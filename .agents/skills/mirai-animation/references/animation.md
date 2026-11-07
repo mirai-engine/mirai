@@ -297,6 +297,33 @@ What used to be a state or a transition has its owner:
 | Waiting for an animation to finish | Finished or Exited of `match_play`, or Completed |
 | Game logic by states (AI, menus) | Game data and its functions; AI, in `std/ai` |
 
+### A game with a handful of authored clips
+
+Motion matching does not need a motion capture database: a port of a game whose characters have
+one clip per thing (idle, walk, run, an attack, a death, a scripted entry) maps each clip to its
+owner and keeps no clip choice in game code.
+
+- **Locomotion.** `animation.character.setup` with the library classifies idle, walk, run and
+  sprint by their names (a prefix such as `ai_zombie_base_walk_v1` still has `walk`). Three
+  clips cover every speed between theirs through the rates of the `.match`. An in-place clip
+  travels at the speed its feet push at; one whose feet slide (a shamble) gets its speed from
+  `speeds`. A skeleton from another engine needs its body first (`skeleton.body.detect`, or
+  `skeleton.body.set` for the feet and hips it does not recognize). The game sets how fast the
+  body goes (`Walk.max_speed`, which a `Nav_Agent` walks at too), never which clip plays: a
+  faster gait (a round that makes enemies run) is a higher speed, and the search moves to the run.
+- **Variants of one character.** A crawler or a heavy enemy with other clips under the same names
+  is another `.anim` set in `Animation.library`, which the data of the entity names.
+- **Whole-body moments.** An attack, a death, a rise from the ground or an entry through a window
+  is `match_play` with its exit at the end or at a marker and a priority: the death above the
+  attack, the attack above nothing. An entry aligned to a place (a window, a board) is
+  `match_play` with [root motion directed at a target](../../mirai-std/references/anim-motion.md#root-motion-directed-at-a-target).
+  The game reacts to `Animation_Events` (Finished, Exited and the markers of the clip, such as
+  the hit of an attack or a footstep), not to which clip it asked for.
+- **Upper-body moments.** A reload, a swing while walking or a hit reaction over the legs is an
+  action in a layer (`action_fire`).
+- **Props.** A board, a door or a lever that only plays its clips is not a character:
+  `animation_play` of the clip is enough, and its markers arrive in `Animation_Events` all the same.
+
 ## Playback, outputs and order
 
 `Animation` plays `.anim`, `.match` or `.agraph` and optionally references `retarget`, `motion` and
