@@ -67,6 +67,7 @@ Import_Settings :: struct {
     parts:Parts,                // of a model: which of its materials and textures are parts of its prefab (parts.odin)
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
+    skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
 }
 
 SETTINGS_EXTENSION :: ".import"

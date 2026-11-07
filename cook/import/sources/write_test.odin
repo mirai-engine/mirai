@@ -196,6 +196,36 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
     testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==report.skeleton_ids[0])
 }
 
+// With Import_Settings.skeleton the import writes only the clips, as an .anim bound to that
+// skeleton of the project: the motion of another file onto a character imported before.
+@(test)
+clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
+    folder:=temp_folder("write-clips-onto")
+    defer os.remove_all(folder)
+    model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
+    if !ok {return}
+    defer importer.model_destroy(&model)
+    keys:=[2]anim.Keyframe{{value={0,0,0,1}},{time=1,value={0,0,.38,.92}}}
+    tracks:=[1]asset.Animation_Track_Desc{{target=base.text_get(model.skeletons[0].bones[len(model.skeletons[0].bones)-1].path[:]),property=.Rotation,keys=keys[:]}}
+    bend:=[1]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]}}
+    brought:=model.animations;model.animations=bend[:]
+    player:=base.Asset_Id{0x1234,0x5678}
+    report,error:=importer.import_write(&model,folder,{settings={skeleton=player}})
+    model.animations=brought
+    defer importer.report_destroy(&report)
+    testing.expect_value(t,error.code,importer.Error_Code.None)
+    testing.expect_value(t,len(report.assets),1)
+    if len(report.assets)!=1 {return}
+    testing.expect_value(t,report.assets[0].kind,asset.KIND_ANIMATION)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    file,loaded:=read_asset(t,report.assets[0],&types)
+    if !loaded {return}
+    defer asset.asset_close(&file)
+    clips,clips_error:=asset.animation_view(&file,&types)
+    testing.expect_value(t,clips_error,asset.Error.None)
+    testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==player,"bound to the skeleton given")
+}
+
 @(test)
 clips_bound_to_a_skeleton_of_the_project_name_it_and_write_no_copy :: proc(t:^testing.T) {
     folder:=temp_folder("write-bound")

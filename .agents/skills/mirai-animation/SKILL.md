@@ -7,7 +7,8 @@ description: Mirai animation - the `animation` plugin (`plugins/animation/runtim
   motion, retarget, mirroring, rigs and IK, morph targets, motion profiles and warping, grounding,
   budget, `Keyframe_Path` sequences, authoring by intent and by API, and the auto-rig of an
   uploaded or generated character without a skeleton. Use when animating characters or objects,
-  building the locomotion or the actions of a character, looking for a state machine or a
+  building the locomotion or the actions of a character, porting a character's or a weapon's
+  motion and events from another engine's data, looking for a state machine or a
   locomotion blend space (they do not exist; see the workflow), touching those packages or their
   assets, or diagnosing a pose, a skinning or a clip.
 ---
@@ -67,7 +68,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 - An entity that animates at its own pace in slow motion (`core.Own_Pace`):
   [own pace](../mirai-core/references/core.md#core-storages).
 - Animation documents of the editor: [previews](../mirai-plugins/references/previews.md).
-- Importing skeletons and clips: [imports](../mirai-imports/references/imports.md).
+- Importing skeletons and clips: [imports](../mirai-imports/references/imports.md); bringing a
+  character's motion and events from another engine's data: [porting](#porting-a-character-from-another-engine).
 
 ## Workflow
 
@@ -108,6 +110,26 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    and functions. If a task seems to ask for animation states, the table
    [what replaces the FSM](references/animation.md#what-replaces-the-state-machine) says what
    to use; a state machine is not added to the engine or to the game.
+
+## Porting a character from another engine
+
+Adapt the source's data to these features instead of rebuilding its runtime:
+
+1. **Events:** the notifies of its clips (footsteps, foley, hit windows) go in the glTF as
+   `extras.markers`, which the import keeps on the clips; the game reads `Animation_Events`. A blend
+   of several clips that the source plays as one sample (a blend space) takes
+   `Animation.event_policy` `Dominant`.
+2. **More motion for a character imported before:** import the file of clips with the `skeleton`
+   setting ([imports](../mirai-imports/references/imports.md)): it writes only the `.anim`, bound to
+   that skeleton.
+3. **Traversal warped to a target** (a climb onto a ledge): the clip keeps its root and
+   `Animation.motion` gets the window the consumer names (`mantle` for the physics mantle); the
+   root motion moves the body.
+4. **What the source's animation graph does at run time** (a bone locked to another while a curve
+   is on, layered arms, an additive composed of several) is baked into the clips when it only
+   depends on the clip; a layer or an action of a `.action` when it depends on the game.
+5. Values come from the source's data; where its runtime decides something its data does not
+   keep, say so next to the value the game takes.
 
 ## Invariants
 

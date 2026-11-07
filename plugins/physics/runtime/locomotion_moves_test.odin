@@ -300,6 +300,10 @@ a_tactical_sprint_ramps_up_spends_its_energy_and_recharges_after_its_delay :: pr
     tactical:=TACTICAL_SPRINT_DEFAULT
     f.tactical=tactical
     top:=f.walk.sprint_speed*tactical.speed_multiplier
+    // Exponential over its ramp: halfway through, the square root of the multiplier.
+    halfway:=Character{sprint_active=true,sprint_time=tactical.speed_ramp/2}
+    boost,_:=tactical_boost(halfway,tactical)
+    testing.expectf(t,abs(boost-cmath.sqrt(tactical.speed_multiplier))<1e-4,"halfway through its ramp: %v",boost)
     moves_tick(&f,{},20)
     moves_tick(&f,{0,0,-1},6,SPRINT)
     testing.expect(t,f.loco.sprint_active,"sprint held forward with energy starts it")
