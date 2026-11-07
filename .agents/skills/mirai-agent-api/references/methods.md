@@ -271,6 +271,25 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   summary says `comparable:false`; a headless editor waits for neither the display nor a limit.
 - `profile.compare` gives `comparable:false` with a blocking difference in conditions or if either
   of the two is not `comparable`.
+- `profile.load` answers about the last load of the document (`scene.load`, a scene a game asks
+  for), of Play (`play.start`) and of a section, without recording anything first
+  ([loads](../../mirai-core/references/host.md#the-frame)): `ready_ms` until it was the document
+  or the world, `resident_ms` until the end of the first frame after that which drew with nothing
+  busy. While it is not, its state is `Loading` with what the last frame waited for; in a manual
+  editor that needs frames (`engine.step`).
+
+Reading a load:
+
+- **Before and after ready.** The phases up to `ready_ms` are the call (documents read,
+  instantiated, settled; for Play the copy and the plugins); what comes after is in `waits`, the
+  one that ended last first, and in the assets with `after_ready`: in the editor the meshes,
+  textures and materials load on demand in the first frame that draws them.
+- **Where to look.** `phases` and `assets` give the costliest first; `slowest` names files. The
+  physics, collision and navigation phases happen in the ticks, inside `physics_step` and
+  `navigation_build`, which `functions` lists with the other loop functions of those frames.
+  `Prepare` and `Nav_Tiles` are summed over the job workers and can exceed the wall time.
+- **A section** counts what its own load did until it joined, and also adds it to the scene or Play
+  that was loading then.
 
 Reading a capture:
 

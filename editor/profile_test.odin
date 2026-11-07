@@ -328,4 +328,20 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
     }
     compare:=Api_Profile_Compare_Params{base=1,id=2,top=12}
     profile_answer_expect(t,&s,api_profile_compare,&compare,Api_Profile_Compare_Params,Api_Profile_Compare)
+
+    // A load still waiting, and one that ended, with what it counted.
+    app:host.App
+    s.app=&app
+    defer host.load_profile_destroy(&app)
+    host.load_open(&app,.Play,"scenes/lab.scene")
+    host.load_phase_add(&app,.World_Copy,4e6,12)
+    host.load_phase_add(&app,.Nav_Tiles,9e6,3)
+    host.load_asset_done(&app.load_profile,{1,2},.Mesh,1<<20,2e6,5e6,false)
+    host.load_ready(&app,.Play,12)
+    host.load_profile_frame(&app,true)
+    load:=Api_Profile_Load_Params{top=8}
+    profile_answer_expect(t,&s,api_profile_load,&load,Api_Profile_Load_Params,Api_Profile_Loads)
+    host.load_profile_frame(&app,true)
+    load.kind=.Play
+    profile_answer_expect(t,&s,api_profile_load,&load,Api_Profile_Load_Params,Api_Profile_Loads)
 }

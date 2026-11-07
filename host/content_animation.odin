@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import "mirai:std/base"
@@ -37,6 +38,7 @@ Content_Animation_Load :: struct {
     cached:[]u8,      // the cooked document to write at path
     ok:bool,
     counter:jobs.Counter,
+    read_ns,build_ns:i64, // what reading it on the main thread and building it took
 }
 
 @(private)
@@ -136,10 +138,12 @@ content_animation_start :: proc(app:^App,entry:^Content_Animation) -> bool {
     load,error:=new(Content_Animation_Load,c.allocator)
     if error!=nil {return false}
     load.allocator,load.id=c.allocator,entry.id
+    started:=time.tick_now()
     if !content_animation_read(app,entry,load) {
         content_animation_load_free(c,load)
         return false
     }
+    load.read_ns=time.duration_nanoseconds(time.tick_since(started))
     entry.load=load
     if load.compress && jobs.worker_count(&app.jobs)>1 {
         jobs.run(&app.jobs,jobs.OWNER,content_animation_build,load,&load.counter)
@@ -160,6 +164,11 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
     defer content_animation_load_free(c,load)
     first:=entry.generation==0
     defer if first && job {entry.adopted=entry.generation}
+    if first {
+        main,worker:=load.read_ns,load.build_ns
+        if !job {main,worker=main+worker,0}
+        load_asset_done(&app.load_profile,entry.id,.Animation,entry.size,main,worker,!load.ok)
+    }
     if !load.ok {
         if first {content_loaded(c,entry,false)}
         return
@@ -285,6 +294,8 @@ content_animation_cache_matches :: proc(source,cached:asset.Animation_View) -> b
 // Builds the library of what a load read, compressing its keys: in a job, or at once.
 @(private="file")
 content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
+    started:=time.tick_now()
+    defer load.build_ns=time.duration_nanoseconds(time.tick_since(started))
     context.allocator=load.allocator
     view:=load.view
     built:=&load.built

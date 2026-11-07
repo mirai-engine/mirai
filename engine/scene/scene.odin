@@ -182,13 +182,23 @@ load_id :: proc(w:core.World_Ref,app:^host.App,id:base.Asset_Id) -> (report:Repo
 // references are not loaded: a saved game, which keeps them as they were.
 replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true) -> (report:Report,error:Error) {
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
+    making:=host.load_phase_begin(app,.Instantiate)
     data:=host.app_world_create(app)
-    if data==nil {return {},.Out_Of_Memory}
+    if data==nil {
+        host.load_phase_end(app,making)
+        return {},.Out_Of_Memory
+    }
     defer host.app_world_free(app,data)
     candidate:=host.app_world_ref(app,data)
-    if !w.info.copy(data,w.data) {return {},.Out_Of_Memory}
+    if !w.info.copy(data,w.data) {
+        host.load_phase_end(app,making)
+        return {},.Out_Of_Memory
+    }
     w.info.clear(data)
     report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
+    host.load_phase_end(app,making,core.world_entities(candidate).alive)
+    settling:=host.load_phase_begin(app,.Settle)
+    defer host.load_phase_end(app,settling)
     core.world_settle(candidate)
     if error!=.None {return}
     if !references {scopes_restore(candidate)}

@@ -2,6 +2,7 @@ package navigation
 
 import "core:mem"
 import "core:math/linalg"
+import "core:time"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -136,6 +137,7 @@ Build :: struct {
     volume_scratch:ai.Nav_Volume_Scratch,
     volume_scratch_ready:bool,
     zone_result:ai.Nav_Volume_Data,
+    ns:i64, // what its job took
 }
 
 builds_free :: proc(b:^Navigation_Builds) {
@@ -419,8 +421,13 @@ navigation_build :: proc(
     }
     sections_update(n,b,limits,fresh)
     paging_update(n,b,unloaded.ptr,time.playing,fresh,reset,app,problems)
-    builds_publish(n,b,problems)
+    published,spent:=builds_publish(n,b,problems)
+    host.load_phase_add(app,.Nav_Tiles,spent,published)
     builds_start(n,b,physics,limits,gone,time.playing,app,problems)
+    // Tiles building keep a load from being resident.
+    building:=false
+    for build in b.builds {building||=build.busy}
+    host.load_report(app,.Navigation,building)
     links_update(n,b,links,transforms,parents,physics,changed,fresh,problems)
     links_generate(n,physics,problems)
     coarse_update(n,b,problems)
@@ -772,6 +779,8 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
 
 @(private)
 build_job :: proc(build:^Build,worker:int) {
+    started:=time.tick_now()
+    defer build.ns=time.duration_nanoseconds(time.tick_since(started))
     if build.air {
         if !build.volume_scratch_ready {ai.nav_volume_scratch_init(&build.volume_scratch);build.volume_scratch_ready=true}
         ai.nav_volume_data_free(&build.zone_result)
@@ -784,12 +793,14 @@ build_job :: proc(build:^Build,worker:int) {
 }
 
 // Puts the tiles of finished builds in their meshes, when they are still
-// what the tile needs.
+// what the tile needs: how many builds ended and what their jobs took.
 @(private)
-builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems) {
+builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems) -> (ended:int,ns:i64) {
     for build in b.builds {
         if !build.busy || jobs.pending(&build.counter) {continue}
         build.busy=false
+        ended+=1
+        ns+=build.ns
         defer ai.nav_tile_data_free(&build.result)
         defer ai.nav_volume_data_free(&build.zone_result)
         if build.uid!=n.uid || build.class>=n.count {n.stats.discarded+=1;continue}
@@ -826,6 +837,7 @@ builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problem
             core.report(problems,core.NONE,"navigation.build","A tile of class %q at %v failed to build (%v): check its class in Navigation_Settings and the collision there",base.text_get(n.classes[build.class].class.name[:]),build.coord,build.status)
         }
     }
+    return
 }
 
 @(private)

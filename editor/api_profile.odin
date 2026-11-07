@@ -23,6 +23,7 @@ PROFILE_TREE_ZONES :: 256 // zones of one frame in profile.frames
 PROFILE_WAIT :: 20        // seconds profile.capture waits by default for a compilation or another measurement: within the 30 a client waits by default
 PROFILE_NAME_BYTES :: 128 // of a zone or a GPU pass in an answer
 PROFILE_NOTE_BYTES :: 256
+PROFILE_LOAD_TOP :: 8     // slowest assets and loop functions of each load in profile.load
 
 Api_Profile_Capture_Params :: struct {
     frames:int `mirai:"optional,min=1,max=3600,label=Frames to record"`,
@@ -371,6 +372,8 @@ profile_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="profile.frames",summary="The slowest frames of a capture, or a range of them, zone by zone with their GPU passes: where a spike went.",params=Api_Profile_Frames_Params,result=Api_Profile_Frames,writes_result=true,defaults=&frames_default,flags={.Read_Only},run=api_profile_frames})
     api_register(s,st,{name="profile.zone",summary="One zone across a capture: how its time spreads with and without what runs inside it, the zones around and inside it and the frames where it took the longest.",params=Api_Profile_Zone_Params,result=Api_Profile_Zone_Detail,writes_result=true,flags={.Read_Only},run=api_profile_zone})
     api_register(s,st,{name="profile.compare",summary="Two captures: whether they were measured alike and, zone by zone and pass by pass, what changed the most.",params=Api_Profile_Compare_Params,result=Api_Profile_Compare,writes_result=true,defaults=&compare_default,flags={.Read_Only},run=api_profile_compare})
+    load_default:=Api_Profile_Load_Params{top=PROFILE_LOAD_TOP}
+    api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=Api_Profile_Load_Params,result=Api_Profile_Loads,writes_result=true,defaults=&load_default,flags={.Read_Only},run=api_profile_load})
     api_register(s,st,{name="profile.export",summary="Writes a capture as a Chrome trace (JSON) for Perfetto, chrome://tracing or Spall.",params=Api_Profile_Export_Params,result=Api_Profile_Export,run=api_profile_export})
 }
 

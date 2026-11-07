@@ -182,6 +182,23 @@ and reads them with its own cursor; without a recording or a request, the device
 per-pass timestamps. The editor exposes it with
 [`profile.*`](../../mirai-agent-api/references/methods.md#profiling).
 
+**Loads (`load_profile.odin`).** `app.load_profile` keeps the last load of each kind (scene, Play,
+section) with its phases, its assets by kind and the slowest of them, always on: a phase costs two
+clock reads, an asset an insertion among the slowest, and nothing allocates per entity or per
+asset. Whoever starts a load opens its record (`load_open`) and says when it is the document or the
+world (`load_ready`) or that it failed; the record is the current one until it is resident or
+another opens, and receives what happens meanwhile wherever it happens: the assets that load at once
+(`Assets.load_profile`), the phases of the loop functions (physics, navigation) and what the loop
+functions took, from `app.step_ns`. It is resident at the end of the first frame after it was ready
+that drew with nothing busy: no asset loaded in that frame, none uploading over frames, no pipeline
+being made and no `.anim` compressing, and no library that reported busy with `load_report` (its
+state stays until it reports again, so it reports every time it runs); when a game loop runs, after
+one of its ticks too. A load in phases and a section count what their jobs do in a `Load_Tally`
+they give when they end. Phases on the main thread or a job worker are also zones of the profiler
+while it records; those inside a loop function pass `LOAD_NO_ZONE`, since its own zone holds them.
+The player prints each load once it ends, on stderr, with what it took to start before its first
+frame (`Startup`).
+
 ## The player
 
 `player_run(info, project_folder, engine_root, args) -> code` is the whole `main` of a game: the

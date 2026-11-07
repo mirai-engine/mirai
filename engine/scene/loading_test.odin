@@ -247,6 +247,61 @@ a_load_reads_in_jobs_and_a_large_asset_goes_in_a_frame_alone :: proc(t:^testing.
     testing.expect_value(t,core.count(core.read(&p.world.models)),2)
 }
 
+// A load in phases is the record of the scene: the documents and entities
+// its jobs read and made count in its phases, and the assets they prepared
+// by kind. Ready once the scene is the world, it waits for an asset that
+// loads on demand after it, which counts as finished after it was ready, and
+// is resident at the end of the first frame with nothing busy.
+@(test)
+a_load_reports_its_phases_and_the_assets_that_finish_after_it :: proc(t:^testing.T) {
+    p:Loading_Project
+    if !loading_open(t,&p,"profile",2) {return}
+    defer loading_close(&p)
+    p.assets.load_profile=&p.app.load_profile
+    defer host.load_profile_destroy(&p.app)
+    MESH :: base.Asset_Id{0x10ad,0x21}
+    LATER :: base.Asset_Id{0x10ad,0x22}
+    LEVEL :: base.Asset_Id{0x10ad,0x23}
+    loading_mesh(t,&p,MESH,host.LOAD_FRAME_BYTES/8)
+    loading_mesh(t,&p,LATER,host.LOAD_FRAME_BYTES/8)
+    loading_scene(t,&p,LEVEL,{MESH})
+    host.assets_scan(&p.assets)
+
+    job,error:=load_begin(&p.app,LEVEL)
+    if !testing.expect_value(t,error,Error.None) {return}
+    frames:=make([dynamic]Loading_Frame,context.temp_allocator)
+    if !loading_frames(t,&p,{job},&frames) {return}
+    host.load_profile_frame(&p.app,true)
+    summary,found:=host.load_summary(&p.app,.Scene,host.LOAD_SLOWEST,context.temp_allocator)
+    if !testing.expect(t,found) {return}
+    testing.expect(t,summary.state==.Loading && !summary.ready,"not resident before the scene is the world")
+    _,error=load_end(job,host.app_world_ref(&p.app,p.world))
+    if !testing.expect_value(t,error,Error.None) {return}
+
+    testing.expect(t,host.assets_mesh(&p.assets,LATER)!=nil)
+    host.load_profile_frame(&p.app,true)
+    summary,_=host.load_summary(&p.app,.Scene,host.LOAD_SLOWEST,context.temp_allocator)
+    testing.expect(t,summary.state==.Loading && summary.ready && .Assets in summary.waiting,"a frame that loaded an asset is not resident")
+    host.load_profile_frame(&p.app,true)
+    summary,_=host.load_summary(&p.app,.Scene,host.LOAD_SLOWEST,context.temp_allocator)
+    if !testing.expect_value(t,summary.state,host.Load_State.Done) {return}
+    testing.expect(t,summary.resident_ms>=summary.ready_ms && summary.ready_ms>0)
+    testing.expect_value(t,summary.entities,1)
+    counted:[host.Load_Phase]i64
+    for phase in summary.phases {counted[phase.phase]=phase.count}
+    testing.expect_value(t,counted[.Read],1)
+    testing.expect_value(t,counted[.Instantiate],1)
+    meshes:host.Load_Assets
+    for k in summary.assets {if k.kind==.Mesh {meshes=k.totals}}
+    testing.expect(t,meshes.count==2 && meshes.later==1 && meshes.bytes>0,"both meshes, one after it was ready")
+    later:=false
+    for item in summary.slowest {if item.id==LATER {later=item.later && !item.job}}
+    testing.expect(t,later,"the mesh loaded on demand is among the slowest, after it was ready")
+    waited:=false
+    for w in summary.waits {waited||=w.busy==.Assets && w.until_ms>=summary.ready_ms}
+    testing.expect(t,waited,"it waited for the asset after it was ready")
+}
+
 // A load ends once the .anim its World can play are loaded, also one it names through a prefab
 // (a spawner's): while the first load of one compresses in a job, it waits, frame after frame,
 // and a load to its end waits for the compression. Nothing it plays holds a rest pose meanwhile.

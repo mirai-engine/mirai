@@ -133,6 +133,8 @@ mesh_cached :: proc(app:^host.App,meshes:^Collider_Meshes,mesh:base.Asset_Id,sha
         entry=&meshes.entries[len(meshes.entries)-1]
     }
     entry^={mesh=mesh,shape=shape,scale=scale,size=size,time=time,generated=generated}
+    building:=host.load_phase_begin(app,.Collision,host.LOAD_NO_ZONE)
+    defer host.load_phase_end(app,building,1)
     buffer:geom.Mesh_Buffer
     geom.mesh_buffer_init(&buffer,context.temp_allocator)
     _,found:=host.assets_collision(app.assets,mesh,shape,.Mesh,&buffer)

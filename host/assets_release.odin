@@ -32,9 +32,19 @@ Release_Call :: struct {
 // renderer no longer reads it. over_frames: a texture or a mesh larger than
 // LOAD_FRAME_BYTES goes over the frames that follow (app_assets_uploading).
 // False, with prepared as it was and nothing taken, when it waits for a
-// later frame: the renderer takes the levels of other textures.
-app_assets_take :: proc(app:^App,prepared:^Assets_Prepared,over_frames:=false) -> bool {
-    switch assets_take(app.assets,prepared,over_frames) {
+// later frame: the renderer takes the levels of other textures. What it
+// took counts in tally, or in the current load without one.
+app_assets_take :: proc(app:^App,prepared:^Assets_Prepared,over_frames:=false,tally:^Load_Tally=nil) -> bool {
+    a:=app.assets
+    id,ns,failed:=prepared.source.id,prepared.ns,!prepared.ok
+    kinds:=[Assets_Kind]Load_Asset{.Mesh=.Mesh,.Texture=.Texture,.Material=.Material,.Scene=.Plugin,.Shape=.Mesh,.Document=.Plugin,.Fracture=.Plugin}
+    kind:=kinds[prepared.kind]
+    fresh:=id!={} && !assets_loaded(a,id)
+    scope:=load_asset_begin(a.load_profile)
+    taken:=assets_take(a,prepared,over_frames)
+    loaded:=fresh && taken!=.Wait && assets_loaded(a,id)
+    load_asset_end(a.load_profile,scope,id,kind,assets_file_bytes(a,id) if loaded else 0,failed,ns,tally,loaded)
+    switch taken {
     case .Wait: return false
     case .Uploading:
         releases_init(app)

@@ -202,6 +202,7 @@ profile_gpu_want :: proc(app:^App) {
 // Closes the frame, keeps what the renderer measured and drains the rings.
 @(private)
 profile_frame_end :: proc(app:^App,drawn:bool) {
+    load_profile_frame(app,drawn)
     p:=&app.profiler
     opened:=p.frame_zone.profile!=nil
     if opened {profile_frame_close(app)}

@@ -201,6 +201,13 @@ scene_sections :: proc(
     }
     records_look(world)
     if loads!=nil && loading!=nil {sections_progress(loading,loads)}
+    // What loads with the world is resident once its sections joined.
+    busy:=false
+    if loads!=nil {
+        for l in loads.items {busy||=l.job!=nil}
+        for l in loads.far {busy||=l.job!=nil}
+    }
+    host.load_report(app,.Sections,busy)
 }
 
 // A section that did not load says why, and is not tried again until it is

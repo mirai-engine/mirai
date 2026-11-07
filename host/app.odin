@@ -160,6 +160,7 @@ App :: struct {
     step_ns:[]u64, // the time of each function of info.steps since whoever reads it last cleared it, settle included
     step_graphs:[core.Loop][core.Phase]Step_Graph, // the functions of each loop and phase as jobs (steps.odin)
     profiler:Profiler, // the frames someone asked to record (profile.odin)
+    load_profile:Load_Profile, // what the last loads took (load_profile.odin)
 
     tick_dt:f32,
     max_ticks:int,
@@ -318,6 +319,7 @@ app_destroy :: proc(app:^App) {
     delete(app.worlds)
     delete(app.reserved)
     delete(app.step_ns,app.allocator)
+    load_profile_destroy(app)
     steps_free(app)
     delete(app.ui_font_sizes,app.allocator)
     ui.font_destroy(&app.ui_font)

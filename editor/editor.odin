@@ -805,14 +805,26 @@ play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
     if owner==0 {s.play_asked={}}
     if s.recovery.pending {return false}
     if run_find(s,owner)!=nil {return owner!=0}
+    host.load_open(s.app,.Play,document_path(s.document))
+    stopping:=host.load_phase_begin(s.app,.Editor)
     if owner==0 && s.mode==.Watch {watch_stop(s)}
     if owner==0 && !simulate {replay_free(s)}
     // The game of the user is shown: the scene comes to the front.
     if owner==0 {asset_document_activate(s,-1)}
     if owner==0 {tools_release(s)}
+    host.load_phase_end(s.app,stopping)
+    waiting:=host.load_phase_begin(s.app,.Animations)
     play_animations_load(s,wait=true)
+    host.load_phase_end(s.app,waiting)
+    copying:=host.load_phase_begin(s.app,.World_Copy)
     r:=run_create(s,owner,0)
-    if r==nil {return false}
+    entities:=core.world_entities(run_ref(s,r)).alive if r!=nil else 0
+    host.load_phase_end(s.app,copying,entities)
+    if r==nil {
+        host.load_fail(s.app,.Play,"the document could not be copied: no room for another run, an edit was refused, or no memory")
+        return false
+    }
+    defer host.load_ready(s.app,.Play,entities)
     if owner!=0 {
         log.info("Play of an agent")
         return true
@@ -824,7 +836,9 @@ play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
     if preview:=core.world_storage_of(host.app_world_ref(s.app,r.world),erender.Environment_Preview);preview!=nil {preview^={}}
     // A body with no spawn point to appear at appears at the camera; player 1 where Play from here asked.
     if origin:=core.world_storage_of(host.app_world_ref(s.app,r.world),scene.Play_Origin);origin!=nil {origin^=asked.asked?asked:camera_origin(s)}
+    starting:=host.load_phase_begin(s.app,.Plugins)
     if p:=providers(s);p.plays && p.play.play_begin!=nil {p.play.play_begin(s,r)}
+    host.load_phase_end(s.app,starting)
     play_view_enter(s,simulate)
     s.mode=simulate?.Simulate:.Play
     log.info("Play")
