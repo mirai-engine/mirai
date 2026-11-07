@@ -515,6 +515,11 @@ libraries](../../mirai-physics/references/engine.md).
   - **Normal map**: averaged as a vector and renormalized; with `green_down` the green is inverted
     first, so that +Y points up as in glTF and in the renderer.
   - **Other maps and HDR**: direct average of their values; light above 1 is kept.
+- **Channels** (`Build_Options.channels`, `Imported_Image.channels`): before anything else each
+  channel can take another channel of the image or a constant, inverted or not; a gloss map in
+  red becomes the roughness of a metallic-roughness texture (`from={.One,.R,.One,.One}`,
+  `invert={1}`) without the reader decoding it. Part of the settings hash; the zero value keeps
+  the channels.
 - **Alpha coverage**: with `alpha_coverage > 0` each level scales its alpha, by bisection, until
   it keeps the proportion of texels above the cutoff that the original image had.
 - **Maximum size**: a larger image starts at the first level that fits.

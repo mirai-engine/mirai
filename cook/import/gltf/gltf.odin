@@ -129,11 +129,26 @@ gltf_paths :: proc(g:^Gltf) -> bool {
         }
         path:=fmt.tprintf("%s%s",prefix,importer.target_segment(node_label(node)))
         if len(path)>=asset.NODE_PATH_CAPACITY {return importer.fail(g.r,.Limit,"glTF node path %s exceeds %d bytes",path,asset.NODE_PATH_CAPACITY-1)}
-        for existing in g.paths {if existing==path {return importer.fail(g.r,.Malformed,"glTF nodes share the path %s; give siblings distinct names before export",path)}}
         g.paths[row]=importer.own(g.r,path)
         return true
     }
     for &node in g.data.nodes {if !fill(g,&node,0) {return false}}
+    // Clips and skins bind nodes by path: a path one of them names must be
+    // one node's. Siblings that share a name and that nothing binds (the
+    // instances of a scene named after what they place) are imported.
+    shared:=make(map[string]int,len(g.paths),context.temp_allocator)
+    for path in g.paths {shared[path]+=1}
+    bound :: proc(g:^Gltf,shared:^map[string]int,node:^cg.node) -> bool {
+        if node==nil || shared[node_target(g,node)]<2 {return true}
+        return importer.fail(g.r,.Malformed,"glTF nodes share the path %s, which a clip or a skin binds; give siblings distinct names before export",node_target(g,node))
+    }
+    for &skin in g.data.skins {
+        for joint in skin.joints {if !bound(g,&shared,joint) {return false}}
+        if !bound(g,&shared,skin.skeleton) {return false}
+    }
+    for &animation in g.data.animations {
+        for &channel in animation.channels {if !bound(g,&shared,channel.target_node) {return false}}
+    }
     return true
 }
 

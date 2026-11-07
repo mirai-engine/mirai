@@ -254,6 +254,7 @@ Texture_Job :: struct {
     hash:u64,
     srgb,normal_map,green_down,keep_precision:bool,
     alpha_cutoff:f32,
+    channels:textures.Channels,
     index:int,
     version:u32,
     cooked:^Cooked_Texture,        // built ahead (model_cook); nil when not
@@ -261,7 +262,7 @@ Texture_Job :: struct {
 
 @(private)
 texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
-    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,keep_precision=job.keep_precision},w.options.settings)
+    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
 // Builds and writes one texture of source as the asset id at path; false when
@@ -417,7 +418,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 
     jobs:=make([dynamic]Texture_Job,context.temp_allocator)
     for image,i in model.images {
-        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,index=i,version=model.version,cooked=image.cooked}
+        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
         if image.path!="" {
             data,read_error:=read_whole(image.path)
             if read_error!=.None {

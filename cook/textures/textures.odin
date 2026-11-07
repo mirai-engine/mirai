@@ -218,6 +218,19 @@ Encode_Speed :: enum u8 {
 // The effort of a Fast encode.
 FAST_EFFORT :: bcn.Effort.Low
 
+// Where a channel of a built texture comes from: the same channel of the
+// image, another of its channels, or a constant.
+Channel :: enum u8 {Same,R,G,B,A,Zero,One}
+
+// The channels of a built texture made of those of its image, each inverted
+// (1 - x) when invert holds it: a gloss map in red becomes the roughness in
+// the green of a metallic-roughness texture with {from={.One,.R,.One,.One},
+// invert={1}}. The zero value keeps the image's channels.
+Channels :: struct {
+    from:[4]Channel,
+    invert:bit_set[0..<4;u8],
+}
+
 Build_Options :: struct {
     max_size:int,        // 0: DEFAULT_MAX_SIZE. A larger image starts at the first level that fits
     srgb:bool,           // color: averaged as light, stored as sRGB in the formats of 8 bits
@@ -228,6 +241,7 @@ Build_Options :: struct {
     encoding:Encoding,
     rdo_lambda:int,      // of blocks, up to RDO_LAMBDA_MAX: how much error the rate-distortion optimization trades for blocks that compress smaller. 0: RDO_LAMBDA_DEFAULT; below 0: none, the least error
     speed:Encode_Speed,
+    channels:Channels,   // what each channel is made of, before anything else; the zero value keeps them
 }
 
 // The lambda of the RDO of options, 0 for none.
@@ -308,6 +322,11 @@ settings_hash :: proc(options:Build_Options) -> u64 {
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
+    if options.channels!={} {
+        c:=options.channels
+        packed:=u64(c.from[0])|u64(c.from[1])<<8|u64(c.from[2])<<16|u64(c.from[3])<<24|u64(transmute(u8)c.invert)<<32
+        hash=base.hash_combine(hash,packed)
+    }
     return base.hash_combine(hash,0x66617374) if options.speed==.Fast else hash
 }
 
@@ -368,8 +387,23 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
         return .Out_Of_Memory
     }
     owned:Source
+    if options.channels!={} {
+        if options.channels.from[0]>max(Channel) || options.channels.from[1]>max(Channel) || options.channels.from[2]>max(Channel) || options.channels.from[3]>max(Channel) {return {},.Invalid}
+        alloc_error:mem.Allocator_Error
+        owned=level
+        owned.allocator=allocator
+        if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {return {},fail(&mips,&owned)}
+        linear:=transfer_make(false)
+        for at in 0..<owned.width*owned.height*layers {
+            value:=channels_apply(options.channels,texel_read(level.texels,level.format,at,&linear))
+            texel_write(owned.texels,owned.format,at,value,&linear)
+        }
+        level=owned
+    }
     if options.green_down {
         alloc_error:mem.Allocator_Error
+        previous:=owned
+        defer source_destroy(&previous)
         owned=level
         owned.allocator=allocator
         if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {return {},fail(&mips,&owned)}
@@ -683,4 +717,22 @@ blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=j
         built.mips[level]=blocks
     }
     return built,true
+}
+
+// A texel of an image as Channels make it.
+@(private)
+channels_apply :: proc "contextless" (c:Channels,value:[4]f32) -> (out:[4]f32) {
+    for i in 0..<4 {
+        switch c.from[i] {
+        case .Same: out[i]=value[i]
+        case .R: out[i]=value[0]
+        case .G: out[i]=value[1]
+        case .B: out[i]=value[2]
+        case .A: out[i]=value[3]
+        case .Zero: out[i]=0
+        case .One: out[i]=1
+        }
+        if i in c.invert {out[i]=1-out[i]}
+    }
+    return
 }

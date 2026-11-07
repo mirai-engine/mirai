@@ -107,6 +107,7 @@ Imported_Image :: struct {
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
     alpha_cutoff:f32,    // above 0: the base color of a masked material
     keep_precision:bool, // its source asks for the precision of its 16 bits or floats (textures.Build_Options)
+    channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
 }
 

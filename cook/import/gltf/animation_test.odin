@@ -107,3 +107,21 @@ gltf_animation_paths_survive_node_reordering_and_reject_ambiguity :: proc(t:^tes
     defer importer.model_destroy(&ambiguous)
     testing.expect(t,ambiguity_error.code==.Malformed && strings.contains(ambiguity_error.message,"distinct names"))
 }
+
+// The instances of a scene are often named after what they place: siblings
+// that share a name import when no clip or skin binds them.
+@(test)
+siblings_that_share_a_name_import_when_nothing_binds_them :: proc(t:^testing.T) {
+    text:=`{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+"nodes":[{"name":"Map","children":[1,2]},{"name":"Crate","mesh":0,"translation":[1,0,0]},{"name":"Crate","mesh":0,"translation":[2,0,0]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],
+"bufferViews":[{"buffer":0,"byteLength":36}],
+"buffers":[{"byteLength":36,"uri":"data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}]}`
+    folder:=temp_folder("shared-names");defer os.remove_all(folder)
+    model,error:=importer.import_model(write_text(folder,"shared.gltf",text),FORMATS[:])
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    defer importer.model_destroy(&model)
+    testing.expect_value(t,len(model.nodes),3)
+    testing.expect_value(t,model.nodes[2].transform.position,[3]f32{2,0,0})
+}

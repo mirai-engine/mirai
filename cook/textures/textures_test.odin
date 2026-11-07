@@ -107,6 +107,26 @@ a_normal_map_whose_green_points_down_is_turned_to_y_up :: proc(t:^testing.T) {
     testing.expect(t,settings_hash(turned)!=settings_hash(plain),"the setting is part of what a texture is built with")
 }
 
+// A gloss map in red, as some games store it, becomes the roughness in the
+// green of a metallic-roughness texture: inverted, with red and blue at 1.
+@(test)
+channels_make_a_roughness_texture_of_a_gloss_map :: proc(t:^testing.T) {
+    pixels:=[4*4]u8{}
+    for at:=0;at<len(pixels);at+=4 {pixels[at],pixels[at+1],pixels[at+2],pixels[at+3]=200,10,20,255}
+    gloss:=Build_Options{encoding=.Uncompressed,channels={from={.One,.R,.One,.One},invert={1}}}
+    built,error:=build(rgba8(pixels[:],2,2),gloss)
+    defer built_destroy(&built)
+    testing.expect_value(t,error,Error.None)
+    level:=built.mips[0]
+    testing.expectf(t,level[0]==255 && level[1]==55 && level[2]==255 && level[3]==255,"texel %v",level[:4])
+    testing.expect_value(t,pixels[0],u8(200))
+    testing.expect(t,settings_hash(gloss)!=settings_hash({encoding=.Uncompressed}),"the channels are part of what a texture is built with")
+    // The zero value keeps the image's channels.
+    kept,_:=build(rgba8(pixels[:],2,2),{encoding=.Uncompressed})
+    defer built_destroy(&kept)
+    testing.expect(t,kept.mips[0][0]==200 && kept.mips[0][1]==10)
+}
+
 @(test)
 a_normal_map_stays_normalized_in_every_level :: proc(t:^testing.T) {
     size:=16

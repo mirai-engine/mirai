@@ -111,8 +111,9 @@ the assets.
 - **Immutable bind geometry.** A mesh keeps bind positions and normals, up to eight normalized
   weights and its own inverse binds, and references a reusable skeleton asset; the pose is applied
   once ([rig contract](references/imports.md#skinned-meshes)). glTF clips keep their tangents and
-  bind nodes by escaped nominal path: reordering node indices does not change the binding, and
-  ambiguous paths are rejected with a diagnostic.
+  bind nodes by escaped nominal path: reordering node indices does not change the binding, and a
+  path that a clip or a skin binds and other nodes share is rejected with a diagnostic; siblings
+  that share a name and that nothing binds import.
 - **Each hand of a body gets a grip measured on its skin.** `grip_left` and `grip_right`
   (`cook/import/grip.odin`) lie on the palm: X toward the fingertips, Y across the palm, Z out of
   it, in meters; a source socket of that name wins and a skinned hand it cannot measure warns.
