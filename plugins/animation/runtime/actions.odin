@@ -9,8 +9,8 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
 ACTION_KIND :: asset.Fourcc(u32('A')|u32('C')<<8|u32('T')<<16|u32('N')<<24)
-ACTION_VERSION :: 1
-ACTION_OLDEST :: ACTION_VERSION
+ACTION_VERSION :: 2
+ACTION_OLDEST :: 1
 ACTION_CAPACITY :: 64
 ACTION_ROWS :: 256
 ACTION_EVENT_CAPACITY :: 1024
@@ -25,6 +25,17 @@ Action_Clock :: enum u8 {
     Own,   // its entity's own time (core.Own_Pace), as the rest of its animation: slowed with it
     World, // the time of the world: it plays at its speed while its entity is slowed or sped up, as a clip whose play rate makes up for the dilation
 }
+// What the root motion of an action does to the body of its entity. With physics, animation_physics
+// moves its Character by it on every tick the action plays, as a layered move of this mix.
+Action_Body_Move :: enum u8 {
+    None,     // only the pose and animation_root_delta have it
+    Additive, // added to the velocity the locomotion of the body drives toward, which keeps its gravity and ground
+    Override, // replaces that velocity on every axis, without gravity or ground
+}
+// The root motion of a tick that the actions of an entity which move its body give it: translation
+// in the space of the entity, by the share of the root each one has, mirrored and warped with the
+// root; move and vertical of the one with the most share.
+Body_Motion :: struct {translation:mm.Vec3,move:Action_Body_Move,vertical:bool}
 Action_Definition :: struct {
     name,clip:[64]u8 `mirai:"text"`,
     layer:u8 `mirai:"optional,min=1,max=3"`,
@@ -40,10 +51,12 @@ Action_Definition :: struct {
     animation:base.Asset_Id `mirai:"optional"`, // of the clip; empty is the profile's
     mesh_space:bool `mirai:"optional"`,         // Override: the rotations of its branch blend in the space of the rig, as Animation_Layer.mesh_space
     clock:Action_Clock `mirai:"optional"`,
+    body_move:Action_Body_Move `mirai:"optional"`, // with root_motion: its root motion moves the body of its entity
+    body_vertical:bool `mirai:"optional"`,         // with body_move: along the up of the body too; otherwise only across it
 }
 ACTION_DEFINITION_DEFAULT :: Action_Definition{layer=1,weight=1,speed=1,fade_in=.1,fade_out=.1}
 Action_Policy_Error :: enum u8 {None,UnsupportedPolicy,ReservedLayer}
-action_channel_equal :: proc(a,b:Action_Definition) -> bool {return a.over==b.over && a.mode==b.mode && a.reference==b.reference && a.curves==b.curves && a.root_motion==b.root_motion && a.mesh_space==b.mesh_space}
+action_channel_equal :: proc(a,b:Action_Definition) -> bool {return a.over==b.over && a.mode==b.mode && a.reference==b.reference && a.curves==b.curves && a.root_motion==b.root_motion && a.mesh_space==b.mesh_space && a.body_move==b.body_move && a.body_vertical==b.body_vertical}
 action_policy_check :: proc(value:Action_Definition,description:Animation) -> Action_Policy_Error {
     if value.layer==0 || value.layer>ANIMATION_LAYERS {return .UnsupportedPolicy}
     if description.layers[value.layer-1].clip!=0 {return .ReservedLayer}
@@ -57,8 +70,9 @@ Action_Profile :: struct {info:Action_Info,actions:[]Action_Definition,sections:
 action_profile_check :: proc(profile:Action_Profile) -> bool {
     if profile.info.animation=={} || len(profile.actions)==0 || len(profile.actions)>ACTION_CAPACITY || len(profile.sections)>ACTION_ROWS || len(profile.windows)>ACTION_ROWS {return false}
     for &value,i in profile.actions {
-        if !blend_text_valid(value.name[:],false) || !blend_text_valid(value.clip[:],false) || value.layer==0 || value.layer>ANIMATION_LAYERS || value.mode>max(Layer_Mode) || value.curves>max(Curve_Blend) || value.root_motion>max(Root_Motion_Policy) || value.cancel>max(Action_Cancel_Policy) || !profile_bone(value.over) || !profile_weight(value.weight) || !finite(value.speed) || value.speed<=0 || value.clock>max(Action_Clock) {return false}
+        if !blend_text_valid(value.name[:],false) || !blend_text_valid(value.clip[:],false) || value.layer==0 || value.layer>ANIMATION_LAYERS || value.mode>max(Layer_Mode) || value.curves>max(Curve_Blend) || value.root_motion>max(Root_Motion_Policy) || value.cancel>max(Action_Cancel_Policy) || !profile_bone(value.over) || !profile_weight(value.weight) || !finite(value.speed) || value.speed<=0 || value.clock>max(Action_Clock) || value.body_move>max(Action_Body_Move) {return false}
         if value.root_motion!=.None && (value.over!={} || value.mode!=.Override) {return false}
+        if value.body_move!=.None && value.root_motion==.None || value.body_vertical && value.body_move==.None {return false}
         for number in ([?]f32{value.reference,value.fade_in,value.fade_out}) {if !finite(number) || number<0 {return false}}
         for previous in profile.actions[:i] {if previous.name==value.name || previous.layer==value.layer && !action_channel_equal(previous,value) {return false}}
     }
@@ -167,6 +181,8 @@ Action_Playing :: struct {
     has_root,continuous:bool,
     layer:Animation_Layer, // the one it asked for in its last tick: a slot that finishes fades it out
     speed,fade_out:f32,    // of its action, which a change of the actions asset does not take from a finishing slot
+    body:Action_Body_Move, // of its action, as speed
+    body_vertical:bool,
 }
 Action_State :: struct {entity:core.Entity,plan,content:i32,layers:[ANIMATION_LAYERS]Action_Playing,seen:u64,retry:bool}
 @(storage,free="actions_runtime_free")
@@ -336,7 +352,7 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets
                 action_end(runtime,state,slot,true,problems)
             }
             if section<0 {for value,i in profile.sections {if int(value.action)==index {section=i;break}}}
-            slot^=Action_Playing{active=true,starting=true,seeking=true,action=i16(index),section=i16(section),time=profile.sections[section].start if section>=0 else 0,speed=definition.speed,fade_out=definition.fade_out}
+            slot^=Action_Playing{active=true,starting=true,seeking=true,action=i16(index),section=i16(section),time=profile.sections[section].start if section>=0 else 0,speed=definition.speed,fade_out=definition.fade_out,body=definition.body_move,body_vertical=definition.body_vertical}
             action_emit(runtime,state,slot,.Started,slot.time,problems)
             if section>=0 {action_emit(runtime,state,slot,.Section,slot.time,problems)}
             action_windows(runtime,state,slot,slot.time,slot.time,problems,true)
@@ -531,8 +547,10 @@ actions_layer_finish :: proc(runtime:^Action_Runtime,state:^Playing) {
     for slot,i in active.layers {if slot.active {state.layers[i].fader.current.speed=slot.speed}}
 }
 actions_apply_root :: proc(runtime:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation=nil) {
-    if state==nil {return};state.has_action_root=false
+    if state==nil {return};state.has_action_root=false;state.body_motion={}
     active:=action_state(runtime,state.entity);if active==nil {return}
+    moving,strongest:f32
+    defer if !(moving>0) {state.body_motion={}}
     for &slot,i in active.layers {
         if !slot.active || !slot.has_root {continue}
         share:=state.layers[i].weight*mm.saturate(description.weight)
@@ -543,6 +561,12 @@ actions_apply_root :: proc(runtime:^Action_Runtime,state:^Playing,description:An
         rotation:=mm.quat_slerp(1,slot.delta.rotation,current)*slot.outgoing_delta.rotation
         state.motion.translation=mm.lerp(state.motion.translation,translation,share)
         state.motion.rotation=mm.quat_slerp(state.motion.rotation,rotation,share)
+        // The body takes the part of that blend the actions that move it give.
+        state.body_motion.translation*=1-share;moving*=1-share
+        if slot.body!=.None {
+            state.body_motion.translation+=translation*share;moving+=share
+            if share>=strongest {state.body_motion.move,state.body_motion.vertical,strongest=slot.body,slot.body_vertical,share}
+        }
         state.root_enabled=true;state.action_root=slot.root;state.has_action_root=true
     }
 }
@@ -558,13 +582,19 @@ action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,conten
     return
 }
 
-action_clock :: proc(runtime:^Action_Runtime,entity:core.Entity) -> (clock:Motion_Clock) {
+// The action that leads the root of its entity: the one with the most of it, at least half.
+@(private)
+action_root_slot :: proc(runtime:^Action_Runtime,entity:core.Entity) -> (leading:^Action_Playing) {
     state:=action_state(runtime,entity);if state==nil {return}
-    for slot in state.layers {
-        if !slot.active || !slot.has_root || slot.root_weight<.5 || slot.root_weight<clock.weight {continue}
-        clock={player=slot.player,from=slot.from,to=slot.to,root=slot.root,weight=slot.root_weight,active=slot.continuous && !slot.finishing}
+    for &slot in state.layers {
+        if !slot.active || !slot.has_root || slot.root_weight<.5 || leading!=nil && slot.root_weight<leading.root_weight {continue}
+        leading=&slot
     }
     return
+}
+action_clock :: proc(runtime:^Action_Runtime,entity:core.Entity) -> (clock:Motion_Clock) {
+    slot:=action_root_slot(runtime,entity);if slot==nil {return}
+    return {player=slot.player,from=slot.from,to=slot.to,root=slot.root,weight=slot.root_weight,active=slot.continuous && !slot.finishing}
 }
 actions_finish :: proc(runtime:^Action_Runtime,playback:^Playback,dt:f32) {
     if runtime==nil || playback==nil || !finite(dt) || dt<0 {return}

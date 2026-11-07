@@ -165,6 +165,7 @@ Playing :: struct {
     curves_ready:bool,
     motion:Root_Delta,
     root_enabled:bool,
+    body_motion:Body_Motion,   // the part of motion its actions give its body
     action_root:Root_Motion,
     has_action_root:bool,
     base_root:Root_Motion,
@@ -249,7 +250,7 @@ animation_tick :: proc(
         memory_problem(problems,core.NONE,"the animation requests, so nothing is animated in this tick")
         return
     }
-    if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.driven_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false};return}
+    if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.driven_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}};return}
     // The editor runs this once a frame with dt 0: a preview advances by the frame.
     tick_dt:=time.dt
     if !time.playing {tick_dt=frame.dt if finite(frame.dt) && frame.dt>0 else 0}
@@ -363,7 +364,7 @@ animation_tick :: proc(
         }
         if programmed && len(state.program.from)!=len(state.local) && resize(&state.program.from,len(state.local))!=nil {memory_problem(problems,e,"its animation program");continue}
 
-        state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.has_action_root=false
+        state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.has_action_root=false;state.body_motion={}
         state.driven_ready=false
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         state.base_root={}
@@ -437,6 +438,7 @@ animation_tick :: proc(
         if actions!=nil && content!=nil {actions_apply_root(actions,state,animation)}
         if animation.mirror && len(state.mirror_pairs)>0 {
             state.motion=root_delta_mirror(state.mirror_plane,state.motion)
+            state.body_motion.translation=lib.mirror_vector(state.mirror_plane,state.body_motion.translation)
             if state.has_action_in_place {if bone:=bone_resolve(state,state.action_in_place_root.bone);bone>0 && state.parents[bone]==0 {state.action_in_place_local=lib.mirror_transform(state.mirror_plane,state.mirror_corrections[bone],state.action_in_place_local)}}
         }
         if motion!=nil && animation.motion!={} && content!=nil {
@@ -446,9 +448,12 @@ animation_tick :: proc(
             if state.has_base_root && !programmed {clock.root=state.base_root}
             action:=action_clock(actions,e);if action.player.clip!=0 {clock=action}
             if animation.mirror && len(state.mirror_pairs)>0 {clock.mirror=!clock.mirror}
+            unwarped:=state.motion.translation
             if ok && !motion_apply_root(motion,motion_assets,app,state,animation.motion,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
                 if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error,app,motion_assets,animation.motion)}
             }
+            // The warp of the clock of an action that moves the body moves the body as much.
+            if leading:=action_root_slot(actions,e);leading!=nil && leading.body!=.None {state.body_motion.translation+=state.motion.translation-unwarped}
         }
         if programmed && state.program.kind==MATCH_KIND {match_lag_apply(state,placed)}
         copy(state.sampled[:],state.local[:])
