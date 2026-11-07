@@ -176,6 +176,12 @@ Imported_Skeleton :: struct {
     name:string,
     bones:[]asset.Skeleton_Bone,
     sockets:[]asset.Skeleton_Socket, // named places on its bones that the source gives, their offsets in the space of their bone
+    // A skeleton of the project the source binds to, whose bones a reader
+    // copied from that asset (clips of a format that keeps no skeleton, such
+    // as those of a Cast animation): it is not written, and the clips and the
+    // meshes of the model name that id. Its bones are already in the engine's
+    // space, so the reader of such a model declares ENGINE_SPACE.
+    asset:base.Asset_Id,
 }
 
 Imported_Model :: struct {

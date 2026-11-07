@@ -436,8 +436,14 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for job in jobs {append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=job.index,extension=".tex",file=job.file,size=job.size,hash=job.hash,settings=textures.settings_hash(texture_options(w,job)),earlier=-1,shared=-1})}
     first_material:=len(parts)
     for material,i in model.materials {append(&parts,Part{kind=asset.KIND_MATERIAL,name=material.name,index=w.options.material_index+i,extension=".mat",earlier=-1,shared=-1})}
-    first_skeleton:=len(parts)
-    for skeleton,i in model.skeletons {append(&parts,Part{kind=asset.KIND_SKELETON,name=skeleton.name,index=i,extension=".skeleton",earlier=-1,shared=-1})}
+    // A skeleton of the project the source binds to is not a part: nothing is written of it.
+    skeleton_parts:=make([]int,len(model.skeletons),context.temp_allocator)
+    for skeleton,i in model.skeletons {
+        skeleton_parts[i]=-1
+        if skeleton.asset!={} {continue}
+        skeleton_parts[i]=len(parts)
+        append(&parts,Part{kind=asset.KIND_SKELETON,name=skeleton.name,index=i,extension=".skeleton",earlier=-1,shared=-1})
+    }
     first_mesh:=len(parts)
     for mesh,i in model.meshes {append(&parts,Part{kind=asset.KIND_MESH,name=mesh.name,index=i,extension=".mesh",earlier=-1,shared=-1})}
     animation:=len(parts)
@@ -481,7 +487,15 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     w.report.skeleton_ids=make([]base.Asset_Id,len(model.skeletons),w.allocator)
     root_bones:=make([]int,len(model.skeletons),context.temp_allocator)
     for skeleton,i in model.skeletons {
-        part:=&parts[first_skeleton+i]
+        if skeleton.asset!={} {
+            w.report.skeleton_ids[i]=skeleton.asset
+            body:asset.Skeleton_Body
+            body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
+            count,map_:=skeleton_body(nil,skeleton.bones,&body,&body_parts)
+            root_bones[i]=skeleton_root_bone(skeleton.bones,map_) if count>0 else -1
+            continue
+        }
+        part:=&parts[skeleton_parts[i]]
         w.report.skeleton_ids[i]=part.id
         import_data:=import_info(source,skeleton.name,i,model.source_size,model.source_hash,0,model.version)
         existed:=os.exists(part.path)

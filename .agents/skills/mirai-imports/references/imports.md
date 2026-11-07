@@ -71,6 +71,10 @@ meshes with `Mesh_Builder`.
   that deforms are not shared and their normal delta leads to the normal of the deformed face; a
   declared tangent takes the delta of the source and a MikkTSpace one, what MikkTSpace gives the
   shape at weight 1 minus the rest one.
+- A skeleton with `asset` set is one the project already has, whose bones the reader copied from
+  that `.skeleton` (the clips of a format that keeps no skeleton): it is not written, and the
+  clips and skins of the model name that id. Its bones are in the engine's space, so such a reader
+  declares `ENGINE_SPACE` and brings its keys to the frames of those bones itself.
 - `source_space(r,space)` declares the file's space before the first triangle; `r.basis` is its
   change of basis, in case the reader needs to orient something (a light) in the engine's.
 
