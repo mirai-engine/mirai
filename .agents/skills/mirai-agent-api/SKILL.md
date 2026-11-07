@@ -79,9 +79,13 @@ difference with the catalog, it rules.
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`
    finds nondeterminism, and `play.seek` rewinds the run there to step it again.
-6. After changing code, `mirai session restart [project]` builds and opens another session with
-   the same arguments; `mirai build editor` also restarts it if it has to replace the engine
-   binaries it runs ([sessions](references/api.md#sessions)).
+6. After changing code of the project (its `game/`, `editor/` or `plugins/`), `build.start` (or
+   `play.start`, which builds first) compiles it and loads it into the running editor: the scene,
+   the Play and the history stay, also with a new or changed component
+   ([build](references/methods.md#build)). A large scene is not loaded again for each change.
+   `mirai session restart [project]` is only for engine code: it builds and opens another
+   session with the same arguments, and `mirai build editor` also restarts it if it has to
+   replace the engine binaries it runs ([sessions](references/api.md#sessions)).
 7. Close with `engine.shutdown` (`discard` to discard unsaved changes) or with
    `mirai session stop`.
 
@@ -214,7 +218,8 @@ positions misses both.
   `std/base` and `std/jobs`; a plugin method, those of its skill.
 - `large_mcp_images_keep_the_complete_content_with_small_socket_buffers` (`editor/api`) shrinks
   the receiving socket buffer: run it when touching partial sends.
-- Live: `mirai session start demo --dev` (or `mirai session restart demo` after changing code),
+- Live: `mirai session start demo --dev` (`build.start` after changing project code,
+  `mirai session restart demo` after changing engine code),
   repeat the change with `mirai rpc ... --project demo` checking `mirai rpc describe`,
   `scene.inspect`, `history.undo` and `editor.capture`, and `mirai session stop demo`.
 - Live AI attribution: two MCP sessions with different headers over the same entities;

@@ -417,7 +417,8 @@ tools come from `.deps`, also from a worktree.
 - The builds of all checkouts take turns by themselves; do not set `-thread-count`. Tests and
   builds do not wait for a measurement: they run with low priority while it lasts.
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
-  `mirai session stop`; after a code change, `mirai session restart` (or `mirai build editor`,
+  `mirai session stop`; after a change of project code, `build.start` loads it into the open
+  session; after a change of engine code, `mirai session restart` (or `mirai build editor`,
   which restarts the session that holds the build); after a failure, `mirai rpc
   engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
 - **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
