@@ -96,6 +96,7 @@ document_merge :: proc(m:^Merge,ours,base,theirs:^Document) -> Error {
     g.path=make([dynamic]u8,g.scratch)
     serial.writer_init(&g.text,allocator=g.scratch)
     first_added:=len(ours.tables)
+    columns_follow(&g) or_return
     tables_add(&g) or_return
     g.tables=make([]Table_Merge,len(ours.tables),g.scratch)
     for &table,at in g.tables {
@@ -136,6 +137,33 @@ document_table_take :: proc(dst,src:^Document,name:string) -> Error {
         if column.ref>=0 {dst.tables[table].columns[added].ref,_=document_table(dst,src.tables[column.ref].name)}
     }
     dst.tables[table].key=source.key
+    return .None
+}
+
+// A column whose type only theirs changed (a field added or removed: its component grew) takes
+// the type of theirs, ours' rows moving to it by field names, so what theirs added is kept; base's
+// rows then migrate to it as theirs' do. Where ours changed the type too, ours' stays.
+@(private="file")
+columns_follow :: proc(g:^Merger) -> Error {
+    ours,base,theirs:=g.docs[OURS],g.docs[BASE],g.docs[THEIRS]
+    if theirs==nil || base==nil {return .None}
+    for at in 0..<len(ours.tables) {
+        name:=ours.tables[at].name
+        their_table,in_theirs:=document_table(theirs,name)
+        base_table,in_base:=document_table(base,name)
+        if !in_theirs || !in_base {continue}
+        for c in 0..<len(ours.tables[at].columns) {
+            column:=ours.tables[at].columns[c]
+            if column.ref>=0 {continue}
+            their_column,has_theirs:=document_column(theirs,their_table,column.name)
+            base_column,has_base:=document_column(base,base_table,column.name)
+            if !has_theirs || !has_base {continue}
+            their_type:=theirs.tables[their_table].columns[their_column].type
+            base_type:=base.tables[base_table].columns[base_column].type
+            if theirs.hashes[their_type]==ours.hashes[column.type] || base.hashes[base_type]!=ours.hashes[column.type] {continue}
+            document_column_retype(ours,at,c,&theirs.schema,their_type) or_return
+        }
+    }
     return .None
 }
 

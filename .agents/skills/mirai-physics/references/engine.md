@@ -409,6 +409,11 @@ writes.
     and a jump adds `added_speed` along that velocity (clamped to `max_speed` across the up) and
     `up_speed` over the jump's rise. `ledge_jumping` lasts until it stands again; meanwhile air
     control steers without slowing it below its speed. It costs no tactical energy.
+  - Mantle (with `Mantle`): `ledge_find` looks for the top just past the face, so a top thinner
+    than the capsule (a built wall) counts, and puts the feet a radius past the face or in the
+    middle of a narrower top. An `Override` layered move takes the climb off its own way for its
+    `time` (the root motion of the climb's clip: `animation_physics` warps it onto `mantle_to`
+    through the window `mantle` of `Animation.motion`); the tick it ends it stops and falls.
   - In the air: control bounded by `Walk.air_control`; it does not climb ground that is too steep.
   - Flying (`MODE_FLYING`, with `Fly`): velocity on the three axes according to yaw and pitch,
     `Airborne` and without gravity; it lasts until another mode is requested.

@@ -159,6 +159,8 @@ ledge_ready_update :: proc(loco:^Character,ledge:Ledge_Jump,ground:Character_Sta
 @(private) LEDGE_PROBE :: f32(0.5)     // share of its radius of the sphere that looks for the wall
 @(private) LEDGE_WALL :: f32(0.7)      // least part of the normal of a wall across its up: within 45° of upright
 @(private) LEDGE_INSET :: f32(0.05)    // m past the face, and over the top, the capsule is put
+@(private) LEDGE_TOP_STEPS :: 6        // rays down from the face to a radius past it that find how far the top goes
+@(private) LEDGE_TOP_STEP :: f32(0.05) // m off the height of the top at which a ray has left it
 @(private) LEDGE_SWEEP :: f32(0.9)     // share of its radius the capsule swept along the way has
 @(private) MANTLE_TOLERANCE :: f32(0.4) // m off the way at which a climb is given up: something pushed it
 @(private) MANTLE_FORCE :: f32(10)     // times its traction force that drives the climb
@@ -216,9 +218,10 @@ mantle_wanted :: proc "contextless" (loco:^Character,mantle:Mantle,ground:Charac
 // Where a character can mantle onto ahead of it toward facing: its feet on the top of a ledge, height
 // over its feet. A sphere half its radius from just over its step finds the wall within reach, which is
 // within 45° of upright and within facing of where it looks; a ray down from max_height over its feet,
-// a radius past the face, finds the top, walkable for it, between min_height and max_height (over
-// ground_height from_ground). Its capsule fits standing there, and a thinner one goes up along the wall
-// and across onto it without hitting anything.
+// just past the face, finds the top, walkable for it, between min_height and max_height (over
+// ground_height from_ground). The feet go a radius past the face, or onto the middle of a top
+// narrower than that (the top of a thin wall). Its capsule fits standing there, and a thinner one
+// goes up along the wall and across onto it without hitting anything.
 ledge_find :: proc(w:^sim.World,h:sim.Character_Handle,facing:[3]f32,mantle:Mantle,from_ground:bool) -> (to:[3]f32,height:f32,found:bool) {
     if !sim.character_valid(w,h) || !(mantle.reach>0) || !(mantle.max_height>mantle.min_height) {return}
     desc:=sim.character_desc(w,h)
@@ -236,13 +239,26 @@ ledge_find :: proc(w:^sim.World,h:sim.Character_Handle,facing:[3]f32,mantle:Mant
     if span<LEDGE_WALL {return}
     into:=-across/span
     if linalg.dot(into,ahead)<cmath.cos(mantle.facing) {return}
-    over:=wall.point+into*(desc.radius+LEDGE_INSET)
-    over-=up*linalg.dot(over-feet,up)
+    face:=wall.point-up*linalg.dot(wall.point-feet,up)
     drop:=mantle.max_height+LEDGE_INSET-mantle.min_height
-    top,landed:=sim.ray_cast_closest(w,over+up*(mantle.max_height+LEDGE_INSET),-up*drop,filter)
+    top_at :: proc(w:^sim.World,face,into,up:[3]f32,depth,over,drop:f32,filter:sim.Query_Filter) -> (sim.Ray_Hit,bool) {
+        return sim.ray_cast_closest(w,face+into*depth+up*over,-up*drop,filter)
+    }
+    top,landed:=top_at(w,face,into,up,LEDGE_INSET,mantle.max_height+LEDGE_INSET,drop,filter)
     if !landed || !(top.fraction>0) || linalg.dot(top.normal,up)<cmath.cos(desc.max_slope) {return}
     height=linalg.dot(top.point-feet,up)
     if height<mantle.min_height || height>mantle.max_height || from_ground && height<=mantle.ground_height {return}
+    // As far onto the top as a radius past the face, while it goes on at that height.
+    stand:=desc.radius+LEDGE_INSET
+    reached:=f32(LEDGE_INSET)
+    for step in 1..=LEDGE_TOP_STEPS {
+        depth:=LEDGE_INSET+(stand-LEDGE_INSET)*f32(step)/LEDGE_TOP_STEPS
+        hit,ok:=top_at(w,face,into,up,depth,mantle.max_height+LEDGE_INSET,drop,filter)
+        if !ok || abs(linalg.dot(hit.point-top.point,up))>LEDGE_TOP_STEP {break}
+        reached=depth
+    }
+    if reached<stand {stand=0.5*(reached+LEDGE_INSET)}
+    top.point=face+into*stand+up*linalg.dot(top.point-face,up)
     center:=desc.step_height+0.5*(desc.height-desc.step_height)
     capsule:=sim.Capsule{desc.radius,0.5*(desc.height-desc.step_height)-desc.radius}
     blocking:[1]sim.Shape_Handle
@@ -271,8 +287,10 @@ mantle_point :: proc "contextless" (from,to,up:[3]f32,u:f32) -> [3]f32 {
 
 // The Character_Move of a tick of a climb, from where its feet are: a drive that overrides gravity and
 // the ground and takes the feet where the way puts them at the end of the tick. At the end of the way,
-// or when something holds it off the way, it falls (and stands on what it climbed).
-mantle_move :: proc(loco:^Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:input.Move_Input,jump:input.Action,dt:f32) -> (move:sim.Character_Move) {
+// or when something holds it off the way, it falls (and stands on what it climbed). driven: an
+// Override layered move takes the climb this tick (the root motion of the animation of the climb,
+// warped onto the ledge), so it goes where that move takes it and only its time runs.
+mantle_move :: proc(loco:^Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:input.Move_Input,jump:input.Action,dt:f32,driven:=false) -> (move:sim.Character_Move) {
     up:=mm.quat_rotate(frame,{0,1,0})
     move.yaw=move_input.look_yaw
     loco.jump_held=move_input.buttons&input.action_bit(jump)!=0
@@ -280,9 +298,11 @@ mantle_move :: proc(loco:^Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,
     length:=max(mantle.time,dt)
     now:=mantle_point(loco.mantle_from,loco.mantle_to,up,min(loco.mantle_time/length,1))
     off:=position-now
-    if loco.mantle_time>=length || linalg.dot(off,off)>MANTLE_TOLERANCE*MANTLE_TOLERANCE {
+    if loco.mantle_time>=length || !driven && linalg.dot(off,off)>MANTLE_TOLERANCE*MANTLE_TOLERANCE {
+        // It stops where the climb left it, up and across, and falls from there.
         loco.mode,loco.air_time=MODE_FALLING,0
-        move.air={{},loco.traction_force}
+        move.air={{},max(loco.traction_force,1)*MANTLE_FORCE}
+        move.flags={.Airborne,.Drive_Vertical}
         return
     }
     loco.mantle_time+=dt

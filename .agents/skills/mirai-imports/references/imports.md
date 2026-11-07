@@ -629,6 +629,13 @@ A node with `skin` produces its own mesh, without sharing it between nodes.
   the pelvis is the bob of the body. Importing again keeps the root someone set on a clip
   (`animation.clip.set`) while its bone exists.
 
+### glTF clip markers
+
+`extras.markers` of a glTF animation (`[{"name": "foot_l", "time": 0.27}]`) become the markers of
+its clip, sorted by time: the events a source keeps on a timeline (notifies, footsteps), which
+importing again keeps. A marker without a name or at a time that is not finite and nonnegative
+fails the import.
+
 ### glTF morph targets
 
 The targets of a mesh go to its `morphs` and `morph_deltas` tables ([mesh
