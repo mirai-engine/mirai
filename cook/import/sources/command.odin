@@ -41,7 +41,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> --out <folder> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--into <id>] [--in-place|--copy] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh] [--force-collision] [--hulls N] [--parts auto|all|none] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--rebuild] [--no-save] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> --out <folder> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--into <id>] [--in-place|--copy] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh] [--force-collision] [--hulls N] [--parts auto|all|none] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--no-save] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
     file,out:string
@@ -50,7 +50,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     placed:bool // --in-place or --copy was given
     profiled:bool
     // What the options change of the settings the source has.
-    Change :: enum {Max_Texture,Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Max_Triangles,Collision,Force_Collision,Hulls,Parts,Rig,Rig_Crotch,Rig_Neck}
+    Change :: enum {Max_Texture,Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Max_Triangles,Collision,Force_Collision,Hulls,Parts,Rig,Rig_Crotch,Rig_Neck,Skeleton}
     given:importer.Import_Settings
     changed:bit_set[Change]
     at:=0
@@ -69,6 +69,13 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
             if text,ok=value(args,&at);ok {
                 parsed:bool
                 if options.into,parsed=base.asset_id_parse(text);!parsed || options.into=={} {fmt.wprintln(errors,"mirai import: --into needs the 32-hex-digit id of the prefab, texture or sound written by the import being updated");return 2}
+            }
+        case "--skeleton":
+            text:string
+            if text,ok=value(args,&at);ok {
+                parsed:bool
+                if given.skeleton,parsed=base.asset_id_parse(text);!parsed {fmt.wprintln(errors,"mirai import: --skeleton needs the 32-hex-digit id of a skeleton of the project (32 zeros import the model whole)");return 2}
+                changed+={.Skeleton}
             }
         case "--max-texture":
             text:string
@@ -195,7 +202,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     kind:=source_kind(file)
     if file=="" || out=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
-    if changed&{.Lods,.Max_Triangles,.Collision,.Force_Collision,.Hulls,.Parts,.Rig,.Rig_Crotch,.Rig_Neck}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --max-triangles, --collision, --force-collision, --hulls, --parts and the --rig options apply only to models");return 2}
+    if changed&{.Lods,.Max_Triangles,.Collision,.Force_Collision,.Hulls,.Parts,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --max-triangles, --collision, --force-collision, --hulls, --parts, --skeleton and the --rig options apply only to models");return 2}
 
     if kind==.Model || kind==.Image {
         stored,found,settings_error:=importer.settings_load(file)
@@ -220,6 +227,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         if .Rig in changed {options.rig=given.rig}
         if .Rig_Crotch in changed {options.rig_crotch=given.rig_crotch}
         if .Rig_Neck in changed {options.rig_neck=given.rig_neck}
+        if .Skeleton in changed {options.skeleton=given.skeleton}
         // The heights tell the fit of a person where the body is.
         if options.rig!=.Humanoid {
             if changed&{.Rig_Crotch,.Rig_Neck}!={} {fmt.wprintln(errors,"mirai import: --rig-crotch and --rig-neck go with --rig humanoid");return 2}

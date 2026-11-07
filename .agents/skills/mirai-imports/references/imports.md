@@ -324,6 +324,10 @@ its fields are the options of `mirai import` (`IMPORT_USAGE`). What is not obvio
   animal) in place of the skeletons and skins of the source; `rig_crotch` and `rig_neck`, only for
   the humanoid, are the heights in meters of the crotch and the neck when the fit does not see them
   (a skirt, a coat).
+- `skeleton` (`--skeleton <id>`) puts the clips of a model on a skeleton the project already has,
+  with the same bones: the import writes only its `.anim`, bound to it, and no textures,
+  materials, skeletons, meshes or prefab. It is how the motion of another file (a set of clips
+  exported with a body) joins a character imported before.
 
 Settings live next to the source in `<source>.import`, a JSON with one entry per field name (an
 absent field is its default), and win over the options except with `ignore_stored`: importing a
