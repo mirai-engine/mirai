@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -13,6 +14,7 @@ import "mirai:editor/api"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
+import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -130,6 +132,7 @@ Probe :: struct {
     viewport:Viewport,
     gui:Editor_Ui,
     document:Document,
+    build:Build_State,
     editor:Probe_Editor,
     s:Session,
     out:serial.Writer,
@@ -184,7 +187,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     probe_settle(f.data,nil,nil)
     f.viewport={orbit=ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
-    f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.editor,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document}
+    f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.editor,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
     edits_reset(&f.edits,edited_world(&f.s))
     f.document.saved=edits_state(&f.edits)
     if !testing.expect(t,api_open(&f.s,0,true)==.None) {return false}
@@ -755,4 +758,82 @@ verify_says_the_first_tick_and_field_where_playing_the_past_again_differs :: pro
     testing.expect(t,strings.contains(text,`position[0]"`),text)
     api_result_shape_expect(t,text,Api_Play_History_Result)
     testing.expect(t,running.time.tick==newest && running.score.points==points && r.history.at==r.history.serial)
+}
+
+// A scenario file plays the game from its first tick through its steps as
+// calls of the play methods and stops it: it passes when every step does,
+// ends at the first that fails (a check that does not hold, an until that
+// runs out of ticks, a call that fails) and refuses a file whose steps its
+// methods would not take before the game starts.
+@(test)
+a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    error,_:=probe_call(f,"play.stop",`{}`)
+    testing.expect_value(t,error.code,0)
+    folder:=project.path_absolute(fmt.tprintf(".mirai/test-scenarios-%d",os.get_pid()),context.temp_allocator)
+    defer os.remove_all(folder)
+    testing.expect(t,os.make_directory_all(folder)==nil)
+    write :: proc(folder,name,text:string) -> string {
+        path:=fmt.tprintf("%s/%s",folder,name)
+        _=os.write_entire_file(path,transmute([]u8)text)
+        return path
+    }
+    hero:=fmt.tprintf("%016x",u64(f.hero))
+    health :: proc(compare:string,points:int) -> string {
+        return strings.concatenate({`{"name":"Hero","component":"Probe_Health","field":"points","compare":"`,compare,`","number":`,fmt.tprint(points),`}`},context.temp_allocator)
+    }
+    write(folder,"a_weakens.mirai",strings.concatenate({`{"steps":[`,
+        `{"name":"weaken","method":"play.set","params":{"entity":"`,hero,`","components":{"Probe_Health":{"points":1}}}},`,
+        `{"method":"play.check","params":{"conditions":[`,health("Equal",1),`]}},`,
+        `{"method":"play.step","params":{"ticks":5,"until":[`,health("Below",2),`]}},`,
+        `{"method":"play.check","params":{"conditions":[{"storage":"Probe_Score","field":"points","compare":"Equal","number":0}]}}]}`},context.temp_allocator))
+    write(folder,"b_misses.mirai",strings.concatenate({`{"steps":[`,
+        `{"name":"fresh","method":"play.check","params":{"conditions":[`,health("Equal",3),`]}},`,
+        `{"method":"play.check","params":{"conditions":[{"storage":"Probe_Score","field":"points","compare":"Equal","number":5}]}},`,
+        `{"method":"play.set","params":{"entity":"`,hero,`","position":[0,0,0]}}]}`},context.temp_allocator))
+    write(folder,"notes.txt","not a scenario")
+    text:string
+    error,text=probe_call(f,"play.scenario.run",strings.concatenate({`{"path":"`,folder,`"}`},context.temp_allocator))
+    testing.expectf(t,error.code==0,"%v",error)
+    api_result_shape_expect(t,text,Api_Play_Scenario_Result)
+    Step :: struct {method,name:string,passed:bool,tick:u64}
+    Report :: struct {path:string,passed:bool,failure:string,tick:u64,steps:int,ran:[]Step}
+    Result :: struct {passed:bool,total,failed:int,scenarios:[]Report}
+    result:Result
+    testing.expect(t,json.unmarshal_string(text,&result,allocator=context.temp_allocator)==nil,text)
+    testing.expect(t,!result.passed && result.total==2 && result.failed==1 && len(result.scenarios)==2,text)
+    if len(result.scenarios)==2 {
+        weakens,misses:=result.scenarios[0],result.scenarios[1]
+        testing.expect(t,strings.has_suffix(weakens.path,"a_weakens.mirai") && weakens.passed && weakens.failure=="" && len(weakens.ran)==4,text)
+        testing.expect(t,len(weakens.ran)==4 && weakens.ran[0].name=="weaken" && weakens.ran[2].passed && weakens.tick==0,text)
+        testing.expect(t,!misses.passed && misses.steps==3 && len(misses.ran)==2 && misses.ran[0].passed && !misses.ran[1].passed,text)
+        testing.expect(t,strings.contains(misses.failure,"steps[1] play.check: did not hold"),misses.failure)
+    }
+    testing.expect(t,strings.contains(text,`"result":{"passed":false,"tick":0,"results":[{"passed":false,"value":0}]}`),text)
+    testing.expect(t,run_find(&f.s,0)==nil,"the game stops after each scenario")
+    // A step that fails, an until that runs out and files the methods would not take.
+    cases:=[?]struct{text,says:string}{
+        {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
+        {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
+        {`{"steps":[{"method":"scene.add","params":{}}]}`,"steps are play methods"},
+        {`{"steps":[{"method":"play.start"}]}`,"leave it out"},
+        {`{"steps":[{"method":"play.nothing"}]}`,"is not a method"},
+        {`{"start":{"players":9},"steps":[{"method":"play.step"}]}`,"start:"},
+        {`{"steps":[{"method":"play.step","wait":1}]}`,`"wait" is not a key`},
+        {`{"steps":[]}`,"steps: give the steps"},
+        {`{"scene":"scenes/none.scene","steps":[{"method":"play.step"}]}`,"is not there"},
+    }
+    for c in cases {
+        path:=write(folder,"case.mirai",c.text)
+        error,text=probe_call(f,"play.scenario.run",strings.concatenate({`{"path":"`,path,`"}`},context.temp_allocator))
+        result={}
+        _=json.unmarshal_string(text,&result,allocator=context.temp_allocator)
+        failure:=len(result.scenarios)==1?result.scenarios[0].failure:""
+        testing.expectf(t,error.code==0 && !result.passed && strings.contains(failure,c.says),"%s: %s",c.text,text)
+    }
+    error,_=probe_call(f,"play.scenario.run",strings.concatenate({`{"path":"`,folder,`/none"}`},context.temp_allocator))
+    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    testing.expect(t,run_find(&f.s,0)==nil)
 }
