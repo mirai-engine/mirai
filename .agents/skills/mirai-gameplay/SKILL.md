@@ -49,6 +49,10 @@ the same attributes and no private paths. Declaration and parameter binding:
   and drops per layer
   ([what digging leaves](../mirai-plugins/references/terrain.md#what-digging-leaves)); the example
   is the `dig` scene of the [demo](references/demo.md#code-demogame).
+- Testing that the game plays as it should (walk there, press that, the door opens) in a file
+  played again after each change and in CI:
+  [scenarios](../mirai-agent-api/references/methods.md#scenarios), written as the
+  [player plays](../mirai-agent-api/SKILL.md#testing-like-a-player).
 - Demo, templates, generated content, portal game: [demo.md](references/demo.md).
 - Physics and destruction: [mirai-physics](../mirai-physics/SKILL.md). Networking:
   [mirai-networking](../mirai-networking/SKILL.md).

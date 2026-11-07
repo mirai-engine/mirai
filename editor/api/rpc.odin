@@ -239,6 +239,41 @@ rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     return method_execute(s,method,req.has_params?req.params:"{}",w)
 }
 
+// Reads params as the params of method into the scratch of the server, with
+// its defaults, and checks them against its schema: nil for a method that
+// reads its params by hand. What method_execute does before the handler runs.
+params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,err:Error,ok:bool) {
+    if method.params==serial.TYPE_NONE {return nil,{},true}
+    allocator:=base.arena_allocator(&s.scratch)
+    failed:=s.scratch.failed
+    sc:=&s.schema
+    type:=sc.types[method.params]
+    bytes=base.arena_alloc(&s.scratch,max(int(type.size),1),max(int(type.align),16))
+    if bytes==nil {return nil,scratch_error(s),false}
+    if method.defaults!=nil {copy(bytes,method.defaults)}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,params,allocator)
+    if !serial.text_read(&r,sc,method.params,bytes) || !serial.text_end(&r) {
+        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
+        return nil,text_error(s,"invalid params",params,&r),false
+    }
+    if s.scratch.failed!=failed {return nil,scratch_error(s),false}
+    checker:=Checker{server=s,schema=sc,allocator=allocator}
+    again:serial.Text_Reader
+    serial.text_reader_init(&again,params,allocator)
+    if !check_required(&checker,&again,method.params) || !check_value(&checker,method.params,bytes[:type.size],nil) {
+        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
+        return nil,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
+    }
+    return bytes,{},true
+}
+
+@(private="file")
+scratch_error :: proc(s:^Server) -> Error {
+    s.stats.scratch_failures+=1
+    return {INTERNAL_ERROR,"the request needs more scratch memory than the server has",""}
+}
+
 // Reads the params of the method, runs its handler and writes its result to out.
 method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool) {
     s.stats.calls+=1
@@ -246,36 +281,14 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     failed:=s.scratch.failed
     sc:=&s.schema
     call:=Call{server=s,method=method,user=method.user,raw=params,client_tag=s.client_tag,client_name=s.client_name,allocator=allocator}
-    scratch_error :: proc(s:^Server) -> (Error,bool) {
-        s.stats.scratch_failures+=1
-        return {INTERNAL_ERROR,"the request needs more scratch memory than the server has",""},false
-    }
-    if method.params!=serial.TYPE_NONE {
-        type:=sc.types[method.params]
-        bytes:=base.arena_alloc(&s.scratch,max(int(type.size),1),max(int(type.align),16))
-        if bytes==nil {return scratch_error(s)}
-        if method.defaults!=nil {copy(bytes,method.defaults)}
-        r:serial.Text_Reader
-        serial.text_reader_init(&r,params,allocator)
-        if !serial.text_read(&r,sc,method.params,bytes) || !serial.text_end(&r) {
-            if s.scratch.failed!=failed {return scratch_error(s)}
-            return text_error(s,"invalid params",params,&r),false
-        }
-        if s.scratch.failed!=failed {return scratch_error(s)}
-        checker:=Checker{server=s,schema=sc,allocator=allocator}
-        again:serial.Text_Reader
-        serial.text_reader_init(&again,params,allocator)
-        if !check_required(&checker,&again,method.params) || !check_value(&checker,method.params,bytes[:type.size],nil) {
-            if s.scratch.failed!=failed {return scratch_error(s)}
-            return {INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
-        }
-        call.params=raw_data(bytes)
-    }
+    params_bytes,read_error,read:=params_read(s,method,params)
+    if !read {return read_error,false}
+    if params_bytes!=nil {call.params=raw_data(params_bytes)}
     typed:=method.result!=serial.TYPE_NONE && !method.writes_result
     if typed {
-        bytes:=base.arena_alloc(&s.scratch,max(int(sc.types[method.result].size),1),max(int(sc.types[method.result].align),16))
-        if bytes==nil {return scratch_error(s)}
-        call.result=raw_data(bytes)
+        result_bytes:=base.arena_alloc(&s.scratch,max(int(sc.types[method.result].size),1),max(int(sc.types[method.result].align),16))
+        if result_bytes==nil {return scratch_error(s),false}
+        call.result=raw_data(result_bytes)
     } else {
         call.out=out
     }
@@ -284,7 +297,7 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     method.handler(&call)
     if call.failed {return call.error,false}
     s.image=call.image
-    if s.scratch.failed!=failed {return scratch_error(s)}
+    if s.scratch.failed!=failed {return scratch_error(s),false}
     if typed {
         size:=int(sc.types[method.result].size)
         serial.text_write(out,sc,method.result,mem.byte_slice(call.result,size),.Line)

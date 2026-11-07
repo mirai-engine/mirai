@@ -18,6 +18,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
   shaders/          own Slang programs
   panels/           editor panels built by the chat agent (engine-time)
+  tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
     gen/            generated packages: the worlds and the root of each target
     plugins/        libraries of the engine plugins, with their stages and declarations
