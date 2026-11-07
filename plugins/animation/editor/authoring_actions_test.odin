@@ -53,6 +53,12 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
     bad=fmt.tprintf(`"animation":"%s","actions":[{{"name":"attack","clip":"walk"}},{{"name":"second","clip":"walk","mode":"Additive"}}]`,identity)
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,asset_text,bad));testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"UnsupportedPolicy"))
     testing.expect_value(t,authoring_test_revision(f,"actions.action"),revision)
+    // A body moves by root motion, and its vertical asks for a move.
+    for c in ([2][2]string{{`"body_move":"Additive"`,"actions[0].body_move"},{`"body_vertical":true`,"actions[0].body_vertical"}}) {
+        bad=fmt.tprintf(`"animation":"%s","actions":[{{"name":"attack","clip":"walk",%s}}]`,identity,c[0])
+        result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,asset_text,bad));testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,c[1]),"%s: %s",c[0],result.data)
+        testing.expect_value(t,authoring_test_revision(f,"actions.action"),revision)
+    }
     schema:=authoring_result_schema(Action_Inspect_Result,type_info_of(Action_Inspect_Result),context.temp_allocator);testing.expect(t,strings.contains(schema,`"root_motion"`) && strings.contains(schema,`"cancel"`) && !strings.contains(schema,"section_count"))
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
     result=authoring_test_execute(f,"request",`{"id":"1","actions":[{"name":"attack"}]}`)

@@ -395,9 +395,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for warning in model.warnings {writer_warn(w,"%s",warning)}
     for program in model.programs {append(&w.report.programs,strings.clone(program,w.allocator))}
 
-    // The import this one updates, by its prefab.
     name:=model.name if model.name!="" else filepath.stem(source)
     w.named=source
+    if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
+
+    // The import this one updates, by its prefab.
     prefab_path:=folder_path(w,fmt.tprintf("%s.prefab",safe_name(name)))
     root:=earlier_root(w,asset.KIND_PREFAB,source,model.source_size,model.source_hash) or_return
     if root>=0 {
@@ -600,6 +602,49 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         w.report.animation_id=part.id
         record(w,part.id,asset.KIND_ANIMATION,name,part.path,source,existed,fmt.tprintf("%d clips",len(model.animations)))
     }
+    earlier_left(w)
+    return true
+}
+
+// Only the clips of a model, as an .anim of its own bound to a skeleton the project has
+// (Import_Settings.skeleton): the motion of another file onto a character imported before. Each clip
+// keeps the root the model's own skeleton gives it, and the root a person set on the .anim it
+// replaces.
+@(private="file")
+write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skeleton:base.Asset_Id) -> bool {
+    if len(model.animations)==0 {return writer_fail(w,.Malformed,"%s has no clips to put on the skeleton of Import_Settings.skeleton",source)}
+    parts:=[1]Part{{kind=asset.KIND_ANIMATION,name=name,extension=".anim",earlier=-1,shared=-1}}
+    parts_plan(w,parts[:])
+    part:=&parts[0]
+    if part.earlier>=0 && !earlier_writable(w,&w.earlier[part.earlier]) {return false}
+    if part.id=={} {part.id=writer_id(w)}
+    import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
+    existed:=os.exists(part.path)
+    clips:=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)
+    copy(clips,model.animations)
+    previous_file:asset.Asset
+    previous:asset.Animation_View
+    loaded:=existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None
+    defer if loaded {asset.asset_close(&previous_file)}
+    if loaded {previous,_=asset.animation_view(&previous_file,&w.types)}
+    ids:=make([]base.Asset_Id,len(model.skeletons),context.temp_allocator)
+    for &id in ids {id=skeleton}
+    for &clip in clips {
+        index:int
+        clip.skeleton,index=clip_skeleton(model,clip,ids)
+        if index<0 {return writer_fail(w,.Malformed,"clip %s of %s moves no bone of a skeleton of the file, which the skeleton it goes on should share",clip.name,source)}
+        clip.skeleton=skeleton
+        body:asset.Skeleton_Body
+        body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
+        bones:=model.skeletons[index].bones
+        count,map_:=skeleton_body(nil,bones,&body,&body_parts)
+        clip.root=clip_root(bones,skeleton_root_bone(bones,map_) if count>0 else -1,clip,previous)
+    }
+    desc:=asset.Animation_Desc{id=part.id,owner=part.owner,clips=clips,source=&import_data}
+    if error:=asset.animation_save(part.path,&w.types,desc);error!=.None {return save_failed(w,error,part.path)}
+    w.report.animation_id=part.id
+    text:[base.ASSET_ID_TEXT]u8
+    record(w,part.id,asset.KIND_ANIMATION,name,part.path,source,existed,fmt.tprintf("%d clips on skeleton %s",len(model.animations),base.asset_id_format(skeleton,text[:])))
     earlier_left(w)
     return true
 }

@@ -15,7 +15,7 @@ MANTLE_WINDOW :: "mantle"
 MANTLE_ROOT_MOVE :: u32(0x4d4e544c) // the id of its layered moves
 
 @(step="fixed",stage="apply",after="animation_sample")
-animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time) {
+animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {
         if core.at(characters,row).mode!=phys.MODE_MANTLING {continue}
@@ -23,7 +23,7 @@ animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(c
         delta,rooted:=anim.animation_root_delta(playback.ptr,entity)
         placed,ok:=core.get(worlds,entity)
         if !rooted || !ok {continue}
-        velocity:=mm.quat_rotate(placed.rotation,delta.translation*placed.scale)/time.dt
+        velocity:=root_velocity(delta.translation,placed,time.dt*core.pace_of(clock,paces,entity))
         phys.add_move(moves,entity,{velocity=velocity,ticks=1,mix=.Override,id=MANTLE_ROOT_MOVE})
     }
 }

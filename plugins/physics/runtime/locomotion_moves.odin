@@ -45,14 +45,13 @@ Mantle :: struct {
 
 MANTLE_DEFAULT :: Mantle{reach=1,min_height=0.5,max_height=2.5,ground_height=1.2,facing=45*mm.RAD_PER_DEG,time=0.6,delay=0.25}
 
-@(component,replicated,description="The sprint of the character spends energy for more speed (tactical sprint): sprinting on the ground with at least min_energy, its top speed ramps from the sprint_speed of its Walk to speed_multiplier times it, by speed_step every step_time, it accelerates acceleration_multiplier times faster and its jumps go up to jump_multiplier times faster (ramped by jump_step). It spends cost_per_second while it runs (not in the air when pause_falling), cost_jump on a jump and cost_slide when it slides; it ends without energy, after going down in the air for fall_grace, once sprint is let go, or after the move points off forward for grace. Energy comes back at recharge per second recharge_delay after it was last spent. Without energy it sprints as its Walk says. It needs a Walk.")
+@(component,replicated,description="The sprint of the character spends energy for more speed (tactical sprint): sprinting on the ground with at least min_energy, its top speed ramps from the sprint_speed of its Walk to speed_multiplier times it over speed_ramp, growing by the same factor every instant, it accelerates acceleration_multiplier times faster and its jumps go up to jump_multiplier times faster (over jump_ramp). It spends cost_per_second while it runs (not in the air when pause_falling), cost_jump on a jump and cost_slide when it slides; it ends without energy, after going down in the air for fall_grace, once sprint is let go, or after the move points off forward for grace. Energy comes back at recharge per second recharge_delay after it was last spent. Without energy it sprints as its Walk says. It needs a Walk.")
 Tactical_Sprint :: struct {
     speed_multiplier:f32 `mirai:"min=1"`,        // of the sprint_speed of its Walk, at the end of the ramp
     acceleration_multiplier:f32 `mirai:"min=0"`, // of the acceleration of its Walk on the ground while it lasts
     jump_multiplier:f32 `mirai:"min=1"`,         // of the speed of its jumps, at the end of the ramp
-    speed_step:f32 `mirai:"min=1"`,              // the speed multiplier grows by this factor every step_time, up to speed_multiplier
-    jump_step:f32 `mirai:"min=1"`,               // and the jump multiplier by this one, up to jump_multiplier
-    step_time:f32 `mirai:"min=0,unit=s"`,        // 0: the multipliers whole at once
+    speed_ramp:f32 `mirai:"min=0,unit=s"`,       // from the start of the sprint to speed_multiplier, exponentially; 0: whole at once
+    jump_ramp:f32 `mirai:"min=0,unit=s"`,        // the same to jump_multiplier
     energy:f32 `mirai:"min=0"`,                  // most it holds
     min_energy:f32 `mirai:"min=0"`,              // it starts only with this much
     cost_per_second:f32 `mirai:"min=0,unit=1/s"`,
@@ -65,7 +64,7 @@ Tactical_Sprint :: struct {
     pause_falling:bool,                          // it spends nothing in the air
 }
 
-TACTICAL_SPRINT_DEFAULT :: Tactical_Sprint{speed_multiplier=1.4,acceleration_multiplier=3,jump_multiplier=1.2,speed_step=1.04138,jump_step=1.019,step_time=0.075,energy=115,min_energy=10,cost_per_second=15,cost_jump=18,cost_slide=10,recharge=52,recharge_delay=2,fall_grace=0.5,grace=0.5,pause_falling=true}
+TACTICAL_SPRINT_DEFAULT :: Tactical_Sprint{speed_multiplier=1.4,acceleration_multiplier=3,jump_multiplier=1.2,speed_ramp=0.6224,jump_ramp=0.7265,energy=115,min_energy=10,cost_per_second=15,cost_jump=18,cost_slide=10,recharge=52,recharge_delay=2,fall_grace=0.5,grace=0.5,pause_falling=true}
 
 @(component,replicated,description="The character jumps off a ledge farther (ledge jump): standing at min_speed or faster for min_time, with nothing in the way for reach ahead along where it goes and no ground there within min_drop under its feet, it is ready (Character.ledge_ready) and a jump adds added_speed along where it goes, at most max_speed across its up, and up_speed up to the speed of its jump. It lasts until it lands (Character.ledge_jumping), and meanwhile air control steers it without slowing it. It needs a Walk.")
 Ledge_Jump :: struct {
@@ -81,15 +80,16 @@ Ledge_Jump :: struct {
 LEDGE_JUMP_DEFAULT :: Ledge_Jump{min_speed=6,min_time=0.25,reach=1.5,min_drop=1.9,added_speed=8,max_speed=10.24,up_speed=0.8}
 
 // The multipliers of speed and jump of a tactical sprint that has lasted sprint_time: each grows
-// by its step every step_time up to its whole value. 1 outside a tactical sprint.
+// by the same factor every instant from 1 to its whole value over its ramp. 1 outside a tactical
+// sprint.
 tactical_boost :: proc "contextless" (loco:Character,tactical:Tactical_Sprint) -> (speed,jump:f32) {
     if !loco.sprint_active {return 1,1}
-    speed,jump=max(tactical.speed_multiplier,1),max(tactical.jump_multiplier,1)
-    if !(tactical.step_time>0) {return}
-    steps:=max(loco.sprint_time,0)/tactical.step_time
-    if tactical.speed_step>1 {speed=min(cmath.pow(tactical.speed_step,steps),speed)}
-    if tactical.jump_step>1 {jump=min(cmath.pow(tactical.jump_step,steps),jump)}
-    return
+    ramp :: proc "contextless" (whole,seconds,elapsed:f32) -> f32 {
+        whole:=max(whole,1)
+        if !(seconds>0) {return whole}
+        return cmath.pow(whole,clamp(max(elapsed,0)/seconds,0,1))
+    }
+    return ramp(tactical.speed_multiplier,tactical.speed_ramp,loco.sprint_time),ramp(tactical.jump_multiplier,tactical.jump_ramp,loco.sprint_time)
 }
 
 // The energy left of the tactical sprint of a character.
