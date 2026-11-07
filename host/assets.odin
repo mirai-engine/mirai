@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import render "mirai:render"
 import "mirai:rhi"
@@ -220,6 +221,7 @@ Assets :: struct {
     loads:Load_Budget,
     texture_assets:[]base.Asset_Id, // by entry of the texture table of the renderer: the asset given it, as last given
     stats:Assets_Stats,
+    load_profile:^Load_Profile, // of the application, which counts the assets that load; nil: nobody counts
 }
 
 Assets_Structure_Change :: struct {version:u64,id:base.Asset_Id}
@@ -657,11 +659,20 @@ assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
     }
     entry:=assets_mesh_entry(a,id)
     if entry==nil {return assets_missing_mesh(a)}
-    if problem,detail,ok:=assets_mesh_load(a,id,entry);!ok {
+    scope:=load_asset_begin(a.load_profile)
+    problem,detail,ok:=assets_mesh_load(a,id,entry)
+    if !ok {
         assets_fail(a,id,.Mesh,problem,detail)
         entry^=assets_missing_mesh(a)^
     }
+    load_asset_end(a.load_profile,scope,id,.Mesh,assets_file_bytes(a,id),!ok)
     return entry
+}
+
+// The bytes of the file of an asset; 0 for one the registry does not have.
+assets_file_bytes :: proc(a:^Assets,id:base.Asset_Id) -> i64 {
+    file,found:=asset.registry_find(&a.registry,id)
+    return file.size if found else 0
 }
 
 @(private="file") ASSETS_GENERATED_TAG :: 0x6d697261695f6765 // first word of the id of every generated mesh and texture
@@ -1208,10 +1219,13 @@ assets_texture :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Texture {
     }
     entry:=assets_texture_entry(a,id)
     if entry==nil {return nil}
-    if problem,detail,ok:=assets_texture_load(a,id,entry);!ok {
+    scope:=load_asset_begin(a.load_profile)
+    problem,detail,ok:=assets_texture_load(a,id,entry)
+    if !ok {
         assets_fail(a,id,.Texture,problem,detail)
         entry^=assets_missing_texture(a)^
     }
+    load_asset_end(a.load_profile,scope,id,.Texture,assets_file_bytes(a,id),!ok)
     return entry
 }
 
@@ -1391,8 +1405,10 @@ assets_material :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Material {
     }
     entry:=assets_material_entry(a,id)
     if entry==nil {return nil}
+    scope:=load_asset_begin(a.load_profile)
     problem,detail,ok:=assets_material_load(a,id,entry)
     assets_material_loaded(a,entry,problem,detail,ok)
+    load_asset_end(a.load_profile,scope,id,.Material,assets_file_bytes(a,id),!ok)
     return entry
 }
 
@@ -1467,12 +1483,15 @@ Assets_Prepared :: struct {
     texture:asset.Texture_Info,
     levels:Assets_Levels,
     material:asset.Material_View,
+    ns:i64, // what assets_prepare took
 }
 
 // Reads the file of prepared.source and does what loading it does before the
 // renderer takes it. Any thread; types and decoder are of the thread and
 // outlive nothing of prepared.
 assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^asset.Types,decoder:^asset.Decoder=nil) {
+    started:=time.tick_now()
+    defer prepared.ns=time.duration_nanoseconds(time.tick_since(started))
     // What reads the file after it, on another thread, decodes with a decoder of its own.
     defer if !prepared.file.decoder_owned {prepared.file.decoder=nil}
     switch prepared.source.kind {

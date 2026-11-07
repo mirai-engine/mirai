@@ -51,7 +51,8 @@ difference with the catalog, it rules.
   [change review](../mirai-editor/references/ai-review.md).
 - Methods of a plugin:
   [providers](../mirai-editor/references/extensions.md#api-methods).
-- Profiling an open editor: [profiling](references/methods.md#profiling).
+- Profiling an open editor, and where the seconds of a load or a Play start went:
+  [profiling](references/methods.md#profiling).
 - Opening the editor and its arguments: [editor](../mirai-editor/references/editor.md#arguments).
 
 ## Workflow
@@ -211,7 +212,9 @@ positions misses both.
   a_capture_makes_its_folder_and_says_why_it_cannot_write`.
 - An editor method: the tests of its `editor/api_<topic>_test.odin` with
   `mirai test editor <test...>`; profiling, `editor/profile_test.odin` and the recorder in
-  `std/base` and `std/jobs`; a plugin method, those of its skill.
+  `std/base` and `std/jobs`, and for loads
+  `mirai test engine/scene a_load_reports_its_phases_and_the_assets_that_finish_after_it`; a
+  plugin method, those of its skill.
 - `large_mcp_images_keep_the_complete_content_with_small_socket_buffers` (`editor/api`) shrinks
   the receiving socket buffer: run it when touching partial sends.
 - Live: `mirai session start demo --dev` (or `mirai session restart demo` after changing code),

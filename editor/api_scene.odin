@@ -9,6 +9,7 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
+import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -970,7 +971,10 @@ api_scene_load :: proc(s:^Session,call:^api.Call) {
         api_document_fail(call,error,target)
         return
     }
+    following:=host.load_phase_begin(s.app,.Editor)
     prefabs_follow(s,prefabs_of(s))
+    host.load_phase_end(s.app,following)
+    host.load_ready(s.app,.Scene,core.world_entities(edited_world(s)).alive)
     api_file_result(s,call)
 }
 

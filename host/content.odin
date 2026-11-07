@@ -534,7 +534,11 @@ content_ui :: proc(app:^App,id:base.Asset_Id) -> ^Content_Ui {
     if c==nil || id=={} {return nil}
     entry,fresh:=content_slot(c,&c.uis,id,.Ui)
     if entry==nil {return nil}
-    if fresh {content_loaded(c,entry,content_ui_load(app,id,entry))}
+    if fresh {
+        scope:=load_asset_begin(&app.load_profile)
+        content_loaded(c,entry,content_ui_load(app,id,entry))
+        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
+    }
     if entry.failed {return nil}
     if a:=app.assets;entry.revision!=a.revision {
         // Textures or shaders were loaded again: a texture may sit elsewhere in
@@ -571,7 +575,11 @@ content_sound :: proc(app:^App,id:base.Asset_Id) -> audio.Sound {
     if c==nil || id=={} {return {}}
     entry,fresh:=content_slot(c,&c.sounds,id,.Sound)
     if entry==nil {return {}}
-    if fresh {content_loaded(c,entry,content_sound_load(app,id,entry))}
+    if fresh {
+        scope:=load_asset_begin(&app.load_profile)
+        content_loaded(c,entry,content_sound_load(app,id,entry))
+        load_asset_end(&app.load_profile,scope,id,.Sound,entry.size,entry.failed)
+    }
     return entry.failed?{}:entry.sound
 }
 
@@ -586,9 +594,11 @@ content_font :: proc(app:^App,id:base.Asset_Id) -> (face:u8,ok:bool) {
     entry,fresh:=content_slot(c,&c.fonts,id,.Font)
     if entry==nil {return}
     if fresh {
+        scope:=load_asset_begin(&app.load_profile)
         data,read:=content_font_read(app,id,entry)
         content_loaded(c,entry,read && content_font_take(app,entry,data))
         c.fonts_waiting||=!entry.failed
+        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
     }
     return entry.face,!entry.failed
 }
@@ -659,7 +669,11 @@ content_strings :: proc(app:^App,id:base.Asset_Id) -> ^Content_Strings {
     if c==nil || id=={} {return nil}
     entry,fresh:=content_slot(c,&c.texts,id,.Strings)
     if entry==nil {return nil}
-    if fresh {content_loaded(c,entry,content_strings_load(app,id,entry))}
+    if fresh {
+        scope:=load_asset_begin(&app.load_profile)
+        content_loaded(c,entry,content_strings_load(app,id,entry))
+        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
+    }
     return entry.failed?nil:entry
 }
 
@@ -669,7 +683,11 @@ content_prompts :: proc(app:^App,id:base.Asset_Id) -> ^Content_Prompts {
     if c==nil || id=={} {return nil}
     entry,fresh:=content_slot(c,&c.prompts,id,.Prompts)
     if entry==nil {return nil}
-    if fresh {content_loaded(c,entry,content_prompts_load(app,id,entry))}
+    if fresh {
+        scope:=load_asset_begin(&app.load_profile)
+        content_loaded(c,entry,content_prompts_load(app,id,entry))
+        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
+    }
     return entry.failed?nil:entry
 }
 
@@ -696,7 +714,11 @@ content_sound_set :: proc(app:^App,id:base.Asset_Id) -> ^Content_Sound_Set {
     if record,found:=asset.registry_find(&app.assets.registry,id);!found || record.kind!=asset.KIND_SOUND_SET {return nil}
     entry,fresh:=content_slot(c,&c.sound_sets,id,.Sound_Set)
     if entry==nil {return nil}
-    if fresh {content_loaded(c,entry,content_sound_set_load(app,id,entry))}
+    if fresh {
+        scope:=load_asset_begin(&app.load_profile)
+        content_loaded(c,entry,content_sound_set_load(app,id,entry))
+        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
+    }
     return entry.failed?nil:entry
 }
 

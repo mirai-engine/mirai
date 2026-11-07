@@ -1,5 +1,6 @@
 package navigation
 
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -303,13 +304,18 @@ bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_K
 @(private)
 bake_load :: proc(n:^Navigation,bake:Navigation_Bake,app:^host.App,problems:^core.Problems,only:Bake_Keys=nil) {
     if bake.asset=={} || app==nil || app.assets==nil {return}
+    started:=time.tick_now()
     file:asset.Asset
     if host.assets_file(app.assets,bake.asset,BAKE_KIND,&file)!=.None {
         core.report(problems,core.NONE,"navigation.bake","The .navmesh of the scene (Navigation_Bake) cannot be read: the meshes are built from the collision; bake it again with nav.bake")
         return
     }
     defer asset.asset_close(&file)
-    if _,ok:=bake_read(n,&file,&app.assets.types,only);!ok {
+    count,ok:=bake_read(n,&file,&app.assets.types,only)
+    // Read once a section or the scene that has it comes: a load counts it.
+    host.load_asset_done(&app.load_profile,bake.asset,.Plugin,host.assets_file_bytes(app.assets,bake.asset),time.duration_nanoseconds(time.tick_since(started)),0,!ok,phase=.Nav_Bake)
+    host.load_phase_add(app,.Nav_Bake,0,count)
+    if !ok {
         core.report(problems,core.NONE,"navigation.bake","The .navmesh of the scene is of another version or damaged: the meshes are built from the collision; bake it again with nav.bake")
     }
 }

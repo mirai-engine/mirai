@@ -7,6 +7,7 @@ import "core:path/filepath"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:platform"
@@ -30,6 +31,7 @@ PLAYER_GPU_LOST :: 7   // the GPU device stopped working (app_gpu_failure)
 // 5 is left to a library that ends the player (app_exit) for a reason of its own.
 
 PLAYER_ASSETS :: "assets"
+PLAYER_LOAD_TOP :: 5 // slowest assets and loop functions of each load the player prints
 
 @(private)
 Player_Options :: struct {
@@ -255,6 +257,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     }
     gpu:=!options.no_gpu && !options.dedicated
     windowed:=!options.headless && gpu
+    started:=time.tick_now()
     app,error:=app_create({
         info=info,root=root,engine_root=engine_root,options=app_user_folder(root,context.temp_allocator),threads=jobs.THREADS_AUTO,
         window=windowed,shown=surfaced,gpu=gpu,gpu_validation=options.validation,
@@ -276,6 +279,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         fmt.eprintln("mirai: could not create the world")
         return PLAYER_FAILED
     }
+    load_startup(app,time.duration_nanoseconds(time.tick_since(started)))
     // Nobody watches a dedicated server: its frames last a tick, and the
     // generator keeps the game from depending on what ui and render do.
     phases:=ALL_PHASES
@@ -325,6 +329,8 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
             break
         }
         if surface!=nil {surface_frame_end(app,surface)}
+        // Where the seconds of each load went, once it is resident.
+        if text:=load_profile_text(app,PLAYER_LOAD_TOP,context.temp_allocator);text!="" {fmt.eprint(text)}
         if frame==1 {
             if untaken:=launch_untaken(&app.launch);untaken!="" {
                 fmt.eprintfln("mirai: no plugin of the project reads the argument %s",untaken)

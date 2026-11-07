@@ -106,12 +106,19 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     if a==nil {return .No_Assets}
     file:=scene_file(s,path)
     if file=="" {return .Bad_Path}
+    host.load_open(s.app,.Scene,scene_path(s,file))
+    stopping:=host.load_phase_begin(s.app,.Editor)
     runs_stop(s)
+    host.load_phase_end(s.app,stopping)
     loaded,error:=scene_load_file(s,file)
     if error!=.None {
         if loaded!=nil {asset.scene_destroy(loaded);free(loaded)}
+        host.load_fail(s.app,.Scene,document_error_text(error))
         return error
     }
+    opening:=host.load_phase_begin(s.app,.Editor)
+    defer host.load_ready(s.app,.Scene,core.world_entities(edited_world(s)).alive)
+    defer host.load_phase_end(s.app,opening)
     d:=s.document
     if document_file(d)!=file {
         ai_document_closed(s,s.edit_world)
@@ -479,6 +486,9 @@ dialogs_answer :: proc(s:^Session) {
 scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Document_Error) {
     a:=s.app.assets
     if a==nil {return nil,.No_Assets}
+    reading:=host.load_phase_begin(s.app,.Read)
+    read:=false
+    defer if !read {host.load_phase_end(s.app,reading,1)}
     // A file of the assets as the registry holds it, unsaved, else the disk.
     source:asset.Asset
     opened:asset.Error
@@ -501,14 +511,18 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         free(loaded)
         return nil,.Not_A_Scene
     }
+    host.load_phase_end(s.app,reading,1)
+    read=true
     tools_release(s)
     w:=edited_world(s)
     if _,replaced:=scene.replace(w,s.app,&source,&a.types);replaced!=.None {
         log.errorf("%s: %s",file,scene.error_text(replaced))
         return loaded,.Rejected
     }
+    settling:=host.load_phase_begin(s.app,.Settle)
     core.problems_clear(host.app_world_storage(s.app,w.data,core.Problems))
     core.world_settle(w)
+    host.load_phase_end(s.app,settling)
     return loaded,.None
 }
 

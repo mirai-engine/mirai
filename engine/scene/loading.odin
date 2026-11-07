@@ -112,6 +112,10 @@ Load_Job :: struct {
     taken:int,         // items given to the assets
     budget:u64,        // its id in the budget of the loads
     pieces:asset.Piece_Decoders, // the pieces of a large chunk decode at once on the job workers
+    // What it did, for the records of the loads: what its jobs write while Reading, the main thread after.
+    tally:host.Load_Tally,
+    record:u64, // the record it opened (host.load_open); 0: a section or a far form
+    started:time.Tick,
 }
 
 @(private)
@@ -130,7 +134,8 @@ load_begin :: proc(app:^host.App,id:base.Asset_Id,request:Scene_Request={},salt:
     // What the jobs write is of the heap, which any thread can use.
     heap:=runtime.heap_allocator()
     job=new(Load_Job,heap)
-    job^={app=app,request=request,root=id,salt=salt,cooked=a.indexed,far=far,phase=.Reading}
+    job^={app=app,request=request,root=id,salt=salt,cooked=a.indexed,far=far,phase=.Reading,started=time.tick_now()}
+    if salt==0 && !far {job.record=host.load_open(app,.Scene,file.path)}
     job.queue=make([dynamic]host.Assets_Source,heap)
     job.wanted=make([dynamic]base.Asset_Id,heap)
     job.documents=make(map[base.Asset_Id]^asset.Asset,heap)
@@ -167,6 +172,8 @@ load_free :: proc(job:^Load_Job) {
         host.app_world_free(job.app,job.world)
     }
     if job.budget!=0 {host.assets_load_close(job.app.assets,job.budget)}
+    // A far form has no record: what it took counts in the current load.
+    if job.far {host.load_job_merge(job.app,&job.tally)}
     heap:=runtime.heap_allocator()
     for &source in job.queue {host.assets_source_free(&source)}
     delete(job.queue);delete(job.wanted)
@@ -205,6 +212,7 @@ load_documents :: proc(job:^Load_Job) -> Documents {
 @(private)
 load_read :: proc(job:^Load_Job,worker:int) {
     context.allocator=runtime.heap_allocator()
+    reading:=host.load_phase_begin(job.app,.Read,worker)
     for &source in job.queue {
         document:=new(asset.Asset)
         if host.assets_source_open(&source,document)!=.None {
@@ -228,8 +236,10 @@ load_read :: proc(job:^Load_Job,worker:int) {
             }
         }
     }
+    documents_read:=len(job.queue)
     for &source in job.queue {host.assets_source_free(&source)}
     clear(&job.queue)
+    host.load_phase_end(job.app,reading,documents_read,&job.tally)
     if job.documents[job.root]==nil {
         job.error=.Corrupt
         return
@@ -244,14 +254,18 @@ load_read :: proc(job:^Load_Job,worker:int) {
         job.error=error
         return
     }
+    making:=host.load_phase_begin(job.app,.Instantiate,worker)
     // One store per value until odin-lang/Odin#7937
     report,instantiated:=instantiate(w,root,&job.types,{documents=documents,salt=job.salt})
+    host.load_phase_end(job.app,making,core.world_entities(w).alive,&job.tally)
     job.report=report
     job.error=instantiated
     if job.error!=.None {return}
+    settling:=host.load_phase_begin(job.app,.Settle,worker)
     core.world_settle(w)
     if job.far {far_keep(w)}
     host.world_asset_ids(w,&job.names)
+    host.load_phase_end(job.app,settling,0,&job.tally)
 }
 
 @(private)
@@ -312,8 +326,10 @@ load_named :: proc(job:^Load_Job) {
     app,a:=job.app,job.app.assets
     host.app_assets_building(app,job.world,false)
     w:=host.app_world_ref(app,job.world)
+    settling:=host.load_phase_begin(app,.Settle)
     propagate(w,app)
     references_resolve(w)
+    host.load_phase_end(app,settling,0,&job.tally)
     // Textures, then materials, which take them, then meshes, which take materials.
     kinds:=[3]asset.Fourcc{asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
     lists:[3][dynamic]base.Asset_Id
@@ -400,7 +416,7 @@ load_warm :: proc(job:^Load_Job,all:bool,start:time.Tick,taken:^int) -> bool {
             if first {host.assets_load_alone(a,job.budget)}
             return false
         }
-        if !host.app_assets_take(app,&item.prepared,over_frames=!all) {return false}
+        if !host.app_assets_take(app,&item.prepared,over_frames=!all,tally=&job.tally) {return false}
         job.taken+=1
         taken^+=cost
         first=false
@@ -455,6 +471,7 @@ loads_waits_settle :: proc(loads:^Section_Loads,waited:[]base.Asset_Id) {
 // hangs from it, and with the fields it waits for. Frees the load.
 load_end :: proc(job:^Load_Job,w:core.World_Ref) -> (report:Report,error:Error) {
     defer load_free(job)
+    defer host.load_job_end(job.app,job.record,&job.tally,core.world_entities(w).alive if error==.None else 0,error_text(error))
     if job.error!=.None {return job.report,job.error}
     if w.info!=job.app.info || w.place!=.World {return job.report,.Invalid}
     loaded:=host.app_world_ref(job.app,job.world)
@@ -507,6 +524,7 @@ section_load_begin :: proc(app:^host.App,w:core.World_Ref,e:core.Entity) -> (job
 // Cycle. Frees the load.
 section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (report:Report,error:Error) {
     defer load_free(job)
+    defer section_record(job,error)
     if job.error!=.None {return job.report,job.error}
     references:=core.world_table_of(w,Scene_Reference)
     if references==nil || core.raw_find(core.raw(references),type_info_of(Scene_Reference),e)==nil {return job.report,.Invalid}
@@ -590,6 +608,16 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
     }
     if own:=records_add(w,e,locals);own!=nil {record_fill(own,apart,core.NONE,of,made[:],fresh,sleepers.took[:])}
     return job.report,.None
+}
+
+// The record of a section load that ended (host.load_section).
+@(private)
+section_record :: proc(job:^Load_Job,error:Error) {
+    a:=job.app.assets
+    name:string
+    if file,found:=asset.registry_find(&a.registry,job.root);found {name=file.path}
+    entities:=core.world_entities(host.app_world_ref(job.app,job.world)).alive if job.world!=nil else 0
+    host.load_section(job.app,name,job.started,&job.tally,entities,error_text(error))
 }
 
 // The Ids of its scene that a section load brought of its own: not those of

@@ -12,6 +12,7 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
         return .Assets_Failed
     }
     app.assets=assets
+    assets.load_profile=&app.load_profile
     // Without a watch nothing reloads; the application still runs.
     app.assets_watch.watch,_=platform.watch_create(app.platform,{path=root,recursive=true})
     return .None

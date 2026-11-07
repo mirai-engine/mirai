@@ -107,6 +107,8 @@ physics_step :: proc(
         locals=core.read(transforms),transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
     }
+    // Bodies that wait for the next tick keep a load from being resident.
+    defer host.load_report(app,.Physics,s.waiting)
     s.collision=settings_or_default(collision.ptr)
     if state.collision!=s.collision^ {
         state.collision,s.collision_changed=s.collision^,true
@@ -140,6 +142,8 @@ physics_step :: proc(
     // Only Transform values were written: what hangs from the rows sealed since is all that moved.
     if !synced {synced=sealed_sync(&s,structure)}
     if !synced {
+        syncing:=host.load_phase_begin(app,.Physics,host.LOAD_NO_ZONE)
+        defer host.load_phase_end(app,syncing,BODIES_PER_TICK-s.budget)
         collider_meshes_prune(meshes,app.assets)
         #reverse for &link,at in state.links.values {
             e:=state.links.entities[at]
