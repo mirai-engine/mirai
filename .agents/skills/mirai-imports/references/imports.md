@@ -483,7 +483,8 @@ does.
 `collision` adds to the `.mesh` `asset.Collider` rows in the space of the mesh, made from the
 surface welded by position: `Hull`, a convex hull (of a flat surface, its outline); `Pieces`, hulls
 that together cover a non-convex mesh (up to `collision_hulls`); `Mesh`, the simplified triangles
-(`COLLISION_MESH_SHARE`). A surface from which the collider cannot be made is left without
+(`COLLISION_MESH_SHARE`); `Exact` (`--collision exact`), every triangle, for geometry made to
+collide (a clip map of another game), which a simplification would open. A surface from which the collider cannot be made is left without
 colliders with a warning. How they are used:
 [host](../../mirai-core/references/host.md#loaded-assets) and [the physics
 libraries](../../mirai-physics/references/engine.md).

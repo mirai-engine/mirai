@@ -41,7 +41,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> --out <folder> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--into <id>] [--in-place|--copy] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh] [--force-collision] [--hulls N] [--parts auto|all|none] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--rebuild] [--no-save] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> --out <folder> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--into <id>] [--in-place|--copy] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--rebuild] [--no-save] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
     file,out:string
@@ -152,6 +152,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
             case "hull":   given.collision=.Hull
             case "pieces": given.collision=.Pieces
             case "mesh":   given.collision=.Mesh
+            case "exact":  given.collision=.Exact
             case: ok=false
             }
             changed+={.Collision}

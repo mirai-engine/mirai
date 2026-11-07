@@ -223,7 +223,7 @@ angle_build :: proc(out:^geom.Mesh_Buffer) {
 }
 
 @(test)
-collision_is_a_hull_convex_pieces_or_a_simplified_surface :: proc(t:^testing.T) {
+collision_is_a_hull_convex_pieces_or_a_simplified_or_exact_surface :: proc(t:^testing.T) {
     sphere:geom.Mesh_Buffer
     geom.mesh_buffer_init(&sphere,context.temp_allocator)
     geom.sphere_build(&sphere,1,48,24)
@@ -246,6 +246,13 @@ collision_is_a_hull_convex_pieces_or_a_simplified_surface :: proc(t:^testing.T) 
         triangles:=int(surface.colliders[0].index_count)/3
         testing.expectf(t,surface.colliders[0].kind==.Mesh && triangles<=len(sphere.indices)/3*3/10 && triangles>=COLLISION_MESH_MIN_TRIANGLES,"the surface keeps about a quarter of its triangles: %d of %d",triangles,len(sphere.indices)/3)
         testing.expect(t,int(surface.colliders[0].point_count)<len(vertices),"the points are those of the surface, welded")
+    }
+    exact,exact_ok:=mesh_collision(vertices,sphere.indices[:],.Exact,allocator=context.temp_allocator)
+    testing.expect(t,exact_ok && len(exact.colliders)==1)
+    if exact_ok {
+        collision_valid(t,exact)
+        testing.expect(t,exact.colliders[0].kind==.Mesh && int(exact.colliders[0].index_count)==len(sphere.indices),"exact keeps every triangle")
+        testing.expect(t,int(exact.colliders[0].point_count)<len(vertices),"the points are those of the surface, welded")
     }
 
     angle:geom.Mesh_Buffer

@@ -12,6 +12,7 @@ Collision :: enum u8 {
     Hull,   // one convex hull of up to COLLISION_HULL_VERTICES vertices
     Pieces, // convex hulls that together stand for a mesh that is not convex (geom.mesh_decompose)
     Mesh,   // the triangles of the surface welded by position, simplified to COLLISION_MESH_SHARE of them
+    Exact,  // the triangles of the surface welded by position, all of them: geometry made to collide (a clip)
 }
 
 COLLISION_HULL_VERTICES :: 32
@@ -70,16 +71,21 @@ mesh_collision :: proc(vertices:[]asset.Vertex,indices:[]u32,kind:Collision,hull
         if failed==.None {
             for hull in parts.hulls {hull_add(&colliders,&out_points,hull)}
         }
-    case .Mesh:
-        triangles:=len(surface)/3
-        target:=triangles>=COLLISION_MESH_MIN_TRIANGLES?max(int(f32(triangles)*COLLISION_MESH_SHARE),COLLISION_MESH_MIN_TRIANGLES):triangles
-        simplified:=make([]u32,len(surface),temp)
-        if result,failed:=geom.simplify(simplified,surface[:],points[:],target*3,max(f32));failed==.None && result.index_count>0 {
+    case .Mesh,.Exact:
+        kept:=surface[:]
+        if kind==.Mesh {
+            triangles:=len(surface)/3
+            target:=triangles>=COLLISION_MESH_MIN_TRIANGLES?max(int(f32(triangles)*COLLISION_MESH_SHARE),COLLISION_MESH_MIN_TRIANGLES):triangles
+            simplified:=make([]u32,len(surface),temp)
+            result,failed:=geom.simplify(simplified,surface[:],points[:],target*3,max(f32))
+            kept=simplified[:result.index_count] if failed==.None else nil
+        }
+        if len(kept)>0 {
             // The points the triangles that remain use, in their order.
             used:=make([]u32,len(points),temp)
             for &at in used {at=max(u32)}
             point_count:u32
-            for index in simplified[:result.index_count] {
+            for index in kept {
                 if used[index]==max(u32) {
                     used[index]=point_count
                     point_count+=1
@@ -87,7 +93,7 @@ mesh_collision :: proc(vertices:[]asset.Vertex,indices:[]u32,kind:Collision,hull
                 }
                 append(&out_indices,used[index])
             }
-            append(&colliders,asset.Collider{kind=.Mesh,rotation=1,point_count=point_count,index_count=u32(result.index_count)})
+            append(&colliders,asset.Collider{kind=.Mesh,rotation=1,point_count=point_count,index_count=u32(len(kept))})
         }
     }
     if len(colliders)==0 {
