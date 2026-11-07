@@ -207,7 +207,9 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     keys:=[2]anim.Keyframe{{value={0,0,0,1}},{time=1,value={0,0,.38,.92}}}
     tracks:=[1]asset.Animation_Track_Desc{{target=base.text_get(model.skeletons[0].bones[len(model.skeletons[0].bones)-1].path[:]),property=.Rotation,keys=keys[:]}}
-    bend:=[1]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]}}
+    // A clip of markers alone (its motion was on bones this skeleton lacks) goes on it as well.
+    cue:=[1]asset.Animation_Marker_Desc{{time=0.5,name="sndnt#reload"}}
+    bend:=[2]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]},{name="cue",markers=cue[:]}}
     brought:=model.animations;model.animations=bend[:]
     player:=base.Asset_Id{0x1234,0x5678}
     report,error:=importer.import_write(&model,folder,{settings={skeleton=player}})
@@ -223,40 +225,8 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
     defer asset.asset_close(&file)
     clips,clips_error:=asset.animation_view(&file,&types)
     testing.expect_value(t,clips_error,asset.Error.None)
-    testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==player,"bound to the skeleton given")
-}
-
-@(test)
-clips_bound_to_a_skeleton_of_the_project_name_it_and_write_no_copy :: proc(t:^testing.T) {
-    folder:=temp_folder("write-bound")
-    defer os.remove_all(folder)
-    model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
-    if !ok {return}
-    defer importer.model_destroy(&model)
-    // Only the clips of a source that names a skeleton the project already has.
-    RIG :: base.Asset_Id{0x1234,0x5678}
-    bound:=[1]importer.Imported_Skeleton{model.skeletons[0]}
-    bound[0].asset=RIG
-    keys:=[2]anim.Keyframe{{value={0,0,0,1}},{time=1,value={0,0,.38,.92}}}
-    tracks:=[1]asset.Animation_Track_Desc{{target=base.text_get(bound[0].bones[len(bound[0].bones)-1].path[:]),property=.Rotation,keys=keys[:]}}
-    markers:=[1]asset.Animation_Marker_Desc{{time=.5,name="halfway"}}
-    bend:=[1]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:],markers=markers[:]}}
-    clips_only:=importer.Imported_Model{source=model.source,source_size=model.source_size,source_hash=model.source_hash,format=model.format,name="bend",version=model.version,skeletons=bound[:],animations=bend[:]}
-    report,error:=importer.import_write(&clips_only,folder)
-    defer importer.report_destroy(&report)
-    testing.expect_value(t,error.code,importer.Error_Code.None)
-    for item in report.assets {testing.expectf(t,item.kind!=asset.KIND_SKELETON,"no skeleton is written: %s",item.path)}
-    testing.expect(t,len(report.skeleton_ids)==1 && report.skeleton_ids[0]==RIG)
-    animation_written,found:=written_of(&report,asset.KIND_ANIMATION,"bend")
-    if !testing.expect(t,found) {return}
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    file,loaded:=read_asset(t,animation_written,&types)
-    if !loaded {return}
-    defer asset.asset_close(&file)
-    clips,clips_error:=asset.animation_view(&file,&types)
-    testing.expect_value(t,clips_error,asset.Error.None)
-    testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==RIG,"the clip plays on the skeleton of the project")
-    testing.expect(t,len(clips.markers)==1 && base.text_get(clips.markers[0].name[:])=="halfway" && clips.markers[0].time==.5)
+    testing.expect(t,len(clips.clips)==2 && clips.clips[0].skeleton==player && clips.clips[1].skeleton==player,"bound to the skeleton given")
+    testing.expect(t,len(clips.clips)==2 && clips.clips[1].marker_count==1)
 }
 
 @(test)

@@ -19,7 +19,7 @@ import mm "mirai:std/math"
 // space when the file says it (source_space), and returns false after fail.
 Reader :: struct {
     out:mem.Allocator,
-    options:Import_Options,
+    options:Import_Options, // its settings are those the import applies: <source>.import when it has one
     data:rawptr,          // Format.data: the options of the format
     path:string,          // of the source: absolute, with forward slashes
     directory:string,

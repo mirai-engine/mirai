@@ -128,7 +128,9 @@ import_busy :: proc(s:^Session) -> string {
 // source's settings, which a model inside the project keeps for its next import.
 // image, when given, is the use of an image that replaces its settings the same
 // way; without it, its settings say, else its name (sources.image_use).
-import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil) -> bool {
+// skeleton, when not zero, is the skeleton of the project the clips of a model
+// play on (Import_Settings.skeleton), kept the same way.
+import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={}) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -163,14 +165,15 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     case .Model:
         if folder=="" {destination="models"}
         destination=fmt.tprintf("%s/%s",destination,sources.model_folder(source,formats))
-        if wanted,given:=rig.?;given {
+        if _,given:=rig.?;given || skeleton!={} {
             stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
             }
             options.settings,options.ignore_stored=stored,true
-            options.rig,options.rig_crotch,options.rig_neck=wanted.rig,wanted.rig_crotch,wanted.rig_neck
+            if wanted,rigged:=rig.?;rigged {options.rig,options.rig_crotch,options.rig_neck=wanted.rig,wanted.rig_crotch,wanted.rig_neck}
+            if skeleton!={} {options.skeleton=skeleton}
         }
     case .Image:
         if folder=="" {destination="textures"}
@@ -203,6 +206,11 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     if _,given:=rig.?;given && kind!=.Model {
         import_job_free(job)
         import_say(s,"%s is not a model: only a model takes a rig",name)
+        return false
+    }
+    if skeleton!={} && kind!=.Model {
+        import_job_free(job)
+        import_say(s,"%s is not a model: only the clips of a model go on a skeleton",name)
         return false
     }
     if _,given:=image.?;given && kind!=.Image {

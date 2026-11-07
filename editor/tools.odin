@@ -43,6 +43,7 @@ Import_Params :: struct {
     rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing +Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
     rig_crotch:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the crotch in the model, where a skirt or a coat hides it; 0 is where the fit finds it"`,
     rig_neck:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the neck in the model; 0 is where the fit finds it"`,
+    skeleton:[base.ASSET_ID_TEXT+1]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
     image:[24]u8 `mirai:"text,optional,label=Of an image: what it holds; color (sRGB) or data (linear: a packed metallic-roughness or occlusion or a mask) or normal or normal_green_down (DirectX). Of a source in the project the choice stays in its settings. Empty: what they say or else what its name says"`,
 }
 
@@ -162,7 +163,15 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         }
         image=use
     }
-    if !import_file(s,path,into,folder,params.profile,rig,image) {
+    skeleton:base.Asset_Id
+    if text:=base.text_get(params.skeleton[:]);text!="" {
+        parsed:bool
+        if skeleton,parsed=base.asset_id_parse(text);!parsed || skeleton=={} {
+            api.call_failf(call,api.INVALID_PARAMS,"skeleton %q is not an id: give the 32 hex digits of a .skeleton, as asset.list lists them",text)
+            return
+        }
+    }
+    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }
