@@ -44,6 +44,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 - Actions (layers, sections, windows, priority, cancellation):
   [animation-actions.md](references/animation-actions.md); motion profiles and warping:
   [animation-motion.md](references/animation-motion.md).
+- An action whose root motion moves its `Character` (a lunge, a slam: `body_move`, not game code):
+  [root and movement](references/animation-actions.md#root-and-movement).
 - Rigs, spatial targets and chain modifiers: [animation-rigs.md](references/animation-rigs.md).
 - Morph targets, `Morph_Weights` and their deformation:
   [animation-morphs.md](references/animation-morphs.md).

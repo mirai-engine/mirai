@@ -18,7 +18,8 @@ blends a local copy of its description.
   character is slowed). Windows of an ability that follow it count `World` time too.
 - Action names are unique and those of sections and windows, within their action.
 - Actions that share a layer must have the same `over`, `mode`, `reference`, `curves`,
-  `mesh_space` and `root_motion`, so that the outgoing fade keeps the policy of its channel.
+  `mesh_space`, `root_motion`, `body_move` and `body_vertical`, so that the outgoing fade keeps the
+  policy of its channel.
 - A combo whose parts chain pose to pose is one clip cut in sections: the game jumps to the next
   part with Section when the current one reaches its end section, so nothing crossfades.
 - `animation.action.set` (with `path` or `asset`) resolves names and derives quantities. The `next`
@@ -83,6 +84,13 @@ Discovery and memory:
   and fade. In_Place delivers the delta and removes only its contribution to the internal root,
   without moving the gameplay transform; partial, it leaves the movement of the base that it does
   not cover. The layers blend both policies with the weights of the pose, also on exit.
+- **An action moves its body by its root motion only with `body_move`** (Additive or Override, with
+  `root_motion`; In_Place keeps the pose on a moving body). `animation_body_motion` gives the share
+  of the root delta of the tick that those actions have, not what the base keeps, mirrored and
+  warped with the root, with the mix of the one with the most share; a finishing slot keeps the
+  policy it was fired with. With physics, `animation_physics` makes it a one-tick layered move of
+  that mix for its `Character`, in the body's own time and across its up unless `body_vertical`,
+  except while it mantles (the climb has its own). A game does not convert root motion itself.
 - `action_clock` gives the `Motion_Clock` of the dominant root when it reaches at least half the
   weight, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the
@@ -105,6 +113,12 @@ Discovery and memory:
 - `actions_discover_changed_components_retry_requests_and_compact_generational_rows_through_world_copies`:
   discovery by stamp, lack of memory and generational recycling.
 - `discovery_bench_test.odin` (with `MIRAI_BENCH`): optional preparation without stable allocations.
+- `an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta`: Fire, the share without the
+  base and an action without `body_move`.
+
+`plugins/animation_physics/runtime`:
+`the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tick` (mix,
+own time, vertical about `core.Vertical`, no move while mantling).
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
 `authoring_actions_test.odin` covers real JSON, defaults, names and preservation of asset and

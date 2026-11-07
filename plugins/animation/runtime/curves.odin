@@ -112,3 +112,12 @@ animation_root_delta :: proc(playback:^Playback,entity:core.Entity) -> (Root_Del
     if state==nil || state.seen!=playback.frame || !state.root_enabled {return ROOT_DELTA_DEFAULT,false}
     return state.motion,true
 }
+
+// The root motion of the tick that the actions of entity give its body: ok while one whose
+// body_move is not None plays.
+animation_body_motion :: proc(playback:^Playback,entity:core.Entity) -> (Body_Motion,bool) {
+    if playback==nil {return {},false}
+    state:=constraint_playing(playback,entity)
+    if state==nil || state.seen!=playback.frame || state.body_motion.move==.None {return {},false}
+    return state.body_motion,true
+}

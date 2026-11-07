@@ -47,6 +47,72 @@ action_profiles_roundtrip_and_reject_invalid_section_links_and_root_layer_polici
     profile.actions[1].reference=.1;testing.expect(t,!action_profile_check(profile));profile.actions[1].reference=0
     profile.actions[1].layer=2;profile.actions[1].root_motion=.In_Place;testing.expect(t,action_profile_check(profile));profile.actions[1].layer=1;profile.actions[1].root_motion=.None
     profile.actions[0].root_motion=.Extract;profile.actions[0].over=bone_ref("arm");testing.expect(t,!action_profile_check(profile));profile.actions[0].over={};profile.actions[0].mode=.Additive;testing.expect(t,!action_profile_check(profile))
+    // An action moves its body by its root motion, the actions of a layer move it alike, and a vertical asks for a move.
+    profile.actions[0].mode=.Override
+    for &action in profile.actions {action.root_motion=.In_Place;action.body_move=.Override;action.body_vertical=true}
+    testing.expect(t,action_profile_check(profile))
+    profile.actions[1].body_vertical=false;testing.expect(t,!action_profile_check(profile));profile.actions[1].body_vertical=true
+    for &action in profile.actions {action.root_motion=.None};testing.expect(t,!action_profile_check(profile));for &action in profile.actions {action.root_motion=.In_Place}
+    for &action in profile.actions {action.body_move=.None};testing.expect(t,!action_profile_check(profile));for &action in profile.actions {action.body_move=.Override}
+    moved:asset.Document;defer asset.document_destroy(&moved)
+    testing.expect_value(t,action_profile_document(&moved,&types,{3,4},profile),asset.Error.None)
+    bytes,written:=asset.document_bytes(&moved,context.temp_allocator);testing.expect_value(t,written,asset.Error.None)
+    moving:asset.Asset;defer asset.asset_close(&moving)
+    testing.expect_value(t,asset.asset_open(&moving,bytes,context.temp_allocator),asset.Error.None)
+    view,error=action_profile_view(&moving,&types)
+    testing.expect(t,error==.None && view.actions[0]==profile.actions[0])
+    // A version 1 file, from before actions moved their body, migrates by its schema: they do not.
+    Definition_1 :: struct {
+        name,clip:[64]u8 `mirai:"text"`,layer:u8 `mirai:"optional,min=1,max=3"`,over:Bone_Ref `mirai:"optional"`,mode:Layer_Mode `mirai:"optional"`,curves:Curve_Blend `mirai:"optional"`,root_motion:Root_Motion_Policy `mirai:"optional"`,
+        reference,fade_in,fade_out:f32 `mirai:"optional,min=0,unit=s"`,weight:f32 `mirai:"optional,min=0,max=1"`,speed:f32 `mirai:"optional,min=0"`,priority:i16 `mirai:"optional"`,cancel:Action_Cancel_Policy `mirai:"optional"`,
+        animation:base.Asset_Id `mirai:"optional"`,mesh_space:bool `mirai:"optional"`,clock:Action_Clock `mirai:"optional"`,
+    }
+    olds:[2]Definition_1;wanted:[2]Action_Definition
+    for a,i in profile.actions {
+        olds[i]={name=a.name,clip=a.clip,layer=a.layer,over=a.over,mode=a.mode,curves=a.curves,root_motion=a.root_motion,reference=a.reference,fade_in=a.fade_in,fade_out=a.fade_out,weight=a.weight,speed=a.speed,priority=a.priority,cancel=a.cancel,animation=a.animation,mesh_space=a.mesh_space,clock=a.clock}
+        wanted[i]=a;wanted[i].body_move,wanted[i].body_vertical=.None,false
+    }
+    old:asset.Document;asset.document_init(&old,ACTION_KIND,{3,4});defer asset.document_destroy(&old);old.kind_version=1
+    info:=[1]Action_Info{profile.info}
+    _,put:=asset.document_put(&old,&types,"info",info[:]);testing.expect_value(t,put,asset.Error.None)
+    _,put=asset.document_put(&old,&types,"actions",olds[:]);testing.expect_value(t,put,asset.Error.None)
+    _,put=asset.document_put(&old,&types,"sections",profile.sections);testing.expect_value(t,put,asset.Error.None)
+    _,put=asset.document_put(&old,&types,"windows",profile.windows);testing.expect_value(t,put,asset.Error.None)
+    bytes,written=asset.document_bytes(&old,context.temp_allocator);testing.expect_value(t,written,asset.Error.None)
+    migrated:asset.Asset;defer asset.asset_close(&migrated)
+    testing.expect_value(t,asset.asset_open(&migrated,bytes,context.temp_allocator),asset.Error.None)
+    view,error=action_profile_view(&migrated,&types)
+    testing.expect(t,error==.None && len(view.actions)==2 && view.actions[0]==wanted[0] && view.actions[1]==wanted[1])
+}
+
+// An action whose body_move is not None gives its body the share of the root delta of the tick it
+// has, and not what the base keeps; without one the body is left to its locomotion.
+@(test)
+an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^testing.T) {
+    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities);entity:=core.create(&entities)
+    descriptions:core.Table(Animation);defer core.table_destroy(&descriptions)
+    description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};core.add(&descriptions,entity,description);core.table_settle(&descriptions,&entities)
+    profile:=action_test_profile();profile.actions[0].weight=.75
+    for &action in profile.actions {action.root_motion=.In_Place;action.body_move=.Additive}
+    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
+    append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=profile,valid=true})
+    host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    content:host.Content_Animation;defer lib.library_destroy(&content.lib)
+    playback:Playback;defer playback_free(&playback)
+    append(&playback.states,layer_fixture(t,&content));resize(&playback.rows,core.entity_index(entity)+1);playback.rows[core.entity_index(entity)]=1
+    state:=&playback.states[0];state.entity,state.asset,state.seen=entity,description.asset,playback.frame
+    content.roots=make([]asset.Animation_Root,3);defer delete(content.roots);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
+    requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
+    events:Animation_Events;defer delete(events.items)
+    testing.expect(t,action_fire(&requests,entity,"attack"))
+    if !testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)) {return}
+    actions_sample(&actions,state,&description,.2,nil,&content);layers_advance(&playback,state,&content,description,&events,.2,nil);actions_layer_finish(&actions,state)
+    state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,state,description)
+    body,moving:=animation_body_motion(&playback,entity)
+    testing.expectf(t,moving && body.move==.Additive && !body.vertical && abs(body.translation.x-.15)<1e-5 && abs(state.motion.translation.x-.175)<1e-5,"the action has .75 of .2 and the base the rest of .1: %v %v",body,state.motion)
+    actions.states[0].layers[0].body=.None;state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,state,description)
+    _,moving=animation_body_motion(&playback,entity)
+    testing.expect(t,!moving && abs(state.motion.translation.x-.175)<1e-5)
 }
 
 @(test)

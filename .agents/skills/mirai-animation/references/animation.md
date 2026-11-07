@@ -383,7 +383,10 @@ Order in `fixed`:
 
 - `animation_sample` (`apply`): prepares profiles and requests, samples programs, clips, actions,
   layers and overrides, and extracts and adapts root motion, before physics (`simulate`).
-- The controller consumes `animation_root_delta` between the two through requests to physics.
+- Between the two, `animation_physics` turns root motion into layered moves of the `Character`: the
+  root delta of a climb and the body motion of the actions with
+  [`body_move`](animation-actions.md#root-and-movement); another controller reads
+  `animation_root_delta`.
 - `animation_advance` (`react`): takes updated targets and applies retarget, root removal, pose
   adaptation, grounding, contacts, IK/look-at, rigs and limits; then consumes the final physical
   poses and updates attachments. It uses the current physical placement of the actor and keeps the

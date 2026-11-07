@@ -446,6 +446,8 @@ writes.
 - Layered movements (`Layered_Move`): `add_move` and `remove_moves` enqueue in
   `Locomotion_Requests`; they last their `ticks`. `Additive` adds its velocity to that of the two
   drives (wind, belt); `Override` replaces it on the three axes, without gravity or ground (dash).
+  The root motion of an action that moves its body arrives as one of them
+  ([actions](../../mirai-animation/references/animation-actions.md#root-and-movement)).
   A request to an entity without `Character`, without ticks or with the array full is the
   `locomotion.request` problem.
 - A game mode (climbing) is a step of its own that walks the entities with its component and, while

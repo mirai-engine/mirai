@@ -17,7 +17,7 @@ Action_Write_Params :: struct {
     path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .action; exclusive with asset"`,
     asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
     animation:base.Asset_Id,
-    actions:[anim.ACTION_CAPACITY]anim.Action_Definition `mirai:"label=Actions on one layer share over; mode; reference; curves and root_motion. A root action is a full-body Override of a clip with root motion"`,
+    actions:[anim.ACTION_CAPACITY]anim.Action_Definition `mirai:"label=Actions on one layer share over; mode; reference; curves; root_motion and body_move. A root action is a full-body Override of a clip with root motion; with body_move its root motion moves the Character of its entity"`,
     sections:[anim.ACTION_ROWS]Action_Section_Params `mirai:"optional"`,
     windows:[anim.ACTION_ROWS]Action_Window_Params `mirai:"optional,label=Gameplay windows"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
@@ -58,7 +58,11 @@ action_authoring_prepare :: proc(s:^editor.Session,call:^api.Call,p:^Action_Writ
     profile.actions=make([]anim.Action_Definition,count,call.allocator);profile.sections=make([]anim.Action_Section,sections,call.allocator);profile.windows=make([]anim.Action_Window,windows,call.allocator)
     if profile.actions==nil || sections>0 && profile.sections==nil || windows>0 && profile.windows==nil {authoring_failure(call,"definition","Out_Of_Memory","memory for the action profile","allocation failed","The action profile could not be allocated",api.SERVER_ERROR);return}
     copy(profile.actions,p.actions[:count])
-    for value,i in profile.actions {for previous in profile.actions[:i] {if previous.layer==value.layer && !anim.action_channel_equal(previous,value) {authoring_failure(call,fmt.tprintf("actions[%d]",i),"UnsupportedPolicy","the same over, mode, reference, curves and root_motion for every action on one layer","incompatible channel policy","Actions sharing a layer must share its channel policy");return}}}
+    for value,i in profile.actions {
+        if value.body_move!=.None && value.root_motion==.None {authoring_failure(call,fmt.tprintf("actions[%d].body_move",i),"Missing_Root","root_motion Extract or In_Place with a body_move",fmt.tprintf("%v",value.body_move),"An action moves its body by its root motion; give it root_motion or set body_move to None");return}
+        if value.body_vertical && value.body_move==.None {authoring_failure(call,fmt.tprintf("actions[%d].body_vertical",i),"Missing_Body_Move","a body_move with body_vertical","true","body_vertical keeps the vertical of a body_move; give it a body_move or leave it false");return}
+        for previous in profile.actions[:i] {if previous.layer==value.layer && !anim.action_channel_equal(previous,value) {authoring_failure(call,fmt.tprintf("actions[%d]",i),"UnsupportedPolicy","the same over, mode, reference, curves, root_motion and body_move for every action on one layer","incompatible channel policy","Actions sharing a layer must share its channel policy");return}}
+    }
     for &section,i in p.sections[:sections] {
         action:=action_named_index(profile.actions,section.action)
         if action<0 {authoring_failure(call,fmt.tprintf("sections[%d].action",i),"Missing_Reference","an action name",base.text_get(section.action[:]),"The section references an unknown action");return}
