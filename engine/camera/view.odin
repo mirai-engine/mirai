@@ -12,7 +12,8 @@ import mm "mirai:std/math"
 // The view of each local player is drawn from the camera its seat sees
 // through. When that changes with a blend (an override that asks for one, or
 // a mode its camera takes), the view does not cut: it starts from what it
-// drew, which travels with the body of the seat, and comes into the new
+// drew, which travels with the body of the seat and turns as the new camera
+// turns (a player looking around during the blend), and comes into the new
 // camera over the blend. Around the pivot of an Orbit it turns at a distance
 // between both, so that it does not cross the target; between a perspective
 // and an orthographic lens it is a dolly zoom. A blend asked in the middle of
@@ -29,6 +30,7 @@ Camera_View :: struct {
     elapsed:f32,           // s
     anchor:core.Entity,    // the body that what it left travels with
     from:render.View_Pose, // what it left; its position from the anchor when it has one
+    turned:mm.Quat,        // the rotation of the camera it blends into when it left: what turns what it left
     pose:render.View_Pose, // what it is drawn from
     blending:bool,
     cut:bool,              // it jumped this frame
@@ -122,7 +124,7 @@ view_update :: proc(
                 v.from.position-=at
                 v.anchor=body
             }
-            v.blend,v.elapsed=blend,0
+            v.blend,v.elapsed,v.turned=blend,0,live.rotation
         }
         v.camera,v.changes=camera,changes
     }
@@ -131,8 +133,13 @@ view_update :: proc(
         v.elapsed+=frame.dt
         if v.elapsed<v.blend.seconds {
             from:=v.from
+            // What it left turns, around the body it travels with, as the camera has turned since.
             if v.anchor!=core.NONE {
-                if at,ok:=anchor_at(worlds,v.anchor,frame);ok {from.position+=at}
+                if at,ok:=anchor_at(worlds,v.anchor,frame);ok {
+                    turn:=live.rotation*conj(v.turned)
+                    from.rotation=turn*from.rotation
+                    from.position=at+mm.quat_rotate(turn,from.position)
+                }
             }
             pivot:=live.position+mm.quat_rotate(live.rotation,{0,0,-1})*10
             if at,ok:=anchor_at(worlds,body,frame);ok {pivot=at}

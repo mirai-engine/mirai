@@ -42,6 +42,8 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
         case phys.MODE_SLIDING,phys.MODE_MANTLING:
             // The slide keeps its course and the climb its way: what the body does is what it asks.
             if walk,ok:=core.get(walks,entity);ok {goal.desired,goal.acceleration,goal.braking={going.linear.x,0,going.linear.z},walk.acceleration,walk.braking}
+            // The clip of the climb warps onto where it ends (mantle.odin).
+            if character.mode==phys.MODE_MANTLING && animation.motion!={} {anim.motion_target(warps,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
         case:
             if walk,ok:=core.get(walks,entity);ok {
                 sprinting:=input.buttons&inp.action_bit(inp.action_of(walk_actions,.Sprint))!=0

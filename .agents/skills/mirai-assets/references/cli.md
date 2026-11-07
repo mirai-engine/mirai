@@ -65,7 +65,9 @@ conflicts; 2 if a file is not an asset or the result is not valid, and then `<ou
 was.
 
 - Rows are paired as in `diff` and values field by field: a field that one side left as it was in
-  `<base>` takes the other's. A vector is a whole value.
+  `<base>` takes the other's. A vector is a whole value. A column whose type only theirs changed
+  (a component that gained or lost a field) takes theirs' type first, so a field only theirs added
+  keeps its values.
 - In a conflict, ours stays; git leaves the file as unresolved with the three versions in the
   index.
 - A row that one side removed goes away if the other did not change it; if it changed it, or hung

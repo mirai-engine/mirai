@@ -241,7 +241,11 @@ locomotion_step :: proc(
             next.value={}
         } else if c.mode==MODE_MANTLING {
             placed,_:=core.world_of(locals,parents,e)
-            next.value=mantle_move(c,mantle,frame,placed.position,given,jump,time.dt*pace)
+            next.value=mantle_move(c,mantle,frame,placed.position,given,jump,time.dt*pace,overriding(c))
+            // The layered moves of the tick drive the climb; the tick it ends they are spent, so it
+            // stops on what it climbed instead of carrying the last one on.
+            spent:=next.value
+            layers_apply(c,&next.value if c.mode==MODE_MANTLING else &spent,c.traction_force,pace)
             move_paced(&next.value,c,pace,motion.linear,ground,frame)
         } else if c.mode>MODE_ENGINE_LAST {
             if written:=core.get(moves,e);written!=nil {next=written^}

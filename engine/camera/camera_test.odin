@@ -235,6 +235,34 @@ a_view_blends_into_a_new_mode_from_what_it_drew_and_travels_with_its_body :: pro
     testing.expect(t,!v.blending && close_vec(v.pose.position,{10,0,0}))
 }
 
+// A player who looks around during a blend into a mode turns what the view left too: it keeps
+// the same place beside the new camera instead of lagging behind the look.
+@(test)
+what_a_view_left_turns_with_the_camera_it_blends_into :: proc(t:^testing.T) {
+    f:=test_make()
+    defer test_free(f)
+    camera,body:=core.create(&f.es),core.create(&f.es)
+    core.add(&f.cameras,camera,render.CAMERA_DEFAULT)
+    core.add(&f.follows,camera,Camera_Follow{mode=.Follow})
+    test_place(f,camera,{0,0,2})
+    test_place(f,body,{})
+    test_settle(f)
+    frame:=core.Frame_Time{dt=0.125,alpha=1}
+    v:Camera_View
+    view_update(&v,camera,{},body,core.read(&f.cameras),core.read(&f.follows),core.read(&f.worlds),frame)
+    follow:=core.get(&f.follows,camera)
+    follow.state.changes=1
+    follow.state.blend={0.5,.Linear}
+    test_place(f,camera,{0,0,4})
+    view_update(&v,camera,{},body,core.read(&f.cameras),core.read(&f.follows),core.read(&f.worlds),frame)
+    testing.expectf(t,v.blending && close_vec(v.pose.position,{0,0,2.5}),"a quarter of the way: %v",v.pose.position)
+    quarter:=mm.quat_axis_angle({0,1,0},math.PI/2)
+    test_place(f,camera,{4,0,0},quarter)
+    view_update(&v,camera,{},body,core.read(&f.cameras),core.read(&f.follows),core.read(&f.worlds),frame)
+    testing.expectf(t,close_vec(v.pose.position,{3,0,0}),"halfway between both, turned with the look: %v",v.pose.position)
+    testing.expectf(t,abs(linalg.dot(v.pose.rotation,quarter))>0.9999,"looking where the camera looks: %v",v.pose.rotation)
+}
+
 @(test)
 a_view_enters_and_leaves_an_override_with_its_blend_and_cuts_without_one :: proc(t:^testing.T) {
     f:=test_make()

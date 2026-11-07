@@ -220,3 +220,28 @@ merge_of_a_document_of_one_row_takes_fields_from_each_side :: proc(t:^testing.T)
     testing.expect_value(t,m.conflicts[0].kind,Merge_Kind.Table)
     testing.expect_value(t,m.conflicts[0].path,"texels")
 }
+
+@(private="file") Test_Shade_Glow :: struct {roughness:f32,metallic:f32,tint:[3]f32,glow:f32}
+
+// A field only theirs added (its type grew since base) is kept with what theirs gave it, and what
+// ours changed in the other fields stays.
+@(test)
+merge_keeps_a_field_only_theirs_added :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    build :: proc(t:^testing.T,types:^Types,value:$T) -> (doc:Document) {
+        document_init(&doc,KIND_MATERIAL,{0x81,0x82})
+        row:=value
+        _,error:=document_put_row(&doc,types,"shade",&row)
+        testing.expect_value(t,error,Error.None)
+        return
+    }
+    origin:=build(t,&types,Test_Shade{0.8,0,{1,1,1}});defer document_destroy(&origin)
+    ours:=build(t,&types,Test_Shade{0.5,0,{1,1,1}});defer document_destroy(&ours)
+    theirs:=build(t,&types,Test_Shade_Glow{0.8,0,{1,1,1},2});defer document_destroy(&theirs)
+    m:Merge;defer merge_destroy(&m)
+    testing.expect_value(t,document_merge(&m,&ours,&origin,&theirs),Error.None)
+    rows:=make([dynamic]Test_Shade_Glow);defer delete(rows)
+    testing.expect_value(t,document_rows(&ours,&types,"shade",&rows),Error.None)
+    testing.expectf(t,len(rows)==1 && rows[0].roughness==0.5 && rows[0].glow==2,"ours' change and theirs' field: %v",rows)
+    testing.expect_value(t,len(m.conflicts),0)
+}

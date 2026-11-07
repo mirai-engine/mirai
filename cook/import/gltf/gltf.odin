@@ -1,6 +1,7 @@
 package gltf
 
 import "core:encoding/base64"
+import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -893,7 +894,7 @@ gltf_animations :: proc(g:^Gltf) -> bool {
     r:=g.r
     if len(g.data.animations)>asset.ANIMATION_MAX_CLIPS {return importer.fail(r,.Limit,"too many glTF animation clips")}
     names:=make(map[string]bool,context.temp_allocator)
-    total_tracks,total_keys:=0,0
+    total_tracks,total_keys,total_markers:=0,0,0
     for animation,clip_index in g.data.animations {
         name:=string(animation.name)
         if name=="" {name=fmt.tprintf("Animation %d",clip_index)}
@@ -968,7 +969,9 @@ gltf_animations :: proc(g:^Gltf) -> bool {
         }
         total_tracks+=len(tracks)
         if total_tracks>asset.ANIMATION_MAX_TRACKS {return importer.fail(r,.Limit,"too many glTF animation tracks")}
-        append(&r.animations,asset.Animation_Clip_Desc{name=name,tracks=tracks[:]})
+        markers,read:=gltf_markers(g,name,animation.extras,&total_markers)
+        if !read {return false}
+        append(&r.animations,asset.Animation_Clip_Desc{name=name,tracks=tracks[:],markers=markers})
     }
     return true
 }
@@ -1020,4 +1023,32 @@ gltf_weight_tracks :: proc(g:^Gltf,clip:string,channel:cg.animation_channel,trac
         append(tracks,asset.Animation_Track_Desc{target=importer.own(r,target),property=.Float,keys=keys})
     }
     return true
+}
+
+// The markers of a clip, from the extras of its glTF animation: {"markers": [{"name": "foot_l",
+// "time": 0.27}]}, as a source writes the events of its timeline (notifies, footsteps). They are
+// sorted by time; without the key there are none.
+@(private="file")
+gltf_markers :: proc(g:^Gltf,clip:string,extras:cg.extras_t,total:^int) -> (markers:[]asset.Animation_Marker_Desc,ok:bool) {
+    r:=g.r
+    if extras.data==nil {return nil,true}
+    text:=string(cstring(extras.data))
+    if !strings.contains(text,`"markers"`) {return nil,true}
+    Extras :: struct {markers:[]struct {name:string,time:f32}}
+    value:Extras
+    if json.unmarshal_string(text,&value,allocator=context.temp_allocator)!=nil {
+        return nil,importer.fail(r,.Malformed,"glTF animation %s has extras whose markers are not a list of {name, time}",clip)
+    }
+    if len(value.markers)>asset.ANIMATION_MAX_MARKERS-total^ {return nil,importer.fail(r,.Limit,"too many glTF animation markers")}
+    total^+=len(value.markers)
+    out:=make([]asset.Animation_Marker_Desc,len(value.markers),r.out)
+    for m,i in value.markers {
+        if m.time-m.time!=0 || m.time<0 {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker %s at a time that is not finite and nonnegative",clip,m.name)}
+        if m.name=="" || len(m.name)>=asset.ANIMATION_NAME_CAPACITY {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker without a name or with one of %d bytes or more",clip,asset.ANIMATION_NAME_CAPACITY)}
+        out[i]={m.time,importer.own(r,m.name)}
+    }
+    for i in 1..<len(out) {
+        for j:=i;j>0 && out[j].time<out[j-1].time;j-=1 {out[j],out[j-1]=out[j-1],out[j]}
+    }
+    return out,true
 }

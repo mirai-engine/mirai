@@ -63,7 +63,9 @@ moves_tick :: proc(f:^Moves_Test,move:[3]f32,ticks:=1,buttons:=input.Action_Mask
         }
         m:sim.Character_Move
         if f.loco.mode==MODE_MANTLING {
-            m=mantle_move(&f.loco,f.mantle.?,1,sim.character_position(&f.w,f.ch),given,TEST_JUMP,dt)
+            m=mantle_move(&f.loco,f.mantle.?,1,sim.character_position(&f.w,f.ch),given,TEST_JUMP,dt,overriding(&f.loco))
+            spent:=m
+            layers_apply(&f.loco,&m if f.loco.mode==MODE_MANTLING else &spent,f.loco.traction_force)
         } else {
             m=locomotion_move(&f.loco,f.walk,{},nil,{slide=f.slide,tactical=f.tactical,ledge=f.ledge},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.ch),f.w.gravity,dt)
         }
@@ -172,13 +174,15 @@ a_slide_downhill_speeds_up_past_its_time_and_a_jump_leaves_it :: proc(t:^testing
     testing.expectf(t,flat_speed(&f)>7,"the jump keeps the speed of the slide: %v",flat_speed(&f))
 }
 
-// Jump facing a wall whose top is over ground_height climbs onto it in time and stands there; one
-// lower is jumped onto, one over max_height, with a roof over its top or behind it is not climbed.
+// Jump facing a wall whose top is over ground_height climbs onto it in time and stands there, also
+// on the middle of a top thinner than the character; one lower is jumped onto, one over max_height,
+// with a roof over its top or behind it is not climbed.
 @(test)
 jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
-    Case :: struct {top:f32,roof:bool,yaw:f32,mantles:bool}
+    Case :: struct {top:f32,roof:bool,yaw:f32,mantles:bool,thick:f32}
     cases:=[]Case{
         {top=1.8,mantles=true},
+        {top=1.8,mantles=true,thick=0.16},
         {top=1.0},
         {top=3.0},
         {top=1.8,roof=true},
@@ -189,7 +193,8 @@ jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
         testing.expect(t,moves_init(&f,{0,0,0}))
         defer sim.world_destroy(&f.w)
         f.mantle=MANTLE_DEFAULT
-        moves_box(&f,{2,c.top*0.5,0.5},{0,c.top*0.5,-1.3}) // its face at z -0.8
+        thick:=c.thick if c.thick>0 else 1
+        moves_box(&f,{2,c.top*0.5,thick*0.5},{0,c.top*0.5,-0.8-thick*0.5}) // its face at z -0.8
         if c.roof {moves_box(&f,{2,0.1,1},{0,c.top+1.2,-1.8})}
         moves_tick(&f,{},30,yaw=c.yaw)
         moves_tick(&f,{},1,JUMP,yaw=c.yaw)
@@ -205,9 +210,35 @@ jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
         moves_tick(&f,{},20,yaw=c.yaw)
         at:=sim.character_position(&f.w,f.ch)
         state:=character_state_of(sim.character_state(&f.w,f.ch))
-        testing.expectf(t,state.standing && abs(at.y-c.top)<0.05 && at.z<-1.05,"%v: stands on the top at %v",c,at)
+        on_top:=at.z<-1.05 if c.thick==0 else at.z<-0.8 && at.z>-0.8-c.thick
+        testing.expectf(t,state.standing && abs(at.y-c.top)<0.05 && on_top,"%v: stands on the top at %v",c,at)
         testing.expect_value(t,f.loco.mode,MODE_WALKING)
     }
+}
+
+// An Override layered move takes the climb off its own way (the root motion of the animation of the
+// climb, warped onto the ledge): the body goes where the move takes it and the climb lasts its time.
+@(test)
+a_layered_move_drives_a_climb_for_its_time :: proc(t:^testing.T) {
+    f:Moves_Test
+    testing.expect(t,moves_init(&f,{0,0,0}))
+    defer sim.world_destroy(&f.w)
+    f.mantle=MANTLE_DEFAULT
+    moves_box(&f,{2,0.9,0.5},{0,0.9,-1.3})
+    moves_tick(&f,{},30)
+    moves_tick(&f,{},1,JUMP)
+    testing.expect_value(t,f.loco.mode,MODE_MANTLING)
+    ticks:=0
+    for f.loco.mode==MODE_MANTLING && ticks<120 {
+        f.loco.moves[0],f.loco.move_count=Layered_Move{velocity={0,4,0},ticks=1,mix=.Override},1
+        moves_tick(&f,{},1)
+        ticks+=1
+    }
+    at:=sim.character_position(&f.w,f.ch)
+    testing.expectf(t,ticks>=int(MANTLE_DEFAULT.time*60) && ticks<=int(MANTLE_DEFAULT.time*60)+2,"climbed for %d ticks",ticks)
+    testing.expectf(t,at.y>2 && abs(at.z)<0.1,"straight up where the move took it, not across onto the top: %v",at)
+    moves_tick(&f,{},1)
+    testing.expectf(t,sim.character_velocity(&f.w,f.ch).y<1,"the move of the last tick does not carry on: %v",sim.character_velocity(&f.w,f.ch))
 }
 
 // With crouch_toggle a press crouches and the next stands; a press at a sprint slides, at least at

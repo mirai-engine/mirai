@@ -153,6 +153,9 @@ Per tick:
   on the `Character`'s entity faces its +Z, as the body does
   ([facing](../../mirai-physics/SKILL.md#library-invariants)): it is not turned by hand. Without
   physics, the game calls `match_goal` with what moves its rig.
+- While a `Character` mantles, `animation_physics` gives the window `mantle` of `Animation.motion`
+  the target `mantle_to` and drives the climb with the root motion of the tick: a climb clip with a
+  root and that window climbs as the clip does and lands on the ledge.
 - With `lag` (for a body that stops or starts harder than its clips; off by default and in
   `animation.character.setup`), the root of the pose follows the body by a critically damped spring of
   `lag_half_life`: a change of velocity the body makes at once the root takes in over the
