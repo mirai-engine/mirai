@@ -6,6 +6,7 @@ import "mirai:host"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import phys "plugins:physics/runtime"
 
 // The .navmesh of a scene: the tiles of every class, with the hash of what
 // each was built from, the links the build generated, the zones of the
@@ -36,6 +37,7 @@ Bake_Class :: struct {
     space:Nav_Space,
     config:ai.Nav_Build_Config,
     volume_config:ai.Nav_Volume_Config,
+    collision_layers,collision_block:u32, // of the filter it was made with (Class_Mesh.filter); both 0: the defaults
     tile_first,tile_count:u32,
     link_first,link_count:u32,
     zone_first,zone_count:u32,
@@ -122,7 +124,7 @@ bake_bytes :: proc(n:^Navigation,id:base.Asset_Id,types:^asset.Types,filter:=BAK
     for i in 0..<n.count {
         c:=&n.classes[i]
         class:=Bake_Class{
-            name=c.class.name,space=c.class.space,config=c.config,volume_config=c.volume_config,tile_first=u32(len(tiles)),link_first=u32(len(links)),zone_first=u32(len(zones)),
+            name=c.class.name,space=c.class.space,config=c.config,volume_config=c.volume_config,collision_layers=u32(c.filter.filter.layers),collision_block=u32(c.filter.filter.block),tile_first=u32(len(tiles)),link_first=u32(len(links)),zone_first=u32(len(zones)),
             region_first=u32(len(regions)),portal_first=u32(len(portals)),way_first=u32(len(ways)),corner_first=u32(len(corners)),
         }
         if filter.coarse {
@@ -242,6 +244,7 @@ bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_K
         at:=class_find(n,base.text_get(class.name[:]))
         if at<0 || n.classes[at].class.space!=class.space {continue}
         c:=&n.classes[at]
+        if !bake_filter_same(class,c.filter) {continue}
         if only!=nil && only[at].count==0 {continue}
         if class.space!=.Surface {
             if c.volume_config!=class.volume_config {continue}
@@ -312,4 +315,16 @@ bake_load :: proc(n:^Navigation,bake:Navigation_Bake,app:^host.App,problems:^cor
     if _,ok:=bake_read(n,&file,&app.assets.types,only);!ok {
         core.report(problems,core.NONE,"navigation.bake","The .navmesh of the scene is of another version or damaged: the meshes are built from the collision; bake it again with nav.bake")
     }
+}
+
+// Whether a class of a bake was made of the collision a class is made of now.
+// A bake that does not say was made of the defaults.
+@(private)
+bake_filter_same :: proc "contextless" (class:Bake_Class,filter:phys.Query_Filter) -> bool {
+    layers,block:=class.collision_layers,class.collision_block
+    if layers==0 && block==0 {
+        defaults:=phys.QUERY_FILTER_DEFAULT.filter
+        layers,block=u32(defaults.layers),u32(defaults.block)
+    }
+    return u32(filter.filter.layers)==layers && u32(filter.filter.block)==block
 }

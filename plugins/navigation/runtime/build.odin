@@ -193,10 +193,20 @@ settings_same :: proc "contextless" (a,b:^Navigation_Settings) -> bool {
     return a.classes==b.classes && a.cell_size==b.cell_size && a.cell_height==b.cell_height && a.tile_cells==b.tile_cells && a.max_tiles==b.max_tiles && a.max_links==b.max_links
 }
 
-// Makes the meshes of the classes of the settings, empty, with every tile in
-// the bounds marked. False without memory.
+// Whether every class is made of what the collision settings say blocks its agents now.
 @(private)
-navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,problems:^core.Problems) -> bool {
+filters_same :: proc "contextless" (n:^Navigation,collision:^phys.Collision_Settings) -> bool {
+    for &c in n.classes[:n.count] {
+        if c.filter!=class_filter(collision,c.class) {return false}
+    }
+    return true
+}
+
+// Makes the meshes of the classes of the settings, empty, with every tile in
+// the bounds marked, each made of what blocks its agents under collision
+// (nil: the defaults). False without memory.
+@(private)
+navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^phys.Collision_Settings,problems:^core.Problems) -> bool {
     uid:=n.uid
     navigation_free(n)
     n.uid=uid
@@ -205,13 +215,18 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,problems:^c
     links:=int(settings.max_links) if settings.max_links>=0 else 0
     for &class in settings.classes {
         if base.text_get(class.name[:])=="" {continue}
+        filter:=class_filter(collision,class)
+        if class.collision==phys.PRESET_CUSTOM || filter.filter.block==0 {
+            core.report(problems,core.NONE,"navigation.class","The class %q of Navigation_Settings takes collision preset %d, which blocks nothing: give it the preset of the colliders of its agents (not Custom nor a sensor). It has no mesh",base.text_get(class.name[:]),class.collision)
+            continue
+        }
         if class.space!=.Surface {
             if !(class.radius>0) || !(class.height>0) || class.radius>1e3 || class.height>1e3 {
                 core.report(problems,core.NONE,"navigation.class","The class %q of Navigation_Settings needs a radius and a height above 0 and below 1000 m: it has no volume",base.text_get(class.name[:]))
                 continue
             }
             c:=&n.classes[n.count]
-            c.class=class
+            c.class,c.filter=class,filter
             c.volume_config=volume_config(class)
             if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !base.hash_map_init(&c.marks,tiles) {
                 navigation_free(n)
@@ -226,7 +241,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,problems:^c
             continue
         }
         c:=&n.classes[n.count]
-        c.class=class
+        c.class,c.filter=class,filter
         c.config=class_config(settings,class)
         width:=f32(c.config.tile_size)*c.config.cell_size
         if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !base.hash_map_init(&c.marks,tiles) {
@@ -343,8 +358,10 @@ navigation_build :: proc(
     b.sections=sections_gather(references,worlds,ids)
     gone:=Unloaded{unloaded.ptr,&b.sections,base.hash_combine(unloaded.ptr.revision if unloaded.ptr!=nil else 0,b.sections.hash)}
     fresh,reset:=false,false
-    if !n.ready || !settings_same(&n.settings,settings.ptr) {
-        if !navigation_reset(n,settings.ptr,problems) {
+    // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).
+    collision:=&physics.ptr.collision
+    if !n.ready || !settings_same(&n.settings,settings.ptr) || !filters_same(n,collision) {
+        if !navigation_reset(n,settings.ptr,collision,problems) {
             core.report(problems,core.NONE,"navigation.memory","No memory for the navigation meshes of Navigation_Settings: lower max_tiles or max_links")
             return
         }
@@ -668,15 +685,16 @@ build_launch :: proc(build:^Build,app:^host.App) {
     if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&build.counter)}
 }
 
-// The triangles of the static collision in a box into a build, up to
-// NAV_TRIANGLES_MAX. False when not all of them fit.
+// The triangles of the static collision in a box that block filter (the
+// agents of a class) into a build, up to NAV_TRIANGLES_MAX. False when not
+// all of them fit.
 @(private)
-gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:mm.Aabb) -> bool {
+gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:mm.Aabb,filter:phys.Query_Filter) -> bool {
     size:=4096
     for {
         resize(&build.vertices,size)
         resize(&build.indices,size*2)
-        vertex_count,index_count,fit:=phys.static_triangles(physics,box,transmute([][3]f32)build.vertices[:],build.indices[:])
+        vertex_count,index_count,fit:=phys.static_triangles(physics,box,transmute([][3]f32)build.vertices[:],build.indices[:],filter)
         if fit || size>=NAV_TRIANGLES_MAX {
             resize(&build.vertices,vertex_count)
             resize(&build.indices,index_count)
@@ -694,7 +712,7 @@ gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:m
 gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),zone:[3]i32) -> bool {
     box:=ai.nav_volume_zone_box(&c.volume,zone)
     margin:=c.volume_config.half+c.volume_config.voxel
-    complete:=gather_triangles(build,physics,{box.min-margin,box.max+margin})
+    complete:=gather_triangles(build,physics,{box.min-margin,box.max+margin},c.filter)
     clear(&build.spaces)
     clear(&build.holes)
     water:=c.class.space==.Water
@@ -721,7 +739,7 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
         box.min.y=min(box.min.y if box.min.y>-1e9 else limit.min.y,limit.min.y)
         box.max.y=max(box.max.y if box.max.y<1e9 else limit.max.y,limit.max.y)
     }
-    complete:=gather_triangles(build,physics,box)
+    complete:=gather_triangles(build,physics,box,c.filter)
     clear(&build.volumes)
     // The deep ground under the water first: an area of a Nav_Area or an obstacle there wins.
     for water in b.water {

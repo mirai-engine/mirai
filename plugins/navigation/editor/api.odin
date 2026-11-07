@@ -9,6 +9,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
+import phys "plugins:physics/runtime"
 
 @(storage)
 Navigation_Api :: struct {provider:editor.Api_Provider}
@@ -116,6 +117,7 @@ status :: proc(s:^editor.Session,call:^api.Call) {
         api.write_text(w,"space",fmt.tprintf("%v",class.space))
         api.write_key(w,"radius");api.write_number(w,class.radius)
         api.write_key(w,"height");api.write_number(w,class.height)
+        api.write_text(w,"collision",phys.collision_name(s.app.info if s.app!=nil else nil,phys.Collision_Preset,i64(class.collision)))
         if class.space!=.Surface {
             api.write_key(w,"voxel");api.write_number(w,c.volume.voxel)
             api.write_key(w,"zone_size");api.write_number(w,c.volume.zone_size)

@@ -5,6 +5,7 @@ import "mirai:core"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import phys "plugins:physics/runtime"
 
 // Navigation meshes made by themselves from the static collision of the
 // physics, one for each class of agent, in tiles that are built again
@@ -76,7 +77,11 @@ Nav_Space :: enum u8 {Surface,Air,Water}
 // and what the links generated for it may ask: how high and how far it jumps
 // and how far it drops. 0 asks none of that kind. A class of the air or of
 // the water uses only its radius and height: agents with a Fly take one of
-// the air, and those with a Swim one of the water while they swim.
+// the air, and those with a Swim one of the water while they swim. Its mesh
+// is made of the static collision that blocks a collider of its collision
+// preset, the one its agents take, under the Collision_Settings of the
+// physics: what blocks only other categories (a clip for players) is not in
+// it. Default: what blocks the Default category, all blocking collision.
 Nav_Class :: struct {
     name:[32]u8 `mirai:"text"`,
     space:Nav_Space,
@@ -87,6 +92,7 @@ Nav_Class :: struct {
     jump_up:f32 `mirai:"min=0,unit=m"`,
     jump_across:f32 `mirai:"min=0,unit=m"`,
     drop:f32 `mirai:"min=0,unit=m"`,
+    collision:phys.Collision_Preset, // that of the colliders of its agents; not Custom nor a sensor
 }
 
 Nav_Area_Cost :: struct {
@@ -180,6 +186,7 @@ Navigation :: struct {
 
 Class_Mesh :: struct {
     class:Nav_Class,                     // the one of the settings it was made for
+    filter:phys.Query_Filter,            // the static collision its mesh is made of: what blocks its agents (class_filter)
     mesh:ai.Nav_Mesh,
     config:ai.Nav_Build_Config,
     volume:ai.Nav_Volume,                // of a class of the air or the water, instead of the mesh
@@ -269,7 +276,7 @@ navigation_copy :: proc(dst,src:^Navigation) -> bool {
     for &c in dst.classes {c={}}
     for i in 0..<src.count {
         from,to:=&src.classes[i],&dst.classes[i]
-        to.class,to.config,to.volume_config=from.class,from.config,from.volume_config
+        to.class,to.filter,to.config,to.volume_config=from.class,from.filter,from.config,from.volume_config
         if !ai.nav_mesh_copy(&to.mesh,&from.mesh) || !ai.nav_volume_copy(&to.volume,&from.volume) || !ai.nav_coarse_copy(&to.coarse,&from.coarse) {navigation_free(dst);return false}
         if len(from.marks.keys)>0 {
             if !base.hash_map_init(&to.marks,from.marks.capacity) {navigation_free(dst);return false}
@@ -325,4 +332,12 @@ filter_make :: proc "contextless" (settings:^Navigation_Settings,excluded:Nav_Ar
     f.excluded=u64(excluded)
     f.can=can
     return
+}
+
+// What the mesh of a class is made of: the static collision that blocks a
+// collider of its preset under the collision settings of the physics.
+class_filter :: proc "contextless" (collision:^phys.Collision_Settings,class:Nav_Class) -> phys.Query_Filter {
+    filter:=phys.QUERY_FILTER_DEFAULT
+    filter.filter=phys.collision_filter(collision,phys.Collider{preset=class.collision})
+    return filter
 }

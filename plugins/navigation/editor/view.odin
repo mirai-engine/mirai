@@ -12,17 +12,25 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import phys "plugins:physics/runtime"
 
 // The Navigation modes of the viewport: the mesh of a class over the lit
 // image (navigation is the first class, navigation.<class> each one), its
 // polygons by area, walls brighter, the borders between tiles and the links
 // with their arc and direction; for a class of the air, its zones and the
 // free nodes of their octrees. The lines are made again only when the mesh
-// or the volume changes.
+// or the volume changes. navigation.<class>.collision shows what the mesh of
+// a class is made of, around the camera: the static collision that blocks its
+// agents bright, and the one that blocks only others (a clip for players) dim.
 
 NAV_VIEW_LINES :: 1<<17 // the most lines drawn; the rest are counted
 NAV_VIEW_PREFIX :: "navigation."
 NAV_VIEW_LIFT :: f32(0.04) // m above the surface, so the lines are not hidden by it
+NAV_VIEW_COLLISION_SUFFIX :: ".collision"
+NAV_VIEW_COLLISION_REACH :: f32(40)          // m around the camera whose collision is shown
+NAV_VIEW_COLLISION_TRIANGLES :: 1<<15         // the most triangles read; the rest are counted as lines dropped
+COLLISION_IN_COLOR :: mm.Vec4{1,0.75,0.2,0.9} // blocks the agents of the class: in its mesh
+COLLISION_OUT_COLOR :: mm.Vec4{0.6,0.6,0.7,0.25} // blocks only others: not in its mesh
 
 @(storage,free="nav_view_free")
 Nav_View :: struct {
@@ -34,12 +42,21 @@ Nav_View :: struct {
     ready:bool,
     agents:[dynamic]gpu.Debug_Vertex, // the paths of the selected agents, made every frame
     shown:int,      // the class the mode of this frame shows, or -1
+    collision:bool, // the mode shows the collision of the class, not its mesh
+    lines_collision:bool, // what the lines were made of
+    center:mm.Vec3, // of the collision the lines show
+    triangles:[dynamic][3]f32, // read with the colliders of their triangles, the first time the collision is shown
+    indices:[dynamic]u32,
+    owners:[dynamic]core.Entity,
 }
 NAV_VIEW_DEFAULT :: Nav_View{shown=-1,class=-1}
 
 nav_view_free :: proc(v:^Nav_View) {
     delete(v.vertices)
     delete(v.agents)
+    delete(v.triangles)
+    delete(v.indices)
+    delete(v.owners)
     v^=NAV_VIEW_DEFAULT
 }
 
@@ -51,7 +68,7 @@ navigation_view_modes :: proc(s:^editor.Session,view:^Nav_View) {
     reason:=""
     if n==nil {reason="The world shown has no navigation"} else if !n.ready || n.count==0 {reason="The navigation meshes are not made yet"}
     current:=editor.view_mode_current(s.viewport)
-    view.shown=-1
+    view.shown,view.collision=-1,false
     editor.view_mode_declare(s,{name="navigation",label="Navigation",title="Navigation",group="Advanced",submenu="Navigation",icon=.Target,reason=reason,record=navigation_view_record})
     if strings.equal_fold(current,"navigation") && reason=="" {view.shown=0}
     if n==nil {return}
@@ -60,6 +77,10 @@ navigation_view_modes :: proc(s:^editor.Session,view:^Nav_View) {
         mode:=fmt.tprintf("%s%s",NAV_VIEW_PREFIX,name)
         editor.view_mode_declare(s,{name=mode,label=name,title=fmt.tprintf("Navigation: %s",name),group="Advanced",submenu="Navigation",icon=.Layers,reason=reason,record=navigation_view_record})
         if strings.equal_fold(current,mode) && reason=="" {view.shown=i}
+        if nav.class_in_volume(n,i) {continue}
+        collision:=fmt.tprintf("%s%s",mode,NAV_VIEW_COLLISION_SUFFIX)
+        editor.view_mode_declare(s,{name=collision,label=fmt.tprintf("%s: collision",name),title=fmt.tprintf("Navigation: what the mesh of %s is made of",name),group="Advanced",submenu="Navigation",icon=.Layers,reason=reason,record=navigation_view_record})
+        if strings.equal_fold(current,collision) && reason=="" {view.shown,view.collision=i,true}
     }
     if editor.document_is_prefab(s) {view.shown=-1}
 }
@@ -72,9 +93,15 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
     if n==nil || view.shown>=n.count {return}
     if len(view.vertices)==0 {resize(&view.vertices,2*NAV_VIEW_LINES)}
     lines:=gpu.debug_lines_make(view.vertices[:])
-    if !view.ready || view.world!=w.data || view.revision!=n.revision || view.class!=view.shown {
-        if nav.class_in_volume(n,view.shown) {draw_volume(&lines,&n.classes[view.shown].volume)} else {draw_mesh(&lines,&n.classes[view.shown].mesh)}
-        view.world,view.revision,view.class=w.data,n.revision,view.shown
+    // The collision follows the camera: made again once it went a quarter of the reach away.
+    center:=s.viewport.camera.position
+    moved:=view.collision && linalg.length(center-view.center)>NAV_VIEW_COLLISION_REACH*0.25
+    if !view.ready || view.world!=w.data || view.revision!=n.revision || view.class!=view.shown || view.lines_collision!=view.collision || moved {
+        if view.collision {
+            draw_collision(&lines,view,core.world_storage_of(w,phys.Physics_State),&n.classes[view.shown],center)
+            view.center=center
+        } else if nav.class_in_volume(n,view.shown) {draw_volume(&lines,&n.classes[view.shown].volume)} else {draw_mesh(&lines,&n.classes[view.shown].mesh)}
+        view.world,view.revision,view.class,view.lines_collision=w.data,n.revision,view.shown,view.collision
         view.count,view.dropped,view.ready=lines.count,lines.dropped,true
     }
     lines.count,lines.dropped=view.count,view.dropped
@@ -169,6 +196,34 @@ draw_volume :: proc(lines:^gpu.Debug_Lines,volume:^ai.Nav_Volume) {
             }
         }
     }
+}
+
+// The static collision around center that the mesh of a class reads: the
+// triangles of the colliders that block its agents bright, those of the
+// colliders that block only others dim.
+draw_collision :: proc(lines:^gpu.Debug_Lines,view:^Nav_View,physics:^phys.Physics_State,c:^nav.Class_Mesh,center:mm.Vec3) {
+    if physics==nil {return}
+    if len(view.owners)==0 {
+        resize(&view.triangles,3*NAV_VIEW_COLLISION_TRIANGLES)
+        resize(&view.indices,3*NAV_VIEW_COLLISION_TRIANGLES)
+        resize(&view.owners,NAV_VIEW_COLLISION_TRIANGLES)
+    }
+    box:=mm.Aabb{center-NAV_VIEW_COLLISION_REACH,center+NAV_VIEW_COLLISION_REACH}
+    // The colliders in the mesh first, then every static one: both lists name the collider of each triangle.
+    _,in_count,_:=phys.static_triangles(core.ref(physics),box,view.triangles[:],view.indices[:],c.filter,view.owners[:])
+    in_mesh:=make(map[core.Entity]struct{},context.temp_allocator)
+    for e in view.owners[:in_count/3] {in_mesh[e]={}}
+    everything:=phys.QUERY_FILTER_DEFAULT
+    everything.objects=phys.COLLISION_LAYERS_ALL
+    _,index_count,complete:=phys.static_triangles(core.ref(physics),box,view.triangles[:],view.indices[:],everything,view.owners[:])
+    for i in 0..<index_count/3 {
+        color:=COLLISION_IN_COLOR if view.owners[i] in in_mesh else COLLISION_OUT_COLOR
+        a,b,d:=view.triangles[view.indices[i*3]],view.triangles[view.indices[i*3+1]],view.triangles[view.indices[i*3+2]]
+        gpu.debug_line(lines,a,b,color)
+        gpu.debug_line(lines,b,d,color)
+        gpu.debug_line(lines,d,a,color)
+    }
+    if !complete {lines.dropped+=1}
 }
 
 // The lines go over the lit image: the pass of the mode draws nothing.

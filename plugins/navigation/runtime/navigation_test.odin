@@ -254,6 +254,45 @@ corners_length :: proc(corners:[]ai.Nav_Corner) -> (length:f32) {
 }
 
 @(test)
+a_class_is_made_of_the_collision_that_blocks_its_agents :: proc(t:^testing.T) {
+    PLAYER,ZOMBIE,CLIP :: phys.Collision_Category(1),phys.Collision_Category(2),phys.Collision_Category(3)
+    PRESET_ZOMBIE :: phys.Collision_Preset(2)
+    f:Nav_Test
+    nav_test_init(&f)
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    // A clip that blocks zombies alone, across the way.
+    wall:=core.create(&f.entities)
+    core.add(&f.transforms,wall,core.Transform{{0,1,0},1,{1,1,1}})
+    collider:=phys.collider_box({1,1,4})
+    phys.collision_custom(&collider,phys.collision_layers(CLIP),phys.collision_layers(ZOMBIE))
+    core.add(&f.colliders,wall,collider)
+    zombie:=phys.Collision_Preset_Setting{preset=PRESET_ZOMBIE,belongs=phys.collision_layers(ZOMBIE),collides=phys.COLLISION_LAYERS_ALL}
+    testing.expect_value(t,phys.collision_preset_setting_set(&f.collision,zombie),phys.Collision_Error.None)
+    length :: proc(t:^testing.T,f:^Nav_Test) -> f32 {
+        nav_test_settled(t,f)
+        path,status:=nav_test_path(t,f,{-5,0,0},{5,0,0})
+        testing.expect_value(t,status,ai.Search_Status.Found)
+        return corners_length(path.items[:path.count])
+    }
+    // The Default preset: the clip does not block it.
+    testing.expect(t,length(t,&f)<10.5)
+    // The zombies' preset: the mesh goes around the clip.
+    f.settings.classes[0].collision=PRESET_ZOMBIE
+    testing.expect(t,length(t,&f)>11)
+    // What the preset is changes in Collision_Settings: the class is made again, through the clip.
+    zombie.belongs=phys.collision_layers(PLAYER)
+    testing.expect_value(t,phys.collision_preset_setting_set(&f.collision,zombie),phys.Collision_Error.None)
+    testing.expect(t,length(t,&f)<10.5)
+    // A preset that blocks nothing makes no mesh and says why.
+    name:=base.text_get(f.settings.classes[0].name[:])
+    f.settings.classes[0].collision=phys.PRESET_TRIGGER
+    nav_test_settled(t,&f)
+    testing.expect(t,class_find(&f.nav,name)<0,"the class has no mesh")
+    testing.expect(t,core.problem_find(&f.problems,core.NONE,"navigation.class")!=nil,"the class says why it has no mesh")
+}
+
+@(test)
 a_floor_with_a_box_gets_a_mesh_that_goes_around_the_box :: proc(t:^testing.T) {
     f:Nav_Test
     nav_test_init(&f)
@@ -684,7 +723,7 @@ a_baked_navmesh_reads_back_the_same_tiles_and_links :: proc(t:^testing.T) {
     defer asset.asset_close(&file)
     back:Navigation
     defer navigation_free(&back)
-    testing.expect(t,navigation_reset(&back,&f.settings,&f.problems))
+    testing.expect(t,navigation_reset(&back,&f.settings,&f.collision,&f.problems))
     count,ok:=bake_read(&back,&file,&types)
     tiles,links,generated:=0,0,0
     for &tile in f.nav.classes[0].mesh.tiles {if tile.used {tiles+=1}}
@@ -702,6 +741,17 @@ a_baked_navmesh_reads_back_the_same_tiles_and_links :: proc(t:^testing.T) {
         mark:=base.hash_map_ptr(&back.classes[0].marks,coord_key(tile.data.coord))
         testing.expect(t,mark!=nil && mark.hash==tile.data.hash)
     }
+    // A class made of other collision is not seeded with the tiles of the bake.
+    other:=f.settings
+    other.classes[0].collision=phys.Collision_Preset(2)
+    collision:=f.collision
+    testing.expect_value(t,phys.collision_preset_setting_set(&collision,{preset=phys.Collision_Preset(2),belongs=phys.collision_layers(phys.Collision_Category(2)),collides=phys.COLLISION_LAYERS_ALL}),phys.Collision_Error.None)
+    mismatch:Navigation
+    defer navigation_free(&mismatch)
+    testing.expect(t,navigation_reset(&mismatch,&other,&collision,&f.problems))
+    _,mismatch_ok:=bake_read(&mismatch,&file,&types)
+    testing.expect(t,mismatch_ok)
+    for tile in mismatch.classes[0].mesh.tiles {testing.expect(t,!tile.used)}
     // Another version is not read and leaves the meshes alone.
     file.blob.header.kind_version+=1
     _,ok=bake_read(&back,&file,&types)
@@ -1030,7 +1080,7 @@ the_tiles_two_sections_bake_join_at_their_border :: proc(t:^testing.T) {
     testing.expect(t,e1==.None && e2==.None && e3==.None)
     back:Navigation
     defer navigation_free(&back)
-    testing.expect(t,navigation_reset(&back,&f.settings,&f.problems))
+    testing.expect(t,navigation_reset(&back,&f.settings,&f.collision,&f.problems))
     read :: proc(t:^testing.T,n:^Navigation,bytes:[]u8,types:^asset.Types) -> int {
         file:asset.Asset
         testing.expect_value(t,asset.asset_open(&file,bytes),asset.Error.None)

@@ -96,7 +96,7 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:core.Read(Nav_Link
             class:=n.classes[i].class
             from,to,two_way:=start,end,link.two_way
             if link_arced(link) {
-                check:=Arc_Check{physics,class.radius,class.height}
+                check:=Arc_Check{physics,class.radius,class.height,n.classes[i].filter}
                 kind:=ai.Nav_Jump_Kind.Jump if link.kind==LINK_JUMP else .Drop
                 forward:=arc_clear(&check,{start=start,end=end,kind=kind})
                 back:=link.two_way && arc_clear(&check,{start=end,end=start,kind=.Jump})
@@ -163,6 +163,7 @@ links_mark :: proc(n:^Navigation,class:int,coord:[2]i32) {
 Arc_Check :: struct {
     physics:core.Ref(phys.Physics_State),
     radius,height:f32,
+    filter:phys.Query_Filter, // what blocks the agents of the class
 }
 
 // Whether a capsule of the class fits along the arc of a link, a little above
@@ -194,7 +195,7 @@ arc_clear :: proc(user:rawptr,link:ai.Nav_Jump_Link) -> bool {
         d:=p-previous
         length:=linalg.length(d)
         if length>1e-4 {
-            if _,hit:=phys.sweep(check.physics,phys.Capsule{radius=radius,half_height=half},previous,mm.QUAT_IDENTITY,d/length,length);hit {return false}
+            if _,hit:=phys.sweep(check.physics,phys.Capsule{radius=radius,half_height=half},previous,mm.QUAT_IDENTITY,d/length,length,filter=check.filter);hit {return false}
         }
         previous=p
     }
@@ -224,7 +225,7 @@ links_generate :: proc(n:^Navigation,physics:core.Ref(phys.Physics_State),proble
             if ai.nav_mesh_remove_links_of(&c.mesh,owner)>0 {n.revision+=1}
             if ai.nav_mesh_tile_at(&c.mesh,coord)==nil {continue}
             jump:=ai.Nav_Jump{up=class.jump_up,across=class.jump_across,down=class.drop,radius=class.radius,climb=class.climb,step=max(c.config.cell_size*4,class.radius)}
-            check:=Arc_Check{physics,class.radius,class.height}
+            check:=Arc_Check{physics,class.radius,class.height,n.classes[i].filter}
             count,complete:=ai.nav_jump_links(&c.mesh,coord,jump,found[:],arc_clear,&check)
             if !complete {
                 core.report(problems,core.NONE,"navigation.generated_links","A tile of class %q at %v has more than %d places to jump or drop from: some get no link",base.text_get(class.name[:]),coord,NAV_GENERATED_PER_TILE)

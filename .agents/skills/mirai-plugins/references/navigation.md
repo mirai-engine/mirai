@@ -9,6 +9,12 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - There is one navmesh per `Navigation_Settings` class: size (radius, height), step, slope and
   what the links generated for it can ask for (jump up and across, drop). Changing a class or a
   build size rebuilds everything.
+- A class's `collision` is the collision preset of its agents' colliders. Its mesh is made of the
+  static collision that blocks a collider of that preset under `Collision_Settings`: a clip that
+  blocks only players is not in the zombies' mesh, and one that blocks only zombies is. Default:
+  what blocks the Default category. A change of the class or of what its preset is in
+  `Collision_Settings` rebuilds it; a bake made of other collision is not read for it. Custom or
+  a sensor preset blocks nothing: the class has no mesh and `navigation.class` says why.
 - `Navigation` (world storage) holds the meshes and is copied with the world: Play starts with
   the document's mesh. `Navigation_Builds` (per world, application) holds the jobs and what
   follows the entities; a new copy is recognized by `Navigation.uid` and discards what was being
@@ -16,8 +22,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
   - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
     (`phys.static_bounds`).
-  - **What.** The physics static collision (`phys.static_triangles`): everything a default query
-    hits, without dynamic or kinematic bodies, characters or sensors. Terrain and foliage enter
+  - **What.** The physics static collision (`phys.static_triangles`) that blocks the agents of the
+    class (above), without dynamic or kinematic bodies, characters or sensors; the arcs of the
+    generated links are checked against the same collision. Terrain and foliage enter
     because they publish their shapes in the same physics world.
   - **When.** A tile is marked when a box of the physics change log (`phys.static_changes`)
     touches it, a `Nav_Area` or obstacle that changed, the bounds or `nav_rebuild`. A log that
@@ -240,6 +247,9 @@ It needs no component or configuration.
   edges between tiles, links with their arc and the corridor and corners of the selected agents.
   For an air class, its zones and the free nodes larger than a block, and the corridor cells and
   the tightened path of the selected agents.
+- `navigation.<class>.collision`, for a surface class: what its mesh is made of, within
+  `NAV_VIEW_COLLISION_REACH` of the camera; the colliders that block its agents bright and those
+  that block only others dim.
 - `nav.status`, `nav.build`, `nav.bake`, `nav.inspect`, `nav.path`, `nav.agent`
   (`engine.describe` gives their schemas); the four read ones also cover the volume, and
   `nav.status` counts the tiles waiting for their collision (`unloaded`), those that left with
