@@ -615,13 +615,14 @@ Extras_Mark :: struct {layers,panels,debug,instances,views:int}
 @(private)
 extras_mark :: proc(app:^host.App) -> Extras_Mark {
     e:=&app.extras
-    return {e.layer_count,e.panel_count,e.debug_count,e.instance_count,app.view_count}
+    return {e.layer_count,e.panel_count,e.debug_count,len(e.instances),app.view_count}
 }
 
 @(private)
 extras_drop :: proc(app:^host.App,mark:Extras_Mark) {
     e:=&app.extras
-    e.layer_count,e.panel_count,e.debug_count,e.instance_count=mark.layers,mark.panels,mark.debug,mark.instances
+    e.layer_count,e.panel_count,e.debug_count=mark.layers,mark.panels,mark.debug
+    resize(&e.instances,mark.instances)
     app.view_count=mark.views
 }
 

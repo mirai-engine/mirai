@@ -94,6 +94,7 @@ Api_Status :: struct {
     textures:Api_Textures,
     geometry:Api_Geometry,
     ticks_dropped:u64,
+    extras_dropped:u64 `mirai:"label=What libraries asked to draw in a frame that did not fit and was not drawn (panels, lines, UI layers and textures, views, probes), since the editor started; it should stay 0"`,
     build:Build_Phase,
     build_errors:int,
     build_message:[256]u8 `mirai:"text"`,
@@ -462,7 +463,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
     api_text_put(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
-    r.ticks_dropped=app.stats.ticks_dropped
+    r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.stats.extras_dropped
     a:=api_of(s)
     functions_fill(s,st,r)
     r.cpu={

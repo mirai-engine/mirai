@@ -28,7 +28,8 @@ import stbi "vendor:stb/image"
 FRAME_LAYER_CAPACITY :: 16
 FRAME_PANEL_CAPACITY :: 512
 FRAME_DEBUG_CAPACITY :: 8
-FRAME_INSTANCE_CAPACITY :: 256
+// Room made once for the instances of a frame; there may be more, and the list grows.
+FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
 FRAME_EFFECT_VIEW_CAPACITY :: 16
 FRAME_SLOT_TEXTURE_CAPACITY :: 32
@@ -47,8 +48,7 @@ Frame_Extras :: struct {
     panel_count:int,
     debug:[FRAME_DEBUG_CAPACITY]render.Debug_Lines,
     debug_count:int,
-    instances:[FRAME_INSTANCE_CAPACITY]render.Instance_Desc,
-    instance_count:int,
+    instances:[dynamic]render.Instance_Desc, // no limit: every animated actor may add skinned copies
     ui_textures:[FRAME_UI_TEXTURE_CAPACITY]render.Ui_Texture_Draw,
     ui_texture_count:int,
     effect_views:[FRAME_EFFECT_VIEW_CAPACITY]render.Effect_View,
@@ -423,7 +423,8 @@ app_frame_end :: proc(app:^App) {
     app_gpu_failure_check(app)
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
-    app.extras.instance_count,app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count,app.extras.slot_texture_count=0,0,0,0,0
+    clear(&app.extras.instances)
+    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count,app.extras.slot_texture_count=0,0,0,0
     app.camera_cut=false
     app.camera_carried={}
     app.inspection={}
@@ -599,13 +600,18 @@ app_debug_lines_add :: proc(app:^App,lines:render.Debug_Lines) -> bool {
 // Visual instances for this frame, without entities in a world.
 app_instance_add :: proc(app:^App,instance:render.Instance_Desc) -> bool {
     extras:=&app.extras
-    if extras.instance_count>=len(extras.instances) {app.stats.extras_dropped+=1;return false}
-    extras.instances[extras.instance_count]=instance
-    extras.instance_count+=1
+    if extras.instances.allocator.procedure==nil && app.allocator.procedure!=nil {extras.instances.allocator=app.allocator}
+    if _,error:=append(&extras.instances,instance);error!=nil {app.stats.extras_dropped+=1;return false}
     return true
 }
 
-app_instances :: proc(app:^App) -> []render.Instance_Desc {return app.extras.instances[:app.extras.instance_count]}
+app_instances :: proc(app:^App) -> []render.Instance_Desc {return app.extras.instances[:]}
+
+// Frees what the extras of the frames hold; app_destroy does it.
+app_extras_free :: proc(app:^App) {
+    delete(app.extras.instances)
+    app.extras.instances=nil
+}
 
 // A texture a slot of the mesh of an entity shows this frame (Slot_Texture).
 // False without room for another one.
@@ -783,7 +789,8 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
         if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,nil}
         drawn=render.renderer_frame(r,desc)
-        extras.layer_count,extras.panel_count,extras.debug_count,extras.instance_count=0,0,0,0
+        extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
+        clear(&extras.instances)
         extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
         app.camera_cut=false
         app.inspection={}
@@ -832,7 +839,8 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         run_phase(app,.Game,.Render,{.Render},world,nil)
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut && frame==0,rect={0,0,size.x,size.y},texture=texture}}
         drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],offscreen=true})
-        extras.layer_count,extras.panel_count,extras.debug_count,extras.instance_count=0,0,0,0
+        extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
+        clear(&extras.instances)
         extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
         if !drawn {return}
     }

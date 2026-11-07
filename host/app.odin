@@ -254,6 +254,7 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     app.tick_dt=1/f32(core.SIMULATION_SETTINGS_DEFAULT.tick_rate)
     app.max_ticks=desc.max_ticks_per_frame>0?desc.max_ticks_per_frame:8
     app.worlds=make([dynamic]World_Slot,allocator)
+    app.extras.instances=make([dynamic]render.Instance_Desc,0,FRAME_INSTANCE_RESERVE,allocator)
     platform_desc:=platform.Platform_Desc{
         headless=!desc.window,window=desc.window_desc,video_driver=desc.video_driver,
         fixed_dt=desc.fixed_dt,allocator=allocator,
@@ -334,6 +335,7 @@ app_destroy :: proc(app:^App) {
     if app.platform!=nil {platform.destroy(app.platform)}
     delete(app.root,app.allocator);delete(app.engine_root,app.allocator);delete(app.options,app.allocator)
     delete(app.animation_cache,app.allocator)
+    app_extras_free(app)
     free(app,app.allocator)
 }
 

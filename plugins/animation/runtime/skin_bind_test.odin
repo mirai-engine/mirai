@@ -64,6 +64,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
+    defer host.app_extras_free(&app)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
     playback:Playback;defer playback_free(&playback)
@@ -102,7 +103,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     }
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer),skins:^core.Table(Pose_Source),parents:^core.Table(core.Parent),worlds:^core.Table(core.World_Transform),tints:^core.Table(erender.Tint),overrides:^core.Table(erender.Material_Override),hidden:^core.Table(erender.Hidden),elsewhere:^core.Table(erender.Drawn_Elsewhere),highlights:^core.Table(erender.Highlight),offsets:^core.Table(erender.Draw_Offset),problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
-        app.extras.instance_count=0
+        clear(&app.extras.instances)
         outlines:core.Table(erender.Outline);defer core.table_destroy(&outlines)
         animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
     }
