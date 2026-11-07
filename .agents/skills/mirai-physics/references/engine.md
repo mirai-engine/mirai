@@ -147,6 +147,16 @@ exposes the criterion to classify with neighboring geometry.
 - Text, inspector and API name them; the data store the number: renaming does not touch what is
   saved and changing the number of a constant changes what it means. From code it is written by
   value: `collider.preset=PRESET_TRIGGER`, or `collision_custom` with `collision_layers(...)`.
+- **A kind of actor is a preset.** When the player, the enemies and the clips that block only one
+  of them collide differently, the game declares a category and a preset per kind
+  (`PRESET_ENEMY :: physics.Collision_Preset(2)`), writes what each preset is once in
+  `Collision_Settings` (`settings.mirai`, or `physics.collision.set`), and the `Collider` of each
+  prefab names its preset: in the inspector, with `asset set` on the prefab, or in the tool that
+  writes it. A spawned prefab (the player of a spawn point, an enemy) then collides as its kind
+  with no game code, and the navmesh class of those agents names the same preset
+  ([navigation](../../mirai-plugins/references/navigation.md#meshes)). A step that rewrites
+  `belongs`/`collides` of a `Collider` at run time to give it its kind is a workaround: change the
+  prefab instead.
 
 `Collision_Settings` (project settings storage, flat and copyable) has an entry only per value that
 differs from its defaults:

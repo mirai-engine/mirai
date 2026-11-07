@@ -218,6 +218,10 @@ distance) picks the point and passes it.
   this tick; if it fails, the seats wait `SPAWN_RETRY` ticks. It is the route to give players a
   body without code; turned off, the game gives them a body. `scene.spawn` remains for what nobody
   drives.
+- What the body is (its collision kind, components, values) is its prefab: to change how the
+  player collides, its `Collider` names the game's preset
+  ([kinds of actors](../../mirai-physics/references/engine.md#collision-categories-and-presets)),
+  not a step that patches the body after it appears.
 - On a server, the body that appears is replicated if its prefab carries `Replicate` ([replicated
   entities](../../mirai-networking/references/multiplayer.md#what-the-game-declares)); its owner
   is the connection of its seat.

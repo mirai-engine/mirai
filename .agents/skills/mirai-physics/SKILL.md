@@ -139,7 +139,9 @@ with networking ([networking](../mirai-networking/SKILL.md)).
 - Collision belongs to the `Collider`: `Character` and `Destructible` do not repeat shape, surface
   or filter. Categories and presets are named ids declared in code; `Collision_Settings` says per
   preset only what differs from the defaults, and the solver only sees a bit `Filter`. A collision
-  change re-filters the shape, never rebuilds it.
+  change re-filters the shape, never rebuilds it. How a kind of actor collides is its preset, named
+  by the `Collider` of its prefab, not code that rewrites colliders at run time
+  ([kinds of actors](references/engine.md#collision-categories-and-presets)).
 
 ## Verification
 
