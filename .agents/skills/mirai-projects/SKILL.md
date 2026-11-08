@@ -3,9 +3,10 @@ name: mirai-projects
 description: Mirai projects and plugins - `project` (manifests, plugin discovery and order,
   layout), `cook/build` (generated world, engine binaries, libraries and shipped game, project
   shaders, fingerprint, cooking and engine-time exclusion), the installed engine (`mirai package
-  engine`, binary package and release workflow), the `tools/mirai` commands and the templates. Use
-  when changing a manifest, the layout or how a project or the engine is generated, compiled or
-  distributed, or when investigating why something does not compile or what went into the game.
+  engine`, binary package and release workflow), the `tools/mirai` commands, the external scripts
+  and the templates. Use when changing a manifest, the layout or how a project or the engine is
+  generated, compiled or distributed, when investigating why something does not compile or what
+  went into the game, or when taking reference frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build
@@ -43,6 +44,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Headless editor in the background, `rpc`, `mcp`, `capture`:
   [sessions](../mirai-agent-api/references/api.md#sessions); comparing captures:
   [images](../mirai-agent-api/references/image.md).
+- `scripts/*.py`, and reference frames from a YouTube or X video:
+  [external scripts](references/projects.md#external-scripts).
 - Templates: [demo and templates](../mirai-gameplay/references/demo.md#templates); attributes that
   generate the world: [core](../mirai-core/SKILL.md); game code:
   [gameplay](../mirai-gameplay/SKILL.md); plugins: [plugins](../mirai-plugins/SKILL.md).
