@@ -278,7 +278,7 @@ Each mode has its folder: switching between them compiles nothing.
   changed declaration of any. Before compiling a part, the stamp zeroes what depends on what
   changed: a build that fails halfway leaves those parts for the next one.
 - **Mode.** `build`, `edit`, `play` and `session start|restart` accept `--dev` (everything at
-  `-o:minimal`, to check changes) or `--release` (`-o:speed`, to measure and ship), not both.
+  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both.
   Without either, `edit` and `play` use `--release` (a person runs them); `build`, `session start`
   and `import`, the last compiled mode (`Keep`) and the manifest's optimization; `session
   restart`, that of the previous session. An agent always passes `--dev`. `build.engine_current`
@@ -407,7 +407,7 @@ tools come from `.deps`, also from a worktree.
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
 | Call the editor API | `mirai rpc <method> [json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
-| Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality]` |
+| Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |
 | Compare and crop images | `mirai image diff\|mottle\|stats\|montage\|crop\|zoom\|pick ...` |
 | Measure only between measurements | `mirai measure -- <command> [arguments...]` |

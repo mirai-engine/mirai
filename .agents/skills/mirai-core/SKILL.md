@@ -206,7 +206,7 @@ A game is a struct in memory and a list of functions that transform it
   project; after each function, `core.fail` names the function, component and entity that changed
   without being requested. It copies tables on every function: it is not for measuring.
 - CPU copies of meshes (`host/assets_geometry_test.odin`, `assets_generated_test.odin`): repeat with
-  `--release` if memory changes.
+  `--release` only if a failure may depend on optimization.
 - Fonts, texts and prompts of the content: `host/content_interface_test.odin`.
 - GPU failure: `a_lost_gpu_leaves_the_frames_running_without_drawing` (`host`, with GPU).
 - Entity pool: also `mirai test plugins/physics/runtime` (scene reload with physics storage).

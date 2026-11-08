@@ -515,7 +515,7 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
 
 ## Verification
 
-`plugins/animation/runtime`; repeat with `--release` when changing state or memory.
+`plugins/animation/runtime`; repeat with `--release` only if a failure may depend on optimization.
 
 - `graph_control_test.odin`: state queries and events, requests with cutoff, names, copies,
   parameters by name, alternative library and mirroring with root motion.

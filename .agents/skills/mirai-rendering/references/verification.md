@@ -128,7 +128,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 ## Render check
 
 `mirai render check demo` measures what the user sees: the fixed views of
-`demo/render_check.mirai` in a windowless editor compiled at `--release`, measured only between
+`demo/render_check.mirai` in a windowless editor compiled at `--dev`, measured only between
 checkouts (it takes the `mirai measure` turn), against the `main` build measured the same way. A
 change of light, GI, materials, exposure or render cost is accepted only with this check without
 regressions, besides the reference metrics of `gi_test`: synthetic fixtures are not enough to
@@ -138,6 +138,12 @@ GPU receives (how assets are stored or loaded when they decode to the same data)
 check: captures against `main` are enough. The full check measures cost, so it runs only on a
 machine with no other GPU load.
 
+- **`--dev` or `--release`.** Both builds of a check are built in the same mode, `--dev` unless it
+  says otherwise. The image, the frame and the GPU of each pass come out the same in the two modes;
+  the CPU costs about twice as much in `--dev`, and its figures only compare against another
+  `--dev`. `--release` only when the doubt is the cost of the CPU or a budget in absolute numbers,
+  or when the user asks for it. Measures saved of one mode do not serve the other, and against a
+  report of the other mode the cost is not compared.
 - **Views** (`render_check.mirai`): window sizes (the demo measures only 1440×900; another with
   `--sizes` when the doubt is about scale), frames and, per view, scene, editor camera and `luma`,
   the mean luminance of its art direction. A view with `play` advances Play and leaves it

@@ -85,7 +85,7 @@ stored in the `.skeleton`, like the one the demo's ragdoll station builds by han
 
 ## Verification
 
-- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` when changing memory.
+- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` only if a failure may depend on optimization.
 - `plugins/ragdoll/editor` (no GPU), for `ragdoll.setup`:
   `ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step_of_undo`,
   `ragdoll_setup_without_a_body_map_fails_with_how_to_detect_it_and_changes_nothing` and
