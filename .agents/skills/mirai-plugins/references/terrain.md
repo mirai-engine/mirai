@@ -734,7 +734,7 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 
 ## Verification
 
-Runtime: `mirai test plugins/terrain/runtime` (CPU); `--release` when changing memory. It covers
+Runtime: `mirai test plugins/terrain/runtime` (CPU); `--release` only if a failure may depend on optimization. It covers
 persistence, clones, validation, memory, halo, raycast, masks, immutable publishing, empty chunks,
 physics, saving, stability and world copy.
 

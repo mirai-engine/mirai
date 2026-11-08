@@ -161,7 +161,7 @@ project world. Layout, manifests and build:
   parts need `-collection:plugins=<root>/plugins`.
 - World: `mirai generate <project that enables the plugin>`, and build and run that project.
 - Tests: `mirai test plugins/<n>/runtime` or `.../editor` with the cases of the Verification
-  section of the area's reference (see Map); `--release` when changing state or memory.
+  section of the area's reference (see Map); `--release` only if a failure may depend on optimization.
 - GPU: terrain uses `-define:TERRAIN_GPU=true`; skinning and render plugins, graphics validation.
 - Discovery, order or validation of manifests:
   [project verification](../mirai-projects/SKILL.md#verification). Editor tools:

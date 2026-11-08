@@ -355,7 +355,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             parts:=[3]lib.Body_Part{.Shoulder_L,.Elbow_L,.Hand_L} if side==0 else {.Shoulder_R,.Elbow_R,.Hand_R}
             if !mapped(body,..parts[:]) {continue}
             ik:=anim.IK_CONSTRAINT_DEFAULT
-            ik.root,ik.joint,ik.end=bone(skeleton,body,parts[0]),bone(skeleton,body,parts[1]),bone(skeleton,body,parts[2])
+            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+            ik.root=bone(skeleton,body,parts[0])
+            ik.joint=bone(skeleton,body,parts[1])
+            ik.end=bone(skeleton,body,parts[2])
             // Elbows bend back and down: a pole far behind and below the body.
             ik.pole=-forward*20-up*10
             ik.enabled=false
@@ -375,7 +378,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             parts:=[4]lib.Body_Part{.Hip_L,.Knee_L,.Foot_L,.Toe_L} if side==0 else {.Hip_R,.Knee_R,.Foot_R,.Toe_R}
             if !mapped(body,parts[0],parts[1],parts[2]) {continue}
             leg:=anim.GROUNDED_LEG_DEFAULT
-            leg.hip,leg.knee,leg.foot=bone(skeleton,body,parts[0]),bone(skeleton,body,parts[1]),bone(skeleton,body,parts[2])
+            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+            leg.hip=bone(skeleton,body,parts[0])
+            leg.knee=bone(skeleton,body,parts[1])
+            leg.foot=bone(skeleton,body,parts[2])
             leg.contact_bone=bone(skeleton,body,parts[3]) if body.bones[parts[3]]>=0 else leg.foot
             foot:=world[body.bones[parts[2]]]
             leg.foot_up=mm.quat_rotate(conj(foot.rotation),up)
@@ -528,7 +534,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         // A loop keeps its phase and a body that does not move stands: searching inside a loop
         // every tick, or walking against a wall, would restart the same frames and freeze the legs.
         info.keep_loop_phase,info.stationary_speed=true,SETUP_STATIONARY_SPEED
-        info.left_foot,info.right_foot,info.hips=bone(skeleton,body,.Foot_L),bone(skeleton,body,.Foot_R),bone(skeleton,body,.Pelvis)
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        info.left_foot=bone(skeleton,body,.Foot_L)
+        info.right_foot=bone(skeleton,body,.Foot_R)
+        info.hips=bone(skeleton,body,.Pelvis)
         info.min_rate,info.max_rate=rates[0],rates[1]
         if authoring_field_present(call,"trajectory_direction") {info.trajectory_direction=p.trajectory_direction}
         if authoring_field_present(call,"landing_marker") {info.landing_marker=p.landing_marker}

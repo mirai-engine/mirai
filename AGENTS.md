@@ -126,8 +126,10 @@ PowerShell `mirai.cmd` hands it to Git Bash. The compiler, Slang and the tools c
 The command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
-- An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`; measurements use
-  `--release`. If the user's editor holds the `--dev` build of the checkout, work in a worktree.
+- An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
+  is `--dev` by itself. **`--release` only when the task cannot do without it or the user asks for
+  it**: figures of the CPU (`mirai bench compare`, a benchmark test) or a budget in absolute numbers.
+  If the user's editor holds the `--dev` build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
   output of `rpc` with scripts: `--select` and `--wait-until` instead of `json.load` and `sleep`.

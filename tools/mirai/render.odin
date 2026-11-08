@@ -17,10 +17,11 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--fresh-base] [--wait S] [--allow-load] [--out folder] | render compare <base.json> <report.json>"
+RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--dev|--release] [--fresh-base] [--wait S] [--allow-load] [--out folder] | render compare <base.json> <report.json>"
 
 // mirai render check: the views of render_check.mirai of a project as its
-// editor shows them, built at Speed and measured alone among the checkouts:
+// editor shows them, built --dev (--release for the figures of the CPU, which
+// an optimized build alone gives) and measured alone among the checkouts:
 // the cost of the frame and of each GPU pass, how much the image changes
 // between captures of a still view, its mean luminance and the captures. It
 // measures the build of --base the same way, alternating the two, and fails
@@ -145,6 +146,7 @@ Render_Run :: struct {
     name:string, // head or base
     checkout,project,commit,editor:string,
     quality:bool,          // measured without the cost (--quality)
+    dev:bool,              // built --dev; a report from before it existed was built --release
     loaded:bool,           // something else loaded the GPU while it measured
     conditions:json.Value, // of the first profile.capture
     notes:[dynamic]string,
@@ -169,7 +171,7 @@ Render_Key :: struct {view:string,size:[2]int}
 Render_Options :: struct {
     folder,base,checkout,views,sizes,out,rerun:string,
     wait:int, // seconds
-    quality,fresh_base,allow_load:bool,
+    quality,fresh_base,allow_load,release:bool,
 }
 
 // A measure of a base saved in the shared cache, valid for the checks that
@@ -265,15 +267,16 @@ render_check :: proc(root:string,args:[]string) -> int {
     if o.checkout!="" {
         head.checkout=project.path_absolute(o.checkout)
         head.project=join(head.checkout,relative)
-        head.editor=render_editor_program(head.checkout)
+        head.editor=render_editor_program(head.checkout,o.release)
         if head.editor=="" {
-            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s --release)",head.checkout,relative)
+            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s %s)",head.checkout,relative,render_mode_flag(o.release))
             return 1
         }
     } else {
         head.checkout,head.project=root,folder
-        if code,_,_:=build_project(root,.Editor,{folder},.Release);code!=0 {return code}
-        head.editor=build.engine_paths(root,.Release,context.temp_allocator).editor_program
+        mode:=Build_Mode.Release if o.release else .Dev
+        if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
+        head.editor=build.engine_paths(root,mode,context.temp_allocator).editor_program
     }
     device:=render_device()
     base_target:Render_Target
@@ -292,12 +295,15 @@ render_check :: proc(root:string,args:[]string) -> int {
         if !found {fmt.eprintfln("mirai render: %s has no head run",o.base);return 2}
         run.name="base"
         base_run=run
+        if !o.quality && !run.quality && run.dev==o.release {
+            append(&report.warnings,fmt.aprintf("%s was built %s and this check %s: the cost is not compared",o.base,render_mode_flag(!run.dev),render_mode_flag(o.release)))
+        }
     case os.is_dir(o.base):
         base_target={name="base",checkout=project.path_absolute(o.base)}
         base_target.project=join(base_target.checkout,relative)
-        base_target.editor=render_editor_program(base_target.checkout)
+        base_target.editor=render_editor_program(base_target.checkout,o.release)
         if base_target.editor=="" {
-            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s --release)",base_target.checkout,relative)
+            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s %s)",base_target.checkout,relative,render_mode_flag(o.release))
             return 1
         }
     case:
@@ -312,12 +318,12 @@ render_check :: proc(root:string,args:[]string) -> int {
             now:=time.time_to_unix(time.now())
             for size in plan.sizes {
                 for view in plan.views {
-                    m,found:=render_saved_find(saved[:],render_base_key(relative,device,plan,view,size),o.quality,now)
+                    m,found:=render_saved_find(saved[:],render_base_key(relative,device,plan,view,size,!o.release),o.quality,now)
                     if found {append(&cached,m)} else {append(&missing,Render_Key{view.name,size})}
                 }
             }
             if len(missing)>0 {
-                target,ok,_:=render_base_prepare(root,o.base,relative)
+                target,ok,_:=render_base_prepare(root,o.base,relative,o.release)
                 if !ok {return 1}
                 base_target=target
             } else {
@@ -332,10 +338,10 @@ render_check :: proc(root:string,args:[]string) -> int {
     layers_isolate(root)
 
     has_base:=base_target.editor!="" || base_ref!=""
-    append(&report.runs,Render_Run{name="head",checkout=head.checkout,project=head.project,editor=head.editor,commit=render_commit(head.checkout),quality=o.quality})
+    append(&report.runs,Render_Run{name="head",checkout=head.checkout,project=head.project,editor=head.editor,commit=render_commit(head.checkout),quality=o.quality,dev=!o.release})
     if has_base {
         commit:=base_target.checkout!=""?render_commit(base_target.checkout):base_commit[:10]
-        append(&report.runs,Render_Run{name="base",checkout=base_target.checkout,project=base_target.project,editor=base_target.editor,commit=commit,quality=o.quality})
+        append(&report.runs,Render_Run{name="base",checkout=base_target.checkout,project=base_target.project,editor=base_target.editor,commit=commit,quality=o.quality,dev=!o.release})
     }
     if run,loaded:=base_run.?;loaded {append(&report.runs,run)}
     targets:=[2]Render_Target{head,base_target}
@@ -373,7 +379,7 @@ render_check :: proc(root:string,args:[]string) -> int {
             if targets[1].editor=="" {
                 // The base was saved: built now, without holding the measurement while it compiles.
                 render_alone_end(&alone)
-                target,ok,_:=render_base_prepare(root,base_ref,relative)
+                target,ok,_:=render_base_prepare(root,base_ref,relative,o.release)
                 if !ok {return 1}
                 targets[1]=target
                 base:=&report.runs[1]
@@ -420,6 +426,8 @@ render_options_parse :: proc(args:[]string) -> (o:Render_Options,problem:string)
         case "--rerun":      option=&o.rerun
         case "--wait":       option=&wait
         case "--quality":    o.quality=true;continue
+        case "--release":    o.release=true;continue
+        case "--dev":        o.release=false;continue
         case "--fresh-base": o.fresh_base=true;continue
         case "--allow-load": o.allow_load=true;continue
         }
@@ -521,8 +529,9 @@ render_saved_path :: proc(root,commit:string) -> string {
 
 // What a measure of a build depends on besides its commit: the tool that
 // takes it, the project, the GPU, the view, its size and the frames of the
-// plan. Two checks with the same key measure the same images.
-render_base_key :: proc(project,device:string,plan:Render_Plan,view:Render_View,size:[2]int) -> string {
+// plan, and whether it was built --dev. Two checks with the same key measure
+// the same images.
+render_base_key :: proc(project,device:string,plan:Render_Plan,view:Render_View,size:[2]int,dev:=false) -> string {
     Keyed :: struct {
         version:int,
         project,device:string,
@@ -532,7 +541,7 @@ render_base_key :: proc(project,device:string,plan:Render_Plan,view:Render_View,
     }
     keyed:=Keyed{RENDER_SAVED_VERSION,project,device,size,plan.warmup,plan.frames,plan.interval,plan.captures,view}
     text,_:=json.marshal(keyed,{sort_maps_by_key=true},context.temp_allocator)
-    return fmt.aprintf("%016x",hash.fnv64a(text))
+    return fmt.aprintf("%s%016x",dev?"dev-":"",hash.fnv64a(text))
 }
 
 @(private="file")
@@ -586,7 +595,7 @@ render_base_save :: proc(root:string,report:Render_Report,commit,device:string,p
             if m.failure!="" && !m.scene_missing {continue}
             for view in plan.views {
                 if view.name!=m.view {continue}
-                render_saved_merge(&saved,{key=render_base_key(report.project,device,plan,view,m.size),date=now,quality=base.quality,measure=m})
+                render_saved_merge(&saved,{key=render_base_key(report.project,device,plan,view,m.size,base.dev),date=now,quality=base.quality,measure=m})
                 count+=1
             }
         }
@@ -719,9 +728,18 @@ render_size_parse :: proc(text:string) -> (size:[2]int,ok:bool) {
     return {w,h},w_ok && h_ok
 }
 
-// The editor a checkout built: at Speed, or where builds before the modes left it.
+// What selects the mode of a build on the command line.
 @(private="file")
-render_editor_program :: proc(checkout:string) -> string {
+render_mode_flag :: proc(release:bool) -> string {return "--release" if release else "--dev"}
+
+// The editor a checkout built in that mode: --release also where builds
+// before the modes left it.
+@(private="file")
+render_editor_program :: proc(checkout:string,release:bool) -> string {
+    if !release {
+        candidate:=project.path(checkout,".mirai","engine","dev",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator)
+        return strings.clone(candidate) if os.is_file(candidate) else ""
+    }
     for candidate in ([2]string{
         project.path(checkout,".mirai","engine","release",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator),
         project.path(checkout,".mirai","engine",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator),
@@ -770,10 +788,10 @@ render_base_resolve :: proc(root,ref:string) -> (commit:string,ok,same:bool) {
     return commit,true,ours==theirs && changes==""
 }
 
-// The checkout of ref the check measures as its base, built at Speed with its
-// own tool: <main>/.worktrees/render-base, moved to the commit of ref. same:
+// The checkout of ref the check measures as its base, built in the mode of the
+// check with its own tool: <main>/.worktrees/render-base, moved to the commit of ref. same:
 // this checkout holds the sources of ref, so there is nothing to compare.
-render_base_prepare :: proc(root,ref,relative:string) -> (target:Render_Target,ok,same:bool) {
+render_base_prepare :: proc(root,ref,relative:string,release:=false) -> (target:Render_Target,ok,same:bool) {
     commit,resolved,sources:=render_base_resolve(root,ref)
     if !resolved {return}
     if sources {return {},true,true}
@@ -796,8 +814,8 @@ render_base_prepare :: proc(root,ref,relative:string) -> (target:Render_Target,o
     shell,_:=shell_executable()
     fmt.eprintfln("mirai render: building %s (%s) in %s",ref,commit[:10],folder)
     slashed,_:=strings.replace_all(launcher,"\\","/",context.temp_allocator)
-    if run(folder,{shell,slashed,"build","editor",relative,"--release"})!=0 {fmt.eprintfln("mirai render: could not build the editor of %s",ref);return}
-    target={name="base",checkout=folder,project=join(folder,relative),editor=render_editor_program(folder)}
+    if run(folder,{shell,slashed,"build","editor",relative,render_mode_flag(release)})!=0 {fmt.eprintfln("mirai render: could not build the editor of %s",ref);return}
+    target={name="base",checkout=folder,project=join(folder,relative),editor=render_editor_program(folder,release)}
     return target,target.editor!="",false
 }
 
@@ -1318,7 +1336,7 @@ render_judge :: proc(report:^Render_Report) {
             add(report,{view=m.view,size=m.size,metric="base",note=found?fmt.aprintf("not measured in the base: %s",b.failure):"not measured: the base has no such view"})
             continue
         }
-        if !head.quality && !base.quality {
+        if !head.quality && !base.quality && head.dev==base.dev {
             h,c:=m,b
             again,head_again:=render_measure_find(head.repeats[:],m.view,m.size)
             before,base_again:=render_measure_find(base.repeats[:],m.view,m.size)
@@ -1372,7 +1390,7 @@ render_finish :: proc(report:^Render_Report,path:string) -> int {
     head,_:=render_run_named(report^,"head")
     base,has_base:=render_run_named(report^,"base")
     fmt.printfln("Render check of %s on %s",report.project,report.device!=""?report.device:"an unnamed GPU")
-    fmt.printfln("  head %s",head.commit)
+    fmt.printfln("  head %s, built %s",head.commit,render_mode_flag(!head.dev))
     if has_base {fmt.printfln("  base %s",base.commit!=""?base.commit:"(report)")}
     fmt.println()
     fmt.printfln("%-16s %-10s %-34s %-30s %s","view","size","frame ms (p50)","stability (luma MAE)","mean luminance")

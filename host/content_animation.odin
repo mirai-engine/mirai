@@ -215,8 +215,10 @@ content_animation_read :: proc(
 ) -> bool {
     a:=app.assets
     content_open(a,entry.id,asset.KIND_ANIMATION,&load.file,entry) or_return
-    error:asset.Error
-    if load.view,error=asset.animation_view(&load.file,&a.types);error!=.None {return false}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    opened,error:=asset.animation_view(&load.file,&a.types)
+    load.view=opened
+    if error!=.None {return false}
     for track in load.view.tracks {
         if track.encoding!=.Raw {return true}
     }
@@ -264,7 +266,10 @@ content_animation_read :: proc(
         return true
     }
     asset.asset_close(&load.file)
-    load.file,load.view,load.compress=cached,view,false
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    load.file=cached
+    load.view=view
+    load.compress=false
     return true
 }
 

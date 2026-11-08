@@ -187,8 +187,7 @@ Body:
 ## Verification
 
 `demo/game/grounding_physics_test.odin` (`mirai test demo/game`, which has `animation` and
-`physics`), against a real simulation and its `World_Query` (repeat with `--release` when changing
-memory or copy). It covers slopes, platforms, procedural steps, spiders, replay and lack of memory.
+`physics`), against a real simulation and its `World_Query` (repeat with `--release` only if a failure may depend on optimization). It covers slopes, platforms, procedural steps, spiders, replay and lack of memory.
 
 - `grounding_queries_real_slopes_places_both_feet_and_releases_when_jumping`
 - `grounding_procedural_pose_follows_platform_replays_clones_and_allocates_nothing_when_stable`

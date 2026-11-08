@@ -3,6 +3,7 @@ package workspace
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import si "core:sys/info"
 import "core:time"
 import "mirai:project"
 
@@ -51,6 +52,7 @@ Lock :: struct {
     handle:uintptr,
     owner:string, // file that names who holds it
     held:bool,
+    next:^Lock,   // what is released with it
 }
 
 // Blocks until the lock of path is free and takes it. notice runs once, with
@@ -78,6 +80,11 @@ lock_acquire :: proc(path,what:string,notice:proc(holder:string)=nil) -> (lock:L
 }
 
 lock_release :: proc(lock:^Lock) {
+    if lock.next!=nil {
+        lock_release(lock.next)
+        free(lock.next)
+        lock.next=nil
+    }
     if !lock.held {return}
     _=os.remove(lock.owner)
     lock_close(lock.handle)
@@ -127,13 +134,18 @@ lock_path :: proc(root,name:string,allocator:=context.allocator) -> string {
     return slashes(join(cache_folder(root,"locks",context.temp_allocator),name),allocator)
 }
 
-// Compilations of every checkout take turns on BUILD_LOCK, and BUILD_NOTE
-// says when one took it last (builds_since). What measures time holds
-// MEASURE_LOCK and starts once no compilation runs. Compilations and test runs
-// do not wait for it: what they start while it runs runs at low priority
-// (measurement_running). A process whose MEASURE_ENV is set is part of a
-// measurement (its children): it neither takes MEASURE_LOCK nor waits for it.
+// The compilations of a machine share a few turns: BUILD_LOCK, the first, and
+// those after it while the memory of another one is free, because together
+// they can run out of it. A generation of shaders has SHADERS_LOCK, which no
+// compilation waits for. Within a checkout or a project they go one at a
+// time: they write the same files. BUILD_NOTE says when one took a turn last
+// (builds_since). What measures time holds MEASURE_LOCK and starts once no
+// compilation runs. Compilations and test runs do not wait for it: what they
+// start while it runs runs at low priority (measurement_running). A process
+// whose MEASURE_ENV is set is part of a measurement (its children): it
+// neither takes MEASURE_LOCK nor waits for it.
 BUILD_LOCK :: "build.lock"
+SHADERS_LOCK :: "shaders.lock"
 BUILD_NOTE :: "build.last"
 MEASURE_LOCK :: "measure.lock"
 MEASURE_ENV :: "MIRAI_MEASURE"
@@ -144,20 +156,130 @@ measuring :: proc() -> bool {
     return found && value!=""
 }
 
-// Takes BUILD_LOCK like lock_acquire and notes that a compilation starts now:
-// BUILD_NOTE holds what, and its modification time is when.
-build_acquire :: proc(root,what:string,notice:proc(holder:string)=nil) -> (lock:Lock,ok:bool) {
-    lock,ok=lock_acquire(lock_path(root,BUILD_LOCK,context.temp_allocator),what,notice)
-    if ok {_=os.write_entire_file(lock_path(root,BUILD_NOTE,context.temp_allocator),transmute([]u8)what)}
+// The most turns of the compilations of a machine, and the memory free that
+// a turn after the first asks for: what the largest compiler of a build takes.
+BUILD_TURNS :: 4
+BUILD_TURN_MEMORY :: 4<<30
+
+// The file of a turn.
+@(private)
+build_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> string {
+    return lock_path(root,turn==0?BUILD_LOCK:fmt.tprintf("build-%d.lock",turn),allocator)
+}
+
+// The locks a compilation or a generation of shaders holds while it runs.
+@(private)
+build_paths :: proc(root:string) -> []string {
+    paths:=make([]string,BUILD_TURNS+1,context.temp_allocator)
+    for turn in 0..<BUILD_TURNS {paths[turn]=build_turn_path(root,turn,context.temp_allocator)}
+    paths[BUILD_TURNS]=lock_path(root,SHADERS_LOCK,context.temp_allocator)
+    return paths
+}
+
+// How many turns this machine has: one per two physical cores, and at least one.
+@(private)
+build_turns :: proc() -> int {
+    physical,_,counted:=si.cpu_core_count()
+    return clamp(physical/2,1,BUILD_TURNS) if counted else 1
+}
+
+// The memory a build that starts now can count on; 0 when unknown.
+@(private)
+build_memory_free :: proc() -> i64 {
+    total,free,_,_,known:=si.ram_stats()
+    if !known {return 0}
+    // macOS does not say what is free.
+    return free>0?free:total/2
+}
+
+// Takes the first turn that is free of those there are: one after the first
+// only with the memory of another compilation free. When none is taken,
+// holder is who has the first.
+@(private)
+build_turn_try :: proc(root,what:string,turns:int,memory:i64) -> (lock:Lock,taken:bool,holder:string,failed:bool) {
+    for turn in 0..<turns {
+        if turn>0 && memory<BUILD_TURN_MEMORY {return}
+        written:string
+        lock,taken,written,failed=lock_take(build_turn_path(root,turn,context.temp_allocator),what)
+        if taken || failed {return}
+        if turn==0 {holder=written}
+    }
     return
 }
 
-// Whether a compilation that takes BUILD_LOCK ran at some moment since since:
+// Takes what keeps the other compilations out of the files of root and of
+// also, one folder after the other: they are always taken in that order.
+@(private)
+build_folders_acquire :: proc(lock:^Lock,root,what:string,notice:proc(holder:string),also:[]string) {
+    take :: proc(lock:^Lock,folder,what:string,notice:proc(holder:string)) {
+        taken,ok:=lock_acquire(join(folder,".mirai","build-turn.lock"),what,notice)
+        if !ok {return}
+        next:=new(Lock)
+        next^=taken
+        next.next=lock.next
+        lock.next=next
+    }
+    take(lock,root,what,notice)
+    for folder in also {
+        if !path_same(folder,root) {take(lock,folder,what,notice)}
+    }
+}
+
+@(private)
+path_same :: proc(a,b:string) -> bool {
+    return strings.equal_fold(slashes(a,context.temp_allocator),slashes(b,context.temp_allocator))
+}
+
+@(private)
+build_note :: proc(root,what:string) {
+    _=os.write_entire_file(lock_path(root,BUILD_NOTE,context.temp_allocator),transmute([]u8)what)
+}
+
+// Blocks until no other compilation writes the files of root or of the
+// folders of also and a turn is free, takes them and notes that a compilation
+// starts now: BUILD_NOTE holds what, and its modification time is when.
+// notice runs once for each thing it waits for, with who has it.
+build_acquire :: proc(root,what:string,notice:proc(holder:string)=nil,also:=[]string{}) -> (lock:Lock,ok:bool) {
+    held:Lock
+    build_folders_acquire(&held,root,what,notice,also)
+    noticed:=false
+    for {
+        turn,taken,holder,failed:=build_turn_try(root,what,build_turns(),build_memory_free())
+        if failed {break}
+        if taken {
+            lock,ok=turn,true
+            build_note(root,what)
+            break
+        }
+        if !noticed && notice!=nil {
+            notice(holder)
+            noticed=true
+        }
+        time.sleep(250*time.Millisecond)
+    }
+    lock.next=held.next
+    return
+}
+
+// The same for a generation of shaders, which takes no turn of the
+// compilations: only one generation runs at a time.
+shaders_acquire :: proc(root,what:string,notice:proc(holder:string)=nil) -> (lock:Lock,ok:bool) {
+    held:Lock
+    build_folders_acquire(&held,root,what,notice,nil)
+    lock,ok=lock_acquire(lock_path(root,SHADERS_LOCK,context.temp_allocator),what,notice)
+    if ok {build_note(root,what)}
+    lock.next=held.next
+    return
+}
+
+// Whether a compilation that takes a turn ran at some moment since since:
 // one holds it now or took it after since. A measurement starts once no
 // compilation runs (measure_try, and the lock_wait of who takes MEASURE_LOCK),
 // so one that took it before since ended before the measurement started.
 builds_since :: proc(root:string,since:time.Time) -> bool {
-    if held,_,_:=lock_holder(lock_path(root,BUILD_LOCK,context.temp_allocator),context.temp_allocator);held {return true}
+    for path in build_paths(root) {
+        if held,_,_:=lock_holder(path,context.temp_allocator);held {return true}
+    }
     info,error:=os.stat(lock_path(root,BUILD_NOTE,context.temp_allocator),context.temp_allocator)
     return error==nil && time.diff(since,info.modification_time)>=0
 }
@@ -193,7 +315,6 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0)) -> (lock:Lock,ok:bo
     if measuring() {return {},true,"",false}
     start:=time.tick_now()
     measure_path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
-    build_path:=lock_path(root,BUILD_LOCK,context.temp_allocator)
     for {
         taken,failed:bool
         lock,taken,holder,failed=lock_take(measure_path,what)
@@ -203,17 +324,25 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0)) -> (lock:Lock,ok:bo
         if left<=0 {return {},false,holder,false}
         lock_wait(measure_path,nil,left)
     }
-    for {
-        build,taken,builder,failed:=lock_take(build_path,what)
-        lock_release(&build)
-        if taken || failed {return lock,true,"",false}
-        left:=wait-time.tick_since(start)
-        if left<=0 {
-            lock_release(&lock)
-            return {},false,builder,true
+    for build_path in build_paths(root) {
+        for {
+            build,taken,builder,failed:=lock_take(build_path,what)
+            lock_release(&build)
+            if taken || failed {break}
+            left:=wait-time.tick_since(start)
+            if left<=0 {
+                lock_release(&lock)
+                return {},false,builder,true
+            }
+            lock_wait(build_path,nil,left)
         }
-        lock_wait(build_path,nil,left)
     }
+    return lock,true,"",false
+}
+
+// Waits until no compilation runs. Those that start later run at low priority.
+builds_wait :: proc(root:string,notice:proc(holder:string)=nil) {
+    for path in build_paths(root) {lock_wait(path,notice)}
 }
 
 @(private)

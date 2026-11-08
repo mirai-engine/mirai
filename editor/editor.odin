@@ -702,7 +702,9 @@ game_ui_frame :: proc(s:^Session,r:^Run) {
     app.ui_input=run_ui_input(r,window)
     app.game_input_blocked=true
     host.app_game_frame(app,r.world,{.Ui},dt=0)
-    app.ui_input,app.game_input_blocked=window,blocked
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    app.ui_input=window
+    app.game_input_blocked=blocked
 }
 
 // What replaces a World or ends the editor, and the jobs that run beside it.

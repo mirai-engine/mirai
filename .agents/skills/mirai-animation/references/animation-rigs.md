@@ -163,7 +163,7 @@ maps.
 
 ## Verification
 
-`plugins/animation/runtime` (repeat with `--release` when changing state or memory):
+`plugins/animation/runtime` (repeat with `--release` only if a failure may depend on optimization):
 
 - `rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities` and the cases of
   `rig_shapes_test.odin` (spline, correctives, spatial targets, Follow, aligned IK, Look with an up

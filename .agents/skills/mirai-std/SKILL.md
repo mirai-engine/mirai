@@ -120,8 +120,8 @@ description: Mirai standard library for games, with the packages std/base, jobs,
 
 - `mirai test std/<package>` of the affected package; if the change is limited to one file, only its
   tests. `std/base` also with `-vet` if it changes.
-- After touching memory or threads, repeat with `--release`, and `std/base` with
-  `-define:MIRAI_PROFILE=false`.
+- After touching memory or threads, repeat `std/base` with `-define:MIRAI_PROFILE=false`, and with
+  `--release` only if a failure may depend on optimization.
 - The `hostile_test.odin` of each package except `subprocess` calls its public functions with random
   inputs and only requires that they return (`-define:<PACKAGE>_HOSTILE_ROUNDS=n`, e.g.
   `BASE_HOSTILE_ROUNDS`). After touching a validation or a path with `#no_bounds_check`, repeat them
