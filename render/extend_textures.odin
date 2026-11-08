@@ -33,7 +33,7 @@ Extension_Table_Texture :: struct {
 table_texture :: proc(r: ^Renderer, world: u64, desc: Table_Texture_Desc) -> (index: u32, made, ok: bool) {
 	entry: ^Extension_Table_Texture
 	if entry, made = extension_table_texture(r, world, desc); entry == nil {return}
-	return u32(entry.handle) - 1, made, true
+	return texture_entry(int(entry.handle) - 1), made, true
 }
 
 // Copies the texels of a table texture of the world of the pass from a

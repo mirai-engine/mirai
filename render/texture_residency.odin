@@ -319,9 +319,15 @@ textures_estimate :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: 
 			if layer.enabled && int(layer.material) < len(s.materials) {row_lods(streams, programs, &s.materials[layer.material], densest, near)}
 		}
 	}
+	// The texture of an entry of the table a material names (texture_index), by handle - 1.
+	texture_of_entry :: proc(entry: u32, count: int) -> (index: int, held: bool) {
+		index = int(entry) - TEXTURE_RESERVED
+		return index, entry != GPU_NONE && index >= 0 && index < count
+	}
 	row_lods :: proc(streams: []Texture_Stream, programs: []Program, row: ^Gpu_Material_Row, density: [2]f32, near: f32) {
-		for index, kind in row.textures {
-			if int(index) >= len(streams) {continue}
+		for entry, kind in row.textures {
+			index, held := texture_of_entry(entry, len(streams))
+			if !held {continue}
 			transform := row.map_transforms[kind]
 			set := min(int(transform.uv_set), 1)
 			stream := &streams[index]
@@ -338,7 +344,7 @@ textures_estimate :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: 
 			if program.id != row.program_id || program.domain != .Surface {continue}
 			for parameter in program.parameters {
 				if parameter.kind != .Texture {continue}
-				if index := words[parameter.offset / 4]; int(index) < len(streams) {
+				if index, held := texture_of_entry(words[parameter.offset / 4], len(streams)); held {
 					streams[index].shown = true
 					streams[index].lod = -max(f32)
 				}

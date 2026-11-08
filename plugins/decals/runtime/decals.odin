@@ -84,7 +84,7 @@ decals_render :: proc(
         }
         if decal.texture!={} {
             if texture:=host.assets_texture_image(app.assets,decal.texture);texture!=nil && texture.handle!=0 && !texture.failed {
-                entry.texture=u32(texture.handle)-1
+                entry.texture=render.texture_index(texture.handle)
                 entry.density=f32(texture.width)/max(abs(world.scale.x),1e-4)
             }
         }

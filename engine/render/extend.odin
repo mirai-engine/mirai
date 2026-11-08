@@ -570,7 +570,7 @@ texture_remove :: proc(app:^host.App,texture:Texture_Handle) -> bool {
 }
 
 // Where shaders read a texture of the table (material_textures of scene.slang).
-texture_index :: proc "contextless" (texture:Texture_Handle) -> u32 {return u32(texture)-1 if texture!=0 else max(u32)}
+texture_index :: proc "contextless" (texture:Texture_Handle) -> u32 {return u32(gpu.TEXTURE_RESERVED)+u32(texture)-1 if texture!=0 else max(u32)}
 
 // How many times the vertices of the scene were made again: what was written
 // in a deformable before is gone, and it is to be written again.

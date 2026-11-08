@@ -76,9 +76,9 @@ the_estimate_takes_the_nearest_instance_that_shows_a_texture :: proc(t: ^testing
 	append(&s.indices, 0)
 	row: Gpu_Material_Row
 	for &index in row.textures {index = GPU_NONE}
-	row.textures[.Base_Color] = 0
+	row.textures[.Base_Color] = texture_entry(0)
 	row.map_transforms[.Base_Color].linear = {1, 0, 0, 1}
-	row.textures[.Normal] = 1
+	row.textures[.Normal] = texture_entry(1)
 	row.map_transforms[.Normal].linear = {4, 0, 0, 4} // tiles four times
 	append(&s.materials, row)
 	place :: proc(s: ^Scene_State, x, scale: f32, flags: u32 = 0) {
