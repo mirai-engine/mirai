@@ -459,3 +459,28 @@ a_cache_entry_restores_into_another_checkout_without_naming_the_first :: proc(t:
         testing.expect(t,os.is_file(resolved),"the declarations link against the library of the second checkout")
     }
 }
+
+// A source without a package clause, a comment alone, is an error that names the file for the
+// world generator and for declare, not a crash of the tool.
+@(test)
+a_source_without_a_package_clause_names_its_file :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder,error:=os.make_directory_temp("","mirai-no-package-*",context.temp_allocator)
+    if !testing.expect(t,error==nil) {return}
+    defer os.remove_all(folder)
+    engine,game:=project.path(folder,"engine"),project.path(folder,"project")
+    write :: proc(t:^testing.T,path,text:string) {
+        testing.expect(t,os.make_directory_all(os.dir(path))==nil)
+        testing.expect(t,os.write_entire_file(path,text)==nil)
+    }
+    write(t,project.path(engine,"core","core.odin"),"package core\n\nvalue :: proc() -> int {return 1}\n")
+    write(t,project.path(engine,"core","probe.odin"),"// probe\n")
+    write(t,project.path(game,"game","game.odin"),"package game\n")
+    p:=project.Project{root=game,engine_root=engine}
+    generated:=world_generate(&p,context.temp_allocator).errors
+    declared,_:=declare({root=engine,packages={"core"},binary="mirai",library=project.path(folder,"out","core.lib"),stage=project.path(folder,"out","stage"),decl=project.path(folder,"out","decl")})
+    for errors,who in ([][]string{generated,declared}) {
+        text:=strings.join(errors,"\n")
+        testing.expectf(t,strings.contains(text,"probe.odin(") && strings.contains(text,"Expected a package declaration"),"%s: %s",who==0?"generator":"declare",text)
+    }
+}

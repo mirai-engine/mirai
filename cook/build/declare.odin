@@ -2,8 +2,6 @@ package build
 
 import "core:fmt"
 import "core:odin/ast"
-import "core:odin/parser"
-import "core:odin/tokenizer"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -76,20 +74,8 @@ declare :: proc(desc:Declare_Desc) -> (errors:[]string,changed:Declare_Changed) 
 @(private="file")
 declare_package :: proc(d:^Declare,path:string) {
     folder:=project.path(d.desc.root,path,allocator=context.temp_allocator)
-    collected,collected_ok:=parser.collect_package(folder)
-    if !collected_ok {
-        append(&d.errors,fmt.aprintf("%s: the package could not be read",folder))
-        return
-    }
-    for file_path in collected.files {
-        if strings.has_suffix(file_path,"_test.odin") {delete_key(&collected.files,file_path)}
-    }
-    p:=parser.default_parser()
-    p.err=proc(pos:tokenizer.Pos,format:string,args:..any) {}
-    if !parser.parse_package(collected,&p) {
-        append(&d.errors,fmt.aprintf("%s: the package does not parse; the compiler says where",folder))
-        return
-    }
+    _,files,ok:=sources_read(folder,&d.errors,context.temp_allocator)
+    if !ok {return}
     stage:=project.path(d.desc.stage,path,allocator=context.temp_allocator)
     decl:=project.path(d.desc.decl,path,allocator=context.temp_allocator)
     for target in ([]string{stage,decl}) {
@@ -99,9 +85,6 @@ declare_package :: proc(d:^Declare,path:string) {
         }
     }
     written:=make(map[string]bool,context.temp_allocator)
-    files:=make([dynamic]^ast.File,context.temp_allocator)
-    for _,file in collected.files {append(&files,file)}
-    slice.sort_by(files[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     link_prefix:=fmt.aprintf("%s.%s",d.desc.binary,strings.join(strings.split(path,"/",context.temp_allocator),".",context.temp_allocator),allocator=context.temp_allocator)
     for file in files {
         scope:=File_Scope{file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix}
