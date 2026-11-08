@@ -465,7 +465,7 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
 @(test)
 an_image_is_a_normal_map_only_when_n_is_a_word_of_its_name :: proc(t:^testing.T) {
     Named :: struct {name:string,use:importer.Image_Use}
-    for named in ([?]Named{{"wall_n.png",.Normal},{"wall_n_2.png",.Normal},{"wall_normal.png",.Normal},{"hud_nmbr2.png",.Color},{"icon_new.png",.Color}}) {
+    for named in ([?]Named{{"wall_n.png",.Normal},{"wall_n_2.png",.Normal},{"wall_normal.png",.Normal},{"wall_nm.png",.Normal},{"wall_nor_gl.png",.Normal},{"wall_norm.png",.Normal},{"hud_nmbr2.png",.Color},{"icon_new.png",.Color},{"north_wall.png",.Color},{"n_wall.png",.Color}}) {
         testing.expectf(t,image_use(named.name)==named.use,"%s: %v",named.name,image_use(named.name))
     }
 }

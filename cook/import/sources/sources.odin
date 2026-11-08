@@ -40,8 +40,14 @@ image_use :: proc(path:string) -> importer.Image_Use {
     for part in ([?]string{"normal","nrm"}) {
         if strings.contains(name,part) {return .Normal}
     }
-    // "_n" only as a word of its own: "wall_n" and "wall_n_2", not "panel_nmbr".
-    if strings.has_suffix(name,"_n") || strings.contains(name,"_n_") {return .Normal}
+    // The short forms only as a word after the first: "wall_n_2" and "wall_nor_gl", not "panel_nmbr".
+    words:=name
+    _,_=strings.split_iterator(&words,"_")
+    for word in strings.split_iterator(&words,"_") {
+        switch word {
+        case "n","nm","nor","norm": return .Normal
+        }
+    }
     for part in ([?]string{"rough","metal","orm","occlusion","_ao","height","displace","mask","specular","data"}) {
         if strings.contains(name,part) {return .Data}
     }
