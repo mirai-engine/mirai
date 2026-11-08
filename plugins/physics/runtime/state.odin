@@ -682,6 +682,8 @@ geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
 geometry_marks :: proc(state:^Physics_State) -> bool {
     w:=&state.world
     total:=len(w.hulls)+len(w.meshes)+len(w.heightfields)
+    // A copy marks its source too: what the source keeps is the source's, not the copier's.
+    if state.geometry.allocator.procedure==nil {state.geometry.allocator=w.allocator}
     if len(state.geometry)!=total && resize(&state.geometry,total)!=nil {return false}
     for &slot,i in w.hulls {
         mark:=&state.geometry[i]
