@@ -179,7 +179,11 @@ worker and what the renderer measures. The first `profile_start` reserves the me
 not allocate, without recording a zone costs one branch and what does not fit is counted in `lost`.
 Whoever reads the zones as they happen (a profiling plugin) calls `profile_request` in every frame
 and reads them with its own cursor; without a recording or a request, the device writes no
-per-pass timestamps. The editor exposes it with
+per-pass timestamps. The GPU times of a frame come back `MAX_FRAMES_IN_FLIGHT` frames later with
+the `rhi.frame_number` they measured, and go to the recorded frame that submitted it, each pass
+with its interval on the clock of the zones; a recording runs up to `PROFILE_GPU_LATE` frames past
+its last one, keeping none of their zones, so that its last frames get theirs. A frame whose times
+did not come back (`profile_stop` first, a device that does not measure) has `gpu` false. The editor exposes it with
 [`profile.*`](../../mirai-agent-api/references/methods.md#profiling).
 
 **Loads (`load_profile.odin`).** `app.load_profile` keeps the last load of each kind (scene, Play,

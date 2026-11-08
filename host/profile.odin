@@ -14,8 +14,11 @@ import "mirai:std/jobs"
 // the ring of each worker of the job system its jobs; and per frame what the
 // zones do not carry, the times of the
 // renderer and of the GPU. Rings are drained at the end of every frame, so a
-// ring only has to hold one frame. While nothing records a zone costs a
-// branch and the GPU reports only its whole frame. The first profile_start
+// ring only has to hold one frame. The GPU times of a frame come back
+// rhi.MAX_FRAMES_IN_FLIGHT frames later, tagged with the rhi frame they
+// measured: they go to the frame that submitted it, and a recording runs up
+// to PROFILE_GPU_LATE frames past its last one to receive them. While nothing
+// records a zone costs a branch and the GPU reports only its whole frame. The first profile_start
 // reserves the memory; a recording allocates nothing. Whoever reads the zones
 // as they happen (a profiler plugin) asks for them every frame with
 // profile_request and reads the rings with profile_read.
@@ -27,6 +30,7 @@ PROFILE_PASSES :: 1<<17        // GPU pass times of a whole recording
 PROFILE_PASS_NAMES :: 128      // the last one names every pass that did not fit
 PROFILE_PASS_NAME_BYTES :: 32
 PROFILE_MAIN :: jobs.OWNER     // the ring of the main thread, worker 0 of the job system
+PROFILE_GPU_LATE :: rhi.MAX_FRAMES_IN_FLIGHT+1 // frames a recording runs past its last one for the GPU times of its frames
 
 Profile_Frame :: struct {
     number:u32,       // the frame of base.Profile that the zones of this frame carry
@@ -35,7 +39,9 @@ Profile_Frame :: struct {
     render_wait_ms:f32,    // the wait for a frame slot of the GPU (and for the display with vsync)
     render_record_ms:f32,
     render_end_ms:f32,
-    gpu_ms:f32,            // the last frame the GPU finished
+    gpu:bool,              // the GPU times of what it submitted came back: gpu_ms and its passes are its own
+    gpu_ms:f32,            // of what it submitted, the sum of its passes
+    device_first,device_end:u64, // the rhi.frame_number of the frames it submitted: [first, end)
     render_width,render_height:u32,
     generated:bool,        // it drew an image shown before its own (frame generation)
     presented:u32,         // images given to the display since the frame before
@@ -46,8 +52,8 @@ Profile_Frame :: struct {
 }
 
 Profile_Pass :: struct {
-    name:int, // into the names of the pass of the Profiler
-    ms:f32,
+    name:int,           // into the names of the pass of the Profiler
+    start_ns,end_ns:i64, // on the clock of the zones: nanoseconds since the Profile was made
 }
 
 Profiler :: struct {
@@ -70,6 +76,9 @@ Profiler :: struct {
     pass_name_count:int,
     frame_zone:base.Profile_Scope,
     presented:rhi.Present_Stats, // as the frame before left them
+    device_open:u64,   // rhi.frame_number when the frame opened
+    timings_taken:u64, // 1 + the rhi frame whose GPU times were taken last; 0: none
+    late:int,          // frames run past the last one recorded, waiting for its GPU times
 }
 
 // What a recording left, until the next profile_start. Zones of the main
@@ -92,7 +101,8 @@ profile_start :: proc(app:^App,frames:int) -> bool {
     p.wanted=min(frames,PROFILE_FRAMES_MAX)
     p.frame_count,p.zone_count,p.pass_count,p.lost=0,0,0,0
     p.frame_zone={}
-    if app.device!=nil {p.presented=rhi.present_stats(app.device)}
+    p.timings_taken,p.late=0,0
+    if app.device!=nil {p.presented=rhi.present_stats(app.device);p.device_open=rhi.frame_number(app.device)}
     out:[0]base.Profile_Zone
     for &cursor,thread in p.cursors {_,cursor,_=base.profile_read_since(&p.profile,thread,0,out[:])}
     p.recording=true
@@ -100,7 +110,8 @@ profile_start :: proc(app:^App,frames:int) -> bool {
     return true
 }
 
-// Ends a recording before its last frame. Between frames.
+// Ends a recording before its last frame, or before the GPU times of its
+// last frames came back: those keep gpu false. Between frames.
 profile_stop :: proc(app:^App) {
     p:=&app.profiler
     if !p.recording {return}
@@ -183,6 +194,7 @@ profile_frame_open :: proc(app:^App) {
     if p.rings_ready {base.profile_set_enabled(&p.profile,active)}
     if !active {return}
     base.profile_frame(&p.profile)
+    if app.device!=nil {p.device_open=rhi.frame_number(app.device)}
     p.frame_zone=base.profile_begin(&p.profile,PROFILE_MAIN,"frame")
 }
 
@@ -199,7 +211,8 @@ profile_gpu_want :: proc(app:^App) {
     if app.device!=nil {rhi.timestamps_want(app.device,profile_active(app))}
 }
 
-// Closes the frame, keeps what the renderer measured and drains the rings.
+// Closes the frame, keeps what the renderer measured, takes the GPU times that
+// came back and drains the rings.
 @(private)
 profile_frame_end :: proc(app:^App,drawn:bool) {
     load_profile_frame(app,drawn)
@@ -208,10 +221,12 @@ profile_frame_end :: proc(app:^App,drawn:bool) {
     if opened {profile_frame_close(app)}
     if p.requested>0 {p.requested-=1}
     if !p.recording {return}
-    if opened && p.frame_count<len(p.frames) {
+    recorded:=false
+    if opened && p.frame_count<p.wanted && p.frame_count<len(p.frames) {
         frame:=&p.frames[p.frame_count]
-        frame^={number=p.profile.frame,drawn=drawn,pass_first=p.pass_count}
+        frame^={number=p.profile.frame,drawn=drawn,pass_first=p.pass_count,device_first=p.device_open,device_end=p.device_open}
         if app.device!=nil {
+            frame.device_end=rhi.frame_number(app.device)
             shown:=rhi.present_stats(app.device)
             frame.presented,frame.intervals=u32(shown.presented-p.presented.presented),u32(shown.intervals-p.presented.intervals)
             frame.interval_total_ms=shown.interval_total_ms-p.presented.interval_total_ms
@@ -221,29 +236,73 @@ profile_frame_end :: proc(app:^App,drawn:bool) {
         }
         if r:=app.renderer;r!=nil {
             stats:=render.renderer_stats(r)
-            frame.gpu_ms=stats.gpu_ms
             frame.generated=stats.generated
             frame.render_width,frame.render_height=stats.render_width,stats.render_height
             if drawn {
                 frame.render_prepare_ms,frame.render_wait_ms=stats.cpu_prepare_ms,stats.cpu_begin_ms
                 frame.render_record_ms,frame.render_end_ms=stats.cpu_record_ms,stats.cpu_end_ms
-                for timing in stats.timings {
-                    if p.pass_count>=len(p.passes) {break}
-                    p.passes[p.pass_count]={profile_pass_intern(p,timing.name),timing.ms}
-                    p.pass_count+=1
-                }
             }
         }
-        frame.pass_count=p.pass_count-frame.pass_first
         p.frame_count+=1
+        recorded=true
+    } else if p.frame_count>=p.wanted {
+        p.late+=1
     }
+    profile_gpu_take(app)
     for &cursor,thread in p.cursors {
+        if !recorded {
+            // A frame run for the GPU times of the last ones keeps none of its zones.
+            out:[0]base.Profile_Zone
+            _,cursor,_=base.profile_read_since(&p.profile,thread,cursor,out[:])
+            continue
+        }
         count,next,lost:=base.profile_read_since(&p.profile,thread,cursor,p.zones[p.zone_count:])
         p.zone_count+=count
         p.lost+=lost
         cursor=next
     }
-    if p.frame_count>=p.wanted {profile_stop(app)}
+    if p.frame_count>=p.wanted && (profile_gpu_done(p) || p.late>=PROFILE_GPU_LATE) {profile_stop(app)}
+}
+
+// The GPU times the renderer collected last.
+@(private)
+profile_gpu_take :: proc(app:^App) {
+    if r:=app.renderer;r!=nil {
+        stats:=render.renderer_stats(r)
+        profile_gpu_add(&app.profiler,stats.timings,stats.timings_frame,profile_epoch_ns(app))
+    }
+}
+
+// Gives the GPU times of the rhi frame measured, once, to the recorded frame
+// that submitted it; those of a frame not recorded go. epoch: the time of
+// time.tick_now in nanoseconds the zones count from.
+@(private)
+profile_gpu_add :: proc(p:^Profiler,timings:[]rhi.Gpu_Timing,measured:u64,epoch:i64) {
+    if len(timings)==0 || measured+1<=p.timings_taken {return}
+    p.timings_taken=measured+1
+    for i:=p.frame_count-1;i>=0;i-=1 {
+        frame:=&p.frames[i]
+        if measured>=frame.device_end {break}
+        if measured<frame.device_first {continue}
+        // Times come back in order: the passes of the frame stay together after those of the frames before.
+        if !frame.gpu {frame.gpu,frame.pass_first,frame.pass_count=true,p.pass_count,0}
+        for timing in timings {
+            frame.gpu_ms+=timing.ms
+            if p.pass_count>=len(p.passes) {continue}
+            p.passes[p.pass_count]={profile_pass_intern(p,timing.name),timing.start_ns-epoch,timing.end_ns-epoch}
+            p.pass_count+=1
+            frame.pass_count+=1
+        }
+        break
+    }
+}
+
+// Whether the GPU times of the last recorded frame came back.
+@(private)
+profile_gpu_done :: proc(p:^Profiler) -> bool {
+    if p.frame_count==0 {return true}
+    last:=p.frames[p.frame_count-1]
+    return last.device_end==last.device_first || p.timings_taken>=last.device_end
 }
 
 @(private)

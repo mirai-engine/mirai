@@ -101,6 +101,7 @@ Mtl_Frame :: struct {
 	paced:         bool, // the frame draws into a pair of the presenter
 	begun_ns:      i64,
 	submitted_ns:  i64,
+	number:        u64, // frame_number of the frame it recorded last: the one its timings measure
 }
 
 // The textures the thread of the presenter copies from, taken while it does not run.
@@ -233,6 +234,7 @@ Device :: struct {
 	timings:        [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:   [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
 	timing_count:   int,
+	timing_frame:   u64, // frame_number of the frame the timings measured
 	timestamps_wanted: bool,
 	clock_cpu, clock_gpu: MTL.Timestamp, // sampled together when the device was made: the rate of the GPU clock
 	error_buffer:   [512]u8,
@@ -737,7 +739,9 @@ mtl_flush_ranges :: proc(d: ^Device, f: ^Mtl_Frame) {
 
 // ---------------------------------------------------------------- frames
 
-frame_timings :: proc(d: ^Device) -> []Gpu_Timing {return d.timings[:d.timing_count]}
+// The timings of the last frame whose slot came back, and its frame_number:
+// MAX_FRAMES_IN_FLIGHT before the frame that began, not the one being recorded.
+frame_timings :: proc(d: ^Device) -> (timings: []Gpu_Timing, frame: u64) {return d.timings[:d.timing_count], d.timing_frame}
 
 // Asks for one timing per cmd_timestamp interval in the frames that begin
 // from now on; without it a frame reports only its whole GPU time.
@@ -757,6 +761,7 @@ MTL_COUNTER_ERROR :: max(u64)
 mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 	NS.scoped_autoreleasepool()
 	d.timing_count = 0
+	d.timing_frame = f.number
 	marks, encoders := f.query_count, f.encoder_count
 	f.query_count, f.encoder_count = 0, 0
 	if begun, ended := MTL.CommandBuffer_GPUStartTime(f.cmd), MTL.CommandBuffer_GPUEndTime(f.cmd); ended > begun && begun > 0 {
@@ -860,6 +865,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	mtl_retain(f.cmd)
 	mtl_list_reset(&f.list, f.cmd)
 	f.passes = d.timestamps_wanted && f.queries != nil
+	f.number = d.frame_number
 	d.in_frame = true
 	return &f.list, true
 }

@@ -41,8 +41,8 @@ recording_fixture :: proc(a_ms:i64) -> host.Profile_Recording {
         )
     }
     frames:=make([]host.Profile_Frame,2,context.temp_allocator)
-    frames[0]={number=5,drawn=true,render_wait_ms=0.5,gpu_ms=3}
-    frames[1]={number=6,drawn=true,render_wait_ms=0.5,gpu_ms=3}
+    frames[0]={number=5,drawn=true,render_wait_ms=0.5,gpu=true,gpu_ms=3}
+    frames[1]={number=6,drawn=true,render_wait_ms=0.5,gpu=true,gpu_ms=3}
     return {frames=frames,zones=zones[:],threads=2,complete=true}
 }
 
@@ -79,6 +79,29 @@ a_capture_keeps_each_zone_with_its_own_time_and_each_frame_with_its_waits :: pro
     for name,i in order {testing.expect_value(t,c.names[zones[i].name],name)}
     testing.expect_value(t,zones[1].self_ns,3*MS) // a without the job it ran
     testing.expect_value(t,zones[0].self_ns,1*MS) // editor without a and b
+}
+
+// A frame whose GPU times did not come back before the capture ended counts
+// in the frame times, not in those of the GPU, and the summary says so.
+@(test)
+the_gpu_numbers_leave_out_the_frames_whose_gpu_times_did_not_come_back :: proc(t:^testing.T) {
+    c:Profile_Capture
+    if vmem.arena_init_growing(&c.arena)!=nil {return}
+    defer profile_capture_free(&c)
+    c.id,c.requested,c.state=1,2,.Done
+    context.allocator=vmem.arena_allocator(&c.arena)
+    c.conditions={optimization="Speed",mode="Edit",backend="Vulkan",window={800,600},render={800,600},workers=1}
+    recording:=recording_fixture(4)
+    recording.frames[1].gpu,recording.frames[1].gpu_ms=false,0
+    profile_build(&c,recording,nil)
+    summary:=profile_summary(&c,4)
+
+    testing.expect_value(t,summary.frame.count,2)
+    testing.expect_value(t,summary.frame.gpu_frames,1)
+    testing.expect_value(t,summary.frame.gpu_ms,3.0)
+    noted:=false
+    for note in summary.notes {if strings.contains(note,"have no GPU times") {noted=true}}
+    testing.expect(t,noted,"the summary says which frames the GPU numbers leave out")
 }
 
 @(test)
