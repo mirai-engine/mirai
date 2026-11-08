@@ -439,14 +439,8 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for job in jobs {append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=job.index,extension=".tex",file=job.file,size=job.size,hash=job.hash,settings=textures.settings_hash(texture_options(w,job)),earlier=-1,shared=-1})}
     first_material:=len(parts)
     for material,i in model.materials {append(&parts,Part{kind=asset.KIND_MATERIAL,name=material.name,index=w.options.material_index+i,extension=".mat",earlier=-1,shared=-1})}
-    // A skeleton of the project the source binds to is not a part: nothing is written of it.
-    skeleton_parts:=make([]int,len(model.skeletons),context.temp_allocator)
-    for skeleton,i in model.skeletons {
-        skeleton_parts[i]=-1
-        if skeleton.asset!={} {continue}
-        skeleton_parts[i]=len(parts)
-        append(&parts,Part{kind=asset.KIND_SKELETON,name=skeleton.name,index=i,extension=".skeleton",earlier=-1,shared=-1})
-    }
+    first_skeleton:=len(parts)
+    for skeleton,i in model.skeletons {append(&parts,Part{kind=asset.KIND_SKELETON,name=skeleton.name,index=i,extension=".skeleton",earlier=-1,shared=-1})}
     first_mesh:=len(parts)
     for mesh,i in model.meshes {append(&parts,Part{kind=asset.KIND_MESH,name=mesh.name,index=i,extension=".mesh",earlier=-1,shared=-1})}
     animation:=len(parts)
@@ -490,15 +484,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     w.report.skeleton_ids=make([]base.Asset_Id,len(model.skeletons),w.allocator)
     root_bones:=make([]int,len(model.skeletons),context.temp_allocator)
     for skeleton,i in model.skeletons {
-        if skeleton.asset!={} {
-            w.report.skeleton_ids[i]=skeleton.asset
-            body:asset.Skeleton_Body
-            body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
-            count,map_:=skeleton_body(nil,skeleton.bones,&body,&body_parts)
-            root_bones[i]=skeleton_root_bone(skeleton.bones,map_) if count>0 else -1
-            continue
-        }
-        part:=&parts[skeleton_parts[i]]
+        part:=&parts[first_skeleton+i]
         w.report.skeleton_ids[i]=part.id
         import_data:=import_info(source,skeleton.name,i,model.source_size,model.source_hash,0,model.version)
         existed:=os.exists(part.path)
@@ -610,7 +596,8 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 // Only the clips of a model, as an .anim of its own bound to a skeleton the project has
 // (Import_Settings.skeleton): the motion of another file onto a character imported before. Each clip
 // keeps the root the model's own skeleton gives it, and the root a person set on the .anim it
-// replaces.
+// replaces. A clip that moves no bone at all (its markers alone, or curves) goes on that skeleton as
+// well: only one whose bones the skeleton lacks is refused.
 @(private="file")
 write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skeleton:base.Asset_Id) -> bool {
     if len(model.animations)==0 {return writer_fail(w,.Malformed,"%s has no clips to put on the skeleton of Import_Settings.skeleton",source)}
@@ -633,6 +620,7 @@ write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skel
     for &clip in clips {
         index:int
         clip.skeleton,index=clip_skeleton(model,clip,ids)
+        if index<0 && len(model.skeletons)>0 && !clip_moves(clip) {index=0}
         if index<0 {return writer_fail(w,.Malformed,"clip %s of %s moves no bone of a skeleton of the file, which the skeleton it goes on should share",clip.name,source)}
         clip.skeleton=skeleton
         body:asset.Skeleton_Body
@@ -666,6 +654,15 @@ clip_skeleton :: proc(model:^Imported_Model,clip:asset.Animation_Clip_Desc,ids:[
         if moved>best {best,id,index=moved,ids[i],i}
     }
     return
+}
+
+// Whether a clip has a transform track: what binds it to the bones of a skeleton.
+@(private="file")
+clip_moves :: proc(clip:asset.Animation_Clip_Desc) -> bool {
+    for track in clip.tracks {
+        if track.property<=.Scale {return true}
+    }
+    return false
 }
 
 // The bone a skeleton carries the motion of its body on: the parent of its pelvis (the root bone of

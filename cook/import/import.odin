@@ -27,6 +27,7 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     context.temp_allocator=base.dynamic_arena_allocator(&scratch)
 
     r:=Reader{out=base.dynamic_arena_allocator(arena),options=options}
+    r.options.settings=settings
     mem.dynamic_arena_init(&r.polygon_arena,allocator,allocator,block_size=64<<10,out_band_size=64<<10)
     defer mem.dynamic_arena_destroy(&r.polygon_arena)
     r.meshes.allocator=context.temp_allocator;r.materials.allocator=context.temp_allocator;r.images.allocator=context.temp_allocator

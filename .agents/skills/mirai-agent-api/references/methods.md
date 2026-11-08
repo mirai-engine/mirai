@@ -629,6 +629,13 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   element.
 - `play.audio`: the voices of `Voices`, with volume and pitch given before bus and distance. The
   mixer is the editor's, shared by all runs; it reports no pause.
+- `play.scenario.run`: plays scenario files ([format](#scenarios)) one after the other in the
+  caller's run and answers one report per file. A file that its methods would not take fails
+  whole before the game starts, with the step and why. Outside a turn it opens the scenario's
+  scene if the document is another without unsaved changes; in a turn the document must be that
+  scene. It fails a scenario while a game of the caller already plays, and when `play.start`
+  answers `building`. Steps hold the server like `play.step`; the response buffer bounds the size
+  of their results, so a long trace or filmstrip goes in a run of its own.
 
 **Networked game**
 ([networked Play](../../mirai-networking/references/multiplayer.md#networked-play)).
@@ -638,6 +645,40 @@ do not exist. Only outside a turn. Their players read the saved files: with unsa
 `assets_unsaved_paths` and the fix (save them with `asset.save` or pass `saved_only:true`, which
 plays with what the files have), like the question of the UI's networked Play. `play.join` fails
 if the host does not serve a game.
+
+### Scenarios
+
+A scenario is a gameplay test written once and played again: a JSON file of the project, by
+convention `tests/scenarios/<name>.mirai`, run by `play.scenario.run` and by
+[`mirai play test`](api.md#mirai-play-test).
+
+```json
+{
+  "scene": "scenes/control.scene",
+  "start": {"players": 1},
+  "steps": [
+    {"name": "settle", "method": "play.step", "params": {"ticks": 30}},
+    {"name": "walk", "method": "play.step",
+     "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 1}]}},
+    {"method": "play.step", "params": {"ticks": 120, "until": [
+      {"name": "Door", "component": "Door", "field": "open", "compare": "Equal", "number": 1}]}},
+    {"method": "play.check", "params": {"conditions": [
+      {"storage": "Score", "field": "points", "compare": "At_Least", "number": 1}]}}
+  ]
+}
+```
+
+- `scene` names the scene it plays (empty: the one open); `start` takes the params of
+  `play.start`; each step is a play method and its params as that method takes them, checked
+  against its schema before the game starts. `play.start` and `play.stop` are the runner's: every
+  scenario starts on a fresh copy of its scene at tick 0 and stops after its last step, or after
+  the first that fails.
+- A step fails when its call fails, when its answer says `passed:false` (`play.check`) or when
+  `play.step` with `until` runs out of its ticks before they hold: `until` with `ticks` is the wait
+  with a timeout. The report gives each step run with what its method answered (what each
+  condition read) and the tick after it.
+- Only the steps advance the game, by fixed ticks: the same file plays the same ticks every time.
+  What waits on assets that stream in, or on wall time, is not part of a scenario.
 
 ## Simulation
 

@@ -59,7 +59,10 @@ Move_Mix :: enum u8 {
 // A velocity on top of the locomotion for a number of ticks: dash, wind, conveyor.
 Layered_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // world axes
-    force:f32 `mirai:"min=0,unit=N"`,   // limit of the force of an Override; 0 takes the traction force
+    // N: the limit of the force of an Override, 0 taking the traction force; an Additive adds it to the
+    // force of the locomotion, so that the body follows an added velocity that changes faster than
+    // traction drives it (root motion), which the locomotion would otherwise count as its own
+    force:f32 `mirai:"min=0,unit=N"`,
     ticks:u32,                          // left
     mix:Move_Mix,
     id:u32,                             // meaning given by the game
@@ -322,7 +325,7 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
     held:=move_input.buttons&input.action_bit(jump)!=0
     pressed:=held && !loco.jump_held && walk.jump_height>0
     loco.jump_held=held
-    v:=velocity-loco.added
+    v:=velocity-additive_delivered(velocity,loco.added,loco.driven)
     wish:=move_wish(move_input,frame)
     // Into the water and out of it by the depth of the water over the ground, the same both ways; never in
     // the middle of a move that overrides the locomotion, as climbing out.
@@ -506,8 +509,21 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
             loco.jump_speed,loco.jump_rise=rise,0 if loco.ledge_jumping else walk.jump_rise
         }
     }
+    loco.driven=move.ground.velocity+ground.ground_velocity if ground.standing && .Airborne not_in move.flags else move.air.velocity
     layers_apply(loco,&move,traction,pace)
     return
+}
+
+// The part of the velocity of a body that the additive layered moves of the last tick put in it: of
+// the added velocity, as much as the body went past what the locomotion drove toward (driven), so
+// that the locomotion counts the rest as its own. A body that falls short of an added velocity,
+// blocked by a wall or by the force that drives it, did not take that part, and the locomotion does
+// not take it as its own going the other way.
+additive_delivered :: proc "contextless" (velocity,added,driven:[3]f32) -> [3]f32 {
+    speed:=linalg.length(added)
+    if !(speed>0) {return {}}
+    along:=added/speed
+    return along*clamp(linalg.dot(velocity-driven,along),0,speed)
 }
 
 // The layered moves of a locomotion on top of a move, each for pace more
@@ -515,6 +531,7 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
 // the game.
 layers_apply :: proc(loco:^Character,move:^sim.Character_Move,traction:f32,pace:f32=1) {
     added:[3]f32
+    extra:f32 // the force the Additive ones add
     kept:u32
     loco.layer_time+=pace
     spent:=u32(loco.layer_time)
@@ -524,10 +541,11 @@ layers_apply :: proc(loco:^Character,move:^sim.Character_Move,traction:f32,pace:
         switch layered.mix {
         case .Additive:
             added+=layered.velocity
+            extra+=layered.force
             if move.ground.force==0 {move.ground.force=traction}
             if move.air.force==0 {move.air.force=traction}
         case .Override:
-            added={}
+            added={};extra=0
             drive:=sim.Drive{layered.velocity,layered.force>0?layered.force:traction}
             move.ground,move.air=drive,drive
             move.flags+={.Airborne,.Drive_Vertical,.No_Gravity}
@@ -544,6 +562,8 @@ layers_apply :: proc(loco:^Character,move:^sim.Character_Move,traction:f32,pace:
     loco.added=added
     move.ground.velocity+=added
     move.air.velocity+=added
+    move.ground.force+=extra
+    move.air.force+=extra
 }
 
 // A move of the time of a character in the time of the world, at its pace:

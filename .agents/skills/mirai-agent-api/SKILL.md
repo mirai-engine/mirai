@@ -33,6 +33,9 @@ difference with the catalog, it rules.
   image of cells around an entity): [`play.step` and `play.capture`](references/methods.md#play).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
+- Writing a gameplay test once as a file and playing it again after every change, from the API
+  or from CI: [scenarios](references/methods.md#scenarios),
+  [`mirai play test`](references/api.md#mirai-play-test).
 - Values of entities at past ticks without changing the game, and whether replaying the past
   repeats it (first tick and field that differ): [`play.history`](references/methods.md#play).
 - Capturing the world without UI and comparing it with a reference:
@@ -114,6 +117,10 @@ positions misses both.
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
    `points.0.on_screen`; `until` with them waits for the moment. Look at one image at the moments
    that matter: values can pass while the picture is wrong.
+4. Once the sequence passes, write it as a [scenario](references/methods.md#scenarios) in
+   `tests/scenarios/` instead of a script: the same steps and params, played again with
+   `play.scenario.run` or `mirai play test` after each change. A scenario holds one behavior;
+   another setup is another file, not a script that runs part of another.
 
 ### Checking an image
 
@@ -198,7 +205,11 @@ positions misses both.
   a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_entity`;
   the input of a person and what the player sees: `mirai test editor
   play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
-  play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; and the grid of its
+  play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:
+  `mirai test editor
+  a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails
+  a_scenario_step_holds_unless_its_check_fails_or_its_until_runs_out`, and a live run of
+  `mirai play test demo`; and the grid of its
   cells, `mirai test cook/image
   a_sheet_of_given_columns_takes_regions_of_frames_black_outside_them`; the filmstrip with a GPU,
   live.

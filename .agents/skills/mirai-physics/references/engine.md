@@ -445,7 +445,11 @@ writes.
   modes whose component the entity has.
 - Layered movements (`Layered_Move`): `add_move` and `remove_moves` enqueue in
   `Locomotion_Requests`; they last their `ticks`. `Additive` adds its velocity to that of the two
-  drives (wind, belt); `Override` replaces it on the three axes, without gravity or ground (dash).
+  drives (wind, belt) and its `force` to theirs, to follow a velocity that changes faster than
+  traction (root motion); `Override` replaces it on the three axes, without gravity or ground
+  (dash). The locomotion counts as its own only the velocity the additive ones did not put in the
+  body (`additive_delivered`): one held back by a wall or by its force does not turn into the walk
+  going the other way.
   The root motion of an action that moves its body arrives as one of them
   ([actions](../../mirai-animation/references/animation-actions.md#root-and-movement)).
   A request to an entity without `Character`, without ticks or with the array full is the

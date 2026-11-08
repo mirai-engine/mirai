@@ -245,6 +245,10 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_2))
     testing.expect_value(t,logged(f,.Interrupted,f.player,SLASH_1),1)
+    // The opener's action is cancelled before the follow-up fires its own: on another layer it would
+    // otherwise play on.
+    asked:=f.actions.queue.items[:]
+    testing.expectf(t,len(asked)==3 && asked[1].kind==.Cancel && base.text_get(asked[1].action[:])=="slash_1" && asked[2].kind==.Fire && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
     step(f,seconds(0.2))
     testing.expect_value(t,user(f,f.dummy).attributes[0].base,30)
     testing.expect(t,ability_has(user(f,f.dummy),STUNNED))

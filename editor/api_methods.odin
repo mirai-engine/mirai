@@ -386,6 +386,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     profile_api_register(s,st)
     api_play_edit_register(s,st)
     api_play_wait_register(s,st)
+    api_play_scenario_register(s,st)
     spatial_api_register(s,st)
     play_observe_api_register(s,st)
     play_view_api_register(s,st)

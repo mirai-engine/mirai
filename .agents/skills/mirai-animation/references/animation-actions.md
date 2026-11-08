@@ -90,7 +90,8 @@ Discovery and memory:
   warped with the root, with the mix of the one with the most share; a finishing slot keeps the
   policy it was fired with. With physics, `animation_physics` makes it a one-tick layered move of
   that mix for its `Character`, in the body's own time and across its up unless `body_vertical`,
-  except while it mantles (the climb has its own). A game does not convert root motion itself.
+  with the force that reaches it in that tick for the mass of the body, except while it mantles
+  (the climb has its own). A game does not convert root motion itself.
 - `action_clock` gives the `Motion_Clock` of the dominant root when it reaches at least half the
   weight, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the

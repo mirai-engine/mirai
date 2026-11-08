@@ -130,6 +130,16 @@ view's threshold is below the SSIM of its `--repeat`.
 loads `--scene`, starts a Play if there is none and stops it when done, and calls `play.record`.
 It prints its result with the editor's validation and exits with 1 if there are validation errors.
 
+## `mirai play test`
+
+`mirai play test [project] [scenario...]` plays [scenarios](methods.md#scenarios) in the project's
+session or in one it opens and closes, one `play.scenario.run` per file: those named (a name of
+`tests/scenarios`, or a path) or all of `tests/scenarios`. It prints a line per scenario and, for
+one that fails, its failure and what the failing step answered; it exits with 0 when all pass, 1
+when one fails and 2 when they cannot run. A session it opens builds the editor of the project
+first when its code changed, as `mirai session start` does. A project runs it in its CI, on a
+machine with a GPU.
+
 ## `mirai rpc`
 
 ```sh

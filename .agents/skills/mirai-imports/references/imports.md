@@ -71,10 +71,6 @@ meshes with `Mesh_Builder`.
   that deforms are not shared and their normal delta leads to the normal of the deformed face; a
   declared tangent takes the delta of the source and a MikkTSpace one, what MikkTSpace gives the
   shape at weight 1 minus the rest one.
-- A skeleton with `asset` set is one the project already has, whose bones the reader copied from
-  that `.skeleton` (the clips of a format that keeps no skeleton): it is not written, and the
-  clips and skins of the model name that id. Its bones are in the engine's space, so such a reader
-  declares `ENGINE_SPACE` and brings its keys to the frames of those bones itself.
 - `source_space(r,space)` declares the file's space before the first triangle; `r.basis` is its
   change of basis, in case the reader needs to orient something (a light) in the engine's.
 
@@ -331,7 +327,12 @@ its fields are the options of `mirai import` (`IMPORT_USAGE`). What is not obvio
 - `skeleton` (`--skeleton <id>`) puts the clips of a model on a skeleton the project already has,
   with the same bones: the import writes only its `.anim`, bound to it, and no textures,
   materials, skeletons, meshes or prefab. It is how the motion of another file (a set of clips
-  exported with a body) joins a character imported before.
+  exported with a body) joins a character imported before. In the editor it is `skeleton` of
+  `asset.import`, the way to give it to a [plugin format](#plugin-formats). The reader sees it in
+  `r.options.settings` (the settings the import applies, those of `<source>.import` when it has
+  one): a format whose clips keep no skeleton of their own (Cast) reads that `.skeleton` to bring
+  its keys to the frames of its bones, and adds its bones as a skeleton of the model, which is
+  not written.
 
 Settings live next to the source in `<source>.import`, a JSON with one entry per field name (an
 absent field is its default), and win over the options except with `ignore_stored`: importing a
