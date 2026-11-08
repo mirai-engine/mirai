@@ -265,8 +265,11 @@ Each mode has its folder: switching between them compiles nothing.
   tool links neither importers nor renderer and compiles before the generated shaders exist.
 - **Stage and declarations.** `build.declare` reads each file with `core:odin/parser` and writes
   the stage, with each procedure exported as `mirai.<package>.<name>`, and the declaration: types
-  and constants as they are, generic, `inline`, `where`, `defer` or `deferred_*` procedures with
-  their body (they are compiled in the caller) and the rest `foreign` towards the library. Nothing
+  and constants as they are, generic, `inline`, `where`, `defer` or `deferred_*` procedures and
+  those with an `any` in their signature (`..any`, `[]any`) with their body (they are compiled in
+  the caller: an `any` carries a typeid that only the caller's type table knows, so `fmt` in the
+  library would print an enum or a struct of a plugin as nothing) and the rest `foreign` towards
+  the library. Nothing
   of the engine is recompiled with what uses it. It writes only the files whose text changes.
 - **Currency by parts.** The runtime is recompiled by its sources (without `_test.odin`) and by
   `shaders/build/manifest.json`, which gives the hash of the code `render` embeds; the editor one,
