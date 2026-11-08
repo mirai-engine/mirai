@@ -411,27 +411,52 @@ has_sources :: proc(folder:string) -> bool {
     return false
 }
 
+@(private="file",thread_local)
+parse_problem:string
+
+// Reads and parses the sources of a package folder, without its tests, and returns its name and
+// its files in path order. Each problem goes to errors naming the file and the position, as the
+// compiler does. Not parser.parse_package: it reads the package clause of a file that failed to
+// parse, which a file without one leaves nil.
+sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.allocator) -> (name:string,files:[]^ast.File,ok:bool) {
+    collected,collected_ok:=parser.collect_package(folder)
+    if !collected_ok {
+        append(errors,fmt.aprintf("%s: the package could not be read",folder))
+        return
+    }
+    sorted:=make([dynamic]^ast.File,0,len(collected.files),allocator)
+    for path,file in collected.files {
+        if !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
+    }
+    slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
+    p:=parser.default_parser()
+    p.err=proc(pos:tokenizer.Pos,format:string,args:..any) {
+        if parse_problem=="" {parse_problem=fmt.aprintf("%s(%d:%d): %s",pos.file,pos.line,pos.column,fmt.tprintf(format,..args))}
+    }
+    ok=true
+    for file in sorted {
+        parse_problem=""
+        if !parser.parse_file(&p,file) {
+            append(errors,parse_problem!="" ? parse_problem : fmt.aprintf("%s: the file does not parse",file.fullpath))
+            ok=false
+            continue
+        }
+        if name=="" {name=file.pkg_name}
+        else if file.pkg_name!=name {
+            append(errors,fmt.aprintf("%s(%d:%d): package %s, while its folder is package %s",file.fullpath,file.pkg_decl.pos.line,file.pkg_decl.pos.column,file.pkg_name,name))
+            ok=false
+        }
+    }
+    parse_problem=""
+    return name,sorted[:],ok
+}
+
 @(private="file")
 package_read :: proc(g:^Generator,pkg:^Package) {
-    collected,ok:=parser.collect_package(pkg.folder)
-    if !ok {
-        append(&g.errors,fmt.aprintf("%s: the package could not be read",pkg.folder))
-        return
-    }
-    for path,file in collected.files {
-        if strings.has_suffix(path,"_test.odin") {delete_key(&collected.files,path)}
-    }
-    p:=parser.default_parser()
-    p.err=proc(pos:tokenizer.Pos,format:string,args:..any) {}
-    if !parser.parse_package(collected,&p) {
-        append(&g.errors,fmt.aprintf("%s: the package does not parse; the compiler says where",pkg.folder))
-        return
-    }
-    pkg.name=collected.name
-    files:=make([dynamic]^ast.File)
-    for _,file in collected.files {append(&files,file)}
-    slice.sort_by(files[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
-    pkg.files=files[:]
+    name,files,ok:=sources_read(pkg.folder,&g.errors)
+    if !ok {return}
+    pkg.name=name
+    pkg.files=files
     pkg.names=make(map[string]bool)
     for file in pkg.files {
         for stmt in file.decls {
