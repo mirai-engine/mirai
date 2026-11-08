@@ -275,6 +275,49 @@ a_flying_locomotion_flies_toward_the_look_and_holds_its_height :: proc(t:^testin
     testing.expect(t,f.loco.mode==MODE_WALKING && near(sim.character_position(&f.w,f.ch).y,0,0.01))
 }
 
+// An Additive move that lunges faster than traction drives the body (the root motion of a slash) and
+// brings its force is followed, and the locomotion does not count it as its own: when the lunge
+// eases off and stops, the body stops where it went instead of sliding back.
+@(test)
+an_additive_lunge_with_its_force_is_followed_and_does_not_slide_back :: proc(t:^testing.T) {
+    f:Loco_Test
+    testing.expect(t,loco_test_init(&f,{0,0,0}))
+    defer sim.world_destroy(&f.w)
+    loco_test_tick(&f,{},30)
+    lunge:=[?]f32{6,12,18,21,21,18,12,8,5,3,2,1}
+    fastest:f32
+    for speed in lunge {
+        f.loco.moves[0]={velocity={0,0,-speed},force=f.loco.mass*speed*60,ticks=1,mix=.Additive,id=5}
+        f.loco.move_count=1
+        loco_test_tick(&f,{})
+        fastest=max(fastest,-sim.character_velocity(&f.w,f.ch).z)
+    }
+    gone:=sim.character_position(&f.w,f.ch).z
+    loco_test_tick(&f,{},60)
+    p:=sim.character_position(&f.w,f.ch)
+    expected:f32
+    for speed in lunge {expected+=speed/60}
+    testing.expectf(t,fastest>20,"the body follows the lunge: %v m/s at most",fastest)
+    testing.expectf(t,near(gone,-expected,0.15),"it went %v of the %v the lunge asked",gone,-expected)
+    testing.expectf(t,p.z<=gone+0.02 && abs(sim.character_velocity(&f.w,f.ch).z)<0.05,"it stays where the lunge left it: %v from %v",p.z,gone)
+
+    // Into a wall the body stops at it, and when the lunge ends it does not bounce back off it.
+    wall:=p.z-1.2
+    loco_test_box(&f,{5,2,0.25},{0,2,wall-0.25})
+    for _ in 0..<2 {
+        for speed in lunge {
+            f.loco.moves[0]={velocity={0,0,-speed},force=f.loco.mass*speed*60,ticks=1,mix=.Additive,id=5}
+            f.loco.move_count=1
+            loco_test_tick(&f,{})
+        }
+    }
+    stopped:=sim.character_position(&f.w,f.ch).z
+    loco_test_tick(&f,{},60)
+    q:=sim.character_position(&f.w,f.ch).z
+    testing.expectf(t,stopped>wall && stopped<wall+0.6,"it stops at the wall at %v: %v",wall,stopped)
+    testing.expectf(t,abs(q-stopped)<0.05,"it stays at the wall: %v from %v",q,stopped)
+}
+
 // A mode of the game writes its own move; the layered moves of the
 // locomotion still go on top of it, one tick at a time.
 @(test)

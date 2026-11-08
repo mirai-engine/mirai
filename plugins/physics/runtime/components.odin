@@ -150,6 +150,7 @@ Character :: struct {
     ready:bool `mirai:"transient,local,hidden"`,               // its look was taken from where it stands
     coyote:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // left
     added:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what additive layered moves put in the last drive
+    driven:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what the locomotion drove toward in the last tick without them, in the world
     pace:f32 `mirai:"transient,readonly,hidden"`,       // of its last move (core.Own_Pace): its velocity is that of its own time by it; 0: 1
     layer_time:f32 `mirai:"transient,readonly,hidden"`, // part of a tick of its own time its layered moves have not spent
     move_count:u32 `mirai:"transient,readonly,hidden"`,
