@@ -131,7 +131,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             irradiance = sun_light(origin) * cosine;
             radius = params.sun_radius;
             dir = sun_ray(float(turn) + shift, spin, radius);
-            reach = scene_reach(origin, dir);
+            reach = sun_reach(origin, dir);
         } else {
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;

@@ -33,6 +33,9 @@ difference with the catalog, it rules.
   image of cells around an entity): [`play.step` and `play.capture`](references/methods.md#play).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
+- Letting a cheap model play with few tokens, finding bugs with monitors or a bot with no model,
+  and a repro of a run as a scenario: `play.observe`, `play.qa.*` and `play.explore` in
+  [Play](references/methods.md#play).
 - Writing a gameplay test once as a file and playing it again after every change, from the API
   or from CI: [scenarios](references/methods.md#scenarios),
   [`mirai play test`](references/api.md#mirai-play-test).
@@ -213,6 +216,12 @@ positions misses both.
   cells, `mirai test cook/image
   a_sheet_of_given_columns_takes_regions_of_frames_black_outside_them`; the filmstrip with a GPU,
   live.
+- What an agent plays with, the monitors and a repro replayed: `mirai test editor
+  play_observe_says_in_one_small_answer_what_a_decision_needs
+  the_monitors_report_a_violation_with_its_tick_place_and_severity
+  a_repro_replays_the_inputs_of_a_run_and_fails_at_the_same_tick
+  the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it
+  the_bot_goes_toward_new_cells_and_presses_every_button_of_a_menu_once`; its filmstrip, live.
 - `mirai image` and the measure of `mirai capture`: `mirai test cook/image`; `mirai capture`
   against a project with GPU and `mirai test tools/mirai` if the CLI changes.
 - `mirai session`: `mirai test tools/mirai` covers options, the free API port, discarding copies

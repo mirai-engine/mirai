@@ -83,6 +83,7 @@ Desc :: struct {
     server:bool,                 // Game: a dedicated server, the same executable without what is only shown or heard: no icon or shaders, and its cook leaves those kinds behind
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
+    incremental:bool,           // Game: the engine and its plugins come from one library compiled once per version (shipped.odin), next to the executable; the game alone compiles. Not for what ships: unset, they compile whole with the game
     engine:Engine_Mode,          // the binaries of the engine a library is built against. Keep: ENGINE_MODE_HERE
     action:Action,               // Check and Test: of the Editor or Play target
     test_package:string,         // Test: the folder of the package, absolute
@@ -103,6 +104,7 @@ Result :: struct {
     plugins_restored:int,     // of those, the ones copied from the cache
     plugins_relinked:int,     // of those, the ones whose objects were linked again (relink.odin)
     relinked:bool,            // the output was linked again from the objects of its last compile
+    shipped_engine:Shipped_Engine_State, // Game with Desc.incremental: what became of its engine library
     tests:Test_Report,        // Test
     seconds:f64,
 }
@@ -142,6 +144,8 @@ Job :: struct {
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
     plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
+    warnings:[]Diagnostic,       // of the generator: join the diagnostics when the job ends
+    shipped:Shipped_Engine,      // Game with Desc.incremental (shipped.odin)
     masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
     link_file:string,            // the record of the last compile of the target
     compiled:bool,               // linking the target again failed, and it compiles
@@ -219,6 +223,11 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
+    job.warnings=make([]Diagnostic,len(generated.warnings),a)
+    for warning,i in generated.warnings {
+        job.warnings[i]=warning
+        job.warnings[i].file,job.warnings[i].message=strings.clone(warning.file,a),strings.clone(warning.message,a)
+    }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && path_equal(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?EXECUTABLE_EXTENSION:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
@@ -237,6 +246,10 @@ job_start :: proc(desc:Desc) -> ^Job {
             return job_fail(job,.Settings_Invalid)
         }
         job.copies=game_copies(p,folder,job.compiler,a,desc.server)
+        if desc.incremental {
+            job.shipped=shipped_engine_paths(p.root,a)
+            job.copies=shipped_engine_copies(&job.shipped,folder,job.copies,a)
+        }
         job.development=make([dynamic]string,a)
         for index in p.active {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
@@ -251,11 +264,13 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
     }
 
-    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine)
+    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
         if failure:=job_plugins_plan(job,p,desc);failure!=.None {return job_fail(job,failure)}
+    } else if desc.incremental {
+        if failure:=job_shipped_start(job,p,desc.force);failure!=.None {return job_fail(job,failure)}
     }
     return job_schedule(job)
 }
@@ -741,7 +756,8 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
         }
         compile:=job.compiles[i]
         ordered_remove(&job.compiles,i)
-        if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
+        if compile.library==SHIPPED_ENGINE_COMPILE {job_shipped_finish(job,compile,state.exit_code)}
+        else if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
         else if compile.library<0 {job_finish(job,compile,state.exit_code)}
         else {job_plugin_finish(job,compile,state.exit_code)}
     }
@@ -765,19 +781,26 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
-    // A library sees the engine through its declarations; the game, whole.
-    mirai:=target==.Game?p.engine_root:engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
+    shipped:=shipped_engine_paths(p.root,context.temp_allocator)
+    // A library sees the engine through its declarations; the game, whole, or through those of its library.
+    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root,allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
-    plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
+    plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
     append(&flags,fmt.aprintf("-collection:plugins=%s",plugins,allocator=a))
     generated:=generated_flags(p.root,a)
     append(&flags,..generated[:])
     if target==.Game {
         append(&flags,dev?"-o:minimal":"-o:speed")
+        if incremental {
+            // What -o:minimal would split only costs the inlining of what the declarations copied.
+            if dev {append(&flags,"-use-single-module")}
+            when ODIN_OS==.Linux {linker_flags_append(&flags,`-Wl,-rpath,"\$ORIGIN"`,a)}
+            else when ODIN_OS==.Darwin {linker_flags_append(&flags,"-Wl,-rpath,@executable_path",a)}
+        }
     } else {
         // The engine runs optimized whole in its own binary; what a project
         // compiles is little, and one module per package builds it in parallel.
@@ -864,6 +887,13 @@ job_run :: proc(desc:Desc) -> ^Job {
 @(private)
 job_done :: proc(job:^Job) -> ^Job {
     job.result.seconds=time.duration_seconds(time.tick_since(job.tick))
+    if len(job.warnings)>0 {
+        joined:=make([]Diagnostic,len(job.result.diagnostics)+len(job.warnings),virtual.arena_allocator(&job.arena))
+        copy(joined,job.result.diagnostics)
+        copy(joined[len(job.result.diagnostics):],job.warnings)
+        job.result.diagnostics=joined
+        job.warnings=nil
+    }
     return job
 }
 

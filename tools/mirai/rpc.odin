@@ -14,6 +14,8 @@ RPC_USAGE :: "rpc <method> [json|-|--file F] [--select FIELDS] [--wait-until CON
 
 // How often --wait-until calls again without --every, in milliseconds.
 RPC_EVERY_MS :: 1000
+RPC_ECHO_BYTES :: 240 // of a result or a list of names an error repeats
+RPC_BRIEF_BYTES :: 80 // of a value inside a message
 
 Connection :: struct {
     port,timeout_ms:int,
@@ -106,6 +108,11 @@ connection_task :: proc(connection:Connection,port:int) -> string {
     return connection.agent.task if port==connection.agent.port else ""
 }
 
+// What a call to a project without an open editor says.
+no_editor_text :: proc(project:string,allocator:=context.temp_allocator) -> string {
+    return fmt.aprintf("%s has no open editor: mirai session start %s",project,project,allocator=allocator)
+}
+
 // One call, retried while nobody listens and the wait allows.
 rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (result:string,err:api.Error,called:bool) {
     start:=time.tick_now()
@@ -113,7 +120,7 @@ rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (
         if port:=connection_port(connection);port!=0 {
             result,err,called=api.rpc_call(port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,port),connection.client)
         } else {
-            err={api.UNREACHABLE,fmt.aprintf("%s has no open editor: mirai session start %s",connection.project,connection.project),""}
+            err={api.UNREACHABLE,no_editor_text(connection.project,context.allocator),""}
         }
         if called || err.code!=api.UNREACHABLE || time.duration_milliseconds(time.tick_since(start))>=f64(connection.wait_ms) {return}
         time.sleep(250*time.Millisecond)
@@ -757,7 +764,7 @@ json_at :: proc(text:string,path:Json_Path) -> (value,problem:string) {
         if !found {
             names:=make([]string,len(members),context.temp_allocator)
             for member,j in members {names[j]=member.name}
-            return "",fmt.tprintf("%s has no '%s'; it has: %s",place,step.name,strings.join(names,", ",context.temp_allocator))
+            return "",fmt.tprintf("%s has no '%s'; it has: %s",place,step.name,text_brief(strings.join(names,", ",context.temp_allocator),RPC_ECHO_BYTES))
         }
     }
     return value,""
@@ -866,10 +873,21 @@ json_compact :: proc(text:string) -> string {
     return strings.to_string(b)
 }
 
-// A value in a message: on one line, cut past 80 bytes.
-json_brief :: proc(value:string) -> string {
-    compact:=json_compact(value)
-    return len(compact)<=80?compact:fmt.tprintf("%s...",compact[:77])
+// A value in a message: on one line, cut past RPC_BRIEF_BYTES.
+json_brief :: proc(value:string) -> string {return text_brief(json_compact(value),RPC_BRIEF_BYTES)}
+
+// At most limit bytes of text, without splitting a character, and how many it left out.
+text_cut :: proc(text:string,limit:int) -> (prefix:string,omitted:int) {
+    if len(text)<=limit {return text,0}
+    end:=limit
+    for end>0 && text[end]&0xC0==0x80 {end-=1}
+    return text[:end],len(text)-end
+}
+
+// text as a message shows it: what text_cut keeps and the size of the rest.
+text_brief :: proc(text:string,limit:int) -> string {
+    prefix,omitted:=text_cut(text,limit)
+    return omitted>0?fmt.tprintf("%s... (%d more bytes)",prefix,omitted):prefix
 }
 
 // mirai rpc --batch <file>: one call per line, {"method": "...", "params": {...}},
@@ -905,7 +923,7 @@ rpc_batch :: proc(connection:Connection,file:string) -> int {
         if called {
             fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
         } else {
-            fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text(err,context.temp_allocator))
+            fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text(rpc_error_short(err),context.temp_allocator))
             failed=true
             break
         }
@@ -927,8 +945,18 @@ params_is_object :: proc(text:string) -> bool {
 }
 
 rpc_fail :: proc(err:api.Error) -> int {
-    fmt.eprintln(api.error_text(err,context.allocator))
+    fmt.eprintln(api.error_text(rpc_error_short(err),context.allocator))
     return 1
+}
+
+// An error as it is shown: data that echoes a large result becomes its first
+// bytes and the size of the rest.
+rpc_error_short :: proc(err:api.Error) -> api.Error {
+    prefix,omitted:=text_cut(err.data,RPC_ECHO_BYTES)
+    if omitted==0 {return err}
+    short:=err
+    short.data=fmt.tprintf(`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix),omitted)
+    return short
 }
 
 read_stdin :: proc() -> string {

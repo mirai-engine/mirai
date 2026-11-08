@@ -144,6 +144,18 @@ the_uv_density_of_a_mesh_is_by_entry_of_its_materials :: proc(t: ^testing.T) {
 	testing.expect_value(t, density[0][1], density[0][0]) // without a set of its own, uv1 is uv
 }
 
+@(test)
+an_image_sky_is_read_from_the_entry_of_its_texture :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	textures_init(r)
+	defer textures_destroy(r)
+	append(&r.textures.textures, rhi.Texture(1))
+	append(&r.textures.sizes, [2]int{1024, 512})
+	r.textures.count = 1
+	testing.expect_value(t, sky_map(r, 1, false), Vec4{f32(texture_entry(0)), 0, 10, 1})
+}
+
 // The textures that need more levels go first, the farthest from their target
 // first, unless the pool is past its room; those being read are left out.
 @(test)

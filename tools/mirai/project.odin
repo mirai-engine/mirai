@@ -148,6 +148,7 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
     defer project.close(&p)
     out,ok:=build.world_write_files(&p)
     for e in out.errors {fmt.eprintln(e)}
+    for w in out.warnings {fmt.eprintfln("%s(%d:%d) Warning: %s",w.file,w.line,w.column,w.message)}
     if !ok {
         if len(out.errors)==0 {fmt.eprintfln("mirai generate: could not write to %s",build.generated_root(p.root))}
         return 1
@@ -210,8 +211,21 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     if slice.contains(rest,"--headless") {layers_isolate(root)}
     command:=make([dynamic]string)
     append(&command,build.engine_paths(root,mode).player_program,"--project",project.path_absolute(folder))
-    append(&command,..rest)
+    append(&command,..play_arguments(rest))
     return run(root,command[:])
+}
+
+// The arguments of the player with --capture and --input made absolute: they
+// are paths of whoever runs the command, and the player runs in the engine.
+play_arguments :: proc(args:[]string) -> []string {
+    out:=slice.clone(args)
+    for i:=0;i+1<len(out);i+=1 {
+        if (out[i]=="--capture" || out[i]=="--input") && out[i+1]!="" {
+            out[i+1]=project.path_absolute(out[i+1])
+            i+=1
+        }
+    }
+    return out
 }
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
@@ -306,7 +320,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine,incremental=target==.Game && mode!=.Release})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
@@ -315,6 +329,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
         if result.plugins_relinked>0 {fmt.printfln("%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
         if result.plugins_restored>0 {fmt.printfln("%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
+        switch result.shipped_engine {
+        case .None:
+        case .Current:  fmt.println("Engine library of the game unchanged.")
+        case .Restored: fmt.println("Engine library of the game copied from the shared cache.")
+        case .Built:    fmt.println("Engine library of the game built.")
+        }
         switch result.status {
         case .Running:
         case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")

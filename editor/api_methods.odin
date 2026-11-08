@@ -181,7 +181,7 @@ Api_Camera_Result :: struct {
 }
 
 Api_Capture_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made"`,
+    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
     warmup_frames:int `mirai:"optional,min=0,max=3600,label=Frames run before the capture; at least one"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s"`,
     ui:bool `mirai:"optional,label=The window with the editor; false: the world shown alone through the camera of the viewport without panels or gizmos or grid or selection"`,
@@ -197,7 +197,6 @@ API_CAPTURE_SETTLE :: 8
 
 Api_Capture_Result :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
-    frame:u64,
     width,height:int,
 }
 
@@ -252,6 +251,8 @@ Api_Play_Step_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
+    observe:bool `mirai:"optional,label=The answer is what play.observe says after the ticks in place of the state of the game"`,
+    targets:[API_OBSERVE_TARGETS][64]u8 `mirai:"optional,text,label=With observe: the targets of play.observe"`,
 }
 
 Api_Build_Params :: struct {
@@ -352,12 +353,12 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=Api_Section_Id_Params,run=api_section_travel})
     api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=Api_Select_Params,result=Api_Select_Result,flags={.Idempotent},run=api_editor_select})
     api_register(s,st,{name="editor.input",params_schema=API_INPUT_SCHEMA,summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=Api_Editor_Inspect,writes_result=true,run=api_editor_input})
-    api_register(s,st,{name="editor.capture",flags={.Core},summary="Draws fresh frames and writes the last as a PNG, which MCP also returns as an image: the window with the UI of the editor (an open .ui document as it shows it), or the world alone through the camera of the viewport.",params=Api_Capture_Params,result=Api_Capture_Result,defaults=&capture_default,run=api_editor_capture})
+    api_register(s,st,{name="editor.capture",flags={.Core},summary="Draws fresh frames and writes the last as a PNG: the window with the UI of the editor (an open .ui document as it shows it), or the world alone through the camera of the viewport. With path the answer is only where it is and its size; without path MCP also returns the image.",params=Api_Capture_Params,result=Api_Capture_Result,defaults=&capture_default,run=api_editor_capture})
     api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
     api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers building: the game starts once the build stands.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
-    api_register(s,st,{name="play.stop",summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,flags={.Idempotent},run=api_play_stop})
+    api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
     api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
     api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Core,.Read_Only},run=api_play_status})
@@ -369,6 +370,9 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
+    play_agent_api_register(s,st)
+    qa_api_register(s,st)
+    play_explore_api_register(s,st)
     api_scene_register(s,st)
     api_names_register(s,st)
     api_simulation_register(s,st)
@@ -1058,7 +1062,8 @@ api_editor_capture :: proc(s:^Session,call:^api.Call) {
         return
     }
     // The frames drawn below free the temporary memory.
-    file,writable:=api_output_file(s,call,base.text_get(params.path[:]),s.app.allocator)
+    given:=base.text_get(params.path[:])
+    file,writable:=api_capture_file(s,call,given,"editor.png",s.app.allocator)
     if !writable {return}
     defer delete(file,s.app.allocator)
     drawn:=s.app.stats.frames_drawn
@@ -1098,22 +1103,35 @@ api_editor_capture :: proc(s:^Session,call:^api.Call) {
         }
         pixels,width,height=cropped.pixels,cropped.width,cropped.height
     }
-    api_capture_answer(s,call,file,pixels,width,height)
+    api_capture_answer(s,call,file,pixels,width,height,given=="")
 }
 
 // Writes pixels of the allocator of the application as the PNG at file, of
 // api_output_file, and answers the call with it as editor.capture does: its
-// path and size, and the image over MCP.
-api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int) {
+// path and size and, when shown, the image over MCP.
+api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true) {
     if !api_png_write(s,file,pixels,width,height) {
         api.call_failf(call,api.SERVER_ERROR,"%s could not be written although it could be opened: the disk may be full",file)
         return
     }
+    api_capture_reply(call,file,width,height,shown)
+}
+
+@(private)
+api_capture_reply :: proc(call:^api.Call,file:string,width,height:int,shown:bool) {
     result:=api.call_result(call,Api_Capture_Result)
-    result.frame=s.frame
     result.width,result.height=width,height
     api_text_put(result.path[:],file)
-    api.call_image(call,file)
+    if shown {api.call_image(call,file)}
+}
+
+// The file a capture writes: path as api_output_file takes it, or name under
+// .mirai/captures of the project without one.
+@(private)
+api_capture_file :: proc(s:^Session,call:^api.Call,path,name:string,allocator:=context.allocator) -> (file:string,ok:bool) {
+    if path!="" {return api_output_file(s,call,path,allocator)}
+    if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return "",false}
+    return api_output_file(s,call,fmt.tprintf(".mirai/captures/%s",name),allocator)
 }
 
 // The file that path names, absolute with forward slashes. path is written
@@ -1366,6 +1384,10 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     api.object_values(call.allocator,call.raw,{"until","trace"},values[:])
     until:=params.until[:api_list_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    observe_raw:[1]string
+    api.object_values(call.allocator,call.raw,{"targets"},observe_raw[:])
+    targets:=observe_targets_read(call,params.targets[:],observe_raw[0],call.allocator)
+    if len(targets)>0 && !params.observe {api.call_fail(call,api.INVALID_PARAMS,"targets are of observe: give observe true, or leave them out");return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
     trace:Api_Trace
     traced:=values[1]!=""
@@ -1379,6 +1401,10 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    if params.observe {
+        api_play_step_observe_write(s,call,run_find(s,owner),ran,len(until)>0 && met,targets,traced?&trace:nil)
+        return
+    }
     api_play_step_write(s,call,run_find(s,owner),ran,len(until)>0 && met,traced?&trace:nil)
 }
 
@@ -1412,6 +1438,7 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
         return false
     }
     input.focus(requests,slot)
+    qa_log_focus(r,slot)
     return true
 }
 
@@ -1431,6 +1458,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
             scripted,at=run_script_take(run_script(s,&other))
             step=&scripted
         }
+        if other.qa!=nil {qa_log_tick(s,&other,step,at)}
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}
         given:core.Input

@@ -51,20 +51,21 @@ Api_Play_Trace :: struct {
 
 // What play.step writes: Api_Play_Result and its trace.
 Api_Play_Step_Result :: struct {
-    playing,paused:bool,
-    detached:bool `mirai:"label=The run is of a turn: the editor does not show it"`,
-    simulating:bool,
-    tick:u64,
-    seconds:f64,
-    entities:int,
-    ticks_dropped:u64,
-    game_camera:bool,
-    input_released:bool,
-    building:bool `mirai:"label=An Odin source changed since the last build: the build runs and the game starts once it stands"`,
+    playing,paused:bool `mirai:"optional"`,
+    detached:bool `mirai:"optional,label=The run is of a turn: the editor does not show it"`,
+    simulating:bool `mirai:"optional"`,
+    tick:u64 `mirai:"optional"`,
+    seconds:f64 `mirai:"optional"`,
+    entities:int `mirai:"optional"`,
+    ticks_dropped:u64 `mirai:"optional"`,
+    game_camera:bool `mirai:"optional"`,
+    input_released:bool `mirai:"optional"`,
+    building:bool `mirai:"optional,label=An Odin source changed since the last build: the build runs and the game starts once it stands"`,
     ran:int `mirai:"label=The ticks it ran"`,
     met:bool `mirai:"label=With until: whether they held when it stopped"`,
-    scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next steps without input play them"`,
+    scripted:int `mirai:"optional,label=Ticks left of the input play.input scheduled: the next steps without input play them"`,
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
+    observe:Api_Play_Observe `mirai:"optional,label=With observe: what play.observe says after the ticks in place of the rest but ran and met; null when the game ended"`,
 }
 Api_Play_Trace_Table :: struct {
     columns:[1]Api_Play_Trace_Column `mirai:"list,label=What each value of a row is: every field of the first entity and then of the next"`,
@@ -293,7 +294,10 @@ Api_Step_Sampler :: struct {
 Api_Step_Frame :: #type proc(s:^Session) -> bool
 
 @(private)
-api_step_frame :: proc(s:^Session) -> bool {return api_frames(s,1,0)>0}
+api_step_frame :: proc(s:^Session) -> bool {
+    if st:=api_state(s);st!=nil && st.step_frame!=nil {return st.step_frame(s)}
+    return api_frames(s,1,0)>0
+}
 
 @(private)
 Api_Step_Run :: struct {
@@ -329,6 +333,7 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
         // The run ends with its turn or with the document.
         if run_find(s,run.owner)==nil {return}
         if target=run_player(s,run.owner,run.player);target==nil {return}
+        qa_tick(s,target)
         if len(run.until)>0 {
             if met,problem=api_conditions_read(s,run_ref(s,target),run.until,nil,"until");problem!="" {
                 problem=fmt.tprintf("%s, after %d ticks",problem,ran)
@@ -504,6 +509,20 @@ api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,tr
     if trace==nil {return}
     out.count-=1 // the brace that closes it
     api_trace_write(s,out,trace)
+    serial.write_u8(out,'}')
+}
+
+// The small answer of play.step with observe: its ticks and what play.observe
+// says after them, and its trace when it read one.
+@(private)
+api_play_step_observe_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,targets:[]string,trace:^Api_Trace) {
+    out:=call.out
+    serial.write_u8(out,'{')
+    api.write_int(out,"ran",i64(ran),true)
+    api.write_bool(out,"met",met)
+    api.write_key(out,"observe")
+    if r!=nil {play_observe_write(s,out,r,targets,API_OBSERVE_NEAREST,call.allocator)} else {serial.text_write_raw(out,"null")}
+    if trace!=nil {api_trace_write(s,out,trace)}
     serial.write_u8(out,'}')
 }
 

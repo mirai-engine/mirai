@@ -6,6 +6,8 @@ import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
+import "mirai:std/serial"
 
 @(test)
 capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^testing.T) {
@@ -27,6 +29,63 @@ capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^te
     }
     _,problem:=api_output_path(root,"")
     testing.expect(t,strings.contains(problem,"path is required"),problem)
+}
+
+@(test)
+a_capture_given_a_path_answers_where_it_is_and_no_image :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    file:="C:/shots/a.png"
+    for shown in ([2]bool{false,true}) {
+        out:serial.Writer
+        serial.writer_init(&out)
+        defer serial.writer_destroy(&out)
+        play:=api.Call{out=&out,allocator=context.temp_allocator}
+        api_play_capture_answer(&play,file,64,32,shown)
+        text:=string(serial.writer_bytes(&out))
+        api_result_shape_expect(t,text,Api_Play_Capture_Result)
+        testing.expect(t,strings.contains(text,file) && !strings.contains(text,"content") && !strings.contains(text,"data"),text)
+        testing.expect_value(t,play.image,shown?file:"")
+
+        method:=api.Method{result_id=Api_Capture_Result}
+        result:Api_Capture_Result
+        editor:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
+        api_capture_reply(&editor,file,64,32,shown)
+        testing.expect(t,base.text_get(result.path[:])==file && result.width==64 && result.height==32,"the file and its size")
+        testing.expect_value(t,editor.image,shown?file:"")
+    }
+}
+
+@(test)
+a_capture_without_a_path_goes_under_the_captures_of_its_project :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=project.path_absolute(fmt.tprintf(".mirai/test-capture-default-%d",os.get_pid()))
+    defer os.remove_all(root)
+    call:=api.Call{allocator=context.temp_allocator}
+    inside:=Session{project_root=root}
+    file,ok:=api_capture_file(&inside,&call,"","editor.png")
+    testing.expect(t,ok && file==fmt.tprintf("%s/.mirai/captures/editor.png",root),file)
+    alone:Session
+    _,ok=api_capture_file(&alone,&call,"","editor.png")
+    testing.expect(t,!ok && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,"path is required"),call.error.message)
+}
+
+@(test)
+a_scaled_capture_averages_what_each_pixel_covers :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    source:=[]u8{0,0,0,255, 100,100,100,255, 100,100,100,255, 200,200,200,255}
+    cases:=[?]struct{size:[2]i32,first:[4]u8}{
+        {{1,1},{100,100,100,255}},
+        {{2,1},{50,50,50,255}},
+        {{2,2},{0,0,0,255}},
+        {{4,4},{0,0,0,255}},
+    }
+    for c in cases {
+        scaled,ok:=api_pixels_scale(source,2,2,c.size,context.allocator)
+        testing.expectf(t,ok && len(scaled)==int(c.size.x*c.size.y)*4,"%v",c.size)
+        if ok {testing.expectf(t,[4]u8{scaled[0],scaled[1],scaled[2],scaled[3]}==c.first,"%v: %v",c.size,scaled[:4])}
+    }
+    _,ok:=api_pixels_scale(source,3,3,{1,1},context.allocator)
+    testing.expect(t,!ok,"pixels shorter than their size")
 }
 
 @(test)

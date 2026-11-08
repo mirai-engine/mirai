@@ -45,7 +45,7 @@ the_rect_of_a_node_of_a_screen_is_in_window_points :: proc(t:^testing.T) {
 the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=3,resimulating=true})
     testing.expect(t,len(events.items)==0 && len(gui.pending)==1)
@@ -53,11 +53,46 @@ the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing
     testing.expect(t,len(events.items)==1 && len(gui.pending)==0 && events.items[0].name==7)
 }
 
+// A frame step reads an event once, in frames with several ticks and with none.
+@(test)
+events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T) {
+    gui:Gui
+    events:UI_Events
+    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
+    event:=UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked}
+    read :: proc(t:^testing.T,gui:^Gui,want:int,loc:=#caller_location) {
+        testing.expect_value(t,len(events_this_frame(gui)),want,loc=loc)
+    }
+    // Two ticks: the second leaves UI_Events empty, this frame still has it, the next one does not.
+    append(&gui.pending,event)
+    gui_events_deliver(&events,&gui,core.Time{tick=1})
+    gui_events_deliver(&events,&gui,core.Time{tick=2})
+    testing.expect_value(t,len(events.items),0)
+    gui_events_frame(&events,&gui,core.Time{tick=2})
+    read(t,&gui,1)
+    gui_events_deliver(&events,&gui,core.Time{tick=3})
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,0)
+    // Stopped: no tick runs, and it comes through the frame phase, once.
+    append(&gui.pending,event)
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,1)
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,0)
+    // A tick that runs again gave them already.
+    append(&gui.pending,event)
+    gui_events_deliver(&events,&gui,core.Time{tick=4})
+    gui_events_frame(&events,&gui,core.Time{tick=4})
+    gui_events_deliver(&events,&gui,core.Time{tick=4,resimulating=true})
+    gui_events_frame(&events,&gui,core.Time{tick=4})
+    read(t,&gui,0)
+}
+
 @(test)
 a_tick_that_runs_again_gets_the_events_it_got :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=5})
     gui_events_deliver(&events,&gui,core.Time{tick=6})
@@ -462,7 +497,7 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
 events_go_to_the_frame_phase_while_no_tick_runs :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
     // A tick ran in the frame: the frame phase leaves it its events.
     append(&gui.pending,UI_Event{name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=4})

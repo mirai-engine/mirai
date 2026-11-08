@@ -22,7 +22,10 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio:focusable=true
     }
     if focusable && .Focus_First in node.flags && !b.desc.passive && !disabled {
-        if _,held:=widget_rect(ctx,ctx.focus);ctx.focus==0 || !held {ctx.focus,ctx.focus_ring=node_id,true}
+        if _,held:=widget_rect(ctx,ctx.focus);ctx.focus==0 || !held || b.turned {
+            ctx.focus,ctx.focus_ring=node_id,true
+            b.turned=false
+        }
     }
     if .Draggable in node.flags {tree_drag_source(ctx,b,node,index,node_id,item)}
     defer if .Draggable in node.flags {tree_drag_ghost(ctx,b,node,index,node_id,values,slot-int(instance.slots[index]),item)}

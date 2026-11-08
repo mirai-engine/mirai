@@ -164,6 +164,15 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
     title,_:=observe_node(screen,"left/title")
     testing.expect_value(t,title["text"].(json.String) or_else "","Inventory")
 
+    // What can be pressed on the screen on top, in the same window points.
+    top,on_top:=play_ui_top(&view,0,false)
+    testing.expect(t,on_top && !top.modal)
+    if testing.expect_value(t,len(top.buttons),2) {
+        testing.expect_value(t,top.buttons[0].name,"left/action")
+        testing.expect(t,top.buttons[0].laid && !top.buttons[0].disabled && top.buttons[0].rect[2]==180)
+        testing.expect(t,top.buttons[1].disabled)
+    }
+
     // all lists the screen the frame did not build too, without nodes.
     view.all=true
     serial.writer_init(&w,0,context.temp_allocator)

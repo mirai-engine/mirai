@@ -114,6 +114,11 @@ float scene_reach(float3 origin, float3 direction) {
     float leave = min(far.x, min(far.y, far.z));
     return leave >= max(max(near.x, max(near.y, near.z)), 0.0) ? leave * 1.001 + 0.01 : 0.0;
 }
+
+// How far a shadow ray goes toward the sun: none (no traversal) while it casts no shadows.
+float sun_reach(float3 origin, float3 direction) {
+    return frame.sun_direction.w >= SUN_UNSHADOWED ? 0.0 : scene_reach(origin, direction);
+}
 float2 project_uv(float3 world) {
     float4 clip = view_clip(world);
     float2 ndc = clip.xy / clip.w;

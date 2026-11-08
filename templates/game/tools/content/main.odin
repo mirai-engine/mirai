@@ -21,12 +21,12 @@ import "mirai:std/base"
 import "mirai:ui"
 import game "project:game"
 
-// Writes every asset of the game: a badge (.tex), the HUD and the sign
-// (.ui), a hum (.sound, imported from the WAV this writes into source/) and
+// Writes every asset of the game: a badge (.tex), the HUD, the sign and the
+// menus of game/shell.odin (.ui), a hum (.sound, imported from the WAV this writes into source/) and
 // the scene assets/scenes/main.scene that uses them. Running it again gives
 // the same bytes. From the folder of the project:
 //
-//   odin run tools/content -collection:mirai=<engine> -collection:project=. -custom-attribute:component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record
+//   odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins -collection:project=. -ignore-unknown-attributes
 
 @(private) id_of :: proc(kind,name:string) -> base.Asset_Id {return base.asset_id_named(fmt.tprintf("%s\x1fgame_content\x1f%s",kind,name))}
 
@@ -120,6 +120,96 @@ write_sign :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Text,name="hits",style=3,bind_text="Status.hits"}),
     }
     check(o,"assets/ui/sign.ui",host.ui_tree_save("assets/ui/sign.ui",&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
+    return id
+}
+
+// The interface of game/shell.odin: a Switcher with one page per member of
+// game.Shell_Page before Playing, in that order. Restyle it here: the colors,
+// the styles and the sizes of the controls are all in this procedure.
+write_shell :: proc(o:^Out) -> base.Asset_Id {
+    GAME_TITLE :: "Game"
+    PANEL_FILL :: ui.Color{16,22,34,240}
+    EDGE :: ui.Color{96,118,160,255}
+    FACE :: ui.Color{34,46,70,255}
+    FACE_LIT :: ui.Color{52,70,104,255}
+    ACCENT :: ui.Color{255,170,40,255}
+    DIM,PANEL,TITLE,BUTTON,LABEL,CONTROL :: 1,2,3,4,5,6 // indices of styles
+
+    styles:=[]ui.Node_Style{
+        {},
+        {fill={8,12,20,170}},
+        {fill=PANEL_FILL,stroke=EDGE,stroke_width=1,radius=12},
+        {text={size=40,color=WHITE,align_x=.Center}},
+        {text={size=22,color=WHITE,align_x=.Center,align_y=.Center},fill=FACE,stroke=EDGE,stroke_width=1,radius=8,transition=0.08},
+        {text={size=18,color={190,204,228,255}}},
+        {text={size=18,color=WHITE,align_x=.Center,align_y=.Center},fill=FACE,stroke=EDGE,stroke_width=1,radius=6,mark=ACCENT,transition=0.08},
+    }
+    lit :: proc(style:u16,states:ui.Style_States,fill,stroke:ui.Color) -> ui.Tree_Style_Variant {
+        values:ui.Node_Style
+        values.fill,values.stroke=fill,stroke
+        return ui.tree_variant_record(style,"",states,{fields={.Fill,.Stroke},values=values})
+    }
+    variants:=[]ui.Tree_Style_Variant{
+        lit(BUTTON,{.Hovered},FACE_LIT,EDGE),lit(BUTTON,{.Focused},FACE_LIT,ACCENT),lit(BUTTON,{.Pressed},ACCENT,ACCENT),
+        lit(CONTROL,{.Hovered},FACE_LIT,EDGE),lit(CONTROL,{.Focused},FACE_LIT,ACCENT),
+    }
+
+    Tree :: struct {texts:[dynamic]u8,nodes:[dynamic]ui.Tree_Node}
+    add :: proc(t:^Tree,parent:i32,desc:ui.Node_Desc) -> i32 {
+        append(&t.nodes,ui.tree_node_record(&t.texts,parent,desc))
+        return i32(len(t.nodes)-1)
+    }
+    // A dimmed page with a centered panel and its title; what it holds goes in the panel.
+    page :: proc(t:^Tree,pages:i32,name,title:string) -> i32 {
+        dim:=add(t,pages,{kind=.Box,style=DIM,layout={width=ui.grow(),height=ui.grow(),align_x=.Center,align_y=.Center}})
+        panel:=add(t,dim,{kind=.Box,name=name,style=PANEL,layout={direction=.Column,align_x=.Center,gap=12,padding=ui.padding_all(28)},flags={.Wrap_Y}})
+        add(t,panel,{kind=.Text,style=TITLE,text=title})
+        return panel
+    }
+    // The first control of a page takes the focus of the keyboard when it shows.
+    first :: proc(on:bool) -> ui.Node_Flags {return on?{.Focus_First}:{}}
+    button :: proc(t:^Tree,parent:i32,name,text:string,is_first:=false) {
+        add(t,parent,{kind=.Button,name=name,text=text,style=BUTTON,flags=first(is_first),layout={width=ui.fixed(280),height=ui.fixed(50)}})
+    }
+    row :: proc(t:^Tree,parent:i32,label:string) -> i32 {
+        at:=add(t,parent,{kind=.Box,layout={gap=16,align_y=.Center}})
+        add(t,at,{kind=.Text,style=LABEL,text=label,layout={width=ui.fixed(190)}})
+        return at
+    }
+    selector :: proc(t:^Tree,parent:i32,label,name,bind,options:string,is_first:=false) {
+        add(t,row(t,parent,label),{kind=.Selector,name=name,bind_value=bind,text=options,style=CONTROL,flags=first(is_first),layout={width=ui.fixed(280),height=ui.fixed(36)}})
+    }
+    checkbox :: proc(t:^Tree,parent:i32,label,name,bind:string) {
+        add(t,row(t,parent,label),{kind=.Checkbox,name=name,bind_value=bind,style=CONTROL,layout={width=ui.fixed(36),height=ui.fixed(36)}})
+    }
+
+    t:=Tree{texts=make([dynamic]u8,context.temp_allocator),nodes=make([dynamic]ui.Tree_Node,context.temp_allocator)}
+    root:=add(&t,-1,{kind=.Box,name="shell",float={to=.Surface,anchor=.Top_Left,pivot=.Top_Left},layout={width=ui.grow(),height=ui.grow()}})
+    pages:=add(&t,root,{kind=.Switcher,name="pages",bind_value="Shell.page",layout={width=ui.grow(),height=ui.grow()}})
+
+    menu:=page(&t,pages,"menu",GAME_TITLE)
+    button(&t,menu,"menu_play","Play",true)
+    button(&t,menu,"menu_exit","Exit")
+
+    pause:=page(&t,pages,"pause","Paused")
+    button(&t,pause,"pause_resume","Resume",true)
+    button(&t,pause,"pause_settings","Settings")
+    button(&t,pause,"pause_quit","Quit to Menu")
+
+    // The options of each selector are in the order of the SHELL_ tables of game/shell.odin.
+    settings:=page(&t,pages,"settings","Graphics")
+    selector(&t,settings,"Quality","settings_preset","Shell_Options.preset","Low|Medium|High|Custom",true)
+    selector(&t,settings,"Render scale","settings_scale","Shell_Options.scale","50%|75%|100%")
+    selector(&t,settings,"Shadows","settings_shadows","Shell_Options.shadows","Off|Low|Medium|High")
+    selector(&t,settings,"Anti-aliasing","settings_aa","Shell_Options.antialiasing","Off|TAA")
+    selector(&t,settings,"Reflections","settings_reflections","Shell_Options.reflections","Off|Traced|Detailed")
+    selector(&t,settings,"Frame limit","settings_limit","Shell_Options.limit","30|60|120|None")
+    checkbox(&t,settings,"Fullscreen","settings_fullscreen","Shell_Options.fullscreen")
+    checkbox(&t,settings,"VSync","settings_vsync","Shell_Options.vsync")
+    button(&t,settings,"settings_back","Back")
+
+    id:=id_of("ui","shell")
+    check(o,"assets/ui/shell.ui",host.ui_tree_save("assets/ui/shell.ui",&o.types,id,{nodes=t.nodes[:],styles=styles,variants=variants,text=t.texts[:]}))
     return id
 }
 
@@ -219,20 +309,14 @@ write_player :: proc(o:^Out) {
     check(o,"assets/prefabs/Player.prefab",asset.scene_save(&s.scene,"assets/prefabs/Player.prefab"))
 }
 
-write_scene :: proc(o:^Out,hud,sign,hum:base.Asset_Id) {
+write_scene :: proc(o:^Out,hud,sign,hum,shell:base.Asset_Id) {
     s:Scene_Out
     asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","main"))
     defer asset.scene_destroy(&s.scene)
 
-    // The sun of noon, lux, and a sky as bright next to it as the template has
-    // always had it, nits.
+    // The air lit by the Sun below, and the exposure the meter gives: a clear day.
     sky:=render.SKY_DEFAULT
-    sky.luminance,sky.use_background={8950,10940,14920},false
     put(&s,entity(&s,"Sky"),"Sky",&sky)
-    // Three quarters of a stop over the meter in the whole scene.
-    look:=render.VIEW_VOLUME_DEFAULT
-    look.exposure.compensation=0.75
-    put(&s,entity(&s,"Exposure"),"View_Volume",&look)
     // It shines toward its -Z, from where the sun of the editor's preset is.
     sun:=render.Sun{color={1,0.96,0.9},illuminance=100000}
     sun_entity:=entity(&s,"Sun")
@@ -274,6 +358,13 @@ write_scene :: proc(o:^Out,hud,sign,hum:base.Asset_Id) {
     overlay:=entity(&s,"Hud")
     put(&s,overlay,"UI_Screen",&screen)
     put(&s,overlay,"Status",&status)
+    put(&s,overlay,"Shell_Hud",&game.Shell_Hud{})
+
+    // Over the HUD, and Modal: while it shows the seats get no actions and the pointer is free.
+    shell_screen:=gui.UI_Screen{asset=shell,order=10,input=.Modal}
+    menus:=entity(&s,"Shell")
+    put(&s,menus,"UI_Screen",&shell_screen)
+    put(&s,menus,"Shell_Screen",&game.Shell_Screen{})
 
     if s.failed {
         fmt.eprintln("content: the scene could not be built")
@@ -289,9 +380,9 @@ main :: proc() {
     defer asset.types_destroy(&o.types)
     for folder in ([]string{"assets/ui","assets/sounds","assets/textures","assets/scenes","assets/prefabs"}) {os.make_directory_all(folder)}
     badge:=write_badge(&o)
-    hud,sign,hum:=write_hud(&o,badge),write_sign(&o),write_hum(&o)
+    hud,sign,hum,shell:=write_hud(&o,badge),write_sign(&o),write_hum(&o),write_shell(&o)
     write_player(&o)
-    if !o.failed {write_scene(&o,hud,sign,hum)}
+    if !o.failed {write_scene(&o,hud,sign,hum,shell)}
     free_all(context.temp_allocator)
     if o.failed {os.exit(1)}
 }

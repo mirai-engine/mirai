@@ -25,6 +25,7 @@ Api_Play_Condition :: struct {
     component:[64]u8 `mirai:"optional,text,label=A component of the entity; empty: the entity itself or its world_position"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of an entity"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of a storage or an entity: the entity named is its point (points.0)"`,
+    qa:bool `mirai:"optional,label=The violations of play.qa.start in place of a storage or an entity: field is a kind such as Fell or Stuck and the value how many"`,
     field:[128]u8 `mirai:"optional,text,label=The value inside by names of fields and indices of elements joined by dots (velocity.1 or points.0.normalized.0); empty: all of it"`,
     compare:Api_Compare `mirai:"optional,label=Exists (the default) and Gone say whether the entity or the component or the field is there; the others compare the value"`,
     number:f64 `mirai:"optional,label=What a number is compared with; a bool is 1 or 0"`,
@@ -46,8 +47,23 @@ Api_Play_Check_Entry :: struct {
     value:u8 `mirai:"any,label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
 }
 
+Api_Play_Get_Params :: struct {
+    name:[64]u8 `mirai:"optional,text,label=The entity by its name: the first with it in the order of play.inspect; give name or entity or id"`,
+    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle as play.inspect gives it"`,
+    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene"`,
+    field:[128]u8 `mirai:"text,label=A component and the path inside it (Transform.position or Motion.linear[1]) or a path of the document of the entity as play.inspect writes it (world_position)"`,
+    player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
+}
+
+Api_Play_Get_Result :: struct {
+    entity:[16]u8 `mirai:"text,label=The handle of the entity"`,
+    tick:u64 `mirai:"label=The tick of the game it was read at"`,
+    value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
+}
+
 @(private)
 api_play_wait_register :: proc(s:^Session,st:^Api_State) {
+    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=Api_Play_Get_Params,result=Api_Play_Get_Result,writes_result=true,flags={.Read_Only},run=api_play_get})
     api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Read_Only},run=api_play_check})
 }
 
@@ -68,7 +84,8 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
     field,text:=base.text_get(c.field[:]),base.text_get(c.text[:])
     named:=int(handle!="")+int(c.id!=0)+int(name!="")
     if c.view && (storage!="" || component!="") {return {},"view reads what the player sees: leave storage and component out; an entity named is its point"}
-    if !c.view && (named>0) == (storage!="") {return {},"name what it reads: an entity (by entity, id or name), a storage or the view"}
+    if c.qa && (c.view || storage!="" || component!="" || named>0) {return {},"qa reads the violations of play.qa.start: leave view, storage, component and the entity out"}
+    if !c.view && !c.qa && (named>0) == (storage!="") {return {},"name what it reads: an entity (by entity, id or name), a storage, the view or qa"}
     if named>1 {return {},"name the entity once: by entity, by id or by name"}
     if storage!="" && component!="" {return {},"a storage has no components: leave component out, or name an entity"}
     if text!="" && c.compare!=.Equal && c.compare!=.Not_Equal && c.compare!=.Exists && c.compare!=.Gone {return {},"a text is compared with Equal or Not_Equal; give number for the others"}
@@ -76,6 +93,12 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
     serial.writer_init(&out,0,allocator)
     found:=false
     switch {
+    case c.qa:
+        run:^Run
+        for &r in s.runs {if r.world==w.data {run=&r;break}}
+        if run==nil || run.qa==nil {return {},"qa reads the violations of play.qa.start, and this game has no monitors: call play.qa.start first"}
+        qa_counts_write(&out,run.qa)
+        found=true
     case storage!="":
         at:=-1
         for &info,i in s.info.storages {if st.storage_types[i]!=serial.TYPE_NONE && info.name==storage {at=i;break}}
@@ -94,9 +117,7 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
             if core.alive(core.world_entities(w),core.Entity(value)) {e=core.Entity(value)}
         case c.id!=0: e=api_entity(w,c.id)
         case name!="":
-            for candidate in api_entities_ordered(w,allocator) {
-                if entity_name(w,candidate)==name {e=candidate;break}
-            }
+            e=api_entity_named(w,name,allocator)
         }
         if c.view {
             // An entity that is not there is a reading of null, as without view.
@@ -201,6 +222,56 @@ api_play_check :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(out,'}')
     }
     serial.text_write_raw(out,"]}")
+}
+
+// A value of a live entity as JSON text: field is a component and the path
+// inside it, read as play.check reads it, or a path of the document of the
+// entity as play.inspect writes it. Transient values count: it is one value.
+@(private)
+api_entity_field :: proc(s:^Session,w:core.World_Ref,e:core.Entity,field:string,allocator:=context.temp_allocator) -> (value,problem:string) {
+    st:=api_state(s)
+    head,rest:=field,""
+    if end:=strings.index_any(field,".[");end>=0 {head,rest=field[:end],strings.trim_prefix(field[end:],".")}
+    if t:=component_table(s,head);t!=nil && t.name==head && t.place==.World && st.types[api_table_index(s,t)]!=serial.TYPE_NONE {
+        c:Api_Play_Condition
+        api_handle_put(c.entity[:],e)
+        api_text_put(c.component[:],head)
+        api_text_put(c.field[:],rest)
+        read,wrong:=api_condition_read(s,w,&c,allocator)
+        if wrong!="" {return "",wrong}
+        if read.value=="null" {return "",fmt.tprintf("the entity has no %s: play.inspect lists its components",head)}
+        return read.value,""
+    }
+    out:serial.Writer
+    serial.writer_init(&out,0,allocator)
+    api_entity_write(s,w,&out,e,true,make([]u8,max(st.largest,1),allocator),true,true)
+    whole,parse_error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
+    if parse_error!=nil {return "","the value could not be read back as JSON"}
+    leaf,missing:=api_json_select(whole,field,allocator)
+    if missing!="" {return "",fmt.tprintf("field %q: %s, or a component of the game as Transform.position",field,missing)}
+    return api_json_text(leaf,allocator),""
+}
+
+@(private)
+api_play_get :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Play_Get_Params)
+    r,_:=api_play_run(s,call,p.player)
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    w:=run_ref(s,r)
+    e,problem:=api_play_entity_of(w,base.text_get(p.entity[:]),p.id,base.text_get(p.name[:]))
+    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
+    if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
+    out:=call.out
+    handle:[16]u8
+    api_handle_put(handle[:],e)
+    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,string(handle[:]))
+    api.write_key(out,"tick")
+    tick:u64
+    if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
+    serial.text_write_uint(out,tick)
+    api.write_key(out,"value");serial.text_write_raw(out,value)
+    serial.write_u8(out,'}')
 }
 
 // The value at a path inside a JSON value: names of fields joined by dots and

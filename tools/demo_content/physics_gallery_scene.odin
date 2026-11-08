@@ -149,6 +149,7 @@ write_physics_gallery :: proc(o:^Out) {
     u:=daylight(3)
     // Two stops over the meter: the gallery as bright as the demo has it.
     environment:=render.SKY_DEFAULT;environment.luminance,environment.background=nits(u,{.4,.52,.72}),nits(u,{.0019,.0026,.0045})
+    environment.atmosphere=false
     exposure:=render.EXPOSURE_DEFAULT
     exposure.compensation=1
     sky_set(&s,&environment,0,exposure)

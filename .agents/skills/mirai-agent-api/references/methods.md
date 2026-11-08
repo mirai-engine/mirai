@@ -110,13 +110,12 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - Held keys and buttons replace those of the previous event.
   - `mouse_position` and `mouse_delta` do not go together; `text` is printable ASCII.
   - Keys by `core.Key` name (`W`, `Left_Control`, `F5`); the Mac Cmd is `Left_Super`.
-- `editor.capture` (`path`, `warmup_frames`, `dt`, `ui`, `width`, `height`, `region`, `seconds`,
-  `rev`): requires a GPU and returns `{path, frame, revision, width, height}`. Draws
-  `warmup_frames` frames (0 to 3600; at least one) and writes a PNG, which over MCP also comes back
-  as an image. With a `.ui` in front (`editor.document`) and `ui:true` the image is its document.
+- `editor.capture`: requires a GPU. Draws `warmup_frames` frames (0 to 3600; at least one) and
+  writes a PNG. With a `.ui` in front (`editor.document`) and `ui:true` the image is its document.
   - `path`: absolute (`C:/x.png`, or `/c/x.png` as Git Bash writes it) or relative to the folder of
     the project the editor opened, never to that of the process. The folder is created. The result
-    brings the absolute path written.
+    brings the absolute path written and the size, with no image data; without `path` the PNG goes
+    in `.mirai/captures/` and over MCP it comes back as an image.
   - Before drawing it opens the file for writing without changing it: if it cannot, it fails with
     the path and the system reason (`permission denied`…), or `-32602` if the path is a folder or
     has a root without a drive (`/tmp/x.png` on Windows).
@@ -585,8 +584,8 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   without the editor (a turn's run and the user's Play alike); `ui:true` takes the user's Play as
   the window shows it, editor around it. Drawn offscreen, its temporal effects start over in that
   view (`frames` lets them settle): to measure stability frame to frame, use `editor.capture` with
-  `ui:true`. A job writes the PNG, at `path` like that
-  of `editor.capture` or, without it, in `.mirai/captures/`.
+  `ui:true`. A job writes the PNG; `path` follows the rule of `editor.capture` (the answer is the
+  file and its size, with no image data; without it `.mirai/captures/` and the image over MCP).
   - Filmstrip (`every` and `count`): steps the caller's own run like `play.step` (pausing the
     user's Play), with `segments` as its input and nothing held after them, and draws a cell
     before the first tick and every `every` ticks: the whole image, a `region`, or a cell of
@@ -619,6 +618,30 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - `verify` replays each span between keyframes and compares the transforms hash of every frame
     and, at the next keyframe, every entity and storage as `play.inspect` writes them, stopping at
     the first span that differs. A keyframe made from an edit while paused is not compared.
+- `play.observe` (`read_only`): one small answer for one decision; the rounded numbers are what a
+  model reads. `problems` lists what is new since the caller last observed this run; `stuck`
+  comes from the monitors when `play.qa.start` armed them, else from comparing the place
+  between two observes while the body asks to move. `play.step` with `observe` answers only
+  `ran`, `met` and this, so one call is act plus observe.
+- `play.qa.start` and `play.qa.report`: monitors of the ticks the API runs. Armed, a tick writes
+  into what `play.qa.start` reserved, and a run without them tests one pointer per tick.
+  - They count only those ticks: what the user's unpaused Play runs is not seen, and repros
+    refuse a run that advanced or went back outside them.
+  - `Frame_Time` and `Memory` measure the machine (`Memory` is growth since the start): their
+    repros do not fail reliably. The others are of the game and repeat with it.
+  - A repro is a regression test: it fails while the bug exists and passes once it is fixed. It
+    plays the inputs from tick 0 (holds, devices and the changes of `play.set`, `play.spawn`,
+    `play.destroy` and `play.push`) and ends in a `play.check` with `qa` on the count of that kind;
+    `play.qa.start` right after `play.start` is what makes it possible. Clicks replay at the same
+    window size.
+  - In a scenario, a step `play.qa.report` fails it on any violation; `qa` of `play.scenario.run`
+    arms them on every file and adds the report.
+- `play.explore`: no model; a game that reads only its World repeats it from the same seed.
+  - `Ui` presses what it never pressed, then the button of the shortest way to a page with one
+    left, then Escape twice, then stops.
+  - A button that asks the game to quit is listed in `exits` and the run goes on; it also
+    stops at its ticks, so a pause or a quit loop cannot hold it.
+  - It arms the monitors if nothing did, and writes one repro per kind of violation.
 - `play.player`: fails without a run. The seat is that of the focused local player
   (`input.focused`); body and camera come from `Drivable` and `render.View_Camera`. The AI context
   reads the player with the same `play_player_snapshot`.

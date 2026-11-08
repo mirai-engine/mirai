@@ -29,11 +29,13 @@ Reflections :: enum u8 {
 
 @(storage,setting="machine")
 Graphics_Settings :: struct {
-    render_megapixels:f32 `mirai:"min=0,max=100,section=Resolution"`, // the most pixels of the 3D image, in millions, below one per point of the window; 0: one per point
+    render_scale:f32 `mirai:"min=0,max=2,section=Resolution"`, // the 3D image per point of the window along each axis, 0.25 to 2 (0: 1); render_megapixels then caps the pixels of the result
+    render_megapixels:f32 `mirai:"min=0,max=100"`, // the most pixels of the 3D image, in millions, below one per point of the window; 0: one per point
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting"`,
     light_probes:Light_Probes,
     reflections:Reflections,
+    sun_shadows:bool,                          // the sun casts shadows; off, no ray goes to it and it lights everything it faces
     shadowed_lights:u32 `mirai:"min=1,max=32"`, // shadow rays of a place, each to a light that reaches it or to a group of far ones that stands for them
     glass_shadows:bool,                        // blended surfaces color the light that crosses them
     glass_layers:u32 `mirai:"min=1,max=2"`,
@@ -49,8 +51,8 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    render_megapixels=2.0736,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
-    shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
+    render_scale=1,render_megapixels=2.0736,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
+    sun_shadows=true,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
 Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
@@ -111,7 +113,7 @@ GRAPHICS_TEXTURE_POOL_MIN :: u32(256)
 graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings,device:rhi.Device_Info) -> gpu.Settings {
     s:=settings
     probes,sizes,pixels:=GRAPHICS_PROBES,GRAPHICS_TEXTURE_SIZES,GRAPHICS_DETAIL_PIXELS
-    s.render_scale,s.render_megapixels=1,max(quality.render_megapixels,0)
+    s.render_scale,s.render_megapixels=quality.render_scale>0?clamp(quality.render_scale,0.25,2):1,max(quality.render_megapixels,0)
     // A plugin that resolves the technique replaces the Resolve stage, where the TAA runs, in its pipeline.
     technique:=quality.antialiasing
     s.taa=base.text_get(technique[:])!=gpu.ANTIALIASING_OFF
@@ -121,6 +123,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     if quality.light_probes==.High {s.probe_grid=32}
     s.reflections=quality.reflections!=.Off
     s.reflection_detail_roughness=quality.reflections==.Detailed?gpu.REFLECTION_SHARED_ROUGHNESS:0
+    s.sun_shadows=quality.sun_shadows
     s.light_budget=clamp(quality.shadowed_lights,1,gpu.LIGHT_CUT_MAX)
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
     s.colored_shadows=quality.glass_shadows

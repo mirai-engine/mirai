@@ -584,7 +584,8 @@ render_sync :: proc(
     if core.count(emissions)>0 && (extras_changed || local_changes) {lights_seen=~sync.lights_seen}
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
     if !sky_found {sky_entity,sky,sky_found=sky_active(skies,hidden,parents)}
-    environment:=sky_environment(sky_entity,sky,sky_found,worlds,a)
+    _,_,sunlit:=sun_on(worlds,lights,hidden,parents)
+    environment:=sky_environment(sky_entity,sky,sky_found,sunlit,worlds,a)
     looked:=view.position
     if preview.ptr!=nil && preview.section!=core.NONE {
         if at,placed:=core.get(worlds,preview.section);placed {looked=at.position}
@@ -1194,6 +1195,25 @@ lights_version :: proc(l:Lights) -> u64 {
     return core.version(l.suns)+core.layout(l.suns)+core.version(l.points)+core.layout(l.points)+core.version(l.spots)+core.layout(l.spots)+core.version(l.rects)+core.layout(l.rects)
 }
 
+// The sun that lights the world: the one previewed, or else the first not hidden.
+@(private)
+sun_on :: proc(worlds:core.Read(core.World_Transform),lights:Lights,hidden:core.Read(Hidden),parents:core.Read(core.Parent)) -> (sun:Sun,direction:[3]f32,found:bool) {
+    if lights.preview!=core.NONE && lights.suns.table!=nil {
+        if row:=core.raw_row(core.raw(lights.suns.table),lights.preview);row>=0 {
+            if world,placed:=core.get(worlds,lights.preview);placed {
+                return lights.suns.table.values[row],mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+            }
+        }
+    }
+    for row in 0..<core.count(lights.suns) {
+        e:=core.entity_at(lights.suns,row)
+        world,placed:=core.get(worlds,e)
+        if !placed || is_hidden(hidden,parents,e) {continue}
+        return core.at(lights.suns,row),mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+    }
+    return
+}
+
 @(private)
 lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32) {
     clear(&sync.lights)
@@ -1204,24 +1224,9 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         sync.sun_factor=sun_height_factor(sync.sun_fade,height)
         sync.sun.illuminance*=sync.sun_factor
     }
-    if lights.preview!=core.NONE && lights.suns.table!=nil {
-        if row:=core.raw_row(core.raw(lights.suns.table),lights.preview);row>=0 {
-            if world,placed:=core.get(worlds,lights.preview);placed {
-                sun:=lights.suns.table.values[row]
-                sync.sun={direction=mm.quat_rotate(world.rotation,[3]f32{0,0,1}),color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
-                sync.sun_fade=sun.height_fade
-            }
-        }
-    }
-    for row in 0..<core.count(lights.suns) {
-        if sync.sun.enabled {break}
-        e:=core.entity_at(lights.suns,row)
-        world,placed:=core.get(worlds,e)
-        if !placed || is_hidden(hidden,parents,e) {continue}
-        sun:=core.at(lights.suns,row)
-        sync.sun={direction=mm.quat_rotate(world.rotation,[3]f32{0,0,1}),color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
+    if sun,direction,found:=sun_on(worlds,lights,hidden,parents);found {
+        sync.sun={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
         sync.sun_fade=sun.height_fade
-        break
     }
     for row in 0..<core.count(lights.points) {
         e:=core.entity_at(lights.points,row)

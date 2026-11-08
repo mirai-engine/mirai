@@ -1,0 +1,62 @@
+# Saves: slots, autosave, checkpoints, profile
+
+`engine/save` writes the world into a slot, a file in the user's folder of the project. Add the
+requests from a `fixed` step; the library serves them at the start of the next frame.
+
+```odin
+import save "mirai:engine/save"
+
+@(step="fixed")
+game_saves :: proc(actions:inp.Input_Of(Action),saves:^save.Save_Requests,
+                   results:core.Ref(save.Save_Results),network:core.Ref(core.Network)) {
+    if network.role!=.Standalone {return}          // a network session does not save
+    if inp.pressed(actions,.Save) {save.request_save(saves,"quick")}
+    if inp.pressed(actions,.Load) {save.request_load(saves,"quick")}
+    for result in results.queue.items {            // one per request served, for one frame
+        if result.error!=.None {continue}          // a save.Error: .Not_Found, .Corrupt...
+        // result.op is .Save or .Load; result.kind .Manual, .Autosave or .Checkpoint
+    }
+}
+```
+
+## What a save keeps
+
+- The components of every entity that has an `Id` (scene entities). A `transient` field is not
+  stored and a component stored by an older layout migrates by field name.
+- Never a storage: what must survive is a component. Bodies, caches and voices are rebuilt by
+  their libraries from the components.
+- Loading replaces the world: every handle changes and events in flight name entities that are
+  gone. Hold `core.Id`s, not `core.Entity`, across a load; `core.entity_of(es, id)` finds one.
+- The clock returns to the saved tick. A slot that does not load whole leaves the world as it was.
+
+## Requests
+
+- `request_save(r, slot)`, `request_load`, `request_delete`; `request_checkpoint(r)` and
+  `request_load_checkpoint(r)` use one reserved slot; `request_autosave(r)`.
+- `request_new_game` starts a game from zero, `request_end_game` turns it off (a menu does that:
+  no autosave and no time counted); `request_label` names the slots.
+- Each returns a `save.Error` at once: `.Invalid_Slot` (a name of letters, digits, spaces, `-`,
+  `_`), `.Invalid_Label` or `.Busy` (too many wait for the next frame).
+- A served request leaves its `Result`; `.Unavailable` is a client of a network session.
+- Autosave is a project setting (`Save_Settings`, `engine.describe`): it rotates slots by time and
+  when a scene replaces another.
+
+## Progress that is not a save
+
+A `@(storage,persist)` of plain data is written to the player's profile, outside any slot:
+achievements, unlocks, the last level. No `Entity`, string, slice, map or pointer fields.
+
+```odin
+@(storage,persist)
+Progress :: struct {best_ms:u32, unlocked:u32}
+```
+
+`save.request_profile_save(saves)` writes it; the profile is read once when a world first runs.
+`save.request_options_save(saves)` writes the player's machine settings and rebinds.
+
+## Pitfalls that fail silently
+
+- A component you want back that lives only in a storage is gone after a load.
+- A `core.Entity` kept in a storage is stale after a load: keep its id and find it again.
+- A function that ignores the `save.Error` of a request loses it silently (`.Busy`, bad name).
+- Thumbnails need a renderer: a headless run saves without one.

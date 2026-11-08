@@ -2,6 +2,7 @@ package host
 
 import "core:c"
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:reflect"
@@ -15,6 +16,7 @@ import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:ui"
 import stbi "vendor:stb/image"
 
 // The player: opens a project, loads its start scene into the world and
@@ -57,6 +59,8 @@ Player_Script_Line :: struct {
     keys:core.Keys,
     mouse:core.Mouse_Buttons,
     look:[2]f32, // mouse movement of every frame
+    pointer:[2]f32, // where the pointer goes on the first frame, in window points
+    points:bool,    // the line places the pointer
 }
 
 @(private)
@@ -78,7 +82,8 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
   --capture     writes the last frame as a PNG on exit
   --validation  enables graphics API validation; exits with code 6 if there are errors
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
-                buttons (mouse:Left) and mouse movement per frame (look:dx,dy)
+                buttons (mouse:Left), mouse movement per frame (look:dx,dy) and the position of the
+                pointer in window points (pointer:x,y), which stays there until another line moves it
   --players     local split-screen players, from 1 to 4; if omitted, as many as the scene says
   --window      window position and size, frame included, in screen coordinates
   --surface     no window: draws into shared textures shown by the process that opened it,
@@ -157,6 +162,12 @@ player_script_parse :: proc(text:string,script:^Player_Script) -> (line:int,ok:b
                 x,_,y:=strings.partition(field[5:],",")
                 entry.look.x=strconv.parse_f32(x) or_return
                 entry.look.y=strconv.parse_f32(y) or_return
+            case strings.has_prefix(field,"pointer:"):
+                x,_,y:=strings.partition(field[8:],",")
+                entry.pointer.x=strconv.parse_f32(x) or_return
+                entry.pointer.y=strconv.parse_f32(y) or_return
+                if math.is_nan(entry.pointer.x) || math.is_inf(entry.pointer.x) || math.is_nan(entry.pointer.y) || math.is_inf(entry.pointer.y) {return line,false}
+                entry.points=true
             case:
                 key:=reflect.enum_from_name(core.Key,field) or_return
                 entry.keys+={key}
@@ -189,6 +200,69 @@ player_script_input :: proc(script:^Player_Script,frame:int) -> (input:core.Inpu
     return
 }
 
+// Where the script has left the pointer by a frame: the line that started
+// last places it, and it stays after the line ends so that a release lands
+// where the press did.
+@(private)
+player_script_pointer :: proc(script:^Player_Script,frame:int) -> (pointer:[2]f32,points:bool) {
+    latest:=-1
+    for &line in script.lines[:script.count] {
+        if line.points && line.first<=frame && line.first>=latest {pointer,points,latest=line.pointer,true,line.first}
+    }
+    return
+}
+
+// Adds what the script does in a frame to the input of the UI, which reads
+// keys and buttons as a window gives them.
+@(private)
+player_script_ui :: proc(input:^ui.Input,scripted:core.Input,pointer:[2]f32,points:bool) {
+    frame:platform.Input_Frame
+    frame.keys_down,frame.keys_pressed,frame.keys_repeated=scripted.keys_down,scripted.keys_pressed,scripted.keys_pressed
+    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=scripted.mouse_down,scripted.mouse_pressed,scripted.mouse_released
+    if .Left in scripted.mouse_pressed {frame.mouse_clicks[.Left]=1}
+    given:=ui_input_from_platform(&frame)
+    input.down+=given.down
+    input.pressed+=given.pressed
+    input.released+=given.released
+    input.clicks=max(input.clicks,given.clicks)
+    input.keys_down+=given.keys_down
+    input.keys_pressed+=given.keys_pressed
+    input.keys_repeated+=given.keys_repeated
+    input.modifiers+=given.modifiers
+    if points {input.pointer,input.pointer_absent=pointer,false}
+}
+
+// A frame of the player: app_frame with what the script does added to the
+// input of the UI, once the frame has built it from the devices.
+@(private)
+player_frame :: proc(app:^App,phases:core.Phases,played:bool,scripted:core.Input,pointer:[2]f32,points:bool) -> bool {
+    if !app_frame_begin(app) {
+        profile_frame_close(app)
+        return false
+    }
+    if played {
+        player_script_ui(&app.ui_input,scripted,pointer,points)
+        if points {ui_input_camera(&app.ui_input,app.camera,app_scene_points(app))}
+    }
+    if app.world!=nil {app_game_frame(app,app.world,phases)}
+    app_frame_end(app)
+    return !app.quit
+}
+
+// Why app_capture failed, which only says that it did.
+@(private)
+player_capture_problem :: proc(app:^App,path:string) -> string {
+    context.allocator=context.temp_allocator
+    if app.renderer==nil {return "nothing is drawn with --no-gpu or --dedicated"}
+    if folder:=filepath.dir(path);!os.is_directory(folder) {return fmt.tprintf("the folder %s does not exist",folder)}
+    existed:=os.exists(path)
+    file,error:=os.open(path,{.Write,.Create})
+    if error!=nil {return os.error_string(error)}
+    os.close(file)
+    if !existed {_=os.remove(path)}
+    return "the renderer had no frame to read, or the PNG could not be encoded"
+}
+
 // The icon of the window: a PNG, read as 8 bits per channel with alpha.
 @(private)
 player_icon_set :: proc(app:^App,file:string) -> bool {
@@ -212,14 +286,15 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     script:=new(Player_Script)
     defer free(script)
     if options.input!="" {
-        text,read_error:=os.read_entire_file(options.input,context.allocator)
+        path:=project.path_absolute(options.input,context.temp_allocator)
+        text,read_error:=os.read_entire_file(path,context.allocator)
         if read_error!=nil {
-            fmt.eprintfln("mirai: could not read %s: %v",options.input,read_error)
+            fmt.eprintfln("mirai: could not read %s: %s",path,os.error_string(read_error))
             return PLAYER_USAGE
         }
         defer delete(text)
         if line,parsed:=player_script_parse(string(text),script);!parsed {
-            fmt.eprintfln("mirai: %s, line %d: expected \"<first frame> <last frame> <keys, mouse:Button or look:dx,dy>...\"",options.input,line)
+            fmt.eprintfln("mirai: %s, line %d: expected \"<first frame> <last frame> <keys, mouse:Button, look:dx,dy or pointer:x,y>...\"",path,line)
             return PLAYER_USAGE
         }
     }
@@ -313,13 +388,20 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     code:=PLAYER_OK
     scripted:=0
     for frame:=1;;frame+=1 {
-        if script.count>0 && !app.script_hold {
-            app_input_add(app,player_script_input(script,scripted))
+        played:=script.count>0 && !app.script_hold
+        pointer:[2]f32
+        points:=false
+        input:core.Input
+        if played {
+            input=player_script_input(script,scripted)
+            pointer,points=player_script_pointer(script,scripted)
+            if points {input.mouse_position=pointer}
+            app_input_add(app,input,devices=points)
             scripted+=1
         }
         if surface!=nil && !surface_frame_begin(app,surface) {break}
         if attached!=nil && attached_gone(attached) {break}
-        if !app_frame(app,phases) {
+        if !player_frame(app,phases,played,input,pointer,points) {
             code=app.exit_code
             break
         }
@@ -340,9 +422,12 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         }
         if options.frames>0 && frame>=options.frames {break}
     }
-    if code==PLAYER_OK && options.capture!="" && !app_capture(app,options.capture) {
-        fmt.eprintfln("mirai: could not write %s",options.capture)
-        code=PLAYER_CAPTURE
+    if code==PLAYER_OK && options.capture!="" {
+        path:=project.path_absolute(options.capture,context.temp_allocator)
+        if !app_capture(app,path) {
+            fmt.eprintfln("mirai: could not write %s: %s",path,player_capture_problem(app,path))
+            code=PLAYER_CAPTURE
+        }
     }
     if options.validation && app.device!=nil {
         if errors:=rhi.device_validation_errors(app.device);errors>0 {

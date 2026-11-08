@@ -92,7 +92,9 @@ play_tick :: proc(s:^Session,r:^Run) -> bool {
     owner:=r.owner
     if owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
     api_step_tick(s,owner,0,nil,0)
-    return api_frames(s,1,0)>0 && run_find(s,owner)!=nil
+    if !api_step_frame(s) || run_find(s,owner)==nil {return false}
+    qa_tick(s,r)
+    return true
 }
 
 // What an entry of actions asks of a map, checked; "" or what is wrong.

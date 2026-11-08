@@ -44,6 +44,36 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     }
 }
 
+// A capture result is megabytes of base64: an error about it stays short and
+// says how much it left out.
+@(test)
+errors_cut_what_they_echo_and_say_how_much :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    result:=strings.concatenate({`{"content":[{"type":"image","data":"`,strings.repeat("A",3<<20),`"}],"isError":false}`})
+    path,_:=json_path_parse("path")
+    _,problem:=json_at(result,path)
+    testing.expect(t,strings.contains(problem,"has no 'path'; it has: content, isError"),problem)
+    path,_=json_path_parse("content.data")
+    _,problem=json_at(result,path)
+    testing.expect(t,len(problem)<256 && strings.contains(problem,"more bytes)"),"a value in a message is cut")
+
+    short:=rpc_error_short({api.INVALID_PARAMS,"--select path",strings.concatenate({`{"result":`,result,"}"})})
+    testing.expect(t,len(short.data)<2*RPC_ECHO_BYTES && api.json_valid(context.allocator,short.data),short.data)
+    testing.expect(t,strings.contains(json_member(short.data,"prefix"),`{\"result\":{\"content\"`),short.data)
+    testing.expect(t,json_member(short.data,"omitted_bytes")!="",short.data)
+
+    small:=`{"result":{"a":1}}`
+    testing.expect_value(t,rpc_error_short({api.INVALID_PARAMS,"x",small}).data,small)
+
+    // Neither the cut of a character nor a list of names runs on.
+    prefix,omitted:=text_cut("aé",2)
+    testing.expect(t,prefix=="a" && omitted==2)
+    many:=strings.concatenate({`{"`,strings.repeat("x",4096),`":1}`})
+    path,_=json_path_parse("y")
+    _,problem=json_at(many,path)
+    testing.expect(t,len(problem)<2*RPC_ECHO_BYTES,"the names it lists are cut")
+}
+
 @(test)
 wait_conditions_compare_numbers_as_numbers_and_the_rest_as_written :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator

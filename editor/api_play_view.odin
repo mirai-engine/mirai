@@ -208,9 +208,7 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
             target.point=p.point
         case name!="":
             target.named=true
-            for e in api_entities_ordered(w,allocator) {
-                if entity_name(w,e)==name {target.entity=e;break}
-            }
+            target.entity=api_entity_named(w,name,allocator)
             if target.entity==core.NONE {return nil,fmt.tprintf("points[%d]: %q names no entity of the game; play.inspect lists them",i,name)}
         case:
             target.named=true

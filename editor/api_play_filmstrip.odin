@@ -68,9 +68,7 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play
         api.call_fail(call,api.INVALID_PARAMS,"size is the cell around a followed entity: give follow (or follow_id or follow_entity) too, or region in its place");return
     }
     if name:=base.text_get(p.follow[:]);name!="" {
-        for e in api_entities_ordered(w) {
-            if entity_name(w,e)==name {strip.follow=e;break}
-        }
+        strip.follow=api_entity_named(w,name)
         if strip.follow==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"follow %q names no entity of the game: play.inspect lists them",name);return}
     } else if named==1 {
         problem:string
@@ -106,7 +104,7 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play
 
 // Steps the game, takes the cells and writes the filmstrip at path.
 @(private)
-api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string) {
+api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string,shown:bool) {
     defer img.sheet_destroy(&strip.sheet)
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
@@ -120,7 +118,8 @@ api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:st
     // The write takes the pixels.
     strip.sheet={}
     if !api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height) {api.call_fail(call,api.SERVER_ERROR,"The filmstrip could not be written");return}
-    api_png_content(call,path,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator))
+    serial.text_write_raw(call.out,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator))
+    if shown {api.call_image(call,path)}
 }
 
 // What a filmstrip answers besides its image: where it is, its grid and the tick of each cell.

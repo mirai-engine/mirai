@@ -100,6 +100,10 @@ Run :: struct {
     frame_dt:f64,               // >0: the step asked for is a frame that lasts this long, as a recording advances it
     history:^Run_History,       // its past, once it kept a copy
     history_off:bool,           // it keeps none: its ring could not be made
+    qa:^Run_Qa,                 // its monitors, once play.qa.start armed them
+    observed:Run_Observed,      // what play.observe keeps between two calls
+    quit_asked:bool,            // the game asked to quit since play.explore last looked
+    quit_held:bool,             // play.explore plays it: asking to quit does not end it
 }
 
 @(private)
@@ -593,7 +597,8 @@ game_frame :: proc(s:^Session) {
         if r.world!=shown {extras_drop(app,kept)}
         if app.quit {
             app.quit=false
-            if s.mode!=.Watch {s.requests+={.Stop}}
+            r.quit_asked=true
+            if s.mode!=.Watch && !r.quit_held {s.requests+={.Stop}}
         }
     }
     blocked:=app.game_input_blocked
@@ -602,6 +607,7 @@ game_frame :: proc(s:^Session) {
         if r.world==nil || r.owner==0 {continue}
         kept:=extras_mark(app)
         game_tick(s,&r,phases)
+        if app.quit {r.quit_asked,app.quit=true,false}
         if r.world!=shown {extras_drop(app,kept)}
     }
     app.game_input_blocked=blocked
@@ -636,9 +642,10 @@ run_input_give :: proc(s:^Session,r:^Run) {
 }
 
 // The UI of the game of a turn sees only what its steps give, never the
-// window of the user; that of the user once a step placed the pointer.
+// window of the user; that of the user in the frames a step gave input to, and
+// from the moment one placed the pointer.
 @(private)
-run_ui_scripted :: proc "contextless" (r:^Run) -> bool {return r.owner!=0 || r.pointer_set}
+run_ui_scripted :: proc "contextless" (r:^Run) -> bool {return r.owner!=0 || r.pointer_set || r.has_input}
 
 // What the UI of the game of a run sees in its next frame: what its steps
 // gave, over the surface of the window.
@@ -673,10 +680,11 @@ game_tick :: proc(s:^Session,r:^Run,phases:core.Phases) {
     }
     r.step=false
     history_before(s,r)
+    scripted:=run_ui_scripted(r)
     run_input_give(s,r)
     record:host.Frame_Record
     window:=app.ui_input
-    if run_ui_scripted(r) {app.ui_input=run_ui_input(r,window)}
+    if scripted {app.ui_input=run_ui_input(r,window)}
     if r.frame_dt>0 {
         // A frame of a recording: what the window does reaches no game.
         blocked:=app.game_input_blocked
@@ -941,6 +949,8 @@ play_stop :: proc(s:^Session,force:=false) {
     if (s.mode==.Play || s.mode==.Paused) && r.history!=nil && r.history.count>0 {
         eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app)
         replay_free(s)
+        qa_free(r.qa)
+        r.qa=nil
         s.replay=r^
         r^={}
     } else {
@@ -966,6 +976,7 @@ run_stop :: proc(s:^Session,owner:int) {
 @(private)
 run_free :: proc(s:^Session,r:^Run) {
     history_free(s,r)
+    qa_free(r.qa)
     host.app_world_free(s.app,r.world)
     r^={}
 }

@@ -17,7 +17,7 @@ Gpu_Frame :: struct {
 	view_proj_unjittered: Mat4,
 	camera_position: Vec4, // w = near
 	camera_forward:  Vec4, // w = far
-	sun_direction:   Vec4, // w = active
+	sun_direction:   Vec4, // w = 0: no sun; 1: active; SUN_UNSHADOWED: active, and no ray goes to it
 	sun_color:       Vec4, // above the air of an atmosphere; w = the angular radius of its disc in the sky, radians; 0: it is not seen
 	sky_color:       Vec4, // rgb the luminance of the sky, render units; w the light scale, render units per nit
 	background:      Vec4, // w = 1: solid background instead of the sky
@@ -69,6 +69,7 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 }
+SUN_UNSHADOWED   :: f32(2)
 MOVED_SUN        :: 1 // the sun moved further than its radius, or came on
 MOVED_LIGHTS_ALL :: 2 // more lights moved than moved_lights holds: each counts as moved
 

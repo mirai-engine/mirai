@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:encoding/base64"
 import "core:fmt"
 import "core:os"
@@ -17,7 +18,7 @@ Api_Viewport_Params :: struct {
 API_VIEWPORT_RESULT :: `{"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"type":{"const":"image"},"data":{"type":"string"},"mimeType":{"const":"image/png"}},"required":["type","data","mimeType"],"additionalProperties":false}},"isError":{"const":false}},"required":["content","isError"],"additionalProperties":false}`
 
 Api_Play_Capture_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write; one under .mirai/captures when empty"`,
+    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write and the answer is only where it is and its size; without it one under .mirai/captures and MCP also returns the image"`,
     frames:int `mirai:"optional,min=1,max=120,label=Frames drawn first so that what builds up over time settles"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
     every:int `mirai:"optional,min=0,max=3600,label=Filmstrip: the ticks the game runs between two cells of one image; 0: an image of now"`,
@@ -30,16 +31,29 @@ Api_Play_Capture_Params :: struct {
     size:[2]f32 `mirai:"optional,min=8,max=4096,label=Filmstrip that follows an entity: width and height of a cell in points of the image"`,
     region:[4]f32 `mirai:"optional,label=Filmstrip: x y width height in points of the image that every cell shows in place of following an entity; none: the whole image"`,
     ui:bool `mirai:"optional,label=The Play of the user: the whole window with the editor around the game, as the user sees it; false: the game alone through its camera, with its own interfaces"`,
+    width:int `mirai:"optional,min=0,max=4096,label=Pixels of an image of the game alone: the window it draws in scaled to them; 0 keeps its aspect (its size when height is 0 too)"`,
+    height:int `mirai:"optional,min=0,max=4096,label=Pixels of an image of the game alone: the window it draws in scaled to them; 0 keeps its aspect (its size when width is 0 too)"`,
 }
 
-@(private)
-API_PLAY_CAPTURE_RESULT :: `{"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"type":{"enum":["image","text"]},"data":{"type":"string"},"mimeType":{"const":"image/png"},"text":{"type":"string","description":"a filmstrip: structuredContent as JSON"}},"required":["type"],"additionalProperties":false}},"structuredContent":{"type":"object","description":"a filmstrip","properties":{"path":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"columns":{"type":"integer"},"rows":{"type":"integer"},"cell":{"type":"array","items":{"type":"integer"},"description":"pixels of a cell"},"cells":{"type":"array","description":"from the top left row by row","items":{"type":"object","properties":{"tick":{"type":"integer","description":"the tick of the game it shows"},"at":{"type":["array","null"],"items":{"type":"number"},"description":"following an entity: where it shows in points of the image; null when it is behind the camera or gone"}},"required":["tick"],"additionalProperties":false}}},"required":["path","width","height","columns","rows","cell","cells"],"additionalProperties":false},"isError":{"const":false}},"required":["content","isError"],"additionalProperties":false}`
+Api_Play_Capture_Result :: struct {
+    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
+    width:int `mirai:"label=Pixels of the image"`,
+    height:int `mirai:"label=Pixels of the image"`,
+    columns:int `mirai:"optional,label=A filmstrip: its cells across"`,
+    rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
+    cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
+    cells:[1]Api_Play_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
+}
+Api_Play_Capture_Cell :: struct {
+    tick:u64 `mirai:"label=The tick of the game it shows"`,
+    at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
+}
 
 @(private)
 api_viewport_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result_schema=API_VIEWPORT_RESULT,flags={.Core,.Read_Only,.Idempotent},mcp_content=true,run=api_view_viewport})
     capture_default:=Api_Play_Capture_Params{frames=8,size={256,256}}
-    api_register(s,st,{name="play.capture",summary="see the game of the caller as its camera shows it, alone with its own interfaces: the run of its turn, or the Play of the user outside a turn, drawn without showing it on the user's screen (ui shows the editor's window around the Play of the user instead). Also writes the PNG. With every and count it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Play_Capture_Params,result_schema=API_PLAY_CAPTURE_RESULT,defaults=&capture_default,flags={.Core,.Read_Only},mcp_content=true,run=api_play_capture})
+    api_register(s,st,{name="play.capture",summary="see the game of the caller as its camera shows it, alone with its own interfaces: the run of its turn, or the Play of the user outside a turn, drawn without showing it on the user's screen (ui shows the editor's window around the Play of the user instead). Writes the PNG: with path the answer is only where it is and its size; without path MCP also returns the image. With every and count it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Play_Capture_Params,result=Api_Play_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_play_capture})
 }
 
 // The game of the caller as an image, drawn off the screen through its camera with its own
@@ -51,21 +65,63 @@ api_play_capture :: proc(s:^Session,call:^api.Call) {
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     strip,ok:=api_filmstrip_read(s,call,r,own,p)
     if !ok {return}
-    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.capture requires a GPU; start without --no-gpu");return}
-    path:=base.text_get(p.path[:])
-    if path=="" {
-        if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return}
-        path=fmt.tprintf(".mirai/captures/play-%d%s.png",r.owner,strip!=nil?"-strip":"")
+    if p.width>0 || p.height>0 {
+        if p.ui {api.call_fail(call,api.INVALID_PARAMS,"width and height size the game alone: leave ui out, or leave them out for the window");return}
+        if strip!=nil {api.call_fail(call,api.INVALID_PARAMS,"width and height size one image: a filmstrip takes the size of its cell or a region");return}
     }
+    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.capture requires a GPU; start without --no-gpu");return}
+    given:=base.text_get(p.path[:])
     // As editor.capture: relative to the project, its folder made. The frames drawn below free the temporary memory.
-    writable:bool
-    if path,writable=api_output_file(s,call,path,s.app.allocator);!writable {return}
+    path,writable:=api_capture_file(s,call,given,fmt.tprintf("play-%d%s.png",r.owner,strip!=nil?"-strip":""),s.app.allocator)
+    if !writable {return}
     defer delete(path,s.app.allocator)
-    if strip!=nil {api_filmstrip_run(s,call,strip,path);return}
+    if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
     pixels,width,height,drawn:=api_play_pixels(s,r,p.frames,p.ui)
     if !drawn {api.call_fail(call,api.SERVER_ERROR,"The game could not be drawn");return}
+    if size:=api_capture_size({i32(width),i32(height)},p.width,p.height);int(size.x)!=width || int(size.y)!=height {
+        scaled,made:=api_pixels_scale(pixels,width,height,size,s.app.allocator)
+        delete(pixels,s.app.allocator)
+        if !made {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be made: out of memory",size.x,size.y);return}
+        pixels,width,height=scaled,int(size.x),int(size.y)
+    }
     if !api_png_write(s,path,pixels,width,height) {api.call_fail(call,api.SERVER_ERROR,"The capture could not be written");return}
-    api_png_content(call,path)
+    api_play_capture_answer(call,path,width,height,given=="")
+}
+
+// What play.capture answers for one image; shown: MCP also gives the image.
+@(private)
+api_play_capture_answer :: proc(call:^api.Call,path:string,width,height:int,shown:bool) {
+    serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path)
+    api.write_int(call.out,"width",i64(width));api.write_int(call.out,"height",i64(height))
+    serial.write_u8(call.out,'}')
+    if shown {api.call_image(call,path)}
+}
+
+// RGBA8 pixels at size, each the average of those of the source it covers,
+// in allocator; the source stays. False when it does not fit in memory.
+@(private)
+api_pixels_scale :: proc(pixels:[]u8,width,height:int,size:[2]i32,allocator:runtime.Allocator) -> (scaled:[]u8,ok:bool) {
+    w,h:=int(size.x),int(size.y)
+    if w<=0 || h<=0 || width<=0 || height<=0 || len(pixels)<width*height*4 {return}
+    memory:runtime.Allocator_Error
+    if scaled,memory=make([]u8,w*h*4,allocator);memory!=nil {return nil,false}
+    for y in 0..<h {
+        y0,y1:=y*height/h,max((y+1)*height/h,y*height/h+1)
+        for x in 0..<w {
+            x0,x1:=x*width/w,max((x+1)*width/w,x*width/w+1)
+            sum:[4]int
+            for sy in y0..<y1 {
+                for sx in x0..<x1 {
+                    pixel:=pixels[(sy*width+sx)*4:][:4]
+                    sum+={int(pixel[0]),int(pixel[1]),int(pixel[2]),int(pixel[3])}
+                }
+            }
+            area:=(y1-y0)*(x1-x0)
+            out:=scaled[(y*w+x)*4:][:4]
+            for c in 0..<4 {out[c]=u8((sum[c]+area/2)/area)}
+        }
+    }
+    return scaled,true
 }
 
 // The game of a run drawn now in pixels of the allocator of the application: off the screen
@@ -101,16 +157,15 @@ api_png_write :: proc(s:^Session,path:string,pixels:[]u8,width,height:int) -> bo
     }
 }
 
-// A PNG file as the image content of an MCP tool; structured, JSON of what it
-// shows, goes before it as text and as the structured content.
+// A PNG file as the image content of an MCP tool.
 @(private)
-api_png_content :: proc(call:^api.Call,path:string,structured:="") {
+api_png_content :: proc(call:^api.Call,path:string) {
     file,open_error:=os.open(path)
     if open_error!=nil {api.call_fail(call,api.SERVER_ERROR,"The image is unavailable");return}
     defer os.close(file)
     size,size_error:=os.file_size(file)
     if size_error!=nil || size<=0 {api.call_fail(call,api.SERVER_ERROR,"The image could not be read");return}
-    if size>i64(max(call.server.max_response-512-len(structured)*3,0)/4*3) {
+    if size>i64(max(call.server.max_response-512,0)/4*3) {
         api.call_failf(call,api.SERVER_ERROR,"The image of %d bytes exceeds the MCP response limit; it is written at %s",size,path)
         return
     }
@@ -120,17 +175,9 @@ api_png_content :: proc(call:^api.Call,path:string,structured:="") {
     encoded,encode_error:=base64.encode(image,allocator=context.allocator)
     if encode_error!=.None {api.call_fail(call,api.INTERNAL_ERROR,"The image could not be encoded");return}
     defer delete(encoded)
-    serial.text_write_raw(call.out,`{"content":[`)
-    if structured!="" {
-        serial.text_write_raw(call.out,`{"type":"text","text":`)
-        serial.text_write_string(call.out,structured)
-        serial.text_write_raw(call.out,`},`)
-    }
-    serial.text_write_raw(call.out,`{"type":"image","data":"`)
+    serial.text_write_raw(call.out,`{"content":[{"type":"image","data":"`)
     serial.text_write_raw(call.out,encoded)
-    serial.text_write_raw(call.out,`","mimeType":"image/png"}]`)
-    if structured!="" {serial.text_write_raw(call.out,`,"structuredContent":`);serial.text_write_raw(call.out,structured)}
-    serial.text_write_raw(call.out,`,"isError":false}`)
+    serial.text_write_raw(call.out,`","mimeType":"image/png"}],"isError":false}`)
 }
 
 @(private)

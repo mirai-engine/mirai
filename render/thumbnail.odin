@@ -111,7 +111,7 @@ preview_lighting :: proc(f:^Gpu_Frame,light:Preview_Light) {
         key=max(key,sun.illuminance*luminance_of(sun.color)/math.PI)
     } else {sun.enabled=false}
     scale:=light_scale_of(0,key)
-    frame_sun_sky(f,sun,light.environment,scale,SUN_RADIUS,false)
+    frame_sun_sky(f,sun,light.environment,scale,SUN_RADIUS,false,true)
     if light.environment.ground_grid {f.flags|=FRAME_FLAG_GRID}
     // As the meter of a scene exposes an image half of its background and half
     // a middle gray card under its strongest light: their geometric mean.

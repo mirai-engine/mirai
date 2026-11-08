@@ -1,5 +1,6 @@
 package build
 
+import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -109,4 +110,60 @@ import "mirai:core"
         testing.expectf(t,found,"no error says %q: %v",want,output.errors)
     }
     testing.expect_value(t,len(output.errors),len(wanted))
+}
+
+// The game loop leaves core.Input at the last tick in frame: a step that reads
+// it there is warned, and what the editor loop refills or fixed reads is not.
+@(test)
+a_frame_step_of_the_game_that_reads_the_input_of_the_tick_is_warned :: proc(t:^testing.T) {
+    folder,error:=os.make_directory_temp("","mirai-rules-*",context.temp_allocator)
+    if !testing.expect(t,error==nil) {return}
+    defer os.remove_all(folder)
+    engine:=project.path(folder,"engine",allocator=context.temp_allocator)
+    game:=project.path(folder,"project",allocator=context.temp_allocator)
+    files:=[][2]string{
+        {project.path(engine,"core","data.odin",allocator=context.temp_allocator),`package core
+@(storage,keep) Input :: struct {keys:u32}
+@(storage,copy=false) Frame_Input :: struct {using input:Input}
+Ref :: struct($T:typeid) {value:^T}
+`},
+        {project.path(game,"game","game.odin",allocator=context.temp_allocator),`package game
+import "mirai:core"
+@(params) Pad :: struct {device:core.Input}
+@(step="frame") stale_value :: proc(input:core.Input) {}
+@(step="frame") stale_ref :: proc(input:core.Ref(core.Input)) {}
+@(step="frame") stale_bundle :: proc(pad:Pad) {}
+@(step="fixed frame",loops="game editor") stale_both :: proc(input:core.Input) {}
+@(step="frame") fresh :: proc(input:core.Frame_Input) {}
+@(step="fixed") ticked :: proc(input:core.Input) {}
+@(step="frame",loops="editor") refilled :: proc(input:core.Input) {}
+`},
+    }
+    for file in files {
+        dir:=file[0][:strings.last_index_any(file[0],`/\`)]
+        if !testing.expect(t,os.make_directory_all(dir)==nil || os.is_dir(dir)) {return}
+        if !testing.expect(t,os.write_entire_file(file[0],file[1])==nil) {return}
+    }
+    p:=project.Project{root=game,engine_root=engine}
+    output:=world_generate(&p,context.temp_allocator)
+    testing.expectf(t,len(output.errors)==0,"%v",output.errors)
+    warned:=[]string{"stale_value","stale_ref","stale_bundle","stale_both"}
+    for step in warned {
+        found:=false
+        for warning in output.warnings {
+            found||=warning.severity==.Warning && strings.has_prefix(warning.message,step) && strings.contains(warning.message,"core.Frame_Input") && strings.has_suffix(warning.file,"game.odin") && warning.line>0
+        }
+        testing.expectf(t,found,"no warning names %s: %v",step,output.warnings)
+    }
+    testing.expect_value(t,len(output.warnings),len(warned))
+    // A job gives them with what the compiler said.
+    job:Job
+    _=virtual.arena_init_growing(&job.arena)
+    defer virtual.arena_destroy(&job.arena)
+    job.warnings=output.warnings
+    compiled:=[]Diagnostic{{severity=.Error,message="the compiler"}}
+    job.result.diagnostics=compiled
+    job_done(&job)
+    testing.expect_value(t,len(job.result.diagnostics),len(warned)+1)
+    testing.expect_value(t,job.result.diagnostics[0].message,"the compiler")
 }

@@ -671,11 +671,11 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
 // the air of an atmosphere, the sun is as bright above it as it has to be to
 // give its illuminance on the ground when it stands overhead.
 @(private)
-frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air: bool) {
+frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air, shadows: bool) {
 	if sun.enabled {
 		light := sun.color * (sun.illuminance / math.PI * scale)
 		if air && environment.sky_atmosphere {light *= air_overhead(environment.air)}
-		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1}
+		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1 if shadows else SUN_UNSHADOWED}
 		f.sun_color = {light.x, light.y, light.z, disc if sun.disc else 0}
 	}
 	sky := environment.sky * scale
@@ -693,7 +693,7 @@ sky_map :: proc(r: ^Renderer, texture: Texture_Handle, atmosphere: bool) -> Vec4
 	index := int(texture) - 1
 	if index < 0 || index >= r.textures.count || r.textures.textures[index] == 0 {return {}}
 	size := r.textures.sizes[index]
-	return {f32(index), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
+	return {f32(texture_entry(index)), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
 }
 
 // The constants of the view and what it decides for all its passes.
@@ -773,7 +773,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		if length > 1e-8 {f.frustum[5] = camera.clip_plane / length}
 	}
 	scale := s.light_scale if s.light_scale > 0 else 1
-	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built)
+	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
 	air_view(p, &f)

@@ -60,6 +60,13 @@ resolution_is_a_budget_of_pixels_under_one_per_point :: proc(t:^testing.T) {
     testing.expect(t,s.render_scale==1 && s.render_megapixels==2.0736)
     g.render_megapixels=0
     testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_megapixels,f32(0))
+    g.render_scale=0.5
+    testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_scale,f32(0.5))
+    g.render_scale=0
+    testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_scale,f32(1))
+    testing.expect(t,graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
+    g.sun_shadows=false
+    testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
     presets:=GRAPHICS_PRESETS
     for preset in Graphics_Preset {
         if preset>.Low {testing.expect(t,presets[preset].render_megapixels>=presets[preset-Graphics_Preset(1)].render_megapixels)}

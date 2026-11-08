@@ -96,6 +96,28 @@ api_play_entity :: proc(w:core.World_Ref,handle:string,id:base.Entity_Id,what:="
     return e,""
 }
 
+// The first live entity with this name in the order of play.inspect; NONE without one.
+@(private)
+api_entity_named :: proc(w:core.World_Ref,name:string,allocator:=context.temp_allocator) -> core.Entity {
+    for candidate in api_entities_ordered(w,allocator) {
+        if entity_name(w,candidate)==name {return candidate}
+    }
+    return core.NONE
+}
+
+// The live entity of a run named by its name, or by its handle or its id in the scene.
+@(private)
+api_play_entity_of :: proc(w:core.World_Ref,handle:string,id:base.Entity_Id,name:string) -> (e:core.Entity,problem:string) {
+    if name=="" {
+        if handle=="" && id==0 {return core.NONE,"give name, entity (its handle) or id"}
+        return api_play_entity(w,handle,id)
+    }
+    if handle!="" || id!=0 {return core.NONE,"give name, entity or id, only one of them"}
+    e=api_entity_named(w,name)
+    if e==core.NONE {return core.NONE,fmt.tprintf("name %q names no entity of the game: play.inspect lists them",name)}
+    return e,""
+}
+
 @(private)
 api_handle_put :: proc(buffer:[]u8,e:core.Entity) {copy(buffer,fmt.tprintf("%016x",u64(e)))}
 
@@ -141,7 +163,8 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
     a:Rpc_Args
     rpc_init(&a,call,call.raw)
     handle:[16]u8
-    handle_text,components:string
+    name_field:[64]u8
+    handle_text,name_text,components:string
     id:base.Entity_Id
     player:int
     position,rotation_deg:[3]f32
@@ -151,6 +174,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
     for key in rpc_next(&a,&object) {
         switch key {
         case "entity":       handle_text,_=rpc_text(&a,key,handle[:])
+        case "name":         name_text,_=rpc_text(&a,key,name_field[:])
         case "id":           id,_=rpc_id(&a,key)
         case "player":
             value,_:=rpc_unsigned(&a,key)
@@ -159,14 +183,14 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         case "position":     has_position=rpc_vector(&a,key,position[:])
         case "rotation_deg": has_rotation=rpc_vector(&a,key,rotation_deg[:])
         case "components":   components,_=rpc_raw(&a)
-        case:                rpc_fail(&a,"unknown field %q: play.set takes entity or id, position, rotation_deg, components and player",key)
+        case:                rpc_fail(&a,"unknown field %q: play.set takes name, entity or id, position, rotation_deg, components and player",key)
         }
     }
     if a.failed {return}
     r,ok:=api_play_own_run(s,call,player)
     if !ok {return}
     w:=run_ref(s,r)
-    e,problem:=api_play_entity(w,handle_text,id)
+    e,problem:=api_play_entity_of(w,handle_text,id,name_text)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     if !has_position && !has_rotation && components=="" {
         api.call_fail(call,api.INVALID_PARAMS,"nothing to change: give position, rotation_deg or components")
@@ -208,6 +232,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         if change.bytes==nil {core.raw_remove(table,e)} else {core.raw_add(table,change.table.info,e,raw_data(change.bytes))}
     }
     core.world_settle(w)
+    qa_log_call(r,"play.set",call.raw)
     result:=api.call_result(call,Api_Play_Set_Result)
     if has_position || has_rotation {
         if !core.place(placer,e,target,turn) {
@@ -245,6 +270,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %v",error)
         return
     }
+    qa_log_call(r,"play.spawn",call.raw)
     result:=api.call_result(call,Api_Play_Spawn_Result)
     api_handle_put(result.entity[:],report.root)
     result.entities=report.entities
@@ -258,6 +284,7 @@ api_play_destroy :: proc(s:^Session,call:^api.Call) {
     w:=run_ref(s,r)
     e,problem:=api_play_entity(w,base.text_get(params.entity[:]),params.id)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    qa_log_call(r,"play.destroy",call.raw)
     before:=core.world_entities(w).alive
     core.world_destroy_tree(w,e)
     core.world_settle(w)
@@ -353,8 +380,9 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     for i in 0..<count {
         runtime.__dynamic_array_append(queue,size,item.align,&values[i*size],1)
     }
+    qa_log_call(r,"play.push",call.raw)
     api.call_result(call,Api_Play_Push_Result).pushed=count
 }
 
-@(private) API_PLAY_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"entity":{"type":"string","description":"the handle of the entity in hexadecimal as play.inspect gives it; give entity or id"},"id":{"type":"string","description":"the id of the entity in the scene, in hexadecimal; give entity or id"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"where in the world it goes, as a teleport: a body of physics jumps there in the next tick"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"its rotation in the world in degrees, with the teleport"},"components":{"type":"object","description":"by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it","additionalProperties":{"type":["object","null"]}},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`
+@(private) API_PLAY_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","description":"the entity by its name: the first with it in the order of play.inspect; give name, entity or id"},"entity":{"type":"string","description":"the handle of the entity in hexadecimal as play.inspect gives it; give name, entity or id"},"id":{"type":"string","description":"the id of the entity in the scene, in hexadecimal; give name, entity or id"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"where in the world it goes, as a teleport: a body of physics jumps there in the next tick"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"its rotation in the world in degrees, with the teleport"},"components":{"type":"object","description":"by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it","additionalProperties":{"type":["object","null"]}},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`
 @(private) API_PLAY_PUSH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["storage","items"],"properties":{"storage":{"type":"string","description":"the name of a queue storage of the game: Seat_Requests, Spawns or one of the project"},"items":{"type":"array","maxItems":64,"items":{"type":"object"},"description":"its requests as the schema of the type of its items, with Entity fields holding handles; play.inspect with storages names them"},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`

@@ -48,7 +48,7 @@ Camera_Follow :: struct {
     look_ahead:f32 `mirai:"min=0,unit=s"`, // the pivot leads the target by how far it goes across the ground in this time
     look_ahead_max:f32 `mirai:"min=0,unit=m"`, // 0: no limit
     yaw:f32 `mirai:"angle,section=Look"`, // Orbit: where it starts; aiming, what it adds to the look
-    pitch:f32 `mirai:"angle"`,
+    pitch:f32 `mirai:"angle"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
     min_pitch,max_pitch:f32 `mirai:"angle"`, // both 0: almost straight up and down
     turn:bool,                      // Orbit without aim: the look action of the focused local player who drives its target turns it
     recenter:f32 `mirai:"min=0,unit=s"`, // Orbit without aim: this long after it was last turned, it comes back behind a target that moves; 0: never

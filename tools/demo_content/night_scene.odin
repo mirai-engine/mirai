@@ -33,6 +33,7 @@ write_night_scene :: proc(o: ^Out) {
     asset.scene_init(&s.scene, &o.types, asset.KIND_SCENE, id_of("scene", "night"))
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = nits(LAMPLIT, {0.02, 0.025, 0.04}), nits(LAMPLIT, {0.004, 0.006, 0.012})
+    environment.atmosphere = false
     // The meter reads from EV100 -0.4 (the stage) to 4.2 (under a lamp): no compensation holds
     // every view, and a light must look the same wherever one looks from. A fixed exposure, EV100
     // 3.5 without the bias of every view (render.EXPOSURE_BIAS), gives `night` in

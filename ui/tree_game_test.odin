@@ -204,6 +204,45 @@ links_wraps_and_orders_decide_where_the_focus_goes :: proc(t:^testing.T) {
     test_key(&input,.Tab)
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect_value(t,ctx.focus,Id(0))
+    // In a Modal, under a pointer that never moved, the keys work from its first frame; a page of
+    // a Switcher that replaces the one with the focus takes it in the frame it comes back.
+    m:Test_Game
+    test_game_init(t,&m)
+    defer test_game_destroy(&m)
+    button:=Layout{width=fixed(40),height=fixed(20)}
+    modal:=tree_node(&m.tree,-1,{kind=.Modal,name="pause",layout={width=fixed(200),height=fixed(200)}})
+    pages:=tree_node(&m.tree,modal,{kind=.Switcher,name="pages",bind_value="Test.level"})
+    first_page:=tree_node(&m.tree,pages,{kind=.Box,name="main",layout={direction=.Column,gap=4}})
+    tree_node(&m.tree,first_page,{kind=.Button,name="play",text="Play",flags={.Focus_First},layout=button})
+    tree_node(&m.tree,first_page,{kind=.Button,name="options",text="Options",layout=button})
+    second_page:=tree_node(&m.tree,pages,{kind=.Box,name="paused"})
+    tree_node(&m.tree,second_page,{kind=.Button,name="quit",text="Quit",flags={.Focus_First},layout=button})
+    testing.expect(t,test_game_instance(&m))
+    menu:Context
+    test_game_context(t,&menu,&m)
+    defer context_destroy(&menu)
+    keys:=test_input()
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"play"))
+    test_key(&keys,.Down)
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"options"))
+    test_key(&keys,.Up)
+    test_frame(&menu,&keys,test_game_build,&m)
+    test_key(&keys,.Enter)
+    test_frame(&menu,&keys,test_game_build,&m)
+    _,clicked:=test_game_events(&m,.Clicked,"play")
+    testing.expect_value(t,clicked,1)
+    m.values.level=1
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"quit"))
+    m.values.level=0
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect(t,menu.focus==tree_element_id(&menu,"play") && menu.focus_ring,"the page that came back has the focus at once")
+    test_key(&keys,.Enter)
+    test_frame(&menu,&keys,test_game_build,&m)
+    _,clicked=test_game_events(&m,.Clicked,"play")
+    testing.expect_value(t,clicked,1)
 }
 
 @(test)

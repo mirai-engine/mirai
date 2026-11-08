@@ -5,8 +5,6 @@ import destruct "plugins:destruct/runtime"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import save "mirai:engine/save"
-import "mirai:host"
-import "mirai:platform"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -22,7 +20,8 @@ import mm "mirai:std/math"
 // connection. Its camera is at its eyes (Camera_Follow Eyes). It runs
 // alone, as a server (--server) or as a client (--connect): the server breaks
 // the wall; every client predicts its own player. tools/content writes the
-// scene, the prefab of the player and their assets.
+// scene, the prefab of the player and their assets. game/shell.odin is its
+// main menu, pause and settings.
 
 EYE_HEIGHT :: f32(1.6)
 WALK_SPEED :: f32(4)
@@ -63,12 +62,6 @@ game_actions_default :: proc "contextless" () -> Game_Actions {
     }}
 }
 
-@(storage)
-Game :: struct {
-    mouse_set:bool,
-    captured:bool,
-}
-
 aim_of :: proc "contextless" (yaw,pitch:f32) -> [3]f32 {
     return mm.quat_rotate(mm.quat_from_euler({pitch,yaw,0}),[3]f32{0,0,-1})
 }
@@ -77,19 +70,6 @@ player_walk :: proc "contextless" () -> phys.Walk {
     walk:=phys.WALK_DEFAULT
     walk.max_speed=WALK_SPEED
     return walk
-}
-
-// The mouse for the camera until Escape frees it.
-@(step="input")
-game_mouse :: proc(game:^Game,app:^host.App,input:core.Input) {
-    if app.platform==nil || app.renderer==nil {return}
-    if !game.mouse_set {
-        game.mouse_set,game.captured=true,true
-        platform.window_set_relative_mouse(app.platform,true)
-    } else if core.key_pressed(input,.Escape) {
-        game.captured=!game.captured
-        platform.window_set_relative_mouse(app.platform,game.captured)
-    }
 }
 
 @(private="file")

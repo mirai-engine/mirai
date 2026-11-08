@@ -59,7 +59,7 @@ Node_Flag :: enum u8 {
     Localized,   // its text, and each of its options, has translations in its tree, by text_id
     Draggable,   // the pointer drags it: Dragged, and Dropped on the node it is let go over
     Drop,        // takes what is let go over it
-    Focus_First, // takes the focus when its tree takes input and nothing there has it
+    Focus_First, // takes the focus when its tree takes input and nothing there has it, or when the page of a Switcher that had it gives way to its own
     Wrap_X,      // a container: the focus that leaves it by a side comes back by the other
     Wrap_Y,
     Skip,        // navigation passes over it
@@ -344,6 +344,8 @@ TREE_TAB_PADDING :: [4]f32{10,4,10,4} // around the text of a tab of a Tabs
 Slot :: struct {
     shown,hovered,focused,latched:bool,
     armed:bool,         // a Button saw its action up: the press that showed it does not click it
+    page:i32,           // 1 + the node a Switcher built
+    page_focused:bool,  // the focus was on a widget of that node
     held:f32,           // seconds its action or the pointer has held a Button
     tip:f32,            // seconds the pointer or the focus has been in it: what its Tooltip waits
     played:Anim_Player, // what tree_play started
@@ -631,6 +633,7 @@ Tree_Build :: struct {
     count,dropped:int,
     floor:int, // the layer the tree is built in
     built:int, // nodes built
+    turned:bool, // a Switcher left the page with the focus for this one: its Focus_First takes it
     animating:bool,
     ghost:int, // the node built under the pointer for a drag, whatever it shows; -1: none
     tracks,tracks_end:int, // the rows of the grid tracks of the frame its own start after, and where they end
@@ -953,7 +956,17 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
     #partial switch node.kind {
     case .Switcher:
         shown:=int(bound_number(values,instance.bounds[index].value)) if instance.bounds[index].value.bound else int(node.index)
+        state:=&instance.slot[slot]
+        outer:=b.turned
+        b.turned||=state.page_focused && state.page!=i32(shown+1)
+        state.page=i32(shown+1)
+        first:=ctx.widget_count
         tree_build_child(ctx,b,index,next,shown,values,copy,item)
+        b.turned=outer
+        state.page_focused=false
+        for &w in ctx.widgets[first:ctx.widget_count] {
+            if w.id==ctx.focus {state.page_focused=true;break}
+        }
     case .List:
         tree_build_list(ctx,b,node,index,slot,values,copy,axis,virtual,items,area)
     case .Tabs:

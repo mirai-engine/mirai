@@ -193,15 +193,22 @@ similar ones.
 
 ## `mirai mcp`
 
-`mirai mcp [--project P|--port N] [--timeout S] [--plugins A,B|*]` is an MCP server
+`mirai mcp [--project P|--port N] [--timeout S] [--plugins A,B|*] [--client NAME]` is an MCP server
 over stdio: it forwards each JSON line (up to `MCP_MAX_LINE` bytes) to the `POST /mcp` of the
 editor that the port picks like [`mirai rpc`](#mirai-rpc) and answers in one line; the task
 context, also like `mirai rpc`, and `--plugins` go in all its messages. Without `--plugins` the
 client receives the editor core and `call`; with it, also the tools of those plugins (`*`: all
 methods). Which plugins exist is told by `engine.describe`.
 
-- Without an editor it answers `initialize` itself (with `listChanged: true` and the instruction
-  to open the editor), `ping` and an empty `tools/list`; a call or another request with `id` gives
+- With `--project` the port is the one `.mirai/api.json` of that project names, read again on
+  every message and never the fixed port, so it only reaches that project's editor, also after
+  it restarts on another port. While the project has no editor it answers `initialize` itself
+  (with `listChanged: true`) and lists one placeholder tool, whose description and whose call say
+  to run `mirai session start`. When an editor appears, or another replaces it, it sends
+  `notifications/tools/list_changed` once that editor answers.
+- Without `--project` and without an editor it answers `initialize` itself (with
+  `listChanged: true` and the instruction to open the editor), `ping` and an empty `tools/list`; a
+  call or another request with `id` gives
   `-32099`. After an empty list it tries the editor every `BRIDGE_RETRY` seconds and, when it
   answers, sends `notifications/tools/list_changed` once.
 - `.mcp.json` declares it: the engine's launches `bin/mirai mcp` relative to the root; a project's
@@ -226,7 +233,7 @@ batch, without sessions or server events.
   or with a `result_schema` of `type:"object"`.
 - `tools/call`: the result as JSON text in `content` and, if it is an object, also in
   `structuredContent`; a method error is `isError:true` with `{"error":{...}}` in the text. With
-  `mcp_content:true` it is an MCP content envelope (`view.viewport`, `play.capture`). A handler
+  `mcp_content:true` it is an MCP content envelope (`view.viewport`). A handler
   with a typed result attaches a PNG with `api.call_image` (`editor.capture`): MCP gives it as an
   image after the text and JSON-RPC returns only the result; if it does not fit in the response or
   cannot be read, a text with its path goes instead. A malformed JSON, or a non-object despite

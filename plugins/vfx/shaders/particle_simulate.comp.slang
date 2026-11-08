@@ -191,7 +191,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (frame.sun_direction.w > 0.5) {
             float wrap = 0.5 + 0.5 * dot(view, frame.sun_direction.xyz);
             float3 from = v.position + frame.sun_direction.xyz * (radius + 0.02);
-            light += sun_light(v.position) * lerp(0.6, 1.0, wrap) * trace_transmission(from, frame.sun_direction.xyz, scene_reach(from, frame.sun_direction.xyz), false);
+            light += sun_light(v.position) * lerp(0.6, 1.0, wrap) * trace_transmission(from, frame.sun_direction.xyz, sun_reach(from, frame.sun_direction.xyz), false);
         }
         Shading around = shading_diffuse(v.position, float3(0.0), float3(1.0));
         light += local_lighting(around, 0.0) + shadowless_lighting(around, 0.0);

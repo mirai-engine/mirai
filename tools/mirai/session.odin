@@ -328,7 +328,9 @@ session_close :: proc(folder:string,file:api.Port_File,discard:bool,command:="se
         if discarded==0 {params="{}"}
     }
     _,err,called:=api.rpc_call(file.port,"engine.shutdown",params,1,10000,context.temp_allocator)
-    if !called && !discard {
+    // An editor that shuts down may close the connection before it answers.
+    if !called {for at:=time.tick_now();workspace.process_alive(file.pid) && time.tick_since(at)<3*time.Second; {time.sleep(50*time.Millisecond)}}
+    if !called && !discard && workspace.process_alive(file.pid) {
         fmt.eprintfln("mirai %s: the editor (pid %d) did not close: %s; `%s` closes it anyway and loses what it did not save",command,file.pid,api.error_text(err,context.temp_allocator),retry)
         return false,0
     }

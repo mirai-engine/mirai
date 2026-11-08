@@ -313,6 +313,8 @@ Gui :: struct {
     deliveries:u64,            // times the events of a frame went to the game: what a widget wrote waits for one past it
     frame_tick:u64,            // Time.tick at the last frame phase: no tick ran while it holds
     pending:[dynamic]UI_Event, // of the frame drawn, until the next fixed tick
+    arrived:[dynamic]UI_Event, // what reached the game since the last frame phase: events_this_frame
+    arrived_read:bool,         // the frame phase went by: what arrived starts again
     delivered:[DELIVERED_CAPACITY]Delivered_Event, // a ring, in the order of the ticks that took them
     delivered_count:int,
     requests:[dynamic]UI_Request, // taken, until the interface they name builds
@@ -422,6 +424,23 @@ back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
     return event_find(events,entity,"",.Back)!=nil
 }
 
+// The events that reached the game in this frame, each once: read them from a
+// frame step, not a fixed one, and the ticks of the frame (none while the clock
+// is stopped, or several) make no difference. Valid until the next frame phase.
+events_this_frame :: proc(gui:^Gui) -> []UI_Event {
+    if gui==nil {return nil}
+    return gui.arrived[:]
+}
+
+@(private)
+events_arrive :: proc(gui:^Gui) {
+    if gui.arrived_read {
+        clear(&gui.arrived)
+        gui.arrived_read=false
+    }
+    append(&gui.arrived,..gui.pending[:])
+}
+
 // The events of the last frame become those of the tick, once; a tick that
 // runs again gets those it got.
 @(step="fixed",stage="input")
@@ -438,6 +457,7 @@ gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     }
     // The clock went back, as a save loads: the ticks kept are of another run.
     if gui.delivered_count>0 && gui.delivered[(gui.delivered_count-1)%DELIVERED_CAPACITY].tick>=time.tick {gui.delivered_count=0}
+    events_arrive(gui)
     if len(gui.pending)==0 {return}
     append(&events.items,..gui.pending[:])
     for event in gui.pending {
@@ -453,9 +473,11 @@ gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
 @(step="frame",stage="input")
 gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     if gui==nil {return}
+    defer gui.arrived_read=true
     ticked:=time.tick!=gui.frame_tick
     gui.frame_tick=time.tick
     if ticked {return}
+    events_arrive(gui)
     clear(&events.items)
     events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
     if len(gui.pending)==0 {return}
@@ -742,6 +764,7 @@ gui_release :: proc(gui:^Gui,app:^host.App) {
     if gui==nil {return}
     instances_clear(gui)
     clear(&gui.pending)
+    clear(&gui.arrived)
     for view in gui.views_shown {render.view_texture_remove(app,view.texture)}
     clear(&gui.views_shown)
     for &shown in gui.particles {if shown.texture!=0 {render.ui_texture_remove(app,shown.texture)};shown={}}
@@ -765,7 +788,7 @@ gui_free :: proc(gui:^Gui) {
         free(s.ctx,a)
         delete(s.draws,a);delete(s.panels,a);delete(s.offscreen,a);delete(s.offscreen_draws,a)
     }
-    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending)
+    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending);delete(gui.arrived)
     delete(gui.requests);delete(gui.unblock);delete(gui.views_shown);delete(gui.actions)
     core.entity_map_destroy(&gui.index)
     if gui.schema_ready {serial.schema_destroy(&gui.schema)}

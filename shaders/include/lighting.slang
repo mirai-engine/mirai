@@ -842,7 +842,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             radiance = sun_light(s.position) * cosine * shading_response(s, frame.sun_direction.xyz);
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
-            reach = scene_reach(origin, direction);
+            reach = sun_reach(origin, direction);
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;

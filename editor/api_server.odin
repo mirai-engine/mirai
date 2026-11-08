@@ -24,7 +24,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "8"
+API_VERSION :: "9"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with method, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -66,6 +66,7 @@ Api_State :: struct {
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
     scripts:[EDITOR_RUNS]Run_Script, // the input play.input scheduled for each place of Session.runs
+    step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
 }
 
 @(storage)

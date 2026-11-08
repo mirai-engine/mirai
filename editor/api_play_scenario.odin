@@ -28,13 +28,14 @@ import "mirai:std/serial"
 
 SCENARIO_FOLDER :: "tests/scenarios"
 SCENARIO_EXTENSION :: ".mirai"
-API_SCENARIO_STEPS :: 256
+API_SCENARIO_STEPS :: 2048
 API_SCENARIO_FILES :: 256
-API_SCENARIO_FILE_BYTES :: 256<<10
+API_SCENARIO_FILE_BYTES :: 1<<20
 API_SCENARIO_TEXT :: 512
 
 Api_Play_Scenario_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=A scenario file or a folder of them (its .mirai files) absolute or under the project; empty: tests/scenarios"`,
+    qa:Api_Play_Qa_Start_Params `mirai:"optional,label=The monitors of play.qa.start on every scenario: a violation fails it"`,
 }
 
 // What play.scenario.run writes.
@@ -52,6 +53,7 @@ Api_Scenario_Report :: struct {
     passed:bool,
     failure:[API_SCENARIO_TEXT]u8 `mirai:"text,label=What failed first and why; empty when it passed"`,
     tick:u64 `mirai:"label=The tick of the game when it stopped"`,
+    qa:Api_Play_Qa_Report `mirai:"optional,label=With qa: what the monitors saw"`,
 }
 Api_Scenario_Step :: struct {
     name:[128]u8 `mirai:"optional,text,label=The name the file gives it"`,
@@ -215,12 +217,14 @@ api_play_scenario_run :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Scenario_Params)
     files,problem:=scenario_files(s.project_root,base.text_get(params.path[:]),call.allocator)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    monitors:[1]string
+    api.object_values(call.allocator,call.raw,{"qa"},monitors[:])
     out:=call.out
     failed:=0
     serial.text_write_raw(out,`{"scenarios":[`)
     for file,i in files {
         if i>0 {serial.write_u8(out,',')}
-        if !api_scenario_play(s,call,file,out) {failed+=1}
+        if !api_scenario_play(s,call,file,monitors[0],out) {failed+=1}
         if out.overflow>0 {break}
     }
     serial.write_u8(out,']')
@@ -232,7 +236,7 @@ api_play_scenario_run :: proc(s:^Session,call:^api.Call) {
 
 // Plays one scenario file and writes its report to out; whether it passed.
 @(private)
-api_scenario_play :: proc(s:^Session,call:^api.Call,file:string,out:^serial.Writer) -> (passed:bool) {
+api_scenario_play :: proc(s:^Session,call:^api.Call,file,monitors:string,out:^serial.Writer) -> (passed:bool) {
     server:=call.server
     failure_buffer:[API_SCENARIO_TEXT]u8
     failure:string
@@ -256,11 +260,13 @@ api_scenario_play :: proc(s:^Session,call:^api.Call,file:string,out:^serial.Writ
     api.write_text(out,"scene",sc.scene)
     api.write_int(out,"steps",i64(len(sc.steps)))
     api.write_key(out,"ran");serial.write_u8(out,'[')
-    if failure=="" {failure,tick=api_scenario_steps(s,call,&sc,out,failure_buffer[:])}
+    report:string
+    if failure=="" {failure,tick,report=api_scenario_steps(s,call,&sc,monitors,out,failure_buffer[:])}
     serial.write_u8(out,']')
     api.write_bool(out,"passed",failure=="")
     api.write_text(out,"failure",failure)
     api.write_uint(out,"tick",tick)
+    if report!="" {api.write_key(out,"qa");serial.text_write_raw(out,report)}
     serial.write_u8(out,'}')
     return failure==""
 }
@@ -300,41 +306,44 @@ scenario_step_held :: proc(params,answer:string) -> (held:bool,why:string) {
 // Plays the scene of a scenario and its steps, writing a report per step to
 // out, and stops the game; the first failure, in buffer, and the last tick.
 @(private)
-api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Writer,buffer:[]u8) -> (failure:string,tick:u64) {
+api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,monitors:string,out:^serial.Writer,buffer:[]u8) -> (failure:string,tick:u64,report:string) {
     server:=call.server
     owner:=ai_task_of_call(s,call)
     answer_buffer:[4096]u8
     if run_find(s,owner)!=nil {
-        return fmt.bprintf(buffer,"a game is already playing: stop it (play.stop) and run the scenario again"),0
+        return fmt.bprintf(buffer,"a game is already playing: stop it (play.stop) and run the scenario again"),0,""
     }
     if sc.scene!="" {
         target:=scene_file(s,sc.scene)
-        if target=="" {return fmt.bprintf(buffer,"scene: %q is not a path of a file",sc.scene),0}
-        if !os.is_file(target) {return fmt.bprintf(buffer,"scene: %s is not there",target),0}
+        if target=="" {return fmt.bprintf(buffer,"scene: %q is not a path of a file",sc.scene),0,""}
+        if !os.is_file(target) {return fmt.bprintf(buffer,"scene: %s is not there",target),0,""}
         when ODIN_OS==.Windows {same:=strings.equal_fold(target,document_file(s.document))} else {same:=target==document_file(s.document)}
         if !same {
             switch {
             case owner!=0:
-                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0
+                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0,""
             case document_dirty(s):
-                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document %s has unsaved changes: save them (scene.save) or open %s",sc.scene,document_path(s.document),sc.scene),0
+                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document %s has unsaved changes: save them (scene.save) or open %s",sc.scene,document_path(s.document),sc.scene),0,""
             }
             path:serial.Writer
             serial.writer_init(&path,0,context.temp_allocator)
             serial.text_write_raw(&path,`{"path":`);serial.text_write_string(&path,target);serial.write_u8(&path,'}')
             if _,error,ok:=api_scenario_call(server,"scene.load",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
-                return fmt.bprintf(buffer,"scene: %s could not be opened: %s",sc.scene,error.message),0
+                return fmt.bprintf(buffer,"scene: %s could not be opened: %s",sc.scene,error.message),0,""
             }
         }
     }
     started,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
-    if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0}
+    if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0,""}
     building:[1]string
     api.object_values(context.temp_allocator,started,{"building"},building[:])
     if building[0]=="true" {
-        return fmt.bprintf(buffer,"play.start: Odin sources changed since the last build, which runs now: run the scenario again once build.status says it stands"),0
+        return fmt.bprintf(buffer,"play.start: Odin sources changed since the last build, which runs now: run the scenario again once build.status says it stands"),0,""
     }
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
+    if monitors!="" {
+        if _,armed,done:=api_scenario_call(server,"play.qa.start",monitors,answer_buffer[:]);!done {return fmt.bprintf(buffer,"qa: %s",armed.message),0,""}
+    }
     for &step,i in sc.steps {
         method:=api.method_find(server,step.method)
         if i>0 {serial.write_u8(out,',')}
@@ -369,6 +378,15 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Wr
         serial.write_u8(out,'}')
         base.arena_rewind(&server.scratch,mark)
         if !held || out.overflow>0 {break}
+    }
+    if monitors!="" {
+        written,_,done:=api_scenario_call(server,"play.qa.report","{}",answer_buffer[:])
+        if done {
+            report=strings.clone(written,call.allocator)
+            values:[1]string
+            api.object_values(context.temp_allocator,written,{"passed"},values[:])
+            if failure=="" && values[0]=="false" {failure=fmt.bprintf(buffer,"qa: the monitors saw violations")}
+        }
     }
     return
 }

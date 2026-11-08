@@ -22,6 +22,11 @@ errors of the attributes.
   sources with `-o:speed`; executable `<output>/<executable><ext>` (`.mirai/game` or `--out`).
   With `Desc.server` (`mirai build server`) it is the [dedicated server](#dedicated-server), the
   same executable in `.mirai/server`.
+  - `mirai build game` and `server` without `--release` set `Desc.incremental`: the engine and its
+    shipping plugins are one `-o:speed` library next to the executable, kept in the shared cache
+    (`shipped-engine`) by its key, and only the game compiles, against its declarations;
+    `--release` and the editor's Build compile everything whole, the only build to ship
+    (`mirai package` builds no game).
 
 A library compiles only the code of the project: it sees the engine through its declarations.
 
@@ -125,8 +130,8 @@ build.job_destroy(job)
 - `job_cancel` kills the compilers, not the linker they may have launched. A job that fails leaves
   no compilers running.
 - `target_state` says, without writing, whether the output is missing, stale or up to date.
-- `Result.diagnostics` are the messages of `-json-errors`; `text`, everything else the compiler
-  printed (the linker is not structured).
+- `Result.diagnostics` are the messages of `-json-errors` and the warnings of the generator; `text`,
+  everything else the compiler printed (the linker is not structured).
 - A compilation failure or a failure of the engine-time check does not publish the executable or
   store its fingerprint. In `Game`, copy and cooking happen after the executable is published,
   inside the call that finishes the job: `Copy_Failed` and `Cook_Failed` do not revert that

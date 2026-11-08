@@ -32,6 +32,7 @@ CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,sha
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 PHASE_TITLES :: [len(PHASES)]string{"Input","Fixed","Frame","Late","Ui","Render","Release"}
+FRAME_PHASE :: 2
 RELEASE_PHASE :: 6 // runs when a World is freed: from the game loop, never in a frame
 LOOPS :: [2]string{"game","editor"}
 // Every phase runs its steps by stage, in this order; a step that names none is in intent.
@@ -191,6 +192,8 @@ Step :: struct {
     params:[dynamic]Param,
     rank:int, // libraries, then declarations
     where_:string,
+    file:string,
+    line:int,
 }
 
 @(private="file")
@@ -211,6 +214,7 @@ Generator :: struct {
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
     errors:[dynamic]string,
+    warnings:[dynamic]Diagnostic,
     engine_root,root:string,
 }
 
@@ -221,6 +225,7 @@ Generator :: struct {
 Generated :: struct {
     game_world,editor_world,shipped_world,editor_main,play_main,game_main:string,
     errors:[]string,
+    warnings:[]Diagnostic, // what builds and runs and most likely does not do what it was written for
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
 }
 
@@ -244,6 +249,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {steps_read(&g,pkg)}
     rules_check(&g)
     out.errors=g.errors[:]
+    out.warnings=g.warnings[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
     out.editor_world=world_write(&g,true)
@@ -998,6 +1004,7 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
             }
             s:=new(Step)
             s.name,s.pkg,s.where_=name,pkg,where_
+            s.file,s.line=slashes(file.fullpath,context.allocator),decl.pos.line
             pkg.used=true
             s.rank=len(g.steps)
             for part in strings.fields(phase_text) {
@@ -1172,6 +1179,7 @@ rules_check :: proc(g:^Generator) {
     }
     stages:=STAGES
     network,has_network:=g.by_key["mirai:core.Network"]
+    tick_input:=g.by_key["mirai:core.Input"]
     for s in g.steps {
         if s.server && (!has_network || network.kind!=.Storage) {
             append(&g.errors,fmt.aprintf("%s: %s is server, and the world has no core.Network to know whether this end decides the rules",s.where_,s.name))
@@ -1203,6 +1211,10 @@ rules_check :: proc(g:^Generator) {
             }
             if param.type.by_world && param.kind==.Storage_Value {
                 append(&g.errors,fmt.aprintf("%s: %s receives %s, which has a value for each World, by value: receive ^%s or core.Ref(%s)",s.where_,s.name,param.type.name,param.type.name,param.type.name))
+            }
+            // The editor loop refills core.Input every frame; only the game loop leaves it at the last tick.
+            if s.loops[0] && s.phases[FRAME_PHASE] && param.type==tick_input && (param.kind==.Storage_Value || param.kind==.Storage_Ref) {
+                append(&g.warnings,Diagnostic{severity=.Warning,file=s.file,line=s.line,column=1,message=fmt.aprintf("%s runs in frame and receives core.Input as %s, which there holds the values of the last tick: edges and scripted keys do not reach it, so use core.Frame_Input",s.name,param.name)})
             }
         }
         // What a step writes reaches it once: in a @(params) and by itself, or

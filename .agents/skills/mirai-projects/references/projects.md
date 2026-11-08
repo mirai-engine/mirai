@@ -440,6 +440,8 @@ tools come from `.deps`, also from a worktree.
 
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
   empty; `--list` gives the first line of the `README.md` of each template.
+- `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
+  of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
   the first build. It copies nothing: `.deps` and the caches (engine binaries, C libraries, shader
   stages) are those of the main checkout ([dependencies](build.md#dependencies-and-worktrees)).

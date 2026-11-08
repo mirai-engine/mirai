@@ -44,7 +44,7 @@ write_raft_scene :: proc(o:^Out) {
     u:=daylight(3)
     environment:=render.SKY_DEFAULT
     // The sky shows as it lights: the window of Snell from under the sea is that sky.
-    environment.luminance,environment.use_background=nits(u,{.42,.56,.78}),false
+    environment.luminance,environment.atmosphere,environment.use_background=nits(u,{.42,.56,.78}),false,false
     sky_set(&s,&environment,0)
     sun:=entity(&s,"Sun")
     sun_placed:=sun_pose(render.SUN_DIRECTION)

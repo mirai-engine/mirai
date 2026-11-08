@@ -112,10 +112,13 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **No decision records.** Docs do not record rejected alternatives, past measurements or what was
   tried: skills and code say how things work. A rule the user decided is one line in the
   invariants of the owning skill.
+- `docs/game` is the documentation for writing games, owned by the engine and served by `mirai docs`
+  and the MCP tool `docs`, so projects keep no copy; `mirai-*` skills may link to it, it never links
+  out.
 - `docs/`: [architecture](docs/ARCHITECTURE.md),
-  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md) and the `PLAN_*.md` of work in
-  progress. Third-party code and assets that ship with the engine are listed in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md), `game/` (above) and the
+  `PLAN_*.md` of work in progress. Third-party code and assets that ship with the engine are listed
+  in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - Contracts are checked against the code: `engine.describe` reports the methods and schemas of an
   open build and `mirai asset` inspects binary assets.
 

@@ -43,6 +43,7 @@ write_horror_scene :: proc(o: ^Out) {
     defer asset.scene_destroy(&s.scene)
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = {0.1, 0.12, 0.25}, {0.01, 0.015, 0.04}
+    environment.atmosphere = false
     exposure := render.EXPOSURE_DEFAULT
     exposure.mode, exposure.aperture, exposure.shutter = .Manual, 2, 0.2
     sky_set(&s, &environment, 0, exposure)

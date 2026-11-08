@@ -40,7 +40,7 @@ a_sky_turned_on_blends_from_the_one_that_was_on :: proc(t:^testing.T) {
     turn:=quaternion128(quaternion(w=0,x=0,y=1,z=0))
     core.add(&worlds,night,core.World_Transform{transform={rotation=turn,scale=1}})
     core.table_settle(&worlds,&es)
-    environment:=sky_environment(e,sky,found,core.read(&worlds),nil)
+    environment:=sky_environment(e,sky,found,false,core.read(&worlds),nil)
     testing.expect_value(t,environment.sky,[3]f32{2,2,3})
     testing.expect_value(t,environment.sky_from,[3]f32{1000,1000,1000})
     testing.expect_value(t,environment.sky_from_weight,f32(0.5))
@@ -50,8 +50,14 @@ a_sky_turned_on_blends_from_the_one_that_was_on :: proc(t:^testing.T) {
     activate(&requests,core.create(&es))
     environment_activate(&requests,&skies,&suns,{dt=0},&problems)
     testing.expect_value(t,problems.count,1)
-    none:=sky_environment(core.NONE,{},false,core.read(&worlds),nil)
+    none:=sky_environment(core.NONE,{},false,false,core.read(&worlds),nil)
     testing.expect(t,none.sky=={} && none.use_background && none.background=={})
+
+    // The air shows only when a sun lights it, and then nothing shows behind it.
+    lit:=sky_environment(e,SKY_DEFAULT,true,true,core.read(&worlds),nil)
+    testing.expect(t,lit.sky_atmosphere && !lit.use_background)
+    unlit:=sky_environment(e,SKY_DEFAULT,true,false,core.read(&worlds),nil)
+    testing.expect(t,!unlit.sky_atmosphere && unlit.use_background && unlit.sky==SKY_DEFAULT.luminance)
 }
 
 // Turning a sky on writes only how it arrives: what drives its change, its

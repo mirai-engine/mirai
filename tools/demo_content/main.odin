@@ -29,7 +29,7 @@ import "mirai:ui"
 // again gives the same bytes. The other scenes, the prefabs of
 // demo/assets/prefabs and the materials of demo/assets/materials are authored.
 //
-//   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -custom-attribute:component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record -- [root of the repository]
+//   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -ignore-unknown-attributes -- [root of the repository]
 
 @(private) id_of :: proc(kind,name:string) -> base.Asset_Id {return base.asset_id_named(fmt.tprintf("%s\x1fdemo_content\x1f%s",kind,name))}
 
