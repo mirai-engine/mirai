@@ -216,15 +216,29 @@ plugin_decl_of :: proc(lib:^Plugin_Library) -> string {
 // declarations of the editor alone builds no runtime part. Nothing of it
 // names the project: with the same flags, every project of an engine shares
 // its libraries through the cache, and those a package of the engine brings.
+// It names the library (plugin_library_name).
 @(private)
 plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine_stamp:string) -> u64 {
+	return plugin_library_hash_of(p,lib,compiler,flags,engine_stamp,false)
+}
+
+// The same with the names of the libraries it links against masked: what its
+// objects are compiled from. A library whose name moves and whose compile
+// hash does not is linked again (relink.odin).
+@(private)
+plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine_stamp:string) -> u64 {
+	return plugin_library_hash_of(p,lib,compiler,flags,engine_stamp,true)
+}
+
+@(private="file")
+plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine_stamp:string,masked:bool) -> u64 {
 	sources:=make([dynamic]string,context.temp_allocator)
 	append(&sources,..engine_sources(project.path(p.engine_root,"plugins",allocator=context.temp_allocator),lib.packages))
 	hashed:=make([dynamic]string,context.temp_allocator)
 	append(&hashed,..flags)
 	// The declarations it compiles against, relative to the folder of the project that has them.
 	decl:=plugin_decl_of(lib)
-	declared,_:=fingerprint(decl,"",nil,engine_sources(decl,lib.needs))
+	declared,_:=fingerprint(decl,"",nil,engine_sources(decl,lib.needs),masked=decl if masked else "")
 	append(&hashed,fmt.tprintf("<plugin declarations %x>",declared))
 	stamp,stamped:=engine_stamp_read(engine_stamp)
 	editor:=lib.part==.Editor
@@ -236,6 +250,12 @@ plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:stri
 	}
 	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
 	return hash
+}
+
+// Where a library keeps the record of its last compile (Link_Record).
+@(private)
+plugin_link_file :: proc(lib:^Plugin_Library) -> string {
+	return strings.concatenate({lib.stamp[:len(lib.stamp)-len(".stamp")],".link"},context.temp_allocator)
 }
 
 // Writes the stage and the declarations of a library, with the declarations
@@ -351,7 +371,14 @@ plugin_cache_store :: proc(engine_root:string,lib:^Plugin_Library,hash:u64) {
 			return
 		}
 	}
-	cache_entry_commit(entry,staging,PLUGIN_CACHE_ENTRIES)
+	// The job trims the cache once its libraries are stored (plugin_cache_trim).
+	cache_entry_commit(entry,staging)
+}
+
+// Keeps the PLUGIN_CACHE_ENTRIES libraries of the shared cache used last.
+@(private)
+plugin_cache_trim :: proc(engine_root:string) {
+	cache_trim(workspace.cache_folder(engine_root,"plugins",context.temp_allocator),PLUGIN_CACHE_ENTRIES)
 }
 
 // Copies the library of an entry next to staged, the way the compiler leaves

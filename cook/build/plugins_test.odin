@@ -136,7 +136,7 @@ split_plugin_write :: proc(t:^testing.T,folder:string) -> (engine,game:string) {
 }
 
 // A job that builds only the plugin libraries of a project.
-@(private="file")
+@(private)
 plugin_job :: proc(p:^project.Project,compiler:string) -> ^Job {
     job:=new(Job,context.temp_allocator)
     job.allocator=context.temp_allocator

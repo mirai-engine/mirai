@@ -522,31 +522,47 @@ cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
     return staging,true
 }
 
-// Renames what staging holds into place with its mark and drops the entries
-// of the cache used the longest ago, keeping `keep`.
+// Renames what staging holds into place with its mark and, with keep, drops
+// the entries of the cache used the longest ago, keeping `keep`. Without it
+// the caller trims the folder once (cache_trim): looking at every entry
+// takes longer than storing one.
 @(private)
-cache_entry_commit :: proc(entry,staging:string,keep:int) {
+cache_entry_commit :: proc(entry,staging:string,keep:=0) {
     if os.write_entire_file(project.path(staging,CACHE_COMPLETE,allocator=context.temp_allocator),"")!=nil || os.rename(staging,entry)!=nil {
         _=os.remove_all(staging)
         return
     }
-    folder:=entry[:strings.last_index_byte(entry,'/')]
+    if keep>0 {cache_trim(entry[:strings.last_index_byte(entry,'/')],keep)}
+}
+
+// Drops the entries of a folder of the cache used the longest ago, keeping
+// `keep`, and those a build that did not finish left half written.
+@(private)
+cache_trim :: proc(folder:string,keep:int) {
     entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
     if error!=nil {return}
     Used :: struct {path:string,at:time.Time}
     used:=make([dynamic]Used,context.temp_allocator)
+    removed:=make([dynamic]string,context.temp_allocator)
     for found in entries {
         if found.type!=.Directory {continue}
+        stale:=time.diff(found.modification_time,time.now())>STALE_AFTER
+        // One being removed (remove_later), whose removal did not finish when it is old.
+        if strings.contains(found.name,TRASH) {
+            if stale {append(&removed,found.fullpath)}
+            continue
+        }
         at,stat_error:=os.modification_time_by_path(project.path(found.fullpath,CACHE_COMPLETE,allocator=context.temp_allocator))
         if stat_error!=nil {
             // An entry left half written by a build that did not finish.
-            if strings.contains(found.name,".part-") && time.diff(found.modification_time,time.now())>STALE_AFTER {_=os.remove_all(found.fullpath)}
+            if strings.contains(found.name,".part-") && stale {append(&removed,found.fullpath)}
             continue
         }
         append(&used,Used{found.fullpath,at})
     }
     slice.sort_by(used[:],proc(a,b:Used) -> bool {return time.diff(b.at,a.at)>0})
-    for old in used[min(len(used),keep):] {_=os.remove_all(old.path)}
+    for old in used[min(len(used),keep):] {append(&removed,old.path)}
+    remove_later(removed[:])
 }
 
 // What the stamp of the binaries in folder says, to tell later whether a

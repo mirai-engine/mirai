@@ -265,11 +265,14 @@ sources_newer :: proc(sources_file,output,root:string,tests:="") -> (newer,known
 // same sources in another checkout of the repository give the same identity.
 // Flags that only change how fast the compiler runs do not count. The
 // libraries next to the compiler are the compiler: their folders are not
-// read. latest is the newest modification among those files.
+// read. latest is the newest modification among those files. The sources
+// under masked count with the names of the plugin libraries in their foreign
+// imports masked (link_names_mask): what tells a compile from a link (relink.odin).
 @(private)
-fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string) -> (hash:u64,latest:time.Time) {
+fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="") -> (hash:u64,latest:time.Time) {
     root:=slashes(root,context.temp_allocator)
-    file_mix :: proc(hash:u64,name,path:string,latest:^time.Time) -> u64 {
+    masked:=slashes(masked,context.temp_allocator)
+    file_mix :: proc(hash:u64,name,path:string,latest:^time.Time,masked:string) -> u64 {
         hash:=base.hash_combine(hash,base.name_hash(name))
         if latest!=nil {
             if changed,error:=os.modification_time_by_path(path);error==nil && time.diff(latest^,changed)>0 {latest^=changed}
@@ -281,6 +284,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string) -> (ha
         for b in data {
             if b!='\r' {data[kept]=b;kept+=1}
         }
+        if masked!="" && len(path)>len(masked) && path[len(masked)]=='/' && path_equal(path[:len(masked)],masked) {link_names_mask(data[:kept])}
         return base.hash_combine(hash,xxhash.XXH3_64_default(data[:kept]))
     }
     // The compiler counts by its file, wherever it is reached from.
@@ -300,7 +304,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string) -> (ha
             continue
         }
         // What a source loads with #load.
-        hash=file_mix(hash,root_relative(source,root),source,&latest)
+        hash=file_mix(hash,root_relative(source,root),source,&latest,masked)
     }
     listed,_:=slice.map_keys(folders,context.temp_allocator)
     slice.sort(listed)
@@ -311,7 +315,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string) -> (ha
         if error!=nil {continue}
         slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
         for entry in entries {
-            if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {hash=file_mix(hash,entry.name,entry.fullpath,&latest)}
+            if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {hash=file_mix(hash,entry.name,slashes(entry.fullpath,context.temp_allocator),&latest,masked)}
         }
     }
     return
