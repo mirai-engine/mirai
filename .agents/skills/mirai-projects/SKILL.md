@@ -79,8 +79,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
   from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.
-- A generic procedure, an `inline` one or one with `deferred_*` is compiled in its caller: it is
-  not exported.
+- A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
+  signature is compiled in its caller: it is not exported. An `any` crossing into a library would
+  carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
