@@ -44,8 +44,10 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
     have. The edited world keeps everything: the editor rewrites the `.navmesh` from its meshes.
     The box of a far section counts the same ([sections](#sections)). Without `Nav_Bounds`, those
     boxes are added to that of the collision: dropping colliders does not take tiles away.
-  - **How.** The input of each marked tile is collected on the loop thread and hashed; if the hash
-    is that of the tile it has, it is not built. If not, a job builds it and the tile is published
+  - **How.** The input of each marked tile is collected on the loop thread and hashed, whatever
+    the order of its triangles, so a bake holds in a world that added its shapes in another order;
+    if the hash is that of the tile it has, it is not built. A tile with no input at all is empty
+    without a job. If not, a job builds it and the tile is published
     on a later tick only if nobody marked it again. Publishing does not allocate; a replaced tile
     expires its references.
 - **Areas.** `Nav_Area_Kind` is a named id (`AREA_BLOCKED`, `AREA_WALKABLE` and the game's).

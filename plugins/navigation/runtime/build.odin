@@ -659,6 +659,13 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 core.report(problems,core.NONE,"navigation.tile_input","A tile of class %q at %v has more than %d triangles of static collision: it is built from part of them; lower tile_cells in Navigation_Settings",base.text_get(n.classes[i].class.name[:]),coord,NAV_TRIANGLES_MAX)
             }
             if free.hash==mark.hash {n.stats.unchanged+=1;continue}
+            // No collision here: nothing to build, and a bake keeps no tile of it, so every load asks.
+            if len(free.indices)==0 && len(free.volumes)==0 {
+                if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
+                mark.hash=free.hash
+                n.stats.emptied+=1
+                continue
+            }
             free.busy,free.class,free.air,free.coord,free.stamp,free.uid=true,i,false,coord,mark.stamp,n.uid
             free.config=c.config
             next.building=true
@@ -728,8 +735,7 @@ gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core
     config:=c.volume_config
     h:=base.hash64(mem.ptr_to_bytes(&config),0)
     h=base.hash64(mem.ptr_to_bytes(&box),h)
-    h=base.hash64(mem.slice_to_bytes(build.vertices[:]),h)
-    h=base.hash64(mem.slice_to_bytes(build.indices[:]),h)
+    h=base.hash_combine(h,triangles_hash(transmute([][3]f32)build.vertices[:],build.indices[:]))
     h=base.hash64(mem.slice_to_bytes(build.spaces[:]),h)
     h=base.hash64(mem.slice_to_bytes(build.holes[:]),h)
     build.hash=h|1
@@ -770,11 +776,24 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
     }
     config:=c.config
     h:=base.hash64(mem.ptr_to_bytes(&config),0)
-    h=base.hash64(mem.slice_to_bytes(build.vertices[:]),h)
-    h=base.hash64(mem.slice_to_bytes(build.indices[:]),h)
+    h=base.hash_combine(h,triangles_hash(transmute([][3]f32)build.vertices[:],build.indices[:]))
     h=base.hash64(mem.slice_to_bytes(build.volumes[:]),h)
     build.hash=h|1
     return complete
+}
+
+// The hash of a set of triangles, whatever their order: a query of the static
+// collision gives them in the order of a tree that depends on how its shapes
+// were added, which differs between the world that baked and one that reads
+// the bake.
+@(private)
+triangles_hash :: proc(vertices:[][3]f32,indices:[]u32) -> u64 {
+    sum:=u64(len(indices))
+    for at:=0;at+2<len(indices);at+=3 {
+        triangle:=[3][3]f32{vertices[indices[at]],vertices[indices[at+1]],vertices[indices[at+2]]}
+        sum+=base.hash64(mem.ptr_to_bytes(&triangle),0)
+    }
+    return sum
 }
 
 @(private)

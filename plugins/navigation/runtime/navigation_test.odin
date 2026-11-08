@@ -370,6 +370,18 @@ tiles_where_the_collision_is_not_loaded_keep_what_they_have_until_it_loads :: pr
     testing.expect(t,f.nav.stats.built+f.nav.stats.emptied>built)
 }
 
+// The order the static collision gives its triangles in depends on how its
+// shapes were added: the same triangles are the same input.
+@(test)
+the_hash_of_triangles_does_not_depend_on_their_order :: proc(t:^testing.T) {
+    vertices:=[][3]f32{{0,0,0},{1,0,0},{0,0,1},{5,1,5},{6,1,5},{5,1,6}}
+    first:=triangles_hash(vertices,{0,1,2,3,4,5})
+    testing.expect_value(t,triangles_hash(vertices,{3,4,5,0,1,2}),first)
+    moved:=[][3]f32{{5,1,5},{6,1,5},{5,1,6},{0,0,0},{1,0,0},{0,0,1}}
+    testing.expect_value(t,triangles_hash(moved,{0,1,2,3,4,5}),first)
+    testing.expect(t,triangles_hash(vertices,{0,1,2})!=first,"other triangles are another input")
+}
+
 // In a run, the tiles that read only where the terrain is not loaded go, and
 // one that reads across its edge waits and keeps what it has; the edited
 // world keeps them all. Loaded again, they come back from the bake of the
