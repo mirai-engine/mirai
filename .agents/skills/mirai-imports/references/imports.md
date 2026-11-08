@@ -197,7 +197,8 @@ with its id, even if it was moved. Among several files with one id the original 
 - **The textures of a model** name the model as source and the image as name, with the size and
   hash of the image.
 - **What the project already has is not written twice.** A new texture whose image has the bytes
-  and settings of a texture imported in the project names that texture; a new material whose
+  and settings of a texture imported in the project names that texture (in an import of the
+  editor, also one another import wrote Fast with those settings); a new material whose
   textures are all like that names the project material that has exactly those textures and whose
   `imported` layer is what this source gives it; if the source gives it other values, one of its
   own is written. What starts using another import stops being part of its own

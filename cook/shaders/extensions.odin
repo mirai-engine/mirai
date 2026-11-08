@@ -199,7 +199,6 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
     append(&command,..SLANG_FLAGS)
     append(&command,"-stage","compute","-I",include)
     for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
-    append(&command,fmt.tprintf("-DTEXTURE_TABLE_CAPACITY=%d",TABLE_CAPACITY))
     append(&command,..SPIRV_FLAGS)
     append(&command,"-o",path_join(temporary,"frame.spv",allocator=context.temp_allocator),"-reflection-json",reflected)
     if result,ran:=tool_run(runner,command[:],context.temp_allocator);!ran {return {},fmt.aprintf("the frame constants of the extensions do not compile:\n%s",result,allocator=allocator)}

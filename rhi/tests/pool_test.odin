@@ -117,7 +117,7 @@ rhi_messages_reach_the_presenter_the_device_was_given :: proc(t:^testing.T) {
         return
     }
     defer rhi.device_destroy(d)
-    testing.expect(t,!rhi.texture_table_set(d,rhi.TEXTURE_TABLE_CAPACITY,0))
+    testing.expect(t,!rhi.texture_table_set(d,u32(rhi.texture_table_limit(d)),0))
     testing.expect_value(t,messages.errors,1)
     testing.expect(t,rhi.device_error(d)!="")
     testing.expect_value(t,messages.validation,0)

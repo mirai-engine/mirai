@@ -108,10 +108,7 @@ extension_table_texture :: proc(r: ^Renderer, world: u64, desc: Table_Texture_De
 	}
 	state := &r.textures
 	index := texture_slot(state)
-	if index >= TEXTURE_CAPACITY {
-		set_error(r, "table texture %s: the texture table is full (%d textures)", desc.name, TEXTURE_CAPACITY)
-		return nil, false
-	}
+	if !textures_room(r, index, desc.name) {return nil, false}
 	texture := rhi.texture_create(r.device, {width = desc.width, height = desc.height, format = .RGBA16_Float, usage = {.Sampled}, name = desc.name})
 	if texture == 0 {
 		set_error(r, "table texture %s: %s", desc.name, rhi.device_error(r.device))
@@ -125,7 +122,7 @@ extension_table_texture :: proc(r: ^Renderer, world: u64, desc: Table_Texture_De
 		return nil, false
 	}
 	delete(black, r.allocator)
-	if !rhi.texture_table_set(r.device, u32(index), texture) {
+	if !rhi.texture_table_set(r.device, texture_entry(index), texture) {
 		set_error(r, "table texture %s: %s", desc.name, rhi.device_error(r.device))
 		rhi.texture_destroy(r.device, texture)
 		return nil, false

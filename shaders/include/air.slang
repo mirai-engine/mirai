@@ -11,9 +11,9 @@
 #define MIRAI_AIR_SLANG
 
 // AIR_* of render/air.odin.
-#define AIR_TRANSMITTANCE_TEXTURE (TEXTURE_TABLE_CAPACITY - 2u)
-#define AIR_SCATTERING_TEXTURE (TEXTURE_TABLE_CAPACITY - 3u)
-#define AIR_SKY_TEXTURE (TEXTURE_TABLE_CAPACITY - 4u)
+#define AIR_TRANSMITTANCE_TEXTURE 1u
+#define AIR_SCATTERING_TEXTURE 2u
+#define AIR_SKY_TEXTURE 3u
 static const float2 AIR_TRANSMITTANCE_SIZE = float2(256.0, 64.0);
 static const float AIR_SCATTERING_SIZE = 32.0;
 static const float2 AIR_SKY_SIZE = float2(256.0, 128.0); // of one row

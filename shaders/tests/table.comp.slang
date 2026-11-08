@@ -6,10 +6,7 @@
 [[vk::binding(2, 0)]] SamplerState table_sampler : register(s2, space0);
 [[vk::binding(3, 0)]] StructuredBuffer<float4> queries : register(t3, space0); // uv, table index, lod
 [[vk::binding(4, 0)]] RWStructuredBuffer<float4> results : register(u4, space0);
-#ifndef TEXTURE_TABLE_CAPACITY
-#define TEXTURE_TABLE_CAPACITY 1024
-#endif
-[[vk::binding(34, 1)]] Texture2D<float4> table[TEXTURE_TABLE_CAPACITY] : register(t34, space1);
+[[vk::binding(34, 1)]] Texture2D<float4> table[] : register(t34, space1);
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]

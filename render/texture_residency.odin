@@ -81,7 +81,7 @@ Texture_Request :: struct {
 }
 
 Texture_Residency :: struct {
-	streams:       []Texture_Stream, // TEXTURE_CAPACITY of them, by entry of the table
+	streams:       [dynamic]Texture_Stream, // by handle - 1, as long as the textures of Texture_State
 	views:         [TEXTURE_VIEWS_MAX]Texture_Viewer, // drawn by the last frame, places of the world
 	view_count:    int,
 	sources:       [TEXTURE_SOURCES_MAX]Vec3,  // places of the world
@@ -476,7 +476,7 @@ texture_levels_install :: proc(r: ^Renderer, request: Texture_Request, data: Tex
 		return .Stale
 	}
 	stream := &state.residency.streams[index]
-	if !rhi.texture_table_set(r.device, u32(index), texture) {
+	if !rhi.texture_table_set(r.device, texture_entry(index), texture) {
 		set_error(r, "texture levels: %s", rhi.device_error(r.device))
 		rhi.texture_destroy(r.device, texture)
 		return .Failed

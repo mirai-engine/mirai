@@ -602,16 +602,18 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 	testing.expect(t, desc.width == 2 && desc.height == 1 && desc.mip_levels == 2, "sizes that are not powers of two are reduced like the rest")
 	_, ok = texture_add(r, {pixels = image[:8], width = 2, height = 2, name = "short"})
 	testing.expect(t, !ok, "pixels that do not cover the image are rejected")
-	for texture_count(r) < TEXTURE_CAPACITY {
+	// The table grows past the entries it starts with.
+	for texture_count(r) < rhi.TEXTURE_TABLE_FIRST + 1 {
 		_, ok = texture_add(r, {pixels = image[:4], width = 1, height = 1, name = "filler"})
 		testing.expect(t, ok, r.error)
 		if !ok {return}
 	}
-	_, ok = texture_add(r, {pixels = image[:4], width = 1, height = 1, name = "one too many"})
-	testing.expect(t, !ok, "the table holds TEXTURE_CAPACITY textures")
+	last := Texture_Handle(texture_count(r))
+	testing.expect_value(t, texture_index(r, last), u32(TEXTURE_RESERVED + rhi.TEXTURE_TABLE_FIRST))
+	testing.expect(t, texture_capacity(r) == rhi.texture_table_limit(f.device) - TEXTURE_RESERVED && texture_capacity(r) > rhi.TEXTURE_TABLE_FIRST)
 	// A material that names a texture that does not exist renders without it.
 	material := DEFAULT_MATERIAL
-	material.textures[.Base_Color] = Texture_Handle(TEXTURE_CAPACITY + 5)
+	material.textures[.Base_Color] = last + 5
 	materials_set(r, {material})
 	testing.expect_value(t, r.scene.materials[1].textures[.Base_Color], GPU_NONE)
 	textures_clear(r)

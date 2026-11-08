@@ -22,9 +22,10 @@
 //   - Clip space is Y-up with depth in [0,1] on both backends (Vulkan uses a
 //     negative viewport height), so projection matrices are shared.
 //   - Textures a shader picks by index at run time (material maps) live in the
-//     texture table: one array of TEXTURE_TABLE_CAPACITY sampled textures per
-//     device, declared by shaders at set 1, binding TEXTURE_TABLE_SLOT. Every
-//     entry is always a valid texture (a white texel until texture_table_set).
+//     texture table: one array of sampled textures per device, declared by
+//     shaders without a size at set 1, binding TEXTURE_TABLE_SLOT. It grows
+//     when an entry past it is set, up to texture_table_limit. Every entry is
+//     always a valid texture (a white texel until texture_table_set).
 //   - A loss of the GPU is found where the API reports it (submissions,
 //     presentation, waits, queries, maps) and kept as device_failure; no wait
 //     lasts past GPU_WAIT_LIMIT_NS. Nothing aborts: calls on a failed device
@@ -53,28 +54,61 @@ MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the tex
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8
 MAX_TEXTURE_MIPS     :: 14
-// Vulkan has the table in descriptor sets of their own, whose size the device
-// limits check; Metal in argument buffers (Tier 2) at buffer index
-// TEXTURE_TABLE_METAL_BUFFER, the table being their member TEXTURE_TABLE_SLOT.
-// There is a copy for each frame in flight and one for immediate lists: a
-// copy takes the entries that changed when its list begins, after the GPU
-// finished the work that read it, so changing the table waits for nothing.
+// Vulkan has the table in descriptor sets of their own, of a variable count
+// whose upper bound the device limits give; Metal in argument buffers (Tier 2)
+// in device memory at buffer index TEXTURE_TABLE_METAL_BUFFER, the table
+// being their member TEXTURE_TABLE_SLOT. There is a copy for each frame in
+// flight and one for immediate lists: a copy takes the entries that changed
+// when its list begins, after the GPU finished the work that read it, so
+// changing the table waits for nothing. Growing makes new copies with every
+// entry and lets the old ones go once the GPU no longer reads them.
 TEXTURE_TABLE_SLOT         :: 34
-TEXTURE_TABLE_CAPACITY     :: 1024
 TEXTURE_TABLE_METAL_BUFFER :: MAX_BUFFER_BINDING_SLOTS
 TEXTURE_TABLE_COPIES       :: MAX_FRAMES_IN_FLIGHT + 1 // the last one, of immediate lists
+// The entries a table starts with: a small scene never grows it.
+TEXTURE_TABLE_FIRST        :: 1024
+// The most entries a table grows to on either backend: the textures Metal's
+// Tier 2 argument buffers give an application at once (Apple, "Improving CPU
+// performance by using argument buffers"). A Vulkan device whose limits allow
+// fewer stops at those.
+TEXTURE_TABLE_MAX          :: 500_000
 
 // Entries of the table each copy has not taken yet, a bit per entry.
-Table_Changes :: [TEXTURE_TABLE_COPIES][TEXTURE_TABLE_CAPACITY / 64]u64
+Table_Changes :: [TEXTURE_TABLE_COPIES][dynamic]u64
+
+// The size a table of capacity entries grows to so that it holds index:
+// doubled until it does, and never past limit. 0 when limit does not hold it.
+table_grown :: proc "contextless" (capacity, index, limit: int) -> int {
+	if index >= limit {return 0}
+	size := max(capacity, TEXTURE_TABLE_FIRST)
+	for size <= index {size *= 2}
+	return min(size, limit)
+}
+
+// Gives every copy a bit for each of capacity entries, none set: a copy
+// made with every entry has none to take.
+@(private)
+table_changes_reset :: proc(changes: ^Table_Changes, capacity: int) {
+	for &copy in changes {
+		resize(&copy, (capacity + 63) / 64)
+		for &word in copy {word = 0}
+	}
+}
+
+@(private)
+table_changes_destroy :: proc(changes: ^Table_Changes) {
+	for &copy in changes {delete(copy)}
+}
 
 @(private)
 table_changed :: proc "contextless" (changes: ^Table_Changes, index: u32) {
 	for &copy in changes {copy[index / 64] |= 1 << (index % 64)}
 }
 
-// The entries copy has not taken, into out; they count as taken.
+// The entries copy has not taken, into out (as long as the table, so taking
+// allocates nothing); they count as taken.
 @(private)
-table_take :: proc "contextless" (changes: ^Table_Changes, copy: int, out: ^[TEXTURE_TABLE_CAPACITY]u32) -> (count: int) {
+table_take :: proc "contextless" (changes: ^Table_Changes, copy: int, out: []u32) -> (count: int) {
 	for &word, w in changes[copy] {
 		for word != 0 {
 			out[count] = u32(w * 64) + u32(intrinsics.count_trailing_zeros(word))
@@ -672,3 +706,7 @@ gpu_skip_allowed :: proc() -> bool {
 	value, found := os.lookup_env("MIRAI_ALLOW_GPU_SKIP", context.temp_allocator)
 	return found && value == "1"
 }
+
+// The most entries the texture table of d grows to: an index of
+// texture_table_set below it is always taken.
+texture_table_limit :: proc "contextless" (d: ^Device) -> int {return d.table_limit}

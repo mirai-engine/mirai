@@ -436,7 +436,12 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         append(&jobs,job)
     }
     parts:=make([dynamic]Part,context.temp_allocator)
-    for job in jobs {append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=job.index,extension=".tex",file=job.file,size=job.size,hash=job.hash,settings=textures.settings_hash(texture_options(w,job)),earlier=-1,shared=-1})}
+    for job in jobs {
+        options:=texture_options(w,job)
+        // An import of the editor also takes what another wrote Fast with the same content.
+        fast:=fast_settings(options) if w.options.fast_textures else 0
+        append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=job.index,extension=".tex",file=job.file,size=job.size,hash=job.hash,settings=textures.settings_hash(options),fast=fast,earlier=-1,shared=-1})
+    }
     first_material:=len(parts)
     for material,i in model.materials {append(&parts,Part{kind=asset.KIND_MATERIAL,name=material.name,index=w.options.material_index+i,extension=".mat",earlier=-1,shared=-1})}
     first_skeleton:=len(parts)

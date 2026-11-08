@@ -87,7 +87,7 @@ app_textures_stream :: proc(app:^App) {
     if !threads {count=min(count,1)}
     next:=0
     for request in requests[:count] {
-        id:=a.texture_assets[request.handle-1]
+        id:=a.texture_assets[request.handle-1] if int(request.handle)<=len(a.texture_assets) else {}
         ref,known:=a.index[id]
         source,found:=assets_source(a,id,runtime.heap_allocator())
         if !known || ref.kind!=.Texture || a.textures[ref.index].handle!=request.handle || a.textures[ref.index].failed || !found {

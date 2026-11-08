@@ -13,9 +13,12 @@ import "mirai:rhi"
 // An entry of the texture table, plus one. 0 is no texture.
 Texture_Handle :: distinct u32
 
-// The last entry of the table holds the split-sum table of the lobe
-// (DFG_TEXTURE), the three before it the tables of the air (AIR_*_TEXTURE).
-TEXTURE_CAPACITY :: rhi.TEXTURE_TABLE_CAPACITY - 4
+// The first entries of the table hold the split-sum table of the lobe
+// (DFG_TEXTURE) and the tables of the air (AIR_*_TEXTURE), as
+// TEXTURE_TABLE_RESERVED of include/common.slang says: the texture of a
+// handle is in the entry TEXTURE_RESERVED + handle - 1. The table grows with
+// the textures, up to texture_capacity.
+TEXTURE_RESERVED :: 4
 
 Texture_Desc :: struct {
 	pixels:        []u8, // RGBA8, rows from the top of the image
@@ -27,11 +30,12 @@ Texture_Desc :: struct {
 }
 
 Texture_State :: struct {
-	textures:  [TEXTURE_CAPACITY]rhi.Texture,
-	keys:      [TEXTURE_CAPACITY]u64,
-	sizes:     [TEXTURE_CAPACITY][2]int,
-	stored:    [TEXTURE_CAPACITY]u64,  // GPU memory of each one
-	partial:   [TEXTURE_CAPACITY]bool, // not streamed, and left levels out to fit the pool
+	// By handle - 1, as long as the largest handle given; count, one past the last alive, is at most that.
+	textures:  [dynamic]rhi.Texture,
+	keys:      [dynamic]u64,
+	sizes:     [dynamic][2]int,
+	stored:    [dynamic]u64,  // GPU memory of each one
+	partial:   [dynamic]bool, // not streamed, and left levels out to fit the pool
 	count:     int,
 	bytes:     u64, // GPU memory of every level
 	reduced:   int, // textures not streamed that left levels out to fit the pool
@@ -215,20 +219,76 @@ texture_build :: proc(desc: Texture_Desc, max_size: int, allocator := context.al
 	return data, true
 }
 
+// The most textures the renderer holds at once: what the texture table of
+// its device grows to, but for the entries of its own tables.
+texture_capacity :: proc(r: ^Renderer) -> int {return rhi.texture_table_limit(r.device) - TEXTURE_RESERVED}
+
+// The entry of the texture table that the texture of handle index + 1 is in.
+@(private)
+texture_entry :: proc "contextless" (index: int) -> u32 {return u32(TEXTURE_RESERVED + index)}
+
+@(private)
+textures_init :: proc(r: ^Renderer) {
+	state := &r.textures
+	state.textures = make([dynamic]rhi.Texture, r.allocator)
+	state.keys = make([dynamic]u64, r.allocator)
+	state.sizes = make([dynamic][2]int, r.allocator)
+	state.stored = make([dynamic]u64, r.allocator)
+	state.partial = make([dynamic]bool, r.allocator)
+	state.residency.streams = make([dynamic]Texture_Stream, r.allocator)
+}
+
+@(private)
+textures_destroy :: proc(r: ^Renderer) {
+	state := &r.textures
+	delete(state.textures)
+	delete(state.keys)
+	delete(state.sizes)
+	delete(state.stored)
+	delete(state.partial)
+	delete(state.residency.streams)
+}
+
+// Makes room for the texture of handle index + 1 in what the renderer keeps
+// of each texture, doubling it as the table grows. False past
+// texture_capacity.
+@(private)
+textures_room :: proc(r: ^Renderer, index: int, name: string) -> bool {
+	state := &r.textures
+	if index >= texture_capacity(r) {
+		set_error(r, "texture %s: the texture table is full (%d textures)", name, texture_capacity(r))
+		return false
+	}
+	if index < len(state.textures) {return true}
+	if index >= cap(state.textures) {
+		size := max(2 * cap(state.textures), rhi.TEXTURE_TABLE_FIRST, index + 1)
+		reserve(&state.textures, size)
+		reserve(&state.keys, size)
+		reserve(&state.sizes, size)
+		reserve(&state.stored, size)
+		reserve(&state.partial, size)
+		reserve(&state.residency.streams, size)
+	}
+	resize(&state.textures, index + 1)
+	resize(&state.keys, index + 1)
+	resize(&state.sizes, index + 1)
+	resize(&state.stored, index + 1)
+	resize(&state.partial, index + 1)
+	resize(&state.residency.streams, index + 1)
+	return true
+}
+
 // Uploads a built texture and gives it an entry of the table. While the pool
 // (settings.texture_pool_megabytes) has no room for all of it, its largest
 // levels are left out: the texture is still there, less sharp, and one with
 // a source gets them back when there is room. Fails when the table is full
-// (TEXTURE_CAPACITY).
+// (texture_capacity).
 texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64=0) -> (Texture_Handle, bool) {
 	state := &r.textures
 	if handle,_,_,found:=texture_find(r,key);found {return handle,true}
 	d := r.device
 	if len(data.levels) == 0 {set_error(r, "texture %s has no levels", name); return 0, false}
-	if texture_slot(state) >= TEXTURE_CAPACITY {
-		set_error(r, "texture %s: the texture table is full (%d textures)", name, TEXTURE_CAPACITY)
-		return 0, false
-	}
+	if !textures_room(r, texture_slot(state), name) {return 0, false}
 	first, bytes := texture_pool_first(r, data)
 	width, height := max(data.width >> uint(first), 1), max(data.height >> uint(first), 1)
 	levels := data.levels[first:]
@@ -244,7 +304,7 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 		}
 	}
 	index := texture_slot(state)
-	if !rhi.texture_table_set(d, u32(index), 0 if layered else texture) {
+	if !rhi.texture_table_set(d, texture_entry(index), 0 if layered else texture) {
 		set_error(r, "texture %s: %s", name, rhi.device_error(d))
 		rhi.texture_destroy(d, texture)
 		return 0, false
@@ -253,11 +313,9 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	state.keys[index]=key
 	state.sizes[index]={data.width,data.height}
 	state.stored[index]=bytes
-	if index < len(state.residency.streams) {
-		texture_stream_set(&state.residency.streams[index], data, first)
-		state.residency.stale = true
-	}
-	streamed := index < len(state.residency.streams) && state.residency.streams[index].levels > 0
+	texture_stream_set(&state.residency.streams[index], data, first)
+	state.residency.stale = true
+	streamed := state.residency.streams[index].levels > 0
 	state.partial[index]=first>0 && !streamed
 	if state.partial[index] {state.reduced += 1}
 	state.count = max(state.count, index + 1)
@@ -282,14 +340,11 @@ texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, byt
 // the table the UI shows. texture_remove releases it. Between frames.
 texture_add_shared :: proc(r: ^Renderer, shared: rhi.Shared_Texture, width, height: int, format: rhi.Format, name: string) -> (Texture_Handle, bool) {
 	state := &r.textures
-	if texture_slot(state) >= TEXTURE_CAPACITY {
-		set_error(r, "texture %s: the texture table is full (%d textures)", name, TEXTURE_CAPACITY)
-		return 0, false
-	}
+	if !textures_room(r, texture_slot(state), name) {return 0, false}
 	texture := rhi.texture_open_shared(r.device, {width = u32(width), height = u32(height), format = format, usage = {.Sampled}, name = name}, shared)
 	if texture == 0 {set_error(r, "texture %s: %s", name, rhi.device_error(r.device)); return 0, false}
 	index := texture_slot(state)
-	if !rhi.texture_table_set(r.device, u32(index), texture) {
+	if !rhi.texture_table_set(r.device, texture_entry(index), texture) {
 		set_error(r, "texture %s: %s", name, rhi.device_error(r.device))
 		rhi.texture_destroy(r.device, texture)
 		return 0, false
@@ -341,9 +396,14 @@ textures_clear :: proc(r: ^Renderer) {
 	state := &r.textures
 	for texture in state.textures[:state.count] {rhi.texture_destroy(r.device, texture)}
 	for index in 0 ..< state.count {texture_stream_forget(state, index)}
-	residency := state.residency
-	residency.pending = 0
-	state^ = {residency = residency}
+	clear(&state.textures)
+	clear(&state.keys)
+	clear(&state.sizes)
+	clear(&state.stored)
+	clear(&state.partial)
+	clear(&state.residency.streams)
+	state.count, state.bytes, state.reduced = 0, 0, 0
+	state.residency.pending = 0
 }
 
 // Drops the textures added since the table had `count`: those a transaction
@@ -352,7 +412,7 @@ textures_truncate :: proc(r: ^Renderer, count: int) {
 	state := &r.textures
 	for state.count > max(count, 0) {
 		index := state.count - 1
-		rhi.texture_table_set(r.device, u32(index), 0)
+		rhi.texture_table_set(r.device, texture_entry(index), 0)
 		rhi.texture_destroy(r.device, state.textures[index])
 		state.bytes -= state.stored[index]
 		if state.partial[index] {state.reduced -= 1}
@@ -378,7 +438,7 @@ texture_find :: proc(r:^Renderer,key:u64)->(handle:Texture_Handle,width,height:i
 @(private)
 texture_index :: proc(r: ^Renderer, handle: Texture_Handle) -> u32 {
 	if handle == 0 || int(handle) > r.textures.count || r.textures.textures[handle - 1] == 0 {return max(u32)}
-	return u32(handle) - 1
+	return texture_entry(int(handle) - 1)
 }
 
 // What the pool holds of a texture, and whether one that does not follow its

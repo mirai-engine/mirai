@@ -298,7 +298,11 @@ sampler_destroy :: proc(d: ^Device, sampler: Sampler) {
 // must have the Sampled usage alone and be uploaded already.
 texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 	assert(!d.in_frame, "rhi: the texture table changes between frames")
-	if index >= TEXTURE_TABLE_CAPACITY {set_error(d, "texture table index %d out of range", index); return false}
+	if int(index) >= len(d.table_textures) {
+		grown := table_grown(len(d.table_textures), int(index), d.table_limit)
+		if grown == 0 {set_error(d, "texture table index %d out of range: the device holds %d entries", index, d.table_limit); return false}
+		if !mtl_table_grow(d, grown) {return false}
+	}
 	t := pool_get(&d.textures, base.Handle(texture if texture != 0 else d.table_default))
 	if t == nil || t.swapchain || t.desc.usage != {.Sampled} {
 		set_error(d, "texture table entry %d needs an uploaded texture with the Sampled usage alone", index)

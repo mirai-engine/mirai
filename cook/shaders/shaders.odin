@@ -38,8 +38,6 @@ ENGINE_INCLUDES :: [?]string{"shaders/include","engine/render/shaders"}
 @(private)
 TABLE_SLOT :: rhi.TEXTURE_TABLE_SLOT
 @(private)
-TABLE_CAPACITY :: rhi.TEXTURE_TABLE_CAPACITY
-@(private)
 TABLE_METAL_BUFFER :: rhi.TEXTURE_TABLE_METAL_BUFFER
 @(private)
 BUFFER_SLOTS :: rhi.MAX_BUFFER_BINDING_SLOTS
@@ -83,9 +81,10 @@ VALIDATE_FLAGS :: []string{"--target-env","vulkan1.2","--scalar-block-layout"}
 // Numeric names avoid Metal keywords such as the DDGI resource ray_data.
 @(private)
 OPTIMIZE_FLAGS :: []string{"--target-env=vulkan1.2","--scalar-block-layout","-O","--strip-debug"}
-// Descriptor set 1, the texture table, is an argument buffer; set 0 keeps the slots.
+// Descriptor set 1, the texture table, is an argument buffer in device memory,
+// where an array without a size may live; set 0 keeps the slots.
 @(private)
-METAL_FLAGS :: []string{"--msl","--msl-version","20400","--msl-decoration-binding","--msl-argument-buffers","--msl-argument-buffer-tier","1","--msl-discrete-descriptor-set","0"}
+METAL_FLAGS :: []string{"--msl","--msl-version","20400","--msl-decoration-binding","--msl-argument-buffers","--msl-argument-buffer-tier","1","--msl-discrete-descriptor-set","0","--msl-device-argument-buffer","1"}
 // Before MSL 3.1 SPIRV-Cross emulates the atomics of an image with a linear
 // texture over a buffer, which the RHI does not make; 3.1 has them on textures.
 @(private)
@@ -289,9 +288,9 @@ variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
 }
 
 // The resources an entry point uses, by slot, checked against the portable
-// binding ABI. capacity: entries of the texture table in this compilation.
+// binding ABI.
 @(private)
-reflected_resources :: proc(data:json.Object,capacity:int,allocator:=context.allocator) -> (resources:[]Binding,error:string) {
+reflected_resources :: proc(data:json.Object,allocator:=context.allocator) -> (resources:[]Binding,error:string) {
     entries,_:=data["entryPoints"].(json.Array)
     if len(entries)==0 {return nil,strings.clone("the reflection has no entry point",allocator)}
     entry,_:=entries[0].(json.Object)
@@ -318,7 +317,8 @@ reflected_resources :: proc(data:json.Object,capacity:int,allocator:=context.all
         switch {
         case space==1:
             count,_:=json_int(type["elementCount"])
-            if slot!=TABLE_SLOT || type_kind!="array" || count!=capacity {return nil,fmt.aprintf("set 1 holds only %d texture-table entries at slot %d",capacity,TABLE_SLOT,allocator=allocator)}
+            // The table has no size: it grows (rhi.texture_table_set).
+            if slot!=TABLE_SLOT || type_kind!="array" || count!=0 {return nil,fmt.aprintf("set 1 holds only the texture table, an array without a size, at slot %d",TABLE_SLOT,allocator=allocator)}
             element,_:=type["elementType"].(json.Object)
             if json_text(element["baseShape"])!="texture2D" {return nil,strings.clone("texture-table entries must be Texture2D",allocator)}
             kind="Texture_Table"
@@ -495,7 +495,6 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         append(&command,"-stage",stage)
         for directory in job.includes {append(&command,"-I",directory)}
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
-        append(&command,fmt.tprintf("-DTEXTURE_TABLE_CAPACITY=%d",TABLE_CAPACITY))
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
         said,compiled:=tool_run(g.runner,command[:],context.temp_allocator)
@@ -528,7 +527,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
             if problem:=layouts_compare(layouts_reflected(data,context.temp_allocator),g.layouts,context.temp_allocator);problem!="" {job_fail(job,allocator,"%s: %s",name,problem);return}
         }
         problem:string
-        resources,problem=reflected_resources(data,TABLE_CAPACITY,allocator)
+        resources,problem=reflected_resources(data,allocator)
         if problem!="" {job_fail(job,allocator,"%s: %s",name,problem);return}
         return data,resources,true
     }
@@ -652,7 +651,7 @@ engine_fingerprint :: proc(root,version:string,include_dirs:[]string,allocator:=
 // The limits of the binding ABI the shaders are checked against.
 @(private)
 abi_text :: proc() -> string {
-    return fmt.tprintf("%d;%d;%d;%d;%d",TABLE_SLOT,TABLE_CAPACITY,TABLE_METAL_BUFFER,BUFFER_SLOTS,SAMPLER_SLOTS)
+    return fmt.tprintf("%d;table;%d;%d;%d",TABLE_SLOT,TABLE_METAL_BUFFER,BUFFER_SLOTS,SAMPLER_SLOTS)
 }
 
 @(private)
@@ -1218,7 +1217,6 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         append(&command,..SLANG_FLAGS)
         append(&command,"-stage","compute")
         for directory in g.includes {append(&command,"-I",directory)}
-        append(&command,fmt.tprintf("-DTEXTURE_TABLE_CAPACITY=%d",TABLE_CAPACITY))
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",path_join(staging,"layouts_probe.spv",allocator=scratch),"-reflection-json",reflection)
         output,ran:=tool_run(g.runner,command[:],scratch)

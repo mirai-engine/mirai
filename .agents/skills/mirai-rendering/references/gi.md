@@ -262,7 +262,7 @@ per km of a physical atmosphere): Rayleigh and Mie that dilute with their scale 
 absorption and a tent-shaped ozone layer. The world is flat and horizontal at the eye;
 `Air.altitude` is that of y 0 above the planet's ground.
 
-- **Tables**, in fixed entries at the end of the texture table (`AIR_*_TEXTURE`, before the DFG),
+- **Tables**, in fixed entries at the start of the texture table (`AIR_*_TEXTURE`, after the DFG),
   made the first time a sky is an atmosphere:
   - Transmittance up to the top of the air by radius and direction, and scattering of the orders
     after the first with isotropic phase (geometric series over fixed directions). They change

@@ -150,7 +150,7 @@ the_uv_density_of_a_mesh_is_by_entry_of_its_materials :: proc(t: ^testing.T) {
 texture_requests_put_what_is_most_blurred_first :: proc(t: ^testing.T) {
 	r := new(Renderer)
 	defer free(r)
-	r.textures.residency.streams = make([]Texture_Stream, 3)
+	resize(&r.textures.residency.streams, 3)
 	defer delete(r.textures.residency.streams)
 	streams := r.textures.residency.streams
 	streams[0] = square_stream(1024, 0, 0);streams[0].target = 3
@@ -172,7 +172,7 @@ texture_requests_put_what_is_most_blurred_first :: proc(t: ^testing.T) {
 @(test)
 a_stream_forgets_its_texture_with_a_new_stamp :: proc(t: ^testing.T) {
 	state: Texture_State
-	state.residency.streams = make([]Texture_Stream, 2)
+	resize(&state.residency.streams, 2)
 	defer delete(state.residency.streams)
 	data := Texture_Data{format = .RGBA8_Unorm, width = 256, height = 256, level = 2, source = {1024, 1024}}
 	for _ in 0 ..< 9 {append(&data.levels, nil)}

@@ -41,7 +41,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 [[vk::binding(SLOT_LINEAR_SAMPLER, 0)]] SamplerState linear_sampler : register(MIRAI_REGISTER(s, SLOT_LINEAR_SAMPLER), space0);
 [[vk::binding(SLOT_POINT_SAMPLER, 0)]] SamplerState point_sampler : register(MIRAI_REGISTER(s, SLOT_POINT_SAMPLER), space0);
 [[vk::binding(SLOT_MATERIAL_SAMPLER, 0)]] SamplerState material_sampler : register(MIRAI_REGISTER(s, SLOT_MATERIAL_SAMPLER), space0); // trilinear, anisotropic, repeating
-[[vk::binding(MATERIAL_TEXTURE_SLOT, 1)]] Texture2D<float4> material_textures[MATERIAL_TEXTURE_CAPACITY] : register(MIRAI_REGISTER(t, MATERIAL_TEXTURE_SLOT), space1);
+[[vk::binding(MATERIAL_TEXTURE_SLOT, 1)]] Texture2D<float4> material_textures[] : register(MIRAI_REGISTER(t, MATERIAL_TEXTURE_SLOT), space1);
 #ifdef INSTANCES_WRITABLE
 [[vk::binding(SLOT_INSTANCES, 0)]] RWStructuredBuffer<Instance> instances : register(MIRAI_REGISTER(u, SLOT_INSTANCES), space0);
 #else
@@ -418,7 +418,7 @@ Material material_row(uint row) {
     return m;
 }
 
-bool material_has(uint texture_index) { return texture_index < uint(MATERIAL_TEXTURE_CAPACITY); }
+bool material_has(uint texture_index) { return texture_index != INVALID; }
 
 // Ray hits have no screen-space derivatives: `lod` is the level of a texture
 // of one texel, which the size of the texture then shifts (see hit_lod).

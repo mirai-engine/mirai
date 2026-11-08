@@ -42,6 +42,7 @@ Part :: struct {
     file:string,      // of a texture: the image file as imports name it, "" for one inside the source
     size,hash:u64,    // of a texture: of the bytes of its image
     settings:u64,     // of a texture: textures.settings_hash of how it is built
+    fast:u64,         // of a texture built Fast, as the editor writes one until the cook encodes it again: its settings hash; 0 for an import that builds Final
     earlier:int,      // the output it writes again; -1 for a new one
     shared:int,       // what another import wrote with the same content, which the part names instead of writing; -1 for none
     id:base.Asset_Id,
@@ -258,7 +259,8 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
         if p.earlier>=0 || p.kind!=asset.KIND_TEXTURE {continue}
         for &e,at in w.earlier {
-            if e.taken || e.kind!=asset.KIND_TEXTURE || !e.imported || e.info.source_size!=p.size || e.info.source_hash!=p.hash || e.info.settings_hash!=p.settings {continue}
+            if e.taken || e.kind!=asset.KIND_TEXTURE || !e.imported || e.info.source_size!=p.size || e.info.source_hash!=p.hash {continue}
+            if e.info.settings_hash!=p.settings && (p.fast==0 || e.info.settings_hash!=p.fast) {continue}
             p.shared,p.id=at,e.id
             break
         }

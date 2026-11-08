@@ -221,14 +221,15 @@ Device :: struct {
 	compact_sizes:  Buffer,                 // the compacted sizes of BLASes, a u32 a slot (accel_compact.odin)
 	compact_free:   [dynamic]u32,           // its free slots
 	scratch_size:   u64,
-	table_textures: [TEXTURE_TABLE_CAPACITY]Texture, // 0: the entry shows table_default
-	table_views:    [TEXTURE_TABLE_CAPACITY]^MTL.Texture,
+	table_textures: [dynamic]Texture, // an entry per entry of the table; 0: it shows table_default
+	table_views:    [dynamic]^MTL.Texture,
 	table_default:  Texture,
 	table_encoder:  ^MTL.ArgumentEncoder,
 	table_buffers:  [TEXTURE_TABLE_COPIES]^MTL.Buffer, // the argument buffers shaders read the table from, one per copy
 	table_changes:  Table_Changes,
-	table_resident: [TEXTURE_TABLE_CAPACITY + 1]^MTL.Resource, // the default and the textures of the entries: what an encoder that reads the table makes resident
-	table_count:    int, // of table_resident
+	table_taken:    []u32, // as long as the table: what a copy takes
+	table_limit:    int,   // the most entries the table grows to
+	table_resident: [dynamic]^MTL.Resource, // the default and the textures of the entries: what an encoder that reads the table makes resident
 	timings:        [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:   [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
 	timing_count:   int,
@@ -448,38 +449,72 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	return mtl_create_texture_table(d)
 }
 
-// The table is an argument buffer per copy (TEXTURE_TABLE_COPIES), each shared
-// by every pipeline that declares it: TEXTURE_TABLE_CAPACITY textures at the
-// member TEXTURE_TABLE_SLOT, as SPIRV-Cross lays out descriptor set 1
-// (cook/shaders).
+// The table is an argument buffer per copy (TEXTURE_TABLE_COPIES) in device
+// memory, each shared by every pipeline that declares it: the textures of
+// its entries at the member TEXTURE_TABLE_SLOT, as SPIRV-Cross lays out
+// descriptor set 1 without a size (cook/shaders). It starts with
+// TEXTURE_TABLE_FIRST entries.
 @(private)
 mtl_create_texture_table :: proc(d: ^Device) -> bool {
 	if MTL.Device_argumentBuffersSupport(d.device) != ._2 {
-		set_error(d, "device lacks Tier 2 argument buffers for a table of %d textures", TEXTURE_TABLE_CAPACITY)
+		set_error(d, "device lacks Tier 2 argument buffers for the texture table")
 		return false
 	}
+	d.table_limit = TEXTURE_TABLE_MAX
+	d.table_default = texture_create(d, {width = 1, height = 1, format = .RGBA8_Unorm, usage = {.Sampled}, name = "texture table default"})
+	white := [4]u8{255, 255, 255, 255}
+	if d.table_default == 0 || !texture_upload(d, d.table_default, white[:], 4) {return false}
+	d.table_textures = make([dynamic]Texture, d.allocator)
+	d.table_views = make([dynamic]^MTL.Texture, d.allocator)
+	d.table_resident = make([dynamic]^MTL.Resource, d.allocator)
+	for &copy in d.table_changes {copy = make([dynamic]u64, d.allocator)}
+	return mtl_table_grow(d, TEXTURE_TABLE_FIRST)
+}
+
+// Makes the copies of the table with capacity entries, each with the texture
+// of its entry or the default, and lets the ones before go once the GPU no
+// longer reads them. Between frames.
+@(private)
+mtl_table_grow :: proc(d: ^Device, capacity: int) -> bool {
+	taken, taken_error := make([]u32, capacity, d.allocator)
+	if taken_error != nil {set_error(d, "texture table of %d entries: out of memory", capacity); return false}
 	argument := MTL.ArgumentDescriptor_argumentDescriptor()
 	MTL.ArgumentDescriptor_setIndex(argument, TEXTURE_TABLE_SLOT)
 	MTL.ArgumentDescriptor_setDataType(argument, .Texture)
 	MTL.ArgumentDescriptor_setTextureType(argument, ._2D)
-	MTL.ArgumentDescriptor_setArrayLength(argument, TEXTURE_TABLE_CAPACITY)
+	MTL.ArgumentDescriptor_setArrayLength(argument, NS.UInteger(capacity))
 	MTL.ArgumentDescriptor_setAccess(argument, .ReadOnly)
 	arguments := NS.Array.alloc()->initWithObjects(cast(^NS.id)&argument, 1)
 	defer mtl_release(arguments)
-	d.table_encoder = MTL.Device_newArgumentEncoderWithArguments(d.device, arguments)
-	if d.table_encoder == nil {set_error(d, "newArgumentEncoderWithArguments failed for the texture table"); return false}
-	d.table_default = texture_create(d, {width = 1, height = 1, format = .RGBA8_Unorm, usage = {.Sampled}, name = "texture table default"})
-	white := [4]u8{255, 255, 255, 255}
-	if d.table_default == 0 || !texture_upload(d, d.table_default, white[:], 4) {return false}
-	for &view in d.table_views {view = pool_get(&d.textures, base.Handle(d.table_default)).handle}
-	length := MTL.ArgumentEncoder_encodedLength(d.table_encoder)
-	for &buffer in d.table_buffers {
+	encoder := MTL.Device_newArgumentEncoderWithArguments(d.device, arguments)
+	if encoder == nil {delete(taken, d.allocator); set_error(d, "newArgumentEncoderWithArguments failed for a texture table of %d entries", capacity); return false}
+	default_view := pool_get(&d.textures, base.Handle(d.table_default)).handle
+	before := len(d.table_views)
+	resize(&d.table_textures, capacity)
+	resize(&d.table_views, capacity)
+	for &view in d.table_views[before:] {view = default_view}
+	length := MTL.ArgumentEncoder_encodedLength(encoder)
+	buffers: [TEXTURE_TABLE_COPIES]^MTL.Buffer
+	for &buffer in buffers {
 		buffer = MTL.Device_newBufferWithLength(d.device, length, {.CPUCacheModeWriteCombined, .HazardTrackingModeTracked})
-		if buffer == nil {set_error(d, "newBufferWithLength(%d) failed for the texture table", length); return false}
+		if buffer == nil {
+			for made in buffers {mtl_release(made)}
+			mtl_release(encoder)
+			delete(taken, d.allocator)
+			set_error(d, "newBufferWithLength(%d) failed for the texture table", length)
+			return false
+		}
 		mtl_set_label(buffer, "texture table")
-		MTL.ArgumentEncoder_setArgumentBuffer(d.table_encoder, buffer, 0)
-		MTL.ArgumentEncoder_setTextures(d.table_encoder, d.table_views[:], NS.Range{TEXTURE_TABLE_SLOT, TEXTURE_TABLE_CAPACITY})
+		MTL.ArgumentEncoder_setArgumentBuffer(encoder, buffer, 0)
+		MTL.ArgumentEncoder_setTextures(encoder, d.table_views[:], NS.Range{TEXTURE_TABLE_SLOT, NS.UInteger(capacity)})
 	}
+	for buffer in d.table_buffers {mtl_defer(d, buffer)}
+	mtl_defer(d, d.table_encoder)
+	d.table_encoder, d.table_buffers = encoder, buffers
+	delete(d.table_taken, d.allocator)
+	d.table_taken = taken
+	table_changes_reset(&d.table_changes, capacity)
+	reserve(&d.table_resident, capacity + 1)
 	mtl_table_resident(d)
 	return true
 }
@@ -488,8 +523,8 @@ mtl_create_texture_table :: proc(d: ^Device) -> bool {
 // GPU no longer reads it.
 @(private)
 mtl_table_take :: proc(d: ^Device, copy: int) {
-	entries: [TEXTURE_TABLE_CAPACITY]u32
-	count := table_take(&d.table_changes, copy, &entries)
+	entries := d.table_taken
+	count := table_take(&d.table_changes, copy, entries)
 	if count == 0 {return}
 	MTL.ArgumentEncoder_setArgumentBuffer(d.table_encoder, d.table_buffers[copy], 0)
 	for index in entries[:count] {MTL.ArgumentEncoder_setTexture(d.table_encoder, d.table_views[index], NS.UInteger(TEXTURE_TABLE_SLOT + index))}
@@ -500,12 +535,11 @@ mtl_table_take :: proc(d: ^Device, copy: int) {
 // buffer.
 @(private)
 mtl_table_resident :: proc(d: ^Device) {
-	d.table_resident[0] = cast(^MTL.Resource)pool_get(&d.textures, base.Handle(d.table_default)).handle
-	d.table_count = 1
+	clear(&d.table_resident)
+	append(&d.table_resident, cast(^MTL.Resource)pool_get(&d.textures, base.Handle(d.table_default)).handle)
 	for texture, i in d.table_textures {
 		if texture == 0 {continue}
-		d.table_resident[d.table_count] = cast(^MTL.Resource)d.table_views[i]
-		d.table_count += 1
+		append(&d.table_resident, cast(^MTL.Resource)d.table_views[i])
 	}
 }
 
@@ -572,6 +606,11 @@ device_destroy :: proc(d: ^Device) {
 	delete(d.compact_free)
 	mtl_release(d.table_encoder)
 	for buffer in d.table_buffers {mtl_release(buffer)}
+	delete(d.table_textures)
+	delete(d.table_views)
+	delete(d.table_resident)
+	delete(d.table_taken, d.allocator)
+	table_changes_destroy(&d.table_changes)
 	mtl_release(d.swapchain.layer)
 	mtl_release(d.queue)
 	mtl_release(d.device)

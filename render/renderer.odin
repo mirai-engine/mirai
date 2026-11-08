@@ -648,7 +648,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	scene_init(r)
 	r.scene.pages.jobs = desc.jobs
 	if desc.pipeline_thread {pipeline_thread_start(r)}
-	r.textures.residency.streams = make([]Texture_Stream, TEXTURE_CAPACITY, r.allocator)
+	textures_init(r)
 	if assets!=nil && assets.owned {
 		r.shader_assets=assets^;r.shader_codes=assets.codes;assets^={}
 	} else {
@@ -726,7 +726,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	ui_offscreen_destroy(r)
 	impostor_gpu_destroy(d, &r.impostor)
 	textures_clear(r)
-	delete(r.textures.residency.streams, r.allocator)
+	textures_destroy(r)
 	ddgi_release(r)
 	world_light_destroy(r)
 	destroy_view_targets(r)
@@ -760,7 +760,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 
 // DFG_SIZE and DFG_TEXTURE of brdf.slang.
 DFG_SIZE :: 64
-DFG_TEXTURE :: rhi.TEXTURE_TABLE_CAPACITY - 1
+DFG_TEXTURE :: 0
 
 // The split-sum table of the specular lobe (dfg.comp), built once into the
 // last entry of the texture table, which materials leave free.

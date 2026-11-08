@@ -187,7 +187,7 @@ texture_remove :: proc(r: ^Renderer, handle: Texture_Handle) -> bool {
 	state := &r.textures
 	index := int(handle) - 1
 	if index < 0 || index >= state.count || state.textures[index] == 0 {return false}
-	rhi.texture_table_set(r.device, u32(index), 0)
+	rhi.texture_table_set(r.device, texture_entry(index), 0)
 	rhi.texture_destroy(r.device, state.textures[index])
 	geometry_released(&r.scene, state.stored[index])
 	state.bytes -= state.stored[index]

@@ -492,7 +492,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 	}
 	c.dirty &~= dirty
 	if missing := p.table - c.table; missing != {} {
-		resident := d.table_resident[:d.table_count]
+		resident := d.table_resident[:]
 		buffer := d.table_buffers[table_copy(c.immediate, d.slot)]
 		read := MTL.ResourceUsage{.Read}
 		if .Compute in missing {

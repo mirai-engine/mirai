@@ -64,7 +64,7 @@ mode.
   of its directional albedo at the view (`base_diffuse_share`, the albedo scaling of OpenPBR), the
   same for each light and for the environment.
 - **DFG table.** The split-sum of the lobe, which `dfg.comp` integrates when the renderer starts
-  with the same functions of `brdf.slang` in the last entry of the texture table (`DFG_TEXTURE`).
+  with the same functions of `brdf.slang` in the first entry of the texture table (`DFG_TEXTURE`).
   With its albedo rough metals recover multiple scattering (Kulla and Conty) in the direct and
   indirect light.
 - The roughness does not go below `MIN_ROUGHNESS`, somewhat more for point lights.
@@ -174,7 +174,9 @@ previews studio use it.
 - **Filtering.** A common trilinear, repeat and anisotropic sampler. In the G-buffer the level comes
   from the screen derivatives, with bias `log2(render resolution / output resolution)` when TAA
   rescales.
-- A scene has at most the texture table minus the DFG entry
+- A scene has at most `texture_capacity` textures: what the texture table grows to, minus the
+  `TEXTURE_RESERVED` entries of the DFG and the air at its start; the texture of a handle is in the
+  entry `TEXTURE_RESERVED + handle - 1` (`texture_index`)
   ([table](rhi.md#bindings-and-texture-table)).
 
 ## Residency by distance

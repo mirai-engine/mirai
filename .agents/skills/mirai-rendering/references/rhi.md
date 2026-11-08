@@ -111,10 +111,16 @@ For a renderer that generates frames (`rhi/present.odin`):
   descriptors) and index N of buffer, texture or sampler on Metal. Parameters go in uniform
   buffers of the ring, not in push constants. The limits are `MAX_*_BINDING_SLOTS`; a slot does
   not have two types in the same pipeline.
-- **Texture table.** The textures that a shader chooses by index (material maps) are an array of
-  `TEXTURE_TABLE_CAPACITY` in set 1, of the same size on both backends: on Vulkan, a non-uniform
-  indexed descriptor set; on Metal, an argument buffer (Tier 2) at buffer index
-  `TEXTURE_TABLE_METAL_BUFFER`, with the table as its member `TEXTURE_TABLE_SLOT`.
+- **Texture table.** The textures that a shader chooses by index (material maps) are an array
+  without a size in set 1: on Vulkan, a non-uniform indexed descriptor set of a variable count
+  (`runtimeDescriptorArray`, `descriptorBindingVariableDescriptorCount`); on Metal, an argument
+  buffer (Tier 2) in device memory at buffer index `TEXTURE_TABLE_METAL_BUFFER`, with the table as
+  its member `TEXTURE_TABLE_SLOT` (SPIRV-Cross `--msl-device-argument-buffer 1`).
+  - It starts with `TEXTURE_TABLE_FIRST` entries and doubles when `texture_table_set` names an
+    entry past it, up to `texture_table_limit`: `TEXTURE_TABLE_MAX` (what Metal's Tier 2 argument
+    buffers give an application), or less on a Vulkan device whose sampled image limits are lower.
+    Growing makes new copies with every entry, between frames, and defers the old ones; a stable
+    frame allocates nothing.
   - Every entry is a valid texture: it starts as a white texel and returns to it when its texture
     is destroyed.
   - There is one copy of the table per frame in flight and one for the immediate lists

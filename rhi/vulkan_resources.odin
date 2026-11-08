@@ -294,37 +294,73 @@ sampler_destroy :: proc(d: ^Device, sampler: Sampler) {
 // ---------------------------------------------------------------- texture table
 
 // The table is a descriptor set per copy (TEXTURE_TABLE_COPIES), each shared
-// by every pipeline that declares it: one binding with TEXTURE_TABLE_CAPACITY
-// sampled images.
+// by every pipeline that declares it: one binding of sampled images whose
+// count each set takes when it is allocated, up to table_limit. It starts
+// with TEXTURE_TABLE_FIRST entries.
 @(private)
 vk_create_texture_table :: proc(d: ^Device) -> bool {
 	binding := vk.DescriptorSetLayoutBinding{
-		binding = TEXTURE_TABLE_SLOT, descriptorType = .SAMPLED_IMAGE, descriptorCount = TEXTURE_TABLE_CAPACITY,
+		binding = TEXTURE_TABLE_SLOT, descriptorType = .SAMPLED_IMAGE, descriptorCount = u32(d.table_limit),
 		stageFlags = {.VERTEX, .FRAGMENT, .COMPUTE},
 	}
-	layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, bindingCount = 1, pBindings = &binding}
+	flags := vk.DescriptorBindingFlags{.VARIABLE_DESCRIPTOR_COUNT}
+	binding_flags := vk.DescriptorSetLayoutBindingFlagsCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO, bindingCount = 1, pBindingFlags = &flags}
+	layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, pNext = &binding_flags, bindingCount = 1, pBindings = &binding}
 	if !vk_check(d, d.dvk.CreateDescriptorSetLayout(d.handle, &layout_info, nil, &d.table_layout), "texture table layout") {return false}
-	size := vk.DescriptorPoolSize{type = .SAMPLED_IMAGE, descriptorCount = TEXTURE_TABLE_CAPACITY * TEXTURE_TABLE_COPIES}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, maxSets = TEXTURE_TABLE_COPIES, poolSizeCount = 1, pPoolSizes = &size}
-	if !vk_check(d, d.dvk.CreateDescriptorPool(d.handle, &pool_info, nil, &d.table_pool), "texture table pool") {return false}
-	layouts: [TEXTURE_TABLE_COPIES]vk.DescriptorSetLayout
-	for &layout in layouts {layout = d.table_layout}
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = d.table_pool, descriptorSetCount = TEXTURE_TABLE_COPIES, pSetLayouts = &layouts[0]}
-	if !vk_check(d, d.dvk.AllocateDescriptorSets(d.handle, &alloc, &d.table_sets[0]), "texture table sets") {return false}
 	d.table_default = texture_create(d, {width = 1, height = 1, format = .RGBA8_Unorm, usage = {.Sampled}, name = "texture table default"})
 	white := [4]u8{255, 255, 255, 255}
 	if d.table_default == 0 || !texture_upload(d, d.table_default, white[:], 4) {return false}
-	view := pool_get(&d.textures, base.Handle(d.table_default)).view
-	images: [TEXTURE_TABLE_CAPACITY]vk.DescriptorImageInfo
-	for &image in images {image = {imageView = view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}}
+	d.table_textures = make([dynamic]Texture, d.allocator)
+	for &copy in d.table_changes {copy = make([dynamic]u64, d.allocator)}
+	return vk_table_grow(d, TEXTURE_TABLE_FIRST)
+}
+
+// Makes the copies of the table with capacity entries, each with the texture
+// of its entry or the default, and lets the ones before go once the GPU no
+// longer reads them. Between frames.
+@(private)
+vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
+	taken, taken_error := make([]u32, capacity, d.allocator)
+	images, images_error := make([]vk.DescriptorImageInfo, capacity, d.allocator)
+	defer delete(images, d.allocator)
+	if taken_error != nil || images_error != nil {
+		delete(taken, d.allocator)
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
+	size := vk.DescriptorPoolSize{type = .SAMPLED_IMAGE, descriptorCount = u32(capacity * TEXTURE_TABLE_COPIES)}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, maxSets = TEXTURE_TABLE_COPIES, poolSizeCount = 1, pPoolSizes = &size}
+	pool: vk.DescriptorPool
+	if !vk_check(d, d.dvk.CreateDescriptorPool(d.handle, &pool_info, nil, &pool), "texture table pool") {delete(taken, d.allocator); return false}
+	layouts: [TEXTURE_TABLE_COPIES]vk.DescriptorSetLayout
+	counts: [TEXTURE_TABLE_COPIES]u32
+	for i in 0 ..< TEXTURE_TABLE_COPIES {layouts[i], counts[i] = d.table_layout, u32(capacity)}
+	variable := vk.DescriptorSetVariableDescriptorCountAllocateInfo{sType = .DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO, descriptorSetCount = TEXTURE_TABLE_COPIES, pDescriptorCounts = &counts[0]}
+	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, pNext = &variable, descriptorPool = pool, descriptorSetCount = TEXTURE_TABLE_COPIES, pSetLayouts = &layouts[0]}
+	sets: [TEXTURE_TABLE_COPIES]vk.DescriptorSet
+	if !vk_check(d, d.dvk.AllocateDescriptorSets(d.handle, &alloc, &sets[0]), "texture table sets") {
+		d.dvk.DestroyDescriptorPool(d.handle, pool, nil)
+		delete(taken, d.allocator)
+		return false
+	}
+	resize(&d.table_textures, capacity)
+	for &image, index in images {
+		shown := d.table_textures[index] if index < len(d.table_textures) && d.table_textures[index] != 0 else d.table_default
+		image = {imageView = pool_get(&d.textures, base.Handle(shown)).view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
+	}
 	writes: [TEXTURE_TABLE_COPIES]vk.WriteDescriptorSet
 	for &write, copy in writes {
 		write = {
-			sType = .WRITE_DESCRIPTOR_SET, dstSet = d.table_sets[copy], dstBinding = TEXTURE_TABLE_SLOT,
-			descriptorCount = TEXTURE_TABLE_CAPACITY, descriptorType = .SAMPLED_IMAGE, pImageInfo = &images[0],
+			sType = .WRITE_DESCRIPTOR_SET, dstSet = sets[copy], dstBinding = TEXTURE_TABLE_SLOT,
+			descriptorCount = u32(capacity), descriptorType = .SAMPLED_IMAGE, pImageInfo = &images[0],
 		}
 	}
 	d.dvk.UpdateDescriptorSets(d.handle, TEXTURE_TABLE_COPIES, &writes[0], 0, nil)
+	if d.table_pool != 0 {vk_defer(d, {descriptor_pool = d.table_pool})}
+	d.table_pool, d.table_sets = pool, sets
+	delete(d.table_taken, d.allocator)
+	d.table_taken = taken
+	table_changes_reset(&d.table_changes, capacity)
 	return true
 }
 
@@ -334,7 +370,11 @@ vk_create_texture_table :: proc(d: ^Device) -> bool {
 // must have the Sampled usage alone and be uploaded already.
 texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 	assert(!d.in_frame, "rhi: the texture table changes between frames")
-	if index >= TEXTURE_TABLE_CAPACITY {set_error(d, "texture table index %d out of range", index); return false}
+	if int(index) >= len(d.table_textures) {
+		grown := table_grown(len(d.table_textures), int(index), d.table_limit)
+		if grown == 0 {set_error(d, "texture table index %d out of range: the device holds %d entries", index, d.table_limit); return false}
+		if !vk_table_grow(d, grown) {return false}
+	}
 	shown := texture if texture != 0 else d.table_default
 	t := pool_get(&d.textures, base.Handle(shown))
 	if t == nil || t.desc.usage != {.Sampled} || t.layout != .SHADER_READ_ONLY_OPTIMAL {
@@ -354,8 +394,8 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 // GPU no longer reads it.
 @(private)
 vk_table_take :: proc(d: ^Device, copy: int) {
-	entries: [TEXTURE_TABLE_CAPACITY]u32
-	count := table_take(&d.table_changes, copy, &entries)
+	entries := d.table_taken
+	count := table_take(&d.table_changes, copy, entries)
 	BATCH :: 64
 	images: [BATCH]vk.DescriptorImageInfo
 	writes: [BATCH]vk.WriteDescriptorSet

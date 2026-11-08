@@ -257,8 +257,8 @@ rhi_texture_table_is_indexed_per_invocation :: proc(t: ^testing.T) {
 	testing.expect(t, rhi.texture_upload(d, red, blue_pixel[:], 4, 1), rhi.device_error(d))
 	testing.expect(t, rhi.texture_upload(d, gray, gray_pixel[:], 4), rhi.device_error(d))
 	testing.expect(t, rhi.texture_table_set(d, 3, red), rhi.device_error(d))
-	testing.expect(t, rhi.texture_table_set(d, rhi.TEXTURE_TABLE_CAPACITY - 1, gray), rhi.device_error(d))
-	testing.expect(t, !rhi.texture_table_set(d, rhi.TEXTURE_TABLE_CAPACITY, gray), "an index past the table is rejected")
+	testing.expect(t, rhi.texture_table_set(d, rhi.TEXTURE_TABLE_FIRST - 1, gray), rhi.device_error(d))
+	testing.expect(t, !rhi.texture_table_set(d, u32(rhi.texture_table_limit(d)), gray), "an index past what the table grows to is rejected")
 	target := rhi.texture_create(d, {width = 1, height = 1, format = .RGBA8_Unorm, usage = {.Sampled, .Color_Target}, name = "target"})
 	testing.expect(t, !rhi.texture_table_set(d, 4, target), "a render target cannot enter the table")
 
@@ -268,7 +268,7 @@ rhi_texture_table_is_indexed_per_invocation :: proc(t: ^testing.T) {
 	results := rhi.buffer_create(d, {size = 8 * size_of([4]f32), usage = {.Storage}, name = "results"})
 	testing.expect(t, sampler != 0 && pipeline != 0 && queries != 0 && results != 0, rhi.device_error(d))
 	// uv, table index, lod
-	last :: f32(rhi.TEXTURE_TABLE_CAPACITY - 1)
+	last :: f32(rhi.TEXTURE_TABLE_FIRST - 1)
 	input := [8][4]f32{{0.5, 0.5, 3, 0}, {0.5, 0.5, 3, 1}, {0.5, 0.5, last, 0}, {0.5, 0.5, 0, 0}, {0.5, 0.5, 3, 0}, {0.5, 0.5, last, 0}, {0.5, 0.5, 50, 0}, {7.5, -3.5, 3, 0}}
 	testing.expect(t, rhi.buffer_upload_slice(d, queries, 0, input[:]), rhi.device_error(d))
 	run :: proc(t: ^testing.T, d: ^rhi.Device, pipeline: rhi.Pipeline, sampler: rhi.Sampler, queries, results: rhi.Buffer) -> (output: [8][4]f32) {
@@ -297,10 +297,22 @@ rhi_texture_table_is_indexed_per_invocation :: proc(t: ^testing.T) {
 	testing.expectf(t, near(output[4], {1, 0, 0, 1}) && near(output[5], output[2]), "neighbouring invocations keep their own entries: %v %v", output[4], output[5])
 	testing.expectf(t, near(output[7], {1, 0, 0, 1}), "coordinates outside 0..1 repeat: %v", output[7])
 
-	// A destroyed texture leaves its entry white instead of dangling.
+	// An entry past the table, after frames read it, grows it twice; the
+	// entries it had keep their textures and the new ones start white.
+	far :: rhi.TEXTURE_TABLE_FIRST * 3 + 1
+	testing.expect(t, rhi.texture_table_set(d, far, red), rhi.device_error(d))
+	input[6] = {0.5, 0.5, f32(far), 0}
+	input[3] = {0.5, 0.5, f32(far - 1), 0}
+	testing.expect(t, rhi.buffer_upload_slice(d, queries, 0, input[:]), rhi.device_error(d))
+	output = run(t, d, pipeline, sampler, queries, results)
+	testing.expectf(t, near(output[6], {1, 0, 0, 1}), "an entry the table grew to: %v", output[6])
+	testing.expectf(t, near(output[0], {1, 0, 0, 1}) && near(output[2], {0.2158, 0.2158, 0.2158, 1}), "the entries before it stay: %v %v", output[0], output[2])
+	testing.expectf(t, near(output[3], {1, 1, 1, 1}), "an entry the table grew without setting is white: %v", output[3])
+
+	// A destroyed texture leaves its entries white instead of dangling.
 	rhi.texture_destroy(d, red)
 	output = run(t, d, pipeline, sampler, queries, results)
-	testing.expectf(t, near(output[0], {1, 1, 1, 1}), "entry 3 after its texture was destroyed: %v", output[0])
+	testing.expectf(t, near(output[0], {1, 1, 1, 1}) && near(output[6], {1, 1, 1, 1}), "entries 3 and far after their texture was destroyed: %v %v", output[0], output[6])
 	testing.expectf(t, near(output[2], {0.2158, 0.2158, 0.2158, 1}), "the other entries stay: %v", output[2])
 	expect_clean(t, d)
 }

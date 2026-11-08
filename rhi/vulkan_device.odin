@@ -49,6 +49,7 @@ Vk_Pipeline :: struct {
 	handle:     vk.Pipeline,
 	layout:     vk.PipelineLayout,
 	set_layout: vk.DescriptorSetLayout,
+	descriptor_pool: vk.DescriptorPool, // of copies of the texture table it outgrew
 	bind_point: vk.PipelineBindPoint,
 	slots:      [MAX_BINDING_SLOTS]Slot_Info,
 	slot_mask:  u32,
@@ -87,6 +88,7 @@ Vk_Deferred :: struct {
 	pipeline:   vk.Pipeline,
 	layout:     vk.PipelineLayout,
 	set_layout: vk.DescriptorSetLayout,
+	descriptor_pool: vk.DescriptorPool, // of copies of the texture table it outgrew
 	accel:      vk.AccelerationStructureKHR,
 	// The range of the arena the structure took: block + 1, 0 for none.
 	arena_block:  i32,
@@ -207,8 +209,10 @@ Device :: struct {
 	table_layout:      vk.DescriptorSetLayout,
 	table_pool:        vk.DescriptorPool,
 	table_sets:        [TEXTURE_TABLE_COPIES]vk.DescriptorSet,
-	table_textures:    [TEXTURE_TABLE_CAPACITY]Texture, // 0: the entry shows table_default
+	table_textures:    [dynamic]Texture, // an entry per entry of the table; 0: it shows table_default
 	table_changes:     Table_Changes,
+	table_taken:       []u32, // as long as the table: what a copy takes
+	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
 	pipeline_cache:    vk.PipelineCache,
 	cache_path:        [512]u8,
@@ -624,9 +628,11 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		set_error(d, "device lacks scalar block layout required by the shared shader data ABI")
 		return false
 	}
+	// It is an array without a size whose sets take the count they need.
+	d.table_limit = min(TEXTURE_TABLE_MAX, int(limits.maxPerStageDescriptorSampledImages) - MAX_BINDING_SLOTS, int(limits.maxDescriptorSetSampledImages))
 	if !v12.shaderSampledImageArrayNonUniformIndexing || !supported.features.shaderSampledImageArrayDynamicIndexing ||
-	   limits.maxPerStageDescriptorSampledImages < TEXTURE_TABLE_CAPACITY + MAX_BINDING_SLOTS || limits.maxDescriptorSetSampledImages < TEXTURE_TABLE_CAPACITY {
-		set_error(d, "device lacks non-uniform indexing of an array of %d sampled textures", TEXTURE_TABLE_CAPACITY)
+	   !v12.runtimeDescriptorArray || !v12.descriptorBindingVariableDescriptorCount || d.table_limit < TEXTURE_TABLE_FIRST {
+		set_error(d, "device lacks non-uniform indexing of an array of at least %d sampled textures of a variable count", TEXTURE_TABLE_FIRST)
 		return false
 	}
 	if limits.maxColorAttachments < MAX_COLOR_TARGETS {
@@ -646,6 +652,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		samplerFilterMinmax = v12.samplerFilterMinmax,
 		scalarBlockLayout = v12.scalarBlockLayout,
 		shaderSampledImageArrayNonUniformIndexing = true,
+		runtimeDescriptorArray = true,
+		descriptorBindingVariableDescriptorCount = true,
 	}
 	enable_v11 := vk.PhysicalDeviceVulkan11Features{sType = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, pNext = &enable_v12, shaderDrawParameters = v11.shaderDrawParameters}
 	enable_as := vk.PhysicalDeviceAccelerationStructureFeaturesKHR{sType = .PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, accelerationStructure = true}
@@ -797,6 +805,9 @@ device_destroy :: proc(d: ^Device) {
 		// Resources the caller did not destroy are released here so shutdown
 		// stays clean under validation.
 		if d.table_pool != 0 {d.dvk.DestroyDescriptorPool(d.handle, d.table_pool, nil)}
+		delete(d.table_textures)
+		delete(d.table_taken, d.allocator)
+		table_changes_destroy(&d.table_changes)
 		if d.table_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, d.table_layout, nil)}
 		for &a, i in d.accels.items {if d.accels.alive[i] && a.handle != 0 {d.dvk.DestroyAccelerationStructureKHR(d.handle, a.handle, nil)}}
 		for &p, i in d.pipelines.items {if d.pipelines.alive[i] {vk_release_pipeline(d, &p)}}
@@ -932,6 +943,7 @@ vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	if e.pipeline != 0 {d.dvk.DestroyPipeline(d.handle, e.pipeline, nil)}
 	if e.layout != 0 {d.dvk.DestroyPipelineLayout(d.handle, e.layout, nil)}
 	if e.set_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, e.set_layout, nil)}
+	if e.descriptor_pool != 0 {d.dvk.DestroyDescriptorPool(d.handle, e.descriptor_pool, nil)}
 	for view in e.views {if view != 0 {d.dvk.DestroyImageView(d.handle, view, nil)}}
 	if e.image != 0 {d.dvk.DestroyImage(d.handle, e.image, nil)}
 	if e.buffer != 0 {d.dvk.DestroyBuffer(d.handle, e.buffer, nil)}

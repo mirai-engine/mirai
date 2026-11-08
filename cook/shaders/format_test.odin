@@ -180,7 +180,7 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
     data:=reflection(t,`{"parameters":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4},"type":{"kind":"resource","baseShape":"structuredBuffer","access":"readWrite"}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9},"type":{"kind":"resource","baseShape":"texture2D"}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1},"type":{"kind":"constantBuffer"}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20},"type":{"kind":"resource","baseShape":"texture2D","access":"readWrite"}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29},"type":{"kind":"resource","baseShape":"accelerationStructure"}},
@@ -193,14 +193,17 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20,"used":1}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29,"used":1}},
         {"name":"filter","binding":{"kind":"descriptorTableSlot","index":2,"used":1}}]}]}`)
-    resources,problem:=reflected_resources(data,1024,context.temp_allocator)
+    resources,problem:=reflected_resources(data,context.temp_allocator)
     testing.expect_value(t,problem,"")
     expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{34,"Texture_Table"}}
     testing.expect_value(t,len(resources),len(expected))
     for binding,i in expected {if i<len(resources) {testing.expect_value(t,resources[i],binding)}}
-    // A table of another size is not the one of the RHI.
-    _,problem=reflected_resources(data,512,context.temp_allocator)
-    testing.expect(t,strings.contains(problem,"texture-table"),problem)
+    // A table with a size is not the one of the RHI, which grows.
+    sized:=reflection(t,`{"parameters":[
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
+      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34,"used":1}}]}]}`)
+    _,problem=reflected_resources(sized,context.temp_allocator)
+    testing.expect(t,strings.contains(problem,"texture table"),problem)
 }
 
 @(test)
@@ -212,23 +215,23 @@ resources_outside_the_portable_binding_abi_are_rejected :: proc(t:^testing.T) {
         {`"binding":{"kind":"descriptorTableSlot","index":34},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"array","elementCount":4,"elementType":{"kind":"resource","baseShape":"texture2D"}}`,"only set 0 scalar resources"},
         {`"binding":{"kind":"descriptorTableSlot","space":2,"index":3},"type":{"kind":"constantBuffer"}`,"only set 0 scalar resources"},
-        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
+        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
         {`"binding":{"kind":"uniform","offset":0},"type":{"kind":"scalar"}`,"explicit descriptor binding"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"resource","baseShape":"textureCube"}`,"unsupported resource type"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"struct"}`,"unsupported parameter type"},
     }
     for c in cases {
         text:=strings.concatenate({`{"parameters":[{"name":"p",`,c.parameter,`}],"entryPoints":[{"bindings":[{"name":"p","binding":{"used":1}}]}]}`},context.temp_allocator)
-        _,problem:=reflected_resources(reflection(t,text),1024,context.temp_allocator)
+        _,problem:=reflected_resources(reflection(t,text),context.temp_allocator)
         testing.expectf(t,strings.contains(problem,c.expected),"%s: %s",c.expected,problem)
     }
     shared:=reflection(t,`{"parameters":[
         {"name":"a","binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"constantBuffer"}},
         {"name":"b","binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"samplerState"}}],
       "entryPoints":[{"bindings":[{"name":"a","binding":{"used":1}},{"name":"b","binding":{"used":1}}]}]}`)
-    _,problem:=reflected_resources(shared,1024,context.temp_allocator)
+    _,problem:=reflected_resources(shared,context.temp_allocator)
     testing.expect(t,strings.contains(problem,"share one portable binding slot"),problem)
-    _,problem=reflected_resources(reflection(t,`{"parameters":[],"entryPoints":[]}`),1024,context.temp_allocator)
+    _,problem=reflected_resources(reflection(t,`{"parameters":[],"entryPoints":[]}`),context.temp_allocator)
     testing.expect(t,problem!="")
 }
 

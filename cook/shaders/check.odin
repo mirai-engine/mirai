@@ -677,7 +677,6 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 if project!="" {append(&out,"-I",path_join(project,"shaders",allocator=context.temp_allocator))}
                 for source in sources {append(&out,"-I",path_clean(source.folder,context.temp_allocator))}
                 append(&out,"-I",folder)
-                append(&out,fmt.tprintf("-DTEXTURE_TABLE_CAPACITY=%d",TABLE_CAPACITY))
                 append(&out,..SPIRV_FLAGS)
                 append(&out,"-o",strings.concatenate({output,".spv"},context.temp_allocator))
                 return out[:]

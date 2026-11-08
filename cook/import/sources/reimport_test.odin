@@ -300,6 +300,26 @@ a_second_model_with_the_same_textures_takes_its_material_and_both_lose_it_as_a_p
     testing.expect_value(t,header_of(mesh.path).owner,first.prefab)
 }
 
+// The editor writes a texture Fast until the cook encodes it again: the
+// next import of the editor with that image takes it as one written Final.
+@(test)
+a_second_model_imported_by_the_editor_takes_the_texture_the_first_wrote_fast :: proc(t:^testing.T) {
+    root:=temp_folder("parts-shared-fast");defer os.remove_all(root)
+    os.make_directory_all(fmt.tprintf("%s/source/chair",root))
+    os.make_directory_all(fmt.tprintf("%s/source/table",root))
+    chair_source:=box_source(fmt.tprintf("%s/source/chair",root),"chair.gltf","Wood","Paint")
+    table_source:=box_source(fmt.tprintf("%s/source/table",root),"table.gltf","Wood","Paint")
+    chair,error:=import_source(chair_source,fmt.tprintf("%s/assets/chair",root),{root=root,fast_textures=true,no_save=true})
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&chair)
+    texture,found:=written_of(&chair,asset.KIND_TEXTURE,"wood")
+    if !testing.expect(t,found) {return}
+    table,table_error:=import_source(table_source,fmt.tprintf("%s/assets/table",root),{root=root,fast_textures=true,no_save=true})
+    if !testing.expectf(t,table_error.code==.None,"%s",table_error.message) {return};defer importer.report_destroy(&table)
+    testing.expect_value(t,table.image_ids[0],texture.id)
+    _,wrote:=written_of(&table,asset.KIND_TEXTURE,"wood")
+    testing.expect(t,!wrote,"the image is not written twice")
+}
+
 @(test)
 a_second_model_with_the_same_textures_and_other_values_writes_a_material_of_its_own :: proc(t:^testing.T) {
     root:=temp_folder("parts-shared-values");defer os.remove_all(root)

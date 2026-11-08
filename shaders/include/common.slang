@@ -49,14 +49,12 @@
 #define SLOT_LAYERS         32
 #define SLOT_DISTANCE       33
 #define SLOT_DRAW           SLOT_PASS9
-// The texture table of the RHI (rhi.TEXTURE_TABLE_SLOT and _CAPACITY): every
-// material texture, picked by the index a material stores. The build script
-// defines the capacity.
+// The texture table of the RHI (rhi.TEXTURE_TABLE_SLOT): every material
+// texture, picked by the index a material stores. It has no size: it grows
+// with the textures of the scene. Its first TEXTURE_TABLE_RESERVED entries
+// hold the tables of the renderer (DFG_TEXTURE, AIR_*_TEXTURE).
 #define MATERIAL_TEXTURE_SLOT     34
-#ifndef TEXTURE_TABLE_CAPACITY
-#define TEXTURE_TABLE_CAPACITY 1024
-#endif
-#define MATERIAL_TEXTURE_CAPACITY TEXTURE_TABLE_CAPACITY
+#define TEXTURE_TABLE_RESERVED    4u
 
 #define PI 3.14159265358979
 #define INV_PI 0.31830988618379

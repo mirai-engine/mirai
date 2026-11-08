@@ -219,7 +219,7 @@ Assets :: struct {
     structure_change_count:int,
     appearance:u64, // the round of derived rows: assets_appearance_begin opens one
     loads:Load_Budget,
-    texture_assets:[]base.Asset_Id, // by entry of the texture table of the renderer: the asset given it, as last given
+    texture_assets:[dynamic]base.Asset_Id, // by handle - 1 of a texture of the renderer: the asset given it, as last given
     stats:Assets_Stats,
     load_profile:^Load_Profile, // of the application, which counts the assets that load; nil: nobody counts
 }
@@ -283,7 +283,7 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     a.free_materials=make([dynamic]u32,0,start,allocator)
     a.free_scenes=make([dynamic]u32,0,start,allocator)
     a.errors=make([dynamic]Assets_Error,0,desc.error_capacity>0?desc.error_capacity:ASSETS_DEFAULT_ERRORS,allocator)
-    if desc.renderer!=nil {a.texture_assets=make([]base.Asset_Id,render.TEXTURE_CAPACITY,allocator)}
+    if desc.renderer!=nil {a.texture_assets=make([dynamic]base.Asset_Id,allocator)}
     ok=ok && cap(a.meshes)==capacity && cap(a.textures)==capacity && cap(a.materials)==capacity && cap(a.scenes)==capacity
     ok=ok && cap(a.material_descs)==capacity*2 && cap(a.row_marks)==capacity*2 && cap(a.row_hashes)==capacity*2 && cap(a.free_rows)==start && cap(a.free_meshes)==start && cap(a.rows_dirty)==ASSETS_ROWS_DIRTY
     ok=ok && cap(a.free_textures)==start && cap(a.free_materials)==start && cap(a.free_scenes)==start
@@ -307,7 +307,7 @@ assets_destroy :: proc(a:^Assets) {
     delete(a.free_rows);delete(a.errors);delete(a.free_meshes);delete(a.rows_dirty)
     for &region in a.regions {base.region_release(&region)}
     delete(a.free_textures);delete(a.free_materials);delete(a.free_scenes)
-    delete(a.texture_assets,a.allocator)
+    delete(a.texture_assets)
     for &scope in a.scopes {delete(scope.ids)}
     asset.types_destroy(&a.types)
     asset.registry_destroy(&a.registry)
@@ -1151,6 +1151,14 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     return {},.None,true
 }
 
+// Notes the asset a texture of the renderer was given, by its handle.
+@(private="file")
+assets_texture_given :: proc(a:^Assets,handle:render.Texture_Handle,id:base.Asset_Id) {
+    if handle==0 {return}
+    if int(handle)>len(a.texture_assets) {resize(&a.texture_assets,int(handle))}
+    a.texture_assets[handle-1]=id
+}
+
 // The entry of a texture of info, its levels given to the renderer.
 @(private="file")
 assets_texture_install :: proc(a:^Assets,id:base.Asset_Id,info:asset.Texture_Info,levels:^Assets_Levels,entry:^Assets_Texture,replace:=render.Texture_Handle(0),removed:^bool=nil) -> (problem:Assets_Problem,detail:asset.Error,ok:bool) {
@@ -1162,7 +1170,7 @@ assets_texture_install :: proc(a:^Assets,id:base.Asset_Id,info:asset.Texture_Inf
         added:bool
         loaded.handle,added=render.texture_add_data(r,levels.data,name)
         if !added {return .Rejected,.Invalid,false}
-        if int(loaded.handle)<=len(a.texture_assets) {a.texture_assets[loaded.handle-1]=id}
+        assets_texture_given(a,loaded.handle,id)
     }
     entry^=loaded
     return {},.None,true
@@ -1185,7 +1193,7 @@ assets_texture_install_over_frames :: proc(a:^Assets,id:base.Asset_Id,prepared:^
     }
     if handle==0 {return .Rejected,.Invalid,false,{}}
     loaded.handle=handle
-    if int(handle)<=len(a.texture_assets) {a.texture_assets[handle-1]=id}
+    assets_texture_given(a,handle,id)
     entry^=loaded
     return {},.None,true,request if result==.Set else {}
 }

@@ -171,7 +171,7 @@ float smith_masking(float cosine, float alpha) {
 // microfacets. render builds it once (dfg.comp) into the entry DFG_TEXTURE of
 // the texture table, DFG_SIZE texels a side from 0 to 1 on each axis.
 #define DFG_SIZE 64
-#define DFG_TEXTURE (TEXTURE_TABLE_CAPACITY - 1u)
+#define DFG_TEXTURE 0u
 #define DFG_SAMPLES 512u
 
 // The integral of the table at one texel, over directions of the visible
