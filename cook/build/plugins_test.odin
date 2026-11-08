@@ -360,6 +360,62 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     }
 }
 
+// What links against a library of the engine passes an `any` of its own types
+// to it, as a plugin passes an enum to core.report: compiled where it is
+// called, the procedure finds the type in the caller's type table and prints
+// the enum, the struct and the formatting the library passes it on to; through
+// the library, whose table does not have them, fmt would print nothing.
+@(test)
+an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
+    compiler,found:=compiler_find(repository,context.temp_allocator)
+    if !testing.expect(t,found,"no Odin compiler") {return}
+    directory,directory_error:=os.make_directory_temp("","mirai-declare-any-*",context.temp_allocator)
+    if !testing.expect(t,directory_error==nil) {return}
+    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
+    defer os.remove_all(folder)
+    files:=[][2]string{
+        {"engine/thing/say.odin","package thing\n\nimport \"core:fmt\"\n\nsay :: proc(buffer:[]u8,format:string,args:..any) -> string {return fmt.bprintf(buffer,format,..args)}\n\ncount :: proc(n:int) -> int {return n+1}\n"},
+        // Passes its arguments on, as core.report does to base.text_format.
+        {"engine/thing/report.odin","package thing\n\nreport :: proc(buffer:[]u8,format:string,args:..any) -> string {return say(buffer,format,..args)}\n"},
+    }
+    for file in files {
+        path:=project.path(folder,file[0])
+        testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil || os.is_dir(path[:strings.last_index_byte(path,'/')]))
+        testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
+    }
+    out:=project.path(folder,"out")
+    library:=project.path(out,project.library_file("thing"))
+    linked:=project.path(out,"thing.lib") when ODIN_OS==.Windows else library
+    stage,decl:=project.path(folder,"stage"),project.path(folder,"decl")
+    errors,_:=declare({root=project.path(folder,"engine"),packages={"thing"},binary="mirai",library=linked,stage=stage,decl=decl})
+    if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
+    declared_say,_:=os.read_entire_file(project.path(decl,"thing","say.odin"),context.temp_allocator)
+    testing.expectf(t,strings.contains(string(declared_say),"fmt.bprintf") && strings.contains(string(declared_say),"link_name=\"mirai.thing.count\""),"say is compiled where it is called and count through the library:\n%s",string(declared_say))
+    entry_write(stage,"__engine",{"thing"})
+    testing.expect(t,os.make_directory_all(out)==nil || os.is_dir(out))
+    memory,_:=compiler_memory()
+    environment:=child_environment(repository,context.temp_allocator)
+    built_library,_,library_errors,library_error:=subprocess.exec({command={compiler,"build",project.path(stage,"__engine"),"-build-mode:dll",fmt.tprintf("-collection:mirai=%s",stage),fmt.tprintf("-out:%s",library),"-o:minimal"},env=environment},context.temp_allocator,{memory=memory})
+    if !testing.expectf(t,library_error==nil && built_library.exit_code==0,"the library does not build:\n%s",string(library_errors)) {return}
+
+    program:=project.path(folder,"program")
+    testing.expect(t,os.make_directory_all(program)==nil)
+    main_text:="package main\n\nimport \"core:os\"\nimport \"mirai:thing\"\n\nKind :: enum u8 {Fire,Cancel,Section}\nRequest :: struct {kind:Kind,at:i32}\n\nmain :: proc() {\n    buffer:[128]u8\n    text:=thing.report(buffer[:],\"a %v of %v, %d\",Kind.Cancel,Request{.Section,7},thing.count(41))\n    os.write(os.stdout,transmute([]u8)text)\n}\n"
+    testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),main_text)==nil)
+    executable:=project.path(out,strings.concatenate({"program",EXECUTABLE_EXTENSION}))
+    command:=make([dynamic]string)
+    append(&command,compiler,"build",program,fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-out:%s",executable),"-o:minimal")
+    when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
+    else when ODIN_OS==.Darwin {linker_flags_append(&command,"-Wl,-rpath,@executable_path")}
+    built,_,program_errors,built_error:=subprocess.exec({command=command[:],env=environment},context.temp_allocator,{memory=memory})
+    if !testing.expectf(t,built_error==nil && built.exit_code==0,"the program does not build:\n%s",string(program_errors)) {return}
+    ran,printed,_,ran_error:=subprocess.exec({command={executable}},context.temp_allocator)
+    testing.expect(t,ran_error==nil && ran.exit_code==0)
+    testing.expect_value(t,string(printed),"a Cancel of Request{kind = \"Section\", at = 7}, 42")
+}
+
 // The libraries of plugins compile at once, each as soon as the libraries it
 // links against are published: one that depends on another waits for it, and
 // one that does not starts beside it.

@@ -15,8 +15,8 @@ import "mirai:project"
 // own. Whoever links against the binary compiles, instead of those sources,
 // their declarations: the same files with the types and the constants as
 // they are, the procedures that must be compiled where they are called
-// (generic, inline, with a deferred procedure) too, and the rest declared
-// foreign in the binary. Nothing of the engine is compiled again with what
+// (generic, inline, with a deferred procedure, with an `any`) too, and the
+// rest declared foreign in the binary. Nothing of the engine is compiled again with what
 // uses it. A file is written only when its text changes: a declaration that
 // comes out the same leaves the stage and the declarations as they were, and
 // the halves of the engine follow each folder by itself.
@@ -283,7 +283,10 @@ value_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_Dec
     }
     // A procedure with a deferred one runs it in the scope of its caller: a
     // call through the binary would run it on leaving the export as well.
-    if generic(lit.type) || lit.inlining==.Inline || len(lit.where_clauses)>0 || deferred(decl) {
+    // An `any` carries a typeid that only the type table of the module that
+    // made it knows: through the binary, fmt would find no type for an enum
+    // or a struct of the caller and print nothing.
+    if generic(lit.type) || lit.inlining==.Inline || len(lit.where_clauses)>0 || deferred(decl) || takes_any(lit.type) {
         fmt.sbprintfln(&out.decl,"%s%s",indent,decl_text(scope,decl))
         return
     }
@@ -468,6 +471,28 @@ generic :: proc(type:^ast.Proc_Type) -> bool {
         for name in field.names {ast.walk(&v,name)}
         if field.type!=nil {ast.walk(&v,field.type)}
         if found {return true}
+    }
+    return false
+}
+
+// A procedure with an `any` in its parameters or its results, alone or
+// inside another type (..any, []any).
+@(private="file")
+takes_any :: proc(type:^ast.Proc_Type) -> bool {
+    found:=false
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        found:=cast(^bool)v.data
+        if id,ok:=node.derived.(^ast.Ident);ok && id.name=="any" {found^=true}
+        return found^?nil:v
+    }
+    v:=ast.Visitor{visit=visit,data=&found}
+    for fields in ([]^ast.Field_List{type.params,type.results}) {
+        if fields==nil {continue}
+        for field in fields.list {
+            if field.type!=nil {ast.walk(&v,field.type)}
+            if found {return true}
+        }
     }
     return false
 }
