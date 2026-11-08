@@ -32,9 +32,9 @@ Api_Material_Result :: struct {
 
 @(private)
 materials_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.inspect",params_schema=MATERIAL_PARAMS_SCHEMA,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Core,.Read_Only},run=api_material_inspect})
+    api_register(s,st,{name="material.inspect",params_schema=MATERIAL_PARAMS_SCHEMA,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",flags={.Core},params_schema=MATERIAL_PARAMS_SCHEMA,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
+    api_register(s,st,{name="material.set",params_schema=MATERIAL_PARAMS_SCHEMA,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
     api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,writes_result=true,flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }
@@ -78,7 +78,7 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
     file:asset.Asset
     view,read:=material_open(s,id,&file)
     if !read {
-        api.call_fail(call,api.SERVER_ERROR,"The material could not be read")
+        api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"material"))
         return
     }
     defer asset.asset_close(&file)
@@ -119,7 +119,7 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
     if !t.created {
         loaded:bool
         if info,loaded=material_file(s,t.id);!loaded {
-            api.call_fail(call,api.SERVER_ERROR,"The material could not be read")
+            api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,t.id,"material"))
             return
         }
     }
@@ -133,7 +133,7 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
     } else {
         written=material_write(s,t.id,{kind=.Values,info=info})
     }
-    if !written {api.call_fail(call,api.SERVER_ERROR,"The material could not be written")}
+    if !written {api.call_fail(call,api.SERVER_ERROR,api_asset_write_problem(s,t.file))}
     if !api_edit_end(s,call,written) {return}
     api_material_write(s,call,t.id)
 }
@@ -147,7 +147,7 @@ api_material_revert :: proc(s:^Session,call:^api.Call) {
     file:asset.Asset
     view,read:=material_open(s,id,&file)
     if !read {
-        api.call_fail(call,api.SERVER_ERROR,"The material could not be read")
+        api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"material"))
         return
     }
     reverted,failed,error:=asset.material_revert(&s.app.assets.types,view,paths)
@@ -161,12 +161,12 @@ api_material_revert :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"paths: %q is not a field of the material; material.inspect names them, as in overrides",failed)
         return
     case:
-        api.call_fail(call,api.SERVER_ERROR,"The material could not be read")
+        api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"material"))
         return
     }
     if !api_edit_begin(s,call,"Revert material") {return}
     written:=material_write(s,id,{kind=.Values,info=reverted})
-    if !written {api.call_fail(call,api.SERVER_ERROR,"The material could not be written")}
+    if !written {api.call_fail(call,api.SERVER_ERROR,api_asset_write_problem(s,asset_name_of(s.app.assets,id)))}
     if !api_edit_end(s,call,written) {return}
     api_material_write(s,call,id)
 }

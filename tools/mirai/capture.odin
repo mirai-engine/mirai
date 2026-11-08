@@ -9,7 +9,7 @@ import "mirai:cook/image"
 import "mirai:editor/api"
 import "mirai:project"
 
-CAPTURE_USAGE :: "capture [project] --out <x.png> [--scene S] [--camera-entity ID | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--dev|--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--dev|--release]"
+CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--dev|--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--dev|--release]"
 
 // mirai capture: one image of the world of a project as the editor draws it,
 // without its UI, from a camera of the scene or a pose, with the validation
@@ -108,7 +108,6 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         if out!="" || scene!="" || entity!="" || position!="" || reference!="" || view!="" {fmt.eprintln("mirai capture: --plan takes its views from captures.mirai: leave out --out, --scene, the camera, --view and --reference");return 2}
         return capture_plan(root,folder,mode,views,references,write,repeat)
     }
-    if out=="" {fmt.eprintln("mirai capture: --out <file.png> is missing");return usage()}
     if (position=="")!=(target=="") {fmt.eprintln("mirai capture: --position and --target go together");return 2}
     if entity!="" && position!="" {fmt.eprintln("mirai capture: --camera-entity or --position/--target, not both");return 2}
     if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
@@ -116,7 +115,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         return 2
     }
     folder=project.path_absolute(folder)
-    out=project.path_absolute(out)
+    out=out!=""?project.path_absolute(out):project.path(folder,".mirai/captures/capture.png")
 
     file,alive:=session_find(folder)
     reused:=alive && session_answers(file.port)
@@ -174,8 +173,8 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         }
         if _,ok:=call(file.port,"editor.view_mode.set",struct{mode:string}{view});!ok {return 1}
     }
-    Capture :: struct {path:string,ui:bool,width,height,warmup_frames:int,seconds:f64}
-    captured,captured_ok:=call(file.port,"editor.capture",Capture{out,false,width,height,frames,0})
+    Capture :: struct {path,of:string,ui:bool,width,height,frames:int,seconds:f64}
+    captured,captured_ok:=call(file.port,"capture",Capture{out,"Scene",false,width,height,frames,0})
     again:=""
     if captured_ok && repeat {
         again=fmt.tprintf("%s.repeat.png",strings.trim_suffix(out,".png"))
@@ -185,7 +184,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         } else {
             fmt.eprintln("mirai capture: the document has unsaved changes or no file: the second capture goes on from the first, with what the GI gathered since")
         }
-        if captured_ok {_,captured_ok=call(file.port,"editor.capture",Capture{again,false,width,height,frames,0})}
+        if captured_ok {_,captured_ok=call(file.port,"capture",Capture{again,"Scene",false,width,height,frames,0})}
     }
     if view!="" && reused {_,_=call(file.port,"editor.view_mode.set",struct{mode:string}{shown.current})}
     if !captured_ok {return 1}
@@ -328,8 +327,8 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
             if v.fov>0 {camera["fov"]=v.fov}
             if _,ok:=call(port,"camera.set",camera);!ok {return false}
         }
-        Capture :: struct {path:string,ui:bool,width,height,warmup_frames:int,seconds:f64}
-        _,ok:=call(port,"editor.capture",Capture{out,false,plan.size.x,plan.size.y,max(plan.frames,1),0})
+        Capture :: struct {path,of:string,ui:bool,width,height,frames:int,seconds:f64}
+        _,ok:=call(port,"capture",Capture{out,"Scene",false,plan.size.x,plan.size.y,max(plan.frames,1),0})
         return ok
     }
     Result :: struct {

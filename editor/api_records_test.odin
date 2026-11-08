@@ -315,11 +315,21 @@ records_texts_go_by_field_path_and_language :: proc(t:^testing.T) {
     testing.expectf(t,strings.contains(language,"is not the code of a language"),"%s",language)
 }
 
+// records.move puts a row right after another: the place it ends at is that
+// row's, counted once it left its own place.
+@(test)
+records_move_places_a_row_right_after_another :: proc(t:^testing.T) {
+    cases:=[?]struct{row,after,to:int}{{3,1,2},{1,3,3},{0,1,1},{2,0,1}}
+    for c in cases {
+        testing.expectf(t,records_move_place(c.row,c.after)==c.to,"%v",c)
+    }
+}
+
 // The hand-written params schemas are JSON, and a row as inspect writes it
 // keeps the shape of its result.
 @(test)
 records_api_schemas_and_results_keep_their_shape :: proc(t:^testing.T) {
-    for schema in ([]string{RECORDS_API_CREATE_SCHEMA,RECORDS_API_INSPECT_SCHEMA,RECORDS_API_SET_SCHEMA,RECORDS_API_ADD_SCHEMA,RECORDS_API_REMOVE_SCHEMA,RECORDS_API_RENAME_SCHEMA,RECORDS_API_MOVE_SCHEMA,RECORDS_API_IMPORT_SCHEMA,RECORDS_API_EXPORT_SCHEMA}) {
+    for schema in ([]string{RECORDS_API_CREATE_SCHEMA,RECORDS_API_INSPECT_SCHEMA,RECORDS_API_SET_SCHEMA,RECORDS_API_ADD_SCHEMA,RECORDS_API_REMOVE_SCHEMA,RECORDS_API_MOVE_SCHEMA,RECORDS_API_IMPORT_SCHEMA,RECORDS_API_EXPORT_SCHEMA}) {
         testing.expectf(t,api.json_valid(context.temp_allocator,schema),"%s",schema)
     }
     f:Csv_Fixture

@@ -4,8 +4,10 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import "core:strings"
 import "mirai:core"
 import erender "mirai:engine/render"
+import "mirai:project"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -151,6 +153,23 @@ graphics_preset :: proc(c:Graphics_Choices) -> (preset:erender.Graphics_Preset,f
 // The graphics settings of the edited World; nil for a project without the render library.
 graphics_settings :: proc(s:^Session) -> ^erender.Graphics_Settings {
     return core.world_storage_of(edited_world(s),erender.Graphics_Settings)
+}
+
+// Applies a preset, by its name, to the graphics settings among list; message
+// says what is wrong.
+settings_graphics_preset :: proc(list:[]project.Setting,name:string) -> (message:string) {
+    labels:=GRAPHICS_PRESET_LABELS
+    for label,preset in labels {
+        if !strings.equal_fold(label,name) {continue}
+        for setting in list {
+            if setting.name=="Graphics_Settings" {
+                erender.graphics_preset_apply((^erender.Graphics_Settings)(setting.value),preset)
+                return ""
+            }
+        }
+        return "The project has no graphics settings"
+    }
+    return fmt.tprintf("%q is not a preset: Low, Medium, High or Ultra",name)
 }
 
 // What the settings of a project that fixes none are on the device of the editor.

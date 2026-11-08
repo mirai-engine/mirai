@@ -284,11 +284,11 @@ prefab_file :: proc(s:^Session,id:base.Asset_Id) -> (file:^asset.Registry_File,p
 }
 
 // The id of a prefab named by an asset id or by a path: a file, or inside the assets folder.
-prefab_locate :: proc(s:^Session,path:string,id:base.Asset_Id) -> (found:base.Asset_Id,error:Prefab_Error) {
+prefab_locate :: proc(s:^Session,path:string) -> (found:base.Asset_Id,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
     assets_rescan(s)
-    if id!={} {
+    if id,is_id:=base.asset_id_parse(path);is_id {
         _,_,ok:=prefab_file(s,id)
         return id,ok?.None:.Not_Found
     }

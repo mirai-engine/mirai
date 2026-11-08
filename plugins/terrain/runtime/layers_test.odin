@@ -205,9 +205,9 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     }
     grass,rock:=LAYER_DEFAULT,LAYER_DEFAULT
     rock.tiling=8
-    testing.expect(t,request_layer(&w.requests,owner,0,grass))
-    testing.expect(t,request_layer(&w.requests,owner,1,rock))
-    testing.expect(t,request_layer(&w.requests,owner,3,rock))
+    request_layer(&w.requests,owner,0,grass)
+    request_layer(&w.requests,owner,1,rock)
+    request_layer(&w.requests,owner,3,rock)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
@@ -222,7 +222,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     }
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Paint,center={-6,0,-6},radius=0.6,amount=1,layer=1}))
+    dig(&w.requests,{kind=.Paint,center={-6,0,-6},radius=0.6,amount=1,layer=1},owner)
     terrain_test_update(&w,&resident,&app)
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
@@ -233,8 +233,8 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     testing.expect_value(t,w.statics.version,version)
     // The last layer stays.
     core.problems_clear(&w.problems)
-    testing.expect(t,request_layer_remove(&w.requests,owner,0))
-    testing.expect(t,request_layer_remove(&w.requests,owner,0))
+    request_layer_remove(&w.requests,owner,0)
+    request_layer_remove(&w.requests,owner,0)
     terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(1))
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)

@@ -252,7 +252,7 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     }
     s:=Swap_Test{&animations,&transforms,&parents,&hierarchy,&names,&targets,&requests,&events,&playback,&app,&skeletons,&problems,&graphs,&actions,&action_requests,&action_assets,&sources}
     if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}
-    testing.expect(t,action_fire(&action_requests,actor,"slash"))
+    action_fire(&action_requests,actor,"slash")
     tick(s)
     if !testing.expect(t,problems.count==0 && len(playback.states)==1 && len(playback.states[0].local)==2 && len(actions.states)==1 && actions.states[0].layers[0].active) {return}
     before:=playback.states[0].local[1].position.x

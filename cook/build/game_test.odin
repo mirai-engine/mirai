@@ -118,7 +118,7 @@ a_game_ships_the_settings_of_the_engine_and_of_its_project_merged :: proc(t:^tes
     m:=project.manifest_default("Set Game")
     testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),project.manifest_text(&m,context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Graphics": {"vsync": false}}`)==nil)
-    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"Graphics": {"vsync": true, "scale": 2}, "Net": {"port": 9}}`)==nil)
+    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 2, "Graphics": {"vsync": true, "scale": 2}, "Net": {"port": 9}}`)==nil)
     p,open_error:=project.open(root,engine)
     defer project.close(&p)
     if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}

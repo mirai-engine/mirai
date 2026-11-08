@@ -15,7 +15,6 @@ import "mirai:ui"
 // over how deep the physics says its head is.
 
 RAFT_SCENE :: "scenes/raft.scene"
-RAFT_PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x7261667400000001}
 RAFT_DROWNED_SECONDS :: 3 // the message stays this long
 
 // Under the surface its oxygen runs out; with the head out it comes back. With
@@ -42,7 +41,7 @@ Raft_Game :: struct {
 @(step="fixed")
 raft_breath :: proc(
     divers:^core.Table(Diver),states:core.Read(phys.Character_State),games:^core.Table(Raft_Game),
-    worlds:core.Read(core.World_Transform),placer:core.Placer,bodies:^phys.Body_Requests,time:core.Time,
+    worlds:core.Read(core.World_Transform),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(core.read(games)) {
@@ -65,8 +64,7 @@ raft_breath :: proc(
         for &game in core.writable(games) {
             raft,found:=core.get(worlds,game.raft)
             if !found {continue}
-            core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0})
-            phys.launch(bodies,e,{},override=true)
+            core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0},at_rest=true)
             game.message=RAFT_DROWNED_SECONDS
             break
         }

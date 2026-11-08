@@ -7,6 +7,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import sim "plugins:physics/runtime/sim"
 
 @(test)
 a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing.T) {
@@ -41,6 +42,29 @@ a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing
     physics_test_step(&f,0)
     testing.expect_value(t,len(jumps.queue.items),1)
     testing.expect_value(t,f.state.stats.teleports,u64(2))
+}
+
+// A place at rest stops the body it puts; one that is not keeps its velocity.
+@(test)
+a_place_at_rest_stops_the_body :: proc(t:^testing.T) {
+    f:Physics_Test
+    physics_test_init(&f)
+    defer physics_test_destroy(&f)
+    places:core.Places
+    defer delete(places.queue.items)
+    box:=physics_test_box(&f,{1,2,3},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
+    physics_test_step(&f,0)
+    body:=link_find(&f.state,box).body
+    cases:=[]struct{at_rest:bool,velocity:[3]f32}{{false,{5,0,0}},{true,{}}}
+    for c,i in cases {
+        set_velocity(&f.requests,box,{5,0,0})
+        physics_test_step(&f,0)
+        core.push(&places.queue,core.Place_Request{box,{f32(i),2,0},1,c.at_rest})
+        physics_places(&places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
+        physics_test_step(&f,0)
+        testing.expect_value(t,sim.body_linear_velocity(&f.state.world,body),c.velocity)
+        testing.expect(t,linalg.length(physics_test_pose(&f,box).position-[3]f32{f32(i),2,0})<1e-4)
+    }
 }
 
 // A body that passes to another parent where it is (a section that it left

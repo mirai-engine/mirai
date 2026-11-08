@@ -9,16 +9,16 @@ import render "mirai:engine/render"
 import mm "mirai:std/math"
 
 @(private = "file")
-night_shape :: proc(s: ^Scene_Out, name: string, kind: render.Shape, position, size, color: [3]f32, rotation: mm.Quat = 1, emission: [3]f32 = {}) {
+night_shape :: proc(s: ^asset.Scene_Builder, name: string, kind: render.Shape, position, size, color: [3]f32, rotation: mm.Quat = 1, emission: [3]f32 = {}) {
     id := placed(s, name, position, rotation, size)
-    put(s, id, "Mesh_Renderer", &render.Mesh_Renderer{shape = kind})
+    asset.builder_set(s, id, render.Mesh_Renderer{shape = kind})
     tinted(s, id, color, emission)
 }
 
 // A globe of light of `size` across that glows, and the light it gives, as
 // wide as it: intensity in candela.
 @(private = "file")
-night_lamp :: proc(s: ^Scene_Out, name: string, position, color: [3]f32, size, intensity, range: f32) {
+night_lamp :: proc(s: ^asset.Scene_Builder, name: string, position, color: [3]f32, size, intensity, range: f32) {
     night_shape(s, name, .Sphere, position, {size, size, size}, color, emission = nits(LAMPLIT, color * 6))
     point_light(s, fmt.tprintf("%s light", name), position, color, intensity, range, radius = size * 0.5)
 }
@@ -29,8 +29,8 @@ night_lamp :: proc(s: ^Scene_Out, name: string, position, color: [3]f32, size, i
 // many reach every place, and candles up a staircase. Every surface has the
 // material of the engine and a tint.
 write_night_scene :: proc(o: ^Out) {
-    s: Scene_Out
-    asset.scene_init(&s.scene, &o.types, asset.KIND_SCENE, id_of("scene", "night"))
+    s: asset.Scene_Builder
+    asset.builder_init(&s, &o.content, asset.KIND_SCENE, asset.content_id(PROJECT,"scene","night"))
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = nits(LAMPLIT, {0.02, 0.025, 0.04}), nits(LAMPLIT, {0.004, 0.006, 0.012})
     environment.atmosphere = false
@@ -71,7 +71,7 @@ write_night_scene :: proc(o: ^Out) {
     for at, i in spots {
         towards := linalg.normalize([3]f32{0, 1, -8} - at)
         id := placed(&s, fmt.tprintf("Spot %d", i + 1), at, mm.quat_between([3]f32{0, 0, -1}, towards), {1, 1, 1})
-        put(&s, id, "Spot_Light", &render.Spot_Light{color = colors[i], intensity = 60 * LAMP, range = 11, angle = 22.5 * mm.RAD_PER_DEG, radius = 0.08})
+        asset.builder_set(&s, id, render.Spot_Light{color = colors[i], intensity = 60 * LAMP, range = 11, angle = 22.5 * mm.RAD_PER_DEG, radius = 0.08})
     }
 
     // The terrace: six strings of sixteen small lights over tables and stools.
@@ -107,6 +107,6 @@ write_night_scene :: proc(o: ^Out) {
 
     eye := [3]f32{0, 8, 24}
     camera := placed(&s, "Camera", eye, mm.quat_look([3]f32{0, 1, 0} - eye, {0, 1, 0}), {1, 1, 1})
-    put(&s, camera, "Camera", &render.Camera{fov = 55 * mm.RAD_PER_DEG, near = 0.1, active = true})
+    asset.builder_set(&s, camera, render.Camera{fov = 55 * mm.RAD_PER_DEG, near = 0.1, active = true})
     feature_scene_end(&s, o, "night")
 }

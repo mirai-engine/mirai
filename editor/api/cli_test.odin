@@ -213,7 +213,7 @@ mcp_session_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     session_send(&s,`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,integer(at(reply,"id")),2)
-    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),9)
+    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),10)
     session_send(&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"test_add","arguments":{"a":40,"b":2}}}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,integer(at(reply,"id")),3)
@@ -258,7 +258,7 @@ editor_not_running_cases :: proc(t:^testing.T,tool:Tool) {
     session_send(&s,`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,integer(at(reply,"id")),3)
-    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),0)
+    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),1) // docs, served without an editor
     session_send(&s,`{"jsonrpc":"2.0","id":"call","method":"tools/call","params":{"name":"scene_inspect","arguments":{}}}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,string_of(at(reply,"id")),"call")

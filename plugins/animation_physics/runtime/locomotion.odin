@@ -52,10 +52,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
                 goal.desired,goal.acceleration,goal.braking=walk_goal(walk,character.mode==phys.MODE_FALLING,wish,going.linear,phys.walk_speed(walk,input,sprinting,character.mode==phys.MODE_CROUCHING,boost))
             }
         }
-        if !anim.match_goal(requests,goal) {
-            core.report(problems,entity,"animation.match_goal","the locomotion of this Character was not told to its motion matching: a value of its body is not finite, its mode is past 31, or more than %d characters animate in one tick; fix its Character, or animate fewer of them",anim.MATCH_GOAL_CAPACITY)
-            continue
-        }
+        anim.match_goal(requests,goal)
         if animation.motion=={} || !matching {continue}
         // The warping corrects what the clip travels, in its own direction, toward the body: a clip
         // that strafes or backs off is not turned as if it went forward.

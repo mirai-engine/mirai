@@ -121,7 +121,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
         case .Actions,.Warp:
             // The warp walks up to its stride from its origin; past that, or fallen, it goes back.
             limit:=1.2*item.stride if item.kind==.Warp else 2.6
-            if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>limit {core.place(placer,entity,home)}
+            if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>limit {core.place(placer,entity,home,at_rest=true)}
             // While it turns toward its next goal its motor is off: it stands and faces that way.
             if item.kind==.Warp {
                 if warp:=gallery_warp(item,time.dt);warp.turn {
@@ -152,7 +152,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
         // The jumper takes off just before the obstacle at its origin when it walks toward it.
         ahead:=(item.origin.z-placed.position.z)*math.sign(delta)
         if item.kind==.Jumper && ahead>.7 && ahead<1.05 {input.buttons|=inp.action_bit(inp.action_of(walk_actions,.Jump))}
-        if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>4 {core.place(placer,entity,home)}
+        if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>4 {core.place(placer,entity,home,at_rest=true)}
     }
 }
 
@@ -194,7 +194,7 @@ gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(G
 @(step="fixed",before="animation_sample")
 gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,actions:^anim.Action_Requests,goals:^anim.Modifier_Requests,motion:^anim.Motion_Requests,playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs.table!=nil && morph_weights!=nil {morph_playground_animate(morphs,animations,morph_weights,time)}
-    for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.get(animations,entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
+    for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.get(animations,core.entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
     commands:=panel.commands[:panel.count]
     gallery_playback_commands(commands,animations,requests,actions,goals)
     gallery_direct_clips(gallery,animations,requests,commands)

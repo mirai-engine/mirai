@@ -1,5 +1,6 @@
 package main
 
+import "mirai:asset"
 import "core:fmt"
 import "core:math/linalg"
 import render "mirai:engine/render"
@@ -25,7 +26,7 @@ CHURCH_APSE_WINDOWS :: [3]f32{-2.5,0,2.5}
 // keeps it even, for the render check, which takes what changes in a still
 // view as noise.
 write_church_scene :: proc(o:^Out,meshes:Feature_Meshes,name:string,wisps:bool) {
-    s:Scene_Out
+    s:asset.Scene_Builder
     feature_scene_begin(&s,o,name,.Day,{1,0.86,0.66},CHURCH_DAY,{0.9,1.05,-0.75},daylight(CHURCH_DAY))
     // The nave: 10 m across, 24 m long and 9 m high, inside, of a dark old brick.
     slab(&s,o,"Floor",{0,-0.25,0},{11,0.5,25},"Tiles")
@@ -59,14 +60,14 @@ write_church_scene :: proc(o:^Out,meshes:Feature_Meshes,name:string,wisps:bool) 
     }
     for row in 0..<10 {
         z:=7.5-f32(row)*1.3
-        for x in ([2]f32{-1.7,1.7}) {solid(&s,entity(&s,fmt.tprintf("Pew %d %s",row+1,x<0?"west":"east"),{x,0.25,z},{2.1,0.5,0.45}),"Planks")}
+        for x in ([2]f32{-1.7,1.7}) {solid(&s,asset.builder_entity(&s,fmt.tprintf("Pew %d %s",row+1,x<0?"west":"east"),{position={x,0.25,z},scale={2.1,0.5,0.45}}),"Planks")}
     }
-    solid(&s,entity(&s,"Step",{0,0.1,-9.6},{5,0.2,2.4}),"Marble")
-    solid(&s,entity(&s,"Altar",{0,0.7,-10},{2.6,1,1}),"Marble")
+    solid(&s,asset.builder_entity(&s,"Step",{position={0,0.1,-9.6},scale={5,0.2,2.4}}),"Marble")
+    solid(&s,asset.builder_entity(&s,"Altar",{position={0,0.7,-10},scale={2.6,1,1}}),"Marble")
     for x in ([2]f32{-1.8,1.8}) {
-        stand:=entity(&s,x<0?"Candles west":"Candles east",{x,0.2,-9.4})
-        shape(&s,entity(&s,"Stand",{0,0.6,0},{0.08,1.2,0.08},stand),.Cylinder,"Cast metal")
-        flame:=entity(&s,"Flame",{0,1.27,0},{0.05,0.12,0.05},stand)
+        stand:=asset.builder_entity(&s,x<0?"Candles west":"Candles east",{position={x,0.2,-9.4}})
+        shape(&s,asset.builder_entity(&s,"Stand",{position={0,0.6,0},scale={0.08,1.2,0.08}},stand),.Cylinder,"Cast metal")
+        flame:=asset.builder_entity(&s,"Flame",{position={0,1.27,0},scale={0.05,0.12,0.05}},stand)
         shape(&s,flame,.Sphere,"Matte paint")
         tinted(&s,flame,{1,0.6,0.25},[3]f32{1,0.6,0.25}*8000)
         point_light(&s,"Light",{0,1.3,0},{1,0.62,0.3},20,9,stand,0.04)
@@ -74,28 +75,28 @@ write_church_scene :: proc(o:^Out,meshes:Feature_Meshes,name:string,wisps:bool) 
     for z in ([2]f32{5,-1}) {lamp_hanging(&s,fmt.tprintf("Lamp %d",z>0?1:2),{0,6,z})}
     haze:=fog.FOG_VOLUME_DEFAULT
     haze.density,haze.color,haze.anisotropy,haze.falloff,haze.variable=0.025,{0.95,0.95,0.95},0.75,0.05,wisps
-    haze_entity:=entity(&s,"Haze",{0,4.5,0},{10,9,24})
-    put(&s,haze_entity,"Fog_Volume",&haze)
-    put(&s,haze_entity,"Volume",&volume.Volume{shape=.Box,extents={0.5,0.5,0.5},blend=0.5})
+    haze_entity:=asset.builder_entity(&s,"Haze",{position={0,4.5,0},scale={10,9,24}})
+    asset.builder_set(&s,haze_entity,haze)
+    asset.builder_set(&s,haze_entity,volume.box({0.5,0.5,0.5},blend=0.5))
     eye:=[3]f32{0,1.6,11}
     camera:=placed(&s,"Camera",eye,mm.quat_look(linalg.normalize([3]f32{0,3.2,-11}-eye),{0,1,0}),{1,1,1})
-    put(&s,camera,"Camera",&render.Camera{fov=60*mm.RAD_PER_DEG,near=0.05,active=true})
+    asset.builder_set(&s,camera,render.Camera{fov=60*mm.RAD_PER_DEG,near=0.05,active=true})
     spawn_point(&s,{0,0,10})
     feature_scene_end(&s,o,name)
 }
 
 // A pane of the stained glass of the church filling a window.
 @(private)
-stained_window :: proc(s:^Scene_Out,name:string,position,size:[3]f32) {
-    cube(s,entity(s,name,position,size),"Stained glass window")
+stained_window :: proc(s:^asset.Scene_Builder,name:string,position,size:[3]f32) {
+    cube(s,asset.builder_entity(s,name,{position=position,scale=size}),"Stained glass window")
 }
 
 // A lamp that hangs from the roof: a chain and a warm globe that lights the haze around it.
 @(private)
-lamp_hanging :: proc(s:^Scene_Out,name:string,position:[3]f32) {
-    root:=entity(s,name,position)
-    shape(s,entity(s,"Chain",{0,1.5,0},{0.03,3,0.03},root),.Cylinder,"Cast metal")
-    globe:=entity(s,"Globe",{0,0,0},{0.35,0.35,0.35},root)
+lamp_hanging :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32) {
+    root:=asset.builder_entity(s,name,{position=position})
+    shape(s,asset.builder_entity(s,"Chain",{position={0,1.5,0},scale={0.03,3,0.03}},root),.Cylinder,"Cast metal")
+    globe:=asset.builder_entity(s,"Globe",{scale={0.35,0.35,0.35}},root)
     shape(s,globe,.Sphere,"Matte paint")
     tinted(s,globe,{1,0.8,0.55},[3]f32{1,0.8,0.55}*3000)
     point_light(s,"Light",{0,0,0},{1,0.8,0.55},400,14,root,0.17)

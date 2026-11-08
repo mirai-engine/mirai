@@ -29,7 +29,7 @@ Icon_Shape :: enum u8 {Sword,Potion,Shield,Gem,Coin}
 @(private)
 write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
     names:=[Icon_Shape]string{.Sword="sword",.Potion="potion",.Shield="shield",.Gem="gem",.Coin="coin"}
-    id:=id_of("texture",fmt.tprintf("item_%s",names[shape]))
+    id:=asset.content_id(PROJECT,"texture",fmt.tprintf("item_%s",names[shape]))
     pixels:=make([]u8,ICON_SIZE*ICON_SIZE*4,context.temp_allocator)
     for y in 0..<ICON_SIZE {
         for x in 0..<ICON_SIZE {
@@ -65,7 +65,7 @@ write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
         }
     }
     file:=fmt.tprintf("assets/textures/item_%s.tex",names[shape])
-    check(o,file,asset.texture_save(path(o,file),&o.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
+    asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
 
@@ -91,10 +91,10 @@ state_fill :: proc(style:u16,state:ui.Style_State,fill:ui.Color) -> ui.Tree_Styl
 
 @(private)
 write_button :: proc(o:^Out) -> (base.Asset_Id,ui.Tree_Data) {
-    id:=id_of("ui","interface_button")
+    id:=asset.content_id(PROJECT,"ui","interface_button")
     texts:=make([dynamic]u8,context.temp_allocator)
     data:=interface_localized(button_widget(&texts),&texts)
-    check(o,"assets/ui/interface/button.ui",host.ui_tree_save(path(o,"assets/ui/interface/button.ui"),&o.types,id,data))
+    asset.content_check(&o.content,"assets/ui/interface/button.ui",host.ui_tree_save(path(o,"assets/ui/interface/button.ui"),&o.content.types,id,data))
     return id,data
 }
 
@@ -170,7 +170,7 @@ interface_localized :: proc(data:ui.Tree_Data,texts:^[dynamic]u8) -> ui.Tree_Dat
 @(private)
 write_interface_hud :: proc(o:^Out) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","interface_hud")
+    id:=asset.content_id(PROJECT,"ui","interface_hud")
     styles:=[]ui.Node_Style{
         {},
         {fill={16,22,34,220},stroke={96,118,160,255},stroke_width=1,radius=12,shadow=true,shadow_color={0,0,0,120},shadow_blur=12,shadow_offset={0,4}},
@@ -214,7 +214,7 @@ write_interface_hud :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,9,{kind=.Text,name="talk_label",style=6,text="hud.talk",flags={.Localized}}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/hud.ui",host.ui_tree_save(path(o,"assets/ui/interface/hud.ui"),&o.types,id,data))
+    asset.content_check(&o.content,"assets/ui/interface/hud.ui",host.ui_tree_save(path(o,"assets/ui/interface/hud.ui"),&o.content.types,id,data))
     return id
 }
 
@@ -224,7 +224,7 @@ write_interface_hud :: proc(o:^Out) -> base.Asset_Id {
 @(private)
 write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Data) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","interface_menu")
+    id:=asset.content_id(PROJECT,"ui","interface_menu")
     control:=ui.Node_Style{text={size=15,color=WHITE},fill={30,36,52,255},stroke={90,110,150,255},mark={120,160,255,255},track={52,58,76,255},knob={235,240,250,255},radius=6,stroke_width=1}
     styles:=[]ui.Node_Style{
         {},
@@ -245,7 +245,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
     append(&nodes,ui.tree_node_record(&texts,0,{kind=.Text,name="title",style=2,text="menu.title",flags={.Localized}}))
     volume:=i32(len(nodes));append(&nodes,row(&texts,"volume_row"))
     append(&nodes,label(&texts,volume,"menu.volume"))
-    append(&nodes,ui.tree_node_record(&texts,volume,{kind=.Slider,name="volume",style=4,bind_value="Interface_Demo.volume",range={0,1,0.05},flags={.Focus_First},layout={width=ui.fixed(240),height=ui.fixed(22)}}))
+    append(&nodes,ui.tree_node_record(&texts,volume,{kind=.Slider,name="volume",style=4,bind_value="Audio_Volumes.master",range={0,1,0.05},flags={.Focus_First},layout={width=ui.fixed(240),height=ui.fixed(22)}}))
     tip:=i32(len(nodes));append(&nodes,ui.tree_node_record(&texts,volume,{kind=.Tooltip,name="volume_tip",style=5,layout={padding=ui.padding_all(8)}}))
     append(&nodes,ui.tree_node_record(&texts,tip,{kind=.Text,style=5,text="menu.volume_tip",flags={.Localized}}))
     quality:=i32(len(nodes));append(&nodes,row(&texts,"quality_row"))
@@ -277,7 +277,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
     }
     data:=interface_localized({nodes=nodes[:],styles=styles,variants=variants,components=components,overrides=overrides},&texts)
     imports:=[]ui.Tree_Data{button_data}
-    check(o,"assets/ui/interface/menu.ui",host.ui_tree_save(path(o,"assets/ui/interface/menu.ui"),&o.types,id,data,imports))
+    asset.content_check(&o.content,"assets/ui/interface/menu.ui",host.ui_tree_save(path(o,"assets/ui/interface/menu.ui"),&o.content.types,id,data,imports))
     return id
 }
 
@@ -287,7 +287,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
 @(private)
 write_interface_inventory :: proc(o:^Out) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","interface_inventory")
+    id:=asset.content_id(PROJECT,"ui","interface_inventory")
     slot:=ui.Node_Style{fill={28,34,48,255},stroke={70,84,110,255},stroke_width=1,radius=8}
     styles:=[]ui.Node_Style{
         {},
@@ -327,7 +327,7 @@ write_interface_inventory :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,12,{kind=.Action_Bar,name="actions",style=6}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/inventory.ui",host.ui_tree_save(path(o,"assets/ui/interface/inventory.ui"),&o.types,id,data))
+    asset.content_check(&o.content,"assets/ui/interface/inventory.ui",host.ui_tree_save(path(o,"assets/ui/interface/inventory.ui"),&o.content.types,id,data))
     return id
 }
 
@@ -335,14 +335,14 @@ write_interface_inventory :: proc(o:^Out) -> base.Asset_Id {
 @(private)
 write_interface_tag :: proc(o:^Out) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","interface_tag")
+    id:=asset.content_id(PROJECT,"ui","interface_tag")
     styles:=[]ui.Node_Style{{},{fill={14,18,28,220},radius=10},{text={size=28,color=WHITE,font=ui.FONT_SEMIBOLD,align_x=.Center}},{fill={235,72,72,255},track={44,48,62,255},radius=4}}
     nodes:=[]ui.Tree_Node{
         ui.tree_node_record(&texts,-1,{kind=.Box,name="tag",style=1,layout={width=ui.GROW,height=ui.GROW,direction=.Column,padding=ui.padding_all(12),gap=8,align_x=.Center}}),
         ui.tree_node_record(&texts,0,{kind=.Text,name="name",style=2,bind_text="Interface_Demo.player"}),
         ui.tree_node_record(&texts,0,{kind=.Progress,name="health",style=3,bind_value="Interface_Demo.life",layout={width=ui.fixed(200),height=ui.fixed(10)}}),
     }
-    check(o,"assets/ui/interface/tag.ui",host.ui_tree_save(path(o,"assets/ui/interface/tag.ui"),&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
+    asset.content_check(&o.content,"assets/ui/interface/tag.ui",host.ui_tree_save(path(o,"assets/ui/interface/tag.ui"),&o.content.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
     return id
 }
 
@@ -351,7 +351,7 @@ write_interface_tag :: proc(o:^Out) -> base.Asset_Id {
 @(private)
 write_interface_dialogue :: proc(o:^Out) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","interface_dialogue")
+    id:=asset.content_id(PROJECT,"ui","interface_dialogue")
     styles:=[]ui.Node_Style{
         {},
         {fill={14,18,28,242},stroke={80,100,140,255},stroke_width=1,radius=14},
@@ -377,7 +377,7 @@ write_interface_dialogue :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,5,{kind=.Action_Bar,name="actions",style=5}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/dialogue.ui",host.ui_tree_save(path(o,"assets/ui/interface/dialogue.ui"),&o.types,id,data))
+    asset.content_check(&o.content,"assets/ui/interface/dialogue.ui",host.ui_tree_save(path(o,"assets/ui/interface/dialogue.ui"),&o.content.types,id,data))
     return id
 }
 
@@ -452,23 +452,23 @@ write_interface_scene :: proc(o:^Out) {
     hud,menu,inventory,tag:=write_interface_hud(o),write_interface_menu(o,button,button_data),write_interface_inventory(o),write_interface_tag(o)
     dialogue:=write_interface_dialogue(o)
     write_interface_records(o,icons)
-    if o.failed {return}
+    if o.content.failed {return}
 
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","interface"))
-    defer asset.scene_destroy(&s.scene)
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","interface"))
+    defer asset.builder_destroy(&s)
     environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.5)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.5),disc=disc}
-    sun_entity:=entity(&s,"Sun",{0,6,0})
+    sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})
     pose:=sun_pose(to_sun,{0,6,0})
-    put(&s,sun_entity,"Transform",&pose)
-    put(&s,sun_entity,"Sun",&sun)
-    solid(&s,entity(&s,"Floor",{0,-0.05,0},{14,0.1,14}),"Tiles")
-    solid(&s,entity(&s,"Pillar",{0,1,-3},{0.6,2,0.6}),"Marble")
+    asset.builder_set(&s,sun_entity,pose)
+    asset.builder_set(&s,sun_entity,sun)
+    solid(&s,asset.builder_entity(&s,"Floor",{position={0,-0.05,0},scale={14,0.1,14}}),"Tiles")
+    solid(&s,asset.builder_entity(&s,"Pillar",{position={0,1,-3},scale={0.6,2,0.6}}),"Marble")
     spawn_point(&s,{0,0,4})
 
-    demo:=game.Interface_Demo{health=100,most=100,coins=120,volume=0.8,quality=2,subtitles=true}
+    demo:=game.Interface_Demo{health=100,most=100,coins=120,quality=2,subtitles=true}
     base.text_set(demo.player[:],"Ana")
     // Rows of the same item top each other up when one is let go over the other.
     Stock :: struct {item:string,count:i32}
@@ -477,26 +477,21 @@ write_interface_scene :: proc(o:^Out) {
     demo.item_count=i32(len(stock))
     demo.talk=record_ref(game.Dialogue_Line,LINES_FILE,"greet")
     // The demo is the tag over the pillar too: a World_Widget binds the component of its own entity.
-    holder:=entity(&s,game.INTERFACE_DEMO,{0,2.6,-3})
-    put(&s,holder,"Interface_Demo",&demo)
+    holder:=asset.builder_entity(&s,game.INTERFACE_DEMO,{position={0,2.6,-3}})
+    asset.builder_set(&s,holder,demo)
     widget:=gui.WORLD_WIDGET_DEFAULT
     widget.asset,widget.size,widget.scale,widget.facing,widget.pivot=tag,{280,90},0.006,.Billboard,.Bottom_Center
-    put(&s,holder,"World_Widget",&widget)
+    asset.builder_set(&s,holder,widget)
 
-    screen :: proc(s:^Scene_Out,name:string,asset_id:base.Asset_Id,holder:base.Entity_Id,input:gui.UI_Input,order:i32,back,hidden:bool) {
-        e:=entity(s,name)
+    screen :: proc(s:^asset.Scene_Builder,name:string,asset_id:base.Asset_Id,holder:base.Entity_Id,input:gui.UI_Input,order:i32,back,hidden:bool) {
+        e:=asset.builder_entity(s,name)
         sc:=gui.UI_Screen{asset=asset_id,entity=core.Entity(holder),input=input,order=order,back=back}
-        put(s,e,"UI_Screen",&sc)
-        if hidden {turn_off(s,e,"UI_Screen")}
+        asset.builder_set(s,e,sc)
+        if hidden {asset.builder_set(s,e,render.Hidden{})}
     }
     screen(&s,game.INTERFACE_HUD,hud,holder,.Passive,0,false,false)
     screen(&s,game.INTERFACE_INVENTORY,inventory,holder,.Menu,10,true,true)
     screen(&s,game.INTERFACE_DIALOGUE,dialogue,holder,.Menu,15,true,true)
     screen(&s,game.INTERFACE_MENU,menu,holder,.Modal,20,true,true)
-    if s.failed {
-        fmt.eprintln("demo_content: the interface scene could not be built")
-        o.failed=true
-        return
-    }
-    check(o,"assets/scenes/interface.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/interface.scene")))
+    asset.builder_save(&s,path(o,"assets/scenes/interface.scene"))
 }

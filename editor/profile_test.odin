@@ -176,8 +176,8 @@ a_capture_refuses_what_keeps_the_frame_time_from_being_the_cost :: proc(t:^testi
     testing.expect_value(t,profile_limits({headless=true,vsync=true,frame_limit=60}),Profile_Limits{})
     testing.expect_value(t,profile_limits({headless=true,validation=true}),Profile_Limits{.Validation})
     refusal:=profile_refusal({.Vsync,.Frame_Limit,.Validation})
-    testing.expect(t,strings.contains(refusal,`{"option":"VSync","choice":0}`),refusal)
-    testing.expect(t,strings.contains(refusal,`{"option":"Frame limit","choice":5}`),refusal) // Off
+    testing.expect(t,strings.contains(refusal,`"vsync":false`),refusal)
+    testing.expect(t,strings.contains(refusal,`"frame_limit":0`),refusal)
     testing.expect(t,strings.contains(refusal,"--validation"),refusal)
     testing.expect(t,strings.contains(refusal,"allow_limited"),refusal)
     testing.expect_value(t,profile_refusal({}),"")

@@ -22,7 +22,9 @@ Asset_Inspect_Params :: struct {
     asset:base.Asset_Id,
     section:Asset_Section `mirai:"optional,label=Track: the keys of a track of an .anim; Body: the body parts of a .skeleton"`,
     clip:[64]u8 `mirai:"text,optional,label=.anim: the clip; empty is the first"`,
-    track:u32 `mirai:"optional,label=.anim with section Track: the track of the clip"`,
+    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim with section Track: the bone path or curve of the track of the clip"`,
+    property:lib.Property `mirai:"optional,label=.anim with section Track: its property"`,
+    slot:u8 `mirai:"optional,label=.anim with section Track: its slot"`,
     table:Profile_Table `mirai:"optional,label=.pose: the table"`,
     offset:u32 `mirai:"optional,label=First row of each long table"`,
     limit:u32 `mirai:"optional,min=1,max=512,label=Rows of each long table"`,
@@ -50,14 +52,14 @@ Asset_Inspect_Result :: struct {
     root:aa.Animation_Root `mirai:"optional,label=.anim: the root motion of the clip"`,
     tracks_total,markers_total:u32 `mirai:"optional,label=.anim: of the clip"`,
     tracks:[1]Asset_Clip_Track `mirai:"list,optional,label=.anim: a page of the tracks of the clip"`,
-    markers:[1]Asset_Clip_Marker `mirai:"list,optional,label=.anim: a page of the markers of the clip"`,
+    markers:[1]aa.Animation_Marker `mirai:"list,optional,label=.anim: a page of the markers of the clip"`,
     target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim section Track: the bone path or curve of the track"`,
     property:lib.Property `mirai:"optional"`,
     slot:u8 `mirai:"optional"`,
     keys_total:u32 `mirai:"optional"`,
-    keys:[1]Asset_Track_Key `mirai:"list,optional,label=.anim section Track: a page of the keys"`,
+    keys:[1]lib.Keyframe `mirai:"list,optional,label=.anim section Track: a page of the keys"`,
     bones_total,sockets_total:u32 `mirai:"optional,label=.skeleton"`,
-    bones:[1]Asset_Skeleton_Bone `mirai:"list,optional,label=.skeleton: a page of the bones with their rest pose"`,
+    bones:[1]Authoring_Bone `mirai:"list,optional,label=.skeleton: a page of the bones with their rest pose"`,
     sockets:[1]aa.Skeleton_Socket `mirai:"list,optional,label=.skeleton: a page of the sockets; offsets are local"`,
     forward,up:mm.Vec3 `mirai:"optional,label=.skeleton section Body: where the body faces at rest"`,
     axes_confidence:f32 `mirai:"optional,label=0 to 1"`,
@@ -122,10 +124,7 @@ Asset_Match_Clip :: struct {
 }
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
 Asset_Match_Database :: struct {rows:u32,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
-Asset_Clip_Track :: struct {index:u32,target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
-Asset_Clip_Marker :: struct {index:u32,marker:aa.Animation_Marker}
-Asset_Track_Key :: struct {index:u32,key:lib.Keyframe}
-Asset_Skeleton_Bone :: struct {index:u32,bone:Authoring_Bone}
+Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
 // A warp window of a .motion or a gameplay window of an .action.
 Asset_Window :: struct {
     name:[64]u8 `mirai:"text"`,
@@ -326,7 +325,7 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
     limit:=min(p.limit,256)
     switch record.kind {
     case aa.KIND_ANIMATION:
-        if p.section==.Track {inner:=Track_Inspect_Params{asset=p.asset,clip=p.clip,track=p.track,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,authoring_track_inspect);return}
+        if p.section==.Track {inner:=Track_Inspect_Params{asset=p.asset,clip=p.clip,target=p.target,property=p.property,slot=p.slot,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,authoring_track_inspect);return}
         inner:=Clip_Inspect_Params{asset=p.asset,clip=p.clip,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_clip_inspect)
     case aa.KIND_SKELETON:
         if p.section==.Body {
@@ -418,7 +417,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
     if !present {authoring_failure(call,"id","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
     if record,found:=aa.registry_find(&s.app.assets.registry,value.asset);!found || record.kind!=anim.MATCH_KIND {authoring_failure(call,"id","Not_Matching","an Animation.asset that is a .match","another asset" if found else "none","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
     result,matching:=preview_match(world,s.app,entity)
-    if !matching {authoring_failure(call,"id","Not_Running","a .match the world plays","not sampled","Matching runs in Play, Simulation, the preview of the editor or animation.preview",api.SERVER_ERROR);return}
+    if !matching {authoring_failure(call,"id","Not_Running","a .match the world plays","not sampled","Matching runs in Play, Simulation, the preview of the editor or animation.preview");return}
     out:=call.out
     if !authoring_write_value(call,&result,type_info_of(Preview_Match_Result)) || out.count==0 {return}
     // The object goes on past the fields of Preview_Match_Result.

@@ -16,9 +16,9 @@ procedural_profile_authoring_derives_nested_arrays_and_exposes_compact_typed_res
     inspect:=Profile_Inspect_Params{limit=16};authoring_test_register(f,t,"inspect",Profile_Inspect_Params,authoring_profile_inspect,&inspect)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"constraints.pose"}`).code,0) {return}
     id:=authoring_test_id(f,"constraints.pose");identity:=authoring_test_id_text(id)
-    result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Chain_IK","index":0,"chain_ik":{{"name":"arm","root":{{"path":"shoulder"}},"end":{{"path":"hand"}},"limits":[{{"min_bend":0,"max_bend":2}}]}}}}`,identity))
+    result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Chain_IK","chain_ik":{{"name":"arm","root":{{"path":"shoulder"}},"end":{{"path":"hand"}},"limits":[{{"min_bend":0,"max_bend":2}}]}}}}`,identity))
     if !testing.expect(t,result.code==0,result.message) {return}
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Twist","index":0,"twist":{{"name":"twist","source":{{"path":"hand"}},"root":{{"path":"shoulder"}},"end":{{"path":"hand"}},"amounts":[{{"value":0.25}},{{"value":0.75}}]}}}}`,identity))
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Twist","twist":{{"name":"twist","source":{{"path":"hand"}},"root":{{"path":"shoulder"}},"end":{{"path":"hand"}},"amounts":[{{"value":0.25}},{{"value":0.75}}]}}}}`,identity))
     if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(f,"constraints.pose",&file),asset.Error.None)
     profile,error:=anim.pose_profile_view(&file,&f.assets.types);testing.expect_value(t,error,asset.Error.None);testing.expect(t,profile.chain_ik[0].limit_count==1 && profile.chain_ik[0].iterations==24 && profile.twist[0].amount_count==2 && profile.twist[0].amounts[1]==.75);asset.asset_close(&file)

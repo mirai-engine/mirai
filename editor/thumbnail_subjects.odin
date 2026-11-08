@@ -309,7 +309,7 @@ scene_thumbnail_update :: proc(s:^Session,id:base.Asset_Id) {
 
 // Takes the view of the scene opened when its frame came: the World alone
 // through the camera of the viewport, without panels, gizmos, lines or the
-// grid, as editor.capture draws it without the UI. Not when another scene,
+// grid, as capture draws it without the UI. Not when another scene,
 // a Play or a document of an asset is in front by then. Between frames.
 @(private)
 thumbnail_scene_capture :: proc(s:^Session) {

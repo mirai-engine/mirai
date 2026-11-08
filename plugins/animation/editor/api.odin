@@ -297,7 +297,8 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     }
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,p.ticks,nil) {return}
     animation,_=editor.entity_get(world,e,anim.Animation)
-    if requests==nil || !anim.animation_seek(requests,e,p.time) || !anim.animation_evaluate(world,s.app,0) {
+    if requests!=nil {anim.animation_seek(requests,e,p.time)}
+    if requests==nil || !anim.animation_evaluate(world,s.app,0) {
         authoring_failure(call,"preview","Evaluation_Failed","a valid animation request and evaluable preview world","initial evaluation failed","The animation preview could not be evaluated",api.SERVER_ERROR);return
     }
     preview_trace_frame(call,&trace,world,e,p,0,s.app)

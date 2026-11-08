@@ -20,11 +20,11 @@ WALK_STUCK_DISTANCE :: 0.25 // m
 
 Walk_Params :: struct {
     to:[3]f32 `mirai:"optional,unit=m,label=Where it walks in the world; give to or target"`,
-    target:base.Entity_Id `mirai:"optional,label=An entity of the scene it walks to instead: where it is when the walk starts"`,
-    ticks:int `mirai:"optional,min=1,max=3600,label=Fixed ticks it walks at most before Timeout"`,
+    target:[editor.API_ENTITY_TEXT]u8 `mirai:"optional,text,label=An entity it walks to instead by its name or a path Parent/Child or its id or its handle: where it is when the walk starts"`,
+    ticks:int `mirai:"optional,min=1,max=3600,label=Fixed ticks it runs at most before Timeout, those it waits for the navigation meshes of a game just started included"`,
+    seconds:f32 `mirai:"optional,min=0,unit=s,label=Game time it walks at most before Timeout in place of ticks"`,
     reach:f32 `mirai:"optional,min=0,unit=m,label=How near the end counts as there; 0: as its Nav_Agent"`,
     slot:int `mirai:"optional,min=-1,max=3,label=The local seat by its slot; -1: the one with the focus"`,
-    seat:[16]u8 `mirai:"optional,text,label=A seat by its handle in place of slot"`,
 }
 
 Walk_State :: enum u8 {
@@ -37,7 +37,7 @@ Walk_State :: enum u8 {
 
 Walk_Result :: struct {
     state:Walk_State `mirai:"label=How the walk ended"`,
-    ran:int `mirai:"label=Fixed ticks it walked"`,
+    ran:int `mirai:"label=Fixed ticks the call ran, those it waited for the navigation meshes included"`,
     tick:u64 `mirai:"label=The tick of the game it ended at"`,
     body:[16]u8 `mirai:"text,label=The handle of the body that walked"`,
     position:[3]f32 `mirai:"unit=m,label=Where the body ended in the world"`,
@@ -79,8 +79,14 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     if !own {editor.api_play_refused(call);return}
     if r.owner==0 && editor.simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation has no players: play.start without simulate");return}
+    limit:=p.ticks
+    if editor.tool_call_given(call,"seconds") {
+        if editor.tool_call_given(call,"ticks") {api.call_fail(call,api.INVALID_PARAMS,"ticks and seconds both say how long it walks: give one");return}
+        timed:bool
+        if limit,timed=editor.api_seconds_ticks(call,"",f64(p.seconds),s.app.tick_dt,3600);!timed {return}
+    }
     w:=editor.run_ref(s,r)
-    seat,found:=editor.play_seat(s,call,w,p.slot,base.text_get(p.seat[:]),"This run is a client, which sends the server the actions of its seat and not the Move_Input that walking writes: walk the seat of that player in the run of the server (player 0) by its handle")
+    seat,found:=editor.play_seat(s,call,w,p.slot,"This run is a client, which sends the server the actions of its seat and not the Move_Input that walking writes: play.walk walks a local seat of a run that is not a client")
     if !found {return}
     requests,n:=core.world_storage_of(w,nav.Nav_Requests),core.world_storage_of(w,nav.Navigation)
     agents,paths:=core.world_table_of(w,nav.Nav_Agent),core.world_table_of(w,nav.Nav_Path)
@@ -96,18 +102,36 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
     values:[1]string
     api.object_values(call.allocator,call.raw,{"to"},values[:])
     goal:=p.to
+    target:=core.NONE
+    given:=base.text_get(p.target[:])!=""
     switch {
-    case p.target!=0 && values[0]!="":
+    case given && values[0]!="":
         api.call_fail(call,api.INVALID_PARAMS,"give to or target, not both");return
-    case p.target!=0:
-        e:=core.entity_of(core.world_entities(w),p.target)
-        pose,placed:=core.get(core.read(worlds),e)
-        if !placed {api.call_failf(call,api.INVALID_PARAMS,"target %016x is not an entity of the game with a place: play.inspect lists them",u64(p.target));return}
+    case given:
+        known:bool
+        if target,known=editor.api_call_entity(call,w,p.target[:],"target",game=true);!known {return}
+        pose,placed:=core.get(core.read(worlds),target)
+        if !placed {api.call_failf(call,api.INVALID_PARAMS,"target %q has no place in the world: play.inspect lists the entities",base.text_get(p.target[:]));return}
         goal=pose.position
     case values[0]=="":
         api.call_fail(call,api.INVALID_PARAMS,"give to (a point of the world) or target (an entity)");return
     }
-    if !n.ready || n.count==0 {api.call_fail(call,api.INVALID_PARAMS,"The navigation meshes are not made yet: play.step until nav.status says ready");return}
+    // A game that just started makes its meshes in its first ticks: they count in the limit.
+    ran:=0
+    for (n==nil || !n.ready || n.count==0) && ran<limit {
+        if !editor.play_tick(s,r) {api.call_failf(call,api.SERVER_ERROR,"The game ended after %d ticks of the walk",ran+1);return}
+        ran+=1
+        w=editor.run_ref(s,r)
+        n=core.world_storage_of(w,nav.Navigation)
+    }
+    if n==nil || !n.ready || n.count==0 {api.call_failf(call,api.INVALID_PARAMS,"The navigation meshes were not ready after %d ticks: the physics of the game must be ready and Navigation_Settings must have a class (nav.status), or give it more ticks",ran);return}
+    if ran>0 {
+        requests,agents,paths,characters,worlds=core.world_storage_of(w,nav.Nav_Requests),core.world_table_of(w,nav.Nav_Agent),core.world_table_of(w,nav.Nav_Path),core.world_table_of(w,phys.Character),core.world_table_of(w,core.World_Transform)
+        if !core.has(characters,body) {api.call_failf(call,api.INVALID_PARAMS,"Body %016x stopped being a Character while the navigation meshes were made",u64(body));return}
+        if given {
+            if pose,placed:=core.get(core.read(worlds),target);placed {goal=pose.position}
+        }
+    }
 
     // A seated agent for the walk; what the body was before comes back after.
     added:=!core.has(agents,body)
@@ -122,9 +146,8 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
 
     watch:Walk_Watch
     state:=Walk_State.Timeout
-    ran:=0
     path:nav.Nav_Path
-    for ran<p.ticks {
+    for ran<limit {
         if !editor.play_tick(s,r) {api.call_failf(call,api.SERVER_ERROR,"The game ended after %d ticks of the walk",ran+1);return}
         ran+=1
         w=editor.run_ref(s,r)

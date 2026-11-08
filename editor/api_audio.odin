@@ -94,7 +94,7 @@ Api_Audio_Stop_Result :: struct {
 }
 
 @(private)
-SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"string","description":"A sound set: its path under the assets folder, or its id"},"path":{"type":"string","description":"sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound ids, as asset.list gives them"}},"additionalProperties":false}`
+SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"string","description":"A sound set: its path under the assets folder, or its id"},"path":{"type":"string","description":"sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound paths or ids, as asset.list gives them"}},"additionalProperties":false}`
 
 @(private)
 Api_Sound_Set_Result :: struct {
@@ -259,7 +259,7 @@ sound_set_write :: proc(s:^Session,id:base.Asset_Id,info:asset.Sound_Set_Info) -
 api_sound_set_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
     info,read:=sound_set_file(s,id)
     if !read {
-        api.call_fail(call,api.SERVER_ERROR,"The sound set could not be read")
+        api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"sound set"))
         return
     }
     out:=call.out
@@ -297,7 +297,7 @@ api_sound_set_set :: proc(s:^Session,call:^api.Call) {
     if !t.created {
         loaded:bool
         if info,loaded=sound_set_file(s,t.id);!loaded {
-            api.call_fail(call,api.SERVER_ERROR,"The sound set could not be read")
+            api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,t.id,"sound set"))
             return
         }
     }

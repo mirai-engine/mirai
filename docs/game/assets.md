@@ -40,9 +40,9 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
   project has: `--skeleton <id>` ([animation](animation.md)).
 - Importing again from the same path updates in place, keeping ids and material edits; after
   moving or renaming the source pass `--into <id>` of its prefab, texture or sound.
-- With an editor session: `asset.import` (MCP `asset_import`), then `mirai rpc
-  asset.import_status --project . --wait-until importing=false`; after a CLI import,
-  `asset.reload`. `asset.list` shows what exists; `engine.describe` the method fields.
+- With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
+  wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what
+  exists; `engine.describe` the method fields.
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font`
@@ -56,15 +56,15 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
 
 - A `base.Asset_Id` field of a component holds an id; tag it `mirai:"kind=.tex"` (several:
   `kind=.anim .match`) so the inspector lists only those; fill it in the scene or prefab.
-- Imported ids are random: read them with `asset.list` or `mirai asset ls assets`. A constant in
-  code is only for assets your own tool writes with `base.asset_id_named`.
-- What only code refers to (a prefab spawned by id) ships only as a root in `cook.mirai`:
-  `{"roots":["prefabs/Enemy.prefab","sounds/"]}` (path under `assets/`, folder with `/`, or id).
+- The API takes an asset by its path under `assets/`, with or without its extension, or its id. A
+  constant in code is only for assets your own tool writes with `asset.content_id`.
+- Scenes, prefabs and `.records` ship. Other assets only code names need a root in `cook.mirai`:
+  `{"roots":["materials/Chrome.mat","sounds/"]}` (path under `assets/`, folder with `/`, or id).
 - Texts: `host.strings_text(host.content_strings(app,id),base.name_hash("en"),
   base.name_hash(key))` gives `(text,found)`. `mirai texts export|import <file.csv>` moves the
   translations of `.ui` files through the open editor.
 - Game data: a struct tagged `@(record)` is a catalog (items, dialogue, waves) whose rows live in
-  a `.records` file (`asset.create` kind `records`; `records.add`, `records.set`). A
+  a `.records` file (`records.create`; `records.add`, `records.set`). A
   `core.Record(T)` field names a row; read it with `core.record(rows,ref,problems,entity)`.
 
 ## Inspect
@@ -75,6 +75,6 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.
-- An asset only code uses, missing from `cook.mirai`: works in Play, absent from the build.
+- A material only code uses, missing from `cook.mirai`: works in Play, absent from the build.
 - Roughness or ORM imported as color: `--data`. DirectX normals: `--normal-green-down`.
 - `.ttc` and `.woff` fonts, three or more audio channels, Draco or meshopt indices: refused.

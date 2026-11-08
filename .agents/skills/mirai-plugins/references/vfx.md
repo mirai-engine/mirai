@@ -201,9 +201,9 @@ had, from its first cell (x fastest, then y and z), with their layers.
   another: `particles_frame` reads it and puts it in the order in which the grid stores its cells,
   and the pass writes it into its two copies. One of other cells or layers is the `vfx.grid`
   problem.
-- `particle.grid.bake` asks for the cells that the next frame's steps leave (`grid_bake_ask`); an
-  editor step writes the `.grid` when they come back from the GPU, frames later
-  (`grid_bake_take`), like a project edit.
+- `particle.grid.bake` asks for the cells that the next frame's steps leave (`grid_bake_ask`) and
+  holds the call, advancing frames, until they come back from the GPU (`grid_bake_take`): it
+  writes the `.grid` as a project edit and answers its path, or fails if they do not come back.
 - `follow_view` centers the region, instead of on its entity, toward where the view's center looks
   at the plane at the entity's height, without passing what leaves inside what the view's bottom
   edge sees (`VIEW_NEAR`; the water waves): a high camera sees the waves where it looks and a low
@@ -568,4 +568,4 @@ they light everything within their reach, without shadow rays or a place in thos
   `prefabs/physics_burst.prefab` (station 11 with `trigger` 1 and `simulation.start`), and
   `particle.*` creates, changes and controls effects
   ([methods](../../mirai-agent-api/references/methods.md#components-and-assets)); a `Surface` effect
-  over a mesh and another bound to a sphere (`Particle_Bindings`) are seen in `editor.capture`.
+  over a mesh and another bound to a sphere (`Particle_Bindings`) are seen in `capture`.

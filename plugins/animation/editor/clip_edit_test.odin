@@ -103,6 +103,12 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     testing.expect(t,edited.marker_count==1 && abs(view.markers[edited.first_marker].time-1)<.02)
     testing.expect(t,edited.root.translation && base.text_get(edited.root.bone[:])=="root")
 
+    // A skeleton that stores no body has one found for the call: an Offset of a part works.
+    plain:=base.Asset_Id{812,3}
+    testing.expect_value(t,aa.skeleton_save(fmt.tprintf("%s/plain.skeleton",f.root),&f.assets.types,{id=plain,bones=body_test_figure()}),aa.Error.None)
+    result=authoring_test_execute(f,"edit",fmt.tprintf(`{{"asset":"%s","skeleton":"%s","path":"found.anim","edits":[{{"verb":"Offset","part":"Head","direction":"Forward","strength":"Medium"}}]}}`,authoring_test_id_text(animation),authoring_test_id_text(plain)))
+    testing.expectf(t,result.code==0,"%s %s",result.message,result.data)
+
     // What a step needs, and what is not there, says so.
     result=authoring_test_execute(f,"edit",fmt.tprintf(`{{%s,"edits":[{{"verb":"Offset","part":"Head"}}]}}`,ids))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"edits[0].direction"`) && strings.contains(result.data,`"fix":`))

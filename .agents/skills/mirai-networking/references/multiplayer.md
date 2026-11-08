@@ -52,7 +52,7 @@ Usually its prefab carries it: everything that appears from that prefab is repli
     the object, like what is disabled before having one, which is created when it is enabled.
   - What a client holds or each end simulates carries only the bit of its creation.
   - It occupies its place in `max_objects` and `state_words` while it is disabled.
-- A client makes the entity from the prefab of the pose (`scene.spawn`, `transient`), takes it from
+- A client makes the entity from the prefab of the pose (`scene.spawn_prefab`, `transient`), takes it from
   the scene if it has that `Id`, or makes it empty; the one of a section it has not loaded waits
   for it to load.
 - A replicated component that names an entity the other end does not have (it has not arrived yet,

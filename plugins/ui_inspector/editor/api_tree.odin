@@ -158,6 +158,7 @@ Tree_Args :: struct {
     types:^asset.Types,
     registry:^asset.Registry,
     asset:base.Asset_Id, // the .ui edited; tree_open sets it
+    session:^editor.Session,
 }
 
 @(private)
@@ -191,7 +192,7 @@ tree_object :: proc(call:^api.Call,text:string,what:string) -> (keys,values:[dyn
 
 @(private)
 tree_args :: proc(s:^editor.Session,call:^api.Call) -> (args:Tree_Args,ok:bool) {
-    args.call=call
+    args.call,args.session=call,s
     if a:=s.app.assets;a!=nil {args.types,args.registry=&a.types,&a.registry}
     args.keys,args.values,ok=tree_object(call,call.raw,"params")
     return
@@ -234,13 +235,12 @@ tree_arg_bool :: proc(args:^Tree_Args,key:string) -> (value,ok:bool) {
 tree_open :: proc(s:^editor.Session,args:^Tree_Args,records:^Records) -> (id:base.Asset_Id,ok:bool) {
     text,found,read:=tree_arg_string(args,"asset")
     if !read {return}
-    if !found {api.call_fail(args.call,api.INVALID_PARAMS,"asset is required: the id of a .ui of the project (asset.list kind ui)");return}
-    parsed:bool
-    id,parsed=serial.text_parse_asset_id(text)
-    if !parsed {api.call_failf(args.call,api.INVALID_PARAMS,"asset '%s' is not an asset id",text);return}
+    if !found {api.call_fail(args.call,api.INVALID_PARAMS,"asset is required: the path of a .ui of the project or its id");return}
+    problem:string
+    if id,problem=editor.asset_resolve(s,text,".ui");problem!="" {api.call_failf(args.call,api.INVALID_PARAMS,"asset: %s",problem);return}
     a:=s.app.assets
     if a==nil || !records_read(a,id,records,args.call.allocator) {
-        api.call_failf(args.call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the id of a .ui of the project (asset.list kind ui)",text)
+        api.call_failf(args.call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the path of a .ui of the project or its id",text)
         return
     }
     args.asset=id
@@ -310,7 +310,7 @@ tree_fields_read :: proc(call:^api.Call,types:^asset.Types,$T:typeid,value:^T,te
             return false
         }
         r:serial.Text_Reader
-        serial.text_reader_init(&r,tree_broadcast(types,field.type,values[i]),call.allocator)
+        api.call_reader_init(call,&r,tree_broadcast(types,field.type,values[i]))
         if !serial.text_read(&r,&types.schema,field.type,bytes[field.offset:],.Text in field.flags) {
             api.call_failf(call,api.INVALID_PARAMS,"%s",serial.text_error_message(&r,fmt.tprintf("%s.%s",what,key),call.allocator))
             return false
@@ -510,9 +510,9 @@ tree_node_add :: proc(args:^Tree_Args,r:^Records,parent,before:int) -> int {
     if named && !tree_name_free(call,r,-1,name) {return -1}
     row:int
     if widget_text,has_widget,widget_ok:=tree_arg_string(args,"widget");!widget_ok {return -1} else if has_widget {
-        widget,parsed:=serial.text_parse_asset_id(widget_text)
+        widget,problem:=editor.asset_resolve(args.session,widget_text,".ui")
         record,found:=asset.registry_find(args.registry,widget)
-        if !parsed || !found || record.kind!=asset.KIND_UI || widget==args.asset {api.call_failf(call,api.INVALID_PARAMS,"widget '%s' is not another .ui of the project",widget_text);return -1}
+        if problem!="" || !found || record.kind!=asset.KIND_UI || widget==args.asset {api.call_failf(call,api.INVALID_PARAMS,"widget '%s' is not another .ui of the project",widget_text);return -1}
         row=records_widget(r,-1,parent,widget,name if named else "widget")
     } else {
         kind_text,has_kind,kind_ok:=tree_arg_string(args,"kind")

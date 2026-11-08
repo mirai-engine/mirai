@@ -50,7 +50,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   `ai.commit(a, score)` on `Enter` so it finishes; stun and death propose above everything.
 - **Cooldowns:** `ai.mind_ready(&agent.state, .Slam, time.seconds, 5)`, `agent` a `Mind_Agent`.
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
-  `ai.reserve_free(...)`; the rest circle. Tokens release on `Exit`.
+  `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
 - **Hearing:** `behavior.noise(noises, position, loudness, maker)`; a `Perceiver` hears
   within `loudness` times its `hearing`. Both senses feed `Perception.memory`.
 - **Use the world:** a smart object offers a use; `think` proposes going if one is open and

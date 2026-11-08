@@ -2,6 +2,7 @@ package input
 
 import "mirai:core"
 import "mirai:host"
+import mm "mirai:std/math"
 
 // Who drives what. A seat is someone who plays: at this machine (a slot), or
 // at another end of the network (a peer, which the network seats on a
@@ -153,6 +154,14 @@ body_of :: proc(drivables:core.Read(Drivable),seat:core.Entity) -> core.Entity {
 seat_of :: proc(drivables:core.Read(Drivable),body:core.Entity) -> core.Entity {
     value,ok:=core.get(drivables,body)
     return ok?value.seat:core.NONE
+}
+
+// The ray of the view of a body: from its Drivable.camera, where it looks, as
+// the player sees it, whatever the mode of the camera. False without a camera.
+aim :: proc(drivables:core.Read(Drivable),worlds:core.Read(core.World_Transform),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
+    drivable:=core.get(drivables,body) or_return
+    placed:=core.get(worlds,drivable.camera) or_return
+    return placed.position,mm.quat_rotate(placed.rotation,[3]f32{0,0,-1}),true
 }
 
 // The seat of a local slot; none without one.

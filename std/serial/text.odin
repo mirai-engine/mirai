@@ -336,6 +336,7 @@ Text_Error_Code :: enum u8 {
     Too_Many_Elements,
     Text_Too_Long,
     Invalid_Id,
+    Unknown_Asset,     // a text a reader with assets could not take for one: names says why
     Too_Deep,
     Invalid_Type,      // the type is not of the schema, or the destination is shorter than it
 }
@@ -362,6 +363,16 @@ Text_Reader :: struct {
     error:Text_Error,
     scratch:[dynamic]u8,
     names:[dynamic]u8, // of the error
+    assets:Text_Assets,
+    asset_kinds:string, // of the field being read
+}
+
+// How a reader that knows the assets takes a name for one where an Asset_Id
+// goes, besides its id. kinds: the extensions the field holds, separated by
+// spaces; "": any. problem says what is wrong with the name; "": found.
+Text_Assets :: struct {
+    user:rawptr,
+    resolve:proc(user:rawptr,name,kinds:string) -> (id:base.Asset_Id,problem:string),
 }
 
 text_reader_init :: proc(r:^Text_Reader,text:string,allocator:=context.allocator) {
@@ -455,6 +466,7 @@ text_error_message :: proc(r:^Text_Reader,prefix:="",allocator:=context.allocato
     switch {
     case e.code==.Unknown_Member && named && e.names!="": parts={`"`,name,`" is not one of `,e.names}
     case e.code==.Unknown_Field && named && e.names!="":  parts={`"`,name,`" is not a field: the fields are `,e.names}
+    case e.code==.Unknown_Asset:                          parts={e.names}
     case:                                                 parts={text_error_words(e.code)}
     }
     for part in parts {append(&out,part)}
@@ -478,6 +490,7 @@ text_error_words :: proc(code:Text_Error_Code) -> string {
     case .Too_Many_Elements: return "too many elements"
     case .Text_Too_Long: return "text too long"
     case .Invalid_Id: return "invalid id"
+    case .Unknown_Asset: return "no such asset"
     case .Too_Deep: return "nesting too deep"
     case .Invalid_Type: return "a type that is not of the schema, or a destination shorter than it"
     }
@@ -793,6 +806,19 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
     case .Asset:
         text:=text_string(r) or_return
         id,ok:=text_parse_asset_id(text)
+        if !ok && r.assets.resolve!=nil {
+            problem:string
+            if id,problem=r.assets.resolve(r.assets.user,text,r.asset_kinds);problem!="" {
+                if r.error.code==.None {
+                    r.error={code=.Unknown_Asset,offset=start}
+                    clear(&r.names)
+                    append(&r.names,problem)
+                    r.error.names=string(r.names[:])
+                }
+                return false
+            }
+            ok=true
+        }
         if !ok {return text_fail(r,.Invalid_Id,start)}
         intrinsics.unaligned_store((^base.Asset_Id)(raw_data(bytes)),id)
         return true
@@ -809,6 +835,7 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             }
             if found==nil {return text_fail_names(r,.Unknown_Field,at,nil,s.fields[type.first:][:type.count])}
             text_expect(r,':') or_return
+            r.asset_kinds=found.asset_kinds
             part:=bytes[found.offset:][:s.types[found.type].size]
             if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
                 text_error_within(r,found.name)

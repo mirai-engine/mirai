@@ -382,7 +382,7 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         bind_only(p,"Value",n.bind_value[:],.Number,"It is selected while this value is what it writes, and choosing it writes it there")
         edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What choosing it writes in its value"))
     case .Switcher:
-        if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
+        if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds; bound to an enum or a text, the node of that name") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
     case .Tabs:
         if bindable(p,"Tab",n.bind_value[:],.Number,"The tab it shows, and where it writes the one the player chooses: 0 is the first node it holds") {edit(u,"Tab",value_row(p,"Tab",Count_Value,&n.index,d.index,"The tab it shows first: 0 is the first node it holds"))}
     case .Popup:

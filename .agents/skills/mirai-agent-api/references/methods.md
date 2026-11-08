@@ -84,16 +84,15 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   `Loading`), its box in the world and its cost (`entities`, `meshes`, `textures`, `gpu_bytes` of
   its assets on the GPU now and `file_bytes`); the streaming sources and the camera.
 - `editor.section_view`: `id` and `state` (`Active`, `Loaded`, `Unloaded` or `Auto`): turns it on,
-  off or back to the default in the editor view, without editing. It loads in the following
-  frames: wait with `editor.sections` and `--wait-until` on its `shown`.
+  off or back to the default in the editor view, without editing. It answers once it is loaded.
 - `editor.section_travel`: `id`: takes the camera to the section and turns it on in the view if
-  what asks for it does not ask for it active.
+  what asks for it does not ask for it active, loaded when it answers.
 - `editor.section_preview`: `id` of an entity with `Scene_Reference`: the editor draws the `Sky`
   and the `Sun` of its section instead of the enabled ones, and the view takes the look of the
   inside of its box; `id` 0 goes back. Only in Edit; returns the `{sky,sun}` drawn (0 where the
   section has none).
-- `editor.select`: selects `ids`; the last one becomes active and none clears. An id that is not in
-  the scene is `-32602`. A different selection is an undo step of the caller
+- `editor.select`: selects `entities`; the last one becomes active and none clears. What names no
+  entity is `-32602`. A different selection is an undo step of the caller
   ([selection in undo](../../mirai-editor/references/document.md#selection-in-undo)).
 - `editor.material`: opens and brings to the front the
   [document](../../mirai-editor/references/panels.md#material-document) of `material`, picks
@@ -110,33 +109,46 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - Held keys and buttons replace those of the previous event.
   - `mouse_position` and `mouse_delta` do not go together; `text` is printable ASCII.
   - Keys by `core.Key` name (`W`, `Left_Control`, `F5`); the Mac Cmd is `Left_Super`.
-- `editor.capture`: requires a GPU. Draws `warmup_frames` frames (0 to 3600; at least one) and
-  writes a PNG. With a `.ui` in front (`editor.document`) and `ui:true` the image is its document.
+- `capture`: the only image of the editor and the game; requires a GPU. Draws `frames` frames (0:
+  what the image needs) and writes a PNG. What it shows:
+  - `ui:true`: the last frame of the window with the editor around what it shows, as the user sees
+    it; with a `.ui` in front (`editor.document`) the image is its document. `width`, `height` and
+    `of` do not go with it. A turn's own run is never in the window.
+  - Without `ui`, the image alone. `of` is `Game` (the caller's game through its camera with its
+    game UI, drawn offscreen; a turn's run and the user's Play alike), `Scene` (what the viewport
+    shows through its camera, the editor's in Edit and Simulate and the game's in a Play that has
+    one, with the inspection mode of the tab and without panels, gizmos, lines, grid, selection or
+    game UI) or `Auto`, by default: `Game` while the caller has one playing, otherwise `Scene`.
+  - The image alone is `width` x `height` (0 to 4096): one side at 0 keeps the proportion of what
+    it shows and both at 0 give its size. Drawn offscreen, the temporal effects of a game start
+    over in that view (`frames` lets them settle): to measure stability frame to frame, use
+    `ui:true`.
   - `path`: absolute (`C:/x.png`, or `/c/x.png` as Git Bash writes it) or relative to the folder of
     the project the editor opened, never to that of the process. The folder is created. The result
     brings the absolute path written and the size, with no image data; without `path` the PNG goes
     in `.mirai/captures/` and over MCP it comes back as an image.
   - Before drawing it opens the file for writing without changing it: if it cannot, it fails with
-    the path and the system reason (`permission denied`…), or `-32602` if the path is a folder or
+    the path and the system reason (`permission denied`...), or `-32602` if the path is a folder or
     has a root without a drive (`/tmp/x.png` on Windows).
-  - `region` `[x, y, width, height]` keeps that part, in pixels from the top left of the image:
-    the window with `ui`, `width` × `height` without it. A part outside the image is `-32602` with
-    its size. `width` and `height` of the result are those of the part.
-  - `ui` (true): the last frame of the window with the UI; `width` and `height` are omitted.
-  - `ui:false`: afterwards draws 8 frames of the shown world alone, from the viewport camera (the
-    editor's in Edit and Simulate; the game's in a Play that has one), with the inspection mode of
-    the tab and without panels, gizmos, lines, grid, selection or game UI.
-  - With `ui:false` the image is `width` × `height` (0 to 4096): one side at 0 keeps the viewport
-    proportion (the scene under the bars) and both at 0 give its size: the same framing as the
-    window.
+  - `region` `[x, y, width, height]` keeps that part, in pixels from the top left of the image. A
+    part outside the image is `-32602` with its size. `width` and `height` of the result are those
+    of the part.
   - `seconds` (0 or more) sets the window clock, the one the renderer draws, when the frames
     start: a scene loaded anew and captured at the same seconds draws the same. Without it the
-    clock keeps running.
+    clock keeps running. A game runs by its ticks, so `dt` and `seconds` do not go with it.
+  - Filmstrip (`every` or `every_seconds`, and `count`): steps the caller's own run like
+    `play.step` (pausing the user's Play), with `segments` as its input and nothing held after
+    them, and draws a cell before the first tick and every `every` ticks: the whole image, a
+    `region` in points, or a cell of `size` centered where the `follow` entity (its name, id or
+    handle) projects through the game camera (with `ui`, inside the viewport). One PNG, cells left
+    to right and top to bottom with their tick in the corner, scaled down past a sheet width;
+    `structuredContent` gives each cell's tick.
   - It changes neither the document nor the history.
   - A job compresses and writes the PNG: with a window the editor keeps drawing; a manual one
     waits without advancing frames.
-- `view.viewport`: the snapshot saved when the message was sent, without advancing frames or
-  recapturing; fails if it does not exist or exceeds the response limit.
+- `view.viewport`: the snapshot saved when the message of the caller's turn was sent (`request`
+  names another of its folder under `.mirai/ai`, and outside a turn it is required), without
+  advancing frames or recapturing; fails if it does not exist or exceeds the response limit.
 - `editor.view_mode.list` and `editor.view_mode.set`: the core
   [inspection modes](../../mirai-editor/references/panels.md#inspection-mode),
   `collision` and `collision.<layer>` per object layer, and those the plugins declare in that frame
@@ -145,7 +157,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     document, is `-32602` with the reason.
   - In Play the lit image of the game is shown; the mode comes back on returning to Edit. A mode of
     a plugin that stops being declared goes back to `lit`.
-  - `collision` are lines: `editor.capture` with `ui:false` does not include them.
+  - `collision` are lines: `capture` without `ui` does not include them.
 - `editor.recover`: fails without a pending copy. While it waits, Play, Simulate and document edits
   are blocked
   ([recovery](../../mirai-editor/references/document.md#recovery-and-failures)).
@@ -154,7 +166,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `position` and `target` are 3 numbers and must differ; `yaw` and `pitch`, radians.
   - `fov`: vertical degrees from 1 to 170. It is editor camera state: it starts at 50 and is kept
     with the camera of each document and on returning from Play.
-  - `entity` (id of an entity with a perspective `Camera`) copies its position, where it looks and
+  - `entity` (one with a perspective `Camera`) copies its position, where it looks and
     its FOV without modifying the scene; it excludes `position`, `target`, `yaw` and `pitch`, and
     `fov` and `distance` apply on top. It takes its `Exposure` (`exposure:"Camera"`); without one,
     that of the scene.
@@ -181,6 +193,8 @@ projects; `names.create` declares a new one. Categories, sensors, presets and gr
   `settings.set`, by name.
 - `physics.collision.get` reads the shown world (the document in Edit, the copy in Play or
   Simulate) and gives what rules: from the preset or its own.
+- Without `component`, get and set take the only collision component of the entity; with several
+  or none, the error lists them.
 - `physics.collision.set`: only in Edit, in a single undo; keeps `group` and the other fields.
   `preset` makes it follow that preset and `custom` saves as its own what rules; `sensor`,
   `belongs` and `collides` make the collider custom starting from what rules. An unknown name or an
@@ -201,16 +215,15 @@ with `animation.analyze` and `animation.capture` before touching keys.
 
 The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.set`
 on their components. In Edit, `cinematics.control` drives the preview of the Cinematics tool: the
-document does not change and the image shows in the next frame (`editor.capture`); in Play it
+document does not change and the image shows in the next frame (`capture`); in Play it
 queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
 
 ## Ragdoll
 
 `ragdoll.setup` (plugin `ragdoll`) builds the bodies, colliders, joints and the `Ragdoll` of a rig
-from the body stored in its `.skeleton`: only in Edit and in a single undo. It fails without
-changes if the skeleton has no body (`Missing_Body_Map`: run `skeleton.body.detect`) or if the rig
-already has a ragdoll (`Ragdoll_Exists`: pass `replace`). Parts, shapes and joints:
+from the body of its `.skeleton`, detected in memory if it stores none: only in Edit and in a
+single undo, which also replaces the ragdoll the rig had. Parts, shapes and joints:
 [setup](../../mirai-plugins/references/ragdoll.md#setup-by-api).
 
 ## Interfaces
@@ -266,7 +279,7 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   cheaper).
 - It refuses to measure with graphics API validation or, in a window, with VSync or a frame limit:
   the frame would last the limit and not the cost. The error says how to turn each off
-  (`graphics.set` or open without `--validation`). `allow_limited:true` measures anyway and the
+  (`settings.set` or open without `--validation`). `allow_limited:true` measures anyway and the
   summary says `comparable:false`; a headless editor waits for neither the display nor a limit.
 - `profile.compare` gives `comparable:false` with a blocking difference in conditions or if either
   of the two is not `comparable`.
@@ -335,8 +348,8 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
 ([protocol](api.md#concurrency-transactions-and-undo)).
 
 - `scene.inspect` (`read_only`): free-form result
-  `{revision,path,dirty,playing,total,offset, entities[],shown,matched,omitted}`.
-  - Filters: `id` (only that entity); `name` (exact name; `*` stands for any sequence and case is
+  `{path,dirty,playing,total,offset, entities[],shown,matched,omitted}`.
+  - Filters: `entity` (only that one); `name` (exact name; `*` stands for any sequence and case is
     significant); `component` (only the entities that have it, by its name, case-insensitive; an
     unknown one is `-32602`).
   - `summary` (false): each entity is only `{id,name,parent,components:[names]}`, without place,
@@ -362,12 +375,12 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
     `scene.inspect` are the document's.
 - On a large game, `summary:true` with `name` or `component`; `omitted` says how many were left
   out.
-- `scene.add`: creates an entity; everything is optional. Returns `{id,revision}`.
-- `scene.set`: changes an entity; `parent:null` makes it a root. A member of an instance that is
+- `scene.add`: creates an entity; everything is optional. Returns `{id}`.
+- `scene.set`: changes `entity`; `name` renames it and `parent:null` makes it a root. A member of an instance that is
   not its root keeps the `parent` the prefab gives it.
-- `scene.delete`: destroys the entity and what hangs from it. A member of an instance that is not
+- `scene.delete`: destroys `entity` and what hangs from it. A member of an instance that is not
   its root is not deleted: it is turned off with `scene.set` `enabled` false.
-- `scene.duplicate`: returns the id of the copy; it and what hangs from it get new ids.
+- `scene.duplicate`: copies `entity` and returns the id of the copy; it and what hangs from it get new ids.
 - `scene.write`: makes `root`, or without it a new root, and what hangs from it say what
   `entities` declares (that entity, with the rest nested by `children`), in one step:
   - Matches by `id` (an entity of the subtree may change parent inside it), else by `name` among
@@ -389,7 +402,7 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
     (`entities[0].children[2].components.Light: …`) and changes nothing.
   - Changing a few fields of scattered entities is for `scene.set`.
 - `scene.batch`: from 1 to 64 `{method,params}` with `scene.add`, `scene.set`, `scene.delete` or
-  `scene.duplicate` in one step. Returns `{revision,results:[{id}]}` in order; if one fails none is
+  `scene.duplicate` in one step. Returns `{results:[{id}]}` in order; if one fails none is
   applied and the message starts with `operations[N]:`.
 - `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
   becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
@@ -402,7 +415,7 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
 - `enabled` is `false` if the entity has its own `Disabled`; `active`, if it or something above it
   has it ([turned off](../../mirai-core/references/core.md#disabled-entities)). `off` lists the
   components turned off by themselves, which `components` shows with their values.
-- `parent` is an id or `null`. `prefab`, if it is a member of an instance:
+- `parent` is an id or `null` in what it returns; a param `parent` names an entity as any other. `prefab`, if it is a member of an instance:
   `{instance,asset,source,root}`.
 - `components` is `{Name:{fields}}` with those the scene stores and the inspector lists; not
   `Transform`, `Name`, `Id`, `Parent`, `Hidden` or `Disabled`, which have fields of their own.
@@ -467,7 +480,9 @@ foliage) at the place the locals give them, with the edits of the same frame.
 
 ## Editor documents
 
-- `editor.document`:
+- `editor.document`: a document goes by its `path`, as `editor.documents` lists tabs and asset
+  documents; without it `Activate` and `Preview_Sun` are the active tab and `Close` the asset
+  document in front when one is.
   - Opening an already open file activates its tab; activating or opening a scene brings it to the
     front. `Open` of an asset that is neither scene nor prefab opens its
     [document](../../mirai-editor/references/document.md#asset-documents); one of a type
@@ -512,7 +527,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   in a networked game of a turn all its runs advance and the input goes to that of `player`.
   - Input: keys, buttons, `mouse_position`, `text` and gamepads arrive through the path of real
     input. The pointer stays where a step leaves it and the game UI takes it with its clicks
-    (window points: the image of `play.capture` over the density). The UI of a turn's run sees
+    (window points: the image of `capture` over the density). The UI of a turn's run sees
     only what its steps give, never the user's pointer.
   - Local seats (`play.start players`): gamepad `slot` i belongs to seat i; keyboard and mouse go
     to the focused seat, which `focus` changes like `input.focus`.
@@ -535,7 +550,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
     component the entity does not have yet; later, what is gone is `null`. With `view` the
     entities named are its `points`.
 - `play.check` (`read_only`): each condition reads a field (`field` with dots and indices) of a
-  component of an entity (by `entity`, `id` or `name`), of a storage or of the `view`, as
+  component of an `entity`, of a storage or of the `view`, as
   `play.inspect` or `play.view` write them, and compares it with `number` or `text`; without a
   component, the entity gives its `world_position`. With `view` the entity named is `points.0`.
   `Exists` and `Gone` say whether the entity, the component or the field is there: what is not
@@ -565,33 +580,22 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   nothing; the kind comes from the run's input map and a value
   that does not fit it is `-32602`. They act from the next tick for whole ticks: `play.input` and
   then `play.step` give the same game every time, paused or not. The seat is the focused local
-  one, another by `slot`, or a local one by handle. In a networked game a player is held in the
+  one, another by `slot`. In a networked game a player is held in the
   run of its client (`player`), whose seat sends the held actions to the server with the others;
   the seat of a connection in the server's run is refused, since it takes what its client sends.
+  An action is held for `ticks` or `seconds`, the nearest whole ticks.
   Typical test: hold `jump` for 1 tick, `play.step` 30 ticks with a `trace` of the height (or
-  `play.capture` with a filmstrip that follows the body), `play.check` the height.
+  `capture` with a filmstrip that follows the body), `play.check` the height.
   - `segments` instead schedule devices, as in `play.step`, through the path of real input (taps,
     holds, double presses and thresholds of the actions see them as a person's): the following
     ticks the API runs without input of their own (`play.step`, a filmstrip, `play.walk`) play them
     one by one, and nothing is held after them. They replace what was left of earlier ones;
     `release_all` drops them, and `scripted` in the play results counts the ticks left. Keys and
-    mouse go to the focused seat and gamepad i to seat i, so `slot` and `seat` fail beside them
+    mouse go to the focused seat and gamepad i to seat i, so `slot` fails beside them
     alone. The user's Play pauses; `play.record` fails while some are left.
 - `play.walk` (registered by the `navigation` plugin): walks the body of a seat to a point or
   an entity tick by tick through the meshes and says how it ended
   ([walk](../../mirai-plugins/references/navigation.md#editor-and-api)).
-- `play.capture`: requires a GPU. The game is drawn offscreen with its camera and its game UI,
-  without the editor (a turn's run and the user's Play alike); `ui:true` takes the user's Play as
-  the window shows it, editor around it. Drawn offscreen, its temporal effects start over in that
-  view (`frames` lets them settle): to measure stability frame to frame, use `editor.capture` with
-  `ui:true`. A job writes the PNG; `path` follows the rule of `editor.capture` (the answer is the
-  file and its size, with no image data; without it `.mirai/captures/` and the image over MCP).
-  - Filmstrip (`every` and `count`): steps the caller's own run like `play.step` (pausing the
-    user's Play), with `segments` as its input and nothing held after them, and draws a cell
-    before the first tick and every `every` ticks: the whole image, a `region`, or a cell of
-    `size` centered where the `follow` entity projects through the game camera (with `ui`, inside
-    the viewport). One PNG, cells left to right and top to bottom with their tick
-    in the corner, scaled down past a sheet width; `structuredContent` gives each cell's tick.
 - `play.record`: requires a GPU. Deletes the previous sequence in the folder, pauses the run,
   advances it `1/fps` of game time per frame (with its `Clock`), draws the world alone through the
   camera of its `View`, without screen UI, and writes `frame_000000.png` (16 bits, after the
@@ -609,8 +613,9 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   ticks, paused, playing the frames again from the previous copy; `matches` false says that what
   was played again is not what was seen. Fails with the range if the tick is older
   ([history](../../mirai-editor/references/editor.md#play)).
-  - Both take `run`, the id `play.history` returns; without it, the caller's run or else the user's
-    last Play kept after Stop (`stopped`), which `play.seek` opens again paused outside a turn.
+  - Both act on the caller's run or else the user's last Play kept after Stop (`stopped`), which
+    `play.seek` opens again paused outside a turn. Ticks may be given as game time: `seconds` of
+    `play.seek` and `from_seconds` and `to_seconds` of `play.history`.
   - Both `trace` and `verify` play the kept frames again on the run's World and put it back after:
     the game, paused or playing, stays as it was. A trace takes the syntax of `play.step`'s and
     gives a row per kept frame that reached `every` ticks past the previous row (a frame that ran
@@ -623,16 +628,18 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   comes from the monitors when `play.qa.start` armed them, else from comparing the place
   between two observes while the body asks to move. `play.step` with `observe` answers only
   `ran`, `met` and this, so one call is act plus observe.
-- `play.qa.start` and `play.qa.report`: monitors of the ticks the API runs. Armed, a tick writes
-  into what `play.qa.start` reserved, and a run without them tests one pointer per tick.
+- `play.qa.start` and `play.qa.report`: monitors of the ticks the API runs. The first call of the
+  API on a run reserves the log of its inputs, which a tick writes into; a run the API never
+  touched tests one pointer per tick.
   - They count only those ticks: what the user's unpaused Play runs is not seen, and repros
     refuse a run that advanced or went back outside them.
   - `Frame_Time` and `Memory` measure the machine (`Memory` is growth since the start): their
     repros do not fail reliably. The others are of the game and repeat with it.
   - A repro is a regression test: it fails while the bug exists and passes once it is fixed. It
     plays the inputs from tick 0 (holds, devices and the changes of `play.set`, `play.spawn`,
-    `play.destroy` and `play.push`) and ends in a `play.check` with `qa` on the count of that kind;
-    `play.qa.start` right after `play.start` is what makes it possible. Clicks replay at the same
+    `play.destroy` and `play.push`), starts the monitors where the run did and ends in a
+    `play.check` with `qa` on the count of that kind; the monitors may start at any tick, but
+    every tick from the first must come from the API. Clicks replay at the same
     window size.
   - In a scenario, a step `play.qa.report` fails it on any violation; `qa` of `play.scenario.run`
     arms them on every file and adds the report.
@@ -657,7 +664,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   whole before the game starts, with the step and why. Outside a turn it opens the scenario's
   scene if the document is another without unsaved changes; in a turn the document must be that
   scene. It fails a scenario while a game of the caller already plays, and when `play.start`
-  answers `building`. Steps hold the server like `play.step`; the response buffer bounds the size
+  fails (the code does not build: the error says where). Steps hold the server like `play.step`; the response buffer bounds the size
   of their results, so a long trace or filmstrip goes in a run of its own.
 
 **Networked game**
@@ -684,7 +691,7 @@ convention `tests/scenarios/<name>.mirai`, run by `play.scenario.run` and by
     {"name": "walk", "method": "play.step",
      "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 1}]}},
     {"method": "play.step", "params": {"ticks": 120, "until": [
-      {"name": "Door", "component": "Door", "field": "open", "compare": "Equal", "number": 1}]}},
+      {"entity": "Door", "component": "Door", "field": "open", "compare": "Equal", "number": 1}]}},
     {"method": "play.check", "params": {"conditions": [
       {"storage": "Score", "field": "points", "compare": "At_Least", "number": 1}]}}
   ]
@@ -719,7 +726,7 @@ Runs the whole scene with the editor's camera and controls, without player input
   not include created entities or component changes.
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
-actions act on the copy; `editor.input` still requires a manual editor and `editor.capture`
+actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`
 captures the image with the editor. `scene.inspect` reads the document. On stopping, the original
 camera and selection return. The actions are `simulate` and `apply_simulation`; `pause`, `step` and
 `stop` work in both modes.
@@ -729,9 +736,8 @@ camera and selection return. The actions are `simulate` and `apply_simulation`; 
 The slots of the project's saves folder, the same as the shipped game's on that machine
 ([save](../../mirai-gameplay/references/libraries.md#save)).
 
-- `save.list` and `save.inspect` read only headers, in Edit and in Play. `save.list` also gives the
-  slots that do not load (corrupt or of another version) with their `error`; `save.inspect` fails
-  with them.
+- `save.list` reads only headers, in Edit and in Play; with `slot`, that one. It also gives the
+  slots that do not load (corrupt or of another version) with their `error`.
 - `save.delete`: with a run of its own of the caller, it asks the game, which first writes what is
   pending (it could create the slot again); without it, it deletes the file. It is not an undo
   step.
@@ -745,17 +751,20 @@ The slots of the project's saves folder, the same as the shipped game's on that 
 
 ## Build
 
-`build.start` compiles the project's `editor` library, also during a Play; fails if one already
-runs. If it succeeds, the editor loads the new code without closing: the API, the scene, the
-history, the Play and the agents' turns continue, also with a new or changed component or storage
+`build.start` compiles the project's `editor` library, also during a Play, and answers when it
+ends, with `phase` and each error with its file and line in `diagnostics`; the editor goes on
+drawing meanwhile. It fails if one already runs. If it succeeds, the editor loads the new code
+without closing: the API, the scene, the history, the Play and the agents' turns continue, also
+with a new or changed component or storage
 ([reload](../../mirai-editor/references/editor.md#build-and-reload)). Only when the migration cannot
-leave the engine's data in place does the editor restart with the open scene and the API disappear
-for a few seconds (`mirai rpc --wait-until` keeps waiting for it). Errors, with file and line, stay
-in `build.status` (the first) and in `engine.diagnostics` (`build`).
+leave the engine's data in place does the editor restart with the open scene (`restarting`) and
+the API disappear for a few seconds (`mirai rpc --wait-until` keeps waiting for it). `build.status`
+says the same at any moment; `target:"shaders"` publishes the shaders of the project and answers
+when the viewport draws with them, which `mirai shaders` asks for.
 
 - `play.start` compiles first if an Odin source of the project or its manifest changed since the
-  last build that remains: it replies `building` and the game starts only when the build is done;
-  if it fails, it does not start and leaves its errors where `build.start` leaves them.
+  last build that remains and answers when the game plays; if the build fails, it fails with the
+  first error and the rest in `data.diagnostics`.
 - `build.check` checks the types of the project code (game, editor and plugins, with the generated
   world) without compiling or loading anything, and `build.test` compiles and runs the `@(test)`s
   of a project package (`package_folder`, `game` if missing; `tests` by name) against the engine it
@@ -791,7 +800,7 @@ in `build.status` (the first) and in `engine.diagnostics` (`build`).
 
 ## Prefabs
 
-A prefab is named by `path` (file or path under `assets/`) or by `asset`. Those that edit are
+A prefab is named by `asset`: its file, a path under `assets/` or its id. Those that edit are
 transactions. Unknown id, no id, prefab not found, nonexistent override and "is not part of an
 instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
@@ -800,7 +809,7 @@ instance" are `-32602`; the rest, `-32000`
   prefab brings an outdated one.
 - `prefab.inspect` with `id`: `kind` of an override is `field`, `added`, `removed`, `turned` or
   `child` (the entity was added by the instance); a turned-off member is an `added` of `Disabled`.
-  With `path` or `asset` it gives the prefab with its own instances up to date, and its `base` and
+  With `asset` it gives the prefab with its own instances up to date, and its `base` and
   `chain` if it is a [variant](../../mirai-editor/references/prefabs.md#variants) (zero and empty
   if not).
 - `prefab.variant.create`: `prefab` is the base by file, path or asset id; writes the variant at
@@ -832,27 +841,15 @@ instance" are `-32602`; the rest, `-32000`
 - `asset.import`: what the Import button of the content browser does with any source it imports
   ([import](../../mirai-editor/references/panels.md#import)), wherever it is on disk: the
   editor reads it and writes only in the assets folder. `folder` replaces the folder of its type; a
-  source that a plugin imports whole (a map) does not accept it. It starts the import, which writes
-  to disk (it is an operation on files) in the background, and returns `importing:true`;
-  `asset.import_status` says whether it runs (`importing`) and, of the last one that finished,
-  whether it wrote (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its
-  file was already the one it gives). Wait with
-  `mirai rpc asset.import_status --wait-until importing=false`. While it runs, another import and
-  whatever writes assets fail saying what is being imported. Reimporting keeps ids and files;
+  source that a plugin imports whole (a map) does not accept it. It imports, writing to disk (it
+  is an operation on files) while the editor goes on, and answers when it ends: whether it wrote
+  (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its file was already
+  the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
+  any moment. While it runs, another import and whatever writes assets fail saying what is being imported. Reimporting keeps ids and files;
   `into` (the id of the prefab, texture or sound of the import) updates it from a moved or renamed
   source. `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on its
   own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
-- `asset.reload`: reads again asset files changed on disk outside the editor (a tool, a script,
-  `mirai import`, another session) so the scene and Play use what they hold now: the registry looks
-  at them again and what is loaded from them (meshes, textures, materials, the prefabs and scenes
-  Play spawns from, plugin documents, sounds, texts, interfaces) is replaced where it is. `assets`
-  names them (paths, also of a file that is new or gone, or ids), each read again; without it, the
-  whole asset folder is looked at and what changed is read. Answers
-  `{reloaded:[{path,asset,kind}],removed,unsaved,stale}`: an `unsaved` file keeps its changes
-  (`asset.discard` takes the file); `stale` are prefabs whose placed instances are behind their file,
-  which `prefab.refresh` brings up as an edit. Refused in Play and while an import runs
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
   and shown alone; the import keeps writing it and leaves it out
   ([parts](../../mirai-imports/references/imports.md#parts)). It is an unsaved edit, with undo;
@@ -873,11 +870,13 @@ instance" are `-32602`; the rest, `-32000`
   once, without undo or `asset.save`. Returns `{moved,used_by}`; those that use it keep the
   reference. Fails saying why with an asset of a plugin, of the engine or of the editor, a scene
   open in a tab or outside Edit.
-- `asset.rename`, `asset.move` and `asset.duplicate` take an asset by path or id, or a folder by
-  path, and write at once, without undo or `asset.save`; they return the resulting path and id
-  ([rename, move and duplicate](../../mirai-editor/references/panels.md#content-browser)). Moving
-  keeps the id and takes the parts along; what has unsaved changes fails asking for `asset.save` or
-  `asset.discard`. Duplicating gives new ids and the copy is not an output of the import.
+- `asset.move {asset, folder?, name?, copy?}` takes an asset by path or id, or a folder by path,
+  and writes at once, without undo or `asset.save`; it returns the resulting path and id
+  ([rename, move and duplicate](../../mirai-editor/references/panels.md#content-browser)). No
+  `folder` keeps the one it is in and `/` is the root. Moving keeps the id and takes the parts
+  along; what has unsaved changes fails asking for `asset.save` or `asset.discard`. With `copy` it
+  copies with new ids and the copy is not an output of the import; without `name` it takes a free
+  one.
 - `asset.users`: `asset` (path or id). Returns `{used_by}`, the files that reference it or a part
   it owns, the same as the delete modal lists. A reference is the id of the header: moving the
   asset does not break it and deleting it does.
@@ -892,7 +891,7 @@ instance" are `-32602`; the rest, `-32000`
   - `sound_set.inspect`: `{sound_set,path,values,sounds}`; `values` is the text of
     `asset.Sound_Set_Info` with the sounds by id and `sounds` their paths.
   - `sound_set.set` (with `path`, a new one over `SOUND_SET_DEFAULTS`, which fails if the file
-    exists): `values.sounds` carries `.sound` ids (`asset.list` with `kind` `Sound`); an id that is
+    exists): `values.sounds` carries `.sound` paths or ids; one that is
     not a `.sound` of the registry or an inverted range is `-32602` and says which field to fix.
     They leave the file unsaved, in an undo step.
 - **Game data** (`records.*`, `api_records.odin`): `.records` tables of the `@(record)` types
@@ -902,8 +901,8 @@ instance" are `-32602`; the rest, `-32000`
   and what value is expected.
   - `records.types`: each type as `library.Name`, with its description, its fields (type, options
     of an enum, `records` of the type a `core.Record` names, description) and its tables.
-  - `records.create {path,type}` creates an empty table; `asset.create` with `kind` `records` and
-    Create of the content browser do too, the second with one entry per type.
+  - `records.create {path,type}` creates an empty table of that type, the only method that does;
+    Create of the content browser has one entry per type.
   - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values,texts}]}`; `id` is
     a JSON number (ids have 53 bits) and `texts` gives, by path of a `core.Text` field, the text of
     each language (`""`: the language the game is written in).
@@ -914,8 +913,8 @@ instance" are `-32602`; the rest, `-32000`
     ids stay), while what no key names keeps its value (a new row starts at the default). To
     change one nested field, name its path. A `core.Record` is given as `{table,row}`, as the name
     of a row or as `table/row`; a `core.Text`, as its original text.
-  - `records.remove {records,rows}`, `records.rename {records,row,name}` and
-    `records.move {records,row,to}`.
+  - `records.remove {records,rows}` and `records.move {records,row,after}`: the row it goes right
+    after, `""` for first. A row is renamed with `name` of `records.set`.
   - `records.import {records,file}` reads a CSV (RFC 4180, UTF-8) whose header is `name` and paths
     of leaf fields (`damage`, `stats.speed`, `position[1]`; `title@es` is a translation): each row
     changes the one of the same name or is added, an empty cell changes nothing and there are no
@@ -929,7 +928,9 @@ instance" are `-32602`; the rest, `-32000`
     program has `kind:"program"`, without `asset`, and `path` is the path of its `.slang` under the
     project (`engine/...` for one of the engine).
   - `asset.save`: `assets` (paths under the assets folder, ids or the path of a program) or
-    `all:true`. Writes their files and returns `{saved}`; like Save, it waits for Edit (a running
+    `all:true`; without either, the unsaved assets of the turn of the caller, or every one outside
+    a turn. Writes their files and returns `{saved}`; a file that cannot be written is named with
+    its cause; like Save, it waits for Edit (a running
     game reads those files). With `folder` (inside the project's `.mirai/tmp/`) it writes copies
     there, with the same paths, and leaves them unsaved: this is how an agent tests without
     touching the project.
@@ -940,24 +941,21 @@ instance" are `-32602`; the rest, `-32000`
 
 - `graphics.status`: `preset` is `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_megapixels`
   is the scene budget (0: one pixel per point); the size it is drawn at is given by
-  `engine.status` (`render_width`, `render_height`). `antialiasing` is the name of the technique of
-  the setting and `antialiasing_choices`, the Antialiasing choices in order: Off, TAA and those
-  offered by the plugins.
-- `graphics.set`: a `preset`, or `option` and `choice` (index from the first choice). `option` is
-  compared case-insensitively with the popup names: `Resolution`, `Antialiasing`, `Indirect light`,
-  `Light probes`, `Reflections`, `Shadowed lights`, `Glass shadows`, `Glass layers`, `Textures`,
-  `Detail`, `Frame limit`, `VSync`, `Show FPS`. A choice that does not exist fails with the list of
-  those that do. It applies instantly and is saved in the engine layer
-  ([graphics](../../mirai-editor/references/panels.md#graphics)).
-- `settings.get` (read-only): `{machine, settings, engine, project}`
+  `engine.status` (`render_width`, `render_height`). `options` lists every option of the popup with
+  its current choice and its choices.
+- `settings.get` (read-only): `{machine, settings, engine, project}`, narrowed to `sections`
   ([settings](../../mirai-projects/references/projects.md#project-settings)).
-  - `machine`: the names of the machine settings, the only ones the engine file stores.
+  - `machine`: the names of the machine settings, the only ones the engine file stores; only
+    without `sections`.
   - `settings`: all the effective values, one section per setting.
   - `engine`: what the engine file sets over the code.
   - `project`: what the project's file sets over both.
-- `settings.set {layer, settings}`: `layer` is `"project"` (default) or `"engine"`; `settings` are
-  sections with the fields that change (`{"Particle_Settings":{"capacity":100000}}`). Returns what
-  `settings.get` returns.
+- `settings.set {layer, settings, graphics_preset}`: `layer` is `"project"` (default) or
+  `"engine"`; `settings` are sections with the fields that change
+  (`{"Particle_Settings":{"capacity":100000}}`), and `graphics_preset` sets the quality fields of
+  `Graphics_Settings` as that preset of the Graphics popup does, before `settings`. Answers as
+  `settings.get` does, for the sections it changed; `preferences.set` and `input.set` too, with
+  `sections` and `actions` as the filters of their gets.
   - `engine` admits only `machine` sections; another is `-32602` with those it admits.
   - The edited world takes the values instantly and the layer's file stores what differs.
   - In `engine`, a field that the project overrides does not change.
@@ -996,10 +994,10 @@ instance" are `-32602`; the rest, `-32000`
     or a grid, `iterations`, `neighbors`).
   - `particle.set` leaves the `.particle` in an undo step (`history.undo`), attributed to the AI
     turn that calls them.
-  - `particle.grid.bake` (`id` of an entity with `Particle_Grid`, `path`): returns
-    `{path,grid,pending}` and writes the `.grid` a few frames later, when the cells come back from
-    the GPU, in an undo step of its own. An `engine.step` of a few frames completes it in a manual
-    editor. A grid the world did not take (another with its name, invalid cells or layers) is
+  - `particle.grid.bake` (`id` of an entity with `Particle_Grid`, `path`): holds the call until
+    the cells come back from the GPU, writes the `.grid` in an undo step of its own and returns
+    `{path,grid}`, or fails if they do not come back. A grid the world did not take (another with
+    its name, invalid cells or layers) is
     `-32602` with the `vfx.grid` problem that rejected it.
 - **Emitters** (`id` of the entity; `world` `Edit`, the document, or `Play`, the caller's):
   - `particle.instance.inspect` (`world` `Edit` by default): `values` (what it shows), `overrides`
@@ -1095,23 +1093,6 @@ file's.
   gives its values as it writes them, before the renderer limits them; a NaN is magenta in the
   image and counts in `nan_count`. If publishing fails or the renderer rejects the stages of the
   previews, the error says so. Two captures are compared with `mirai image diff`.
-
-## Graphics and settings
-
-- `graphics.status`: `render_megapixels` is the scene budget (0: one pixel per point); the size it
-  is drawn at is given by `engine.status`.
-- `graphics.set`: `option` is compared case-insensitively with the popup names; a choice that does
-  not exist fails with the list of those that do. It applies instantly and is saved in the engine
-  layer ([graphics](../../mirai-editor/references/panels.md#graphics)).
-- `settings.get` and `settings.set`
-  ([settings](../../mirai-projects/references/projects.md#project-settings)): the edited world
-  takes the values instantly and the layer's file stores what differs.
-  - `engine` admits only `machine` sections; another is `-32602` with those it admits. In `engine`,
-    a field that the project overrides does not change.
-  - A section that is not a setting or a field the type does not have is `-32602` with those that
-    exist (the file, on the other hand, may store fields the type no longer has, and they are
-    skipped). An out-of-range value or `engine` without an engine root is `-32602` and changes
-    nothing.
 
 ## Collaboration
 

@@ -134,7 +134,7 @@ Scenes:
   (`door_opened`).
 - **`dig_site.odin`**: `Dig_Site` (on the terrain: how many balls it digs by itself and every how
   many ticks) and `dig_site` (`stage="react"`, nothing on a client), which requests the balls with
-  `terrain.request_edit`, adds to `Dig_Inventory` the cubic meters per material of
+  `terrain.dig`, adds to `Dig_Inventory` the cubic meters per material of
   `terrain.Terrain_Digs` and picks up the `Dig_Pickup`s that a `Player` touches; `dig_hud` shows
   the inventory. It is the game's rule: the engine has no inventory.
 - **`horror.odin`**: `Light_Switch`, `House_Lamp` (its `Point_Light` gives its intensity while its
@@ -294,7 +294,7 @@ Content:
   Re-importing keeps the ids
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
-  on its own uses `base.asset_id_named`. What did not change is kept
+  on its own uses `asset.content_id`. What did not change is kept
   ([cache](../../mirai-imports/references/imports.md#import-cache)).
 - **Prefabs** (`prefabs.odin`): `Player`, `Person`, `Dog` (with `Replicate`) and `Thrown cube`; the
   scenes name them from their spawn points.

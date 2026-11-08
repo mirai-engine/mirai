@@ -47,13 +47,15 @@ asset.scene_set(&s,look_entity,"View_Volume",&look)                          // 
 - Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air
   lit by the sun: turning the sun entity then changes the whole day. One `Sky` is on at a time;
   without one there is no sky light and the background is black. One `Sun` is on at a time.
-- API: `scene.add {"preset":"sun"}` aims it like the editor's sun; `scene.set {"id":N,
+- API: `scene.add {"preset":"sun"}` aims it like the editor's sun; `scene.set {"entity":"Sun",
   "components":{"Sky":{"atmosphere":true}}}` changes only the fields named.
 - Indoor: turn the `Sun` off (`"enabled":false`) when the room has no window, keep the `Sky` if
   a window shows it, and light with `Point_Light`, `Spot_Light` and `Rect_Light` (`range` in
   metres; spot and rect lights shine toward their -Z). Emission of materials is in nits.
-- Zones: a `View_Volume` or `Fog_Volume` with a `volume.Volume` (box, sphere) applies only
-  inside it, with `blend` metres of edge and a `priority`; without a `Volume` it is the world's.
+- Zones: a `View_Volume` or `Fog_Volume` with a `volume.box(half,blend)` or
+  `volume.sphere(radius,blend)` applies only inside it, with `blend` metres of edge and a
+  `priority`; without a `Volume` it is the world's. A `Volume` with `extents` and no `shape` is the
+  whole world: the problem `volume.unbounded_extents` says so.
 
 ## Exposure
 

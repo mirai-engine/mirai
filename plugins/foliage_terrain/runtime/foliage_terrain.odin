@@ -367,6 +367,11 @@ foliage_terrain_ground :: proc(
         owner:=foliage.ground_owner(ground,e)
         fresh:=owner==nil
         if fresh {append(&ground.owners,foliage.Ground_Owner{entity=e});owner=&ground.owners[len(ground.owners)-1]}
+        if len(state.views)>0 {
+            first:=state.views[0].source
+            owner.layer_count=min(first.layer_count,foliage.RULE_LAYERS)
+            for &material,i in owner.layers[:owner.layer_count] {material=first.layers[i].material}
+        }
         cells:=seen.epoch!=entry.epoch || seen.loads!=entry.loads
         asked_here:=false
         for request in asked {asked_here||=request.entity==e}

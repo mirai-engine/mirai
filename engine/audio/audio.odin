@@ -144,18 +144,17 @@ Audio_Settings :: struct {
     reverb_bus:Audio_Bus,
 }
 
-// The volume of each bus as the player chose it, over the gain the game gives
-// it in Audio_Settings: an option of the player, which the options menu of the
-// game writes (audio_volume_set) and save keeps in the options of the player.
+// The volume of each bus as the player chose it, 0 to 1, over the gain the
+// game gives it in Audio_Settings: what a slider of the options menu binds
+// (Audio_Volumes.music) and save keeps in the options of the player.
 @(storage,setting="machine")
 Audio_Volumes :: struct {
-    buses:[AUDIO_BUS_CAPACITY]Audio_Volume `mirai:"trim"`,
+    master,music,effects,voice,ui:f32 `mirai:"min=0,max=1"`, // by the order of the BUS_ constants
+    more:[AUDIO_BUS_CAPACITY-5]f32 `mirai:"min=0,max=1"`,    // the buses a game adds after BUS_UI
 }
+#assert(size_of(Audio_Volumes)==AUDIO_BUS_CAPACITY*size_of(f32))
 
-Audio_Volume :: struct {
-    bus:Audio_Bus,
-    volume:f32 `mirai:"min=-80,max=0,unit=dB"`, // 0: as the game mixes it; AUDIO_SILENCE_DB or below: silent
-}
+AUDIO_VOLUMES_DEFAULT :: Audio_Volumes{1,1,1,1,1,{1,1,1}}
 
 AUDIO_OUTPUT_NAME_BYTES :: 128
 
@@ -337,7 +336,7 @@ buses_apply :: proc(app:^host.App,settings:^Audio_Settings,volumes:^Audio_Volume
     for index in 0..<min(mixer.bus_count(m),AUDIO_BUS_CAPACITY) {
         bus:=Audio_Bus(index)
         setting:=audio_bus_setting(settings,bus)
-        if volume:=db_volume(setting.gain+audio_volume(volumes,bus));mixer.bus_volume(m,mixer.Bus(bus))!=volume {mixer.bus_set_volume(m,mixer.Bus(bus),volume)}
+        if volume:=db_volume(setting.gain)*audio_volume(volumes,bus);mixer.bus_volume(m,mixer.Bus(bus))!=volume {mixer.bus_set_volume(m,mixer.Bus(bus),volume)}
         lowpass:=max(setting.lowpass,0)
         if bus==BUS_MASTER && medium!=nil {lowpass=lowpass_lower(lowpass,medium.lowpass)}
         if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass)}
@@ -408,39 +407,15 @@ audio_bus_setting_set :: proc "contextless" (settings:^Audio_Settings,setting:Au
     return true
 }
 
-// The volume in dB the player chose for a bus; 0 without a choice.
+// The volume the player chose for a bus, 0 to 1; 1 without a choice.
 audio_volume :: proc "contextless" (volumes:^Audio_Volumes,bus:Audio_Bus) -> f32 {
-    if volumes!=nil {
-        for entry in volumes.buses {
-            if entry!={} && entry.bus==bus {return min(entry.volume,0)}
-        }
-    }
-    return 0
+    if volumes==nil || int(bus)>=AUDIO_BUS_CAPACITY {return 1}
+    volume:=(^[AUDIO_BUS_CAPACITY]f32)(volumes)[int(bus)]
+    return volume>=0?min(volume,1):0
 }
 
-// Sets the volume of a bus the player chose, in dB; 0 removes the choice.
-// False when every entry is taken.
-audio_volume_set :: proc "contextless" (volumes:^Audio_Volumes,bus:Audio_Bus,volume:f32) -> bool {
-    if volumes==nil {return false}
-    free:=-1
-    for &entry,i in volumes.buses {
-        if entry!={} && entry.bus==bus {
-            entry=volume==0?{}:Audio_Volume{bus,volume}
-            return true
-        }
-        if entry=={} && free<0 {free=i}
-    }
-    if volume==0 {return true}
-    if free<0 {return false}
-    volumes.buses[free]={bus,volume}
-    return true
-}
-
-// The gain in dB of a linear volume, and the volume of a gain.
-volume_db :: proc "contextless" (volume:f32) -> f32 {
-    if volume<=0 {return AUDIO_SILENCE_DB}
-    return max(20*math.log10(volume),AUDIO_SILENCE_DB)
-}
+// The gain of a level in dB, as the mixer takes it.
+@(private)
 db_volume :: proc "contextless" (gain:f32) -> f32 {
     if gain<=AUDIO_SILENCE_DB {return 0}
     return math.pow(10,gain/20)

@@ -114,6 +114,39 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     testing.expect_value(t,action_of(shown,.Move),MOVE)
 }
 
+// A frame without a tick (a paused clock) runs the input phase and not fixed:
+// Input_Of keeps what the last tick left, its edge repeated and a new press
+// unseen, and only Frame_Input_Of follows the frame. The generator refuses
+// Input_Of and core.Input outside fixed in the game loop because of this.
+@(test)
+a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
+    names:=TEST_NAMES
+    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
+    info:=test_info(names[:],storages)
+    m:Input_Map
+    input_map_make(&m,&info,"","",nil)
+    state:Seats
+    seats:core.Table(Seat)
+    tick:Actions
+    frame:Frame_Actions
+    ticked:=Input_Of(Test_Action){actions=core.ref(&tick),base=3}
+    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),base=3}
+
+    pressed_space:=core.Input{keys_down={.Space},keys_pressed={.Space}}
+    input_actions_update(&m,&tick,pressed_space,core.ref(&state),core.read(&seats))
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&seats))
+    testing.expect(t,pressed(ticked,.Jump) && pressed(shown,.Jump))
+
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&seats))
+    testing.expect(t,pressed(ticked,.Jump) && down(ticked,.Jump),"the edge of the last tick is still there")
+    testing.expect(t,released(shown,.Jump) && !down(shown,.Jump),"the frame saw the key go up")
+
+    held_d:=core.Input{keys_down={.D},keys_pressed={.D}}
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&seats))
+    testing.expect_value(t,vector(ticked,.Move),[2]f32{0,0})
+    testing.expect_value(t,vector(shown,.Move),[2]f32{1,0})
+}
+
 // A name in input.mirai that the code does not declare is a problem that
 // says which, in which file and how to fix it; the file is not read and the
 // defaults stay. An action with neither a default nor an entry is one too.

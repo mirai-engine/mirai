@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import mm "mirai:std/math"
 
 @(private="file") TEST_MOVE :: Action(0)
 @(private="file") TEST_JUMP :: Action(2)
@@ -19,6 +20,32 @@ test_bindings :: proc() -> (bindings:Input_Map) {
     input_map_action(&bindings,TEST_MOVE,.Axis2)
     input_map_bind(&bindings,TEST_MOVE,binding_keys(.A,.D,.S,.W))
     return
+}
+
+// The ray is that of the camera the body names, not of the body.
+@(test)
+aim_is_the_ray_of_the_camera_of_the_body :: proc(t:^testing.T) {
+    es:core.Entities
+    core.entities_init(&es)
+    defer core.entities_destroy(&es)
+    drivables:core.Table(Drivable)
+    core.table_init(&drivables,"Drivable")
+    defer core.table_destroy(&drivables)
+    worlds:core.Table(core.World_Transform)
+    core.table_init(&worlds,"World_Transform")
+    defer core.table_destroy(&worlds)
+    body,camera,bare:=core.create(&es),core.create(&es),core.create(&es)
+    turn:=mm.quat_axis_angle({0,1,0},mm.PI/2)
+    core.add(&drivables,body,Drivable{camera=camera})
+    core.add(&drivables,bare,Drivable{})
+    core.add(&worlds,camera,core.World_Transform{transform={position={1,2,3},rotation=turn,scale={1,1,1}}})
+    core.table_settle(&drivables,&es)
+    core.table_settle(&worlds,&es)
+    origin,direction,ok:=aim(core.read(&drivables),core.read(&worlds),body)
+    testing.expect(t,ok && origin==[3]f32{1,2,3})
+    testing.expectf(t,abs(direction.x+1)<1e-5 && abs(direction.z)<1e-5,"a quarter turn to the left looks along -X: %v",direction)
+    _,_,ok=aim(core.read(&drivables),core.read(&worlds),bare)
+    testing.expect(t,!ok,"a body without a camera has no aim")
 }
 
 @(test)

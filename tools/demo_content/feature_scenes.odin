@@ -180,9 +180,9 @@ mesh_built :: proc(m:^Feature_Mesh,built:^geom.Mesh_Buffer,offset:[3]f32,color:u
 
 @(private)
 mesh_write :: proc(o:^Out,name:string,m:^Feature_Mesh) -> base.Asset_Id {
-    id:=id_of("mesh",name)
+    id:=asset.content_id(PROJECT,"mesh",name)
     file:=fmt.tprintf("assets/models/features/%s.mesh",name)
-    if !asset.mesh_tangents(&m.vertices,m.indices[:]) {check(o,file,.Out_Of_Memory);return id}
+    if !asset.mesh_tangents(&m.vertices,m.indices[:]) {asset.content_check(&o.content,file,.Out_Of_Memory);return id}
     mesh_write_built(o,file,file,{id=id},{vertices=m.vertices[:],flags={.Has_Colors}},m.indices[:])
     return id
 }
@@ -265,7 +265,7 @@ tile_of :: proc(o:^Out,material:string) -> [2]f32 {
     }
     file:asset.Asset
     if asset.asset_load(&file,path(o,fmt.tprintf("assets/materials/%s.mat",material)),context.temp_allocator)!=.None {return {metres,metres}}
-    view,error:=asset.material_view(&file,&o.types)
+    view,error:=asset.material_view(&file,&o.content.types)
     if error!=.None || view.info.uv_scale.x<=0 || view.info.uv_scale.y<=0 {return {metres,metres}}
     return metres*view.info.uv_scale
 }
@@ -273,7 +273,7 @@ tile_of :: proc(o:^Out,material:string) -> [2]f32 {
 // A box that shows its material at its true size on every face, that the
 // player stands on and walks into. Its mesh is one for its size.
 @(private)
-slab :: proc(s:^Scene_Out,o:^Out,name:string,position,size:[3]f32,material:string,parent:base.Entity_Id=0) -> base.Entity_Id {
+slab :: proc(s:^asset.Scene_Builder,o:^Out,name:string,position,size:[3]f32,material:string,parent:base.Entity_Id=0) -> base.Entity_Id {
     tile:=tile_of(o,material)
     file:=fmt.tprintf("slab_%dx%dx%d_%dx%d",int(size.x*100+0.5),int(size.y*100+0.5),int(size.z*100+0.5),int(tile.x*100+0.5),int(tile.y*100+0.5))
     mesh,written:=o.slabs[file]
@@ -283,10 +283,10 @@ slab :: proc(s:^Scene_Out,o:^Out,name:string,position,size:[3]f32,material:strin
         mesh=mesh_write(o,file,&m)
         o.slabs[file]=mesh
     }
-    id:=entity(s,name,position,{1,1,1},parent)
+    id:=asset.builder_entity(s,name,{position=position},parent)
     model(s,id,mesh,material)
     collider:=phys.collider_box(size*0.5)
-    put(s,id,"Collider",&collider)
+    asset.builder_set(s,id,collider)
     return id
 }
 
@@ -294,47 +294,47 @@ STONE :: [3]f32{0.85,0.8,0.71}
 
 // A fluted column of stone on its base, under its capital.
 @(private)
-column :: proc(s:^Scene_Out,meshes:Feature_Meshes,name:string,position:[3]f32,width,height:f32,parent:base.Entity_Id=0) {
-    root:=entity(s,name,position,{1,1,1},parent)
-    shaft:=entity(s,"Shaft",{0,height*0.5,0},{width,height-0.7,width},root)
+column :: proc(s:^asset.Scene_Builder,meshes:Feature_Meshes,name:string,position:[3]f32,width,height:f32,parent:base.Entity_Id=0) {
+    root:=asset.builder_entity(s,name,{position=position},parent)
+    shaft:=asset.builder_entity(s,"Shaft",{position={0,height*0.5,0},scale={width,height-0.7,width}},root)
     model(s,shaft,meshes.column,"Satin paint")
     tinted(s,shaft,STONE)
     collider:=phys.collider_box({0.5,0.5,0.5})
-    put(s,shaft,"Collider",&collider)
+    asset.builder_set(s,shaft,collider)
     for y,i in ([4]f32{0.1,0.275,height-0.275,height-0.1}) {
         wide:=width*(i==0 || i==3?1.5:1.25)
-        block:=entity(s,i<2?"Base":"Capital",{0,y,0},{wide,i==0 || i==3?0.2:0.15,wide},root)
+        block:=asset.builder_entity(s,i<2?"Base":"Capital",{position={0,y,0},scale={wide,i==0 || i==3?0.2:0.15,wide}},root)
         cube(s,block,"Satin paint")
         tinted(s,block,STONE)
     }
 }
 
 @(private)
-model :: proc(s:^Scene_Out,id:base.Entity_Id,mesh:base.Asset_Id,material:string) {
+model :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,mesh:base.Asset_Id,material:string) {
     shown:=render.Mesh_Renderer{mesh=mesh}
     shown.materials[0]=game.material_asset(material)
-    put(s,id,"Mesh_Renderer",&shown)
+    asset.builder_set(s,id,shown)
 }
 
 @(private)
-tinted :: proc(s:^Scene_Out,id:base.Entity_Id,color:[3]f32,emission:[3]f32={}) {
+tinted :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,color:[3]f32,emission:[3]f32={}) {
     tint:=render.Tint{color={color.r,color.g,color.b,1},emission=emission}
-    put(s,id,"Tint",&tint)
+    asset.builder_set(s,id,tint)
 }
 
 @(private)
-point_light :: proc(s:^Scene_Out,name:string,position,color:[3]f32,intensity,range:f32,parent:base.Entity_Id=0,radius:f32=0.05) {
+point_light :: proc(s:^asset.Scene_Builder,name:string,position,color:[3]f32,intensity,range:f32,parent:base.Entity_Id=0,radius:f32=0.05) {
     light:=render.Point_Light{color=color,intensity=intensity,range=range,radius=radius}
-    put(s,entity(s,name,position,{1,1,1},parent),"Point_Light",&light)
+    asset.builder_set(s,asset.builder_entity(s,name,{position=position},parent),light)
 }
 
 // A lamp on a post of a scene its lamps light: its light is as wide as its
 // globe, which glows; both in the units of the scene.
 @(private)
-lamp :: proc(s:^Scene_Out,name:string,position,color:[3]f32,intensity,range:f32) {
-    root:=entity(s,name,position)
-    shape(s,entity(s,"Post",{0,1.6,0},{0.12,3.2,0.12},root),.Cylinder,"Cast metal")
-    globe:=entity(s,"Globe",{0,3.62,0},{0.46,0.46,0.46},root)
+lamp :: proc(s:^asset.Scene_Builder,name:string,position,color:[3]f32,intensity,range:f32) {
+    root:=asset.builder_entity(s,name,{position=position})
+    shape(s,asset.builder_entity(s,"Post",{position={0,1.6,0},scale={0.12,3.2,0.12}},root),.Cylinder,"Cast metal")
+    globe:=asset.builder_entity(s,"Globe",{position={0,3.62,0},scale={0.46,0.46,0.46}},root)
     shape(s,globe,.Sphere,"Matte paint")
     tinted(s,globe,color,nits(LAMPLIT,color*6))
     point_light(s,"Light",{0,3.62,0},color,candela(LAMPLIT,intensity),range,root,0.23)
@@ -344,7 +344,7 @@ lamp :: proc(s:^Scene_Out,name:string,position,color:[3]f32,intensity,range:f32)
 // trees and reeds in the wind, posts that twist, a pool of mercury with rings
 // and a blob. Their shadows and their reflections follow them.
 write_deform_scene :: proc(o:^Out,meshes:Feature_Meshes) {
-    s:Scene_Out
+    s:asset.Scene_Builder
     feature_scene_begin(&s,o,"deform",.Sunset,{1,0.62,0.38},3.2,{0.45,0.75,0.5},LAMPLIT)
     slab(&s,o,"Ground",{0,-0.25,0},{30,0.5,30},"Cobblestone")
     slab(&s,o,"Wall",{-3,1.5,-8.5},{14,3,0.5},"Bricks")
@@ -354,34 +354,34 @@ write_deform_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     colors:=[3][3]f32{{0.85,0.1,0.08},{0.1,0.3,0.8},{0.95,0.75,0.1}}
     for color,i in colors {
         x:=-7+f32(i)*3.2
-        shape(&s,entity(&s,fmt.tprintf("Mast %d",i+1),{x,2.2,-6},{0.09,4.4,0.09}),.Cylinder,"Brushed steel")
-        flag:=entity(&s,fmt.tprintf("Flag %d",i+1),{x+0.05,3.6,-6})
+        shape(&s,asset.builder_entity(&s,fmt.tprintf("Mast %d",i+1),{position={x,2.2,-6},scale={0.09,4.4,0.09}}),.Cylinder,"Brushed steel")
+        flag:=asset.builder_entity(&s,fmt.tprintf("Flag %d",i+1),{position={x+0.05,3.6,-6}})
         model(&s,flag,meshes.flag,"Satin paint")
         tinted(&s,flag,color)
         wave:=deform.Deform{kind=.Wave,axis={1,0,0},direction={0,0,1},amplitude=0.13,wavelength=1.15,speed=0.9,offset=f32(i)*0.31,pin=0.22}
-        put(&s,flag,"Deform",&wave)
+        asset.builder_set(&s,flag,wave)
     }
     trees:=[3][3]f32{{6,0,-5},{9,0,-0.5},{6.5,0,4}}
     for position,i in trees {
         tree:=placed(&s,fmt.tprintf("Tree %d",i+1),position,mm.quat_axis_angle(up,f32(i)*1.9),{1,1,1}*(0.9+0.15*f32(i)))
         model(&s,tree,meshes.tree,"Matte paint")
         sway:=deform.Deform{kind=.Sway,axis=up,direction=wind,amplitude=0.5,speed=0.2,offset=f32(i)*0.37,pin=0.12}
-        put(&s,tree,"Deform",&sway)
+        asset.builder_set(&s,tree,sway)
     }
     for i in 0..<14 {
         angle:=f32(i)*2.4
         reach:=0.35+0.11*f32(i)
-        reed:=entity(&s,fmt.tprintf("Reed %d",i+1),{-7+math.cos(angle)*reach,0,3.5+math.sin(angle)*reach},{1,0.8+0.05*f32(i%5),1})
+        reed:=asset.builder_entity(&s,fmt.tprintf("Reed %d",i+1),{position={-7+math.cos(angle)*reach,0,3.5+math.sin(angle)*reach},scale={1,0.8+0.05*f32(i%5),1}})
         model(&s,reed,meshes.reed,"Matte paint")
         sway:=deform.Deform{kind=.Sway,axis=up,direction=wind,amplitude=0.42,speed=0.45,offset=f32(i)*0.173,pin=0.1}
-        put(&s,reed,"Deform",&sway)
+        asset.builder_set(&s,reed,sway)
     }
     materials:=[2]string{"Marble","Bricks"}
     for material,i in materials {
-        post:=entity(&s,fmt.tprintf("Post %d",i+1),{-4.6+f32(i)*1.7,0,6.2})
+        post:=asset.builder_entity(&s,fmt.tprintf("Post %d",i+1),{position={-4.6+f32(i)*1.7,0,6.2}})
         model(&s,post,meshes.post,material)
         twist:=deform.Deform{kind=.Twist,axis=up,amplitude=2.4,speed=0.11,offset=f32(i)*0.5}
-        put(&s,post,"Deform",&twist)
+        asset.builder_set(&s,post,twist)
     }
     // The pool: a rim, and a sheet of mercury that reflects what stands around it.
     for side in 0..<4 {
@@ -389,24 +389,24 @@ write_deform_scene :: proc(o:^Out,meshes:Feature_Meshes) {
         sign:=side%2==0?f32(-1):f32(1)
         slab(&s,o,fmt.tprintf("Rim %d",side+1),along?[3]f32{1.5,0.2,-1+sign*2.65}:[3]f32{1.5+sign*2.65,0.2,-1},along?[3]f32{5.6,0.4,0.3}:[3]f32{0.3,0.4,5.6},"Marble")
     }
-    pool:=entity(&s,"Mercury",{1.5,0.24,-1})
+    pool:=asset.builder_entity(&s,"Mercury",{position={1.5,0.24,-1}})
     model(&s,pool,meshes.membrane,"Chrome")
     rings:=deform.Deform{kind=.Ripple,axis=up,amplitude=0.06,wavelength=0.95,speed=0.55,pin=0.3}
-    put(&s,pool,"Deform",&rings)
-    shape(&s,entity(&s,"Pedestal",{-3.8,0.45,0.2},{0.9,0.9,0.9}),.Cylinder,"Marble")
-    blob:=entity(&s,"Blob",{-3.8,1.55,0.2})
+    asset.builder_set(&s,pool,rings)
+    shape(&s,asset.builder_entity(&s,"Pedestal",{position={-3.8,0.45,0.2},scale={0.9,0.9,0.9}}),.Cylinder,"Marble")
+    blob:=asset.builder_entity(&s,"Blob",{position={-3.8,1.55,0.2}})
     model(&s,blob,meshes.blob,"Lacquer")
     tinted(&s,blob,{1,0.42,0.08})
     wobble:=deform.Deform{kind=.Wave,axis=up,direction={1,0,0.4},amplitude=0.07,wavelength=0.55,speed=0.7}
-    put(&s,blob,"Deform",&wobble)
+    asset.builder_set(&s,blob,wobble)
     // Two hoses up the wall that swallow: an equation of the demo, shaders/pulse.comp.slang.
     for x,i in ([2]f32{2.2,3.2}) {
-        hose:=entity(&s,fmt.tprintf("Hose %d",i+1),{x,0,-7.9})
+        hose:=asset.builder_entity(&s,fmt.tprintf("Hose %d",i+1),{position={x,0,-7.9}})
         model(&s,hose,meshes.hose,"Lacquer")
         tinted(&s,hose,i==0?[3]f32{0.1,0.55,0.3}:[3]f32{0.75,0.2,0.5})
         pulse:=deform.Deform{axis=up,amplitude=0.16,speed=i==0?0.35:-0.25,offset=f32(i)*0.4,pin=0.08,values={0.045,i==0?2:3,0,0}}
         base.text_set(pulse.shape[:],"pulse")
-        put(&s,hose,"Deform",&pulse)
+        asset.builder_set(&s,hose,pulse)
     }
     spawn_point(&s,{0,0,9})
     feature_scene_end(&s,o,"deform")
@@ -424,17 +424,17 @@ FACE_BACK :: quaternion(w=0,x=0,y=1,z=0)
 // next to it as the demo has it, that of a pane pi times as bright.
 // The pane is thin: the shadow rays stop 2 cm short of the plane of the light.
 @(private)
-screen :: proc(s:^Scene_Out,name:string,position:[3]f32,rotation:mm.Quat,size:[2]f32,feed:monitors.Screen) {
+screen :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Quat,size:[2]f32,feed:monitors.Screen) {
     root:=placed(s,name,position,rotation,{1,1,1})
-    shape(s,entity(s,"Frame",{0,0,-0.05},{size.x+0.16,size.y+0.16,0.08},root),.Cube,"Cast metal")
+    shape(s,asset.builder_entity(s,"Frame",{position={0,0,-0.05},scale={size.x+0.16,size.y+0.16,0.08}},root),.Cube,"Cast metal")
     pane:=placed(s,"Pane",{0,0,0},FACE_BACK,{size.x,size.y,0.004},root)
     shape(s,pane,.Cube,"Satin paint")
     shown:=feed
-    put(s,pane,"Screen",&shown)
+    asset.builder_set(s,pane,shown)
     light:=render.Rect_Light{color={1,1,1},luminance=feed.brightness*math.PI,range=12}
-    put(s,pane,"Rect_Light",&light)
+    asset.builder_set(s,pane,light)
     emission:=render.Light_Emission{slot=u8(feed.slot)}
-    put(s,pane,"Light_Emission",&emission)
+    asset.builder_set(s,pane,emission)
 }
 
 // A panel of a scene its lamps light that glows with `glow` times its color
@@ -443,22 +443,22 @@ screen :: proc(s:^Scene_Out,name:string,position:[3]f32,rotation:mm.Quat,size:[2
 // bright. It is 1 cm thick: the shadow rays, which stop 2 cm short of the
 // plane of a rectangle, do not meet it.
 @(private)
-glowing_panel :: proc(s:^Scene_Out,name:string,position:[3]f32,rotation:mm.Quat,size:[2]f32,color:[3]f32,glow,range:f32,parent:base.Entity_Id=0) {
+glowing_panel :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Quat,size:[2]f32,color:[3]f32,glow,range:f32,parent:base.Entity_Id=0) {
     id:=placed(s,name,position,rotation*FACE_BACK,{size.x,size.y,0.01},parent)
     cube(s,id,"Matte paint")
     tinted(s,id,{0.02,0.02,0.02},nits(LAMPLIT,color*glow))
     light:=render.Rect_Light{color=color,luminance=lux(LAMPLIT,glow),range=range}
-    put(s,id,"Rect_Light",&light)
+    asset.builder_set(s,id,light)
 }
 
 // A camera for screens, and what a screen asks of it.
 @(private)
-feed :: proc(s:^Scene_Out,name:string,position,target:[3]f32,camera:render.Camera,size:[2]u32,light:bool,interval:u32=0) -> monitors.Screen {
+feed :: proc(s:^asset.Scene_Builder,name:string,position,target:[3]f32,camera:render.Camera,size:[2]u32,light:bool,interval:u32=0) -> monitors.Screen {
     up:=abs(linalg.normalize(target-position).y)>0.99?[3]f32{0,0,-1}:[3]f32{0,1,0}
     id:=placed(s,name,position,mm.quat_look(target-position,up),{1,1,1})
     camera:=camera
     camera.active=false
-    put(s,id,"Camera",&camera)
+    asset.builder_set(s,id,camera)
     return {camera=core.Entity(id),width=size.x,height=size.y,interval=interval,light=light,brightness=nits(LAMPLIT,1.1)}
 }
 
@@ -466,11 +466,11 @@ feed :: proc(s:^Scene_Out,name:string,position,target:[3]f32,camera:render.Camer
 // screens of a wall show them. The nearer a screen is seen, the more of its
 // image is drawn.
 write_monitors_scene :: proc(o:^Out,meshes:Feature_Meshes) {
-    s:Scene_Out
+    s:asset.Scene_Builder
     // A dim room at night: a stop and a half under the meter.
     feature_scene_begin(&s,o,"monitors",.Night,{0.55,0.68,1},0.5,{0.3,0.8,0.5},LAMPLIT,-1.5)
     slab(&s,o,"Floor",{0,-0.25,0},{22,0.5,18},"Tiles")
-    wall:=entity(&s,"Wall",{0,2.5,-7.2},{22,5,0.4})
+    wall:=asset.builder_entity(&s,"Wall",{position={0,2.5,-7.2},scale={22,5,0.4}})
     solid(&s,wall,"Matte paint")
     tinted(&s,wall,{0.12,0.13,0.16})
     slab(&s,o,"Wall west",{-11.2,2.5,0},{0.4,5,18},"Bricks")
@@ -480,22 +480,22 @@ write_monitors_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     // The stage: what the first camera watches moves on its own.
     up:=[3]f32{0,1,0}
     slab(&s,o,"Stage",{6,0.15,1},{5,0.3,5},"Decking")
-    post:=entity(&s,"Stage post",{6,0.3,1})
+    post:=asset.builder_entity(&s,"Stage post",{position={6,0.3,1}})
     model(&s,post,meshes.post,"Marble")
     twist:=deform.Deform{kind=.Twist,axis=up,amplitude=2.6,speed=0.16}
-    put(&s,post,"Deform",&twist)
-    shape(&s,entity(&s,"Stage mast",{4.3,2.1,-0.4},{0.08,3.6,0.08}),.Cylinder,"Brushed steel")
-    flag:=entity(&s,"Stage flag",{4.35,3.1,-0.4})
+    asset.builder_set(&s,post,twist)
+    shape(&s,asset.builder_entity(&s,"Stage mast",{position={4.3,2.1,-0.4},scale={0.08,3.6,0.08}}),.Cylinder,"Brushed steel")
+    flag:=asset.builder_entity(&s,"Stage flag",{position={4.35,3.1,-0.4}})
     model(&s,flag,meshes.flag,"Satin paint")
     tinted(&s,flag,{0.9,0.2,0.1})
     wave:=deform.Deform{kind=.Wave,axis={1,0,0},direction={0,0,1},amplitude=0.12,wavelength=1.1,speed=0.9,pin=0.22}
-    put(&s,flag,"Deform",&wave)
-    blob:=entity(&s,"Stage blob",{7.4,1.1,2})
+    asset.builder_set(&s,flag,wave)
+    blob:=asset.builder_entity(&s,"Stage blob",{position={7.4,1.1,2}})
     model(&s,blob,meshes.blob,"Lacquer")
     tinted(&s,blob,{0.15,0.6,1})
     wobble:=deform.Deform{kind=.Wave,axis=up,direction={1,0,0.4},amplitude=0.07,wavelength=0.55,speed=0.7}
-    put(&s,blob,"Deform",&wobble)
-    shape(&s,entity(&s,"Stage ball",{5.2,0.75,2.6},{0.9,0.9,0.9}),.Sphere,"Chrome")
+    asset.builder_set(&s,blob,wobble)
+    shape(&s,asset.builder_entity(&s,"Stage ball",{position={5.2,0.75,2.6},scale={0.9,0.9,0.9}}),.Sphere,"Chrome")
 
     stage:=feed(&s,"Stage camera",{2.4,2.4,5.2},{6,1.5,1},{fov=42*mm.RAD_PER_DEG,near=0.1},{1280,720},false)
     above:=feed(&s,"Overview camera",{0,11,0},{0,0,0},{fov=60*mm.RAD_PER_DEG,near=0.1,projection=.Orthographic,height=19},{1024,1024},true,2)
@@ -504,7 +504,7 @@ write_monitors_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     screen(&s,"Screen overview",{2.2,3.2,-6.95},face,{2.2,2.2},above)
     screen(&s,"Screen stage small",{2.2,1.25,-6.95},face,{1.6,0.9},stage)
     // A desk with a small screen, and one far at the end of the room.
-    solid(&s,entity(&s,"Desk",{-6,0.45,3},{2.2,0.9,1}),"Planks")
+    solid(&s,asset.builder_entity(&s,"Desk",{position={-6,0.45,3},scale={2.2,0.9,1}}),"Planks")
     screen(&s,"Screen desk",{-6,1.35,3},mm.quat_axis_angle(up,0.6),{0.96,0.54},stage)
     screen(&s,"Screen far",{-10.9,2.4,-2},mm.quat_axis_angle(up,math.PI/2),{3.2,1.8},above)
     spawn_point(&s,{0,0,7})
@@ -514,7 +514,7 @@ write_monitors_scene :: proc(o:^Out,meshes:Feature_Meshes) {
 // A door: two pillars, a lintel and a plate behind, facing +Z, and the portal
 // of its opening, in a scene its lamps light.
 @(private)
-door :: proc(s:^Scene_Out,o:^Out,name:string,position:[3]f32,rotation:mm.Quat) -> base.Entity_Id {
+door :: proc(s:^asset.Scene_Builder,o:^Out,name:string,position:[3]f32,rotation:mm.Quat) -> base.Entity_Id {
     root:=placed(s,name,position,rotation,{1,1,1})
     slab(s,o,"Pillar left",{-2.05,2.45,0},{0.8,4.9,1.0},"Cast metal",root)
     slab(s,o,"Pillar right",{2.05,2.45,0},{0.8,4.9,1.0},"Cast metal",root)
@@ -523,32 +523,32 @@ door :: proc(s:^Scene_Out,o:^Out,name:string,position:[3]f32,rotation:mm.Quat) -
     // A strip of light around the opening, on the front of the pillars and of the lintel.
     color:=[3]f32{0.35,0.75,1}
     for x,i in ([2]f32{-1.72,1.72}) {
-        strip:=entity(s,i==0?"Strip left":"Strip right",{x,2.3,0.5},{0.08,4.6,0.04},root)
+        strip:=asset.builder_entity(s,i==0?"Strip left":"Strip right",{position={x,2.3,0.5},scale={0.08,4.6,0.04}},root)
         cube(s,strip,"Matte paint")
         tinted(s,strip,color,nits(LAMPLIT,color*1.8))
     }
-    strip:=entity(s,"Strip top",{0,4.66,0.6},{3.52,0.08,0.04},root)
+    strip:=asset.builder_entity(s,"Strip top",{position={0,4.66,0.6},scale={3.52,0.08,0.04}},root)
     cube(s,strip,"Matte paint")
     tinted(s,strip,color,nits(LAMPLIT,color*1.8))
-    return entity(s,"Portal",{0,2.3,0},{3.3,4.6,1},root)
+    return asset.builder_entity(s,"Portal",{position={0,2.3,0},scale={3.3,4.6,1}},root)
 }
 
 // A wall of bricks with a coping of stone over it.
 @(private)
-wall :: proc(s:^Scene_Out,o:^Out,name:string,position,size:[3]f32,parent:base.Entity_Id=0) {
+wall :: proc(s:^asset.Scene_Builder,o:^Out,name:string,position,size:[3]f32,parent:base.Entity_Id=0) {
     slab(s,o,name,position,size,"Bricks",parent)
-    coping:=entity(s,fmt.tprintf("%s coping",name),position+[3]f32{0,size.y*0.5+0.1,0},{size.x+(size.x>size.z?0:0.3),0.2,size.z+(size.x>size.z?0.3:0)},parent)
+    coping:=asset.builder_entity(s,fmt.tprintf("%s coping",name),{position=position+[3]f32{0,size.y*0.5+0.1,0},scale={size.x+(size.x>size.z?0:0.3),0.2,size.z+(size.x>size.z?0.3:0)}},parent)
     cube(s,coping,"Satin paint")
     tinted(s,coping,STONE)
 }
 
 // A bench: a seat of planks on two legs.
 @(private)
-bench :: proc(s:^Scene_Out,o:^Out,name:string,position:[3]f32,rotation:mm.Quat,parent:base.Entity_Id=0) {
+bench :: proc(s:^asset.Scene_Builder,o:^Out,name:string,position:[3]f32,rotation:mm.Quat,parent:base.Entity_Id=0) {
     root:=placed(s,name,position,rotation,{1,1,1},parent)
     slab(s,o,"Seat",{0,0.48,0},{2.4,0.1,0.6},"Planks",root)
     for x,i in ([2]f32{-0.95,0.95}) {
-        solid(s,entity(s,i==0?"Leg left":"Leg right",{x,0.215,0},{0.12,0.43,0.5},root),"Cast metal")
+        solid(s,asset.builder_entity(s,i==0?"Leg left":"Leg right",{position={x,0.215,0},scale={0.12,0.43,0.5}},root),"Cast metal")
     }
 }
 
@@ -556,13 +556,13 @@ bench :: proc(s:^Scene_Out,o:^Out,name:string,position:[3]f32,rotation:mm.Quat,p
 // each: what is seen through a door is the other place, and who walks into it
 // walks out of the other. A screen in the plaza shows the patio from a camera.
 write_portals_scene :: proc(o:^Out,meshes:Feature_Meshes) {
-    s:Scene_Out
+    s:asset.Scene_Builder
     // A bright plaza: a stop over the meter.
     feature_scene_begin(&s,o,"portals",.Day,{1,0.93,0.82},2.2,{0.8,0.35,0.3},LAMPLIT)
     up:=[3]f32{0,1,0}
 
     // The plaza: cobbles, two walls of bricks with columns before the north one, lamps and benches.
-    plaza:=entity(&s,"Plaza")
+    plaza:=asset.builder_entity(&s,"Plaza")
     slab(&s,o,"Floor",{0,-0.25,0},{32,0.5,32},"Cobblestone",plaza)
     wall(&s,o,"Wall north",{0,3,-15.6},{32,6,0.8},plaza)
     wall(&s,o,"Wall east",{15.6,3,0},{0.8,6,32},plaza)
@@ -574,26 +574,26 @@ write_portals_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     }
     bench(&s,o,"Bench north",{6.8,0,-13.2},1,plaza)
     bench(&s,o,"Bench east",{14,0,5},mm.quat_axis_angle(up,math.PI/2),plaza)
-    solid(&s,entity(&s,"Crate",{-6.5,0.6,3.2},{1.2,1.2,1.2},plaza),"Planks")
+    solid(&s,asset.builder_entity(&s,"Crate",{position={-6.5,0.6,3.2},scale={1.2,1.2,1.2}},plaza),"Planks")
     solid(&s,placed(&s,"Crate small",{-7.7,0.4,2.5},mm.quat_axis_angle(up,0.5),{0.8,0.8,0.8},plaza),"Planks")
     solid(&s,placed(&s,"Crate top",{-6.4,1.55,3.1},mm.quat_axis_angle(up,0.3),{0.7,0.7,0.7},plaza),"Planks")
-    shape(&s,entity(&s,"Ball",{-8.2,0.7,-3.4},{1.4,1.4,1.4},plaza),.Sphere,"Polished metal")
+    shape(&s,asset.builder_entity(&s,"Ball",{position={-8.2,0.7,-3.4},scale={1.4,1.4,1.4}},plaza),.Sphere,"Polished metal")
     // A planter with a tree in the wind.
     for side in 0..<4 {
         along:=side<2
         sign:=side%2==0?f32(-1):f32(1)
         slab(&s,o,fmt.tprintf("Planter %d",side+1),along?[3]f32{3,0.3,-4+sign*1.35}:[3]f32{3+sign*1.35,0.3,-4},along?[3]f32{3,0.6,0.3}:[3]f32{0.3,0.6,2.4},"Bricks",plaza)
     }
-    soil:=entity(&s,"Soil",{3,0.25,-4},{2.4,0.5,2.4},plaza)
+    soil:=asset.builder_entity(&s,"Soil",{position={3,0.25,-4},scale={2.4,0.5,2.4}},plaza)
     cube(&s,soil,"Matte paint")
     tinted(&s,soil,{0.16,0.11,0.07})
-    tree:=entity(&s,"Tree",{3,0.5,-4},{1.1,1.1,1.1},plaza)
+    tree:=asset.builder_entity(&s,"Tree",{position={3,0.5,-4},scale={1.1,1.1,1.1}},plaza)
     model(&s,tree,meshes.tree,"Matte paint")
     sway:=deform.Deform{kind=.Sway,axis=up,direction={1,0,0.3},amplitude=0.4,speed=0.2,pin=0.12}
-    put(&s,tree,"Deform",&sway)
+    asset.builder_set(&s,tree,sway)
 
     // The patio: a floor of marble, a ring of columns around a pool, and a sign on its back wall.
-    patio:=entity(&s,"Patio",{200,0,0})
+    patio:=asset.builder_entity(&s,"Patio",{position={200,0,0}})
     slab(&s,o,"Floor",{0,-0.25,0},{32,0.5,32},"Marble",patio)
     wall(&s,o,"Wall back",{0,3,15.6},{32,6,0.8},patio)
     wall(&s,o,"Wall west",{-15.6,3,0},{0.8,6,32},patio)
@@ -604,15 +604,15 @@ write_portals_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     for side in 0..<4 {
         along:=side<2
         sign:=side%2==0?f32(-1):f32(1)
-        rim:=entity(&s,fmt.tprintf("Pool rim %d",side+1),along?[3]f32{0,0.25,sign*3.2}:[3]f32{sign*3.2,0.25,0},along?[3]f32{6.8,0.5,0.4}:[3]f32{0.4,0.5,6},patio)
+        rim:=asset.builder_entity(&s,fmt.tprintf("Pool rim %d",side+1),{position=along?[3]f32{0,0.25,sign*3.2}:[3]f32{sign*3.2,0.25,0},scale=along?[3]f32{6.8,0.5,0.4}:[3]f32{0.4,0.5,6}},patio)
         solid(&s,rim,"Satin paint")
         tinted(&s,rim,STONE)
     }
-    water:=entity(&s,"Pool water",{0,0.32,0},{6,0.1,6},patio)
+    water:=asset.builder_entity(&s,"Pool water",{position={0,0.32,0},scale={6,0.1,6}},patio)
     cube(&s,water,"Pool water")
     column(&s,meshes,"Pedestal",{0,0,0},1.1,1.5,patio)
-    shape(&s,entity(&s,"Chrome ball",{0,2.2,0},{1.4,1.4,1.4},patio),.Sphere,"Chrome")
-    cube(&s,entity(&s,"Neon sign",{0,3.6,15.1},{6,1.5,0.15},patio),"Neon sign")
+    shape(&s,asset.builder_entity(&s,"Chrome ball",{position={0,2.2,0},scale={1.4,1.4,1.4}},patio),.Sphere,"Chrome")
+    cube(&s,asset.builder_entity(&s,"Neon sign",{position={0,3.6,15.1},scale={6,1.5,0.15}},patio),"Neon sign")
     for corner,i in ([4][2]f32{{-12,-12},{12,-12},{-12,12},{12,12}}) {
         lamp(&s,fmt.tprintf("Patio lamp %d",i+1),{200+corner.x,0,corner.y},{0.45,0.75,1},9,11)
     }
@@ -621,8 +621,8 @@ write_portals_scene :: proc(o:^Out,meshes:Feature_Meshes) {
     plaza_portal:=door(&s,o,"Plaza door",{-12,0,0},mm.quat_axis_angle(up,math.PI/2))
     patio_portal:=door(&s,o,"Patio door",{200,0,-12},1)
     to_patio,to_plaza:=portals.Portal{exit=core.Entity(patio_portal)},portals.Portal{exit=core.Entity(plaza_portal)}
-    put(&s,plaza_portal,"Portal",&to_patio)
-    put(&s,patio_portal,"Portal",&to_plaza)
+    asset.builder_set(&s,plaza_portal,to_patio)
+    asset.builder_set(&s,patio_portal,to_plaza)
 
     camera:=feed(&s,"Patio camera",{211,7,11},{200,1.5,0},{fov=50*mm.RAD_PER_DEG,near=0.1},{1280,720},true)
     screen(&s,"Monitor",{0,3.3,-15.1},1,{4.8,2.7},camera)
@@ -633,7 +633,7 @@ write_portals_scene :: proc(o:^Out,meshes:Feature_Meshes) {
 // A closed room of concrete, `size` wide, deep and high around `center` at
 // floor level, with a ceiling: the light inside is only its own.
 @(private)
-room :: proc(s:^Scene_Out,o:^Out,center,size:[3]f32,shade:[3]f32,parent:base.Entity_Id=0) {
+room :: proc(s:^asset.Scene_Builder,o:^Out,center,size:[3]f32,shade:[3]f32,parent:base.Entity_Id=0) {
     slab(s,o,"Floor",center+[3]f32{0,-0.25,0},{size.x,0.5,size.z},"Tiles",parent)
     half:=size*0.5
     walls:=[4]struct{name:string,position,scale:[3]f32}{
@@ -643,11 +643,11 @@ room :: proc(s:^Scene_Out,o:^Out,center,size:[3]f32,shade:[3]f32,parent:base.Ent
         {"Wall east",{half.x+0.2,half.y,0},{0.4,size.y,size.z}},
     }
     for w in walls {
-        wall:=entity(s,w.name,center+w.position,w.scale,parent)
+        wall:=asset.builder_entity(s,w.name,{position=center+w.position,scale=w.scale},parent)
         solid(s,wall,"Matte paint")
         tinted(s,wall,shade)
     }
-    ceiling:=entity(s,"Ceiling",center+[3]f32{0,size.y+0.2,0},{size.x+1.6,0.4,size.z+1.6},parent)
+    ceiling:=asset.builder_entity(s,"Ceiling",{position=center+[3]f32{0,size.y+0.2,0},scale={size.x+1.6,0.4,size.z+1.6}},parent)
     solid(s,ceiling,"Matte paint")
     tinted(s,ceiling,shade*0.5)
 }
@@ -658,50 +658,50 @@ room :: proc(s:^Scene_Out,o:^Out,center,size:[3]f32,shade:[3]f32,parent:base.Ent
 // console light the laboratory amber and green; a dim lamp, the rest. Who
 // walks into the gate walks out in the chamber, and back.
 write_portal_lab_scene :: proc(o:^Out) {
-    s:Scene_Out
+    s:asset.Scene_Builder
     // A dark laboratory: two stops and a half under the meter.
     feature_scene_begin(&s,o,"portal_lab",.Night,{0.55,0.68,1},0.15,{0.3,0.8,0.5},LAMPLIT,-2.5)
     up:=[3]f32{0,1,0}
     concrete:=[3]f32{0.2,0.22,0.25}
 
     // The laboratory: 14 by 12 m and 6 high, the gate in its north wall.
-    lab:=entity(&s,"Laboratory")
+    lab:=asset.builder_entity(&s,"Laboratory")
     room(&s,o,{0,0,0},{14,6,12},concrete,lab)
-    solid(&s,entity(&s,"Console",{3.6,0.68,-4.9},{4.1,1.36,1.6},lab),"Rough metal")
-    solid(&s,entity(&s,"Console top",{3.6,1.4,-4.8},{4.2,0.08,1.9},lab),"Brushed steel")
-    for i in 0..<9 {shape(&s,entity(&s,fmt.tprintf("Switch %d",i+1),{2+0.39*f32(i),1.47,-4.2},{0.18,0.03,0.13},lab),.Cube,"Brushed steel")}
+    solid(&s,asset.builder_entity(&s,"Console",{position={3.6,0.68,-4.9},scale={4.1,1.36,1.6}},lab),"Rough metal")
+    solid(&s,asset.builder_entity(&s,"Console top",{position={3.6,1.4,-4.8},scale={4.2,0.08,1.9}},lab),"Brushed steel")
+    for i in 0..<9 {shape(&s,asset.builder_entity(&s,fmt.tprintf("Switch %d",i+1),{position={2+0.39*f32(i),1.47,-4.2},scale={0.18,0.03,0.13}},lab),.Cube,"Brushed steel")}
     glowing_panel(&s,"Amber display",{2.6,2.6,-5.99},1,{2.15,1.2},{1,0.3,0.03},4,14,lab)
     glowing_panel(&s,"Green display",{5.1,2.6,-5.99},1,{1.7,1.2},{0.02,1,0.3},4,14,lab)
-    receiver:=entity(&s,"Receiver block",{-3.9,0.62,-2.6},{1.25,1.24,1.25},lab)
+    receiver:=asset.builder_entity(&s,"Receiver block",{position={-3.9,0.62,-2.6},scale={1.25,1.24,1.25}},lab)
     solid(&s,receiver,"Matte paint")
     tinted(&s,receiver,{0.85,0.87,0.9})
-    shape(&s,entity(&s,"Receiver ball",{-3.9,1.6,-2.6},{0.73,0.73,0.73},lab),.Sphere,"Chrome")
-    shape(&s,entity(&s,"Vessel",{-5.4,1.2,-1.2},{0.8,2.4,0.8},lab),.Cylinder,"Brushed steel")
-    for band in ([3]f32{0.3,1.2,2.1}) {shape(&s,entity(&s,"Vessel band",{-5.4,band,-1.2},{0.87,0.09,0.87},lab),.Cylinder,"Rough metal")}
+    shape(&s,asset.builder_entity(&s,"Receiver ball",{position={-3.9,1.6,-2.6},scale={0.73,0.73,0.73}},lab),.Sphere,"Chrome")
+    shape(&s,asset.builder_entity(&s,"Vessel",{position={-5.4,1.2,-1.2},scale={0.8,2.4,0.8}},lab),.Cylinder,"Brushed steel")
+    for band in ([3]f32{0.3,1.2,2.1}) {shape(&s,asset.builder_entity(&s,"Vessel band",{position={-5.4,band,-1.2},scale={0.87,0.09,0.87}},lab),.Cylinder,"Rough metal")}
     solid(&s,placed(&s,"Crate",{1.2,0.44,0.6},mm.quat_axis_angle(up,0.3),{1,0.88,1},lab),"Planks")
-    solid(&s,entity(&s,"Equipment case",{4.8,0.75,3},{1.6,1.5,1.6},lab),"Rough metal")
+    solid(&s,asset.builder_entity(&s,"Equipment case",{position={4.8,0.75,3},scale={1.6,1.5,1.6}},lab),"Rough metal")
     point_light(&s,"Work lamp",{-3,5.6,3},{1,0.82,0.6},3*LAMP,10,lab,0.08)
 
     // The chamber, 100 m away: 12 by 9 m, its gate in the south wall, cyan panels on the back wall, the ceiling and the west wall.
-    chamber:=entity(&s,"Chamber",{100,0,0})
+    chamber:=asset.builder_entity(&s,"Chamber",{position={100,0,0}})
     room(&s,o,{0,0,0},{12,6,9},concrete,chamber)
     cyan:=[3]f32{0.035,0.63,1}
     glowing_panel(&s,"Back panel",{0,3.2,-4.49},1,{5.2,1.7},cyan,8,20,chamber)
     glowing_panel(&s,"Ceiling panel",{0,5.99,-0.5},mm.quat_axis_angle({1,0,0},math.PI/2),{3.1,1.6},cyan,8,20,chamber)
     glowing_panel(&s,"West panel",{-5.99,2.8,-1.5},mm.quat_axis_angle(up,math.PI/2),{1.4,2.2},cyan,8,18,chamber)
-    shape(&s,entity(&s,"Pedestal",{0,0.46,-1},{1.8,0.92,1.8},chamber),.Cylinder,"Rough metal")
-    shape(&s,entity(&s,"Ball",{0,1.57,-1},{1.3,1.3,1.3},chamber),.Sphere,"Chrome")
+    shape(&s,asset.builder_entity(&s,"Pedestal",{position={0,0.46,-1},scale={1.8,0.92,1.8}},chamber),.Cylinder,"Rough metal")
+    shape(&s,asset.builder_entity(&s,"Ball",{position={0,1.57,-1},scale={1.3,1.3,1.3}},chamber),.Sphere,"Chrome")
     for i in 0..<4 {
         x:=-3+2*f32(i)
-        solid(&s,entity(&s,fmt.tprintf("Cabinet %d",i+1),{x,0.9,-3.9},{1.25,1.8,0.8},chamber),"Rough metal")
-        for slit in 0..<5 {shape(&s,entity(&s,"Vent",{x,0.55+0.17*f32(slit),-3.49},{0.8,0.045,0.015},chamber),.Cube,"Brushed steel")}
+        solid(&s,asset.builder_entity(&s,fmt.tprintf("Cabinet %d",i+1),{position={x,0.9,-3.9},scale={1.25,1.8,0.8}},chamber),"Rough metal")
+        for slit in 0..<5 {shape(&s,asset.builder_entity(&s,"Vent",{position={x,0.55+0.17*f32(slit),-3.49},scale={0.8,0.045,0.015}},chamber),.Cube,"Brushed steel")}
     }
 
     lab_gate:=door(&s,o,"Laboratory gate",{-1.7,0,-5.45},1)
     chamber_gate:=door(&s,o,"Chamber gate",{100,0,3.95},mm.quat_axis_angle(up,math.PI))
     to_chamber,to_lab:=portals.Portal{exit=core.Entity(chamber_gate)},portals.Portal{exit=core.Entity(lab_gate)}
-    put(&s,lab_gate,"Portal",&to_chamber)
-    put(&s,chamber_gate,"Portal",&to_lab)
+    asset.builder_set(&s,lab_gate,to_chamber)
+    asset.builder_set(&s,chamber_gate,to_lab)
     spawn_point(&s,{-1,0,4.5})
     feature_scene_end(&s,o,"portal_lab")
 }

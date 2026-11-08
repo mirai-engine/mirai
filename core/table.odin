@@ -48,6 +48,7 @@ Table :: struct($T:typeid) {
     owners:[dynamic]Row_Owner, // shared tables: by index, the generation and lock that own the row
     locks:[]Lock,             // rows of other tables a row on of this one owns
     name:string,
+    default:proc(dst:rawptr), // writes the value a new row starts with; nil: zero
 }
 
 Pending :: struct {
@@ -167,6 +168,20 @@ table_entity_at :: #force_inline proc "contextless" (t:^Table($T),row:int) -> En
 read_entity_at :: #force_inline proc "contextless" (r:Read($T),row:int) -> Entity {return r.table.entities[row]}
 entity_at :: proc{table_entity_at,read_entity_at}
 
+// The entity of the first row on; false without rows.
+table_first :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on>0?t.entities[0]:NONE,t.on>0
+}
+read_first :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_first(r.table)}
+first :: proc{table_first,read_first}
+
+// The entity of the only row on; false without rows or with several.
+table_sole :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on==1?t.entities[0]:NONE,t.on==1
+}
+read_sole :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_sole(r.table)}
+sole :: proc{table_sole,read_sole}
+
 table_stamp :: #force_inline proc "contextless" (t:^Table($T),row:int) -> u64 {return t.stamps[row]}
 read_stamp :: #force_inline proc "contextless" (r:Read($T),row:int) -> u64 {return r.table.stamps[row]}
 stamp :: proc{table_stamp,read_stamp}
@@ -186,6 +201,18 @@ add :: proc(t:^Table($T),e:Entity,value:T) {
     append(&t.pending,Pending{e,i32(len(t.added)-1)})
 }
 
+// What a new row of this table starts as: the default the generator found
+// for the component (<NAME>_DEFAULT or <name>_default() of its package), or zero.
+table_default :: proc(t:^Table($T)) -> (value:T) {
+    if t.default!=nil {t.default(&value)}
+    return
+}
+read_default :: proc(r:Read($T)) -> T {return table_default(r.table)}
+default :: proc{table_default,read_default,commands_default}
+
+// Gives the entity the component at its default, as add does.
+add_default :: proc(t:^Table($T),e:Entity) {add(t,e,table_default(t))}
+
 // Takes the component from the entity at the end of the function.
 remove :: proc(t:^Table($T),e:Entity) {
     append(&t.pending,Pending{e,PENDING_REMOVE})
@@ -204,6 +231,26 @@ staged :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {
     return table_get(t,e)
 }
 
+// Whether the entity will have the component on at the end of the function,
+// counting what this table waits for: what has answers after the settle. Of a
+// single table it says whether the row of the entity is turned on; which row
+// stays on is decided as the table settles.
+staged_has :: proc "contextless" (t:^Table($T),e:Entity) -> bool {
+    row:=raw_row(raw(t),e)
+    present,off:=row>=0,row>=0 && t.off[row]
+    off_with_entity:=present && row>=t.on && !off
+    for p in t.pending {
+        if p.entity!=e {continue}
+        switch p.value {
+        case PENDING_REMOVE: present,off=false,false
+        case PENDING_OFF:    off=present
+        case PENDING_ON:     off=false
+        case:                present=true
+        }
+    }
+    return present && !off && !off_with_entity
+}
+
 // Turns the component of an entity off at the end of the function: its row
 // keeps its value, and no function sees it until enable. The base of an
 // entity does not turn off: Disabled turns the whole entity off.
@@ -213,6 +260,11 @@ disable :: proc(t:^Table($T),e:Entity) {raw_disable(raw(t),e)}
 // entity is disabled it stays off with it. In a single table it is the one on
 // from then, and the one that was on waits behind it.
 enable :: proc(t:^Table($T),e:Entity) {raw_enable(raw(t),e)}
+
+// Turns the component of an entity on or off at the end of the function.
+set_on :: proc(t:^Table($T),e:Entity,on:bool) {
+    if on {enable(t,e)} else {disable(t,e)}
+}
 
 // What a reader saw of a table, for changes.
 Seen :: struct {
@@ -683,6 +735,7 @@ Raw_Table :: struct {
     owners:[dynamic]Row_Owner,
     locks:[]Lock,
     name:string,
+    default:proc(dst:rawptr),
 }
 #assert(size_of(Raw_Table)==size_of(Table(u8)))
 #assert(offset_of(Raw_Table,stamps)==offset_of(Table(u8),stamps))
@@ -690,6 +743,7 @@ Raw_Table :: struct {
 #assert(offset_of(Raw_Table,gone)==offset_of(Table(u8),gone))
 #assert(offset_of(Raw_Table,on)==offset_of(Table(u8),on))
 #assert(offset_of(Raw_Table,name)==offset_of(Table(u8),name))
+#assert(offset_of(Raw_Table,default)==offset_of(Table(u8),default))
 
 raw :: #force_inline proc "contextless" (t:^Table($T)) -> ^Raw_Table {return cast(^Raw_Table)t}
 

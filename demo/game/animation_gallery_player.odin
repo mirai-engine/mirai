@@ -63,7 +63,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
         input.move,input.buttons={},{}
         if player.focus!=core.NONE {input.look_yaw=yaw_of(placed.rotation);continue}
         gallery_player_input(input,placed.rotation,time.dt,owner,walk_actions,look_actions,follows)
-        if placed.position.y< -3 {core.place(placer,body,GALLERY_START)}
+        if placed.position.y< -3 {core.place(placer,body,GALLERY_START,at_rest=true)}
     }
 }
 
@@ -114,9 +114,10 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // widget without size is not drawn.
 @(step="fixed",after="gallery_interact")
 gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Gallery_Label),panels:core.Read(Gallery_Panel),widgets:^core.Table(gui.World_Widget),worlds:core.Read(core.World_Transform),drivables:core.Read(inp.Drivable)) {
-    if core.count(players)==0 {return}
+    player,found:=core.first(players)
+    if !found {return}
     focus:=core.at(players,0).focus
-    body,_:=core.get(worlds,inp.body_of(drivables,core.entity_at(players,0)))
+    body,_:=core.get(worlds,inp.body_of(drivables,player))
     for row in 0..<core.count(labels) {
         e:=core.entity_at(labels,row)
         placed,exists:=core.get(worlds,e)

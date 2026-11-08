@@ -38,9 +38,7 @@ Api_Play_Segment :: struct {
 }
 
 Api_Play_Trace :: struct {
-    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene"`,
-    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle as play.inspect gives it"`,
-    name:[128]u8 `mirai:"optional,text,label=The entities with this name; * stands for any run of characters"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=The entity by its name or a path Parent/Child or its id or its handle; a name with * stands for any run of characters and takes every entity it fits"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of entities"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of entities or a storage: the entities named are its points"`,
@@ -109,12 +107,9 @@ api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:
     step={ticks=segment.ticks,keys=segment.keys,buttons=segment.mouse_buttons,tap_keys=segment.tap_keys,tap_buttons=segment.tap_buttons,mouse_position=segment.mouse_position,placed=values[0]!="",mouse_delta=segment.mouse_delta,wheel=segment.wheel}
     if values[3]!="" {
         if values[2]!="" {api.call_failf(call,api.INVALID_PARAMS,"%sticks and %sseconds both say how long it holds: give one",at,at);return}
-        ticks:=f64(segment.seconds)/f64(max(tick_dt,1e-6))
-        if !rpc_finite(segment.seconds) || !(segment.seconds>0) || ticks>f64(API_STEP_LIMIT) {
-            api.call_failf(call,api.INVALID_PARAMS,"%sseconds takes a time above 0 and up to %d ticks of %g s",at,API_STEP_LIMIT,tick_dt)
-            return
-        }
-        step.ticks=max(int(math.round(ticks)),1)
+        span,timed:=api_seconds_ticks(call,at,f64(segment.seconds),tick_dt,API_STEP_LIMIT)
+        if !timed {return}
+        step.ticks=span
     }
     if step.ticks<1 {api.call_failf(call,api.INVALID_PARAMS,"%sticks: give the ticks it holds its input (1 or more) or seconds",at);return}
     if both:=step.keys&step.tap_keys;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%stap_keys: %v are in keys too; a key is held or tapped",at,both);return}
@@ -176,6 +171,18 @@ api_segments_read :: proc(call:^api.Call,segments:[]Api_Play_Segment,raw:string,
         return
     }
     return timeline,true
+}
+
+// The whole ticks of a game time, the nearest and at least 1; ok is false
+// after failing the call. at names the entry in the error (with its separator)
+// and limit is the most ticks it may be.
+api_seconds_ticks :: proc(call:^api.Call,at:string,seconds:f64,tick_dt:f32,limit:int) -> (span:int,ok:bool) {
+    count:=seconds/f64(max(tick_dt,1e-6))
+    if !rpc_finite(f32(seconds)) || !(seconds>0) || count>f64(limit) {
+        api.call_failf(call,api.INVALID_PARAMS,"%sseconds takes a time above 0 and up to %d ticks of %g s",at,limit,tick_dt)
+        return
+    }
+    return max(int(math.round(count)),1),true
 }
 
 // The input of play.step along its ticks: its segments, or the input fields as one segment of ticks.
@@ -383,11 +390,12 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     if rows:=1+(ticks+every-1)/every;rows>API_TRACE_ROWS {
         return fmt.tprintf("trace would keep %d rows and keeps at most %d: give every %d or more",rows,API_TRACE_ROWS,(ticks+API_TRACE_ROWS-2)/(API_TRACE_ROWS-1))
     }
-    handle,name,component,storage:=base.text_get(p.entity[:]),base.text_get(p.name[:]),base.text_get(p.component[:]),base.text_get(p.storage[:])
-    named:=p.id!=0 || handle!="" || name!="" || component!=""
+    entity,component,storage:=base.text_get(p.entity[:]),base.text_get(p.component[:]),base.text_get(p.storage[:])
+    pattern:=strings.contains_rune(entity,'*')
+    named:=entity!="" || component!=""
     switch {
     case p.view && storage!="": return "trace: view reads what the player sees in place of a storage: leave storage out"
-    case !p.view && named==(storage!=""): return "trace: name what it reads: entities by id or entity or name or component (they narrow each other), a storage or the view"
+    case !p.view && named==(storage!=""): return "trace: name what it reads: entities by entity or component (they narrow each other), a storage or the view"
     }
     if storage!="" {
         for &info,i in s.info.storages {if st.storage_types[i]!=serial.TYPE_NONE && info.name==storage {trace.storage=i;break}}
@@ -399,21 +407,21 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
         }
         candidates:[]core.Entity
         one:[1]core.Entity
-        if handle!="" || p.id!=0 {
-            e,wrong:=api_play_entity(w,handle,p.id)
-            if wrong!="" {return fmt.tprintf("trace: %s",wrong)}
+        if entity!="" && !pattern {
+            e,wrong:=api_entity_select(w,entity,"trace.entity",true,call.allocator)
+            if wrong!="" {return wrong}
             one[0]=e
             candidates=one[:]
         } else {candidates=api_entities_ordered(w)}
         matched:=0
         for e in candidates {
-            if name!="" && !api_name_match(name,entity_name(w,e)) {continue}
+            if pattern && !api_name_match(entity,entity_name(w,e)) {continue}
             if table!=nil && core.raw_find(core.world_table_at(w,table),table.info,e)==nil {continue}
             if matched<API_TRACE_ENTITIES {trace.entities[matched],trace.names[matched]=e,strings.clone(entity_name(w,e),call.allocator)}
             matched+=1
         }
         if matched==0 {return "trace matches no entity of the game: play.inspect lists them"}
-        if matched>API_TRACE_ENTITIES {return fmt.tprintf("trace matches %d entities and reads at most %d: narrow it with id or entity or name or component",matched,API_TRACE_ENTITIES)}
+        if matched>API_TRACE_ENTITIES {return fmt.tprintf("trace matches %d entities and reads at most %d: narrow it with entity or component",matched,API_TRACE_ENTITIES)}
         trace.count=matched
     }
     if !trace.view {

@@ -307,6 +307,7 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
             field.name=schema_string(dst,field.name)
             field.label,field.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
             field.description=schema_string(dst,field.description)
+            field.asset_kinds=schema_string(dst,field.asset_kinds)
         }
         copied.first=u32(len(dst.fields))
         append(&dst.fields,..fields[:])
@@ -341,6 +342,7 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) {
         copied.name=schema_string(dst,field.name)
         copied.label,copied.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
         copied.description=schema_string(dst,field.description)
+        copied.asset_kinds=schema_string(dst,field.asset_kinds)
         append(&dst.fields,copied)
     }
     for choice in src.choices {append(&dst.choices,Choice{schema_string(dst,choice.name),choice.value})}

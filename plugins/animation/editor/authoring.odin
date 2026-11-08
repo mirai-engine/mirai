@@ -21,7 +21,7 @@ Authoring_Create_Params :: struct {
     path:[1024]u8 `mirai:"text"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
-Authoring_File :: struct {file:asset.Asset,path:string}
+Authoring_File :: struct {file:asset.Asset,path:string,replaced:bool}
 
 @(private)
 authoring_register :: proc(s:^editor.Session) {
@@ -39,13 +39,20 @@ authoring_register :: proc(s:^editor.Session) {
     inspect_register(s)
 }
 
+// The kind of an asset as a file names it: anim, skel, ...
+@(private)
+authoring_kind_text :: proc(kind:asset.Fourcc) -> string {
+    buffer:[4]u8
+    return fmt.tprintf("kind %s",strings.trim_right_space(asset.fourcc_text(kind,&buffer)))
+}
+
 @(private)
 authoring_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,kind:asset.Fourcc,result:^Authoring_File) -> bool {
     if s.app==nil || s.app.assets==nil {authoring_failure(call,"asset","Unavailable","an initialized asset service","unavailable","Assets are unavailable",api.SERVER_ERROR);return false}
     a:=s.app.assets
     if !host.assets_scan(a) {authoring_failure(call,"asset","Registry_Error","a refreshed asset registry","scan failed","The asset registry could not be refreshed",api.SERVER_ERROR);return false}
     record,found:=asset.registry_find(&a.registry,id)
-    if !found || record.kind!=kind {authoring_failure(call,"asset","Invalid_Asset",fmt.tprintf("kind %v",kind),fmt.tprintf("kind %v",record.kind) if found else "missing","The asset is missing or has a different kind");return false}
+    if !found || record.kind!=kind {authoring_failure(call,"asset","Invalid_Asset",authoring_kind_text(kind),authoring_kind_text(record.kind) if found else "missing","The asset is missing or has a different kind");return false}
     result.path=asset.registry_file_path(&a.registry,record.path,call.allocator)
     if error:=host.assets_file(a,id,kind,&result.file);error!=.None {authoring_failure(call,"asset","Read_Error","a readable asset file",fmt.tprintf("%v",error),"The asset could not be read");return false}
     return true
@@ -53,35 +60,52 @@ authoring_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,kind:as
 
 @(private)
 authoring_editable :: proc(s:^editor.Session,call:^api.Call) -> bool {
-    if s.mode!=.Edit && !authoring_dry_run(call) {authoring_failure(call,"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"Asset authoring requires Edit mode",api.SERVER_ERROR);return false}
+    if s.mode!=.Edit && !authoring_dry_run(call) {authoring_failure(call,"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"Asset authoring requires Edit mode: stop the run with play.stop");return false}
     if s.app==nil || s.app.assets==nil {authoring_failure(call,"asset","Unavailable","an initialized asset service","unavailable","Assets are unavailable",api.SERVER_ERROR);return false}
     return true
 }
 
 @(private)
-authoring_create_target :: proc(s:^editor.Session,call:^api.Call,path,extension:string,exists_fix:="") -> (target:Authoring_File,id:base.Asset_Id,ok:bool) {
+authoring_create_target :: proc(s:^editor.Session,call:^api.Call,path,extension:string) -> (target:Authoring_File,id:base.Asset_Id,ok:bool) {
     if !authoring_editable(s,call) {return}
     if path=="" {authoring_failure(call,"path","Required","a nonempty asset path","empty","path must not be empty");return}
     if !strings.has_suffix(path,extension) {authoring_failure(call,"path","Extension",extension,path,"The asset path has a different extension");return}
     target.path=editor.scene_file(s,path,call.allocator)
-    if editor.file_exists(s,target.path) {authoring_failure(call,"path","Already_Exists","a new asset path",path,"The destination already exists",fix=exists_fix);return}
+    if editor.file_exists(s,target.path) {authoring_failure(call,"path","Already_Exists","a new asset path",path,"The destination already exists");return}
     rng:=base.rng_make(s.id_state~platform.clock_ns())
     id=base.asset_id_random(&rng);s.id_state=rng.state
     return target,id,true
 }
 
-// The asset a set method writes: a new one at path, or the existing asset
-// replaced whole. Exactly one of the two.
+// The asset of a kind a call names at path: found false when nothing is there
+// yet. Another kind there fails.
 @(private)
-authoring_set_target :: proc(s:^editor.Session,call:^api.Call,path:string,id:base.Asset_Id,kind:asset.Fourcc,extension:string,target:^Authoring_File) -> (base.Asset_Id,bool) {
-    if (id!={})==(path!="") {
-        authoring_failure(call,"path","Exclusive_Reference","exactly one of path or asset","both" if id!={} else "neither","Supply exactly one of path or asset",fix=fmt.tprintf("Pass path to create a new %s, or asset to replace an existing one",extension))
-        return {},false
+authoring_at :: proc(s:^editor.Session,call:^api.Call,path:string,kind:asset.Fourcc,extension:string) -> (id:base.Asset_Id,found,ok:bool) {
+    if !authoring_editable(s,call) {return}
+    if path=="" {authoring_failure(call,"path","Required","a nonempty asset path","empty","path must not be empty");return}
+    if !strings.has_suffix(path,extension) {authoring_failure(call,"path","Extension",extension,path,"The asset path has a different extension");return}
+    a:=s.app.assets
+    if !host.assets_scan(a) {authoring_failure(call,"asset","Registry_Error","a refreshed asset registry","scan failed","The asset registry could not be refreshed",api.SERVER_ERROR);return}
+    if record,there:=asset.registry_find_path(&a.registry,editor.scene_path(s,editor.scene_file(s,path,call.allocator)));there {
+        if record.kind!=kind {authoring_failure(call,"path","Invalid_Asset",fmt.tprintf("a new path, or a %s",extension),fmt.tprintf("kind %v",record.kind),"The path holds another kind of asset");return}
+        return record.id,true,true
     }
-    if id!={} {return id,authoring_open(s,call,id,kind,target)}
-    created,new_id,ok:=authoring_create_target(s,call,path,extension,exists_fix="Choose another path, or pass its id from asset.list as asset to replace it")
+    return {},false,true
+}
+
+// The asset a set method writes: the one at path, replaced whole keeping its
+// id, or a new one there.
+@(private)
+authoring_set_target :: proc(s:^editor.Session,call:^api.Call,path:string,kind:asset.Fourcc,extension:string,target:^Authoring_File) -> (base.Asset_Id,bool) {
+    existing,found,ok:=authoring_at(s,call,path,kind,extension)
+    if !ok {return {},false}
+    if found {
+        target.replaced=true
+        return existing,authoring_open(s,call,existing,kind,target)
+    }
+    created,new_id,made:=authoring_create_target(s,call,path,extension)
     target^=created
-    return new_id,ok
+    return new_id,made
 }
 
 // Publishes an asset document: prepares the response and writes the file as
@@ -101,6 +125,7 @@ authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File
     serial.text_write_raw(call.out,"{")
     authoring_result(call,doc.id,target.path)
     if dry_run {api.write_bool(call.out,"dry_run",true)}
+    if target.replaced {api.write_bool(call.out,"replaced",true)}
     if more!=nil {more(call,data)}
     serial.text_write_raw(call.out,"}")
     if call.out.overflow!=0 {

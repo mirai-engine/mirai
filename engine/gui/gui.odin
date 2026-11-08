@@ -347,51 +347,78 @@ gui_consumed :: proc "contextless" (events:^UI_Events) -> (pointer,keyboard:bool
     return events.pointer_consumed,events.keyboard_consumed
 }
 
+// Every helper below takes the events of a tick (^UI_Events) or those of a
+// frame (events_this_frame).
+
 // The last event of a kind of the node called name of an interface of the
 // entity: of several in one frame, the one that came last says what the
 // widget asks for now. Every helper below reads that one.
-ui_event :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
+ui_event :: proc{ui_event_tick,ui_event_frame}
+ui_event_tick :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
+    return ui_event_frame(events.items[:],entity,name,kind)
+}
+ui_event_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
     event:=event_find(events,entity,name,kind)
     if event==nil {return}
     return event^,true
 }
 
 @(private)
-event_find :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
+event_find :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
     hash:=name!=""?base.name_hash(name):0
-    #reverse for &event in events.items {
+    #reverse for &event in events {
         if event.entity==entity && event.name==hash && event.kind==kind {return &event}
     }
     return nil
 }
 
 // Whether the node called name of an interface of the entity was clicked.
-clicked :: proc(events:^UI_Events,entity:core.Entity,name:string) -> bool {
+clicked :: proc{clicked_tick,clicked_frame}
+clicked_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> bool {
+    return clicked_frame(events.items[:],entity,name)
+}
+clicked_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> bool {
     return event_find(events,entity,name,.Clicked)!=nil
 }
 
 // Which element of its list a button that was clicked is in.
-clicked_item :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
-    event:=ui_event(events,entity,name,.Clicked) or_return
+clicked_item :: proc{clicked_item_tick,clicked_item_frame}
+clicked_item_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
+    return clicked_item_frame(events.items[:],entity,name)
+}
+clicked_item_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
+    event:=ui_event_frame(events,entity,name,.Clicked) or_return
     return event.item,true
 }
 
 // Whether the checkbox called name of an interface of the entity changed, and
 // what it asks for: the game writes it to the field the checkbox binds.
-changed :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (on,ok:bool) {
-    event:=ui_event(events,entity,name,.Changed) or_return
+changed :: proc{changed_tick,changed_frame}
+changed_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (on,ok:bool) {
+    return changed_frame(events.items[:],entity,name)
+}
+changed_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (on,ok:bool) {
+    event:=ui_event_frame(events,entity,name,.Changed) or_return
     return event.on,true
 }
 
 // The number a slider, selector, dropdown or radio called name asks for.
-changed_value :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
-    event:=ui_event(events,entity,name,.Changed) or_return
+changed_value :: proc{changed_value_tick,changed_value_frame}
+changed_value_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
+    return changed_value_frame(events.items[:],entity,name)
+}
+changed_value_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
+    event:=ui_event_frame(events,entity,name,.Changed) or_return
     return event.value,true
 }
 
 // The text a field called name asks for as it is typed in: the game writes
 // it to the field the node binds. Valid while the events are.
-changed_text :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+changed_text :: proc{changed_text_tick,changed_text_frame}
+changed_text_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+    return changed_text_frame(events.items[:],entity,name)
+}
+changed_text_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (text:string,ok:bool) {
     event:=event_find(events,entity,name,.Changed)
     if event==nil {return}
     return base.text_get(event.text[:]),true
@@ -399,7 +426,11 @@ changed_text :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:
 
 // The text a field called name holds when Enter was pressed in it. Valid
 // while the events are.
-submitted :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+submitted :: proc{submitted_tick,submitted_frame}
+submitted_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+    return submitted_frame(events.items[:],entity,name)
+}
+submitted_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (text:string,ok:bool) {
     event:=event_find(events,entity,name,.Submitted)
     if event==nil {return}
     return base.text_get(event.text[:]),true
@@ -407,20 +438,32 @@ submitted :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:str
 
 // What was let go over the node called name: the node dragged (from, its
 // from_item) and the entity of its interface (from_entity).
-dropped :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
-    return ui_event(events,entity,name,.Dropped)
+dropped :: proc{dropped_tick,dropped_frame}
+dropped_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
+    return ui_event_frame(events.items[:],entity,name,.Dropped)
+}
+dropped_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
+    return ui_event_frame(events,entity,name,.Dropped)
 }
 
 // Whether the animation anim that play_animation started on node ended.
-finished :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool {
-    for event in events.items {
+finished :: proc{finished_tick,finished_frame}
+finished_tick :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool {
+    return finished_frame(events.items[:],entity,node,anim)
+}
+finished_frame :: proc(events:[]UI_Event,entity:core.Entity,node,anim:string) -> bool {
+    for event in events {
         if event.entity==entity && event.kind==.Finished && event.name==base.name_hash(node) && event.from==base.name_hash(anim) {return true}
     }
     return false
 }
 
 // Whether the screen of the entity reported Back.
-back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
+back :: proc{back_tick,back_frame}
+back_tick :: proc(events:^UI_Events,entity:core.Entity) -> bool {
+    return back_frame(events.items[:],entity)
+}
+back_frame :: proc(events:[]UI_Event,entity:core.Entity) -> bool {
     return event_find(events,entity,"",.Back)!=nil
 }
 

@@ -538,17 +538,36 @@ head_type :: proc(tool:^Foliage_Tool,id:u32) -> foliage.Foliage_Type {
 
 // A type that shows a mesh, painted by the brush, as a step.
 type_add :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,mesh:base.Asset_Id) -> bool {
-    if mesh=={} {editor.notify(s,"Choose a .mesh for the type: foliage draws meshes of the assets, not primitives");return false}
-    source:=&tool.edit.source
-    if len(source.types)>=foliage.TYPES_MAX {editor.notify(s,"The foliage has as many types as it holds");return false}
-    edit_baseline(tool)
-    name:="Type"
-    if app.assets!=nil {
-        if file,found:=asset.registry_find(&app.assets.registry,mesh);found {name=filepath.stem(filepath.base(file.path))}
-    }
-    t:=foliage.source_type_add(source,name,mesh)
-    type_reveal(tool,t.id)
+    if type_make(s,tool,app,mesh)==nil {return false}
     return edit_commit(s,tool,world,app,"Add foliage type")
+}
+
+// A new type of a name no other has: name, or that of the mesh with none. Nil
+// and a notice when it cannot be made.
+type_make :: proc(s:^editor.Session,tool:^Foliage_Tool,app:^host.App,mesh:base.Asset_Id,name:="") -> ^foliage.Foliage_Type {
+    if mesh=={} {editor.notify(s,"Choose a .mesh for the type: foliage draws meshes of the assets, not primitives");return nil}
+    source:=&tool.edit.source
+    if len(source.types)>=foliage.TYPES_MAX {editor.notify(s,"The foliage has as many types as it holds");return nil}
+    edit_baseline(tool)
+    wanted:=name!=""?name:"Type"
+    if app.assets!=nil && name=="" {
+        if file,found:=asset.registry_find(&app.assets.registry,mesh);found {wanted=filepath.stem(filepath.base(file.path))}
+    }
+    t:=foliage.source_type_add(source,type_name_free(source,wanted),mesh)
+    type_reveal(tool,t.id)
+    return t
+}
+
+// name, with a number after it if another type has it.
+@(private)
+type_name_free :: proc(source:^foliage.Source,name:string) -> string {
+    taken :: proc(source:^foliage.Source,name:string) -> bool {
+        for &t in source.types {if type_name(&t)==name {return true}}
+        return false
+    }
+    free:=name
+    for number:=2;taken(source,free);number+=1 {free=fmt.tprintf("%s %d",name[:min(len(name),len(foliage.Foliage_Type{}.name)-8)],number)}
+    return free
 }
 
 // Another mesh for a type, which keeps its instances and its values, as a

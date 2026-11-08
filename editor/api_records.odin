@@ -171,18 +171,17 @@ Api_Records_Export :: struct {
 @(private) RECORDS_API_SET_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"name":{"type":"string","description":"A new name for the row"}},"required":["records","row"],"additionalProperties":false}`
 @(private) RECORDS_API_ADD_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"name":{"type":"string","description":"The name of the new row: a word of ASCII letters, digits and _, unique in the table"},` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"after":{"type":"string","description":"The row it goes after; without it, at the end"}},"required":["records","name"],"additionalProperties":false}`
 @(private) RECORDS_API_REMOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"rows":{"type":"array","items":{"type":"string"},"description":"The names of the rows to remove"}},"required":["records","rows"],"additionalProperties":false}`
-@(private) RECORDS_API_RENAME_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"name":{"type":"string","description":"Its new name: a word of ASCII letters, digits and _, unique in the table"}},"required":["records","row","name"],"additionalProperties":false}`
-@(private) RECORDS_API_MOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"to":{"type":"integer","minimum":0,"description":"The place it goes to, from 0, in the order records.inspect lists the rows"}},"required":["records","row","to"],"additionalProperties":false}`
+@(private) RECORDS_API_MOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"after":{"type":"string","description":"The row it goes right after; empty: it goes first"}},"required":["records","row","after"],"additionalProperties":false}`
 @(private) RECORDS_API_IMPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"}},"required":["records","file"],"additionalProperties":false}`
 @(private) RECORDS_API_EXPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"}},"required":["records","file"],"additionalProperties":false}`
 
-Records_Api_Key :: enum u8 {Records,Path,Type,Row,Name,After,To,File,Values,Texts,Rows}
+Records_Api_Key :: enum u8 {Records,Path,Type,Row,Name,After,File,Values,Texts,Rows}
 Records_Api_Keys :: bit_set[Records_Api_Key;u16]
 
 @(private)
 RECORDS_API_KEY_NAMES :: [Records_Api_Key]string{
     .Records="records",.Path="path",.Type="type",.Row="row",.Name="name",.After="after",
-    .To="to",.File="file",.Values="values",.Texts="texts",.Rows="rows",
+    .File="file",.Values="values",.Texts="texts",.Rows="rows",
 }
 
 @(private)
@@ -193,7 +192,6 @@ RECORDS_API_KEY_HINTS :: [Records_Api_Key]string{
     .Row="the name of the row; records.inspect lists them",
     .Name="the name of the row, a word of ASCII letters, digits and _",
     .After="the row it goes after",
-    .To="the place the row goes to, from 0",
     .File="the CSV file, by its path from the root of the project or absolute",
     .Values="the fields of the row",
     .Texts="the texts of its core.Text fields",
@@ -202,7 +200,6 @@ RECORDS_API_KEY_HINTS :: [Records_Api_Key]string{
 
 Records_Api_Params :: struct {
     records,path,type,row,name,after,file:string,
-    to:int,
     values,texts:string, // the text of the object
     rows:[]string,
     given:Records_Api_Keys,
@@ -235,9 +232,6 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
         case .Values,.Texts:
             text:=rpc_raw(&a) or_return
             if k==.Values {p.values=text} else {p.texts=text}
-        case .To:
-            n:=rpc_unsigned(&a,"to") or_return
-            p.to=int(min(n,u64(max(i32))))
         case .Rows:
             list:=make([dynamic]string,context.temp_allocator)
             if !serial.text_accept(&a.r,'[') {return p,rpc_fail(&a,"rows must be a list of names of rows")}
@@ -1170,7 +1164,6 @@ records_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="records.set",params_schema=RECORDS_API_SET_SCHEMA,summary="Changes the values, the texts or the name of a row of a table of game data.",result=Api_Records_Table,writes_result=true,run=api_records_set})
     api_register(s,st,{name="records.add",params_schema=RECORDS_API_ADD_SCHEMA,summary="Adds a row to a table of game data with the defaults of its type and the values and texts given.",result=Api_Records_Table,writes_result=true,run=api_records_add})
     api_register(s,st,{name="records.remove",params_schema=RECORDS_API_REMOVE_SCHEMA,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,writes_result=true,flags={.Destructive},run=api_records_remove})
-    api_register(s,st,{name="records.rename",params_schema=RECORDS_API_RENAME_SCHEMA,summary="Renames a row of a table of game data; its id, which references keep, stays.",result=Api_Records_Table,writes_result=true,run=api_records_rename})
     api_register(s,st,{name="records.move",params_schema=RECORDS_API_MOVE_SCHEMA,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,writes_result=true,run=api_records_move})
     api_register(s,st,{name="records.import",params_schema=RECORDS_API_IMPORT_SCHEMA,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,writes_result=true,run=api_records_import})
     api_register(s,st,{name="records.export",params_schema=RECORDS_API_EXPORT_SCHEMA,summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=Api_Records_Export,writes_result=true,flags={.Idempotent},run=api_records_export})
@@ -1372,39 +1365,32 @@ api_records_remove :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(out,"]}")
 }
 
+// The index a row ends at, moved right after the row at another index.
 @(private)
-api_records_rename :: proc(s:^Session,call:^api.Call) {
-    p,read:=records_api_params(call,"records.rename",{.Records,.Row,.Name},{.Records,.Row,.Name})
-    if !read {return}
-    e:Records_Edit
-    if !records_api_open(s,call,p.records,&e) {return}
-    row:=records_api_row_named(call,&e,p.row)
-    if row<0 {return}
-    if message:=records_row_rename(&e,row,p.name);message!="" {
-        api.call_fail(call,api.INVALID_PARAMS,message)
-        return
-    }
-    if !records_api_publish(s,call,&e,"Rename record") {return}
-    c,leaves:=records_api_context(s,&e)
-    records_api_table_write(s,call.out,&c,leaves,[]int{row},false)
-}
+records_move_place :: proc "contextless" (row,after:int) -> int {return after+1 if after<row else after}
 
 @(private)
 api_records_move :: proc(s:^Session,call:^api.Call) {
-    p,read:=records_api_params(call,"records.move",{.Records,.Row,.To},{.Records,.Row,.To})
+    p,read:=records_api_params(call,"records.move",{.Records,.Row,.After},{.Records,.Row,.After})
     if !read {return}
     e:Records_Edit
     if !records_api_open(s,call,p.records,&e) {return}
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
-    if p.to>=records_count(&e) {
-        api.call_failf(call,api.INVALID_PARAMS,"to %d is past the last row: the table has %d, from 0",p.to,records_count(&e))
-        return
+    to:=0
+    if p.after!="" {
+        after:=records_api_row_named(call,&e,p.after)
+        if after<0 {return}
+        if after==row {
+            api.call_failf(call,api.INVALID_PARAMS,"after names the row that moves: %q",p.after)
+            return
+        }
+        to=records_move_place(row,after)
     }
-    records_row_move(&e,row,p.to)
+    records_row_move(&e,row,to)
     if !records_api_publish(s,call,&e,"Move record") {return}
     c,leaves:=records_api_context(s,&e)
-    records_api_table_write(s,call.out,&c,leaves,[]int{p.to},false)
+    records_api_table_write(s,call.out,&c,leaves,[]int{to},false)
 }
 
 @(private)

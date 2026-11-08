@@ -53,6 +53,21 @@ the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing
     testing.expect(t,len(events.items)==1 && len(gui.pending)==0 && events.items[0].name==7)
 }
 
+// The helpers read the events of a frame as those of a tick, from the slice events_this_frame gives.
+@(test)
+the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
+    entity:=core.entity_make(1,1)
+    events:=[]UI_Event{
+        {entity=entity,name=base.name_hash("play"),kind=.Clicked},
+        {entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
+        {entity=entity,kind=.Back},
+    }
+    testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
+    value,ok:=changed_value(events,entity,"volume")
+    testing.expect(t,ok && value==0.5)
+    testing.expect(t,back(events,entity))
+}
+
 // A frame step reads an event once, in frames with several ticks and with none.
 @(test)
 events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T) {

@@ -48,6 +48,13 @@ TINT_DEFAULT :: Tint{color={1,1,1,1}}
 @(component,description="Hides this entity and its descendants from rendering.")
 Hidden :: struct {}
 
+// Hides the entity and what hangs from it, or shows them again, at the end of
+// the function. A UI_Screen is shown and hidden this way.
+set_hidden :: proc(table:^core.Table(Hidden),e:core.Entity,hidden:bool) {
+    if e==core.NONE || core.has(table,e)==hidden {return}
+    if hidden {core.add(table,e,Hidden{})} else {core.remove(table,e)}
+}
+
 // Its mesh is drawn by something else: the pieces of a broken destructible.
 // The library that draws it instead adds and removes it.
 @(component,description="The mesh is rendered by another system, such as destructible fragments.")

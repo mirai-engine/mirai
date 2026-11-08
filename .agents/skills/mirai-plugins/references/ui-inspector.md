@@ -242,5 +242,5 @@ the `.ui`s that use the widget
 check
 (`the_check_of_interfaces_reads_again_only_what_changed_and_finds_what_the_full_check_finds`).
 The document is checked in the demo editor by API: `editor.document` opens a `.ui`,
-`editor.capture` shows it; the gestures (choosing in the preview, editing in place, Try) are tested
+`capture` shows it; the gestures (choosing in the preview, editing in place, Try) are tested
 by a person.

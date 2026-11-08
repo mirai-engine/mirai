@@ -14,17 +14,17 @@ LIGHTS_SCENE_INTENSITY :: 16*LAMP
 // what direct light costs with many lights. The lights are in the order in
 // which the first 4, 16, 64 or 256 of them are spread evenly over the floor.
 write_lights_scene :: proc(o:^Out) {
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","lights"))
-    floor:=entity(&s,"Receiver",{0,-0.15,0},{24,0.3,20})
-    put(&s,floor,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","lights"))
+    floor:=asset.builder_entity(&s,"Receiver",{position={0,-0.15,0},scale={24,0.3,20}})
+    asset.builder_set(&s,floor,render.Mesh_Renderer{shape=.Cube})
     tinted(&s,floor,{0.4,0.4,0.4})
-    posts:=entity(&s,"Occluders")
+    posts:=asset.builder_entity(&s,"Occluders")
     for i in 0..<48 {
-        post:=entity(&s,fmt.tprintf("Occluder %d",i),{-9+f32(i%8)*2.5,0.7,-7+f32(i/8)*2.5},{0.8,1.4,0.8},posts)
-        put(&s,post,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
+        post:=asset.builder_entity(&s,fmt.tprintf("Occluder %d",i),{position={-9+f32(i%8)*2.5,0.7,-7+f32(i/8)*2.5},scale={0.8,1.4,0.8}},posts)
+        asset.builder_set(&s,post,render.Mesh_Renderer{shape=.Cube})
     }
-    lights:=entity(&s,"Lights")
+    lights:=asset.builder_entity(&s,"Lights")
     for i in 0..<LIGHTS_SCENE_LIGHTS {
         x,z:u32
         for bit in 0..<uint(5) {
@@ -36,6 +36,6 @@ write_lights_scene :: proc(o:^Out) {
     }
     eye:=[3]f32{16,12,18}
     camera:=placed(&s,"Camera",eye,mm.quat_look(-eye,{0,1,0}),{1,1,1})
-    put(&s,camera,"Camera",&render.Camera{fov=50*mm.RAD_PER_DEG,near=0.1,active=true})
+    asset.builder_set(&s,camera,render.Camera{fov=50*mm.RAD_PER_DEG,near=0.1,active=true})
     feature_scene_end(&s,o,"lights")
 }

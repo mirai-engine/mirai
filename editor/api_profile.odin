@@ -658,13 +658,9 @@ profile_limits :: proc(k:Profile_Conditions) -> (limits:Profile_Limits) {
 // Why profile.capture does not measure with limits, and how to lift each; "" without them.
 profile_refusal :: proc(limits:Profile_Limits) -> string {
     if limits=={} {return ""}
-    choices,off:=GRAPHICS_FRAME_LIMITS,0
-    for limit,i in choices {
-        if limit==0 {off=i}
-    }
     lifts:=make([dynamic]string,context.temp_allocator)
-    if .Vsync in limits {append(&lifts,`VSync is on: graphics.set {"option":"VSync","choice":0} turns it off`)}
-    if .Frame_Limit in limits {append(&lifts,fmt.tprintf(`frames are limited: graphics.set {{"option":"Frame limit","choice":%d}} lifts the limit`,off))}
+    if .Vsync in limits {append(&lifts,`VSync is on: settings.set {"settings":{"Graphics_Settings":{"vsync":false}}} turns it off`)}
+    if .Frame_Limit in limits {append(&lifts,`frames are limited: settings.set {"settings":{"Graphics_Settings":{"frame_limit":0}}} lifts the limit`)}
     if .Validation in limits {append(&lifts,"graphics API validation is on: open the editor without --validation")}
     return fmt.tprintf("The frame time would not be the cost of the frame: %s. A headless editor (mirai session start) paces nothing; allow_limited:true measures anyway, with comparable:false",strings.join(lifts[:],"; ",context.temp_allocator))
 }
@@ -689,10 +685,10 @@ profile_notes :: proc(c:^Profile_Capture,out:Profile_Summary_Out) -> []string {
         append(&notes,fmt.tprintf("%d frames ran before recording, until they stopped getting faster: a GPU that idled starts at a lower clock",c.warmup))
     }
     if f64(out.frame.bound.paced)>=n/2 {
-        append(&notes,fmt.tprintf("%d of %d frames wait for pacing (frame_limit %d, vsync %v): the frame time is the limit, not the cost; read cpu_ms, or lift the limit with graphics.set",out.frame.bound.paced,out.frame.count,k.frame_limit,k.vsync))
+        append(&notes,fmt.tprintf("%d of %d frames wait for pacing (frame_limit %d, vsync %v): the frame time is the limit, not the cost; read cpu_ms, or lift the limit with settings.set",out.frame.bound.paced,out.frame.count,k.frame_limit,k.vsync))
     } else if f64(out.frame.bound.gpu)>=n/2 {
         append(&notes,fmt.tprintf("%d of %d frames wait for the GPU (wait_ms): CPU savings will not shorten them; the gpu passes say where the GPU goes",out.frame.bound.gpu,out.frame.count))
-        if k.vsync {append(&notes,"vsync is on: the wait for a frame slot includes the display; with VSync off (graphics.set) it is only the GPU")}
+        if k.vsync {append(&notes,"vsync is on: the wait for a frame slot includes the display; with VSync off (settings.set) it is only the GPU")}
     }
     if len(c.pass_names)==1 && c.pass_names[0]=="frame" {append(&notes,"The GPU of this backend is measured per frame, not per pass: gpu has the whole frame only")}
     if out.frame.spikes>0 {append(&notes,fmt.tprintf("%d frames took more than twice the median: profile.frames shows the worst with their zones",out.frame.spikes))}

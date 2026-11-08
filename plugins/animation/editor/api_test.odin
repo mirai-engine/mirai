@@ -66,7 +66,7 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
     s.runs[0]={}
     call.failed=false
     request(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.seeks.items)==0)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.seeks.items)==0)
 }
 
 @(test)

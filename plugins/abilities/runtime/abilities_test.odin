@@ -428,18 +428,22 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)
     // Requests that name nothing, stale entities, rows of no table and a full queue.
-    testing.expect(t,!ability_use(&f.requests,core.NONE,ref(SLASH_1)))
-    testing.expect(t,!ability_use(&f.requests,f.dummy,{}))
-    testing.expect(t,ability_use(&f.requests,f.seat,ref(SLASH_1)))
-    testing.expect(t,ability_use(&f.requests,f.dummy,{ABILITY_TABLE,77}))
-    testing.expect(t,ability_effect(&f.requests,f.dummy,{attribute=HEALTH,amount=nan}))
-    testing.expect(t,ability_effect(&f.requests,core.Entity(0xdead_0000_0042),{attribute=HEALTH,amount=-1}))
+    ability_use(&f.requests,core.NONE,ref(SLASH_1))
+    ability_use(&f.requests,f.dummy,{})
+    testing.expect_value(t,f.requests.queue.refused,2)
+    ability_use(&f.requests,f.seat,ref(SLASH_1))
+    ability_use(&f.requests,f.dummy,{ABILITY_TABLE,77})
+    ability_effect(&f.requests,f.dummy,{attribute=HEALTH,amount=nan})
+    ability_effect(&f.requests,core.Entity(0xdead_0000_0042),{attribute=HEALTH,amount=-1})
     step(f,2)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"abilities.effect")!=nil)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"records.missing")!=nil)
     testing.expect_value(t,user(f,f.dummy).attributes[0].base,100)
-    for _ in 0..<REQUEST_CAPACITY {ability_cancel(&f.requests,f.dummy)}
-    testing.expect(t,!ability_cancel(&f.requests,f.dummy))
+    for _ in 0..=cap(f.requests.queue.items) {ability_cancel(&f.requests,f.dummy)}
+    testing.expect_value(t,f.requests.queue.dropped,1)
+    ability_requests_serve(&f.requests,ABILITY_SETTINGS_DEFAULT,&f.problems)
+    testing.expect_value(t,f.requests.queue.dropped,0)
+    testing.expect(t,core.problem_find(&f.problems,core.NONE,"abilities.requests")!=nil)
     step(f)
     // A clock that does not run, or runs by no number, does nothing.
     f.time.dt=nan
@@ -455,7 +459,7 @@ a_stable_tick_allocates_nothing :: proc(t:^testing.T) {
     fixture_make(f);defer fixture_destroy(f)
     reserve(&f.log,4096)
     reserve(&f.moves.queue.items,64);reserve(&f.actions.queue.items,64);reserve(&f.animations.match_plays.items,64)
-    reserve(&f.requests.queue.items,REQUEST_CAPACITY)
+    reserve(&f.requests.queue.items,int(ABILITY_SETTINGS_DEFAULT.requests))
     f.down[0]=true
     step(f,2)
     calls:=0
@@ -617,7 +621,7 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
     fixture_make(f);defer fixture_destroy(f)
     health :: proc(f:^Fixture) -> f32 {return user(f,f.dummy).attributes[0].base}
     poison:=Ability_Effect{attribute=HEALTH,amount=-1,period=0.5,seconds=2,tags=tag_bit(POISON),max_stacks=3,cue=SLASH}
-    testing.expect(t,ability_effect(&f.requests,f.dummy,poison,f.player))
+    ability_effect(&f.requests,f.dummy,poison,f.player)
     step(f)
     testing.expect_value(t,logged(f,.Effect_Begin,f.dummy,-1),1)
     step(f,29)

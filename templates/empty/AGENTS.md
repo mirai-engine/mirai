@@ -22,7 +22,7 @@ This is a Mirai game project.
 - Write a scenario in `tests/scenarios/<name>.mirai` and run it in one call with
   `mirai play test . <name>`, instead of stepping and inspecting by hand.
 - While looking at state, read only what you need with `play.get` and `--select`.
-- Give `play.capture` a `path`: it answers only where the image is. Open only what you need.
+- Give `capture` a `path`: it answers only where the image is. Open only what you need.
 
 ## Commands
 
@@ -32,6 +32,7 @@ Run them from the project folder. Never talk to an editor without `--project`.
 - `mirai rpc --project . <method> '<json>' --select <fields>` calls a method of that editor.
 - `mirai rpc --project . describe <method>` gives the params of a method.
 - `mirai play .` plays the game; `mirai play test .` plays every scenario.
-- `mirai check <absolute path of game>` checks the types of the code.
+- `mirai check` checks the types of the code of the project, from any folder inside it;
+  `mirai check game` and `mirai test game` take a package relative to the folder you are in.
 - `mirai build game .` builds the game fast; add `--release` for the build you ship.
 - `mirai build editor .` builds the library of the editor.

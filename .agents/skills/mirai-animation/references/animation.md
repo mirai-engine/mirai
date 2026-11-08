@@ -427,8 +427,10 @@ World poses:
   (translating parent and child with the same weight keeps their distance). Zero weight ignores the
   request and the last request of each bone wins. An expired handle or a bone that the rig does not
   have are the problems `animation.final_pose_binding` and `animation.final_pose_bone`.
-- `animation_requests_reserve` reserves the queues at load.
-  [Ragdoll](../../mirai-plugins/references/ragdoll.md) uses it.
+- Request procs return nothing: `animation_requests_serve` keeps the room of `Animation_Settings`
+  and reports what was dropped or refused. `animation_requests_reserve` keeps more final poses
+  than that for a library that sends one per bone, as
+  [Ragdoll](../../mirai-plugins/references/ragdoll.md) does.
 
 Editor and skinning:
 

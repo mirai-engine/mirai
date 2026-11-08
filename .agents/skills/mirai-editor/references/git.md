@@ -74,4 +74,4 @@ merge`](../../mirai-assets/references/cli.md#merge), which the editor configures
   not collide already joined).
 - Merge mode: `git.conflicts`, `scene.inspect` with theirs by default, `git.choose` with ours,
   `git.accept` (with and without `reject`) and `git.finish`; with a row removed by one side and
-  changed by the other. The UI: `editor.action source_control` and `editor.capture` with `ui`.
+  changed by the other. The UI: `editor.action source_control` and `capture` with `ui`.

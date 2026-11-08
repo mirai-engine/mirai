@@ -213,7 +213,7 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     for e in w.colliders.entities {testing.expect(t,phys.collider_ready({&w.physics},e))}
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={-6,0,-6},normal={0,1,0},radius=0.6,amount=1}))
+    dig(&w.requests,{kind=.Raise,center={-6,0,-6},normal={0,1,0},radius=0.6,amount=1},owner)
     terrain_test_update(w,&resident,&app)
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
@@ -227,7 +227,7 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     testing.expect_value(t,stable_calls,calls);testing.expect_value(t,stable_temps,temps)
     testing.expect_value(t,w.statics.version,version);testing.expect_value(t,assets.structure,structure);testing.expect_value(t,resident.stats.built,built)
     cloned:=&worlds[1];terrain_test_world_copy(cloned,w)
-    testing.expect(t,request_edit(&cloned.requests,owner,{kind=.Raise,center={-6,1,-6},normal={0,1,0},radius=0.6,amount=1}))
+    dig(&cloned.requests,{kind=.Raise,center={-6,1,-6},normal={0,1,0},radius=0.6,amount=1},owner)
     terrain_test_update(cloned,&resident,&app)
     point,_,found:=source_ray(&w.data.entries[0].source,{-6,10,-6},{0,-1,0})
     testing.expect(t,found && abs(point.y-1)<1e-4)

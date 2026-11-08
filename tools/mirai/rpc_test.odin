@@ -1,9 +1,11 @@
 package main
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
+import "mirai:project"
 
 @(private="file")
 SAMPLE_RESULT :: `{"phase": "Compiling", "errors": 0, "frame": 18446744073709551615, "ok": false,
@@ -14,9 +16,9 @@ SAMPLE_RESULT :: `{"phase": "Compiling", "errors": 0, "frame": 18446744073709551
 select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     at :: proc(t:^testing.T,path_text,expected:string,loc:=#caller_location) {
-        path,ok:=json_path_parse(path_text)
+        path,ok:=api.json_path_parse(path_text)
         if !testing.expectf(t,ok,"%s parses",path_text,loc=loc) {return}
-        value,problem:=json_at(SAMPLE_RESULT,path)
+        value,problem:=api.json_at(SAMPLE_RESULT,path)
         testing.expectf(t,problem=="" && value==expected,"%s: %q %s",path_text,value,problem,loc=loc)
     }
     at(t,"phase",`"Compiling"`)
@@ -25,13 +27,13 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     at(t,"entities[-1].tags[0]",`"light"`)
     at(t,"camera.position[2]","-3")
     at(t,"camera",`{"position": [1, 2.5, -3]}`)
-    testing.expect_value(t,json_scalar_text(`"Compiling"`),"Compiling")
-    testing.expect_value(t,json_scalar_text("2.5"),"2.5")
-    testing.expect_value(t,json_scalar_text(`{"a": [1]}`),"{\n  \"a\": [\n    1\n  ]\n}")
+    testing.expect_value(t,api.json_scalar_text(`"Compiling"`),"Compiling")
+    testing.expect_value(t,api.json_scalar_text("2.5"),"2.5")
+    testing.expect_value(t,api.json_scalar_text(`{"a": [1]}`),"{\n  \"a\": [\n    1\n  ]\n}")
 
     missing :: proc(t:^testing.T,path_text,said:string,loc:=#caller_location) {
-        path,_:=json_path_parse(path_text)
-        _,problem:=json_at(SAMPLE_RESULT,path)
+        path,_:=api.json_path_parse(path_text)
+        _,problem:=api.json_at(SAMPLE_RESULT,path)
         testing.expectf(t,strings.contains(problem,said),"%s: %s",path_text,problem,loc=loc)
     }
     missing(t,"phases","has no 'phases'; it has: phase, errors, frame, ok, entities, camera")
@@ -39,7 +41,7 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     missing(t,"entities[0].name.first","entities[0].name is not an object")
     missing(t,"camera[0]","camera is not an array")
     for wrong in ([]string{"","a..b",".a","a.","a[","a[x]","a[0]b","a.[0]"}) {
-        _,ok:=json_path_parse(wrong)
+        _,ok:=api.json_path_parse(wrong)
         testing.expectf(t,!ok,"'%s' is not a path",wrong)
     }
 }
@@ -50,27 +52,27 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
 errors_cut_what_they_echo_and_say_how_much :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     result:=strings.concatenate({`{"content":[{"type":"image","data":"`,strings.repeat("A",3<<20),`"}],"isError":false}`})
-    path,_:=json_path_parse("path")
-    _,problem:=json_at(result,path)
+    path,_:=api.json_path_parse("path")
+    _,problem:=api.json_at(result,path)
     testing.expect(t,strings.contains(problem,"has no 'path'; it has: content, isError"),problem)
-    path,_=json_path_parse("content.data")
-    _,problem=json_at(result,path)
+    path,_=api.json_path_parse("content.data")
+    _,problem=api.json_at(result,path)
     testing.expect(t,len(problem)<256 && strings.contains(problem,"more bytes)"),"a value in a message is cut")
 
     short:=rpc_error_short({api.INVALID_PARAMS,"--select path",strings.concatenate({`{"result":`,result,"}"})})
     testing.expect(t,len(short.data)<2*RPC_ECHO_BYTES && api.json_valid(context.allocator,short.data),short.data)
-    testing.expect(t,strings.contains(json_member(short.data,"prefix"),`{\"result\":{\"content\"`),short.data)
-    testing.expect(t,json_member(short.data,"omitted_bytes")!="",short.data)
+    testing.expect(t,strings.contains(api.json_member(short.data,"prefix"),`{\"result\":{\"content\"`),short.data)
+    testing.expect(t,api.json_member(short.data,"omitted_bytes")!="",short.data)
 
     small:=`{"result":{"a":1}}`
     testing.expect_value(t,rpc_error_short({api.INVALID_PARAMS,"x",small}).data,small)
 
     // Neither the cut of a character nor a list of names runs on.
-    prefix,omitted:=text_cut("aé",2)
+    prefix,omitted:=api.text_cut("aé",2)
     testing.expect(t,prefix=="a" && omitted==2)
     many:=strings.concatenate({`{"`,strings.repeat("x",4096),`":1}`})
-    path,_=json_path_parse("y")
-    _,problem=json_at(many,path)
+    path,_=api.json_path_parse("y")
+    _,problem=api.json_at(many,path)
     testing.expect(t,len(problem)<2*RPC_ECHO_BYTES,"the names it lists are cut")
 }
 
@@ -78,9 +80,9 @@ errors_cut_what_they_echo_and_say_how_much :: proc(t:^testing.T) {
 wait_conditions_compare_numbers_as_numbers_and_the_rest_as_written :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     met :: proc(t:^testing.T,text,value:string,expected:bool,loc:=#caller_location) {
-        condition,ok:=rpc_condition_parse(text)
+        condition,ok:=api.condition_parse(text)
         if !testing.expectf(t,ok,"%s parses",text,loc=loc) {return}
-        result,mismatch:=rpc_condition_met(condition,value)
+        result,mismatch:=api.condition_met(condition,value)
         testing.expectf(t,mismatch=="" && result==expected,"%s against %s: %v %s",text,value,result,mismatch,loc=loc)
     }
     met(t,"phase=Done",`"Done"`,true)
@@ -99,12 +101,12 @@ wait_conditions_compare_numbers_as_numbers_and_the_rest_as_written :: proc(t:^te
     met(t,"position=[1,2]","[1, 2]",true)
     met(t,"entities[0].name=Floor",`"Floor"`,true)
 
-    condition,parsed:=rpc_condition_parse("phase>2")
+    condition,parsed:=api.condition_parse("phase>2")
     testing.expect(t,parsed)
-    _,mismatch:=rpc_condition_met(condition,`"Done"`)
+    _,mismatch:=api.condition_met(condition,`"Done"`)
     testing.expect(t,strings.contains(mismatch,"is not a number"),mismatch)
     for wrong in ([]string{"phase","=Done","phase>Done","phase<=","a..b=1","phase!Done"}) {
-        _,ok:=rpc_condition_parse(wrong)
+        _,ok:=api.condition_parse(wrong)
         testing.expectf(t,!ok,"'%s' is not a condition",wrong)
     }
 }
@@ -147,6 +149,18 @@ the_commands_of_an_agent_call_its_editor_in_its_context :: proc(t:^testing.T) {
     testing.expect(t,os.set_env(api.CLIENT_VARIABLE,"cursor")==nil)
     testing.expect_value(t,client_environment(),"cursor")
     os.unset_env(api.CLIENT_VARIABLE);os.unset_env("CLAUDECODE")
+}
+
+// A call from inside a project goes to its editor, from any folder under it.
+@(test)
+the_project_of_a_folder_is_the_nearest_with_a_manifest :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=fmt.tprintf("%s/mirai-project-of-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
+    nested:=project.path(root,"game/sub",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(nested)==nil)
+    defer os.remove_all(root)
+    testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE),"{}")==nil)
+    testing.expect_value(t,project_of(nested),project.path_absolute(root))
 }
 
 @(test)

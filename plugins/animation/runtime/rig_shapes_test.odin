@@ -305,13 +305,14 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     }
     if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true}) && modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true}))
+    modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})
+    modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true})
+    modifier_goal(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true})
     modifier_take(&modifiers,&requests,core.read(&configs),&problems)
     testing.expect(t,len(modifiers.goals)==2 && modifiers.look.values[0].weight==.25)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head"))
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head"))
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head")
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands")
     // The profile reorders its looks and effectors: what was asked by slot goes; by name, follows.
     hands.effectors[0],hands.effectors[1]=hands.effectors[1],hands.effectors[0]
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes,head},multi_ik={hands}}),asset.Error.None)
@@ -326,7 +327,8 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     testing.expect(t,modifiers.look.values[0].target.position=={} && modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && modifiers.look.values[1].weight==.6)
     testing.expect(t,modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
     controls:Modifier_Requests;defer delete(controls.controls.items)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands") && modifier_control_named(&controls,&modifiers,{rig=rig,kind=.Look,weight=0},"head"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
+    modifier_control_named(&controls,&modifiers,{rig=rig,kind=.Look,weight=0},"head")
     hands.effector_count=1
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes},multi_ik={hands}}),asset.Error.None)
     record.time+=1;assets.revision+=1

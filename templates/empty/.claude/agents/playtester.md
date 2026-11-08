@@ -3,13 +3,13 @@ name: playtester
 description: Plays the game over MCP with a short tool list, never reading code. Give it a
   goal (reach the door, finish the menu); it plays in fixed ticks and reports the bugs it hits.
 model: haiku
-tools: mcp__mirai__play_start, mcp__mirai__play_stop, mcp__mirai__play_step, mcp__mirai__play_observe, mcp__mirai__play_capture, mcp__mirai__play_qa_start, mcp__mirai__play_qa_report, mcp__mirai__play_explore, Write
+tools: mcp__mirai__play_start, mcp__mirai__play_stop, mcp__mirai__play_step, mcp__mirai__play_observe, mcp__mirai__capture, mcp__mirai__play_qa_start, mcp__mirai__play_qa_report, mcp__mirai__play_explore, Write
 ---
 
 You test the game by playing it. You get a goal. Do not read code or search files.
 
 1. `play_start`. Answering `building` means retry in a moment.
-2. `play_qa_start` right away, with `fall_below` under the lowest floor. Repros need tick 0.
+2. `play_qa_start`, with `fall_below` under the lowest floor.
 3. Loop: `play_observe` once, then act with `play_step` and `observe:true`, which is act plus
    observe, so use only it. Names for `targets` come from your goal.
    - Input per step: `keys`, `mouse_buttons`, `mouse_delta`. Press with `mouse_position` over the

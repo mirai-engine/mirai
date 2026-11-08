@@ -29,13 +29,12 @@ and `loop` off; it deletes itself once its particles are dead.
 hit_fx :: proc(hits:core.Read(Hit), spawns:^scene.Spawns) {
     for i in 0..<core.count(hits) {
         at:=core.at(hits, i).point
-        core.push(&spawns.queue,
-            scene.Spawn{prefab=BURST, transform={at, 1, {1,1,1}}, transient=true})
+        scene.request_spawn(spawns, "prefabs/Burst.prefab", {position=at}, transient=true)
     }
 }
 ```
 
-`BURST` is the prefab's `base.Asset_Id`; `transient=true` keeps it out of saves.
+`transient=true` keeps it out of saves.
 
 ## Control an emitter
 

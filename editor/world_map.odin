@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import scene "mirai:engine/scene"
+import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -543,7 +544,8 @@ api_section_view :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,why)
         return
     }
-    api_section_write(s,call.out,w,e,false)
+    api_sections_settle(s)
+    api_section_write(s,call.out,edited_world(s),e,false)
 }
 
 api_section_travel :: proc(s:^Session,call:^api.Call) {
@@ -556,5 +558,26 @@ api_section_travel :: proc(s:^Session,call:^api.Call) {
         return
     }
     if m:=world_map_of(s);m!=nil {m.chosen=params.id}
-    api_section_write(s,call.out,w,e,false)
+    api_sections_settle(s)
+    api_section_write(s,call.out,edited_world(s),e,false)
+}
+
+// What a section asked for is there when the call answers: its load, over
+// the frames it takes, also in a manual editor.
+@(private)
+api_sections_settle :: proc(s:^Session) {
+    Settle :: struct {frames:int}
+    settle:Settle
+    loading :: proc(s:^Session,user:rawptr) -> bool {
+        settle:=(^Settle)(user)
+        settle.frames+=1
+        // The frame after the request begins the loads it needs.
+        if settle.frames<=2 {return true}
+        sections:=host.app_world_storage(s.app,edited_world(s).data,scene.Section_Loads)
+        if sections==nil {return false}
+        for item in sections.items {if item.job!=nil {return true}}
+        for item in sections.far {if item.job!=nil {return true}}
+        return false
+    }
+    api_settle(s,&settle,loading)
 }

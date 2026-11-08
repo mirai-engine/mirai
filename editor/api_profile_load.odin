@@ -90,6 +90,17 @@ Api_Profile_Loads :: struct {
 @(private)
 api_profile_load :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Load_Params)
+    Asked :: struct {kind:Profile_Load_Kind}
+    asked:=Asked{p.kind}
+    loading :: proc(s:^Session,user:rawptr) -> bool {
+        kind:=(^Asked)(user).kind
+        for one in host.Load_Kind {
+            if kind!=.All && int(kind)-1!=int(one) {continue}
+            if summary,found:=host.load_summary(s.app,one,1);found && summary.state==.Loading {return true}
+        }
+        return false
+    }
+    api_settle(s,&asked,loading)
     context.allocator=context.temp_allocator
     loads:=make([dynamic]Profile_Load_Out)
     manual:=false

@@ -411,11 +411,12 @@ does not publish again
 - Another change while the job runs cancels it and abandons its loads, which would compete for the
   driver. If the job fails, or ends without changes after the renderer took early stages from
   another, the renderer loads the published generation again.
-- A shader changed outside the editor is published the same with `build.shaders`, which answers
-  when the viewport draws with it. `mirai shaders --project P` with the editor of `P` open asks
-  it instead of generating on its own; `--whole` generates everything on the command line. A
+- A shader changed outside the editor is published at the next call of the API, and a call that
+  draws waits for it (`api_disk_sync`). `mirai shaders --project P` with the editor of `P` open
+  asks it (`build.start` with `target:"shaders"`, which answers when the viewport draws with it)
+  instead of generating on its own; `--whole` generates everything on the command line. A
   change in the engine sources does not load in an already compiled editor (`Stale`, by the
-  executable's fingerprint): `build.shaders` says so and asks to compile the editor again.
+  executable's fingerprint): the call says so and asks to compile the editor again.
 
 ### Loading in `host`
 

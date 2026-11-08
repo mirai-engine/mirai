@@ -29,7 +29,7 @@ Prefer the first that answers the question:
 mirai play test . shell                  # 1: tests/scenarios/shell.mirai; PASS or FAIL per file
 ```
 ```bash
-mirai rpc --project . play.start '{}'    # 2: wait if it answers building, then repeat
+mirai rpc --project . play.start '{}'    # 2: builds first when Odin changed; answers when it plays
 mirai rpc --project . play.explore '{"mode":"World","seconds":30}' --select stopped,cells,passed
 mirai rpc --project . play.stop
 ```
@@ -42,7 +42,7 @@ mirai rpc --project . play.qa.report '{"violation":0,"repro":true}'   # 3: write
 
 ```bash
 mirai rpc --project . play.observe '{"targets":["Door*"]}'
-mirai rpc --project . play.get '{"name":"Player","field":"world_position"}' --select value
+mirai rpc --project . play.get '{"entity": "Player","field":"world_position"}' --select value
 ```
 
 ## Look
@@ -51,7 +51,7 @@ mirai rpc --project . play.get '{"name":"Player","field":"world_position"}' --se
   screen and the nearest `targets`; `play.step` with `observe:true` runs ticks and answers it.
 - `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
 - `--select a,b.c,d[0]` prints only those fields: always use it on a large answer.
-- An image: `play.capture` with `path`; it answers where the file is and its size, so open
+- An image: `capture` with `path`; it answers where the file is and its size, so open
   it only when the number is not enough.
 
 ## UI and menus
@@ -66,8 +66,8 @@ mirai rpc --project . play.get '{"name":"Player","field":"world_position"}' --se
 
 ## Pitfalls that fail silently
 
-- `play.start` answers `building` when Odin changed: nothing plays yet; repeat when
-  `build.status` says it stands. Start `play.qa.start` right after it, or no repro can be written.
+- A repro plays from tick 0: give the game its ticks with `play.step` from the first one (a Play
+  outside a turn runs by itself until the first `play.step`).
 - A call without `--project` goes to the default port, which may be another editor.
 - A step with `until` fails the scenario when the ticks run out before the condition holds.
 - `play.stop` discards what the game changed; read what you need before it.

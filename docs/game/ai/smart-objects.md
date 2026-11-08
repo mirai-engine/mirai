@@ -1,15 +1,8 @@
 # Smart objects, fences and place queries
 
-Add to the `Tick` of [mind.md](mind.md): `smart:behavior.Smart_View`, `uses:^behavior.Smart_Uses`,
-`places:^behavior.Place_Requests`, `results:core.Read(behavior.Place_Result)`,
-`links:core.Read(nav.Nav_Link)`, `placer:core.Placer`, `noises:^behavior.Noises`. The loop
-function takes the matching parameters (`objects:core.Read(behavior.Smart_Object)`,
-`offered:core.Read(behavior.Smart_State)`, `claims`, and so on) and fills the view each tick:
-
-```odin
-smart = {objects=objects, states=offered, worlds=worlds, claims=claims,
-         time=time.seconds, tick=time.tick}
-```
+`behavior.Mind_Tick` (the `Tick` of [mind.md](mind.md) begins with it) holds `smart`, `uses`,
+`places`, `results`, `links` and `noises`, filled each tick from `behavior.Mind_World`. For the
+actions that move an entity add `placer:core.Placer` to `Tick` and to the loop function.
 
 ## An object that offers a use
 
@@ -72,14 +65,13 @@ later. Candidate layouts, tests and responses: `engine.describe` and `behavior.q
 
 ```odin
 case .Enter:
-    a.memory[0] = u64(w.smart.tick) // the request number
-    q := behavior.Place_Query{querier=w.entity, request=u32(a.memory[0]), center=.Querier,
+    q := behavior.Place_Query{querier=w.entity, center=.Querier,
         layout=.Offers, use=USE_COVER, outer=14, keep=1}
     falling := ai.Response{kind=.Linear, slope=-1, shift_y=1}
     q.tests[0] = {measure=.Visible, from=.Target, target=enemy, min=0, max=1, response=falling}
     q.tests[1] = {measure=.Path, from=.Querier, min=0, max=30, response=falling}
     q.test_count = 2
-    behavior.place_query(w.places, q)
+    a.memory[0] = u64(behavior.place_query(w.places, q)) // the number the result answers with
     return .Running
 case .Update:
     r, ok := core.get(w.results, w.entity)

@@ -46,6 +46,8 @@ game_fire :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) {
   `.Crouch`) and `inp.Input_Of(inp.Look_Action)`.
 - In `frame`, `late` and `ui` take `inp.Frame_Input_Of(Action)`; the same `inp.pressed` reads
   it, so a press is not missed between ticks.
+- To hit, dig or throw from where the player looks, `inp.aim(drivables,worlds,body)` gives the ray
+  of the camera of its `Drivable`, in any camera mode; no eye height or look angles in game code.
 - Contexts (a menu with its own bindings) and chords: `engine.describe` on `Input_Context`; block
   actions while a menu is open with `inp.input_block(seats,owner,seat)` and `inp.input_unblock`.
 

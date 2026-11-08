@@ -136,7 +136,7 @@ spread :: proc "contextless" (seed:^u64) -> [3]f32 {
 debris_spawn :: proc(commands:core.Commands,app:^host.App,prefab:base.Asset_Id,at:[3]f32,owner:core.Entity,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
     transform:=core.TRANSFORM_IDENTITY
     transform.position=at
-    report,error:=scene.spawn(commands,app,{prefab=prefab,transform=transform})
+    report,error:=scene.spawn_prefab(commands,app,{prefab=prefab,transform=transform})
     if error!=.None {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,owner,"terrain_debris.prefab","the debris prefab %s of this terrain could not spawn (%v): give each layer of Terrain_Debris a .prefab of the assets, or none",host.assets_name(app.assets,prefab,&name),error)

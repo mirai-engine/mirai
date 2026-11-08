@@ -241,7 +241,7 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     _,result,_=inspect(state,&out,"scene.inspect",`{"name":"Crate*","offset":1}`)
     testing.expect_value(t,names(result),"Crate 2")
     testing.expect_value(t,number(result["omitted"]),0)
-    _,result,_=inspect(state,&out,"scene.inspect",`{"id":"0000000000000003","name":"Crate 2"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"entity":"0000000000000003","name":"Crate 2"}`)
     testing.expect_value(t,number(result["matched"]),0)
 
     session.mode=.Play

@@ -293,3 +293,78 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     table_settle(&skies,&es)
     testing.expect(t,skies.layout==shape && entity_at(read(&skies),0)==a)
 }
+
+// What a function asked waits for the settle: staged_has answers as has will after it.
+@(test)
+staged_has_says_what_has_will_say_when_the_function_ends :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    marks:Table(Name)
+    table_init(&marks,"Name")
+    defer table_destroy(&marks)
+    kept,gone,turned,fresh:=create(&es),create(&es),create(&es),create(&es)
+    add(&marks,kept,{});add(&marks,gone,{});add(&marks,turned,{})
+    table_settle(&marks,&es)
+
+    remove(&marks,gone)
+    set_on(&marks,turned,false)
+    add(&marks,fresh,{})
+    testing.expect(t,staged_has(&marks,kept) && !staged_has(&marks,gone) && !staged_has(&marks,turned) && staged_has(&marks,fresh))
+    testing.expect(t,has(&marks,gone) && has(&marks,turned) && !has(&marks,fresh),"has keeps the rows of before the settle")
+    table_settle(&marks,&es)
+    testing.expect(t,has(&marks,kept) && !has(&marks,gone) && !has(&marks,turned) && has(&marks,fresh))
+
+    set_on(&marks,turned,true)
+    testing.expect(t,staged_has(&marks,turned) && !has(&marks,turned))
+    set_on(&marks,turned,false)
+    testing.expect(t,!staged_has(&marks,turned),"the last turn counts")
+}
+
+@(test)
+first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    names:Table(Name)
+    table_init(&names,"Name")
+    defer table_destroy(&names)
+    _,any:=first(&names)
+    _,one:=sole(read(&names))
+    testing.expect(t,!any && !one && entity_named(read(&names),"lift")==NONE)
+
+    a,b:=create(&es),create(&es)
+    add(&names,a,name_make("lift"))
+    table_settle(&names,&es)
+    e,found:=sole(&names)
+    testing.expect(t,found && e==a)
+
+    add(&names,b,name_make("door"))
+    table_settle(&names,&es)
+    e,found=first(read(&names))
+    testing.expect(t,found && e==a)
+    _,found=sole(&names)
+    testing.expect(t,!found,"sole is the only one")
+    testing.expect_value(t,entity_named(read(&names),"door"),b)
+}
+
+@(private="file") Starts_At :: struct {value:i32}
+
+// A row added at its default takes what the generator found for its component; without one, zero.
+@(test)
+a_table_gives_the_default_of_its_component :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    rows:Table(Starts_At)
+    table_init(&rows,"Starts_At")
+    defer table_destroy(&rows)
+    testing.expect_value(t,default(&rows).value,i32(0))
+    rows.default=proc(dst:rawptr) {(cast(^Starts_At)dst)^={7}}
+    testing.expect_value(t,default(read(&rows)).value,i32(7))
+    e:=create(&es)
+    add_default(&rows,e)
+    table_settle(&rows,&es)
+    value,_:=get(read(&rows),e)
+    testing.expect_value(t,value.value,i32(7))
+}

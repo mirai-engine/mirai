@@ -7,7 +7,6 @@ import "mirai:core"
 import inp "mirai:engine/input"
 import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
-import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -28,7 +27,6 @@ import portals "plugins:portals/runtime"
 // (Floor_Button) opens its door while a cube or the player stands on it.
 // The scene and the prefab of the player are written by tools/demo_content.
 
-PORTAL_PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x706f7274616c0005}
 PORTAL_SIZE :: [2]f32{1.3,2.2} // m, of the opening
 PORTAL_LIFT :: f32(0.02)        // m the opening stands off its wall
 PORTAL_RANGE :: f32(120)        // m a shot reaches
@@ -74,15 +72,6 @@ Floor_Button :: struct {
     door:core.Entity,
     plate:core.Entity, // glows while pressed
     pressed:bool `mirai:"transient"`,
-}
-
-// Where the eyes of a body are and where they look.
-@(private="file")
-eyes_of :: proc(worlds:core.Read(core.World_Transform),inputs:core.Read(inp.Move_Input),body:core.Entity) -> (eye,aim:[3]f32,ok:bool) {
-    placed,has_world:=core.get(worlds,body)
-    input,has_input:=core.get(inputs,body)
-    if !has_world || !has_input {return}
-    return placed.position+[3]f32{0,EYE_HEIGHT,0},aim_of(input.look_yaw,input.look_pitch),true
 }
 
 // The first portal that leads somewhere the way from `from` to `to` goes into, after which share of the
@@ -211,7 +200,7 @@ portal_fit :: proc(wall:mm.Transform,box:Surface_Box,point,normal,up:[3]f32,othe
 portal_gun :: proc(
     guns:^core.Table(Portal_Gun),mouths:^core.Table(Portal_Mouth),surfaces:core.Read(Portal_Surface),cubes:core.Read(Portal_Cube),
     rims:core.Read(portals.Portal_Rim),openings:core.Read(portals.Portal),
-    colliders:core.Read(phys.Collider),inputs:core.Read(inp.Move_Input),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    colliders:core.Read(phys.Collider),inputs:core.Read(inp.Move_Input),drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
     characters:core.Read(core.Motion),passes:^Grill_Passes,
 ) {
@@ -230,7 +219,7 @@ portal_gun :: proc(
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun:=core.at(core.read(guns),row)
-        eye,aim,ok:=eyes_of(worlds,inputs,player)
+        eye,aim,ok:=inp.aim(drivables,worlds,player)
         if !ok {continue}
         blue:=inp.pressed(actions,player,.Portal_Blue)
         orange:=inp.pressed(actions,player,.Portal_Orange)
@@ -242,7 +231,8 @@ portal_gun :: proc(
             target,facing,carry:=hold_place(openings,worlds,eye,aim,input.look_yaw,cube.position)
             dropped:=!placed || linalg.distance(cube.position,target)>HOLD_REACH || grab
             // Standing on what it carries would lift the player with it.
-            if under,found:=phys.raycast(physics,eye-[3]f32{0,EYE_HEIGHT-0.2,0},{0,-1,0},0.5,player);found && under.entity==held {dropped=true}
+            feet,_:=core.get(worlds,player)
+            if under,found:=phys.raycast(physics,feet.position+[3]f32{0,0.2,0},{0,-1,0},0.5,player);found && under.entity==held {dropped=true}
             if blue {
                 walking,_:=core.get(characters,player)
                 phys.set_velocity(bodies,held,mm.quat_rotate(carry,aim*THROW_CUBE_SPEED+walking.linear))
@@ -313,17 +303,13 @@ Grill_Passes :: struct {queue:core.Queue(core.Entity)}
 // Each opening leads to the other once both are placed, cut into the wall it is on; the film of a mouth
 // shows while it leads nowhere, and a mouth not placed is not drawn.
 @(step="fixed",after="portal_gun")
-portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),hidden:^core.Table(render.Hidden)) {
+portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),shows:^Show_Requests) {
     opening_of :: proc(mouths:core.Read(Portal_Mouth),color:Portal_Color) -> (core.Entity,bool) {
         for row in 0..<core.count(mouths) {
             mouth:=core.at(mouths,row)
             if mouth.color==color {return mouth.opening,mouth.placed}
         }
         return core.NONE,false
-    }
-    show :: proc(hidden:^core.Table(render.Hidden),e:core.Entity,shown:bool) {
-        if e==core.NONE || core.has(hidden,e)==!shown {return}
-        if shown {core.remove(hidden,e)} else {core.add(hidden,e,render.Hidden{})}
     }
     for row in 0..<core.count(mouths) {
         mouth:=core.at(mouths,row)
@@ -334,8 +320,8 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
             written:=core.get(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
-        show(hidden,core.entity_at(mouths,row),mouth.placed)
-        show(hidden,mouth.film,exit==core.NONE)
+        ask_hidden(shows,core.entity_at(mouths,row),!mouth.placed)
+        ask_hidden(shows,mouth.film,exit!=core.NONE)
     }
 }
 
@@ -345,12 +331,11 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
 portal_chamber :: proc(
     cubes:^core.Table(Portal_Cube),buttons:^core.Table(Floor_Button),grills:core.Read(Grill),guns:core.Read(Portal_Gun),
     colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),events:core.Ref(phys.Physics_Events),
-    physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,passes:^Grill_Passes,placer:core.Placer,
+    physics:core.Ref(phys.Physics_State),passes:^Grill_Passes,placer:core.Placer,
 ) {
-    home :: proc(cubes:^core.Table(Portal_Cube),bodies:^phys.Body_Requests,placer:core.Placer,e:core.Entity) {
+    home :: proc(cubes:^core.Table(Portal_Cube),placer:core.Placer,e:core.Entity) {
         cube,_:=core.get(core.read(cubes),e)
-        core.place(placer,e,cube.home)
-        phys.set_velocity(bodies,e,{},{})
+        core.place(placer,e,cube.home,at_rest=true)
     }
     for row in 0..<core.count(cubes) {
         e:=core.entity_at(cubes,row)
@@ -360,13 +345,13 @@ portal_chamber :: proc(
             cube:=core.at(cubes,row)
             cube.home,cube.homed=placed.position,true
         } else if placed.position.y<FALL_LIMIT {
-            home(cubes,bodies,placer,e)
+            home(cubes,placer,e)
         }
     }
     for event in events.overlap_begin.items {
         if !core.has(grills,event.collider) && !core.has(grills,event.entity) {continue}
         if core.has(cubes,event.other) {
-            home(cubes,bodies,placer,event.other)
+            home(cubes,placer,event.other)
             core.push(&passes.queue,event.other)
         } else if core.has(guns,event.other) {
             core.push(&passes.queue,event.other)

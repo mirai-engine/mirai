@@ -26,8 +26,7 @@ DOG_BEHIND :: [3]f32{1.2,0,1.5} // m from its person, in the frame of the person
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
 CAMERA_CYCLE :: [cam.Camera_Preset]cam.Camera_Preset{.Third_Person=.First_Person,.First_Person=.Isometric,.Isometric=.Top_Down,.Top_Down=.Side,.Side=.Third_Person,.Aim=.Third_Person}
 
-PERSON_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x6e6574706572736f}
-DOG_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x6e6574646f670003}
+DOG_PREFAB :: "prefabs/Dog.prefab"
 
 // An AI that walks its body after the body of its leader while no seat drives it.
 @(component,description="An AI walks this body after the leader body while no player drives it.")
@@ -91,7 +90,7 @@ game_seats :: proc(
         if inp.seat_pressed(actions,seat,.Overhead_View) {
             if cam.camera_overriding(shown.ptr,seat) {
                 cam.camera_override_remove(camera_requests,seat)
-            } else if camera:=entity_named(names,CONTROL_SHARED_CAMERA);camera!=core.NONE {
+            } else if camera:=core.entity_named(names,CONTROL_SHARED_CAMERA);camera!=core.NONE {
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)
             }
         }
@@ -109,7 +108,7 @@ game_seats :: proc(
 // Each person gets a dog behind it.
 @(step="fixed",server)
 game_dogs :: proc(
-    commands:core.Commands,app:^host.App,follows:core.Read(Follow),drivables:core.Read(inp.Drivable),players:core.Read(Player),
+    spawner:scene.Spawner,follows:core.Read(Follow),drivables:core.Read(inp.Drivable),players:core.Read(Player),
     seats:core.Read(inp.Seat),demos:core.Read(Control_Demo),worlds:core.Read(core.World_Transform),
 ) {
     if core.count(demos)==0 {return}
@@ -119,10 +118,10 @@ game_dogs :: proc(
         placed,found:=core.get(worlds,body)
         if !found {continue}
         at:=core.Transform{placed.position+mm.quat_rotate(placed.rotation,DOG_BEHIND),placed.rotation,{1,1,1}}
-        if report,error:=scene.spawn(commands,app,{prefab=DOG_PREFAB,transform=at});error==.None {
+        if dog:=scene.spawn(spawner,DOG_PREFAB,at);dog!=core.NONE {
             follow:=FOLLOW_DEFAULT
             follow.leader=body
-            core.commands_add(commands,report.root,follow)
+            core.commands_add(spawner.commands,dog,follow)
         }
     }
 }

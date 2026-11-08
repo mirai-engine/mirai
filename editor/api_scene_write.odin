@@ -180,7 +180,8 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
     if !rpc_object_begin(&a,"params") {return}
     for key in rpc_next(&a,&object) {
         switch key {
-        case "root":     root,_=rpc_id(&a,key)
+        case "root":
+            if e,read:=rpc_entity(&a,edited_world(s),key);read {root=api_entity_id(edited_world(s),e)}
         case "entities": api_write_read(&a,-1,"entities",&decls)
         case:            rpc_fail(&a,"unknown field %q; scene.write takes root and entities",key)
         }
@@ -273,7 +274,7 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
             }
             continue
         }
-        if d.prefab!="" {api_write_prefab_check(call,w,links,&d) or_return}
+        if d.prefab!="" {api_write_prefab_check(s,call,w,links,&d) or_return}
         if d.parent>=0 && member(w,links,d.e) && entity_parent(w,d.e)!=decls[d.parent].e {
             api.call_failf(call,api.INVALID_PARAMS,"%s: %s is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under %s, or leave it out to turn it off",d.path,entity_label(w,d.e),entity_label(w,entity_parent(w,d.e)))
             return
@@ -356,7 +357,7 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
 // The prefab a matched entity gives is what scene.inspect says of it: the
 // links of an instance change with the prefab methods.
 @(private)
-api_write_prefab_check :: proc(call:^api.Call,w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link,d:^Api_Write_Entity) -> bool {
+api_write_prefab_check :: proc(s:^Session,call:^api.Call,w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link,d:^Api_Write_Entity) -> bool {
     a:Rpc_Args
     rpc_init(&a,call,d.prefab)
     asset_id:base.Asset_Id
@@ -366,11 +367,11 @@ api_write_prefab_check :: proc(call:^api.Call,w:core.World_Ref,links:map[base.En
     for key in rpc_next(&a,&object) {
         switch key {
         case "asset":
-            text:[64]u8
+            text:[API_PATH_BYTES]u8
             given,read:=rpc_text(&a,key,text[:])
             if !read {break}
-            parsed:bool
-            if asset_id,parsed=serial.text_parse_asset_id(given);!parsed {rpc_fail(&a,"prefab.asset must be the id of a prefab")}
+            problem:string
+            if asset_id,problem=asset_resolve(s,given,".prefab");problem!="" {rpc_fail(&a,"prefab.asset: %s",problem)}
         case "root":
             root,has_root=rpc_bool(&a,key)
         case "instance","source":
@@ -541,12 +542,12 @@ api_card_place :: proc(s:^Session,card:int) -> (rotation:mm.Quat,scale:[3]f32) {
 // scene.inspect gives of the whole scene.
 @(private)
 api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_Inspect_Params) {
-    if params.id!=0 || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!="" || params.summary || params.offset!=0 || params.include_runtime || params.storages || base.text_get(params.storage[:])!="" {
-        api.call_fail(call,api.INVALID_PARAMS,"root gives the whole subtree as the document scene.write takes: leave out id, name, component, summary, offset, include_runtime and storages; components false gives it without components")
+    if base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!="" || params.summary || params.offset!=0 || params.include_runtime || params.storages || base.text_get(params.storage[:])!="" {
+        api.call_fail(call,api.INVALID_PARAMS,"root gives the whole subtree as the document scene.write takes: leave out entity, name, component, summary, offset, include_runtime and storages; components false gives it without components")
         return
     }
-    root:=api_entity(w,params.root)
-    if root==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"root 0x%016x is not an entity of the scene",u64(params.root));return}
+    root,known:=api_call_entity(call,w,params.root[:],"root")
+    if !known {return}
     if text:=section_lock_text(s,w,root,true);text!="" {api.call_failf(call,api.SERVER_ERROR,"root: %s",text);return}
     part:=api_part(s,w,root,call.allocator)
     if len(part)>params.limit {
@@ -626,4 +627,4 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
 
 // The shape of the params of scene.write.
 @(private) API_WRITE_ENTITY :: `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","description":"matches the entity with this id under root, which may move to another parent"},"preset":{"type":"string","description":"a preset or the card of a plugin, as scene.add takes it (cube, point_light, sun, spawn...): it gives the entity its components, whose fields components changes, and the rotation and scale it has when those are left out"},"name":{"type":"string","description":"without id, matches the entity of this name among those of its parent"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"local to the parent; [0,0,0] when left out"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[0,0,0] or that of its preset when left out"},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[1,1,1] or that of its preset when left out"},"visible":{"type":"boolean","description":"true when left out"},"enabled":{"type":"boolean","description":"true when left out"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go"},"off":{"type":"array","items":{"type":"string"},"description":"components it declares that are turned off by themselves"},"prefab":{"type":"object","description":"as scene.inspect gives it; a write changes no link"},"children":{"type":"array","items":{"type":"object"},"description":"the entities that hang from it, in order, each with these keys"}}}`
-@(private) API_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entities"],"properties":{"root":{"type":["string","null"],"description":"id of the entity the document declares with what hangs from it; left out: the document makes a new root"},"entities":{"type":"array","minItems":1,"maxItems":1,"items":` + API_WRITE_ENTITY + `,"description":"the entity root is, or the new one, nesting what hangs from it by children; matched by id, else by name among siblings, else by place, the others are made and what it leaves out goes (a member of an instance of a prefab is turned off)"}}}`
+@(private) API_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entities"],"properties":{"root":{"type":["string","null"],"description":"by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it; left out: the document makes a new root"},"entities":{"type":"array","minItems":1,"maxItems":1,"items":` + API_WRITE_ENTITY + `,"description":"the entity root is, or the new one, nesting what hangs from it by children; matched by id, else by name among siblings, else by place, the others are made and what it leaves out goes (a member of an instance of a prefab is turned off)"}}}`

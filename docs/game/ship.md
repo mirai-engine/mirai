@@ -23,7 +23,7 @@ says how to fix each finding.
 
 | Command | What it is for |
 | --- | --- |
-| `mirai check <abs path of game>` | types of the Odin code only: the fastest answer |
+| `mirai check` | types of the Odin code only: the fastest answer |
 | `mirai generate .` | the generator's errors (attributes, parameters, order), no build |
 | `mirai play .` | compile the project, run it from its folder: iterate with this |
 | `mirai play test . [name]` | run `tests/scenarios` in a headless editor, exit 1 on a failure |
@@ -37,8 +37,8 @@ says how to fix each finding.
 - `play` compiles the project at the `build.optimization` of `project.mirai` (`Minimal` in the
   template) and reads assets and shaders from the project: nothing is cooked, so it starts fast.
   Batch your Odin changes and play once per batch.
-- `build game` generates the shaders, cooks the assets that every scene and `cook.mirai` reach and
-  writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
+- `build game` generates the shaders, cooks the assets that every scene, prefab and `cook.mirai`
+  reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
   `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
 - `mirai build game` (and `--dev`) is the fast incremental path: the engine and its plugins come
   from a cached library, `mirai-shipped.dll` next to the executable (`libmirai-shipped.so` or
@@ -56,8 +56,8 @@ says how to fix each finding.
 
 ## Pitfalls that fail silently
 
-- An asset only code names (a prefab spawned by id) works in `mirai play` and is missing from
-  `build game` unless it is a root in `cook.mirai`.
+- An asset only code names (a material chosen by name) works in `mirai play` and is missing from
+  `build game` unless it is a root in `cook.mirai`. Prefabs are roots by themselves.
 - `source/` (art sources) never ships, and a game package that imports an editor package fails the
   build with `Engine_Time_Code`.
 - The shipped game on Windows is a console program.

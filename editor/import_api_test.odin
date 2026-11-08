@@ -16,11 +16,10 @@ asset_import_takes_the_use_of_an_image_by_name :: proc(t:^testing.T) {
         params:Import_Params
         base.text_set(params.path[:],"T_Katana_MR.png")
         base.text_set(params.image[:],image)
-        method:=api.Method{params_id=Import_Params,result_id=Import_Result}
-        result:Import_Result
-        call:=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
+        method:=api.Method{params_id=Import_Params}
+        call:=api.Call{method=&method,params=&params,allocator=context.temp_allocator}
         api_asset_import(s,&call)
-        call.method,call.params,call.result=nil,nil,nil
+        call.method,call.params=nil,nil
         return call
     }
     wrong:=run(&s,"metallic")
@@ -39,11 +38,10 @@ asset_import_takes_the_skeleton_of_the_clips_by_its_id :: proc(t:^testing.T) {
         params:Import_Params
         base.text_set(params.path[:],"walk.glb")
         base.text_set(params.skeleton[:],skeleton)
-        method:=api.Method{params_id=Import_Params,result_id=Import_Result}
-        result:Import_Result
-        call:=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
+        method:=api.Method{params_id=Import_Params}
+        call:=api.Call{method=&method,params=&params,allocator=context.temp_allocator}
         api_asset_import(s,&call)
-        call.method,call.params,call.result=nil,nil,nil
+        call.method,call.params=nil,nil
         return call
     }
     wrong:=run(&s,"crusader")
@@ -51,4 +49,11 @@ asset_import_takes_the_skeleton_of_the_clips_by_its_id :: proc(t:^testing.T) {
     // An id passes on to the import, which here has no asset folder to write into.
     known:=run(&s,"0123456789abcdef0123456789abcdef")
     testing.expect(t,known.failed && known.error.code==api.SERVER_ERROR && strings.contains(known.error.message,"asset folder"),known.error.message)
+}
+
+@(test)
+asset_import_reads_a_relative_source_from_the_project :: proc(t:^testing.T) {
+    s:=Session{project_root="C:/game"}
+    testing.expect_value(t,asset_import_source(&s,"source/walk.glb"),"C:/game/source/walk.glb")
+    testing.expect_value(t,asset_import_source(&s,"C:/elsewhere/walk.glb"),"C:/elsewhere/walk.glb")
 }

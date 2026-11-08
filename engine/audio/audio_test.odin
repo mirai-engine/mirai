@@ -205,7 +205,7 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     hall:=Reverb{room_size=0.9,damping=0.3,wet=0.8,width=1}
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC,gain=-6,lowpass=2000,duck_by=BUS_VOICE,duck_amount=0.5,duck_threshold=0.1,duck_attack=0.05,duck_release=0.3,reverb=hall}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,gain=AUDIO_SILENCE_DB}))
-    volumes:Audio_Volumes
+    volumes:=AUDIO_VOLUMES_DEFAULT
     audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
     testing.expect(t,mixer.bus_count(m)>int(BUS_VOICE))
     testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.5012)<0.001 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==2000)
@@ -214,10 +214,17 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     testing.expect(t,mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))==hall,"a song in the music bus sounds in its hall")
 
     // The volume the player chose goes over the gain of the game.
-    testing.expect(t,audio_volume_set(&volumes,BUS_MUSIC,-6))
+    volumes.music=0.5
     audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
-    testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2512)<0.001)
-    testing.expect(t,audio_volume_set(&volumes,BUS_MUSIC,0) && volumes==Audio_Volumes{},"a volume back to 0 leaves no choice")
+    testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2506)<0.001)
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0.5))
+    volumes.more[0]=0.25
+    testing.expect_value(t,audio_volume(&volumes,Audio_Bus(5)),f32(0.25))
+    volumes.music=max(f32)
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(1))
+    volumes.music=math.nan_f32()
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0))
+    volumes=AUDIO_VOLUMES_DEFAULT
 
     // A bus whose entry goes back to playing as it comes loses its entry, and the mixer follows.
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC}))
@@ -226,7 +233,7 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
     testing.expect(t,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))==1 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==0 && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC))=={} && mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))=={})
     testing.expect_value(t,mixer.bus_volume(m,mixer.BUS_MASTER),f32(1))
-    testing.expect(t,abs(db_volume(volume_db(0.25))-0.25)<1e-5 && db_volume(volume_db(0))==0)
+    testing.expect(t,db_volume(AUDIO_SILENCE_DB)==0 && abs(db_volume(-6)-0.5012)<0.001)
 }
 
 @(test)
@@ -376,7 +383,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     defer fixture_destroy(&f)
     m:=f.app.mixer
     settings:Audio_Settings
-    volumes:Audio_Volumes
+    volumes:=AUDIO_VOLUMES_DEFAULT
     water:=Audio_Medium{lowpass=700,reverb={room_size=0.3,damping=0.9,wet=0.6,width=0.5},weight=1}
     audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),&f.app)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))

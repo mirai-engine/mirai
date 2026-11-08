@@ -156,7 +156,7 @@ smart_open :: proc(v:^Smart_View,object:core.Entity,i:int,offer:Smart_Offer,stat
     if offer.teams!=0 && u32(offer.teams)&(1<<u32(user.team))==0 {return false}
     if u32(offer.abilities)&~u32(user.abilities)!=0 {return false}
     if v.claims==nil || user.entity==core.NONE {return true}
-    return ai.reserve_free(&v.claims.reservations,{u64(object),u16(i+1)},u64(user.entity),max(int(offer.users),1),v.tick)
+    return ai.reserve_open(&v.claims.reservations,{u64(object),u16(i+1)},u64(user.entity),max(int(offer.users),1),v.tick)
 }
 
 // Crosses the link the agent waits at (Nav_Path.state Crossing, of a kind the

@@ -74,10 +74,10 @@ of its owner and is taken by the function in parentheses:
   (`spawn_step`, plugin `spawn`).
 - **Play a cinematic**: `cinematics.cinematic_play` and its companions in
   `^cinematics.Cinematic_Requests` (`cinematic_advance`, plugin `cinematics`).
-- **Change scene**: `scene.request(&r, id)` or `request_path` in `^scene.Scene_Requests`
+- **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in `^scene.Scene_Requests`
   (`scene_requests`); the result arrives in `scene.Scene_Results`.
-- **Instantiate a prefab**: `core.push(&spawns.queue, scene.Spawn{...})` in `^scene.Spawns`
-  (`scene_spawns`).
+- **Instantiate a prefab**: `scene.request_spawn(spawns, path, at)` in `^scene.Spawns`
+  (`scene_spawns`), or `scene.spawn(spawner, path, at)` for the root.
 - **Save or load**: `save.request_save(&r, "slot")`, `request_load`, `request_delete` in
   `^save.Save_Requests` (`saves_serve`).
 - **Send a network message**: `net.send(&outbox, time, value)` with a struct
@@ -87,7 +87,8 @@ of its owner and is taken by the function in parentheses:
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,
 `joint_break`...), `destruct.Destruct_Events`, `gui.UI_Events`, `anim.Animation_Events`,
 `cinematics.Cinematic_Events`, `save.Save_Results`, `scene.Scene_Results`, `net.Net_Events`. They
-are cleared and filled once per tick or frame; they are read with `core.Ref(...)` in the same tick,
+are cleared and filled once per tick or frame; those of the frame (`Save_Results`, `Scene_Results`)
+are read in a `frame` step, the others with `core.Ref(...)` in the same tick,
 in a function that runs after the emitting one: those of physics and destruction in the `react`
 stage ([order](../../mirai-core/references/generator.md#order)), those of animation with
 `stage="react",after="animation_advance"`.
@@ -105,8 +106,8 @@ actions are read from the seat that drives the body, with its blocks ([control](
   connection).
 - `game_hit` (`fixed`, `server`): with the action of the seat that drives each player
   (`inp.pressed(players, body, HIT)`), `phys.raycast` from the eyes and `destruct.damage` on what
-  it touches. `game_play` counts the hits through `Destruct_Events.applied` on all ends and
-  requests save and load.
+  it touches. `game_play` counts the hits through `Destruct_Events.applied` on all ends;
+  `game_saves` (`frame`) requests save and load and shows their results.
 
 There is no spawn or camera code: `Spawn_Settings` with `"players": true` and the scene's
 `Spawn_Point` give a character (`Player.prefab`, with `Replicate`) to the player of this machine

@@ -8,7 +8,8 @@ import "mirai:std/serial"
 // JSON Schema (2020-12) of a type of the registry. Types are written inline:
 // plain data has no cycles. Integers carry the range of their type narrowed by
 // the field's min and max; enums are their member names; bit sets are lists of
-// names; ids are strings; a text field is a string of at most N bytes; an
+// names; ids are strings; an asset is a string, its id or its path, with
+// x-asset the extensions its field holds; a text field is a string of at most N bytes; an
 // array of numbers has exactly its length and any other array at most that.
 // An array has no default of its own: its items carry the default of an
 // element when every element has the same one. A list (an array tagged list)
@@ -124,7 +125,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
-        entry(w,&count,"pattern");raw(w,`"^[0-9a-fA-F]{32}$"`)
+        entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
     case .Struct:
         entry(w,&count,"type");raw(w,`"object"`)
         fields:=sc.fields[type.first:][:type.count]
@@ -202,6 +203,8 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
 
 // The schema of the params or result of a method; free-form JSON when there is no type.
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
+    start:=w.count
+    defer if !result {reserved_params_write(w,start)}
     index:=result?method.result:method.params
     if index==serial.TYPE_NONE {
         written:=result?method.result_schema:method.params_schema
@@ -209,4 +212,31 @@ method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:boo
         return
     }
     schema_write(w,s,index,nil,result?nil:method.defaults)
+}
+
+// Adds the params every method takes to the properties of the object schema
+// written from start. One without properties takes anything already.
+@(private)
+reserved_params_write :: proc(w:^serial.Writer,start:int) {
+    if w.overflow>0 {return}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,string(w.data[start:w.count]),context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    if !serial.text_accept(&r,'{') {return}
+    at:=-1
+    for at<0 && !serial.text_accept(&r,'}') {
+        key,ok:=serial.text_string(&r)
+        if !ok || !serial.text_expect(&r,':') {return}
+        serial.text_peek(&r)
+        if key=="properties" {at=start+r.offset+1}
+        if !serial.text_skip(&r) {return}
+        if !serial.text_accept(&r,',') {break}
+    }
+    if at<0 {return}
+    end:=w.count
+    empty:=w.data[at]=='}'
+    raw(w,RESERVED_SCHEMA)
+    if !empty {raw(w,",")}
+    if w.overflow>0 {return}
+    slice.rotate_left(w.data[at:w.count],end-at)
 }

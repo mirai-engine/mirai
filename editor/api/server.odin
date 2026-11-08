@@ -43,6 +43,7 @@ server_init :: proc(s:^Server,desc:Server_Desc) -> Init_Error {
     s.name=clone_text(allocator,desc.name!=""?desc.name:"mirai")
     s.version=clone_text(allocator,desc.version!=""?desc.version:"1")
     s.instructions=clone_text(allocator,desc.instructions!=""?desc.instructions:"engine_describe lists the methods and the plugins of the project; the tools of a plugin come with mirai mcp --plugins <names>.")
+    s.docs_root=clone_text(allocator,desc.docs_root)
     serial.writer_init_fixed(&s.out,s.response[HEAD_ROOM:])
     serial.writer_init_fixed(&s.stage,s.staging)
     err:net.Network_Error
@@ -64,7 +65,7 @@ server_destroy :: proc(s:^Server) {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
         delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
     }
-    delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator)
+    delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator);delete(s.docs_root,s.allocator)
     plugins_free(s)
     guides_free(s)
     delete(s.methods,s.allocator);delete(s.conns,s.allocator);delete(s.conn_memory,s.allocator)

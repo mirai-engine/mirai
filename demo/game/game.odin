@@ -31,7 +31,6 @@ import "mirai:ui"
 // their values. The prefabs of the player and of the thrown cube are written
 // by tools/demo_content.
 
-EYE_HEIGHT :: f32(1.6)
 WALK_SPEED :: f32(4)
 LOOK_SPEED :: inp.LOOK_SPEED
 PITCH_LIMIT :: phys.PITCH_LIMIT_DEFAULT
@@ -48,8 +47,19 @@ BARK_GLOW :: [3]f32{64,25,4.8}
 // The materials of assets/materials a Swatch walks through.
 SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
 
-PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x706c617965720001}
-THROWN_CUBE :: base.Asset_Id{0x6d69726169646d6f,0x7468726f776e0002}
+THROWN_CUBE :: "prefabs/Thrown cube.prefab"
+
+// Hidden has one writer: the scenes ask for it here.
+@(storage,queue)
+Show_Requests :: struct {queue:core.Queue(Show_Request)}
+Show_Request :: struct {entity:core.Entity,hidden:bool}
+
+ask_hidden :: proc(shows:^Show_Requests,e:core.Entity,hidden:bool) {core.push(&shows.queue,Show_Request{e,hidden})}
+
+@(step="fixed",stage="end")
+shows_apply :: proc(shows:^Show_Requests,hidden:^core.Table(render.Hidden)) {
+    for show in core.take(&shows.queue) {render.set_hidden(hidden,show.entity,show.hidden)}
+}
 THROWN_CUBE_SIZE :: f32(0.25) // m, the side of a thrown cube
 
 // On a body that opens doors, changes samples and throws cubes.
@@ -152,10 +162,6 @@ material_asset :: proc(name:string) -> base.Asset_Id {
     return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
 }
 
-aim_of :: proc "contextless" (yaw,pitch:f32) -> [3]f32 {
-    return mm.quat_rotate(mm.quat_from_euler({pitch,yaw,0}),[3]f32{0,0,-1})
-}
-
 // The look yaw of an upright character body: where its front, +Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     ahead:=mm.quat_rotate(rotation,[3]f32{0,0,1})
@@ -166,14 +172,6 @@ player_walk :: proc "contextless" () -> phys.Walk {
     walk:=phys.WALK_DEFAULT
     walk.max_speed=WALK_SPEED
     return walk
-}
-
-entity_named :: proc(names:core.Read(core.Name),text:string) -> core.Entity {
-    for row in 0..<core.count(names) {
-        name:=core.at(names,row)
-        if base.text_equal(name.text[:],text) {return core.entity_at(names,row)}
-    }
-    return core.NONE
 }
 
 // The actions the game reads, bound by Demo_Actions, those of interface_demo.odin too; move and
@@ -222,7 +220,7 @@ demo_actions_default :: proc "contextless" () -> Demo_Actions {
 // Keeps the mouse for the camera until Escape frees it; the animation gallery frees it while its
 // player adjusts a panel.
 @(step="input")
-game_mouse :: proc(game:^Game,app:^host.App,input:core.Input,gallery_players:core.Read(Gallery_Player)) {
+game_mouse :: proc(game:^Game,app:^host.App,input:core.Frame_Input,gallery_players:core.Read(Gallery_Player)) {
     if app.platform==nil {return}
     focus:=core.NONE
     gallery:=core.count(gallery_players)>0
@@ -231,7 +229,7 @@ game_mouse :: proc(game:^Game,app:^host.App,input:core.Input,gallery_players:cor
         game.mouse_set,game.mouse_focus=true,focus
         game.captured=focus==core.NONE
         platform.window_set_relative_mouse(app.platform,game.captured)
-    } else if core.key_pressed(input,.Escape) {
+    } else if core.key_pressed(input.input,.Escape) {
         game.captured=!game.captured
         platform.window_set_relative_mouse(app.platform,game.captured)
     }
@@ -248,7 +246,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:core.Read(inp.Move_Input),
-    actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawns:^scene.Spawns,
+    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawns:^scene.Spawns,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -269,11 +267,10 @@ game_use :: proc(
                 if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
             }
         }
-        if inp.pressed(actions,e,.Throw) {
-            aim:=aim_of(input.look_yaw,input.look_pitch)
-            from:=feet+[3]f32{0,EYE_HEIGHT,0}+aim*0.8
+        if origin,aim,aimed:=inp.aim(drivables,worlds,e);aimed && inp.pressed(actions,e,.Throw) {
+            from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
-            core.push(&spawns.queue,scene.Spawn{prefab=THROWN_CUBE,transform={from,turn,THROWN_CUBE_SIZE},transient=true})
+            scene.request_spawn(spawns,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
             core.at(players,row).thrown+=1
         }
     }

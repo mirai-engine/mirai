@@ -33,7 +33,7 @@ game_showcase :: proc(
     for marker in markers.items {
         if marker.marker==base.name_hash("top") {arrivals+=1}
     }
-    lift:=entity_named(names,SHOWCASE_LIFT)
+    lift:=core.entity_named(names,SHOWCASE_LIFT)
     animation,animated:=core.get(animations,lift)
     lift_time,_,_,has_progress:=anim.animation_progress(playback.ptr,lift)
     for &showcase in core.writable(shown) {

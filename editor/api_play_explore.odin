@@ -585,7 +585,7 @@ api_play_explore :: proc(s:^Session,call:^api.Call) {
     if values[0]!="" {total=int(f64(p.seconds)/tick_dt+0.5)}
     if values[1]!="" {total=p.ticks}
     if total<1 || total>API_EXPLORE_TICKS {api.call_failf(call,api.INVALID_PARAMS,"it plays from 1 to %d ticks: give ticks or seconds in that range",API_EXPLORE_TICKS);return}
-    if r.qa==nil && qa_arm(s,r,{stuck_seconds=3,non_finite=true,problems=true})==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}
+    if (r.qa==nil || !r.qa.armed) && qa_arm(s,r,{stuck_seconds=3,non_finite=true,problems=true})==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}
     if r.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
     x:=new(Explore_Run,call.allocator)
     x.s,x.owner,x.r,x.total,x.last_node=s,r.owner,r,total,-1

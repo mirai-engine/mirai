@@ -1017,11 +1017,11 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 jumped(s,e,from,turned*conj(was),request.position)
                 pose_write(s,l,e,{request.position,turned})
                 state.stats.teleports+=1
-            case .Velocity,.Launch: sim.character_launch(w,l.character,request.linear,request.kind==.Velocity || request.override)
+            case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
             case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
-            case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, launch it or write its Character_Move")
+            case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
             }
             continue
         }
@@ -1088,8 +1088,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 l.hold.release,l.hold.keep_velocity=true,request.override
                 if !s.playing || .Target in l.hold.by || !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {hold_end(w,l,.Manipulation,l.hold.keep_velocity)}
             }
-        case .Launch:
-            request_problem(s,e,request.kind,"physics.request_launch","launch is for a Character","give a body velocity with set_velocity or an impulse")
         }
     }
 }

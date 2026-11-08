@@ -30,10 +30,9 @@ Ragdoll_Part :: enum u8 {Pelvis,Spine,Chest,Head,Upper_Arm_L,Forearm_L,Hand_L,Up
 Ragdoll_Joint_Kind :: enum u8 {None,Hinge,Swing_Twist}
 
 Ragdoll_Setup_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh whose skeleton has a body"`,
+    id:base.Entity_Id `mirai:"label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh"`,
     mass:f32 `mirai:"optional,min=0,max=100000,unit=kg,label=Total mass, split by volume; 0 weighs each body as water"`,
     mode:rag.Ragdoll_Mode `mirai:"optional"`,
-    replace:bool `mirai:"optional,label=Removes the bodies of the ragdoll the rig has first; without it a rig with a ragdoll fails"`,
 }
 Ragdoll_Setup_Body :: struct {
     id:base.Entity_Id,
@@ -47,14 +46,14 @@ Ragdoll_Setup_Body :: struct {
 }
 Ragdoll_Setup_Result :: struct {
     id:base.Entity_Id `mirai:"label=The rig"`,
-    removed:u32 `mirai:"label=Bodies of the previous ragdoll that replace removed"`,
+    removed:u32 `mirai:"label=Bodies of the ragdoll it replaced"`,
     bodies:[len(Ragdoll_Part)]Ragdoll_Setup_Body `mirai:"trim"`,
 }
 
 @(private)
 register :: proc(s:^editor.Session) {
     defaults:=Ragdoll_Setup_Params{mode=rag.RAGDOLL_DEFAULT.mode}
-    editor.api_method_register(s,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton: a dynamic body with collider, Ragdoll_Bone and limited Joint per part, and the Ragdoll of the rig, in one step of undo.",params=Ragdoll_Setup_Params,params_info=type_info_of(Ragdoll_Setup_Params),result=Ragdoll_Setup_Result,result_info=type_info_of(Ragdoll_Setup_Result),defaults=&defaults,run=setup})
+    editor.api_method_register(s,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider, Ragdoll_Bone and limited Joint per part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",params=Ragdoll_Setup_Params,params_info=type_info_of(Ragdoll_Setup_Params),result=Ragdoll_Setup_Result,result_info=type_info_of(Ragdoll_Setup_Result),defaults=&defaults,run=setup})
 }
 
 // What a part takes from the body: its parent part, its joint with limits in
@@ -112,7 +111,7 @@ failure :: proc(call:^api.Call,f:Plan_Failure,rpc_code:=api.INVALID_PARAMS) {
 @(private)
 setup :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Ragdoll_Setup_Params)
-    if editor.playing(s) {failure(call,{"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"A ragdoll is set up in Edit","Stop Play or Simulation with play.stop"},api.SERVER_ERROR);return}
+    if editor.playing(s) {failure(call,{"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"A ragdoll is set up in Edit","Stop Play or Simulation with play.stop"});return}
     if s.app==nil || s.app.assets==nil {failure(call,{"asset","Unavailable","an asset registry","none","Assets are unavailable",""},api.SERVER_ERROR);return}
     if !(p.mass>=0 && p.mass<=max(f32)) || p.mode>max(rag.Ragdoll_Mode) {failure(call,{"mass","Invalid_Value","a finite mass of 0 or more and a mode",fmt.tprintf("mass %v mode %v",p.mass,p.mode),"The mass or the mode is not valid","Pass mass in kg, or omit it"});return}
     w:=editor.edited_world(s)
@@ -144,25 +143,22 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if error:=host.assets_file(s.app.assets,skeleton_id,aa.KIND_SKELETON,&file);error!=.None {failure(call,{"skeleton","Read_Error","a readable .skeleton",fmt.tprintf("%v",error),"The skeleton of the rig could not be read",""},api.SERVER_ERROR);return}
     view,error:=aa.skeleton_view(&file,&s.app.assets.types)
     if error!=.None {failure(call,{"skeleton","Invalid_Asset","a valid .skeleton",fmt.tprintf("%v",error),"The skeleton of the rig is not valid",""});return}
+    body_map:=aa.skeleton_body_map(view.bones,view.body,view.body_parts)
     if view.body==nil {
-        buffer:[base.ASSET_ID_TEXT]u8
-        failure(call,{"skeleton","Missing_Body_Map","a skeleton whose body parts are stored","no body","The skeleton of the rig has no body map",fmt.tprintf(`Find its body parts with skeleton.body.detect {{"asset":"%s"}}, correct them with skeleton.body.set, then call ragdoll.setup again`,base.asset_id_format(skeleton_id,buffer[:]))})
-        return
+        detected,found:=aa.skeleton_body_detect(view.bones,lib.body_map_empty(),call.allocator)
+        if !found {failure(call,{"skeleton","Missing_Body_Map","a skeleton whose body parts can be found","detection failed","The body of the skeleton could not be found","Name its parts with skeleton.body.set, then call ragdoll.setup again"});return}
+        body_map=detected
     }
     previous:=make([dynamic]core.Entity,0,16,call.allocator)
     for row in 0..<core.count(bindings) {if bindings.values[row].rig==rig {append(&previous,core.entity_at(bindings,row))}}
-    if (core.has(core.read(configs),rig) || len(previous)>0) && !p.replace {
-        failure(call,{"replace","Ragdoll_Exists","a rig without a ragdoll",fmt.tprintf("a Ragdoll and %d bodies",len(previous)),"The rig already has a ragdoll",fmt.tprintf("Pass replace:true to remove its %d bodies and make them again",len(previous))})
-        return
-    }
     for body in previous {
         for at,depth:=rig,0;at!=core.NONE && depth<1024;depth+=1 {
-            if at==body {failure(call,{"replace","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing would remove it","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
+            if at==body {failure(call,{"id","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing it would remove the rig","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
             parent,placed:=core.get(core.read(parents),at)
             at=parent.entity if placed else core.NONE
         }
     }
-    bodies,fail:=plan(view.bones,aa.skeleton_body_map(view.bones,view.body,view.body_parts),editor.entity_world(w,rig),p.mass,call.allocator)
+    bodies,fail:=plan(view.bones,body_map,editor.entity_world(w,rig),p.mass,call.allocator)
     if fail.code!="" {failure(call,fail);return}
     config:=rag.RAGDOLL_DEFAULT;config.mode=p.mode
     stem:=editor.entity_name(w,rig)
@@ -171,7 +167,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if len(previous)>0 {editor.entities_delete(s,previous[:])}
     for body in previous {
         if editor.entity_alive(w,body) {
-            failure(call,{"replace","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
+            failure(call,{"id","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
             editor.api_edit_end(s,call,false)
             return
         }

@@ -30,6 +30,10 @@ editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testin
     state:=api_state(&session)
     testing.expect_value(t,state.refused,0)
     testing.expect_value(t,state.count+1,state.server.method_count)
+    for name in AI_PROMPT_TOOLS {
+        method:=api.method_find(&state.server,name)
+        testing.expectf(t,method!=nil && .Core in method.flags,"the instructions name %s as a tool: it must be listed",name)
+    }
     // The plugins of a project register through providers, after the methods of the editor.
     PLUGIN_METHODS :: 64
     testing.expectf(t,state.count+PLUGIN_METHODS<=API_METHOD_CAPACITY,"the editor registers %d of %d methods; raise API_METHOD_CAPACITY",state.count,API_METHOD_CAPACITY)

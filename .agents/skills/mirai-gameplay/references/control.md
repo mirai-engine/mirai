@@ -195,9 +195,9 @@ requested point, the points are used in turn in table order; a game with another
 distance) picks the point and passes it.
 
 - Requests in `^spawn.Spawn_Requests`, which `spawn_step` (`fixed`, `input`) takes before driving.
-- `spawn(r, seat, prefab={}, point=NONE)`: takes the requested point or the next one with a prefab,
-  instantiates the requested prefab, the point's or `Spawn_Settings.prefab` (the project's player
-  body) with its world transform (`scene.spawn`, `transient`) and asks the seat to drive it, in the
+- `spawn(r, seat, path="", point=NONE)`: takes the requested point or the next one with a prefab,
+  instantiates the prefab at `path`, the point's or `Spawn_Settings.prefab` (the project's player
+  body) with its world transform (`scene.spawn_prefab`, `transient`) and asks the seat to drive it, in the
   same tick. In the editor's Play, a scene without points makes it appear at the editor camera
   (`scene.Play_Origin`, which the editor fills when Play starts). With Play from here or from
   camera (`Play_Origin.asked`), the first body of player 1 (`slot` 0 of this machine) appears there

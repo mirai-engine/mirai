@@ -78,11 +78,13 @@ Report :: struct {
     refused:Refusal,  // load_untrusted: what made it fail
 }
 
-// A prefab to place while the world runs. The scene library takes the queue.
+// A prefab to place while the world runs: by id, or by path of the assets
+// when the id is zero. The scene library takes the queue.
 Spawn :: struct {
     prefab:base.Asset_Id,
+    path:[SCENE_PATH_CAPACITY]u8 `mirai:"text"`,
     parent:core.Entity,
-    transform:core.Transform,
+    transform:core.Transform, // of the root; a zero scale counts as 1, a zero rotation as none
     transient:bool,
 }
 
@@ -100,23 +102,63 @@ Prefab_Source :: struct {
 
 @(private) NONE_ROW :: u32(0xffffffff)
 
+// What placing a prefab needs, for a step to receive in one parameter.
+@(params)
+Spawner :: struct {
+    commands:core.Commands,
+    app:^host.App,
+    problems:^core.Problems,
+}
+
+// Places a prefab of the assets by its path ("prefabs/Dog.prefab") and gives
+// back its root, whose rows wait for the end of the function. NONE when it
+// did not spawn, which is a problem that says why.
+spawn :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
+    order:=Spawn{parent=parent,transform=at,transient=transient}
+    base.text_set(order.path[:],path)
+    report,error:=spawn_prefab(s.commands,s.app,order)
+    if error!=.None {
+        spawn_problem(s.problems,s.app,&order,error)
+        return core.NONE
+    }
+    return report.root
+}
+
+// Asks for a prefab by its path, for the scene library to place at the end of
+// the stage: for what does not need its root.
+request_spawn :: proc(spawns:^Spawns,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) {
+    order:=Spawn{parent=parent,transform=at,transient=transient}
+    base.text_set(order.path[:],path)
+    core.push(&spawns.queue,order)
+}
+
+// What a Spawn names, for a message: its path, or else its id written in name.
+spawn_name :: proc(app:^host.App,s:^Spawn,name:^[base.ASSET_ID_TEXT]u8) -> string {
+    if s.prefab=={} {return base.text_get(s.path[:])}
+    return host.assets_name(app.assets,s.prefab,name)
+}
+
+@(private)
+spawn_problem :: proc(problems:^core.Problems,app:^host.App,s:^Spawn,error:Error) {
+    name:[base.ASSET_ID_TEXT]u8
+    fix:string
+    #partial switch error {
+    case .No_Assets:     fix="run the game from a project with an assets folder"
+    case .Not_Found:     fix="name a .prefab of the assets by its path or id: import or create it, or fix the name"
+    case .Invalid:       fix="spawn a .prefab under a parent that is alive, or with no parent"
+    case .Not_A_Prefab:  fix="name a .prefab: a scene is placed as a Scene_Reference, or turned into a prefab with asset.convert"
+    case .Corrupt:       fix="open the prefab in the editor and save it again"
+    case .Out_Of_Memory: fix="free memory or spawn fewer prefabs at once"
+    }
+    core.report(problems,s.parent,"scene.spawn","prefab %s did not spawn: %s; %s",spawn_name(app,s,&name),error_text(error),fix)
+}
+
 @(step="fixed frame",loops="game",stage="apply")
 scene_spawns :: proc(commands:core.Commands,app:^host.App,spawns:^Spawns,problems:^core.Problems) {
     if len(spawns.queue.items)==0 {return}
-    for s in core.take(&spawns.queue) {
-        _,error:=spawn(commands,app,s)
-        if error==.None {continue}
-        name:[base.ASSET_ID_TEXT]u8
-        fix:string
-        #partial switch error {
-        case .No_Assets:     fix="run the game from a project with an assets folder"
-        case .Not_Found:     fix="give Spawn.prefab the id of a .prefab of the assets: import or create it, or fix the id"
-        case .Invalid:       fix="spawn a .prefab under a parent that is alive, or with no parent"
-        case .Not_A_Prefab:  fix="give Spawn.prefab a .prefab: a scene is placed as a Scene_Reference, or turned into a prefab with asset.convert"
-        case .Corrupt:       fix="open the prefab in the editor and save it again"
-        case .Out_Of_Memory: fix="free memory or spawn fewer prefabs at once"
-        }
-        core.report(problems,s.parent,"scene.spawn","prefab %s did not spawn: %s; %s",host.assets_name(app.assets,s.prefab,&name),error_text(error),fix)
+    for &s in core.take(&spawns.queue) {
+        _,error:=spawn_prefab(commands,app,s)
+        if error!=.None {spawn_problem(problems,app,&s,error)}
     }
 }
 
@@ -219,12 +261,20 @@ propagate :: proc(w:core.World_Ref,app:^host.App) {
     core.world_run(w,app.shared,nil,app,.Game,.Late,{"core"},time)
 }
 
-// Places a prefab of the assets in the world while it runs. Its entities
-// exist at once and their rows wait for the end of the function: whoever
-// spawned it reads and finishes them with core.added.
-spawn :: proc(c:core.Commands,app:^host.App,s:Spawn) -> (report:Report,error:Error) {
+// Places a prefab of the assets in the world while it runs, for what holds
+// its id in data or needs the report. Its entities exist at once and their
+// rows wait for the end of the function: whoever spawned it reads and finishes
+// them with core.added.
+spawn_prefab :: proc(c:core.Commands,app:^host.App,s:Spawn) -> (report:Report,error:Error) {
     if app.assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(app.assets,s.prefab)
+    s:=s
+    id:=s.prefab
+    if id=={} {
+        named,found:=asset.registry_find_path(&app.assets.registry,base.text_get(s.path[:]))
+        if !found {return {},.Not_Found}
+        id=named.id
+    }
+    file:=host.assets_scene(app.assets,id)
     if file==nil {return {},.Not_Found}
     if file.blob.header.kind!=asset.KIND_PREFAB {return {},.Not_A_Prefab}
     resolved:asset.Asset
@@ -232,8 +282,12 @@ spawn :: proc(c:core.Commands,app:^host.App,s:Spawn) -> (report:Report,error:Err
     document:=current(assets_documents(app.assets),file,&resolved) or_return
     report,error=instantiate(core.world_ref(c.data,c.info),document,&app.assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient})
     if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {root^=s.transform}
-    core.commands_add(c,report.root,Prefab_Source{s.prefab})
+    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
+        root^=s.transform
+        if root.rotation==0 {root.rotation=1}
+        if root.scale=={} {root.scale={1,1,1}}
+    }
+    core.commands_add(c,report.root,Prefab_Source{id})
     return
 }
 

@@ -36,7 +36,8 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
 
 - `input`: `Passive` (HUD), `Menu` (navigation, keys, actions), `Modal` (as Menu; the seats it
   covers get no actions and the pointer shows). A higher `order` covers a lower one.
-- Show or hide a screen by adding or removing `render.Hidden` on its entity.
+- Show or hide a screen with `render.set_hidden(hidden,entity,true)`: it plays its hide
+  animations; turning off `UI_Screen` or `core.Disabled` removes it at once.
 - `back=true` makes Escape or East report `Back` while it is on top.
 
 ## Events
@@ -45,22 +46,19 @@ A frame step reads what the widgets asked, once each, also while the clock is st
 
 ```odin
 @(step="frame")
-menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen)) {
+menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), volumes:^audio.Audio_Volumes) {
     screen:=core.entity_at(screens,0)
-    for event in gui.events_this_frame(g) {
-        if event.entity!=screen {continue}
-        #partial switch event.kind {
-        case .Clicked: if event.name==base.name_hash("menu_play") {start_game()}
-        case .Changed: options.volume=f32(event.value)  // checkbox: on; slider, selector: value
-        }
-    }
+    events:=gui.events_this_frame(g)
+    if gui.clicked(events,screen,"menu_play") {start_game()}
+    if value,ok:=gui.changed_value(events,screen,"volume");ok {volumes.master=f32(value)}
 }
 ```
 
 - Names are `base.name_hash` of the node name. Controls never write their bound value: the game
   writes it on `Changed`, or the control goes back to what the field holds.
-- A fixed step reads the `UI_Events` storage with `gui.clicked(events,entity,name)`; it sees
-  nothing while the clock is stopped, as under a pause menu.
+- The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`...) take a
+  frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a fixed step reads the
+  storage and sees nothing while the clock is stopped, as under a pause menu.
 
 ## Focus
 
@@ -75,4 +73,4 @@ Keyboard and gamepad move a ring over the controls. Mark the first control of ea
 - A screen with no `Focus_First` can be clicked but not driven by keys.
 - The game, not the screen, holds the mouse: release it while a menu shows (the shell does).
 - More screens than fit leave out the lowest `order` (`gui.screens`): hide the unused ones.
-- Rewritten `.ui` files are not seen by an open editor until `asset.reload`.
+- An open editor picks up rewritten `.ui` files at its next call.

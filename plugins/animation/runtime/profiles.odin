@@ -228,13 +228,15 @@ Modifier_Goal :: struct {
 }
 @(storage,queue)
 Modifier_Requests :: struct {queue:core.Queue(Modifier_Goal),controls:core.Queue(Modifier_Control)}
-modifier_goal :: proc(requests:^Modifier_Requests,goal:Modifier_Goal) -> bool {
+modifier_goal :: proc(requests:^Modifier_Requests,goal:Modifier_Goal) {
+    if requests==nil {return}
     goal:=goal
-    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) {return false}
-    if requests==nil || goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_vector(goal.normal) || !profile_weight(goal.weight) {return false}
-    if cap(requests.queue.items)==0 && reserve(&requests.queue.items,REQUEST_CAPACITY)!=nil {return false}
-    if len(requests.queue.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.queue,goal);return true
+    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
+        goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_vector(goal.normal) || !profile_weight(goal.weight) {
+        core.refuse(&requests.queue)
+        return
+    }
+    core.offer(&requests.queue,goal)
 }
 
 Retarget_Link :: struct {entity,source:core.Entity,profile:base.Asset_Id}
@@ -508,7 +510,6 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
 }
 modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,configs:core.Read(Pose_Modifiers),problems:^core.Problems,dt:f32=0) {
     #reverse for goal,i in runtime.goals {if !core.has(configs,goal.rig) && goal.kind!=.Chain_Retarget {unordered_remove(&runtime.goals,i)}}
-    if cap(requests.queue.items)==0 && reserve(&requests.queue.items,REQUEST_CAPACITY)!=nil {memory_problem(problems,core.NONE,"the goals of pose profiles asked for")}
     for goal in core.take(&requests.queue) {
         goal:=goal
         if error:=modifier_goal_resolve(runtime,&goal);error!=.None {

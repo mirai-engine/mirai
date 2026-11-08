@@ -24,7 +24,7 @@ Node_Kind :: enum u8 {
     Spacer,
     Component, // authoring only: expanded into a Box subtree at load
     Scroll,   // a container whose content moves with the wheel when it does not fit
-    Switcher, // a container that builds one of the nodes it holds: the one its bound value says, or index
+    Switcher, // a container that builds one of the nodes it holds: bound to an enum or a text, the one of that name; bound to a number, the one at that position; else index
     List,     // a container that builds the one node it holds once per element of the array bind_items names
     Prompt,   // the prompts of its action, as the device the player holds shows them
     Slider,   // edits its bound number between range[0] and range[1], in steps of range[2]
@@ -466,7 +466,7 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o:[Binding]bool
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
-        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),.Entity if node.kind==.View else .Number)
+        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),.Entity if node.kind==.View else .Shown if node.kind==.Switcher else .Number)
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
         b.disabled,o[.Disabled]=tree_bind_field(instance,scope,name(tree,&node,.Disabled),.Number)
@@ -955,7 +955,7 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
     }
     #partial switch node.kind {
     case .Switcher:
-        shown:=int(bound_number(values,instance.bounds[index].value)) if instance.bounds[index].value.bound else int(node.index)
+        shown:=tree_switcher_page(tree,node,index,next,instance.bounds[index].value,values)
         state:=&instance.slot[slot]
         outer:=b.turned
         b.turned||=state.page_focused && state.page!=i32(shown+1)
@@ -987,6 +987,23 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         scroll_end(ctx,area,&instance.scrolls[slot])
     }
     box_end(ctx,box^)
+}
+
+// The position of the node a Switcher builds: by name when it binds an enum or
+// a text (the child called as its value; -1, none, when it has no such child),
+// else by index.
+@(private)
+tree_switcher_page :: proc(tree:^Widget_Tree,node:^Node,index,next:int,bound:Bound,values:rawptr) -> int {
+    if !bound.bound {return int(node.index)}
+    if bound.choices_of==nil && !bound.text {return int(bound_number(values,bound))}
+    name:=bound_name(values,bound)
+    if name=="" {return -1}
+    wanted:=base.name_hash(name)
+    for child,i:=index+1,0;child<next;i+=1 {
+        if tree.nodes[child].name==wanted {return i}
+        child+=int(tree.nodes[child].subtree)+1
+    }
+    return -1
 }
 
 // Builds the node held at position at of the node at index, and no other.

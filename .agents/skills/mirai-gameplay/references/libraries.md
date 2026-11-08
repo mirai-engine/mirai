@@ -39,7 +39,10 @@ the name of their type) and a world (handles and tables).
   registry. Prefab instances are not resolved against their prefabs. A `Scene_Reference` may name
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
-- `spawn(commands, app, Spawn{...})` places a prefab while playing; its rows wait for the end of
+- `spawn(spawner, path, at)` places a prefab while playing and returns its root (`NONE` is the
+  problem `scene.spawn`); `spawn_prefab(commands, app, Spawn{...})` is the route of what holds an id
+  in data or needs the report, and `request_spawn(spawns, path, at)` the one that needs no root.
+  A zero rotation is none and a zero scale is 1; its rows wait for the end of
   the function that requested it. The root receives `Prefab_Source`, which a server sends with what
   it replicates so that the client instantiates that prefab
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)). One
@@ -67,6 +70,7 @@ the name of their type) and a world (handles and tables).
   time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
   frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
   that fails is also the problem `scene.load` of the world, with the cause and the fix.
+  `request_restart(&r)` loads again the scene the world is (`Scene_Root`).
 - **Phased load** (`loading.odin`): jobs read and decompress the scene in rounds: each one reads
   what the main thread found in the registry for it (at the start, the scene) and asks for what
   that brings (the scenes of its `With_Document` references and the prefabs of its instances; the
@@ -484,10 +488,9 @@ the reverb of the room where the listener is and what covers each source.
     gain in dB, its low-pass, who ducks it and its own reverb, over everything it touches. The gain
     is in dB so that an entry at zeros says "as it arrives": in linear, the master at volume 0
     would be an empty entry. `audio_bus_setting_set` writes or removes the entry and
-    `volume_db`/`db_volume` convert.
-  - `Audio_Volumes` (machine setting) is the volume the player chose per bus, in dB over the
-    game's gain: the options menu writes it (`audio_volume_set`) and `save` stores it in the
-    player's options.
+    `db_volume` converts inside the mixer.
+  - `Audio_Volumes` (machine setting) is the volume the player chose per bus, 0 to 1 over the
+    game's gain: a slider binds its field and `save` stores it in the player's options.
   - `Audio_Output` (machine setting) is the output the player chose, by its name in
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
@@ -655,8 +658,8 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 - Requests: `request_save` and `request_checkpoint` (with an optional label),
   `request_autosave`, `request_load`, `request_load_checkpoint`, `request_delete`,
-  `request_new_game`, `request_end_game`, `request_label`, `request_profile_save` and
-  `request_options_save` push into `Save_Requests` (up to 8 per frame; `Busy` if they do not fit).
+  `request_new_game`, `request_end_game` and `request_label` push into `Save_Requests` and return
+  nothing; each gets its `Result`, and what is not valid is also the problem `save.request`.
   - `Invalid_Slot`: the name is not letters, digits, spaces, `-` or `_`, or is a Windows device
     name. `Invalid_Label`: the label does not fit in `LABEL_CAPACITY`.
   - `saves_serve` (`input`, game only) serves them at the start of the next frame with what the
@@ -730,13 +733,14 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 - **Player profile** (`profile.save`, in the folder that contains the slots' one): the
   `@(storage,persist)` of all libraries, the progress that is not a save's (achievements,
   unlocks, the last level). It belongs to the player on this machine: `saves_serve` reads it the
-  first time a world runs (`Profile_State`) and `request_profile_save` writes it, also with
-  networking.
+  first time a world runs (`Profile_State`) and writes it by itself, also with networking
+  (`kept_watch`: hashes of what the file holds, looked at every `KEPT_LOOK`; a change is written
+  when it rests, after `KEPT_LOOKS` of never resting, and in `saves_release`).
   - A document with one table per storage (`library/type`); written atomically. A storage stored
     with another layout migrates by field name and one the file does not have keeps its value.
   - A `persist` that is not flat data or has `Entity` fields is not written (`Failed`). A profile
     that is not read is the problem `save.profile` and the progress stays at its initial values.
-- **Player options** (`request_options_save`): the machine settings of the world and the
+- **Player options**, kept the same way as the profile: the machine settings of the world and the
   application (`Graphics_Settings`, `Display_Settings`, `Audio_Volumes`, `Audio_Output`,
   `UI_Preferences`) go to the `settings.mirai` of `App.options` (`host.app_options_save`) and the
   changed bindings to its `input.mirai`. The player reads them over the project's; without

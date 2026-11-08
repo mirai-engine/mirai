@@ -49,7 +49,7 @@ graph_named_definition :: proc(call:^api.Call,profile:anim.Graph_Profile,p:^Grap
 authoring_patch_value :: proc(call:^api.Call,text:string,value:^$T) -> bool {
     schema:serial.Schema;serial.schema_init(&schema,call.allocator);defer serial.schema_destroy(&schema)
     index,ok:=serial.schema_add_type_info(&schema,type_info_of(T));if !ok {authoring_failure(call,"patch","Out_Of_Memory","a schema for the patch","allocation failed","The patch could not be prepared",api.SERVER_ERROR);return false}
-    reader:serial.Text_Reader;serial.text_reader_init(&reader,text,call.allocator);defer serial.text_reader_destroy(&reader)
+    reader:serial.Text_Reader;api.call_reader_init(call,&reader,text);defer serial.text_reader_destroy(&reader)
     if !serial.text_read(&reader,&schema,index,mem.ptr_to_bytes(value),true) || !serial.text_end(&reader) {authoring_failure(call,"patch","Invalid_Value","fields matching the target definition","invalid patch","The patch fields could not be read");return false}
     return true
 }

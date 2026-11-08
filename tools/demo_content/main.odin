@@ -31,8 +31,7 @@ import "mirai:ui"
 //
 //   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -ignore-unknown-attributes -- [root of the repository]
 
-@(private) id_of :: proc(kind,name:string) -> base.Asset_Id {return base.asset_id_named(fmt.tprintf("%s\x1fdemo_content\x1f%s",kind,name))}
-
+PROJECT :: "demo_content"
 BADGE_SIZE :: 64
 PANEL_SIZE :: 32
 HUM_RATE :: 22050
@@ -40,32 +39,21 @@ HUM_SECONDS :: 2
 
 Out :: struct {
     root:string,
-    types:asset.Types,
+    content:asset.Content,
     actions:[]serial.Choice, // the actions of the demo with their numbers, which types.schema names
-    failed:bool,
     slabs:map[string]base.Asset_Id, // the meshes of slab(), by their file
 }
 
 @(private)
 path :: proc(o:^Out,relative:string) -> string {return fmt.tprintf("%s/demo/%s",o.root,relative)}
 
-@(private)
-check :: proc(o:^Out,what:string,error:asset.Error) {
-    if error==.None {
-        fmt.printfln("wrote %s",what)
-        return
-    }
-    fmt.eprintfln("demo_content: %s: %v",what,error)
-    o.failed=true
-}
-
 // Writes a mesh of one level of a source and its indices (asset.mesh_build)
 // to file, a path relative to the demo.
 @(private)
 mesh_write_built :: proc(o:^Out,what,file:string,desc:asset.Mesh_Desc,source:asset.Mesh_Source,indices:[]u32) {
     desc:=desc
-    if !asset.mesh_build(source,indices,nil,&desc.geometry,context.temp_allocator) {check(o,what,.Invalid);return}
-    check(o,what,asset.mesh_save(path(o,file),&o.types,desc))
+    if !asset.mesh_build(source,indices,nil,&desc.geometry,context.temp_allocator) {asset.content_check(&o.content,what,.Invalid);return}
+    asset.content_check(&o.content,what,asset.mesh_save(path(o,file),&o.content.types,desc))
 }
 
 // How much of a pixel a disc of a radius covers, from the distance of its center.
@@ -74,7 +62,7 @@ coverage :: proc(distance,radius:f32) -> f32 {return clamp(radius-distance+0.5,0
 
 // An orange disc with a white core, transparent around it.
 write_badge :: proc(o:^Out) -> base.Asset_Id {
-    id:=id_of("texture","hud_badge")
+    id:=asset.content_id(PROJECT,"texture","hud_badge")
     pixels:=make([]u8,BADGE_SIZE*BADGE_SIZE*4,context.temp_allocator)
     for y in 0..<BADGE_SIZE {
         for x in 0..<BADGE_SIZE {
@@ -86,14 +74,14 @@ write_badge :: proc(o:^Out) -> base.Asset_Id {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    check(o,"assets/textures/hud_badge.tex",asset.texture_save(path(o,"assets/textures/hud_badge.tex"),&o.types,
+    asset.content_check(&o.content,"assets/textures/hud_badge.tex",asset.texture_save(path(o,"assets/textures/hud_badge.tex"),&o.content.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
 
 // A dark rounded panel with a light border: the nine slice of the HUD.
 write_panel :: proc(o:^Out) -> base.Asset_Id {
-    id:=id_of("texture","hud_panel")
+    id:=asset.content_id(PROJECT,"texture","hud_panel")
     pixels:=make([]u8,PANEL_SIZE*PANEL_SIZE*4,context.temp_allocator)
     RADIUS :: f32(8)
     for y in 0..<PANEL_SIZE {
@@ -108,7 +96,7 @@ write_panel :: proc(o:^Out) -> base.Asset_Id {
             pixels[at+3]=u8(235*coverage(distance,RADIUS))
         }
     }
-    check(o,"assets/textures/hud_panel.tex",asset.texture_save(path(o,"assets/textures/hud_panel.tex"),&o.types,
+    asset.content_check(&o.content,"assets/textures/hud_panel.tex",asset.texture_save(path(o,"assets/textures/hud_panel.tex"),&o.content.types,
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -120,7 +108,7 @@ WHITE :: ui.Color{255,255,255,255}
 // lift, its count of trips and a line that exists while it runs.
 write_hud :: proc(o:^Out,badge,panel:base.Asset_Id) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","hud")
+    id:=asset.content_id(PROJECT,"ui","hud")
     // Row 0 is the style of the nodes that name none: the rows of the layout, which draw nothing.
     styles:=[]ui.Node_Style{
         {},
@@ -158,14 +146,14 @@ write_hud :: proc(o:^Out,badge,panel:base.Asset_Id) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Text,name="state",style=5,text="Running",bind_visible="Showcase.running"}),
     }
     data:=ui.Tree_Data{text=texts[:],nodes=nodes,styles=styles,images=images,anims=anims,tracks=tracks,keys=keys,anim_sets=anim_sets}
-    check(o,"assets/ui/hud.ui",host.ui_tree_save(path(o,"assets/ui/hud.ui"),&o.types,id,data))
+    asset.content_check(&o.content,"assets/ui/hud.ui",host.ui_tree_save(path(o,"assets/ui/hud.ui"),&o.content.types,id,data))
     return id
 }
 
 // The sign above the lift: its name, its bar and a button.
 write_sign :: proc(o:^Out) -> base.Asset_Id {
     texts:=make([dynamic]u8,context.temp_allocator)
-    id:=id_of("ui","sign")
+    id:=asset.content_id(PROJECT,"ui","sign")
     styles:=[]ui.Node_Style{
         {},
         {text={size=18,color=WHITE}},
@@ -183,14 +171,14 @@ write_sign :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Progress,name="charge",style=2,bind_value="Showcase.charge",layout={width=ui.fixed(200),height=ui.fixed(10)}}),
         ui.tree_node_record(&texts,0,{kind=.Button,name="toggle",style=3,text="Stop / go",layout={width=ui.fixed(110),height=ui.fixed(28)}}),
     }
-    check(o,"assets/ui/sign.ui",host.ui_tree_save(path(o,"assets/ui/sign.ui"),&o.types,id,{nodes=nodes,styles=styles,variants=sign_variants[:],text=texts[:]}))
+    asset.content_check(&o.content,"assets/ui/sign.ui",host.ui_tree_save(path(o,"assets/ui/sign.ui"),&o.content.types,id,{nodes=nodes,styles=styles,variants=sign_variants[:],text=texts[:]}))
     return id
 }
 
 // The lift: its platform goes up and comes down in four seconds while its
 // beacon turns once. "top" marks the highest point.
 write_lift :: proc(o:^Out) -> base.Asset_Id {
-    id:=id_of("animation","lift")
+    id:=asset.content_id(PROJECT,"animation","lift")
     seconds:=game.SHOWCASE_RIDE_SECONDS
     rise:=[]lib.Keyframe{
         {time=0,value={0,0.1,0,0}},
@@ -205,7 +193,7 @@ write_lift :: proc(o:^Out) -> base.Asset_Id {
         {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{seconds/2,"top"}}},
         {name="parked",tracks={{target="Platform",property=.Position,keys=rise[:1]}}},
     }
-    check(o,"assets/animations/lift.anim",asset.animation_save(path(o,"assets/animations/lift.anim"),&o.types,{id=id,clips=clips}))
+    asset.content_check(&o.content,"assets/animations/lift.anim",asset.animation_save(path(o,"assets/animations/lift.anim"),&o.content.types,{id=id,clips=clips}))
     return id
 }
 
@@ -230,13 +218,13 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
     existing,read_error:=os.read_entire_file(source,context.temp_allocator)
     if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(source,file)!=nil {
         fmt.eprintfln("demo_content: %s could not be written",source)
-        o.failed=true
+        o.content.failed=true
         return {}
     }
     report,error:=sources.import_source(source,path(o,"assets/sounds"),{root=fmt.tprintf("%s/demo",o.root)})
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s",error.message)
-        o.failed=true
+        o.content.failed=true
         return {}
     }
     defer importer.report_destroy(&report)
@@ -244,73 +232,55 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
     return report.assets[0].id
 }
 
-Scene_Out :: struct {
-    scene:asset.Scene,
-    next:base.Entity_Id,
-    failed:bool,
-}
-
 // Half a turn about +Y. A body's front is its +Z (the glTF model front): a spawn turned so looks
 // along -Z, and a camera child of a body turned so looks where the body faces.
 HALF_TURN :: mm.Quat(quaternion(w=0,x=0,y=1,z=0))
+EYE_HEIGHT :: f32(1.6)
 
-@(private)
-entity :: proc(s:^Scene_Out,name:string,position:[3]f32={},scale:[3]f32={1,1,1},parent:base.Entity_Id=0) -> base.Entity_Id {
-    s.next+=1
-    id:=s.next
-    if _,error:=asset.scene_entity_add(&s.scene,id,parent,name);error!=.None {s.failed=true}
-    transform:=core.Transform{position,1,scale}
-    put(s,id,"Transform",&transform)
-    return id
-}
-@(private)
-put :: proc(s:^Scene_Out,id:base.Entity_Id,name:string,value:^$T) {
-    if asset.scene_set(&s.scene,id,name,value)!=.None {s.failed=true}
-}
 
 // Turns a component of an entity off by itself: the world loads it off.
 @(private)
-turn_off :: proc(s:^Scene_Out,id:base.Entity_Id,name:string) {
+turn_off :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,name:string) {
     if asset.scene_component_turn(&s.scene,id,base.name_hash(name),true)!=.None {s.failed=true}
 }
 @(private)
 // The sky turned about the vertical by turn, and how the views of the scene
 // expose: a View_Volume of the whole scene when it is not the default.
-sky_set :: proc(s:^Scene_Out,sky:^render.Sky,turn:f32=0,exposure:=render.EXPOSURE_DEFAULT) {
-    e:=entity(s,"Sky")
+sky_set :: proc(s:^asset.Scene_Builder,sky:^render.Sky,turn:f32=0,exposure:=render.EXPOSURE_DEFAULT) {
+    e:=asset.builder_entity(s,"Sky")
     placed:=core.Transform{{},mm.quat_axis_angle({0,1,0},turn),{1,1,1}}
-    put(s,e,"Transform",&placed)
-    put(s,e,"Sky",sky)
+    asset.builder_set(s,e,placed)
+    asset.builder_set(s,e,sky^)
     if exposure==render.EXPOSURE_DEFAULT {return}
     look:=render.View_Volume{exposure=exposure,tint={1,1,1}}
-    put(s,entity(s,"Exposure"),"View_Volume",&look)
+    asset.builder_set(s,asset.builder_entity(s,"Exposure"),look)
 }
 @(private)
-cube :: proc(s:^Scene_Out,id:base.Entity_Id,material:string) {
+cube :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,material:string) {
     mesh:=render.Mesh_Renderer{shape=.Cube}
     mesh.materials[0]=game.material_asset(material)
-    put(s,id,"Mesh_Renderer",&mesh)
+    asset.builder_set(s,id,mesh)
 }
 
 // A cube that the player stands on and walks into.
 @(private)
-solid :: proc(s:^Scene_Out,id:base.Entity_Id,material:string) {
+solid :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,material:string) {
     cube(s,id,material)
     collider:=phys.collider_box({0.5,0.5,0.5})
-    put(s,id,"Collider",&collider)
+    asset.builder_set(s,id,collider)
 }
 
 // Where a player appears.
 @(private)
-spawn_point :: proc(s:^Scene_Out,position:[3]f32) {
-    point:=spawn.Spawn_Point{prefab=game.PLAYER_PREFAB}
-    put(s,placed(s,"Player start",position,HALF_TURN,{1,1,1}),"Spawn_Point",&point)
+spawn_point :: proc(s:^asset.Scene_Builder,position:[3]f32) {
+    point:=spawn.Spawn_Point{prefab=PLAYER_PREFAB_ID}
+    asset.builder_set(s,placed(s,"Player start",position,HALF_TURN,{1,1,1}),point)
 }
 
 write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","showcase"))
-    defer asset.scene_destroy(&s.scene)
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","showcase"))
+    defer asset.builder_destroy(&s)
 
     environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.6)
     // Its view is mostly sky: a stop under the meter keeps it as the demo has it.
@@ -318,136 +288,131 @@ write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
     exposure.compensation=-1
     sky_set(&s,&environment,turn,exposure)
     sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.6),disc=disc}
-    sun_entity:=entity(&s,"Sun",{0,6,0})
+    sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})
     pose:=sun_pose(to_sun,{0,6,0})
-    put(&s,sun_entity,"Transform",&pose)
-    put(&s,sun_entity,"Sun",&sun)
+    asset.builder_set(&s,sun_entity,pose)
+    asset.builder_set(&s,sun_entity,sun)
     lamp:=render.Point_Light{color={1,0.8,0.6},intensity=candela(LAMPLIT,12),range=14,radius=0.1}
-    put(&s,entity(&s,"Lamp",{2.5,3.5,2.5}),"Point_Light",&lamp)
-    solid(&s,entity(&s,"Floor",{0,-0.05,0},{14,0.1,14}),"Tiles")
-    solid(&s,entity(&s,"Pillar west",{-3,1.5,-1},{0.5,3,0.5}),"Marble")
-    solid(&s,entity(&s,"Pillar east",{3,1.5,-1},{0.5,3,0.5}),"Marble")
+    asset.builder_set(&s,asset.builder_entity(&s,"Lamp",{position={2.5,3.5,2.5}}),lamp)
+    solid(&s,asset.builder_entity(&s,"Floor",{position={0,-0.05,0},scale={14,0.1,14}}),"Tiles")
+    solid(&s,asset.builder_entity(&s,"Pillar west",{position={-3,1.5,-1},scale={0.5,3,0.5}}),"Marble")
+    solid(&s,asset.builder_entity(&s,"Pillar east",{position={3,1.5,-1},scale={0.5,3,0.5}}),"Marble")
     spawn_point(&s,{0,0,5.5})
 
     // The Animation of the lift moves Platform and turns Beacon, found by name below it.
-    root:=entity(&s,game.SHOWCASE_LIFT)
+    root:=asset.builder_entity(&s,game.SHOWCASE_LIFT)
     playing:=anim.ANIMATION_DEFAULT
     playing.asset=lift
     base.text_set(playing.clip[:],"ride")
-    put(&s,root,"Animation",&playing)
-    platform:=entity(&s,"Platform",{0,0.1,0},{1,1,1},root)
-    cube(&s,entity(&s,"Deck",{0,0,0},{2,0.2,2},platform),"Brushed steel")
-    beacon:=entity(&s,"Beacon",{0,0.45,0},{0.45,0.45,0.45},platform)
+    asset.builder_set(&s,root,playing)
+    platform:=asset.builder_entity(&s,"Platform",{position={0,0.1,0}},root)
+    cube(&s,asset.builder_entity(&s,"Deck",{scale={2,0.2,2}},platform),"Brushed steel")
+    beacon:=asset.builder_entity(&s,"Beacon",{position={0,0.45,0},scale={0.45,0.45,0.45}},platform)
     cube(&s,beacon,"Neon sign")
     shown:=game.Showcase{}
     base.text_set(shown.label[:],"Lift")
-    board:=entity(&s,"Sign",{0,1.0,0},{1,1,1},platform)
+    board:=asset.builder_entity(&s,"Sign",{position={0,1.0,0}},platform)
     widget:=gui.WORLD_WIDGET_DEFAULT
     widget.asset,widget.size,widget.scale,widget.facing,widget.pivot=sign,{220,100},0.01,.Billboard_Upright,.Bottom_Center
-    put(&s,board,"World_Widget",&widget)
-    put(&s,board,"Showcase",&shown)
+    asset.builder_set(&s,board,widget)
+    asset.builder_set(&s,board,shown)
 
     screen:=gui.UI_Screen{asset=hud}
-    overlay:=entity(&s,"Hud")
-    put(&s,overlay,"UI_Screen",&screen)
-    put(&s,overlay,"Showcase",&shown)
+    overlay:=asset.builder_entity(&s,"Hud")
+    asset.builder_set(&s,overlay,screen)
+    asset.builder_set(&s,overlay,shown)
 
-    speaker:=entity(&s,"Speaker",{-3,0.35,1.5},{0.7,0.7,0.7})
+    speaker:=asset.builder_entity(&s,"Speaker",{position={-3,0.35,1.5},scale={0.7,0.7,0.7}})
     cube(&s,speaker,"Lacquer")
     source:=audio.AUDIO_SOURCE_DEFAULT
     source.sound,source.loop,source.spatial,source.volume,source.max_distance=hum,true,true,0.7,25
-    put(&s,speaker,"Audio_Source",&source)
+    asset.builder_set(&s,speaker,source)
 
-    if s.failed {
-        fmt.eprintln("demo_content: the scene could not be built")
-        o.failed=true
-        return
-    }
-    check(o,"assets/scenes/showcase.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/showcase.scene")))
+    asset.builder_save(&s,path(o,"assets/scenes/showcase.scene"))
 }
 
 main :: proc() {
     o:Out
     o.root=len(os.args)>1?os.args[1]:"."
-    asset.types_init(&o.types)
-    defer asset.types_destroy(&o.types)
+    asset.content_init(&o.content,PROJECT)
+    defer asset.content_destroy(&o.content)
     actions_load(&o)
-    if o.failed {os.exit(1)}
+    if o.content.failed {os.exit(1)}
     for folder in ([]string{"assets/ui","assets/animations","assets/sounds","assets/textures","assets/scenes","assets/prefabs","assets/data"}) {os.make_directory_all(path(&o,folder))}
     if len(os.args)>2 && os.args[2]=="--physics-only" {
         write_destruction_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--prefabs-only" {
         write_prefabs(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--control-only" {
         write_control_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--portal-only" {
         write_portal_player(&o)
-        if !o.failed {write_portal_chamber_scene(&o)}
-        if o.failed {os.exit(1)}
+        if !o.content.failed {write_portal_chamber_scene(&o)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--raft-only" {
         write_raft_player(&o)
-        if !o.failed {write_raft_scene(&o)}
-        if o.failed {os.exit(1)}
+        if !o.content.failed {write_raft_scene(&o)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--features-only" {
         write_feature_scenes(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--church-only" {
         meshes:=write_feature_meshes(&o)
-        if !o.failed {write_church_scene(&o,meshes,"church",false)}
-        if !o.failed {write_church_scene(&o,meshes,"church_fog",true)}
-        if o.failed {os.exit(1)}
+        if !o.content.failed {write_church_scene(&o,meshes,"church",false)}
+        if !o.content.failed {write_church_scene(&o,meshes,"church_fog",true)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--lights-only" {
         write_lights_scene(&o)
-        if !o.failed {write_night_scene(&o)}
-        if o.failed {os.exit(1)}
+        if !o.content.failed {write_night_scene(&o)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--animation-only" {
         import_model(&o,"mirai/mirai.glb")
-        if !o.failed {write_animation_scene(&o)}
-        if o.failed {os.exit(1)}
+        if !o.content.failed {write_animation_scene(&o)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--sky-only" {
         write_sky_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--interface-only" {
         write_interface_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--dig-only" {
         write_dig_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--horror-only" {
         write_horror_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     if len(os.args)>2 && os.args[2]=="--ai-only" {
         write_ai_scene(&o)
-        if o.failed {os.exit(1)}
+        if o.content.failed {os.exit(1)}
         return
     }
     import_sources(&o)
@@ -455,22 +420,22 @@ main :: proc() {
     hud,sign:=write_hud(&o,badge,panel),write_sign(&o)
     lift,hum:=write_lift(&o),write_hum(&o)
     write_prefabs(&o)
-    if !o.failed {write_scene(&o,hud,sign,lift,hum)}
-    if !o.failed {write_control_scene(&o)}
-    if !o.failed {write_destruction_scene(&o)}
-    if !o.failed {write_ai_scene(&o)}
-    if !o.failed {write_animation_scene(&o)}
-    if !o.failed {write_feature_scenes(&o)}
-    if !o.failed {write_portal_player(&o)}
-    if !o.failed {write_portal_chamber_scene(&o)}
-    if !o.failed {write_raft_player(&o)}
-    if !o.failed {write_raft_scene(&o)}
-    if !o.failed {write_lights_scene(&o)}
-    if !o.failed {write_night_scene(&o)}
-    if !o.failed {write_horror_scene(&o)}
-    if !o.failed {write_dig_scene(&o)}
-    if !o.failed {write_interface_scene(&o)}
-    if !o.failed {write_sky_scene(&o)}
+    if !o.content.failed {write_scene(&o,hud,sign,lift,hum)}
+    if !o.content.failed {write_control_scene(&o)}
+    if !o.content.failed {write_destruction_scene(&o)}
+    if !o.content.failed {write_ai_scene(&o)}
+    if !o.content.failed {write_animation_scene(&o)}
+    if !o.content.failed {write_feature_scenes(&o)}
+    if !o.content.failed {write_portal_player(&o)}
+    if !o.content.failed {write_portal_chamber_scene(&o)}
+    if !o.content.failed {write_raft_player(&o)}
+    if !o.content.failed {write_raft_scene(&o)}
+    if !o.content.failed {write_lights_scene(&o)}
+    if !o.content.failed {write_night_scene(&o)}
+    if !o.content.failed {write_horror_scene(&o)}
+    if !o.content.failed {write_dig_scene(&o)}
+    if !o.content.failed {write_interface_scene(&o)}
+    if !o.content.failed {write_sky_scene(&o)}
     free_all(context.temp_allocator)
-    if o.failed {os.exit(1)}
+    if o.content.failed {os.exit(1)}
 }

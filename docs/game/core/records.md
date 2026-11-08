@@ -42,7 +42,7 @@ game_pickups :: proc(pickups:core.Read(Pickup),items:core.Records(Item),problems
 ## Author the rows
 
 With an editor session (`engine.describe` for fields): `records.types` lists the record types,
-`records.create` (or `asset.create` kind `records`) makes a table, `records.add` and
+`records.create` makes a table, `records.add` and
 `records.set` write rows by field name, `records.import` and `records.export` move a CSV whose
 header is `name` and the paths of the fields, then `asset.save`.
 

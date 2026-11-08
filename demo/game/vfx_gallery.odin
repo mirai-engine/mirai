@@ -13,7 +13,6 @@ import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 
 VFX_GALLERY_STATIONS :: 5
-VFX_GALLERY_SCENE :: "scenes/vfx.scene"
 
 // A station of the VFX gallery (scenes/vfx.scene): what it shows, and where
 // the camera looks at it from.
@@ -60,7 +59,7 @@ Vfx_Impacts :: struct {
 
 @(step="input")
 vfx_gallery_reset :: proc(views:core.Read(Vfx_Gallery_View),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
-    if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_path(scenes,VFX_GALLERY_SCENE)}
+    if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_restart(scenes)}
 }
 
 @(step="fixed")

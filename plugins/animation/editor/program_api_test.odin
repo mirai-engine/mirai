@@ -38,11 +38,9 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     if !testing.expect(t,created.code==0,fmt.tprintf("%s: %s",created.message,request)) {return}
     id:=authoring_test_id(f,"locomotion.blend");identity:=authoring_test_id_text(id)
     neither:=authoring_test_execute(f,"set",fmt.tprintf(`{{%s}}`,definition))
-    testing.expect(t,neither.code==api.INVALID_PARAMS && strings.contains(neither.data,`"code":"Exclusive_Reference"`) && strings.contains(neither.data,`"actual":"neither"`))
-    both:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"other.blend","asset":"%s",%s}}`,identity,definition))
-    testing.expect(t,both.code==api.INVALID_PARAMS && strings.contains(both.data,`"actual":"both"`) && !authoring_test_exists(f,"other.blend"))
+    testing.expect_value(t,neither.code,api.INVALID_PARAMS)
     existing:=authoring_test_execute(f,"set",request)
-    testing.expect(t,existing.code==api.INVALID_PARAMS && strings.contains(existing.data,`"code":"Already_Exists"`) && strings.contains(existing.data,"as asset"))
+    testing.expect(t,existing.code==0 && strings.contains(string(serial.writer_bytes(&f.out)),`"replaced":true`) && authoring_test_id(f,"locomotion.blend")==id,existing.message)
     file:asset.Asset
     testing.expect_value(t,authoring_test_load(f,"locomotion.blend",&file),asset.Error.None)
     profile,error:=anim.blend_space_view(&file,&f.assets.types)
@@ -54,17 +52,17 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     text=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"samples_total":2`) && strings.contains(text,`"index":1`) && !strings.contains(text,`"index":0`))
     revision:=authoring_test_revision(f,"locomotion.blend")
     bad,_:=strings.replace_all(definition,`"position":[2,0]`,`"position":[0,0]`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,bad)).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,bad)).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"locomotion.blend"),revision)
     bad,_=strings.replace_all(definition,`"clip":"walk"`,`"clip":"missing"`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,bad)).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,bad)).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"locomotion.blend"),revision)
     changed,_:=strings.replace_all(definition,`"position":[2,0]`,`"position":[1,0]`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,changed)).code,0)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,changed)).code,0)
     testing.expect_value(t,authoring_test_id(f,"locomotion.blend"),id)
     testing.expect(t,authoring_test_revision(f,"locomotion.blend")!=revision)
     f.session.mode=.Play
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,definition)).code,api.SERVER_ERROR)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,definition)).code,api.INVALID_PARAMS)
 }
 
 @(test)
@@ -85,7 +83,7 @@ two_dimensional_blend_authoring_bakes_triangles_and_rejects_collinear_replacemen
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","position":[0.25,0.25]}}`,identity)).code,0)
     text=string(serial.writer_bytes(&f.out));testing.expect(t,strings.count(text,`"index":`)==3 && strings.contains(text,`"weight":0.5`) && strings.count(text,`"weight":0.25`)==2)
     collinear,_:=strings.replace_all(definition,`"position":[0,1]`,`"position":[0.5,0]`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,collinear)).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,collinear)).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"locomotion.blend"),revision)
 }
 
@@ -116,12 +114,12 @@ graph_authoring_resolves_named_dependencies_and_preserves_files_on_invalid_edits
     testing.expect(t,parsed && result.nodes_total==3 && base.text_get(result.nodes[2].value.left[:])=="idle" && base.text_get(result.nodes[2].value.weight_parameter[:])=="speed")
     for replacement in ([3][2]string{{`"left":"idle"`,`"left":"locomotion"`},{`"output":"locomotion"`,`"output":"missing"`},{`"weight_parameter":"speed"`,`"weight_parameter":"missing"`}}) {
         bad,_:=strings.replace_all(definition,replacement[0],replacement[1],context.temp_allocator)
-        result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,bad))
+        result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"movement.agraph",%s}}`,bad))
         testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect(t,strings.contains(result.data,`"path"`) && strings.contains(result.data,`"code"`))
         testing.expect_value(t,authoring_test_revision(f,"movement.agraph"),revision)
     }
     updated,_:=strings.replace_all(definition,`"value":0`,`"value":0.5`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,updated)).code,0)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"movement.agraph",%s}}`,updated)).code,0)
     testing.expect_value(t,authoring_test_id(f,"movement.agraph"),id)
 }
 
@@ -160,7 +158,7 @@ graph_sync_fields_belong_to_sources_and_inspection_matches_the_typed_result :: p
     testing.expect(t,strings.contains(schema,`"required":["name","kind"]`))
     testing.expect_value(t,api.method_register(&f.server,{name="shape",params=Graph_Inspect_Result,params_info=type_info_of(Graph_Inspect_Result),handler=proc(call:^api.Call) {serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
     result=authoring_test_execute(f,"shape",text);testing.expect(t,result.code==0,result.message)
-    replace,_:=strings.replace_all(request,`"path":"sync.agraph"`,fmt.tprintf(`"asset":"%s"`,authoring_test_id_text(asset_id)),context.temp_allocator)
+    replace,_:=strings.replace_all(request,`"path":"sync.agraph"`,`"path":"sync.agraph"`,context.temp_allocator)
     bad,_:=strings.replace_all(replace,`"left":"idle"`,`"sync_mode":"Independent","left":"idle"`,context.temp_allocator)
     result=authoring_test_execute(f,"set",bad)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"nodes[0].sync_mode"`) && strings.contains(result.data,`"code":"Source_Only"`))
@@ -255,8 +253,8 @@ program_runtime_api_sets_named_parameters_and_keeps_plays_and_modifier_controls_
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"id":"11"}`).code,0)
     text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
     f.session.mode=.Edit
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","plays":[{"clip":"walk"}]}`).code,api.SERVER_ERROR)
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","controls":[{"kind":"Look","name":"head"}]}`).code,api.SERVER_ERROR)
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","plays":[{"clip":"walk"}]}`).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","controls":[{"kind":"Look","name":"head"}]}`).code,api.INVALID_PARAMS)
     testing.expect_value(t,len(document.animation_requests.match_plays.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
     temporary:=Preview_Params{id=17}
     base.text_set(temporary.parameters[0].name[:],"speed");temporary.parameters[0].value=.4
@@ -322,7 +320,7 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","goals":[{"kind":"Contact","name":"foot","grounded":false}]}`).code,0)
     testing.expect(t,len(play.modifier_requests.queue.items)==4 && !play.modifier_requests.queue.items[3].enabled && play.modifier_requests.queue.items[3].normal=={0,1,0})
     f.session.mode=.Edit
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","goals":[{"kind":"Look","name":"head"}]}`).code,api.SERVER_ERROR)
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","goals":[{"kind":"Look","name":"head"}]}`).code,api.INVALID_PARAMS)
     testing.expect_value(t,len(play.modifier_requests.queue.items),4)
     testing.expect(t,len(document.modifier_requests.queue.items)==0 && len(document.modifier_requests.controls.items)==0)
     preview:=Preview_Params{id=17}

@@ -23,14 +23,14 @@ Modifier_Control_State :: struct {
     base_enabled,enabled:bool,
 }
 
-modifier_control :: proc(requests:^Modifier_Requests,control:Modifier_Control) -> bool {
+modifier_control :: proc(requests:^Modifier_Requests,control:Modifier_Control) {
+    if requests==nil {return}
     control:=control
-    if !blend_text_valid(control.name[:],true) {return false}
-    if requests==nil || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {return false}
-    if cap(requests.controls.items)==0 && reserve(&requests.controls.items,REQUEST_CAPACITY)!=nil {return false}
-    if len(requests.controls.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.controls,control)
-    return true
+    if !blend_text_valid(control.name[:],true) || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
+        core.refuse(&requests.controls)
+        return
+    }
+    core.offer(&requests.controls,control)
 }
 
 modifier_control_state :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,slot:u16) -> ^Modifier_Control_State {
@@ -124,7 +124,6 @@ modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_S
 @(private)
 modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,problems:^core.Problems,dt:f32) {
     if requests==nil {return}
-    if cap(requests.controls.items)==0 && reserve(&requests.controls.items,REQUEST_CAPACITY)!=nil {memory_problem(problems,core.NONE,"the controls of pose profiles asked for")}
     for control in core.take(&requests.controls) {
         control:=control
         if control.name[0]!=0 {

@@ -16,8 +16,7 @@ import anim "plugins:animation/runtime"
 Program_Blend_Sample :: struct {position:mm.Vec2 `mirai:"label=In the units of the axes"`,clip:[64]u8 `mirai:"text,label=A clip of its animation"`,speed:f32 `mirai:"optional"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of info"`}
 Program_Blend_Info :: struct {animation:base.Asset_Id,dimension:lib.Blend_Dimension,x:anim.Blend_Axis,y:anim.Blend_Axis `mirai:"optional"`}
 Blend_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .blend; exclusive with asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
+    path:[1024]u8 `mirai:"text,label=Ending in .blend: what is there is replaced keeping its id"`,
     info:Program_Blend_Info,
     samples:[lib.BLEND_MAX_SAMPLES]Program_Blend_Sample `mirai:"label=1 to 256"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
@@ -49,8 +48,7 @@ Program_Graph_Node :: struct {
 Program_Graph_Mask :: struct {name:[64]u8 `mirai:"text"`}
 Program_Graph_Mask_Bone :: struct {mask:[64]u8 `mirai:"text"`,bone:anim.Bone_Ref,weight:f32 `mirai:"optional,min=0,max=1"`,branch:bool `mirai:"optional"`}
 Graph_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .agraph; exclusive with asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
+    path:[1024]u8 `mirai:"text,label=Ending in .agraph: what is there is replaced keeping its id"`,
     animation:base.Asset_Id,
     output:[64]u8 `mirai:"text,label=The node whose pose the graph gives"`,
     nodes:[anim.GRAPH_NODES]Program_Graph_Node,
@@ -169,7 +167,7 @@ program_blend_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Blend_Write_Params)
     if !authoring_editable(s,call) {return}
     target:Authoring_File;defer asset.asset_close(&target.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),p.asset,anim.BLEND_KIND,".blend",&target);if !ok {return}
+    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.BLEND_KIND,".blend",&target);if !ok {return}
     sample_count,_:=api.params_array_count(call,"samples")
     if sample_count==0 || sample_count>lib.BLEND_MAX_SAMPLES {authoring_failure(call,"samples","Capacity","1 to 256 samples",fmt.tprintf("%d",sample_count),"A blend space needs samples");return}
     source:Authoring_File;defer asset.asset_close(&source.file)
@@ -222,7 +220,7 @@ program_graph_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Graph_Write_Params)
     if !authoring_editable(s,call) {return}
     target:Authoring_File;defer asset.asset_close(&target.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),p.asset,anim.GRAPH_KIND,".agraph",&target);if !ok {return}
+    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.GRAPH_KIND,".agraph",&target);if !ok {return}
     profile,prepared:=graph_named_prepare(s,call,p);defer anim.graph_profile_free(&profile,call.allocator)
     if !prepared {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
@@ -256,7 +254,7 @@ program_parameter_check :: proc(s:^editor.Session,call:^api.Call,animation:anim.
 
 @(private)
 program_runtime_mode :: proc(s:^editor.Session,call:^api.Call) -> bool {
-    if s.mode==.Edit {authoring_failure(call,"mode","Runtime_Required","Play or Simulation","Edit","Transient animation controls require Play or Simulation",api.SERVER_ERROR);return false}
+    if s.mode==.Edit {authoring_failure(call,"mode","Runtime_Required","Play or Simulation","Edit","Transient animation controls require Play or Simulation");return false}
     return true
 }
 

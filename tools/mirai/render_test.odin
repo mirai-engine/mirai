@@ -327,7 +327,7 @@ render_flagged_lists_what_a_report_marked :: proc(t:^testing.T) {
     report:Render_Report
     head:=Render_Run{name="head"}
     broken:=measured("broken",0,0,0)
-    broken.size,broken.failure={3072,1728},"editor.capture failed"
+    broken.size,broken.failure={3072,1728},"capture failed"
     append(&head.measures,measured("fine",2,0.04,0.1),measured("slower",2.5,0.04,0.1),broken)
     append(&report.runs,head)
     append(&report.verdicts,Render_Verdict{view="slower",size={1440,900},metric="cost",failed=true},Render_Verdict{view="fine",size={1440,900},metric="cost"},Render_Verdict{view="slower",size={1440,900},metric="stability",failed=true})

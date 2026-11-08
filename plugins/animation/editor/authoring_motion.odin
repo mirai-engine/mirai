@@ -29,8 +29,7 @@ Motion_Window_Params :: struct {
 }
 Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key,animation:base.Asset_Id `mirai:"optional"`}
 Motion_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .motion; exclusive with asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
+    path:[1024]u8 `mirai:"text,label=Ending in .motion: what is there is replaced keeping its id"`,
     pose:Motion_Pose_Params `mirai:"optional,label=Pose warping: the pelvis; spine and IK legs"`,
     windows:[anim.MOTION_WINDOWS]Motion_Window_Params `mirai:"optional,label=Warp windows: each names its source clip and the target it reaches; omitted is none"`,
     distances:[anim.MOTION_WINDOWS]Motion_Distance_Params `mirai:"optional,label=Tracks of strictly monotonic distance and time keys; omitted is none"`,
@@ -97,7 +96,7 @@ authoring_motion_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Motion_Write_Params)
     if !authoring_editable(s,call) {return}
     file:Authoring_File;defer asset.asset_close(&file.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),p.asset,anim.MOTION_KIND,".motion",&file);if !ok {return}
+    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.MOTION_KIND,".motion",&file);if !ok {return}
     profile,valid:=motion_authoring_definition(call,p);if !valid {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
     if error:=anim.motion_profile_document(&doc,&s.app.assets.types,id,profile,s.app.allocator);error!=.None {authoring_failure(call,"definition","Prepare_Failed","a valid serializable motion profile",fmt.tprintf("%v",error),"The motion profile could not be prepared",api.SERVER_ERROR);return}

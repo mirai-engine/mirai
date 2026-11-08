@@ -8,7 +8,7 @@ description: Animate characters and objects from game code - play clips, locomot
 
 Add `"animation"` to `plugins` in `project.mirai`; `animation_physics` (automatic with `physics`)
 feeds each `Character`. Import `anim "plugins:animation/runtime"`. Animation is data on an entity
-plus requests queued from a `fixed` step (they return `false` if invalid or the queue is full).
+plus requests queued from a `fixed` step; what is invalid or full shows in `engine.diagnostics`.
 Fields and defaults: `engine.describe`.
 
 ## Map

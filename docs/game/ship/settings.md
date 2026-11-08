@@ -11,7 +11,9 @@ the language and scale of interfaces (`UI_Preferences`). Fields and ranges: `eng
 From the bottom: the default in code (graphics start at what suits the GPU); the engine file of
 this machine (machine settings only, shared by every project); `settings.mirai` of the project
 (any setting); in a shipped or played game, the player's options file (machine settings only). The
-top layer that sets a field wins. A file stores only what differs from the layers below.
+top layer that sets a field wins. A file stores only what differs from the layers below. The
+machine and player files start with `"version"`: one of another version is left unread and the next
+save writes it anew, with no migration.
 
 ```json
 {
@@ -54,9 +56,8 @@ test ([player.md](player.md)).
 ## An options menu in the game
 
 A game step may write the settings storages; the engine brings the window and the renderer to
-them at once. Persist the player's choices in your own `@(storage,persist)` and
-`save.request_profile_save` ([core](../core/saves.md)), or let the
-engine keep the machine settings with `save.request_options_save`.
+them at once, and keeps them for the next run by itself. Choices that are the game's own go in a
+`@(storage,persist)` ([core](../core/saves.md)).
 
 ```odin
 @(step="frame")
@@ -70,7 +71,7 @@ game_apply_options :: proc(graphics:^render.Graphics_Settings,display:^render.Di
 
 `render.graphics_preset_apply` sets only the quality fields; `render_scale`, `antialiasing`
 (`base.text_set(graphics.antialiasing[:],render.ANTIALIASING_TAA)`, or `ANTIALIASING_OFF`),
-`frame_limit`, `vsync` and `show_fps` stay as they were. Volume is `audio.audio_volume_set`
+`frame_limit`, `vsync` and `show_fps` stay as they were. Volume is a field of `Audio_Volumes`
 ([audio](../audio.md)); language and interface scale are `gui.UI_Preferences`.
 
 ## Pitfalls that fail silently

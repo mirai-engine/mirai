@@ -42,6 +42,10 @@ Api_Save_Slot_Params :: struct {
     slot:[save.SLOT_CAPACITY]u8 `mirai:"text,label=The name of the slot"`,
 }
 
+Api_Save_List_Params :: struct {
+    slot:[save.SLOT_CAPACITY]u8 `mirai:"text,optional,label=Only the slot of this name; none: every slot"`,
+}
+
 Api_Save_Write_Params :: struct {
     slot:[save.SLOT_CAPACITY]u8 `mirai:"text,optional,label=The slot to write; empty: the oldest autosave for Autosave and checkpoint for Checkpoint"`,
     kind:save.Slot_Kind `mirai:"optional,label=Manual; Autosave or Checkpoint as the game writes them by itself"`,
@@ -54,8 +58,7 @@ Api_Save_Deleted :: struct {
 
 @(private)
 save_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="save.list",summary="The saved games of the project: each slot of the folder of its saves with what its header says, also those that do not load with why.",result=Api_Save_List,flags={.Read_Only},run=api_save_list})
-    api_register(s,st,{name="save.inspect",summary="What the header of a saved game says, without loading it: its kind, label, scene, time played and when it was written.",params=Api_Save_Slot_Params,result=Api_Save_Slot,flags={.Read_Only},run=api_save_inspect})
+    api_register(s,st,{name="save.list",summary="The saved games of the project: each slot of the folder of its saves with what its header says without loading it, also those that do not load with why.",params=Api_Save_List_Params,result=Api_Save_List,flags={.Read_Only},run=api_save_list})
     api_register(s,st,{name="save.delete",summary="Deletes a saved game: through the game of the caller while it plays, as the game asks, otherwise its file.",params=Api_Save_Slot_Params,result=Api_Save_Deleted,flags={.Destructive},run=api_save_delete})
     api_register(s,st,{name="save.write",summary="Saves the game of the caller into a slot as the game asks for it and returns the slot once written. Needs Play.",params=Api_Save_Write_Params,result=Api_Save_Slot,run=api_save_write})
     api_register(s,st,{name="save.load",summary="Replaces the world of the game of the caller with a saved game as the game asks for it: its entities get new handles. Needs Play.",params=Api_Save_Slot_Params,result=Api_Save_Slot,flags={.Destructive},run=api_save_load})
@@ -113,22 +116,16 @@ api_save_list :: proc(s:^Session,call:^api.Call) {
     if !ok {return}
     r:=api.call_result(call,Api_Save_List)
     api_text_put(r.folder[:],folder)
+    if name:=base.text_get(api.call_params(call,Api_Save_List_Params).slot[:]);name!="" {
+        slot:=save.slot_info(state,s.app,name)
+        if slot.error==.Not_Found || slot.error==.Invalid_Slot {api_save_fail(call,name,slot.error);return}
+        api_save_slot_put(s,&r.slots[0],&slot)
+        return
+    }
     found:=make([]save.Slot,API_SAVE_SLOTS+1,context.temp_allocator)
     count:=save.slots(state,s.app,found,all=true)
     r.more=count>API_SAVE_SLOTS
     for &slot,i in found[:min(count,API_SAVE_SLOTS)] {api_save_slot_put(s,&r.slots[i],&slot)}
-}
-
-@(private)
-api_save_inspect :: proc(s:^Session,call:^api.Call) {
-    name:=base.text_get(api.call_params(call,Api_Save_Slot_Params).slot[:])
-    local:save.Save_State
-    state:=api_save_state(s,&local)
-    defer if state==&local {delete(local.folder,s.app.allocator)}
-    if _,ok:=api_save_folder(s,call,state);!ok {return}
-    slot:=save.slot_info(state,s.app,name)
-    if slot.error!=.None {api_save_fail(call,name,slot.error);return}
-    api_save_slot_put(s,api.call_result(call,Api_Save_Slot),&slot)
 }
 
 @(private)
@@ -173,7 +170,7 @@ api_save_run :: proc(s:^Session,call:^api.Call) -> (r:^Run,ok:bool) {
     own:bool
     r,own=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing: start Play with play.start first; save.list, save.inspect and save.delete work without it")
+    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing: start Play with play.start first; save.list and save.delete work without it")
     case !own: api_play_refused(call)
     case core.world_storage_of(run_ref(s,r),save.Save_Requests)==nil: api.call_fail(call,api.SERVER_ERROR,"The game of this project has no save library: generate the project again so that its world has engine/save")
     case: return r,true
@@ -200,10 +197,11 @@ api_save_done :: proc(s:^Session,call:^api.Call,name:string) {
 @(private)
 api_save_ask :: proc(s:^Session,call:^api.Call,r:^Run,op:save.Op,slot:string,kind:=save.Slot_Kind.Manual,label:="") -> (result:save.Result,ok:bool) {
     owner:=r.owner
-    if error:=save.request(core.world_storage_of(run_ref(s,r),save.Save_Requests),op,slot,kind,label);error!=.None {
+    if error:=save.request_error(op,slot,kind,label);error!=.None {
         api_save_fail(call,slot,error)
         return
     }
+    save.request(core.world_storage_of(run_ref(s,r),save.Save_Requests),op,slot,kind,label)
     run:=r
     goes_on:=run_goes_on(s,run)
     for _ in 0..<(goes_on?API_SAVE_FRAMES:1) {

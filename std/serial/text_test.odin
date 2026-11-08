@@ -348,6 +348,21 @@ text_reader_walks_any_json :: proc(t:^testing.T) {
     testing.expect(t,!text_skip(&deep))
     testing.expect_value(t,deep.error.code,Text_Error_Code.Too_Deep)
 
+    // A reader with assets takes a name where an id goes, and says why not.
+    Holder :: struct {mesh:base.Asset_Id `mirai:"kind=.mesh"`}
+    schema:Schema;schema_init(&schema);defer schema_destroy(&schema)
+    holder_type,_:=schema_add_type_info(&schema,type_info_of(Holder))
+    resolve :: proc(user:rawptr,name,kinds:string) -> (id:base.Asset_Id,problem:string) {
+        if name=="cube" && kinds==".mesh" {return {1,2},""}
+        return {},"no such mesh"
+    }
+    found:Holder
+    named:Text_Reader;text_reader_init(&named,`{"mesh": "cube"}`,context.temp_allocator);named.assets={nil,resolve}
+    testing.expect(t,text_read(&named,&schema,holder_type,mem.ptr_to_bytes(&found)) && found.mesh==base.Asset_Id{1,2})
+    missing:Text_Reader;text_reader_init(&missing,`{"mesh": "sphere"}`,context.temp_allocator);missing.assets={nil,resolve}
+    testing.expect(t,!text_read(&missing,&schema,holder_type,mem.ptr_to_bytes(&found)) && missing.error.code==.Unknown_Asset)
+    testing.expect_value(t,text_error_message(&missing,allocator=context.temp_allocator),"mesh: no such mesh")
+
     id,id_ok:=text_parse_asset_id("000000000000000a000000000000000b")
     testing.expect(t,id_ok && id==base.Asset_Id{0xa,0xb})
     _,short:=text_parse_asset_id("abc")

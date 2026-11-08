@@ -52,38 +52,38 @@ write_horde_records :: proc(o:^Out) {
 
 write_ai_scene :: proc(o:^Out) {
     write_horde_records(o)
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","ai"))
-    defer asset.scene_destroy(&s.scene)
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","ai"))
+    defer asset.builder_destroy(&s)
     environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.6,0.8,0}),render.SUN_DIRECTION),LAMPLIT,1.6)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.6),disc=disc}
-    sun_entity:=entity(&s,"Sun",{0,20,0})
+    sun_entity:=asset.builder_entity(&s,"Sun",{position={0,20,0}})
     pose:=sun_pose(to_sun,{0,20,0})
-    put(&s,sun_entity,"Transform",&pose)
-    put(&s,sun_entity,"Sun",&sun)
+    asset.builder_set(&s,sun_entity,pose)
+    asset.builder_set(&s,sun_entity,sun)
     // Below the floors of the arenas, which stand 5 cm higher.
     gallery_cube(&s,"Ground",{-15,-0.55,-7.5},{210,1,200},{0.28,0.3,0.27,1},true)
     label:=physics_gallery_label(o)
-    sign :: proc(s:^Scene_Out,label:base.Asset_Id,name:string,position:mm.Vec3,title,detail:string) {
-        e:=entity(s,name,position)
+    sign :: proc(s:^asset.Scene_Builder,label:base.Asset_Id,name:string,position:mm.Vec3,title,detail:string) {
+        e:=asset.builder_entity(s,name,{position=position})
         text:=game.Gallery_Label{}
         base.text_set(text.title[:],title)
         base.text_set(text.detail[:],detail)
-        put(s,e,"Gallery_Label",&text)
+        asset.builder_set(s,e,text)
         widget:=gui.WORLD_WIDGET_DEFAULT
         widget.asset,widget.size,widget.scale,widget.passive=label,{380,88},0.012,true
-        put(s,e,"World_Widget",&widget)
+        asset.builder_set(s,e,widget)
     }
     sign(&s,label,"Sign: AI level",{0,3,-6},"AI level","Navigation, decisions and senses. Editor: view mode Navigation shows tiles, links and paths.")
     for arena in AI_ARENAS {
-        root:=entity(&s,fmt.tprintf("Arena: %s",arena.title),arena.origin)
+        root:=asset.builder_entity(&s,fmt.tprintf("Arena: %s",arena.title),{position=arena.origin})
         a:=game.AI_ARENA_DEFAULT
         a.kind,a.agents,a.place=arena.kind,arena.agents,false
-        put(&s,root,"AI_Arena",&a)
+        asset.builder_set(&s,root,a)
         if arena.kind==.Horde {
             waves:=game.Horde_Waves{first=record_ref(game.Horde_Wave,WAVES_FILE,"first"),seed=11}
-            put(&s,root,"Horde_Waves",&waves)
+            asset.builder_set(&s,root,waves)
         }
         pieces:=make([dynamic]game.Arena_Piece,context.temp_allocator)
         game.arena_place(arena.kind,arena.origin,&pieces)
@@ -93,45 +93,40 @@ write_ai_scene :: proc(o:^Out) {
         sign(&s,label,fmt.tprintf("Sign: %s",arena.title),arena.origin+toward*20+{0,3,0},arena.title,arena.detail)
     }
     spawn_point(&s,{0,0,4})
-    if s.failed {
-        fmt.eprintln("demo_content: the AI scene could not be built")
-        o.failed=true
-        return
-    }
-    check(o,"assets/scenes/ai.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/ai.scene")))
+    asset.builder_save(&s,path(o,"assets/scenes/ai.scene"))
 }
 
 // A piece of an arena in the scene, as arena_piece_add puts it in a running world.
 @(private)
-ai_piece :: proc(s:^Scene_Out,piece:game.Arena_Piece) {
+ai_piece :: proc(s:^asset.Scene_Builder,piece:game.Arena_Piece) {
     switch piece.kind {
     case .Solid,.Cart:
-        e:=entity(s,piece.name,piece.position,piece.half*2)
-        put(s,e,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
-        put(s,e,"Tint",&render.Tint{color=piece.color})
+        e:=asset.builder_entity(s,piece.name,{position=piece.position,scale=piece.half*2})
+        asset.builder_set(s,e,render.Mesh_Renderer{shape=.Cube})
+        asset.builder_set(s,e,render.Tint{color=piece.color})
         collider:=phys.collider_box({0.5,0.5,0.5})
-        put(s,e,"Collider",&collider)
+        asset.builder_set(s,e,collider)
         if piece.kind==.Cart {
             rigid:=phys.RIGID_BODY_KINEMATIC
-            put(s,e,"Rigid_Body",&rigid)
-            put(s,e,"Nav_Obstacle",&nav.Nav_Obstacle{half={0.5,0.5,0.5},settle=1})
-            put(s,e,"Arena_Cart",&game.Arena_Cart{from=piece.position,to=piece.to})
+            asset.builder_set(s,e,rigid)
+            asset.builder_set(s,e,nav.Nav_Obstacle{half={0.5,0.5,0.5},settle=1})
+            asset.builder_set(s,e,game.Arena_Cart{from=piece.position,to=piece.to})
         }
     case .Area:
-        e:=entity(s,piece.name,piece.position)
-        put(s,e,"Nav_Area",&nav.Nav_Area{half=piece.half+{0,1,0},area=piece.area})
-        slab:=entity(s,"Slab",{0,0.01,0},piece.half*2,parent=e)
-        put(s,slab,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
-        put(s,slab,"Tint",&render.Tint{color=piece.color})
+        e:=asset.builder_entity(s,piece.name,{position=piece.position})
+        asset.builder_set(s,e,nav.Nav_Area{half=piece.half+{0,1,0},area=piece.area})
+        slab:=asset.builder_entity(s,"Slab",{position={0,0.01,0},scale=piece.half*2},e)
+        asset.builder_set(s,slab,render.Mesh_Renderer{shape=.Cube})
+        asset.builder_set(s,slab,render.Tint{color=piece.color})
     case .Link:
-        e:=entity(s,piece.name,piece.position)
-        put(s,e,"Nav_Link",&nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=game.arena_link_abilities(piece.link)})
-        if piece.offers[0].use!=behavior.USE_NONE {put(s,e,"Smart_Object",&behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})}
+        e:=asset.builder_entity(s,piece.name,{position=piece.position})
+        asset.builder_set(s,e,nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=game.arena_link_abilities(piece.link)})
+        if piece.offers[0].use!=behavior.USE_NONE {asset.builder_set(s,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})}
     case .Offer:
-        e:=entity(s,piece.name,piece.position)
-        put(s,e,"Smart_Object",&behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})
+        e:=asset.builder_entity(s,piece.name,{position=piece.position})
+        asset.builder_set(s,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})
     case .Air:
-        e:=entity(s,piece.name,piece.position)
-        put(s,e,"Nav_Bounds",&nav.Nav_Bounds{half=piece.half,air=true})
+        e:=asset.builder_entity(s,piece.name,{position=piece.position})
+        asset.builder_set(s,e,nav.Nav_Bounds{half=piece.half,air=true})
     }
 }

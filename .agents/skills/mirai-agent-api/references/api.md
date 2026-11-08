@@ -103,13 +103,14 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
 
 ## `mirai capture`
 
-`mirai capture [project] --out x.png` (options in `CAPTURE_USAGE`) uses the project's session or
+`mirai capture [project] [--out x.png]` (options in `CAPTURE_USAGE`; without `--out`, under
+`.mirai/captures` of the project, and the JSON says where) uses the project's session or
 opens one and closes it: it loads the scene, places the camera (`camera.set`), captures the world
-without UI (`editor.capture` with `ui:false`), reads `engine.diagnostics` and measures the image.
+without UI (`capture` with `of:"Scene"`), reads `engine.diagnostics` and measures the image.
 It prints a JSON with the validation, the console, `stats` and, with `--reference`, `diff`
 ([`mirai image`](image.md)). It exits with 1 if there are validation errors or if the SSIM against
 `--reference` is below `--threshold`. Each capture starts the window clock at zero (`seconds` of
-`editor.capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads
+`capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads
 the scene again (that of `--scene` or the document's file, if it has no unsaved changes), returns
 to the same camera, captures and gives its SSIM; what remains is what two renderers do not share
 and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--view` shows a mode of
@@ -150,11 +151,12 @@ mirai rpc --batch <calls.jsonl> [the same options]
 ```
 
 - `json` is the params object (`{}` if missing; `-` from stdin). `--project P` takes the port from
-  its `api.json`; without `--project` or `--port`, that of `MIRAI_API_PORT`, of the project of the
-  current folder or the default one.
+  its `api.json`; without `--project` or `--port`, that of `MIRAI_API_PORT` or the editor of the
+  project at or above the current folder, failing when it has none; the default port only outside
+  any project.
 - `--wait S` retries while nobody is listening. `--timeout S` is the wait for the response or,
-  with `--wait-until`, that of the whole wait: a method that advances many frames or a Build asks
-  for it longer. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK` ([context](#ai-turn-context)).
+  with `--wait-until`, that of the whole wait; a method that answers when a job ends
+  (`build.start`, `play.start`, `asset.import`...) needs none: it waits as long as the job takes. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK` ([context](#ai-turn-context)).
   `--batch` reads one `{"method","params"}` call per line and stops at the first error.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
@@ -163,6 +165,14 @@ mirai rpc --batch <calls.jsonl> [the same options]
   similar ones.
 
 ### Fields and waits
+
+Every method takes two reserved params the server handles: `_select` (`"a.b,c[0].d"`) answers
+only those fields, as an object by their paths, and `_wait_until` (`"phase=Built"`) calls the
+method again until the condition holds, the editor going on meanwhile, for at most
+`api.WAIT_UNTIL_SECONDS`. Over MCP the text of the answer is the selection and
+`structuredContent` stays the whole result, which clients check against the tool's schema.
+`--select` and `--wait-until` of `mirai rpc` do the same from the client, and `--wait-until` also
+waits for an editor that restarts.
 
 A field is a path in the result: names separated by dots and `[i]` for element `i` of an array,
 from the end if `i` is negative (`entities[0].id`, `entities[-1]`).
@@ -179,7 +189,7 @@ from the end if `i` is negative (`entities[0].id`, `entities[-1]`).
   Build restarts it; another error, a
   field that is not there or a value that cannot be ordered end immediately. After `--timeout` it
   exits with `-32097`, the last value in the message and `data:{field,value}`. Example:
-  `mirai rpc build.status --wait-until 'building=false' --timeout 600 --select phase,message`.
+  `mirai rpc play.network.status --wait-until 'connected=true' --select connected`.
 
 ### `mirai rpc describe`
 
@@ -220,8 +230,10 @@ methods). Which plugins exist is told by `engine.describe`.
 the revisions of `MCP_VERSIONS` (the first if another is requested): one `POST` per message or
 batch, without sessions or server events.
 
-- `tools/list`: one tool per editor core method (flag `Core`, which `engine.describe` gives as
-  `core`) and per method of the plugins named by the `X-Mirai-Plugins` header (comma-separated;
+- `tools/list`: `docs` (the game documentation of `docs/game`, as `mirai docs` reads it, and the
+  same in `mirai mcp` without an editor; its index goes in the instructions), one tool per editor
+  core method (flag `Core`, which `engine.describe` gives as `core`: what agents use most, since
+  each one listed costs its schema every turn) and per method of the plugins named by the `X-Mirai-Plugins` header (comma-separated;
   `*`, all methods), with dots turned into underscores (the `tool` of `engine.describe`), its
   summary, `inputSchema` and annotations from its flags, and at the end `call` (`method` and
   `params`), which runs any method by its name. `tools/call` is not filtered: it also takes the
@@ -234,7 +246,7 @@ batch, without sessions or server events.
 - `tools/call`: the result as JSON text in `content` and, if it is an object, also in
   `structuredContent`; a method error is `isError:true` with `{"error":{...}}` in the text. With
   `mcp_content:true` it is an MCP content envelope (`view.viewport`). A handler
-  with a typed result attaches a PNG with `api.call_image` (`editor.capture`): MCP gives it as an
+  with a typed result attaches a PNG with `api.call_image` (`capture`): MCP gives it as an
   image after the text and JSON-RPC returns only the result; if it does not fit in the response or
   cannot be read, a text with its path goes instead. A malformed JSON, or a non-object despite
   announcing an object, is `-32603`; an envelope that does not fit, `-32000`.
@@ -245,6 +257,13 @@ Plugins add methods with
 [API providers](../../mirai-editor/references/extensions.md#api-methods). They are registered
 when the server opens; code reload rebuilds methods and schemas without closing connections.
 
+- **An entity is named once, as `entity`.** Everywhere a method takes one (`entity`, `parent`,
+  `entities`, `follow`, `target`) the text is its name, a path of names `Parent/Child`, its id or
+  its handle. A name several entities have is an error that lists them and how to tell them apart;
+  a text of 16 hexadecimal digits or starting with `0x` is tried as an id and a handle first.
+- **An asset field takes a path or an id.** Asset_Id params and component fields also take the path
+  under the assets folder, with or without its extension, checked against the field's `kind`;
+  results keep ids. A miss lists the nearest paths of that kind.
 - **Params and result are flat structs.** A field is required unless its tag carries `optional`;
   when absent, it takes the value from the method's `defaults`, or zero.
   - Text: `[N]u8` with tag `text`, up to N bytes.

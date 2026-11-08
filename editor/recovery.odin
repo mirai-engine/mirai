@@ -474,7 +474,7 @@ api_recover :: proc(s:^Session,call:^api.Call) {
     discard:=api.call_params(call,Api_Recovery_Params).discard
     if discard && api_turn_refused(s,call,"discard the recovery copy of unsaved changes") {return}
     if !recovery_resolve(s,discard) {
-        api.call_fail(call,api.SERVER_ERROR,"The pending recovery could not be resolved")
+        api.call_failf(call,api.SERVER_ERROR,"The pending recovery could not be resolved: %s",string(s.toast[:s.toast_length]))
         return
     }
     api_file_result(s,call)

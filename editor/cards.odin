@@ -1,5 +1,7 @@
 package editor
 
+import "core:reflect"
+import "core:strings"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:ui"
@@ -83,6 +85,15 @@ card_of_table :: proc(s:^Session,t:^core.Table_Info) -> (card:^Card,found:bool) 
         if candidate.component==t.type {return &candidate,true}
     }
     return
+}
+
+// The names card_named takes, for what an error says it takes: the presets,
+// then the cards of plugins, in the temporary allocator.
+cards_named_text :: proc(s:^Session) -> string {
+    names:=make([dynamic]string,context.temp_allocator)
+    for name in reflect.enum_field_names(Preset) {append(&names,strings.to_lower(name,context.temp_allocator))}
+    for card in cards(s)[len(Preset):] {append(&names,card.label)}
+    return strings.join(names[:],", ",context.temp_allocator)
 }
 
 // The card a name of the API means: a preset of the editor by its name in

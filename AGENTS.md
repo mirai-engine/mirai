@@ -151,7 +151,7 @@ Verify in steps and stop at the first one that is enough for what changed:
    real call per touched method or flow, in a session.
 4. If the change is visible: a capture without validation errors compared with its reference. For
    rendering or importing, `mirai capture` from the reference camera with `--reference` and an SSIM
-   threshold; for editor UI, `editor.capture` with the UI. At most two capture iterations of your
+   threshold; for editor UI, `capture` with `ui`. At most two capture iterations of your
    own before showing the user the image and the doubt; in a visual review with the user, each
    round is shown to them. Crops, zoom and pixels with `mirai image`, not with scripts. Looking at
    how something looks does not require removing the frame limit or VSync.
@@ -200,7 +200,7 @@ load.
   `material.program.edit`, another shader of the project or of a plugin with
   `mirai shaders --project P`, which asks the open editor for it; both publish first what the
   viewport draws. An engine shader (`shaders/`) needs `mirai build editor` and restarting the
-  session. Then `editor.capture` or `mirai capture` and `mirai image`. No `render check` or
+  session. Then `capture` or `mirai capture` and `mirai image`. No `render check` or
   `--release` builds per round: the check runs once at the end and only if the change is global; a
   quality one does not measure cost.
 - **New tests.** Before adding one, look for the one that already covers that behavior and extend

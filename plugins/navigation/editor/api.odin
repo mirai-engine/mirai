@@ -23,8 +23,8 @@ Build_Params :: struct {
 
 Inspect_Params :: struct {
     class:[32]u8 `mirai:"text,optional,label=The class; empty is the first"`,
-    min:[3]f32,
-    max:[3]f32,
+    min:[3]f32 `mirai:"optional,label=Corner of the box to look in; without min and max: everything"`,
+    max:[3]f32 `mirai:"optional"`,
     limit:u32 `mirai:"optional,min=1,max=2048,label=Polygons and links listed at most"`,
 }
 
@@ -46,8 +46,8 @@ Path_Params :: struct {
     up:f32 `mirai:"optional,unit=m,label=How high the agent jumps; omitted or below 0: as its class"`,
     across:f32 `mirai:"optional,unit=m,label=How far it jumps; omitted or below 0: as its class"`,
     down:f32 `mirai:"optional,unit=m,label=How far it drops; omitted or below 0: as its class"`,
-    abilities:[8]u8 `mirai:"optional,label=Bits of its abilities (Nav_Ability), as a little-endian mask"`,
-    excluded:u64 `mirai:"optional,label=Areas it never walks, bit per Nav_Area_Kind"`,
+    abilities:nav.Nav_Abilities `mirai:"optional,label=What it can do besides walking by name; omitted: every ability"`,
+    excluded:nav.Nav_Areas `mirai:"optional,label=The areas it never walks by name"`,
 }
 
 @(private)
@@ -56,8 +56,8 @@ register :: proc(s:^editor.Session) {
     path_defaults:=Path_Params{up=-1,across=-1,down=-1}
     editor.api_method_register(s,{name="nav.status",summary="The navigation meshes of the shown world: for each class of Navigation_Settings its size and what it can jump or drop, its tiles, polygons and links, the tiles that wait for a build, are building, or wait for their collision to load (unloaded: they keep what they have), the sections and portals of its coarse graph, and what the builds did (dropped: tiles that went with their sections or, in a run, with the terrain not loaded; regions: sections of the coarse graph made). Read it after editing collision to know when the meshes caught up.",flags={.Read_Only},result_schema=STATUS_SCHEMA,run=status})
     editor.api_method_register(s,{name="nav.build",summary="Builds again the tiles of every class inside a box (min and max), or all of them, even where nothing changed. The meshes build by themselves when collision, a Nav_Area or a Nav_Bounds changes: this is for what they cannot see.",params=Build_Params,params_info=type_info_of(Build_Params),result_schema=`{"type":"object","properties":{"queued":{"type":"boolean"}},"required":["queued"]}`,run=build})
-    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it writes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step; from then on the editor keeps it as the meshes, in memory until the scene is saved. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result_schema=BAKE_SCHEMA,run=bake_call})
-    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result_schema=INSPECT_SCHEMA,run=inspect})
+    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it makes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step. Neither reaches the disk before the scene is saved; until then the editor keeps the .navmesh as the meshes, in memory. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result_schema=BAKE_SCHEMA,run=bake_call})
+    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result_schema=INSPECT_SCHEMA,run=inspect})
     editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result_schema=AGENT_SCHEMA,run=agent})
     editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result_schema=`{"type":"object","properties":{"queued":{"type":"boolean"}},"required":["queued"]}`,run=move})
     walk_defaults:=Walk_Params{ticks=600,slot=-1}
@@ -65,7 +65,7 @@ register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result_schema=PATH_SCHEMA,run=path})
 }
 
-@(private) STATUS_SCHEMA :: `{"type":"object","properties":{"ready":{"type":"boolean"},"revision":{"type":"integer"},"classes":{"type":"array"},"builds":{"type":"object"}},"required":["ready","revision","classes"]}`
+@(private) STATUS_SCHEMA :: `{"type":"object","properties":{"ready":{"type":"boolean"},"classes":{"type":"array"},"builds":{"type":"object"}},"required":["ready","classes"]}`
 @(private) INSPECT_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"tiles":{"type":"array"},"polygons":{"type":"array"},"links":{"type":"array"},"zones":{"type":"array"},"cells":{"type":"array"},"more":{"type":"boolean"}},"required":["class","tiles","polygons","links","more"]}`
 @(private) AGENT_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"state":{"type":"string"},"goal":{"type":"array"},"corners":{"type":"array"},"partial":{"type":"boolean"},"replans":{"type":"integer"},"far":{"type":"boolean"}},"required":["state","corners","far"]}`
 @(private) PATH_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"status":{"type":"string"},"partial":{"type":"boolean"},"cost":{"type":"number"},"corners":{"type":"array"},"polygons":{"type":"integer"},"cells":{"type":"integer"}},"required":["class","status","partial","corners"]}`
@@ -95,7 +95,6 @@ status :: proc(s:^editor.Session,call:^api.Call) {
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_bool(w,"ready",n.ready,true)
-    api.write_uint(w,"revision",n.revision)
     api.write_key(w,"classes")
     serial.text_write_raw(w,"[")
     for i in 0..<n.count {
@@ -184,8 +183,10 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     class,found:=class_of(call,n,p.class[:])
     if !found {return}
-    box:=mm.Aabb{mm.vec3_min(p.min,p.max),mm.vec3_max(p.min,p.max)}
+    whole:=p.min=={} && p.max=={}
+    box:=WHOLE_WORLD if whole else mm.Aabb{mm.vec3_min(p.min,p.max),mm.vec3_max(p.min,p.max)}
     if nav.class_in_volume(n,class) {
+        if whole {box=volume_bounds(&n.classes[class].volume)}
         inspect_volume(call,n,class,box,int(p.limit))
         return
     }
@@ -217,7 +218,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     first=true
     tiles: for &tile in mesh.tiles {
         if !tile.used || !overlaps(tile.data.bounds,box) {continue}
-        for &poly,i in tile.data.polys {
+        for &poly in tile.data.polys {
             corners:[ai.NAV_VERTS_PER_POLY]mm.Vec3
             count:=ai.nav_poly_vertices(&tile,&poly,&corners)
             if !overlaps(mm.aabb_from_points(corners[:count]),box) {continue}
@@ -226,8 +227,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
             if !first {serial.text_write_raw(w,",")}
             first=false
             serial.text_write_raw(w,"{")
-            api.write_text(w,"ref",fmt.tprintf("%x",u64(ai.nav_tile_ref(mesh,&tile,i))),true)
-            api.write_text(w,"area",area_name(world,poly.area))
+            api.write_text(w,"area",area_name(world,poly.area),true)
             api.write_key(w,"vertices")
             serial.text_write_raw(w,"[")
             for k in 0..<count {
@@ -249,7 +249,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     api.write_key(w,"links")
     serial.text_write_raw(w,"[")
     first=true
-    for &link,i in mesh.links {
+    for &link in mesh.links {
         if !link.used {continue}
         if !overlaps({mm.vec3_min(link.desc.start,link.desc.end),mm.vec3_max(link.desc.start,link.desc.end)},box) {continue}
         if written>=limit {more=true;break}
@@ -257,8 +257,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         if !first {serial.text_write_raw(w,",")}
         first=false
         serial.text_write_raw(w,"{")
-        api.write_text(w,"ref",fmt.tprintf("%x",u64(ai.nav_ref_link(link.salt,u32(i),false))),true)
-        api.write_text(w,"kind",link_kind_name(world,link.desc.kind))
+        api.write_text(w,"kind",link_kind_name(world,link.desc.kind),true)
         api.write_numbers(w,"start",link.start_point if link.start_poly!=0 else link.desc.start)
         api.write_numbers(w,"end",link.end_point if link.end_poly!=0 else link.desc.end)
         api.write_bool(w,"two_way",link.desc.two_way)
@@ -266,7 +265,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         api.write_key(w,"up");api.write_number(w,link.desc.need.up)
         api.write_key(w,"across");api.write_number(w,link.desc.need.across)
         api.write_key(w,"down");api.write_number(w,link.desc.need.down)
-        api.write_uint(w,"abilities",u64(link.desc.need.abilities))
+        abilities_write(w,world,link.desc.need.abilities)
         api.write_key(w,"cost");api.write_number(w,link.desc.cost)
         if link.desc.owner&nav.LINK_OWNER_GENERATED!=0 {
             api.write_text(w,"made_by","generated")
@@ -279,6 +278,20 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(w,"]")
     api.write_bool(w,"more",more)
     serial.text_write_raw(w,"}")
+}
+
+@(private) WHOLE_WORLD :: mm.Aabb{{-max(f32),-max(f32),-max(f32)},{max(f32),max(f32),max(f32)}}
+
+// The box of the zones of a volume; the free cells are sampled inside it.
+@(private)
+volume_bounds :: proc(volume:^ai.Nav_Volume) -> mm.Aabb {
+    bounds:=mm.AABB_EMPTY
+    for &zone in volume.zones {
+        if !zone.used {continue}
+        box:=ai.nav_volume_zone_box(volume,zone.data.coord)
+        bounds.min,bounds.max=mm.vec3_min(bounds.min,box.min),mm.vec3_max(bounds.max,box.max)
+    }
+    return bounds
 }
 
 // The zones of a volume inside a box and their free cells: nodes and voxels.
@@ -326,9 +339,8 @@ inspect_volume :: proc(call:^api.Call,n:^nav.Navigation,class:int,box:mm.Aabb,li
                 if written>0 {serial.text_write_raw(w,",")}
                 written+=1
                 serial.text_write_raw(w,"{")
-                api.write_text(w,"ref",fmt.tprintf("%x",u64(ref)),true)
                 layer:=ai.nav_volume_ref_layer(ref)
-                api.write_text(w,"kind","voxel" if layer<0 else "node")
+                api.write_text(w,"kind","voxel" if layer<0 else "node",true)
                 api.write_numbers(w,"min",cell_box.min)
                 api.write_numbers(w,"max",cell_box.max)
                 serial.text_write_raw(w,"}")
@@ -395,9 +407,8 @@ path :: proc(s:^editor.Session,call:^api.Call) {
     settings:=n.classes[class].class
     mesh:=&n.classes[class].mesh
     can:=ai.Nav_Need{up=p.up if p.up>=0 else settings.jump_up,across=p.across if p.across>=0 else settings.jump_across,down=p.down if p.down>=0 else settings.drop}
-    can.abilities=transmute(u32)[4]u8{p.abilities[0],p.abilities[1],p.abilities[2],p.abilities[3]}
-    if p.abilities=={} {can.abilities=max(u32)}
-    filter:=nav.filter_make(&n.settings,nav.Nav_Areas(p.excluded),can)
+    can.abilities=u32(p.abilities) if editor.tool_call_given(call,"abilities") else max(u32)
+    filter:=nav.filter_make(&n.settings,p.excluded,can)
     extents:=mm.Vec3{1,2,1}*max(settings.radius*4,0.5)
     from,start,found_from:=ai.nav_find_nearest(mesh,p.from,extents,&filter)
     to,end,found_to:=ai.nav_find_nearest(mesh,p.to,extents,&filter)
@@ -442,6 +453,20 @@ path :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 overlaps :: proc "contextless" (a,b:mm.Aabb) -> bool {
     return a.min.x<=b.max.x && a.max.x>=b.min.x && a.min.y<=b.max.y && a.max.y>=b.min.y && a.min.z<=b.max.z && a.max.z>=b.min.z
+}
+
+// The abilities of a mask by name.
+@(private)
+abilities_write :: proc(w:^serial.Writer,world:core.World_Ref,abilities:u32) {
+    api.write_key(w,"abilities");serial.text_write_raw(w,"[")
+    first:=true
+    for entry in core.names_of(world.info,nav.Nav_Ability) {
+        if entry.value<0 || entry.value>=32 || abilities&(1<<uint(entry.value))==0 {continue}
+        if !first {serial.text_write_raw(w,",")}
+        first=false
+        serial.text_write_string(w,entry.name)
+    }
+    serial.text_write_raw(w,"]")
 }
 
 @(private)

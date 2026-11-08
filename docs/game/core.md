@@ -24,7 +24,7 @@ reads `game/` and the active plugins; `mirai generate` lists its errors. Fields:
 ```text
 project.mirai   manifest: name, start_scene, plugins, window, build
 settings.mirai  project settings, only what differs; input.mirai: rebinds, never by hand
-cook.mirai      roots only code names: {"roots":["prefabs/Enemy.prefab","sounds/"]}
+cook.mirai      roots only code names: {"roots":["materials/Chrome.mat","sounds/"]}
 assets/ source/ binary assets; art sources, never shipped    game/  the game package
 plugins/<n>/    your plugins (plugins)   tools/content/  writes assets (assets)
 tests/scenarios/  mirai play test .           .mirai/  generated, never edited (.mirai/gen)
@@ -59,7 +59,7 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
   storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`, `^core.Entities`,
   `^host.App`, `core.Placer`. No result, no default values. Names are unique in the whole world.
 - `core.Read` hands out copies; a write needs `^core.Table`, whose `core.writable`, `core.at` and
-  `core.get` mark rows changed (read with `core.read(table)`). `core.add` waits for the end.
+  `core.get` mark rows changed (`core.read(table)` reads). `core.add` waits (`core.staged_has`).
 - One function writes each table; the others push a request ([wiring.md](core/wiring.md)).
   `core.free(table, e)` is the row, or `nil` when a library owns it (`Transform` of a body).
 
@@ -69,12 +69,12 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
   movement, spawning, saves. Read actions with `inp.Input_Of(Action)`; no window or mouse calls.
 - `frame`: once per drawn frame (`core.Frame_Time`: `dt`, `alpha`), for presentation that is not
   a rule. `late`: after movement (cameras). `ui`: interfaces. `input`: devices and the window.
-- **Edges.** In `frame`, `late` and `ui` this frame's presses are in `core.Frame_Input` or
-  `inp.Frame_Input_Of(Action)`; `core.Input` holds the last tick's values (its edges last a tick).
+- **Edges.** Outside `fixed` use `core.Frame_Input` or `inp.Frame_Input_Of(Action)`; the generator
+  refuses `core.Input` and `inp.Input_Of` there, which hold the last tick's values.
 
 ## Pitfalls that fail silently
 
-- A literal `Health{}` or `Walk{}` drops the defaults: copy `HEALTH_DEFAULT`, change fields.
+- A literal `Health{}` or `Walk{}` drops the defaults: `core.default(healths)`, `core.add_default`.
 - Writing the `Transform` of a body is refused: `core.place` or a request. A request pushed
   after its owner ran waits for the next tick; events live one tick.
 - A `fixed` function that reads `core.Frame_Input` differs when a tick is replayed: use actions.

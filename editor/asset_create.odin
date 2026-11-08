@@ -235,9 +235,13 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     for candidate in kinds {
         if strings.equal_fold(asset_create_kind_name(s,candidate),named) || strings.equal_fold(asset_create_label(s,candidate),named) {kind,known=candidate,true;break}
     }
+    if kind==asset.KIND_RECORDS {
+        api.call_fail(call,api.INVALID_PARAMS,"A table of game data has a type: records.create {path,type} makes it")
+        return
+    }
     if !known {
         names:=make([dynamic]string,context.temp_allocator)
-        for candidate in kinds {append(&names,asset_create_kind_name(s,candidate))}
+        for candidate in kinds {if candidate!=asset.KIND_RECORDS {append(&names,asset_create_kind_name(s,candidate))}}
         api.call_failf(call,api.INVALID_PARAMS,"kind %q is not one asset.create makes: give %s",named,strings.join(names[:],", ",context.temp_allocator))
         return
     }

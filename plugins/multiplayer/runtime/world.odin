@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "mirai:core"
-import "mirai:engine/save"
 import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
@@ -295,10 +294,7 @@ player_secret :: proc(s:^Net_Session,w:core.World_Ref) -> [2]u64 {
         if s.secret=={} {s.secret=secret_new()}
         return s.secret
     }
-    if identity.secret=={} {
-        identity.secret=secret_new()
-        if requests:=core.world_storage_of(w,save.Save_Requests);requests!=nil {save.request_profile_save(requests)}
-    }
+    if identity.secret=={} {identity.secret=secret_new()}
     return identity.secret
 }
 

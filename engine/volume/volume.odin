@@ -49,6 +49,30 @@ Volume :: struct {
 
 VOLUME_DEFAULT :: Volume{shape=.Box,extents={5,5,5},blend=1}
 
+// A box of half that size along each axis, scaled by the entity.
+box :: proc "contextless" (half:[3]f32,blend:f32=0) -> Volume {return {shape=.Box,extents=half,blend=blend}}
+// A sphere of that radius, scaled by the entity.
+sphere :: proc "contextless" (radius:f32,blend:f32=0) -> Volume {return {shape=.Sphere,extents={radius,0,0},blend=blend}}
+// The whole world; in a section, the box of its section.
+world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
+
+// When a table of volumes changes: an unbounded volume with extents was meant
+// to be a box, and without its shape it rules everywhere.
+@(storage)
+Volume_Check :: struct {seen:u64 `mirai:"transient,hidden"`}
+
+@(step="frame")
+volumes_check :: proc(volumes:core.Read(Volume),check:^Volume_Check,problems:^core.Problems) {
+    seen:=core.version(volumes)+core.layout(volumes)
+    if seen==check.seen {return}
+    check.seen=seen
+    for row in 0..<core.count(volumes) {
+        if v:=core.at(volumes,row);v.shape==.Unbounded && v.extents!={} {
+            core.report(problems,core.entity_at(volumes,row),"volume.unbounded_extents","this Volume has extents but its shape is Unbounded, so it rules the whole world: use volume.box or volume.sphere, or leave the extents at zero")
+        }
+    }
+}
+
 // The volumes of one value that hold a point, the most that are applied at
 // once: past it the lowest priorities are left out.
 HITS_CAPACITY :: 16

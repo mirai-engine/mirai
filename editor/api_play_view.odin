@@ -22,9 +22,7 @@ import "mirai:std/serial"
 API_VIEW_POINTS :: 8
 
 Api_Play_View_Point :: struct {
-    entity:[16]u8 `mirai:"optional,text,label=An entity by its handle"`,
-    id:base.Entity_Id `mirai:"optional,label=An entity by its id in the scene"`,
-    name:[128]u8 `mirai:"optional,text,label=The first entity with this name in the order of play.inspect"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=An entity by its name or a path Parent/Child or its id or its handle"`,
     point:[3]f32 `mirai:"optional,label=A world point in place of an entity"`,
 }
 
@@ -198,23 +196,17 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
         p:=&points[i]
         values:[1]string
         api.object_values(allocator,items[i],{"point"},values[:])
-        handle,name:=base.text_get(p.entity[:]),base.text_get(p.name[:])
-        named:=int(handle!="")+int(p.id!=0)+int(name!="")
+        entity:=base.text_get(p.entity[:])
         switch {
-        case named+int(values[0]!="")!=1:
-            return nil,fmt.tprintf("points[%d]: name one entity (by entity, id or name) or give a world point",i)
+        case int(entity!="")+int(values[0]!="")!=1:
+            return nil,fmt.tprintf("points[%d]: give entity or a world point",i)
         case values[0]!="":
             if !rpc_finite(p.point.x) || !rpc_finite(p.point.y) || !rpc_finite(p.point.z) {return nil,fmt.tprintf("points[%d].point takes three finite numbers",i)}
             target.point=p.point
-        case name!="":
-            target.named=true
-            target.entity=api_entity_named(w,name,allocator)
-            if target.entity==core.NONE {return nil,fmt.tprintf("points[%d]: %q names no entity of the game; play.inspect lists them",i,name)}
         case:
             target.named=true
-            e,wrong:=api_play_entity(w,handle,p.id)
-            if wrong!="" {return nil,fmt.tprintf("points[%d]: %s",i,wrong)}
-            target.entity=e
+            wrong:string
+            if target.entity,wrong=api_entity_select(w,entity,fmt.tprintf("points[%d]",i),true,allocator);wrong!="" {return nil,wrong}
         }
     }
     return targets,""

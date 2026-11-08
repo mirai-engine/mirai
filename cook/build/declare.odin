@@ -310,7 +310,7 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
             }
         }
     }
-    signature:=fmt.tprintf("%s%s%s%s",before,params,after,tags)
+    signature:=fmt.tprintf("%s%s%s%s",before,inner_procs_odin(params),inner_procs_odin(after),tags)
     // Its parameters renamed: one could have the name of the procedure it calls.
     wrapper:=fmt.tprintf("%s%s%s%s",before,renamed,after,tags)
     fmt.sbprintfln(&out.decl,"%s@(default_calling_convention=\"odin\")",indent)
@@ -320,6 +320,24 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
     if type.results!=nil && !type.diverging {call=fmt.tprintf("return %s",call)}
     fmt.sbprintfln(&out.exports,"%s@(export,link_name=%q%s) __mirai_export_%s :: %s {{%s}}",indent,link,private_file?",private=\"file\"":"",name,wrapper,call)
     out.export_count+=1
+}
+
+// A procedure type among what a foreign block declares takes "cdecl" and not
+// the default_calling_convention of the block (see Odin workarounds): the
+// conventionless ones are the Odin ones the engine and a plugin pass each other.
+@(private="file")
+inner_procs_odin :: proc(text:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    rest:=text
+    for {
+        at:=strings.index(rest,"proc(")
+        if at<0 {strings.write_string(&b,rest);return strings.to_string(b)}
+        strings.write_string(&b,rest[:at])
+        before:=u8(0) if at==0 else rest[at-1]
+        word:=!(before=='_' || before>='0' && before<='9' || before>='a' && before<='z' || before>='A' && before<='Z')
+        strings.write_string(&b,word?`proc "odin" (`:"proc(")
+        rest=rest[at+len("proc("):]
+    }
 }
 
 // The parentheses of the parameters of a procedure type, skipping what is

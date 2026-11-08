@@ -135,7 +135,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"id":"12"}`).code,0)
     testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"source_kind":"Explicit"`))
     f.session.mode=.Watch
-    testing.expect_value(t,authoring_test_execute(f,"set",`{"id":"12","name":"Smile","value":1}`).code,api.SERVER_ERROR)
+    testing.expect_value(t,authoring_test_execute(f,"set",`{"id":"12","name":"Smile","value":1}`).code,api.INVALID_PARAMS)
 }
 
 @(private="file")

@@ -311,7 +311,7 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,plays:[]Match_Play={},veloci
 }
 @(private="file")
 match_test_play :: proc(f:^Match_Fixture,clip:string,mode:u16,options:=MATCH_PLAY_OPTIONS_DEFAULT) -> []Match_Play {
-    if !match_play(&f.requests,f.rig,clip,mode,options) {return nil}
+    match_play(&f.requests,f.rig,clip,mode,options)
     return core.take(&f.requests.match_plays)
 }
 @(private="file")
@@ -331,7 +331,9 @@ match_play_enters_at_its_start_time_or_phase_and_hands_back_at_its_phase_or_mark
         if !testing.expect(t,match_fixture(t,&f)) {continue}
         for _ in 0..<5 {testing.expect(t,match_step(&f,dt,GROUND))}
         before,_:=animation_match(&f.playback,f.rig);duration:=f.state.duration
-        testing.expect(t,!match_play(&f.requests,f.rig,"vault",GROUND,{phase=2}) && !match_play(&f.requests,f.rig,"",GROUND) && !match_play(&f.requests,f.rig,"vault",32),"a phase past 1, an empty name or a mode past 31 is refused")
+        match_play(&f.requests,f.rig,"vault",GROUND,{phase=2});match_play(&f.requests,f.rig,"",GROUND);match_play(&f.requests,f.rig,"vault",32)
+        testing.expect_value(t,f.requests.match_plays.refused,3)
+        f.requests.match_plays.refused=0
         options:=MATCH_PLAY_OPTIONS_DEFAULT;options.entry,options.phase,options.marker=c.entry,c.phase,c.marker
         if !testing.expect(t,match_step(&f,dt,GROUND,match_test_play(&f,"vault",GROUND,options))) {continue}
         playing,_:=animation_match(&f.playback,f.rig)
@@ -423,7 +425,8 @@ match_play_hands_back_when_the_body_leaves_its_mode_and_reports_the_end_of_its_c
     testing.expect(t,finished==1 && exited==1)
     // match_stop ends it in its mode, before its end.
     testing.expect(t,match_step(&f,.1,GROUND,match_test_play(&f,"vault",GROUND)))
-    testing.expect(t,match_stop(&f.requests,f.rig) && match_step(&f,.1,GROUND,core.take(&f.requests.match_plays)))
+    match_stop(&f.requests,f.rig)
+    testing.expect(t,match_step(&f,.1,GROUND,core.take(&f.requests.match_plays)))
     value,_=animation_match(&f.playback,f.rig)
     testing.expectf(t,!value.forced && match_test_events(&f,.Exited,"vault")==1 && match_test_events(&f,.Finished,"vault")==0,"match_stop hands the rig back at once, not %v",value)
 }

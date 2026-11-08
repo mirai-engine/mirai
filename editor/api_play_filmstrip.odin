@@ -11,7 +11,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// A filmstrip of play.capture: the game stepped as play.step steps it and
+// A filmstrip of capture: the game stepped as play.step steps it and
 // drawn before the first tick and every some ticks, a cell of each drawing
 // (around where an entity shows, a fixed region or the whole image) put in
 // one grid with its tick in its corner.
@@ -36,14 +36,19 @@ Api_Filmstrip :: struct {
     taken:int,
 }
 
-// The filmstrip play.capture asks for, checked; nil when it asks for one image.
+// The filmstrip capture asks for, checked; nil when it asks for one image.
 @(private)
-api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play_Capture_Params) -> (strip:^Api_Filmstrip,ok:bool) {
-    keys:=[?]string{"every","count","columns","segments","follow","follow_id","follow_entity","size","region"}
+api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capture_Params) -> (strip:^Api_Filmstrip,ok:bool) {
+    keys:=[?]string{"every","count","columns","segments","follow","size","region"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
+    if p.every_seconds!=0 {
+        if p.every!=0 {api.call_fail(call,api.INVALID_PARAMS,"every and every_seconds both say how far apart the cells are: give one");return}
+        timed:bool
+        if p.every,timed=api_seconds_ticks(call,"every_",f64(p.every_seconds),s.app.tick_dt,API_STEP_LIMIT);!timed {return}
+    }
     if p.every==0 {
-        for value,i in values[1:] {
+        for value,i in values[1:len(keys)-1] {
             if value!="" {api.call_failf(call,api.INVALID_PARAMS,"%s is of a filmstrip: give it with every (the ticks between two cells) and count, or leave it out",keys[i+1]);return}
         }
         return nil,true
@@ -57,24 +62,19 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play
     if !own {api_play_refused(call);return}
     w:=run_ref(s,r)
     strip=new(Api_Filmstrip,call.allocator)
-    strip^={frames=p.frames,count=p.count,columns=p.columns,size=p.size,window=p.ui}
-    named:=int(values[4]!="")+int(p.follow_id!=0)+int(values[6]!="")
+    strip^={frames=p.frames>0?p.frames:API_CAPTURE_SETTLE,count=p.count,columns=p.columns,size=p.size,window=p.ui}
+    followed:=values[4]!=""
     switch {
-    case named>1:
-        api.call_fail(call,api.INVALID_PARAMS,"name the entity to follow once: by follow or follow_id or follow_entity");return
-    case named==1 && values[8]!="":
+    case followed && values[6]!="":
         api.call_fail(call,api.INVALID_PARAMS,"give an entity to follow or a region, not both");return
-    case named==0 && values[7]!="":
-        api.call_fail(call,api.INVALID_PARAMS,"size is the cell around a followed entity: give follow (or follow_id or follow_entity) too, or region in its place");return
+    case !followed && values[5]!="":
+        api.call_fail(call,api.INVALID_PARAMS,"size is the cell around a followed entity: give follow too, or region in its place");return
     }
-    if name:=base.text_get(p.follow[:]);name!="" {
-        strip.follow=api_entity_named(w,name)
-        if strip.follow==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"follow %q names no entity of the game: play.inspect lists them",name);return}
-    } else if named==1 {
-        problem:string
-        if strip.follow,problem=api_play_entity(w,base.text_get(p.follow_entity[:]),p.follow_id,"follow_entity");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    if followed {
+        known:bool
+        if strip.follow,known=api_call_entity(call,w,p.follow[:],"follow",game=true);!known {return}
     }
-    if values[8]!="" {
+    if values[6]!="" {
         q:=p.region
         if !rpc_finite(q.x) || !rpc_finite(q.y) || !(q.z>=1 && q.z<=4096) || !(q.w>=1 && q.w<=4096) || abs(q.x)>4096 || abs(q.y)>4096 {
             api.call_fail(call,api.INVALID_PARAMS,"region takes x y width height in window points: finite with x and y within 4096 of the corner and a width and a height from 1 to 4096")

@@ -41,7 +41,8 @@ write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,fa
 // The document scene.inspect gives of root, and the entities in it as text.
 @(private="file")
 write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components:=true) -> (tree:json.Object,entities:string) {
-    params:=Api_Inspect_Params{root=root,components=components,limit=API_INSPECT_DEFAULT}
+    params:=Api_Inspect_Params{components=components,limit=API_INSPECT_DEFAULT}
+    copy(params.root[:],fmt.tprintf("0x%016x",u64(root)))
     method:=api.Method{params_id=Api_Inspect_Params}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)

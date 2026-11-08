@@ -175,7 +175,6 @@ Body_Request_Kind :: enum u8 {
     Box_Radial_Force,
     Plane_Force, // in a box, strongest at its local +Y face and falling with the depth below it
     Kinematic, // the pose a kinematic body reaches in the tick
-    Launch,    // a character: velocity added, or replacing its own with override
     Manipulate,
     Release_Manipulation,
 }
@@ -258,10 +257,6 @@ manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f3
 // Releases once the pending target is reached, preserving pose and clearing velocity.
 manipulation_end :: proc(requests:^Body_Requests,e:core.Entity,preserve_velocity:=false) {
     core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation,override=preserve_velocity})
-}
-// Adds velocity to a character, or replaces its own.
-launch :: proc(requests:^Body_Requests,e:core.Entity,velocity:[3]f32,override:=false) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Launch,linear=velocity,override=override})
 }
 
 // a and b are the entities of the bodies; collider_a and collider_b those of the colliders that touched,

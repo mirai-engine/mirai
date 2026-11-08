@@ -123,7 +123,7 @@ from `tools/demo_content`.
   `mirai test plugins/physics/runtime the_waves_of_a_plane_are_its_own_and_the_sea_of_the_wind`.
 - `mirai test render how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light` and
   `mirai test engine/audio the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb`.
-- In the demo editor, `raft` scene, with validation: `editor.capture` from above, at water level,
+- In the demo editor, `raft` scene, with validation: `capture` from above, at water level,
   from below and crossing the surface, and inside and outside the dry box that crosses the sea; in
   Play, a falling box splashes, what floats follows the waves, the swimmer bubbles and sees
   suspended particles under the water, and what leaves the water looks dark and shiny for a few

@@ -483,7 +483,7 @@ git_merge_ai :: proc(s:^Session,index:int) {
     if index>=0 && index<len(g.merge.items) {
         item:=&g.merge.items[index]
         path:=base.text_get(g.merge.files[item.file].path[:])
-        fmt.sbprintf(&prompt,"Resolve the merge conflict of %s: it has the conflict markers of git. Keep the changes of both sides so that the code still compiles, remove the markers, save the file and call git.choose with item %d and choice folder.",path,index)
+        fmt.sbprintf(&prompt,"Resolve the merge conflict of %s: it has the conflict markers of git. Keep the changes of both sides so that the code still compiles, remove the markers, save the file and call git.choose with file %s and choice folder.",path,path)
     } else {
         strings.write_string(&prompt,"Resolve the merge conflicts of the project. Call git.conflicts to see them, choose ours or theirs for each value with git.choose, merge the files of code that both sides changed keeping both changes (save them and choose folder for them), and accept every item with git.accept. Do not call git.finish.")
     }

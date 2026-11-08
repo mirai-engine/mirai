@@ -36,9 +36,14 @@ game_hits :: proc(requests:^Hit_Requests,healths:^core.Table(Health)) {
 ```
 
 Any other function receives `^Hit_Requests` and calls `hit(requests,e,5)`. The engine's work the
-same way: `core.push(&spawns.queue,scene.Spawn{...})`, `phys.set_velocity(bodies,e,v)`,
-`save.request_save(saves,"slot")`, `core.place(placer,e,position)` (teleport anything),
+same way: `scene.request_spawn(spawns,"prefabs/Crate.prefab",at)`, `phys.set_velocity(bodies,e,v)`,
+`save.request_save(saves,"slot")`, `core.place(placer,e,position)` (teleport anything;
+`at_rest=true` also stops a body),
 `inp.drive(seats,seat,body)`, `cam.camera_mode(changes,camera,.Aim)`.
+
+Finding what to act on: `core.first(table)` and `core.sole(table)` return an entity and `ok`
+(`sole`: only when it is the one row), `core.entity_named(names,"Lift")` finds by name, and
+`core.set_on(table,e,on)` turns a component on or off at the end of the function.
 
 ## Event: tell the rest what happened
 
@@ -63,8 +68,9 @@ game_score :: proc(events:core.Ref(Hit_Events),score:^Score) {
 
 Readers take `core.Ref(Events)` in a function that runs after the owner's. Engine events:
 `phys.Physics_Events` (contacts, overlaps, sleep), `anim.Animation_Events`,
-`destruct.Destruct_Events`, `save.Save_Results`, `scene.Scene_Results`; read them in
-`stage="react"` of the same tick.
+`destruct.Destruct_Events`; read them in `stage="react"` of the same tick.
+`save.Save_Results` and `scene.Scene_Results` are filled and emptied by frame: read them in a
+`frame` step. A `fixed` step that reads such a storage is a generator error.
 
 ## Pitfalls that fail silently
 

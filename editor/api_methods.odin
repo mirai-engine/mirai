@@ -159,7 +159,7 @@ Api_History_Result :: struct {
 }
 
 Api_Select_Params :: struct {
-    ids:[64]base.Entity_Id `mirai:"optional,label=Entities to select (the last one active); none clears the selection"`,
+    entities:[64][API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Entities to select by name or path Parent/Child or id or handle (the last one active); none clears the selection"`,
     add:bool `mirai:"optional,label=Add to the selection instead of replacing it"`,
 }
 Api_Select_Result :: struct {
@@ -180,25 +180,8 @@ Api_Camera_Result :: struct {
     ev100:f32,
 }
 
-Api_Capture_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
-    warmup_frames:int `mirai:"optional,min=0,max=3600,label=Frames run before the capture; at least one"`,
-    dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s"`,
-    ui:bool `mirai:"optional,label=The window with the editor; false: the world shown alone through the camera of the viewport without panels or gizmos or grid or selection"`,
-    width:int `mirai:"optional,min=0,max=4096,label=Pixels of the image without the UI; 0 keeps the aspect of the window (its size when height is 0 too)"`,
-    height:int `mirai:"optional,min=0,max=4096,label=Pixels of the image without the UI; 0 keeps the aspect of the window (its size when width is 0 too)"`,
-    region:[4]int `mirai:"optional,min=0,max=16384,label=x y width height of the part written in pixels from the top left of the image (the window with the UI; width by height without it); zeros: all of it"`,
-    seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=The clock of the window when the warmup starts, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
-    generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
-}
-
 // Frames an image without the UI is drawn so that what builds up over time settles.
 API_CAPTURE_SETTLE :: 8
-
-Api_Capture_Result :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
-    width,height:int,
-}
 
 Api_Play_Result :: struct {
     playing,paused:bool,
@@ -210,7 +193,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    building:bool `mirai:"label=An Odin source changed since the last build: the build runs and the game starts once it stands. build.status says when it ends; a failed one leaves the game stopped and its errors in engine.diagnostics"`,
     ran:int `mirai:"label=play.step: the ticks it ran"`,
     met:bool `mirai:"label=play.step with until: whether they held when it stopped"`,
     scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
@@ -241,7 +223,7 @@ Api_Play_Step_Params :: struct {
     mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick"`,
     tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
     tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside the first tick"`,
-    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of play.capture over the density): the UI of the game takes it and its clicks; it stays for the next steps"`,
+    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of capture over the density): the UI of the game takes it and its clicks; it stays for the next steps"`,
     mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks"`,
     wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
     text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
@@ -256,8 +238,9 @@ Api_Play_Step_Params :: struct {
 }
 
 Api_Build_Params :: struct {
-    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets"`,
+    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them"`,
     out:[512]u8 `mirai:"optional,text,label=For the game: the folder it is built into; empty: .mirai/game of the project"`,
+    seconds:int `mirai:"optional,min=1,max=3600,unit=s,label=How long it waits for the end of the build; past that it answers building and the build goes on"`,
 }
 
 Api_Play_Gamepad :: struct {
@@ -270,15 +253,26 @@ Api_Play_Gamepad :: struct {
     right_trigger:f32 `mirai:"optional,min=0,max=1"`,
 }
 
+API_BUILD_DIAGNOSTICS :: 32
+
+Api_Build_Diagnostic :: struct {
+    severity:build.Severity,
+    file:[API_PATH_BYTES]u8 `mirai:"text,label=Absolute"`,
+    line,column:int,
+    message:[1024]u8 `mirai:"text"`,
+}
+
 Api_Build_Result :: struct {
-    started:bool,
-    building:bool,
+    building:bool `mirai:"label=It still runs: the wait of build.start ran out or build.status asked while it runs"`,
+    restarting:bool `mirai:"label=The new library needs an engine built after this editor started: the editor starts again now on the new one"`,
+    publishing:bool `mirai:"label=Target shaders: the stages the frames do not run are still being compiled"`,
     target:[8]u8 `mirai:"text,label=editor or game: of the build that runs or ran last"`,
     game:[512]u8 `mirai:"text,label=The executable of the game the last build of the game left; player.start with shipped runs it"`,
     phase:Build_Phase,
     errors:int,
     seconds:f64,
     message:[256]u8 `mirai:"text,label=The first error of the build or what failed"`,
+    diagnostics:[API_BUILD_DIAGNOSTICS]Api_Build_Diagnostic `mirai:"trim,label=What the compiler said with its file and line; errors first"`,
 }
 
 Api_Editor_Inspect :: struct {
@@ -336,8 +330,8 @@ Api_Editor_Action :: struct {
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
-    capture_default:=Api_Capture_Params{warmup_frames=1,dt=HEADLESS_DT,ui=true,seconds=-1}
     play_step_default:=Api_Play_Step_Params{ticks=1,focus=-1,trace={every=1}}
+    build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
     api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=Api_Step_Params,result=Api_Step_Result,defaults=&step_default,run=api_step})
@@ -353,17 +347,16 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=Api_Section_Id_Params,run=api_section_travel})
     api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=Api_Select_Params,result=Api_Select_Result,flags={.Idempotent},run=api_editor_select})
     api_register(s,st,{name="editor.input",params_schema=API_INPUT_SCHEMA,summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=Api_Editor_Inspect,writes_result=true,run=api_editor_input})
-    api_register(s,st,{name="editor.capture",flags={.Core},summary="Draws fresh frames and writes the last as a PNG: the window with the UI of the editor (an open .ui document as it shows it), or the world alone through the camera of the viewport. With path the answer is only where it is and its size; without path MCP also returns the image.",params=Api_Capture_Params,result=Api_Capture_Result,defaults=&capture_default,run=api_editor_capture})
     api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
-    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers building: the game starts once the build stands.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
+    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
     api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
     api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
-    api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Core,.Read_Only},run=api_play_status})
-    api_register(s,st,{name="build.start",flags={.Core},summary="Starts the build of the editor of the project, whose new code loads into the running editor when it succeeds, or of the game to ship, which leaves the editor as it is; build.status follows it.",params=Api_Build_Params,result=Api_Build_Result,run=api_build_start})
-    api_register(s,st,{name="build.status",summary="State of the build and its first error.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
+    api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Read_Only},run=api_play_status})
+    api_register(s,st,{name="build.start",flags={.Core},summary="Builds the editor of the project, whose new code loads into the running editor when it succeeds, the game to ship, which leaves the editor as it is, or its shaders; answers when it ends, with each error and its file and line.",params=Api_Build_Params,result=Api_Build_Result,defaults=&build_default,run=api_build_start})
+    api_register(s,st,{name="build.status",summary="State of the build and what the compiler said, with file and line.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
     check_defaults:=Api_Build_Check_Params{seconds=300}
     api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result_schema=API_CHECK_RESULT,flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
@@ -378,7 +371,6 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_simulation_register(s,st)
     api_assets_register(s,st)
     unsaved_api_register(s,st)
-    asset_reload_api_register(s,st)
     prefab_api_register(s,st)
     documents_api_register(s,st)
     collab_api_register(s,st)
@@ -424,7 +416,7 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
 @(private)
 api_manual_required :: proc(s:^Session,call:^api.Call) -> bool {
     if st:=api_state(s);st!=nil && st.manual {return true}
-    api.call_fail(call,api.SERVER_ERROR,"engine.step and editor.input require --headless without --frames")
+    api.call_fail(call,api.SERVER_ERROR,"This editor draws by itself: engine.step and editor.input run only in a manual one, which mirai session start opens. Here play.step drives a game and editor.action runs an action")
     return false
 }
 
@@ -542,8 +534,11 @@ api_shutdown :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; save it first or pass discard")
         return
     }
-    if unsaved:=len(assets_unsaved(s));unsaved>0 && !params.discard {
-        api.call_failf(call,api.SERVER_ERROR,"%d %s unsaved changes; asset.save writes them, or pass discard",unsaved,unsaved==1?"asset has":"assets have")
+    if unsaved:=assets_unsaved(s);len(unsaved)>0 && !params.discard {
+        names:=make([dynamic]string,context.temp_allocator)
+        for held in unsaved[:min(len(unsaved),API_UNSAVED_NAMED)] {append(&names,unsaved_name(s,held.path))}
+        more:=len(unsaved)>API_UNSAVED_NAMED?fmt.tprintf(" and %d more",len(unsaved)-API_UNSAVED_NAMED):""
+        api.call_failf(call,api.SERVER_ERROR,"Unsaved changes in %s%s; asset.save writes them, or pass discard",strings.join(names[:],", ",context.temp_allocator),more)
         return
     }
     if platform.dialog_pending(s.app.platform) {
@@ -609,18 +604,10 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Select_Params)
     w:=shown_world(s)
     if s.edits.preview {tools_release(s)}
-    picked:=make([dynamic]core.Entity,call.allocator)
-    for id in params.ids {
-        if id==0 {continue}
-        e:=api_entity(w,id)
-        if e==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-            return
-        }
-        append(&picked,e)
-    }
+    picked,known:=api_call_entities(call,w,params.entities[:],"entities",call.allocator)
+    if !known {return}
     tools_release(s)
-    if len(picked)==0 && !params.add {selection_clear(s.selection)} else {selection_set(s.selection,picked[:],params.add)}
+    if len(picked)==0 && !params.add {selection_clear(s.selection)} else {selection_set(s.selection,picked,params.add)}
     api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,selection_active(s.selection))}
 }
 
@@ -851,7 +838,7 @@ api_input_step :: proc(a:^Rpc_Args,step:^Api_Input_Step) -> bool {
             step.dt=rpc_number(a,key) or_return
             if !api_dt_valid(step.dt) {return rpc_fail(a,"dt must be greater than 0 and at most 0.25 seconds")}
         case:
-            return rpc_fail(a,"unknown field %q of an event",key)
+            return rpc_fail_unknown(a,key,"keys","repeat_keys","mouse_buttons","mouse_position","mouse_delta","wheel","clicks","text","dt")
         }
     }
     if a.failed {return false}
@@ -892,7 +879,7 @@ api_editor_input :: proc(s:^Session,call:^api.Call) {
                 break
             }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"events","dt")
         }
     }
     if a.failed {return}
@@ -939,11 +926,15 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     orbit:=v.orbit
     position,target:[3]f32
     fov:f32
-    entity:base.Entity_Id
+    entity:string
+    entity_text:[API_ENTITY_TEXT]u8
     exposure:core.View_Exposure
     source:=v.exposure_source
     ev100:=v.ev100
-    has_position,has_target,has_angles,has_fov,has_entity,has_source:=false,false,false,false,false,false
+    has_position,has_target,has_angles,has_fov,has_entity,has_source,has_from:=false,false,false,false,false,false,false
+    from:[3]f32
+    frame_texts:[API_SPATIAL_LIMIT][API_ENTITY_TEXT]u8
+    framed:=0
     a:Rpc_Args
     rpc_init(&a,call,call.raw)
     object:Rpc_Object
@@ -963,8 +954,7 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             if ok && (fov<VIEW_FOV_MIN || fov>VIEW_FOV_MAX) {rpc_fail(&a,"fov must be %v to %v degrees",VIEW_FOV_MIN,VIEW_FOV_MAX)}
             has_fov=true
         case "entity":
-            entity,ok=rpc_id(&a,key)
-            if ok && entity==0 {rpc_fail(&a,"entity must be the id of an entity with a Camera")}
+            entity,ok=rpc_text(&a,key,entity_text[:])
             has_entity=true
         case "exposure":
             buffer:[8]u8
@@ -981,8 +971,18 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             ev100,ok=rpc_number(&a,key)
             if ok && (ev100<-10 || ev100>24) {rpc_fail(&a,"ev100 must be -10 to 24")}
             if !has_source {source=.Manual}
+        case "from":
+            has_from=rpc_vector(&a,key,from[:])
+        case "frame":
+            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"frame must be an array of entities");break}
+            for i:=0;!serial.text_accept(&a.r,']') && !a.failed;i+=1 {
+                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"frame must be an array of entities");break}
+                if framed>=API_SPATIAL_LIMIT {rpc_fail(&a,"frame takes at most %d entities",API_SPATIAL_LIMIT);break}
+                rpc_text(&a,"an entity of frame",frame_texts[framed][:len(frame_texts[0])-1])
+                framed+=1
+            }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"position","target","yaw","pitch","distance","fov","entity","exposure","ev100","frame","from")
         }
     }
     if a.failed {return}
@@ -992,24 +992,24 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             return
         }
         w:=shown_world(s)
-        e:=api_entity(w,entity)
-        if e==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x is not an entity of the scene",u64(entity))
+        e,problem:=api_entity_select(w,entity,allocator=call.allocator)
+        if problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,problem)
             return
         }
         camera,found:=entity_get(w,e,erender.Camera)
         if !found {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has no Camera; scene.inspect with component Camera lists those that do",u64(entity))
+            api.call_failf(call,api.INVALID_PARAMS,"entity %q has no Camera; scene.inspect with component Camera lists those that do",entity)
             return
         }
         if camera.projection!=.Perspective {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has an orthographic Camera; the camera of the editor is perspective",u64(entity))
+            api.call_failf(call,api.INVALID_PARAMS,"entity %q has an orthographic Camera; the camera of the editor is perspective",entity)
             return
         }
         orbit_sanitize(&orbit)
         seen,ok:=orbit_of_camera(entity_world(w,e),camera,orbit.distance)
         if !ok {
-            api.call_failf(call,api.SERVER_ERROR,"entity 0x%016x has no usable orientation",u64(entity))
+            api.call_failf(call,api.SERVER_ERROR,"entity %q has no usable orientation",entity)
             return
         }
         orbit=seen
@@ -1022,6 +1022,25 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     } else {
         exposure=v.exposure
         if !has_source && source==.Camera && (has_position || has_target || has_angles) {source=.Scene}
+    }
+    if framed>0 {
+        if has_position || has_target || has_entity {
+            api.call_fail(call,api.INVALID_PARAMS,"frame places the camera: leave out position, target and entity")
+            return
+        }
+        if has_from && from=={} {api.call_fail(call,api.INVALID_PARAMS,"from is the direction from what is framed to the camera: it cannot be zero");return}
+        w:=shown_world(s)
+        entities,known:=api_call_entities(call,w,frame_texts[:framed],"frame",call.allocator)
+        if !known {return}
+        box:=api_entities_box(s,w,entities)
+        if has_from {
+            center:=(box.min+box.max)*0.5
+            if placed,placeable:=orbit_from_points(center+from,center,orbit.fov);placeable {orbit=placed}
+        }
+        free:=free_region(s.gui,v.window)
+        free.x-=v.origin.x
+        free.y-=v.origin.y
+        orbit_frame(&orbit,box.min,box.max,v.size,free)
     }
     if has_target {orbit.target=target}
     if has_position {
@@ -1041,74 +1060,9 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     api.call_result(call,Api_Camera_Result)^={orbit_position(orbit),orbit.target,orbit.yaw,orbit.pitch,orbit.distance,orbit.fov,source,ev100}
 }
 
-@(private)
-api_editor_capture :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Capture_Params)
-    if params.ui && (params.width>0 || params.height>0) {
-        api.call_fail(call,api.INVALID_PARAMS,"width and height size an image without the UI: pass ui false with them, or leave them out for the window")
-        return
-    }
-    if params.generated && !params.ui {
-        api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it")
-        return
-    }
-    region:=img.Region{params.region[0],params.region[1],params.region[2],params.region[3]}
-    if region!={} && (region.w==0 || region.h==0) {
-        api.call_fail(call,api.INVALID_PARAMS,"region is x, y, width and height: give it a width and a height, or leave it out for the whole image")
-        return
-    }
-    if s.app.renderer==nil {
-        api.call_fail(call,api.SERVER_ERROR,"editor.capture requires a GPU; start without --no-gpu")
-        return
-    }
-    // The frames drawn below free the temporary memory.
-    given:=base.text_get(params.path[:])
-    file,writable:=api_capture_file(s,call,given,"editor.png",s.app.allocator)
-    if !writable {return}
-    defer delete(file,s.app.allocator)
-    drawn:=s.app.stats.frames_drawn
-    if params.seconds>=0 {s.app.seconds=params.seconds}
-    api_frames(s,max(params.warmup_frames,1),params.dt)
-    // A frame that drew a program as its rows while its pipelines were made: one more with them.
-    for gpu.renderer_pipelines_pending(s.app.renderer) {
-        gpu.renderer_pipelines_wait(s.app.renderer)
-        api_frames(s,1,params.dt)
-    }
-    if s.app.stats.frames_drawn==drawn {
-        api.call_fail(call,api.SERVER_ERROR,fmt.tprintf("The renderer could not draw the frame: %s",s.app.renderer.error))
-        return
-    }
-    size:=api_capture_size(api_capture_viewport(s.app),params.width,params.height)
-    if params.generated {
-        if !gpu.renderer_stats(s.app.renderer).generated {
-            api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing and graphics.set Frame generation on, and a frame with history")
-            return
-        }
-    }
-    pixels,width,height,read:=api_capture_image(s,params.ui,size,params.generated)
-    if !read {
-        api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read",size.x,size.y)
-        return
-    }
-    if region!={} {
-        cropped,error:=img.image_crop({pixels=pixels,width=width,height=height},region,s.app.allocator)
-        delete(pixels,s.app.allocator)
-        if error!=.None {
-            if error==.Bad_Region {
-                api.call_failf(call,api.INVALID_PARAMS,"region %d,%d,%d,%d falls outside the image of %dx%d: x plus width may be %d at most and y plus height %d",region.x,region.y,region.w,region.h,width,height,width,height)
-            } else {
-                api.call_fail(call,api.SERVER_ERROR,"The region could not be cut: out of memory")
-            }
-            return
-        }
-        pixels,width,height=cropped.pixels,cropped.width,cropped.height
-    }
-    api_capture_answer(s,call,file,pixels,width,height,given=="")
-}
-
 // Writes pixels of the allocator of the application as the PNG at file, of
-// api_output_file, and answers the call with it as editor.capture does: its
-// path and size and, when shown, the image over MCP.
+// api_output_file, and answers the call with it as capture does: its path and
+// size and, when shown, the image over MCP.
 api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true) {
     if !api_png_write(s,file,pixels,width,height) {
         api.call_failf(call,api.SERVER_ERROR,"%s could not be written although it could be opened: the disk may be full",file)
@@ -1117,17 +1071,8 @@ api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,wid
     api_capture_reply(call,file,width,height,shown)
 }
 
-@(private)
-api_capture_reply :: proc(call:^api.Call,file:string,width,height:int,shown:bool) {
-    result:=api.call_result(call,Api_Capture_Result)
-    result.width,result.height=width,height
-    api_text_put(result.path[:],file)
-    if shown {api.call_image(call,file)}
-}
-
 // The file a capture writes: path as api_output_file takes it, or name under
 // .mirai/captures of the project without one.
-@(private)
 api_capture_file :: proc(s:^Session,call:^api.Call,path,name:string,allocator:=context.allocator) -> (file:string,ok:bool) {
     if path!="" {return api_output_file(s,call,path,allocator)}
     if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return "",false}
@@ -1197,7 +1142,7 @@ api_capture_size :: proc "contextless" (window:[2]i32,width,height:int) -> [2]i3
     return size
 }
 
-// The image editor.capture writes after its frames: the window as the last
+// The image capture writes after its frames: the window as the last
 // one drew it, or the world shown alone at size, through the camera of the
 // viewport. The pixels are of the allocator of the application.
 @(private)
@@ -1255,7 +1200,7 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
 api_play_start :: proc(s:^Session,call:^api.Call) {
     owner:=ai_task_of_call(s,call)
     if owner==0 && run_find(s,0)!=nil {
-        api.call_fail(call,api.SERVER_ERROR,"A game is already playing")
+        api.call_fail(call,api.SERVER_ERROR,"A game is already playing: play.status says how it goes and play.stop ends it")
         return
     }
     params:=api.call_params(call,Api_Play_Start_Params)
@@ -1290,8 +1235,7 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
     case .Point:  s.play_asked=point_origin(s,params.point)
     }
     if play_build_first(s,{owner=owner,players=params.players,online=params.online,ping_ms=params.ping_ms,saved_only=params.saved_only}) {
-        api_play_result(s,call,nil)
-        api.call_result(call,Api_Play_Result).building=true
+        api_play_after_build(s,call,owner)
         return
     }
     if error:=play_begin(s,owner,params.players,params.online,params.ping_ms,params.saved_only);error!="" {
@@ -1300,6 +1244,59 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     api_play_result(s,call,run_find(s,owner))
+}
+
+// play.start once its build began: it answers when the game plays, or fails
+// with what kept it from it.
+@(private)
+api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
+    build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
+    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits) {
+        api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
+        return
+    }
+    switch {
+    case .Restart in s.requests:
+        api.call_fail(call,api.SERVER_ERROR,"The build needs an engine newer than this editor, which starts again on it now: call play.start again once it answers")
+    case s.build.phase==.Failed:
+        api_build_fail(s,call,"The code does not build, so the game did not start")
+    case base.text_get(s.build.play_error[:])!="":
+        api.call_fail(call,api.SERVER_ERROR,base.text_get(s.build.play_error[:]))
+    case run_find(s,owner)==nil:
+        api.call_fail(call,api.SERVER_ERROR,"The game could not start; engine.diagnostics says why")
+    case:
+        api_play_result(s,call,run_find(s,owner))
+    }
+}
+
+// The call fails with what a build said: the first error in its message and
+// every one, with file and line, in its data.
+api_build_fail :: proc(s:^Session,call:^api.Call,what:string) {
+    message:=api_build_first_error(s)
+    data:=strings.builder_make(call.allocator)
+    strings.write_string(&data,`{"diagnostics":[`)
+    first:=true
+    for d in s.build.diagnostics {
+        if d.severity!=.Error {continue}
+        if !first {strings.write_byte(&data,',')}
+        first=false
+        fmt.sbprintf(&data,`{{"file":%s,"line":%d,"column":%d,"message":%s}}`,serial.text_quote(d.file),d.line,d.column,serial.text_quote(d.message))
+    }
+    strings.write_string(&data,`]}`)
+    api.call_fail(call,api.SERVER_ERROR,fmt.tprintf("%s: %s",what,message),strings.to_string(data))
+}
+
+// The first error of the last build with its place, or what failed when no
+// diagnostic says it.
+@(private)
+api_build_first_error :: proc(s:^Session) -> string {
+    for d in s.build.diagnostics {
+        if d.severity==.Error {return fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message)}
+    }
+    texts:=FAILURE_TEXTS
+    text:=strings.trim_space(s.build.text)
+    if line:=strings.index_byte(text,'\n');line>=0 {text=text[:line]}
+    return text!=""?fmt.tprintf("%s: %s",texts[s.build.failure],text):texts[s.build.failure]
 }
 
 // Starts the run of an owner with its local and online players: "" or what
@@ -1438,7 +1435,7 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
         return false
     }
     input.focus(requests,slot)
-    qa_log_focus(r,slot)
+    qa_log_focus(s,r,slot)
     return true
 }
 
@@ -1458,7 +1455,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
             scripted,at=run_script_take(run_script(s,&other))
             step=&scripted
         }
-        if other.qa!=nil {qa_log_tick(s,&other,step,at)}
+        qa_log_tick(s,&other,step,at)
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}
         given:core.Input
@@ -1531,25 +1528,29 @@ run_goes_on :: proc(s:^Session,r:^Run) -> bool {
 // ---------------------------------------------------------------- build
 
 @(private)
-api_build_result :: proc(s:^Session,call:^api.Call,started:bool) {
+api_build_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Build_Result)
-    result.started=started
-    result.building=s.build.phase==.Running
+    result.building=s.build.phase==.Running || s.build.reload
+    result.restarting=.Restart in s.requests
     api_text_put(result.target[:],s.build.target==.Game?"game":"editor")
     api_text_put(result.game[:],s.build.game)
     result.phase=s.build.phase
     result.errors=len(s.build.diagnostics)
     result.seconds=s.build.seconds
-    // The first error, or what failed when no diagnostic says it.
-    for d in s.build.diagnostics {
-        if d.severity==.Error {api_text_put(result.message[:],d.message);return}
+    count:=0
+    for severity in ([2]build.Severity{.Error,.Warning}) {
+        for d in s.build.diagnostics {
+            if d.severity!=severity || count==len(result.diagnostics) {continue}
+            row:=&result.diagnostics[count]
+            count+=1
+            row.severity,row.line,row.column=d.severity,d.line,d.column
+            api_text_put(row.file[:],d.file)
+            api_text_put(row.message[:],d.message)
+        }
     }
-    if s.build.phase==.Failed {
-        texts:=FAILURE_TEXTS
-        text:=strings.trim_space(s.build.text)
-        if line:=strings.index_byte(text,'\n');line>=0 {text=text[:line]}
-        api_text_put(result.message[:],text!=""?fmt.tprintf("%s: %s",texts[s.build.failure],text):texts[s.build.failure])
-    }
+    has_error:=false
+    for d in s.build.diagnostics {has_error||=d.severity==.Error}
+    if has_error || s.build.phase==.Failed {api_text_put(result.message[:],api_build_first_error(s))}
 }
 
 @(private)
@@ -1559,8 +1560,11 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
     switch text:=base.text_get(params.target[:]);text {
     case "","editor": target=.Editor
     case "game":      target=.Game
+    case "shaders":
+        api_build_shaders(s,call,params.seconds)
+        return
     case:
-        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor or game",text)
+        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor, game or shaders",text)
         return
     }
     out:=base.text_get(params.out[:])
@@ -1574,7 +1578,7 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     if s.build.phase==.Running {
-        api.call_fail(call,api.SERVER_ERROR,"A build is running: build.status says when it ends")
+        api.call_fail(call,api.SERVER_ERROR,"Another build is running: build.status says when it ends")
         return
     }
     if !s.has_project || s.engine_root=="" {
@@ -1585,11 +1589,34 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"The player of the project is being built: wait for it")
         return
     }
-    api_build_result(s,call,build_start(s,target,out))
+    if !build_start(s,target,out) {
+        tool_call_fail(s,call,"The build could not start")
+        return
+    }
+    build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
+    api_wait(s,f64(params.seconds),nil,build_running)
+    api_build_result(s,call)
 }
 
 @(private)
-api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call,false)}
+api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call)}
+
+// build.start with target shaders: published again from their files and what
+// the editor holds unsaved, answering once the viewport has them.
+@(private)
+api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
+    started:=time.tick_now()
+    programs_publish_request(s)
+    if ok,message:=programs_wait(s,f64(seconds),true);!ok {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return
+    }
+    api_build_result(s,call)
+    result:=api.call_result(call,Api_Build_Result)
+    result.seconds=time.duration_seconds(time.tick_since(started))
+    result.publishing=programs_publishing(s)
+    api_text_put(result.target[:],"shaders")
+}
 
 Api_Build_Check_Params :: struct {
     seconds:int `mirai:"optional,min=1,max=3600,label=How long it may take before it is stopped"`,
@@ -1691,7 +1718,7 @@ api_probe_write :: proc(out:^serial.Writer,result:^build.Result) {
 
 // The shapes of the params of the methods that read them by hand.
 @(private) API_INPUT_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"events":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"keys":{"type":"array","items":{"type":"string"},"description":"keys held in the frame; they replace the previous set"},"repeat_keys":{"type":"array","items":{"type":"string"},"description":"keys that repeat in the frame"},"mouse_buttons":{"type":"array","items":{"type":"string","enum":["left","right","middle"]},"description":"buttons held in the frame; they replace the previous set"},"mouse_position":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_delta"},"mouse_delta":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_position"},"wheel":{"oneOf":[{"type":"number"},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}]},"text":{"type":"string","description":"printable ASCII typed in the frame"},"clicks":{"type":"integer","minimum":1,"maximum":3},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}`
-@(private) API_CAMERA_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number","description":"radians"},"pitch":{"type":"number","description":"radians"},"distance":{"type":"number","exclusiveMinimum":0},"fov":{"type":"number","minimum":1,"maximum":170,"description":"degrees, vertical"},"entity":{"type":"string","description":"id of an entity with a perspective Camera, in hexadecimal: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"},"exposure":{"enum":["scene","camera","manual"],"description":"how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"},"ev100":{"type":"number","minimum":-10,"maximum":24,"description":"exposure value at ISO 100 of manual; alone, it chooses manual"}}}`
+@(private) API_CAMERA_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number","description":"radians"},"pitch":{"type":"number","description":"radians"},"distance":{"type":"number","exclusiveMinimum":0},"fov":{"type":"number","minimum":1,"maximum":170,"description":"degrees, vertical"},"entity":{"type":"string","description":"an entity with a perspective Camera by its name, a path Parent/Child, its id or its handle: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"},"exposure":{"enum":["scene","camera","manual"],"description":"how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"},"ev100":{"type":"number","minimum":-10,"maximum":24,"description":"exposure value at ISO 100 of manual; alone, it chooses manual"},"frame":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"entities by name, path or id the camera frames with what hangs from them, looking the way it looks now; excludes position, target and entity"},"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"with frame: the direction from what is framed to the camera"}}}`
 
 // The runs of a turn: its own, with players local ones, and those a plugin
 // adds for online players (multiplayer: a run per online player that joins

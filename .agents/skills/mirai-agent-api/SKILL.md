@@ -30,7 +30,7 @@ difference with the catalog, it rules.
   [`play.record`, `play.seek`](references/methods.md#play) and
   [`mirai record`](references/api.md#mirai-record).
 - Checking a motion in one or two calls (an input timeline, a table of values per tick, one
-  image of cells around an entity): [`play.step` and `play.capture`](references/methods.md#play).
+  image of cells around an entity): [`play.step`](references/methods.md#play) and [`capture`](references/methods.md#editor-and-viewport).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
 - Letting a cheap model play with few tokens, finding bugs with monitors or a bot with no model,
@@ -77,17 +77,18 @@ difference with the catalog, it rules.
    the first time, `mirai rpc describe <method|prefix>` (several methods at once:
    `mirai rpc describe a b c`): names, params or result fields are not
    guessed. Read: `scene.inspect` (ids and values), `component.list` (components, fields, ranges
-   and initial values), `asset.list`; a single field with `--select`, and a state that takes time
-   (`build.status`, `play.network.status`) with `--wait-until`.
+   and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
+   and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
 3. Edit: each edit touches only the fields it names. Edits that succeed or fail together go in
    `scene.batch`. Building or rewriting a group of entities: `scene.write` with a nested document,
    the one `scene.inspect` with `root` gives.
-4. Verify with `scene.inspect` or `editor.capture`; undo with `history.undo`. A method that fails
+4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`
    finds nondeterminism, and `play.seek` rewinds the run there to step it again.
 6. After changing code of the project (its `game/`, `editor/` or `plugins/`), `build.start` (or
-   `play.start`, which builds first) compiles it and loads it into the running editor: the scene,
+   `play.start`, which builds first) compiles it, answers when it ends with its errors and loads
+   it into the running editor: the scene,
    the Play and the history stay, also with a new or changed component
    ([build](references/methods.md#build)). A large scene is not loaded again for each change.
    `mirai session restart [project]` is only for engine code: it builds and opens another
@@ -114,7 +115,7 @@ positions misses both.
    - A look or a turn of the stick: `mouse_delta` (spread over its segment) or `gamepads` with a
      stick, in a segment as long as the motion.
 2. Schedule them with `play.input` and step a few ticks at a time with `play.step` without input,
-   reading `play.view` (or `play.capture`) between steps; or in one call, `play.step` with the
+   reading `play.view` (or `capture`) between steps; or in one call, `play.step` with the
    `segments` and a `trace` with `view` that reads every tick.
 3. Assert what a person checks: that the game did it (`play.check` on its components) and what is
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
@@ -151,9 +152,15 @@ positions misses both.
 
 ## Invariants
 
+- The caller names things as a person does: an entity by the text `entity` (name, path, id or
+  handle) and an asset by its path. The engine resolves them and a name that fits several is an
+  error, never the first match.
 - All handlers run in the main thread between frames, one at a time. One that advances frames
-  (`engine.step`, `editor.capture`, `editor.input`, `ai.task`, `play.step`, `profile.capture`)
-  holds the server meanwhile.
+  (`engine.step`, `capture`, `editor.input`, `ai.task`, `play.step`, `profile.capture`) or waits
+  for a job (`build.start`, `play.start`, `asset.import`) holds the server meanwhile; the editor
+  goes on drawing, and a handler finishes what it asks of later frames before answering.
+- What changes on disk is the editor's at the next call: assets are read again and shaders
+  published, whoever wrote them (`assets_watch.odin`, `api_disk_sync`).
 - A scene edit is a transaction: one undo step or none, the caller's. Beforehand, the user's
   pending gesture is recorded as their own step. `history.undo` undoes only the caller's steps.
 - The caller does not pass revisions: a field edited by two authors keeps the last one's, and the
@@ -231,7 +238,7 @@ positions misses both.
 - `mirai rpc` (`--select`, `--wait-until`, `describe`): `mirai test tools/mirai` and
   `mirai test editor/api the_rpc_and_mcp_commands_drive_the_server`, which runs the tool against
   the test methods.
-- The paths of `editor.capture`: `mirai test editor
+- The paths of `capture`: `mirai test editor
   capture_paths_take_git_bash_drives_and_are_relative_to_the_project
   a_capture_makes_its_folder_and_says_why_it_cannot_write`.
 - An editor method: the tests of its `editor/api_<topic>_test.odin` with
@@ -244,7 +251,7 @@ positions misses both.
 - Live: `mirai session start demo --dev` (`build.start` after changing project code,
   `mirai session restart demo` after changing engine code),
   repeat the change with `mirai rpc ... --project demo` checking `mirai rpc describe`,
-  `scene.inspect`, `history.undo` and `editor.capture`, and `mirai session stop demo`.
+  `scene.inspect`, `history.undo` and `capture`, and `mirai session stop demo`.
 - Live AI attribution: two MCP sessions with different headers over the same entities;
   `ai.status.running` is an array; reverting one keeps the other; the header of a previous turn
   fails; after `finish` reading works and writing fails

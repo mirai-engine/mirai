@@ -12,7 +12,7 @@
     {"name": "walk forward", "method": "play.step",
      "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 2}]}},
     {"name": "the player walked", "method": "play.check", "params": {"conditions": [
-      {"name": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}},
+      {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}},
 
     {"name": "Escape pauses", "method": "play.step",
      "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
@@ -61,7 +61,7 @@
     {"name": "on the main menu", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Menu"}]}},
     {"name": "the scene starts over", "method": "play.step", "params": {"ticks": 900, "until": [
-      {"name": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}},
+      {"entity": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}},
     {"name": "the clock runs behind the menu", "method": "play.check", "params": {"conditions": [
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 0}]}}
   ]

@@ -276,6 +276,7 @@ Bind_Problem :: struct {
     asset:base.Asset_Id,
     row:int,              // of its nodes; -1: a node of a widget it uses, or the tree as a whole
     node:int,             // of the tree as it loads; -1: it does not load
+    name:[ui.TREE_NAME_CAPACITY*2]u8, // of that node; inside a widget, instance/node
     binding:ui.Binding,
     fault:Bind_Fault,
     path:[ui.TREE_PATH_CAPACITY]u8, // Path: what it binds; Widget and Load: why
@@ -317,6 +318,7 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
             nodes:=preview_count(linked,n,0)
             if failure.node<at+nodes {
                 if n.kind!=.Component {problem.row=row}
+                bind_problem_name(&problem,linked,row,node.name)
                 break
             }
             at+=nodes
@@ -332,6 +334,20 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
         }
     }
     return
+}
+
+// Names a problem after the node it failed at: the row of its records, or
+// instance/node for one inside a widget.
+@(private)
+bind_problem_name :: proc(problem:^Bind_Problem,linked:ui.Tree_Data,row:int,node:u64) {
+    outer:=&linked.nodes[row]
+    name:=serial.text_field(outer.name[:])
+    if outer.kind==.Component {
+        for &inner in data_template(linked,int(outer.component)) {
+            if inner_name:=serial.text_field(inner.name[:]);inner_name!="" && base.name_hash(inner_name)==node {name=fmt.tprintf("%s/%s",name,inner_name);break}
+        }
+    }
+    ui.tree_text_set(problem.name[:],name)
 }
 
 // Why records of a .ui do not load, for a person: an override that names a
@@ -358,10 +374,10 @@ bind_problem_text :: proc(a:^host.Assets,problem:^Bind_Problem) -> string {
     file:=editor.asset_name_of(a,problem.asset,"missing")
     switch problem.fault {
     case .Widget,.Load: return fmt.tprintf("%s does not load: %s",file,serial.text_field(problem.path[:]))
-    case .Template:     return fmt.tprintf("%s: node %d has a name in braces of its text without a field, or whose field names a path the game does not have or cannot show",file,problem.node)
+    case .Template:     return fmt.tprintf("%s: node '%s' has a name in braces of its text without a field, or whose field names a path the game does not have or cannot show",file,serial.text_field(problem.name[:]))
     case .Path:
     }
-    return fmt.tprintf("%s: node %d binds '%s' for its %v, which the game does not have or cannot show there",file,problem.node,serial.text_field(problem.path[:]),problem.binding)
+    return fmt.tprintf("%s: node '%s' binds '%s' for its %v, which the game does not have or cannot show there",file,serial.text_field(problem.name[:]),serial.text_field(problem.path[:]),problem.binding)
 }
 
 // A .ui as the check of the project read it last: the stamp of its file and
@@ -944,7 +960,7 @@ Ui_Check_Result :: struct {
 }
 Ui_Check_Problem :: struct {
     asset:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The name of the file of the .ui"`,
-    node:int `mirai:"label=Of the tree as it loads with its widgets; -1: it does not load"`,
+    node:[ui.TREE_NAME_CAPACITY*2]u8 `mirai:"text,label=The node that fails: its name, or instance/node inside a widget; empty when it does not load"`,
     binding:[24]u8 `mirai:"text,label=The binding that fails; Text (in braces) for a name in braces of the text; empty when it does not load"`,
     path:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=What the binding names that the game does not have or cannot show there; empty for a name in braces or when it does not load"`,
     loads:bool `mirai:"label=False: it does not load because a widget it uses is missing or an override names a node its widget no longer has"`,
@@ -1115,7 +1131,7 @@ api_check :: proc(s:^editor.Session,call:^api.Call) {
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')
         api.write_text(out,"asset",editor.asset_name_of(a,problem.asset,"missing"),true)
-        api.write_int(out,"node",i64(problem.node))
+        api.write_text(out,"node",serial.text_field(problem.name[:]))
         api.write_text(out,"binding","Text (in braces)" if problem.fault==.Template else fmt.tprintf("%v",problem.binding) if problem.fault==.Path else "")
         api.write_text(out,"path",serial.text_field(problem.path[:]) if problem.fault==.Path else "")
         api.write_bool(out,"loads",problem.fault!=.Widget && problem.fault!=.Load)

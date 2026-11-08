@@ -122,7 +122,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
   references), `MIRAI_GI_DUMP=<folder>`, `MIRAI_GI_CASES`, `MIRAI_GI_SETTINGS=name=value,...` and
   `MIRAI_GI_WINDOW=from,to` for ablations.
 - Blotches in an editor scene: the deviation of the luminance against its blur on a smooth wall,
-  in `mirai capture` or in `editor.capture` with `ui` after hundreds of frames: they measure the
+  in `mirai capture` or in `capture` with `ui` after hundreds of frames: they measure the
   same.
 
 ## Render check

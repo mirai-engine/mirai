@@ -32,7 +32,7 @@ CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,sha
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 PHASE_TITLES :: [len(PHASES)]string{"Input","Fixed","Frame","Late","Ui","Render","Release"}
-FRAME_PHASE :: 2
+FIXED_PHASE :: 1
 RELEASE_PHASE :: 6 // runs when a World is freed: from the game loop, never in a frame
 LOOPS :: [2]string{"game","editor"}
 // Every phase runs its steps by stage, in this order; a step that names none is in intent.
@@ -1180,6 +1180,7 @@ rules_check :: proc(g:^Generator) {
     stages:=STAGES
     network,has_network:=g.by_key["mirai:core.Network"]
     tick_input:=g.by_key["mirai:core.Input"]
+    tick_actions:=g.by_key["mirai:engine/input.Actions"]
     for s in g.steps {
         if s.server && (!has_network || network.kind!=.Storage) {
             append(&g.errors,fmt.aprintf("%s: %s is server, and the world has no core.Network to know whether this end decides the rules",s.where_,s.name))
@@ -1212,9 +1213,13 @@ rules_check :: proc(g:^Generator) {
             if param.type.by_world && param.kind==.Storage_Value {
                 append(&g.errors,fmt.aprintf("%s: %s receives %s, which has a value for each World, by value: receive ^%s or core.Ref(%s)",s.where_,s.name,param.type.name,param.type.name,param.type.name))
             }
-            // The editor loop refills core.Input every frame; only the game loop leaves it at the last tick.
-            if s.loops[0] && s.phases[FRAME_PHASE] && param.type==tick_input && (param.kind==.Storage_Value || param.kind==.Storage_Ref) {
-                append(&g.warnings,Diagnostic{severity=.Warning,file=s.file,line=s.line,column=1,message=fmt.aprintf("%s runs in frame and receives core.Input as %s, which there holds the values of the last tick: edges and scripted keys do not reach it, so use core.Frame_Input",s.name,param.name)})
+            // The editor loop refills core.Input every frame; only the game loop leaves it, and the actions made of it, at the last tick.
+            if s.loops[0] && step_outside_fixed(s) && (param.kind==.Storage_Value || param.kind==.Storage_Ref) {
+                if param.type==tick_input {
+                    append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives core.Input as %s, which there holds the values of the last tick: a frame without a tick repeats its edges and misses what is new; receive core.Frame_Input, or read it in a fixed step",s.where_,s.name,param.name))
+                } else if param.type==tick_actions {
+                    append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives the actions of the tick as %s: a frame without a tick repeats its edges and misses what is new; receive input.Frame_Input_Of(E), or read them in a fixed step",s.where_,s.name,param_text(param)))
+                }
             }
         }
         // What a step writes reaches it once: in a @(params) and by itself, or
@@ -1298,6 +1303,26 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s reads %s, which only %s writes, in ui or render: a dedicated server runs neither and there %s keeps the value it starts with; write it in input, fixed, frame or late, or read it in ui or render",s.where_,s.name,param.type.name,writer.name,param.type.name))
         }
     }
+    // A frame runs any number of ticks: a fixed step would see twice, or never,
+    // what only the frame fills and empties.
+    filled_outside:=make(map[^Type]^Step,context.temp_allocator)
+    filled_in_fixed:=make(map[^Type]bool,context.temp_allocator)
+    for s in g.steps {
+        if !s.loops[0] {continue}
+        for param in s.params {
+            if param.kind!=.Storage_Write || !param.type.events {continue}
+            if s.phases[FIXED_PHASE] {filled_in_fixed[param.type]=true} else {filled_outside[param.type]=s}
+        }
+    }
+    for s in g.steps {
+        if !s.loops[0] || !s.phases[FIXED_PHASE] {continue}
+        for param in s.params {
+            if param.type==nil || !param.type.events || param.kind==.Storage_Write || filled_in_fixed[param.type] {continue}
+            writer,outside:=filled_outside[param.type]
+            if !outside {continue}
+            append(&g.errors,fmt.aprintf("%s: %s runs in fixed and reads %s, which only %s fills, and which is emptied every frame: a frame runs any number of ticks, so a tick would see it twice or never; read it in a frame step",s.where_,s.name,param.type.name,writer.name))
+        }
+    }
     // A cycle of after and before is reported once, also when its steps share several phases.
     reported:=make(map[string]bool,context.temp_allocator)
     phases:=PHASES
@@ -1322,6 +1347,15 @@ together :: proc(a,b:^Step) -> bool {
     loop:=a.loops[0] && b.loops[0] || a.loops[1] && b.loops[1]
     for on,phase in a.phases {
         if on && b.phases[phase] && loop {return true}
+    }
+    return false
+}
+
+// Whether a step runs in a phase of the frame, where only a tick that ran has refreshed the input of the tick.
+@(private="file")
+step_outside_fixed :: proc(s:^Step) -> bool {
+    for on,phase in s.phases {
+        if on && phase!=FIXED_PHASE && phase!=RELEASE_PHASE {return true}
     }
     return false
 }
@@ -1617,6 +1651,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
+            if _,found:=default_value(t);found {fmt.sbprintf(w,"    w.%s.default=default_%s\n",t.field,t.field)}
         }
         for t in g.types {
             if t.place!=place || t.kind!=.Storage || t.by_world || !included(t,editor) {continue}

@@ -236,9 +236,10 @@ It needs no component or configuration.
 - The `.navmesh` of a section stores the tiles and zones that touch its box; that of the scene
   that contains it, those that the boxes of its sections do not cover and the whole coarse graph.
   Those at the border are in both and are read once.
-- `nav.bake` creates it next to the scene, or the scene of the section edited in its world, in an
-  undo step; afterwards the editor rewrites in memory that of each `Navigation_Bake` of the edited
-  world every time the meshes settle, and it is saved with the scene.
+- `nav.bake` makes it next to the scene, or the scene of the section edited in its world, in an
+  undo step and in the memory of the registry; afterwards the editor rewrites in memory that of
+  each `Navigation_Bake` of the edited world every time the meshes settle. Only saving the scene
+  writes it to disk (its field is `owned`).
 - A world that loads the scene starts with those tiles and only builds those that changed. A file
   from another version or a damaged one is the `navigation.bake` problem and the mesh is built
   whole.
@@ -261,7 +262,8 @@ It needs no component or configuration.
   seated agent, which the call adds for the walk (and takes away after, unless it ends in a
   crossing) or makes seated while it lasts. It pauses the game and runs fixed ticks one at a time,
   as `play.step` without devices, so the same call on the same run walks the same; holds of
-  `play.input` act meanwhile. It ends `Arrived`, `Failed`, `Stopped` (the game stopped the agent),
+  `play.input` act meanwhile. In a game just started the first ticks of its limit wait for the
+  meshes. It ends `Arrived`, `Failed`, `Stopped` (the game stopped the agent),
   `Stuck` (moving without getting anywhere for `WALK_STUCK_SECONDS`) or `Timeout`. Not on a
   client run: navigation decides on the server.
 

@@ -67,12 +67,17 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         case package_folder(root,arg)!="": append(&packages,Test_Package{path=arg,folder=package_folder(root,arg)})
         case len(packages)>0: append(&packages[len(packages)-1].names,arg)
         case:
-            fmt.eprintfln("mirai test: %s is not a folder with Odin sources; the first argument is a package",arg)
+            fmt.eprintfln("mirai test: %s is not a folder with Odin sources; the first argument is a package, relative to the working folder (%s) or to the engine (%s), or absolute",arg,project.path_absolute(".",context.temp_allocator),root)
             fmt.eprintfln("Usage: mirai %s\n       mirai %s",TEST_USAGE,TEST_LIST_USAGE)
             return 2
         }
     }
-    if len(packages)==0 {fmt.eprintfln("Usage: mirai %s\n       mirai %s",TEST_USAGE,TEST_LIST_USAGE);return 2}
+    if len(packages)==0 {
+        // Inside a project with no package named: its game, as build.test does.
+        game:=project_game_folder(root)
+        if game=="" {fmt.eprintfln("Usage: mirai %s\n       mirai %s",TEST_USAGE,TEST_LIST_USAGE);return 2}
+        append(&packages,Test_Package{path=game,folder=game})
+    }
     if list {return test_list(packages[:])}
     for p in packages {
         if p.file!="" {fmt.eprintfln("mirai test: a file (%s) only goes with --list",p.file);return 2}
@@ -392,17 +397,23 @@ test_current :: proc(root,folder,executable,sources,stamp,key:string) -> bool {
     return true
 }
 
-// The folder of a package given as a path relative to the engine or absolute;
-// "" when it is no folder with Odin sources.
+// The folder of a package given as a path relative to the working folder or
+// to the engine, or absolute; "" when it is no folder with Odin sources.
 package_folder :: proc(root,path:string) -> string {
-    for candidate in ([2]string{path,join(root,path)}) {
-        if !os.is_absolute_path(candidate) || !os.is_dir(candidate) {continue}
+    for candidate in ([2]string{project.path_absolute(path,context.temp_allocator),join(root,path)}) {
+        if !os.is_dir(candidate) {continue}
         entries,_:=os.read_all_directory_by_path(candidate,context.temp_allocator)
         for entry in entries {
             if entry.type==.Regular && strings.has_suffix(entry.name,".odin") {return project.path_absolute(candidate)}
         }
     }
     return ""
+}
+
+// The folder of the game of the project the working folder is in, when it has Odin sources; "" outside one.
+project_game_folder :: proc(root:string) -> string {
+    owner:=project_of(project.path_absolute(".",context.temp_allocator))
+    return "" if owner=="" else package_folder(root,join(owner,project.FOLDER_NAMES[.Game]))
 }
 
 // The name of the executable of a package: its path in the engine, or its
@@ -475,7 +486,6 @@ package_collections :: proc(root,folder:string,flags:[]string) -> (collections:[
 
 // The project a folder belongs to: the nearest folder at or above it with a
 // project.mirai; "" when there is none.
-@(private="file")
 project_of :: proc(folder:string) -> string {
     at:=project.path_absolute(folder,context.temp_allocator)
     for {

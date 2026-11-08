@@ -42,6 +42,7 @@ import "mirai:core"
 @(component) Glow :: struct {value:f32}
 @(storage) Hud_State :: struct {value:f32}
 @(storage,events) Clicked :: struct {count:int}
+@(storage,events) Hits :: struct {count:int}
 @(storage,queue) Wishes :: struct {count:int}
 @(step="ui") hud_scores :: proc(rows:^core.Table(Score_Row)) {}
 @(step="render") hud_spawns :: proc(entities:^core.Entities) {}
@@ -50,6 +51,9 @@ import "mirai:core"
 @(step="ui") hud_glow :: proc(glows:^core.Table(Glow),state:^Hud_State,clicked:^Clicked,wishes:^Wishes) {}
 @(step="fixed") glow_reader :: proc(glows:core.Read(Glow),state:core.Ref(Hud_State),clicked:core.Ref(Clicked),wishes:^Wishes) {}
 @(step="frame render") glow_both :: proc(state:^Hud_State) {}
+@(step="frame") hits_shown :: proc(hits:^Hits) {}
+@(step="fixed") hits_ticked :: proc(hits:^Hits) {}
+@(step="fixed") hits_reader :: proc(hits:core.Ref(Hits)) {}
 `},
         {project.path(game,"game","game.odin",allocator=context.temp_allocator),"package game\nimport editor \"project:editor\"\n"+`@(step="fixed") steady :: proc() {}
 @(step="fixed") counted :: proc() -> int {return 0}
@@ -103,6 +107,7 @@ import "mirai:core"
         "hud_commands runs only in ui or render and creates or destroys entities",
         "hud_rules is server and runs only in ui or render",
         "glow_reader reads Glow, which only hud_glow writes, in ui or render",
+        "glow_reader runs in fixed and reads Clicked, which only hud_glow fills",
     }
     for want in wanted {
         found:=false
@@ -112,10 +117,11 @@ import "mirai:core"
     testing.expect_value(t,len(output.errors),len(wanted))
 }
 
-// The game loop leaves core.Input at the last tick in frame: a step that reads
-// it there is warned, and what the editor loop refills or fixed reads is not.
+// The game loop leaves core.Input and the actions made of it at the last tick
+// outside fixed: a step that reads them there is refused, and what the editor
+// loop refills or fixed reads is not.
 @(test)
-a_frame_step_of_the_game_that_reads_the_input_of_the_tick_is_warned :: proc(t:^testing.T) {
+a_step_of_the_game_that_reads_the_input_of_the_tick_outside_fixed_is_refused :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-rules-*",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
     defer os.remove_all(folder)
@@ -127,8 +133,16 @@ a_frame_step_of_the_game_that_reads_the_input_of_the_tick_is_warned :: proc(t:^t
 @(storage,copy=false) Frame_Input :: struct {using input:Input}
 Ref :: struct($T:typeid) {value:^T}
 `},
+        {project.path(engine,"engine","input","input.odin",allocator=context.temp_allocator),`package input
+import "mirai:core"
+@(storage,keep) Actions :: struct {count:u32}
+@(storage,keep) Frame_Actions :: struct {count:u32}
+@(params) Input_Of :: struct {actions:core.Ref(Actions)}
+@(params) Frame_Input_Of :: struct {actions:core.Ref(Frame_Actions)}
+`},
         {project.path(game,"game","game.odin",allocator=context.temp_allocator),`package game
 import "mirai:core"
+import inp "mirai:engine/input"
 @(params) Pad :: struct {device:core.Input}
 @(step="frame") stale_value :: proc(input:core.Input) {}
 @(step="frame") stale_ref :: proc(input:core.Ref(core.Input)) {}
@@ -137,6 +151,10 @@ import "mirai:core"
 @(step="frame") fresh :: proc(input:core.Frame_Input) {}
 @(step="fixed") ticked :: proc(input:core.Input) {}
 @(step="frame",loops="editor") refilled :: proc(input:core.Input) {}
+@(step="late") stale_actions :: proc(input:inp.Input_Of) {}
+@(step="input") stale_input :: proc(input:core.Input) {}
+@(step="ui") fresh_actions :: proc(input:inp.Frame_Input_Of) {}
+@(step="fixed") ticked_actions :: proc(input:inp.Input_Of) {}
 `},
     }
     for file in files {
@@ -146,24 +164,32 @@ import "mirai:core"
     }
     p:=project.Project{root=game,engine_root=engine}
     output:=world_generate(&p,context.temp_allocator)
-    testing.expectf(t,len(output.errors)==0,"%v",output.errors)
-    warned:=[]string{"stale_value","stale_ref","stale_bundle","stale_both"}
-    for step in warned {
-        found:=false
-        for warning in output.warnings {
-            found||=warning.severity==.Warning && strings.has_prefix(warning.message,step) && strings.contains(warning.message,"core.Frame_Input") && strings.has_suffix(warning.file,"game.odin") && warning.line>0
-        }
-        testing.expectf(t,found,"no warning names %s: %v",step,output.warnings)
+    refused:=[][2]string{
+        {"stale_value","core.Frame_Input"},{"stale_ref","core.Frame_Input"},{"stale_bundle","core.Frame_Input"},{"stale_both","core.Frame_Input"},
+        {"stale_input","core.Frame_Input"},{"stale_actions","input.Frame_Input_Of"},
     }
-    testing.expect_value(t,len(output.warnings),len(warned))
-    // A job gives them with what the compiler said.
+    for step in refused {
+        found:=false
+        for message in output.errors {
+            found||=strings.contains(message,step[0]) && strings.contains(message,"runs outside fixed") && strings.contains(message,step[1])
+        }
+        testing.expectf(t,found,"no error names %s: %v",step[0],output.errors)
+    }
+    testing.expect_value(t,len(output.errors),len(refused))
+}
+
+// A job gives the warnings of the generator with what the compiler said.
+@(test)
+a_job_joins_the_warnings_of_the_generator_to_the_diagnostics :: proc(t:^testing.T) {
     job:Job
     _=virtual.arena_init_growing(&job.arena)
     defer virtual.arena_destroy(&job.arena)
-    job.warnings=output.warnings
+    warnings:=[]Diagnostic{{severity=.Warning,message="the generator"}}
+    job.warnings=warnings
     compiled:=[]Diagnostic{{severity=.Error,message="the compiler"}}
     job.result.diagnostics=compiled
     job_done(&job)
-    testing.expect_value(t,len(job.result.diagnostics),len(warned)+1)
+    testing.expect_value(t,len(job.result.diagnostics),2)
     testing.expect_value(t,job.result.diagnostics[0].message,"the compiler")
+    testing.expect_value(t,job.result.diagnostics[1].message,"the generator")
 }

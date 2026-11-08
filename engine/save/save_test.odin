@@ -322,7 +322,7 @@ serve_init :: proc(t:^testing.T,f:^Save_Test,s:^Serve) -> bool {
 
 @(private="file")
 serve_destroy :: proc(f:^Save_Test,s:^Serve) {
-    saves_release(&s.work,&s.thumbnails,&f.app)
+    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,{},s.problems)
     work_free(&s.work)
     os.remove_all(s.folder)
     delete(s.folder)
@@ -430,7 +430,14 @@ a_slot_lists_what_it_is_and_its_thumbnail_without_loading_the_world :: proc(t:^t
     testing.expect_value(t,placed_at(w,5),[3]f32{1,2,3})
     testing.expect_value(t,base.text_get(s.game.label[:]),"Gate")
     testing.expect_value(t,s.game.played,125.5)
-    testing.expect_value(t,request_save(&s.requests,"gate",strings.repeat("x",LABEL_CAPACITY,context.temp_allocator)),Error.Invalid_Label)
+
+    // What is not valid does not reach the disk: its result and a problem say so.
+    request_save(&s.requests,"gate",strings.repeat("x",LABEL_CAPACITY,context.temp_allocator))
+    request_save(&s.requests,"bad/slot")
+    serve(&f,&s)
+    testing.expect_value(t,s.results.queue.items[0].error,Error.Invalid_Label)
+    testing.expect_value(t,s.results.queue.items[1].error,Error.Invalid_Slot)
+    testing.expect(t,core.problem_find(s.problems,core.NONE,"save.request")!=nil)
 }
 
 // The thumbnail of a slot is a texture of the assets the game shows by its
@@ -495,12 +502,12 @@ a_thumbnail_becomes_a_texture_the_game_shows_until_the_slot_changes :: proc(t:^t
     _,corrupt:=thumbnail_texture(&s.thumbnails,&s.state,&f.app,"broken")
     testing.expect_value(t,corrupt,Error.Corrupt)
 
-    testing.expect_value(t,request_delete(&s.requests,"gate"),Error.None)
+    request_delete(&s.requests,"gate")
     serve(&f,&s)
     testing.expect(t,!host.assets_loaded(&assets,fresh),"a deleted slot lets go of its texture")
     write(t,&f,&s,ref,"gate",pixels)
     last,_:=thumbnail_texture(&s.thumbnails,&s.state,&f.app,"gate")
-    saves_release(&s.work,&s.thumbnails,&f.app)
+    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,{},s.problems)
     testing.expect(t,last!={} && !host.assets_loaded(&assets,last),"the world that goes lets go of them")
     testing.expect_value(t,assets.stats.generated,0)
 }
@@ -571,7 +578,7 @@ autosaves_go_round_their_slots_and_a_checkpoint_loads_back :: proc(t:^testing.T)
     save_test_entity(w,5,{1,2,3})
     s.settings.autosave_slots=2
     for expected,i in ([]string{"autosave 1","autosave 2","autosave 1"}) {
-        testing.expect_value(t,request_autosave(&s.requests,fmt.tprintf("Save %d",i)),Error.None)
+        request_autosave(&s.requests,fmt.tprintf("Save %d",i))
         serve(&f,&s)
         if !testing.expect_value(t,len(s.results.queue.items),1) {return}
         r:=s.results.queue.items[0]

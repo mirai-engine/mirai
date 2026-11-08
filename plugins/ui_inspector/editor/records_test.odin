@@ -500,6 +500,7 @@ a_check_reports_each_path_the_game_lacks_and_why_records_do_not_load :: proc(t:^
     count:=bind_check(&types,context.allocator,nil,nil,records_data(&r),nil,true,found[:])
     if !testing.expect_value(t,count,2) {return}
     testing.expect(t,found[0].row==1 && found[0].fault==.Path && serial.text_field(found[0].path[:])=="trips")
+    testing.expect_value(t,serial.text_field(found[0].name[:]),serial.text_field(r.nodes[1].name[:]))
     testing.expect(t,found[1].row==3 && found[1].binding==.Value && serial.text_field(found[1].path[:])=="fuel")
     // An override of a node its template does not have.
     texts:=make([dynamic]u8,context.temp_allocator)

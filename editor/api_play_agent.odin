@@ -42,7 +42,7 @@ Api_Play_Observe :: struct {
     problems:[1]Api_Play_Observe_Problem `mirai:"list,optional,label=core.report problems since the last observe"`,
     problems_more:int `mirai:"optional,label=New problems that did not fit"`,
     targets:[1]Api_Play_Observe_Target `mirai:"list,optional,label=The nearest matches of targets"`,
-    capture:Api_Play_Capture_Result `mirai:"optional,label=The image written to path"`,
+    capture:Api_Capture_Result `mirai:"optional,label=The image written to path"`,
     capture_error:[256]u8 `mirai:"optional,text,label=Why the image of path could not be written"`,
 }
 Api_Play_Observe_Player :: struct {
@@ -376,10 +376,10 @@ observe_capture_write :: proc(s:^Session,call:^api.Call,out:^serial.Writer,path:
     params:serial.Writer
     serial.writer_init(&params,0,call.allocator)
     serial.text_write_raw(&params,`{"path":`);serial.text_write_string(&params,path)
-    serial.text_write_raw(&params,`,"frames":1,"width":`);serial.text_write_int(&params,API_OBSERVE_CAPTURE_WIDTH)
+    serial.text_write_raw(&params,`,"of":"Game","frames":1,"width":`);serial.text_write_int(&params,API_OBSERVE_CAPTURE_WIDTH)
     serial.write_u8(&params,'}')
     answer:=make([]u8,4096,call.allocator)
-    text,error,ok:=api_scenario_call(server,"play.capture",string(serial.writer_bytes(&params)),answer)
+    text,error,ok:=api_scenario_call(server,"capture",string(serial.writer_bytes(&params)),answer)
     if !ok {
         api.write_text(out,"capture_error",error.message)
         return

@@ -14,7 +14,7 @@ plays the same ticks. The QA monitors watch every tick the API runs (`play.step`
 ## Explore
 
 ```bash
-mirai rpc --project . play.start '{}'            # answers building while Odin compiles: repeat
+mirai rpc --project . play.start '{}'            # builds first when Odin changed
 mirai rpc --project . play.explore '{"mode":"Ui","seconds":20}' \
   --select stopped,pages,activated,never,exits,passed
 mirai rpc --project . play.explore '{"mode":"World","seed":7,"seconds":60}' \
@@ -82,7 +82,8 @@ mirai rpc --project . play.qa.report '{"violation":0,"filmstrip":"C:/work/bug.pn
 
 ## Pitfalls that fail silently
 
-- Monitors armed after tick 0 find violations but cannot write a repro (the answer says why).
+- A run that advanced outside the API cannot write a repro (the answer says why): the monitors
+  may start at any tick, but every tick from the first must come from `play.step`.
 - `play.explore` in `World` mode on a game with no `Axis2` action fails with a message that says
   to name the action with `move`; `Ui` mode needs a screen with buttons on top (`No_Ui` if none).
 - An exit button never ends the run: look in `exits`, not at `stopped`.

@@ -171,7 +171,7 @@ profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_a
     if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
     if !testing.expect(t,rigs_apply(&playback.states[0],&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
     requests:Modifier_Requests;defer delete(requests.controls.items);defer delete(requests.queue.items)
-    testing.expect(t,modifier_control(&requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0}))
+    modifier_control(&requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0})
     modifier_take(&modifiers,&requests,core.read(&configs),nil,.1)
     geometry,inputs:=modifiers.geometry,modifiers.inputs
     control,joint:=modifiers.controls[0],modifiers.spring_states[0].springs[2]
@@ -242,17 +242,19 @@ named_modifier_controls_preserve_full_bone_paths_and_reject_ambiguous_references
     testing.expect(t,modifier_append(&modifiers.look,rig,right) && modifier_append(&modifiers.look,rig,left))
     ground:=FOOT_GROUNDING_DEFAULT;ground.rig=rig;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
     requests:Modifier_Requests;defer delete(requests.controls.items)
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left)))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     slot,ok:=modifier_named_slot(&modifiers,rig,.Look,modifier_operation_name(&left))
     ground_slot,ground_ok:=modifier_named_slot(&modifiers,rig,.Grounding,"grounding")
-    queued:=modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.8,enabled=true},modifier_operation_name(&right))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.8,enabled=true},modifier_operation_name(&right))
+    queued:=len(requests.controls.items)==2
     context=saved
     testing.expect(t,ok && slot==1 && ground_ok && ground_slot==0 && queued)
     testing.expect(t,len(requests.controls.items)==2 && requests.controls.items[0].slot==1 && requests.controls.items[1].slot==0)
     testing.expect(t,modifier_append(&modifiers.look,rig,left))
-    testing.expect(t,!modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=1,enabled=true},modifier_operation_name(&left)))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=1,enabled=true},modifier_operation_name(&left))
     testing.expect_value(t,len(requests.controls.items),2)
+    testing.expect_value(t,requests.controls.refused,1)
 }
 
 @(test)
@@ -274,7 +276,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm"))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect_value(t,modifiers.chain_ik.values[0].weight,f32(.2))
     core.at(&modifiers.chain_ik,0).enabled=false
@@ -335,9 +337,9 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_retarget_without_po
     testing.expect(t,modifier_append(&modifiers.retarget_chains,transfer,chain))
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true}))
+    modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true})
+    modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true})
+    modifier_goal(&requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true})
     modifier_take(&modifiers,&requests,core.read(&configs),&problems)
     testing.expect_value(t,len(modifiers.goals),3)
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{1,2,3})
@@ -347,7 +349,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_retarget_without_po
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<64 {
-        stable &&=modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
+        modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
         modifier_take(&modifiers,&requests,core.read(&configs),&problems)
         stable &&=len(modifiers.goals)==3 && modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{4,5,6} && modifiers.retarget_chains.values[0].enabled
     }
@@ -366,7 +368,7 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,0);testing.expect(t,found && diagnostic.valid && diagnostic.reached)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body")
     for goal in core.take(&requests.queue) {modifier_apply_goal(&modifiers,goal,nil)}
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{.5,1.8,0})
     copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))

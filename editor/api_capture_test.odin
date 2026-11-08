@@ -40,18 +40,11 @@ a_capture_given_a_path_answers_where_it_is_and_no_image :: proc(t:^testing.T) {
         serial.writer_init(&out)
         defer serial.writer_destroy(&out)
         play:=api.Call{out=&out,allocator=context.temp_allocator}
-        api_play_capture_answer(&play,file,64,32,shown)
+        api_capture_reply(&play,file,64,32,shown)
         text:=string(serial.writer_bytes(&out))
-        api_result_shape_expect(t,text,Api_Play_Capture_Result)
+        api_result_shape_expect(t,text,Api_Capture_Result)
         testing.expect(t,strings.contains(text,file) && !strings.contains(text,"content") && !strings.contains(text,"data"),text)
         testing.expect_value(t,play.image,shown?file:"")
-
-        method:=api.Method{result_id=Api_Capture_Result}
-        result:Api_Capture_Result
-        editor:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
-        api_capture_reply(&editor,file,64,32,shown)
-        testing.expect(t,base.text_get(result.path[:])==file && result.width==64 && result.height==32,"the file and its size")
-        testing.expect_value(t,editor.image,shown?file:"")
     }
 }
 

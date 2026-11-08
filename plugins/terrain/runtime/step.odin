@@ -1,6 +1,7 @@
 package terrain
 
 import "base:runtime"
+import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
@@ -11,6 +12,7 @@ import sim "plugins:physics/runtime/sim"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import mm "mirai:std/math"
 
 // The chunks of the terrains: entities terrain makes under each one, whose
 // meshes, tints and colliders it writes (shared tables). Their Transform and
@@ -511,6 +513,52 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
 }
 
 // The loaded source of the terrain a request names; without it the request is a problem of that entity.
+// The terrain a request edits and its brush as its source reads it: what an
+// edit keys on from here on, also on the network.
+@(private)
+edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (resolved:Edit_Request,ok:bool) {
+    owner:=request.owner
+    if owner==core.NONE {owner=dig_owner(request.brush,data,terrains,worlds) or_return}
+    return {owner,brush_local(request.brush,edit_place(worlds,owner))},true
+}
+
+@(private)
+edit_place :: proc(worlds:core.Read(core.World_Transform),owner:core.Entity) -> mm.Transform {
+    if world,found:=core.get(worlds,owner);found {return world.transform}
+    return mm.TRANSFORM_IDENTITY
+}
+
+// The terrain a brush of the world touches: of several, the nearest to its
+// center, then the one of the smallest footprint (a Volume over the ground it
+// joins). A Heightfield reaches any height.
+@(private)
+dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (owner:core.Entity,ok:bool) {
+    best,smallest:=max(f32),max(f32)
+    for marker,row in terrains.table.values[:core.count(terrains)] {
+        entry:=data_find(data,marker.source)
+        if entry==nil {continue}
+        e:=core.entity_at(terrains,row)
+        local:=brush_local(brush,edit_place(worlds,e))
+        s:=&entry.source
+        low:=source_origin(s)
+        high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
+        if s.kind==.Mesh {
+            low,high=max(f32),min(f32)
+            for chunk in s.mesh_chunks {
+                for axis in 0..<3 {low[axis],high[axis]=min(low[axis],chunk.low[axis]),max(high[axis],chunk.high[axis])}
+            }
+        }
+        outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
+        if s.kind==.Heightfield {outside.y=0}
+        distance:=linalg.length(outside)
+        reach:=max(local.radius,linalg.length(local.extent))
+        area:=(high.x-low.x)*(high.z-low.z)
+        if !(distance<=reach) || distance>best || distance==best && area>=smallest {continue}
+        owner,ok,best,smallest=e,true,distance,area
+    }
+    return
+}
+
 @(private)
 request_source :: proc(data:^Terrain_Data,terrains:core.Read(Terrain),owner:core.Entity,request:string,problems:^core.Problems,a:^host.Assets) -> (entry:^Data_Source,ok:bool) {
     marker,known:=core.get(terrains,owner)
@@ -687,7 +735,8 @@ terrain_update :: proc(
         }
     }
     if !time.playing || frame.phase==.Fixed {
-        for request in core.take(&requests.edits) {
+        for asked_edit in core.take(&requests.edits) {
+            request:=edit_resolve(asked_edit,data,core.read(terrains),worlds) or_continue
             entry:=request_source(data,core.read(terrains),request.owner,"an edit",problems,app.assets) or_continue
             change:=data_edit(data,entry,request.brush)
             if change.error!=.None {

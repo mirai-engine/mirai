@@ -6,7 +6,7 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 Ai_Task_Params :: struct {
-    region:[4]f32 `mirai:"label=x y width and height in window points"`,
+    region:[4]f32 `mirai:"optional,label=x y width and height in window points; omitted: the whole viewport"`,
     prompt:[AI_MESSAGE_BYTES]u8 `mirai:"text"`,
     agent:[32]u8 `mirai:"optional,text,label=Id of a connection of ai.connections; empty uses the selected one"`,
     model:[128]u8 `mirai:"optional,text"`,
@@ -36,14 +36,6 @@ Ai_Permission_Params :: struct {
     cancel:bool `mirai:"optional,label=Cancel the request instead of answering it"`,
 }
 
-Ai_Task_Files :: struct {
-    prompt:[AI_PATH_BYTES]u8 `mirai:"text,label=The instructions of the editor"`,
-    message:[AI_PATH_BYTES]u8 `mirai:"text,label=What the user asked"`,
-    turn_context:[AI_PATH_BYTES]u8 `mirai:"text,key=context"`,
-    image:[AI_PATH_BYTES]u8 `mirai:"text,label=Empty without a capture"`,
-    mcp:[AI_PATH_BYTES]u8 `mirai:"text"`,
-}
-
 Ai_Task_Result :: struct {
     id:int `mirai:"label=The conversation; ai.task continues it with conversation"`,
     state:[16]u8 `mirai:"text,label=queued; running; done; failed or cancelled"`,
@@ -51,22 +43,15 @@ Ai_Task_Result :: struct {
     agent:[32]u8 `mirai:"text,label=The connection that runs it; until it starts the one asked for"`,
     model:[128]u8 `mirai:"text"`,
     effort:[32]u8 `mirai:"text"`,
-    native_session:[256]u8 `mirai:"text,label=The session as the agent names it"`,
     play:bool `mirai:"label=Sent during a Play: the agent gets the live player"`,
-    folder:[AI_PATH_BYTES]u8 `mirai:"text,label=Where the files of the turn are"`,
-    files:Ai_Task_Files `mirai:"label=The paths of the files of the turn by what they hold"`,
     region:[4]f32 `mirai:"label=x y width and height in window points"`,
     entities:int `mirai:"label=The entities of the region its context lists"`,
     image:bool `mirai:"label=Whether the capture of the region was written"`,
-    pid:int `mirai:"label=Of the process of the agent"`,
-    exit_code:int `mirai:"label=Of the process of the agent"`,
     seconds:f32 `mirai:"label=How long it ran"`,
     steps:int `mirai:"label=The changes its review recorded"`,
     revertible:bool `mirai:"label=Whether ai.revert can revert it"`,
     review_finished:bool `mirai:"label=The user confirmed its result"`,
     review_pending:bool `mirai:"label=Changes to the scene or its settings or files wait for review"`,
-    icon:int `mirai:"label=Index of the look of the agent"`,
-    color:int `mirai:"label=Index of the look of the agent"`,
     files_changed:bool `mirai:"label=The agent changed files of the project its review could not keep (larger than 1 MB, or past its capacity); ai.revert refuses it"`,
     changed:[1]base.Entity_Id `mirai:"list,label=The entities it changed"`,
     changed_files:[1][AI_PATH_BYTES]u8 `mirai:"text,list,label=Project paths of the files it wrote through the API"`,
@@ -180,27 +165,15 @@ ai_task_write :: proc(s:^Session,task:^Ai_Task,w:^serial.Writer,transcript:bool,
     api.write_text(w,"agent",base.text_get(task.agent[:]))
     api.write_text(w,"model",string(task.conversation.model[:task.conversation.model_len]))
     api.write_text(w,"effort",string(task.conversation.effort[:task.conversation.effort_len]))
-    api.write_text(w,"native_session",string(task.conversation.native_session[:task.conversation.native_session_len]))
     api.write_bool(w,"play",task.play)
-    api.write_text(w,"folder",ai_task_path(s,task,""))
-    api.write_key(w,"files");serial.write_u8(w,'{')
-    api.write_text(w,"prompt",ai_task_path(s,task,AI_FILE_PROMPT),true)
-    api.write_text(w,"message",ai_task_path(s,task,AI_FILE_MESSAGE))
-    api.write_text(w,"context",ai_task_path(s,task,AI_FILE_CONTEXT))
-    api.write_text(w,"image",task.image?ai_task_path(s,task,AI_FILE_IMAGE):"")
-    api.write_text(w,"mcp",ai_task_path(s,task,AI_FILE_MCP))
-    serial.write_u8(w,'}')
     ai_put_rect(w,"region",task.region)
     api.write_int(w,"entities",i64(task.entities))
     api.write_bool(w,"image",task.image)
-    api.write_int(w,"pid",i64(task.pid))
-    api.write_int(w,"exit_code",i64(task.exit_code))
     api.write_key(w,"seconds");api.write_number(w,task.seconds)
     api.write_int(w,"steps",i64(len(task.review.transactions)))
     api.write_bool(w,"revertible",ai_task_finished(task) && !task.review_finished && ai_review_revertible(s,&task.review) && !task.files_changed && ai_task_current(s,task))
     api.write_bool(w,"review_finished",task.review_finished)
     api.write_bool(w,"review_pending",task.review.pending)
-    api.write_int(w,"icon",i64(task.icon));api.write_int(w,"color",i64(task.color_index))
     api.write_bool(w,"files_changed",task.files_changed)
     api.write_key(w,"changed");serial.write_u8(w,'[')
     for id,index in task.review.changed_ids {if index>0 {serial.write_u8(w,',')};api.write_id(w,id)}
@@ -236,6 +209,7 @@ ai_method_task :: proc(s:^Session,call:^api.Call) {
     m:=s.ai
     params:=api.call_params(call,Ai_Task_Params)
     region:=ui.Rect{params.region[0],params.region[1],params.region[2],params.region[3]}
+    if region=={} {region={s.viewport.origin.x,s.viewport.origin.y,s.viewport.size.x,s.viewport.size.y}}
     prompt:=base.text_get(params.prompt[:])
     api_frames(s,1,HEADLESS_DT)
     if params.conversation!=0 && ai_task_find(m,params.conversation)==nil {

@@ -11,7 +11,7 @@ mirai image stats shot.png                        # mean_luma, black_percent, sa
 ```
 
 `mean_luma` is linear luminance 0 to 1; `black_percent` and `saturated_percent` are the share of
-crushed and clipped pixels. In a played game, `play.capture` with a `path`. Look at the PNG too:
+crushed and clipped pixels. In a played game, `capture` with a `path`. Look at the PNG too:
 a good mean can still hide a black corner. `engine.status` gives the `ev100` the editor's view
 uses.
 

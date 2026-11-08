@@ -19,7 +19,7 @@ Api_Raycast_Params :: struct {
     direction:[3]f32 `mirai:"optional,label=Where the ray goes in the world; not zero; it is normalized"`,
     point:[2]f32 `mirai:"optional,label=Instead of origin and direction: window points over the viewport the ray goes through from the camera of the editor"`,
     reach:f32 `mirai:"optional,unit=m,label=How far the ray looks"`,
-    ignore:[API_SPATIAL_LIMIT]base.Entity_Id `mirai:"optional,label=Entities the ray goes through with what hangs from them"`,
+    ignore:[API_SPATIAL_LIMIT][API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Entities the ray goes through with what hangs from them by name or path Parent/Child or id"`,
 }
 Api_Raycast_Result :: struct {
     hit:bool `mirai:"label=Whether the ray met a mesh; without a hit the rest is empty"`,
@@ -30,8 +30,8 @@ Api_Raycast_Result :: struct {
     distance:f32 `mirai:"unit=m"`,
 }
 
-Api_Spatial_Ids_Params :: struct {
-    ids:[API_SPATIAL_LIMIT]base.Entity_Id `mirai:"label=Entities of the scene"`,
+Api_Spatial_Entities_Params :: struct {
+    entities:[API_SPATIAL_LIMIT][API_ENTITY_TEXT]u8 `mirai:"text,label=Entities of the scene by name or path Parent/Child or id"`,
 }
 Api_Bounds_Entity :: struct {
     id:base.Entity_Id,
@@ -39,13 +39,13 @@ Api_Bounds_Entity :: struct {
     meshes:bool `mirai:"label=Whether meshes make the box; without them it is the point of the entity"`,
 }
 Api_Bounds_Result :: struct {
-    entities:[API_SPATIAL_LIMIT]Api_Bounds_Entity `mirai:"trim,label=One per id in their order"`,
+    entities:[API_SPATIAL_LIMIT]Api_Bounds_Entity `mirai:"trim,label=One per entity in their order"`,
     min,max,center,size:[3]f32 `mirai:"label=Of the box around all of them"`,
     meshes:bool `mirai:"label=Whether any of them has meshes"`,
 }
 
 Api_Ground_Params :: struct {
-    ids:[API_SPATIAL_LIMIT]base.Entity_Id `mirai:"label=Entities of the scene to rest on what is under them; none hanging from another"`,
+    entities:[API_SPATIAL_LIMIT][API_ENTITY_TEXT]u8 `mirai:"text,label=Entities of the scene by name or path Parent/Child or id to rest on what is under them; none hanging from another"`,
     offset:f32 `mirai:"optional,unit=m,label=Height of the bottom of each over the surface"`,
     align:bool `mirai:"optional,label=Also turn each so that its up axis follows the normal of the surface"`,
 }
@@ -57,15 +57,15 @@ Api_Ground_Entity :: struct {
     moved:f32 `mirai:"unit=m,label=How far it went up; negative is down"`,
 }
 Api_Ground_Result :: struct {
-    entities:[API_SPATIAL_LIMIT]Api_Ground_Entity `mirai:"trim,label=One per id in their order"`,
+    entities:[API_SPATIAL_LIMIT]Api_Ground_Entity `mirai:"trim,label=One per entity in their order"`,
 }
 
 @(private)
 spatial_api_register :: proc(s:^Session,st:^Api_State) {
     raycast:=Api_Raycast_Params{reach=PICK_REACH}
-    api_register(s,st,{name="scene.raycast",summary="The first mesh of the document a ray meets: the one picking in the viewport would select.",params=Api_Raycast_Params,result=Api_Raycast_Result,defaults=&raycast,flags={.Core,.Read_Only},run=api_scene_raycast})
-    api_register(s,st,{name="scene.bounds",summary="The boxes in the world of entities of the document with what hangs from them and the box around them all.",params=Api_Spatial_Ids_Params,result=Api_Bounds_Result,flags={.Core,.Read_Only},run=api_scene_bounds})
-    api_register(s,st,{name="scene.ground",flags={.Core},summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=Api_Ground_Params,result=Api_Ground_Result,run=api_scene_ground})
+    api_register(s,st,{name="scene.raycast",summary="The first mesh of the document a ray meets: the one picking in the viewport would select.",params=Api_Raycast_Params,result=Api_Raycast_Result,defaults=&raycast,flags={.Read_Only},run=api_scene_raycast})
+    api_register(s,st,{name="scene.bounds",summary="The boxes in the world of entities of the document with what hangs from them and the box around them all.",params=Api_Spatial_Entities_Params,result=Api_Bounds_Result,flags={.Read_Only},run=api_scene_bounds})
+    api_register(s,st,{name="scene.ground",summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=Api_Ground_Params,result=Api_Ground_Result,run=api_scene_ground})
 }
 
 @(private="file")
@@ -87,28 +87,6 @@ spatial_given :: proc(call:^api.Call,key:string) -> bool {
         if _,ok:=rpc_raw(&a);!ok {break}
     }
     return false
-}
-
-// The entities of a list of ids: each one of the scene and none twice.
-@(private="file")
-spatial_entities :: proc(call:^api.Call,w:core.World_Ref,ids:[]base.Entity_Id,what:string) -> (entities:[]core.Entity,ok:bool) {
-    out:=make([dynamic]core.Entity,0,len(ids),context.temp_allocator)
-    for id,i in ids {
-        if id==0 {continue}
-        e:=api_entity(w,id)
-        if e==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: 0x%016x is not an entity of the scene; scene.inspect lists them",what,i,u64(id))
-            return
-        }
-        for other in out {
-            if other==e {
-                api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: 0x%016x is listed twice; list each entity once",what,i,u64(id))
-                return
-            }
-        }
-        append(&out,e)
-    }
-    return out[:],true
 }
 
 // The bodies of the scene with their places from the locals; with ghosts,
@@ -175,7 +153,7 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
     if !spatial_in_edit(s,call,"scene.raycast") {return}
     params:=api.call_params(call,Api_Raycast_Params)
     w:=edited_world(s)
-    ignore,known:=spatial_entities(call,w,params.ignore[:],"ignore")
+    ignore,known:=api_call_entities(call,w,params.ignore[:],"ignore")
     if !known {return}
     if !spatial_finite({params.reach}) || params.reach<=0 {
         api.call_fail(call,api.INVALID_PARAMS,"reach must be a finite number of meters above 0")
@@ -226,12 +204,12 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_scene_bounds :: proc(s:^Session,call:^api.Call) {
     if !spatial_in_edit(s,call,"scene.bounds") {return}
-    params:=api.call_params(call,Api_Spatial_Ids_Params)
+    params:=api.call_params(call,Api_Spatial_Entities_Params)
     w:=edited_world(s)
-    entities,known:=spatial_entities(call,w,params.ids[:],"ids")
+    entities,known:=api_call_entities(call,w,params.entities[:],"entities")
     if !known {return}
     if len(entities)==0 {
-        api.call_failf(call,api.INVALID_PARAMS,"ids must name 1 to %d entities of the scene",API_SPATIAL_LIMIT)
+        api.call_failf(call,api.INVALID_PARAMS,"entities must name 1 to %d entities of the scene",API_SPATIAL_LIMIT)
         return
     }
     items:=spatial_items(s,w,true)
@@ -244,6 +222,17 @@ api_scene_bounds :: proc(s:^Session,call:^api.Call) {
         result.meshes||=meshes
     }
     result.min,result.max,result.center,result.size=all.min,all.max,(all.min+all.max)*0.5,all.max-all.min
+}
+
+// The box around some entities of a world, with what hangs from them.
+api_entities_box :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> mm.Aabb {
+    items:=spatial_items(s,w,true)
+    all:=mm.Aabb{{1e30,1e30,1e30},{-1e30,-1e30,-1e30}}
+    for e in entities {
+        box,_:=spatial_box(s,w,items,e)
+        all={linalg.min(all.min,box.min),linalg.max(all.max,box.max)}
+    }
+    return all
 }
 
 // The highest surface the rays down from the footprint of a box meet: the
@@ -279,10 +268,10 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
     }
     if !api_edit_begin(s,call,"Ground") {return}
     w:=edited_world(s)
-    entities,known:=spatial_entities(call,w,params.ids[:],"ids")
+    entities,known:=api_call_entities(call,w,params.entities[:],"entities")
     if !known {api_edit_end(s,call,false);return}
     if len(entities)==0 {
-        api.call_failf(call,api.INVALID_PARAMS,"ids must name 1 to %d entities of the scene",API_SPATIAL_LIMIT)
+        api.call_failf(call,api.INVALID_PARAMS,"entities must name 1 to %d entities of the scene",API_SPATIAL_LIMIT)
         api_edit_end(s,call,false)
         return
     }
@@ -293,13 +282,13 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
         id:=api_entity_id(w,e)
         for other in entities {
             if other!=e && entity_under(w,e,other) {
-                api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: 0x%016x hangs from 0x%016x which is listed too and moves it; list only the one above",i,u64(id),u64(api_entity_id(w,other)))
+                api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: 0x%016x hangs from 0x%016x which is listed too and moves it; list only the one above",i,u64(id),u64(api_entity_id(w,other)))
                 api_edit_end(s,call,false)
                 return
             }
         }
         if !entity_has(w,e,core.Transform) {
-            api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: 0x%016x has no Transform to move",i,u64(id))
+            api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: 0x%016x has no Transform to move",i,u64(id))
             api_edit_end(s,call,false)
             return
         }
@@ -307,7 +296,7 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
         box,_:=spatial_box(s,w,boxes,e)
         height,normal,found:=spatial_ground_surface(s,w,surfaces,e,box)
         if !found {
-            api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: nothing shown is under 0x%016x %q; move it over a surface first or leave it out",i,u64(id),entity_label(w,e))
+            api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: nothing shown is under 0x%016x %q; move it over a surface first or leave it out",i,u64(id),entity_label(w,e))
             api_edit_end(s,call,false)
             return
         }
@@ -317,7 +306,7 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
             placed.rotation=linalg.normalize(mm.quat_between(up,linalg.normalize(normal))*world.rotation)
             inverse,invertible:=mm.transform_inverse_matrix(world)
             if !invertible {
-                api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: 0x%016x has no size on some axis and cannot turn; give it a scale or leave align out",i,u64(id))
+                api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: 0x%016x has no size on some axis and cannot turn; give it a scale or leave align out",i,u64(id))
                 api_edit_end(s,call,false)
                 return
             }
@@ -328,7 +317,7 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
         placed.position.y+=moved
         local,related:=mm.transform_relative(placed,entity_parent_world(w,e))
         if !related {
-            api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: the parent of 0x%016x has no size on some axis",i,u64(id))
+            api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: the parent of 0x%016x has no size on some axis",i,u64(id))
             api_edit_end(s,call,false)
             return
         }
@@ -340,7 +329,7 @@ api_scene_ground :: proc(s:^Session,call:^api.Call) {
     }
     for e,i in entities {
         if !transform_set(s,e,places[i]) {
-            api.call_failf(call,api.SERVER_ERROR,"ids[%d]: the transform of 0x%016x cannot be written now; another user holds it",i,u64(api_entity_id(w,e)))
+            api.call_failf(call,api.SERVER_ERROR,"entities[%d]: the transform of 0x%016x cannot be written now; another user holds it",i,u64(api_entity_id(w,e)))
             break
         }
     }

@@ -39,6 +39,15 @@ commands_add :: proc(c:Commands,e:Entity,value:$T) {
     add(t,e,value)
 }
 
+// What a new row of T starts as in this World; zero when T is no component of it.
+commands_default :: proc(c:Commands,$T:typeid) -> (value:T) {
+    if t:=world_table_of(World_Ref{c.data,c.info,.World},T);t!=nil {value=table_default(t)}
+    return
+}
+
+// Gives the entity a row of T at its default, as commands_add does.
+commands_add_default :: proc(c:Commands,e:Entity,$T:typeid) {commands_add(c,e,commands_default(c,T))}
+
 // Takes the row of T from the entity at the end of the function.
 commands_remove :: proc(c:Commands,e:Entity,$T:typeid) {
     if t:=world_table_of(World_Ref{c.data,c.info,.World},T);t!=nil {remove(t,e)}

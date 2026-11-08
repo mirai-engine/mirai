@@ -256,7 +256,7 @@ pose_bake_preserves_other_clips_and_undoes_without_publishing_on_failure :: proc
     animation:=anim.ANIMATION_DEFAULT;animation.asset=source_id;core.add(&f.world.animations,f.rig,animation);pose_bake_test_settle(&f.world,nil,nil)
     result:=authoring_test_execute(a,"bake",`{"id":"11","path":"final.anim","clip":"Still","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     output_id:=authoring_test_id(a,"final.anim");revision:=authoring_test_revision(a,"final.anim")
-    result=authoring_test_execute(a,"bake",fmt.tprintf(`{{"id":"11","asset":"%s","clip":"Other","start":0,"end":0.1,"rate":10}}`,authoring_test_id_text(output_id)));if !testing.expect(t,result.code==0,result.message) {return}
+    result=authoring_test_execute(a,"bake",`{"id":"11","path":"final.anim","clip":"Other","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None)
     view,error:=asset.animation_view(&file,&a.assets.types);testing.expect(t,error==.None && len(view.clips)==2 && len(view.tracks)==30);asset.asset_close(&file)
     failure:=Pose_Bake_Failing_Copy{owner=a.app.allocator,fail_at=3};saved:=a.app.allocator;a.app.allocator={pose_bake_failing_copy_allocator,&failure}

@@ -36,7 +36,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     }
     id :: proc(a:^Authoring_Test,path:string) -> string {return authoring_test_id_text(authoring_test_id(a,path))}
     expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk"}}`,authoring_test_id_text(library)),`"path"`,`"Walk"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk","section":"Track","track":0}}`,authoring_test_id_text(library)),`"keys"`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk","section":"Track","target":"root","property":"Position"}}`,authoring_test_id_text(library)),`"keys"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","section":"Body"}}`,id(a,"figure.skeleton")),`"part":"Head"`,`"stored":true`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.skeleton")),`"bones_total"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.pose")),`"look"`)
@@ -114,7 +114,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     a.session.mode=.Play
     world:=core.world_ref(&f.world,&f.info)
     for _ in 0..<6 {
-        testing.expect(t,anim.match_goal(&f.world.requests,{rig=f.rig,mode=1,velocity={0,0,1},desired={0,0,1},facing={0,0,1},acceleration=10,braking=10}))
+        anim.match_goal(&f.world.requests,{rig=f.rig,mode=1,velocity={0,0,1},desired={0,0,1},facing={0,0,1},acceleration=10,braking=10})
         testing.expect(t,anim.animation_evaluate(world,&a.app,1.0/60))
     }
     refused(t,a,{{`{"id":"11"}`,"Missing_Entity","handle in entity"},{`{"entity":"0000000000000001"}`,"Missing_Entity","play.inspect"},{`{"entity":"rig"}`,"Invalid_Handle","play.inspect"},{fmt.tprintf(`{{"id":"11","entity":"%s"}}`,handle),"Ambiguous_Entity","play.inspect"}})

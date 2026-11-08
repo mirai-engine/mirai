@@ -26,7 +26,6 @@ Vfx_Editor :: struct {
     ready:bool,
     document:Effect_Document,
     thumbnail:Effect_Preview, // where the thumbnails of effects are drawn
-    bake:Grid_Bake_Request,
 }
 
 vfx_editor_free :: proc(v:^Vfx_Editor) {

@@ -117,7 +117,7 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 morph_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Morph_Set_Params)
-    if editor.watching(s) {authoring_failure(call,"mode","Edit_Blocked","Edit, Play or Simulation","Watch","A watched world cannot be changed",api.SERVER_ERROR);return}
+    if editor.watching(s) {authoring_failure(call,"mode","Edit_Blocked","Edit, Play or Simulation","Watch","A watched world cannot be changed",fix="Stop watching the run first");return}
     name:=base.text_get(p.name[:])
     if name=="" {authoring_failure(call,"name","Required","the name of a target","empty","Use animation.inspect parts Morphs to choose a target by name");return}
     if !finite(p.value) || p.mode>max(anim.Morph_Weight_Mode) {authoring_failure(call,"value","Invalid_Value","a finite weight and a valid mode",fmt.tprintf("%v",p.value),"The target weight or mode is invalid");return}

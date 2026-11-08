@@ -15,9 +15,9 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import rag "plugins:ragdoll/runtime"
 
-physics_ragdoll_station :: proc(o:^Out,s:^Scene_Out,origin:mm.Vec3) -> base.Entity_Id {
+physics_ragdoll_station :: proc(o:^Out,s:^asset.Scene_Builder,origin:mm.Vec3) -> base.Entity_Id {
     folder::"assets/models/physics-ragdoll";os.make_directory_all(path(o,folder))
-    skeleton_id,mesh_id,clip_id:=id_of("skeleton","physics-ragdoll"),id_of("mesh","physics-ragdoll"),id_of("animation","physics-ragdoll")
+    skeleton_id,mesh_id,clip_id:=asset.content_id(PROJECT,"skeleton","physics-ragdoll"),asset.content_id(PROJECT,"mesh","physics-ragdoll"),asset.content_id(PROJECT,"animation","physics-ragdoll")
     names:=[7]string{"torso","head","arm.left","arm.right","hips","leg.left","leg.right"}
     parents:=[7]i32{-1,0,0,0,0,4,4}
     local:=[7]mm.Vec3{{0,1.7,0},{0,.7,0},{-.55,.05,0},{.55,.05,0},{0,-.65,0},{-.17,-.6,0},{.17,-.6,0}}
@@ -35,34 +35,34 @@ physics_ragdoll_station :: proc(o:^Out,s:^Scene_Out,origin:mm.Vec3) -> base.Enti
         shape:=world[i];shape.scale=sizes[i]
         gallery_skin_box(&cube,&vertices,&indices,&skin,shape,u16(i),colors[i])
     }
-    check(o,"physics-ragdoll.skeleton",asset.skeleton_save(path(o,folder+"/rig.skeleton"),&o.types,{id=skeleton_id,bones=bones[:]}))
-    if !asset.mesh_tangents(&vertices,indices[:],&skin) {check(o,"physics-ragdoll.mesh",.Out_Of_Memory);return {}}
+    asset.content_check(&o.content,"physics-ragdoll.skeleton",asset.skeleton_save(path(o,folder+"/rig.skeleton"),&o.content.types,{id=skeleton_id,bones=bones[:]}))
+    if !asset.mesh_tangents(&vertices,indices[:],&skin) {asset.content_check(&o.content,"physics-ragdoll.mesh",.Out_Of_Memory);return {}}
     mesh_write_built(o,"physics-ragdoll.mesh",folder+"/rig.mesh",{id=mesh_id,joints=joints[:],skeleton=skeleton_id},{vertices=vertices[:],skin=skin[:]},indices[:])
     keys:[5]lib.Keyframe
     for &key,i in keys {angle:f32=.6 if i%2==1 else -.6;q:=mm.quat_axis_angle({0,0,1},angle);key={time=f32(i)*.5,value={q.x,q.y,q.z,q.w},interpolation=.Linear}}
     track:=asset.Animation_Track_Desc{target=base.text_get(bones[3].path[:]),property=.Rotation,keys=keys[:]}
     clip:=asset.Animation_Clip_Desc{name="wave",tracks={track},skeleton=skeleton_id}
-    check(o,"physics-ragdoll.anim",asset.animation_save(path(o,folder+"/wave.anim"),&o.types,{id=clip_id,clips={clip}}))
-    root:=entity(s,"Ragdoll: animation / simulation / motors",origin)
-    put(s,root,"Mesh_Renderer",&render.Mesh_Renderer{mesh=mesh_id})
-    animation:=anim.ANIMATION_DEFAULT;animation.asset=clip_id;base.text_set(animation.clip[:],"wave");put(s,root,"Animation",&animation)
+    asset.content_check(&o.content,"physics-ragdoll.anim",asset.animation_save(path(o,folder+"/wave.anim"),&o.content.types,{id=clip_id,clips={clip}}))
+    root:=asset.builder_entity(s,"Ragdoll: animation / simulation / motors",{position=origin})
+    asset.builder_set(s,root,render.Mesh_Renderer{mesh=mesh_id})
+    animation:=anim.ANIMATION_DEFAULT;animation.asset=clip_id;base.text_set(animation.clip[:],"wave");asset.builder_set(s,root,animation)
     config:=rag.RAGDOLL_DEFAULT;config.mode=.Animated;config.hertz=8;config.max_torque=120
-    put(s,root,"Ragdoll",&config)
-    put(s,root,"Ragdoll_Gallery",&game.Ragdoll_Gallery{auto_cycle=true})
+    asset.builder_set(s,root,config)
+    asset.builder_set(s,root,game.Ragdoll_Gallery{auto_cycle=true})
     bodies:[7]base.Entity_Id
     for i in 0..<7 {
-        bodies[i]=entity(s,fmt.tprintf("Ragdoll body %s",names[i]),origin+world[i].position)
+        bodies[i]=asset.builder_entity(s,fmt.tprintf("Ragdoll body %s",names[i]),{position=origin+world[i].position})
         body:=phys.RIGID_BODY_DYNAMIC;body.mass=5 if i>0 else 15;body.linear_damping=.1;body.angular_damping=.1
-        put(s,bodies[i],"Rigid_Body",&body)
-        collider:=phys.collider_box(sizes[i]*.5);collider.group=core.Entity(root);collider.friction=.7;put(s,bodies[i],"Collider",&collider)
-        bone:=rag.RAGDOLL_BONE_DEFAULT;bone.rig=core.Entity(root);bone.bone=anim.bone_ref(names[i]);put(s,bodies[i],"Ragdoll_Bone",&bone)
+        asset.builder_set(s,bodies[i],body)
+        collider:=phys.collider_box(sizes[i]*.5);collider.group=core.Entity(root);collider.friction=.7;asset.builder_set(s,bodies[i],collider)
+        bone:=rag.RAGDOLL_BONE_DEFAULT;bone.rig=core.Entity(root);bone.bone=anim.bone_ref(names[i]);asset.builder_set(s,bodies[i],bone)
         if parents[i]>=0 {
             parent:=parents[i];anchor:=mm.Vec3{0,sizes[i].y*.4,0}
             if i==4 {anchor={0,.175,0}}
             joint:=phys.joint_sixdof(core.Entity(bodies[parent]),anchor);joint.auto_target=false;joint.target_anchor=world[i].position+anchor-world[parent].position
             for &axis in joint.angular {axis.motion=.Limited;axis.lower=-1.1;axis.upper=1.1}
             if i==1 {for &axis in joint.angular {axis.lower=-.4;axis.upper=.4}}
-            put(s,bodies[i],"Joint",&joint)
+            asset.builder_set(s,bodies[i],joint)
         }
     }
     return root

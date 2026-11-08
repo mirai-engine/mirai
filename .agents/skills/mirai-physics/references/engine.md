@@ -317,7 +317,8 @@ zone; `gravity.odin` applies it to the simulation.
 `^phys.Body_Requests` is taken at the start of the next step:
 
 - `move_kinematic` gives the body the velocity that takes it to the pose in one tick, and pushes
-  what it touches. `launch` adds velocity to a character or replaces its own.
+  what it touches. On a character `set_velocity` replaces its own velocity and `apply_impulse`
+  adds impulse / mass.
 - **Teleporting is only `core.place`**
   ([requested places](../../mirai-core/references/core.md#requested-places)), also for the game:
   `physics_places` takes the requests on an entity with `Rigid_Body`, `Character` or proxy and
@@ -325,7 +326,7 @@ zone; `gravity.odin` applies it to the simulation.
   caring about physics. It is a jump: the drawing does not interpolate the path (`core.jump`,
   [transform and hierarchy](../../mirai-core/references/core.md#transform-and-hierarchy)).
 - A request that does nothing (non-finite values, without a body of its own, kinematic or
-  manipulation of a character, `launch` to a body) is a `physics.request_*` problem of its entity.
+  manipulation of a character) is a `physics.request_*` problem of its entity.
 - Forces: `apply_force` and `apply_torque` accumulate during one tick; the area ones
   (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
   [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a

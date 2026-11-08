@@ -191,11 +191,11 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
   window), `present_interval_follows_the_frames_and_not_the_thread` (`rhi`) and the tests of
   `plugins/fsr/runtime`; in an editor with a window (`mirai edit`: a headless session does not
   present), `presentation` of `profile.capture` with and without `frame_generation` and
-  `editor.capture` with `ui` and `generated` against the same view without generation.
+  `capture` with `ui` and `generated` against the same view without generation.
 - Surface programs: the focal tests of
   [programs](references/materials.md#program-limits) (`render`), and `generate_test.odin` and
   `programs_test.odin` of `cook/shaders` for the per-program stages and the coverage; in a session,
-  `material.program.edit` with `material.preview.capture` and `editor.capture`.
+  `material.program.edit` with `material.preview.capture` and `capture`.
 - Texture residency: the tests of `render/texture_residency_test.odin` (CPU) and, with GPU,
   `a_texture_holds_the_levels_its_distance_asks_for` of `host`; in the editor, `textures` of
   `engine.status` (memory, pending) when bringing the camera close.

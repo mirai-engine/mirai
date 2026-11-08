@@ -261,36 +261,34 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
 }
 
 @(test)
-ragdoll_setup_without_a_body_map_fails_with_how_to_detect_it_and_changes_nothing :: proc(t:^testing.T) {
+ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_as_it_is :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"no-body") {return};defer setup_test_destroy(f)
     result,_:=setup_test_call(f,`{"id":"12"}`)
-    testing.expect_value(t,result.code,api.INVALID_PARAMS)
-    testing.expectf(t,strings.contains(result.data,`"code":"Missing_Body_Map"`) && strings.contains(result.data,"skeleton.body.detect"),"%s",result.data)
-    testing.expect(t,len(f.world.bones.values)==0 && len(f.world.rigids.values)==0 && !core.has(&f.world.configs,f.plain))
-    testing.expect_value(t,f.edits.cursor,0)
+    if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
+    testing.expect_value(t,len(setup_test_bodies(f,f.plain)),16)
+    testing.expect(t,core.has(&f.world.configs,f.plain))
+    testing.expect_value(t,f.edits.cursor,1)
+    testing.expect_value(t,len(host.assets_unsaved(&f.assets)),0)
     core.remove(&f.world.animations,f.figure);setup_test_settle(&f.world,nil,nil)
     result,_=setup_test_call(f,`{"id":"11"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))
     f.session.mode=.Play
     result,_=setup_test_call(f,`{"id":"11"}`)
-    testing.expect(t,result.code==api.SERVER_ERROR && strings.contains(result.data,"play.stop"))
-    testing.expect_value(t,f.edits.cursor,0)
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"play.stop"))
+    testing.expect_value(t,f.edits.cursor,1)
 }
 
 @(test)
-ragdoll_setup_refuses_a_rig_with_a_ragdoll_unless_replace_removes_its_bodies :: proc(t:^testing.T) {
+ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"replace") {return};defer setup_test_destroy(f)
     w:=&f.world
     result,_:=setup_test_call(f,`{"id":"11"}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     first:=setup_test_bodies(f,f.figure)
-    result,_=setup_test_call(f,`{"id":"11","mode":"Driven"}`)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Ragdoll_Exists"`) && strings.contains(result.data,"replace"))
-    testing.expect(t,len(w.bones.values)==16 && core.get(&w.configs,f.figure).mode==.Simulated && f.edits.cursor==1)
     text:string
-    result,text=setup_test_call(f,`{"id":"11","mode":"Driven","replace":true,"mass":80}`)
+    result,text=setup_test_call(f,`{"id":"11","mode":"Driven","mass":80}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expectf(t,strings.contains(strings.join(strings.fields(text,context.temp_allocator),"",context.temp_allocator),`"removed":16`),"%s",text)
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}

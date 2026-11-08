@@ -140,13 +140,13 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     project_write(t,&types,assets)
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
 
-    // Without cook.mirai the scenes are the roots.
+    // Without cook.mirai the scenes and the prefabs are the roots.
     report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
-    testing.expect_value(t,dropped,"materials/lonely.mat materials/lost.mat materials/spare.mat notes.txt prefabs/prop.prefab textures/blocks.tex textures/icon.tex textures/unused.tex ui/hud.ui ")
-    testing.expect(t,report.roots==1 && len(report.missing)==0 && report.removed==0)
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,dropped,"materials/lonely.mat materials/lost.mat materials/spare.mat notes.txt textures/blocks.tex textures/icon.tex textures/unused.tex ui/hud.ui ")
+    testing.expect(t,report.roots==2 && len(report.missing)==0 && report.removed==0)
     for file in report.dropped {testing.expect(t,file.asset==(file.path!="notes.txt") && file.bytes>0)}
     testing.expect_value(t,report.textures_compressed,2)
     color,color_mips:=cooked_format(t,&types,fmt.tprintf("%s/textures/wood_color.tex",output))
@@ -171,8 +171,8 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     asset.registry_init(&scanned,output);defer asset.registry_destroy(&scanned)
     testing.expect_value(t,asset.registry_load(&indexed,fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)),asset.Error.None)
     testing.expect_value(t,asset.registry_scan(&scanned),asset.Error.None)
-    testing.expect_value(t,len(indexed.files),5)
-    testing.expect_value(t,len(scanned.files),5)
+    testing.expect_value(t,len(indexed.files),6)
+    testing.expect_value(t,len(scanned.files),6)
     for file,at in indexed.files {testing.expect(t,file.path==scanned.files[at].path && file.id==scanned.files[at].id && file.size==scanned.files[at].size && file.time==scanned.files[at].time)}
     crate,found:=asset.registry_find(&indexed,CRATE)
     testing.expect(t,found && len(asset.registry_dependencies(&indexed,crate))==1)
@@ -182,15 +182,15 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
-    testing.expect_value(t,dropped,"materials/lonely.mat prefabs/prop.prefab textures/unused.tex ")
-    testing.expect_value(t,report.roots,5)
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
+    testing.expect_value(t,dropped,"materials/lonely.mat textures/unused.tex ")
+    testing.expect_value(t,report.roots,6)
     testing.expect(t,len(report.missing)==1 && report.missing[0].path=="materials/lost.mat" && report.missing[0].id==ABSENT,"a dependency that is no file is reported")
     icon,_:=cooked_format(t,&types,fmt.tprintf("%s/textures/icon.tex",output))
     blocks,_:=cooked_format(t,&types,fmt.tprintf("%s/textures/blocks.tex",output))
     testing.expect(t,icon==.RGBA8 && blocks==.BC1 && report.textures_compressed==2)
     summary:=cook_summary(&report,context.temp_allocator)
-    testing.expect(t,strings.contains(summary,"assets: 11 of 14 files from 5 roots") && strings.contains(summary,"2 textures compressed") && strings.contains(summary,"  prefabs/prop.prefab (") && strings.contains(summary,"missing: materials/lost.mat depends on 00000000000000090000000000000009"),summary)
+    testing.expect(t,strings.contains(summary,"assets: 12 of 14 files from 6 roots") && strings.contains(summary,"2 textures compressed") && strings.contains(summary,"  textures/unused.tex (") && strings.contains(summary,"missing: materials/lost.mat depends on 00000000000000090000000000000009"),summary)
 
     // A root that is no longer one: its files leave the output.
     testing.expect(t,os.write_entire_file(manifest,`{"roots":["ui/hud.ui"],"textures":"keep"}`)==nil)
@@ -202,7 +202,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     kept_color,_:=cooked_format(t,&types,fmt.tprintf("%s/textures/wood_color.tex",output))
     testing.expect_value(t,kept_color,asset.Texture_Format.RGBA8)
     testing.expect_value(t,asset.registry_load(&indexed,fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)),asset.Error.None)
-    testing.expect_value(t,len(indexed.files),7)
+    testing.expect_value(t,len(indexed.files),8)
 
     // A dedicated server leaves behind what is only shown or heard, without missing it.
     testing.expect(t,os.write_entire_file(manifest,`{"roots":["materials/spare.mat","ui/","00000000000000020000000000000004","notes.txt"]}`)==nil)
@@ -210,7 +210,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=server,manifest=manifest,server=true,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt scenes/main.scene ")
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene ")
     testing.expect(t,len(report.missing)==1 && report.missing[0].id==ABSENT,"a texture a material names is not missing on a server")
     testing.expect(t,!os.exists(fmt.tprintf("%s/textures",server)) && !os.exists(fmt.tprintf("%s/ui",server)))
     summary=cook_summary(&report,context.temp_allocator)
@@ -271,7 +271,7 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     report:=cook_assets({assets=assets,output=output,plugins={{plugin,"plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
     testing.expect(t,os.is_file(fmt.tprintf("%s/plugins/probe/brushes/soft.mat",output)) && os.is_file(fmt.tprintf("%s/plugins/probe/readme.txt",output)))
     indexed:asset.Registry
     asset.registry_init(&indexed,output);defer asset.registry_destroy(&indexed)

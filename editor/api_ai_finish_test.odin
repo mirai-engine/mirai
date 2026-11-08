@@ -37,7 +37,7 @@ finish_typed_results_work_through_rpc_and_mcp_dispatch :: proc(t:^testing.T) {
     testing.expect(t,api.process(&state.server,request,.Rpc,"7-0"))
     rpc:struct {result:Api_Ai_Finish_Result}
     testing.expect(t,json.unmarshal(serial.writer_bytes(&state.server.out),&rpc,allocator=temporary)==nil)
-    testing.expect_value(t,rpc.result,Api_Ai_Finish_Result{id=7,accepted=true})
+    testing.expect_value(t,rpc.result,Api_Ai_Finish_Result{accepted=true})
     testing.expect(t,task.finish_called && task.state==.Running && finish_answer(task)=="","normal RPC dispatch handles a typed result without a free-form writer")
     task.finish_called=false
     state.server.out.count=0
@@ -47,7 +47,7 @@ finish_typed_results_work_through_rpc_and_mcp_dispatch :: proc(t:^testing.T) {
     if !testing.expect(t,json.unmarshal(serial.writer_bytes(&state.server.out),&mcp,allocator=temporary)==nil && !mcp.result.isError && len(mcp.result.content)==1) {return}
     result:Api_Ai_Finish_Result
     testing.expect(t,json.unmarshal(transmute([]u8)mcp.result.content[0].text,&result,allocator=temporary)==nil)
-    testing.expect_value(t,result,Api_Ai_Finish_Result{id=7,accepted=true})
+    testing.expect_value(t,result,Api_Ai_Finish_Result{accepted=true})
     testing.expect(t,task.finish_called && task.state==.Running)
     testing.expect_value(t,finish_answer(task),"The cube is blue.")
 }
@@ -92,7 +92,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     call.client_tag="1-0"
     call.failed=false;call.error={}
     api_ai_finish(&s,&call)
-    testing.expect(t,!call.failed && result==Api_Ai_Finish_Result{id=1,accepted=true} && call.out==nil,"a typed result succeeds without a free-form writer")
+    testing.expect(t,!call.failed && result==Api_Ai_Finish_Result{accepted=true} && call.out==nil,"a typed result succeeds without a free-form writer")
     testing.expect(t,task.finish_called && task.state==.Running && m.workers[0].task==1,"finish requests completion but does not mark the task done")
     testing.expect_value(t,task.transcript.count,1)
     ai_acp_event(&callback,acp.Event{kind=.Update,value=chatter})

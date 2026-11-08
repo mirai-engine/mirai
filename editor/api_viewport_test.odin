@@ -61,6 +61,21 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         testing.expect(t,call.failed)
         testing.expect_value(t,w.count,0)
     }
+    // Without a request it is the turn of the caller; outside a turn it says so.
+    base.text_set(params.request[:],"")
+    serial.writer_init_fixed(&w,buffer[:])
+    outside:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+    api_view_viewport(&s,&outside)
+    testing.expect(t,outside.failed && outside.error.code==api.INVALID_PARAMS,outside.error.message)
+    m:=new(Ai,context.temp_allocator)
+    m.task_count=1
+    base.text_set(m.tasks[0].name[:],requests[1])
+    s.ai=m
+    serial.writer_init_fixed(&w,buffer[:])
+    turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
+    api_view_viewport(&s,&turn)
+    testing.expect(t,!turn.failed && w.count>0,turn.error.message)
+    s.ai=nil
     server.max_response=512
     base.text_set(params.request[:],requests[0])
     serial.writer_init_fixed(&w,buffer[:])

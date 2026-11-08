@@ -236,7 +236,13 @@ rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     if method==nil {
         return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
     }
-    return method_execute(s,method,req.has_params?req.params:"{}",w)
+    start:=w.count
+    err,ok,selected:=method_call(s,method,req.has_params?req.params:"{}",w)
+    if ok && selected!="" {
+        w.count,w.overflow=start,0
+        raw(w,selected)
+    }
+    return err,ok
 }
 
 // Reads params as the params of method into the scratch of the server, with
@@ -253,6 +259,7 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,err:E
     if method.defaults!=nil {copy(bytes,method.defaults)}
     r:serial.Text_Reader
     serial.text_reader_init(&r,params,allocator)
+    r.assets=s.assets
     if !serial.text_read(&r,sc,method.params,bytes) || !serial.text_end(&r) {
         if s.scratch.failed!=failed {return nil,scratch_error(s),false}
         return nil,text_error(s,"invalid params",params,&r),false

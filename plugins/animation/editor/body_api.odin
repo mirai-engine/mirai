@@ -75,6 +75,10 @@ body_rig :: proc(call:^api.Call,view:aa.Skeleton_View,root_path:string) -> (rig:
     if len(rig.parents)!=n || len(rig.rest)!=n {authoring_failure(call,"skeleton","Out_Of_Memory","memory for the rig","allocation failed","The rig could not be prepared",api.SERVER_ERROR);return}
     for &bone,i in view.bones {rig.parents[i]=bone.parent;rig.rest[i]={bone.translation,bone.rotation,bone.scale}}
     rig.body=aa.skeleton_body_map(view.bones,view.body,view.body_parts)
+    if view.body==nil {
+        // Found for the call and not stored: skeleton.body.detect is what stores it.
+        if detected,found:=aa.skeleton_body_detect(view.bones,lib.body_map_empty(),call.allocator);found {rig.body=detected}
+    }
     rig.root=-1
     if root_path!="" {rig.root=body_bone_find(view.bones,root_path)}
     pairs,paired:=anim.skeleton_mirror_pairs(view.bones,call.allocator)

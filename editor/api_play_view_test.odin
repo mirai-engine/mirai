@@ -130,9 +130,9 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     s:=Session{info=&info}
     conditions:=[4]Api_Play_Condition{{view=true,compare=.At_Most,number=7.5},{view=true,compare=.Above,number=0.45},{view=true,compare=.Equal},{view=true,compare=.Gone}}
     copy(conditions[0].field[:],"follow.pivot_distance")
-    copy(conditions[1].name[:],"Hero");copy(conditions[1].field[:],"points.0.normalized.0")
+    copy(conditions[1].entity[:],"Hero");copy(conditions[1].field[:],"points.0.normalized.0")
     copy(conditions[2].field[:],"mode");copy(conditions[2].text[:],"Orbit")
-    copy(conditions[3].name[:],"Nobody")
+    copy(conditions[3].entity[:],"Nobody")
     reads:[4]Api_Condition_Read
     passed,wrong:=api_conditions_read(&s,ref,conditions[:],reads[:],"conditions")
     testing.expect_value(t,wrong,"")
@@ -144,10 +144,10 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     testing.expect(t,strings.contains(wrong,"leave storage and component out"),wrong)
     call:=api.Call{allocator=context.temp_allocator}
     p:=Api_Play_Trace{view=true,every=1}
-    copy(p.name[:],"Hero")
+    copy(p.entity[:],"Hero")
     copy(p.fields[0][:],"points[0].depth");copy(p.fields[1][:],"blend.progress")
     trace:Api_Trace
-    testing.expect_value(t,api_trace_read(&s,&call,ref,&p,`{"view":true,"name":"Hero","fields":["",""]}`,1,&trace),"")
+    testing.expect_value(t,api_trace_read(&s,&call,ref,&p,`{"view":true,"entity":"Hero","fields":["",""]}`,1,&trace),"")
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
     api_trace_write(&s,&out,&trace)

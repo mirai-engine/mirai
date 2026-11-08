@@ -19,10 +19,8 @@ BITERS :: 2
 @(component)
 Patrol :: struct {points:[2][3]f32, next:i32}
 Zombie_Act :: enum u8 {Patrol, Chase, Bite}
-Tick :: struct { // what the actions read; the game builds it each tick
-    using act:behavior.Act_World,
-    worlds:core.Read(core.World_Transform),
-    perceptions:core.Read(behavior.Perception),
+Tick :: struct { // what the actions read: Mind_Tick and the tables of the game
+    using mind:behavior.Mind_Tick,
     patrols:^core.Table(Patrol),
 }
 
@@ -43,7 +41,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act)) { // only reads and proposes
     if subject == core.NONE || sure < 0.2 {return}
     ai.propose(t, .Chase, 0.5)
     if linalg.length(at-here) < 1.8 &&
-       ai.reserve_free(t.reservations, {u64(subject), 0}, t.holder, BITERS, t.tick) {
+       ai.reserve_free(t, subject, BITERS) {
         ai.propose(t, .Bite, 1)
     }
 }
@@ -78,22 +76,13 @@ ZOMBIE_ACTS := [Zombie_Act]proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
 }
 
 @(step="fixed", server)
-zombies_think :: proc(
-    minds:^behavior.Minds, agents:^core.Table(behavior.Mind_Agent),
-    shows:^core.Table(behavior.Mind_Presentation), patrols:^core.Table(Patrol),
-    perceptions:core.Read(behavior.Perception), worlds:core.Read(core.World_Transform),
-    paths:core.Read(nav.Nav_Path), fars:core.Read(nav.Nav_Far), requests:^nav.Nav_Requests,
-    claims:^behavior.Claims, time:core.Time, problems:^core.Problems,
-) {
-    if !time.playing || time.dt <= 0 {return}
-    w := Tick{
-        act = {requests=requests, paths=paths, fars=fars, presentations=shows},
-        worlds = worlds, perceptions = perceptions, patrols = patrols,
-    }
-    ctx := ai.Mind_Context{user=&w, keep=0.05, reservations=&claims.reservations}
-    behavior.minds_tick(minds, agents, "zombie", &ZOMBIE_ACTS, zombie_think,
-                        &ctx, &w.act, time, problems)
-    behavior.minds_unknown(minds, agents, problems) // once, after every mind of the tick
+zombies_think :: proc(world:behavior.Mind_World, patrols:^core.Table(Patrol)) {
+    if !world.time.playing || world.time.dt <= 0 {return}
+    w := Tick{mind=behavior.mind_tick(world), patrols=patrols}
+    ctx := ai.Mind_Context{user=&w, keep=0.05, reservations=&world.claims.reservations}
+    behavior.minds_tick(world.minds, world.agents, "zombie", &ZOMBIE_ACTS, zombie_think,
+                        &ctx, &w.act, world.time, world.problems)
+    behavior.minds_unknown(world.minds, world.agents, world.problems) // once, after every mind
 }
 
 zombie_add :: proc(c:core.Commands, at:[3]f32, route:[2][3]f32) -> core.Entity {

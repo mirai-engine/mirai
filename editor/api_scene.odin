@@ -25,8 +25,8 @@ API_BATCH_LIMIT :: 64
 API_INSPECT_DEFAULT :: 256
 
 Api_Inspect_Params :: struct {
-    root:base.Entity_Id `mirai:"optional,label=This entity and what hangs from it nested by children: the document scene.write takes"`,
-    id:base.Entity_Id `mirai:"optional,label=Only this entity"`,
+    root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     summary:bool `mirai:"optional,label=Only the id and name and parent of each entity and the names of its components; no values"`,
@@ -39,8 +39,8 @@ Api_Inspect_Params :: struct {
     storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages"`,
 }
 
-Api_Id_Params :: struct {
-    id:base.Entity_Id,
+Api_Entity_Params :: struct {
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,label=The entity by its name or a path Parent/Child or its id"`,
 }
 
 Api_Edit_Result :: struct {
@@ -127,11 +127,11 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
     api_register(s,st,{name="scene.add",flags={.Core},params_schema=API_ADD_SCHEMA,summary="Creates an entity from a preset or the card of a plugin.",result=Api_Edit_Result,run=api_scene_add})
     api_register(s,st,{name="scene.set",flags={.Core},params_schema=API_SET_SCHEMA,summary="Changes an entity; what the params leave out stays as it is.",result=Api_Edit_Result,run=api_scene_set})
-    api_register(s,st,{name="scene.delete",summary="Destroys an entity with what hangs from it.",params=Api_Id_Params,result=Api_Edit_Result,flags={.Core,.Destructive},run=api_scene_delete})
-    api_register(s,st,{name="scene.duplicate",flags={.Core},summary="Copies an entity and what hangs from it with new ids.",params=Api_Id_Params,result=Api_Edit_Result,run=api_scene_duplicate})
+    api_register(s,st,{name="scene.delete",summary="Destroys an entity with what hangs from it.",params=Api_Entity_Params,result=Api_Edit_Result,flags={.Core,.Destructive},run=api_scene_delete})
+    api_register(s,st,{name="scene.duplicate",summary="Copies an entity and what hangs from it with new ids.",params=Api_Entity_Params,result=Api_Edit_Result,run=api_scene_duplicate})
     api_scene_write_register(s,st)
     api_register(s,st,{name="scene.batch",flags={.Core},params_schema=API_BATCH_SCHEMA,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
-    api_register(s,st,{name="scene.save",summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
+    api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
     api_register(s,st,{name="scene.load",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_load})
 }
 
@@ -254,7 +254,7 @@ api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator)
 @(private)
 api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     params:=api.call_params(call,Api_Inspect_Params)
-    if params.root!=0 {
+    if base.text_get(params.root[:])!="" {
         if play {api.call_fail(call,api.INVALID_PARAMS,"root is of scene.inspect: the document scene.write takes");return}
         api_inspect_tree(s,call,w,params)
         return
@@ -267,12 +267,9 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
         return
     }
     only:core.Entity
-    if params.id!=0 {
-        only=api_entity(w,params.id)
-        if only==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(params.id))
-            return
-        }
+    if base.text_get(params.entity[:])!="" {
+        known:bool
+        if only,known=api_call_entity(call,w,params.entity[:],game=play);!known {return}
     }
     pattern:=base.text_get(params.name[:])
     component:^core.Table_Info
@@ -383,13 +380,6 @@ api_play_inspect :: proc(s:^Session,call:^api.Call) {
 }
 
 // ---------------------------------------------------------------- edits
-
-@(private)
-api_known :: proc(a:^Rpc_Args,w:core.World_Ref,id:base.Entity_Id,what:string) -> (e:core.Entity,ok:bool) {
-    e=api_entity(w,id)
-    if e!=core.NONE {return e,true}
-    return core.NONE,rpc_fail(a,"%s 0x%016x is not an entity of the scene",what,u64(id))
-}
 
 // Sets, adds or removes one component from the value at the reader: an
 // object with the fields to change, or null to remove it.
@@ -657,12 +647,11 @@ api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
             given:=rpc_text(a,key,text[:]) or_return
             found:bool
             card,found=card_named(s,given)
-            if !found {return 0,rpc_fail(a,"unknown preset %q",given)}
+            if !found {return 0,rpc_fail(a,"unknown preset %q; it takes %s",given,cards_named_text(s))}
         case "parent":
-            parent_id:=rpc_id(a,key) or_return
-            if parent_id!=0 {parent=api_known(a,w,parent_id,"parent") or_return}
+            parent=rpc_entity(a,w,key) or_return
         case:
-            return 0,rpc_fail(a,"unknown field %q",key)
+            return 0,rpc_fail_unknown(a,key,"name","position","rotation_deg","scale","visible","enabled","components","off","preset","parent")
         }
     }
     if a.failed {return 0,false}
@@ -684,7 +673,8 @@ api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 @(private)
 api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entity_Id,ok:bool) {
     parent:core.Entity
-    has_parent,has_name,has_id:=false,false,false
+    has_parent,has_name:=false,false
+    e:core.Entity
     edit:Api_Transform_Edit
     name:[64]u8
     name_text:string
@@ -698,21 +688,19 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
             continue
         }
         switch key {
-        case "id":
-            id=rpc_id(a,key) or_return
-            has_id=true
+        case "entity":
+            e=rpc_entity(a,w,key) or_return
         case "parent":
-            parent_id:=rpc_id(a,key) or_return
-            if parent_id!=0 {parent=api_known(a,w,parent_id,"parent") or_return} else {parent=core.NONE}
+            parent=rpc_entity(a,w,key) or_return
             has_parent=true
         case:
-            return 0,rpc_fail(a,"unknown field %q",key)
+            return 0,rpc_fail_unknown(a,key,"entity","name","position","rotation_deg","scale","visible","enabled","components","off","parent")
         }
     }
     if a.failed {return 0,false}
-    if !has_id {return 0,rpc_fail(a,"id is required")}
-    e:=api_known(a,w,id,"id") or_return
-    if text:=section_lock_text(s,w,e,true);text!="" {return 0,rpc_fail(a,"id: %s",text)}
+    if e==core.NONE {return 0,rpc_fail(a,"entity is required: its name, a path Parent/Child or its id")}
+    id=api_entity_id(w,e)
+    if text:=section_lock_text(s,w,e,true);text!="" {return 0,rpc_fail(a,"entity: %s",text)}
     if has_parent && entity_parent(w,e)!=parent {
         if _,reason:=section_target_texts(s,w,parent);reason!="" {return 0,rpc_fail(a,"%s",reason)}
         if prefab_member_locked(s,e) {
@@ -726,12 +714,7 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 }
 
 @(private)
-api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> bool {
-    e:=api_entity(w,id)
-    if e==core.NONE {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-        return false
-    }
+api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> bool {
     if e==document_root(s,w) {api.call_fail(call,api.SERVER_ERROR,"The root of the prefab document cannot be deleted");return false}
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.delete: %s",text)
@@ -747,12 +730,7 @@ api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Enti
 }
 
 @(private)
-api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> (copy:base.Entity_Id,ok:bool) {
-    e:=api_entity(w,id)
-    if e==core.NONE {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-        return 0,false
-    }
+api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> (copy:base.Entity_Id,ok:bool) {
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.duplicate: %s",text)
         return 0,false
@@ -788,18 +766,23 @@ api_scene_set :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_scene_delete :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Id_Params)
+    params:=api.call_params(call,Api_Entity_Params)
     if !api_edit_begin(s,call,"Delete entity") {return}
     w:=edited_world(s)
-    if api_edit_end(s,call,api_delete_apply(s,call,w,params.id)) {api.call_result(call,Api_Edit_Result).id=params.id}
+    e,known:=api_call_entity(call,w,params.entity[:])
+    id:=api_entity_id(w,e)
+    if api_edit_end(s,call,known && api_delete_apply(s,call,w,e)) {api.call_result(call,Api_Edit_Result).id=id}
 }
 
 @(private)
 api_scene_duplicate :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Id_Params)
+    params:=api.call_params(call,Api_Entity_Params)
     if !api_edit_begin(s,call,"Duplicate entity") {return}
     w:=edited_world(s)
-    copied,applied:=api_duplicate_apply(s,call,w,params.id)
+    e,known:=api_call_entity(call,w,params.entity[:])
+    copied:base.Entity_Id
+    applied:=false
+    if known {copied,applied=api_duplicate_apply(s,call,w,e)}
     if api_edit_end(s,call,applied) {api.call_result(call,Api_Edit_Result).id=copied}
 }
 
@@ -836,7 +819,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
                         text:[32]u8
                         if name,ok:=rpc_text(&a,field,text[:]);ok {operation.method=strings.clone(name,call.allocator)}
                     case "params": operation.params,_=rpc_raw(&a)
-                    case:          rpc_fail(&a,"unknown field %q of an operation",field)
+                    case:          rpc_fail_unknown(&a,field,"method","params")
                     }
                 }
                 count+=1
@@ -845,7 +828,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
                 break
             }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"operations")
         }
     }
     if a.failed {return}
@@ -873,22 +856,21 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
         case "scene.add": ids[at],applied=api_add_apply(s,&inner,world)
         case "scene.set": ids[at],applied=api_set_apply(s,&inner,world)
         case "scene.delete","scene.duplicate":
-            target:base.Entity_Id
-            has_id:=false
+            target:core.Entity
             fields:Rpc_Object
             applied=rpc_object_begin(&inner,"params")
             for field in rpc_next(&inner,&fields) {
                 switch field {
-                case "id": target,has_id=rpc_id(&inner,field)
-                case:      rpc_fail(&inner,"unknown field %q",field)
+                case "entity": target,_=rpc_entity(&inner,world,field)
+                case:          rpc_fail_unknown(&inner,field,"entity")
                 }
             }
             applied=applied && !inner.failed
-            if applied && !has_id {applied=rpc_fail(&inner,"id is required")}
+            if applied && target==core.NONE {applied=rpc_fail(&inner,"entity is required")}
             if applied {
                 if operation.method=="scene.delete" {
+                    ids[at]=api_entity_id(world,target)
                     applied=api_delete_apply(s,call,world,target)
-                    ids[at]=target
                 } else {
                     ids[at],applied=api_duplicate_apply(s,call,world,target)
                 }
@@ -979,6 +961,6 @@ api_scene_load :: proc(s:^Session,call:^api.Call) {
 }
 
 // The shapes of the params of the methods that read them by hand.
-@(private) API_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"preset":{"type":"string","description":"empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"id of the parent; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by component name, the fields to set"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
-@(private) API_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"id of an entity of the document, in hexadecimal"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"id of the parent; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by component name, the fields to change, or null to remove it"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
+@(private) API_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"preset":{"type":"string","description":"empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by component name, the fields to set"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
+@(private) API_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entity"],"properties":{"entity":{"type":"string","description":"the entity by its name, a path Parent/Child or its id; a name several entities have is an error listing them"},"name":{"type":"string","description":"its new name"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by component name, the fields to change, or null to remove it"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
 @(private) API_BATCH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","required":["method"],"additionalProperties":false,"properties":{"method":{"type":"string","enum":["scene.add","scene.set","scene.delete","scene.duplicate"]},"params":{"type":"object","description":"the params of that method"}}}}}}`

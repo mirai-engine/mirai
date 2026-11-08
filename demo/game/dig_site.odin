@@ -8,6 +8,7 @@ import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:ui"
 import terrain "plugins:terrain/runtime"
 
@@ -49,27 +50,25 @@ Dig_Inventory :: struct {
 @(step="fixed",stage="react")
 dig_site :: proc(
     commands:core.Commands,sites:core.Read(Dig_Site),pickups:core.Read(Dig_Pickup),players:core.Read(Player),
-    inputs:core.Read(inp.Move_Input),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
     requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventory:^Dig_Inventory,network:core.Network,time:core.Time,
 ) {
-    if core.count(sites)==0 || network.role==.Client {return}
-    site_entity:=core.entity_at(sites,0)
+    site_entity,found:=core.sole(sites)
+    if !found || network.role==.Client {return}
     site:=core.at(sites,0)
     if site.every>0 && inventory.dug<site.digs && time.tick%u64(site.every)==0 {
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
         i:=f32(inventory.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
-        if terrain.request_edit(requests,site_entity,{kind=.Subtract,shape=.Sphere,center=center,radius=site.radius,amount=1,blend=0.3}) {inventory.dug+=1}
+        site_world,_:=core.get(worlds,site_entity)
+        terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
+        inventory.dug+=1
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        input,has_input:=core.get(inputs,e)
-        placed,has_world:=core.get(worlds,e)
-        if !has_input || !has_world || !inp.pressed(actions,e,.Use) {continue}
-        site_world,_:=core.get(worlds,site_entity)
-        at:=placed.position+[3]f32{0,EYE_HEIGHT,0}+aim_of(input.look_yaw,input.look_pitch)*DIG_REACH
-        local:=at-site_world.position
-        terrain.request_edit(requests,site_entity,{kind=.Subtract,shape=.Sphere,center=local,radius=site.radius*0.8,amount=1,blend=0.2})
+        origin,ahead,aimed:=inp.aim(drivables,worlds,e)
+        if !aimed || !inp.pressed(actions,e,.Use) {continue}
+        terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }
     for dig in digs.digs.items {
         for taken,i in dig.layers {if taken>0 {inventory.cubic_metres[inventory_slot(inventory,dig.materials[i])]+=taken}}

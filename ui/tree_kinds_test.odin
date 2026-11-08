@@ -1,5 +1,6 @@
 package ui
 
+import "core:slice"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -13,7 +14,10 @@ Test_Bag :: struct {
     page:i32,
     slots:[6]Test_Slot,
     used:i32,
+    screen:Test_Screen,
+    screen_name:[16]u8 `mirai:"text"`,
 }
+Test_Screen :: enum i32 {Menu,Pause,Playing}
 
 Test_Kinds :: struct {
     schema:serial.Schema,
@@ -109,6 +113,51 @@ a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^test
     s.values.page=1
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect(t,test_paint(&ctx,"Sword")==nil && test_paint(&ctx,"Nothing here")!=nil)
+}
+
+// The children are in another order than the members of the enum, and Playing has none.
+@(test)
+a_switcher_bound_to_an_enum_or_a_text_builds_the_child_of_that_name :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    s:Test_Kinds
+    serial.schema_init(&s.schema)
+    defer serial.schema_destroy(&s.schema)
+    ok:bool
+    s.type,ok=serial.schema_add(&s.schema,Test_Bag)
+    testing.expect(t,ok)
+    testing.expect(t,tree_init(&s.tree))
+    defer tree_destroy(&s.tree)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}},fill={40,40,40,255}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="root",layout={width=fixed(400),height=fixed(300),direction=.Column}})
+    by_enum:=tree_node(&s.tree,root,{kind=.Switcher,name="by_enum",bind_value="Test.screen"})
+    tree_node(&s.tree,by_enum,{kind=.Text,name="Pause",style=style,text="the pause page"})
+    tree_node(&s.tree,by_enum,{kind=.Text,name="Menu",style=style,text="the menu page"})
+    by_text:=tree_node(&s.tree,root,{kind=.Switcher,name="by_text",bind_value="Test.screen_name"})
+    tree_node(&s.tree,by_text,{kind=.Text,name="b",style=style,text="the b page"})
+    tree_node(&s.tree,by_text,{kind=.Text,name="a",style=style,text="the a page"})
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values)))
+    defer tree_instance_destroy(&s.instance)
+    copy(s.values.screen_name[:],"a")
+    input:=test_input()
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect(t,test_paint(&ctx,"the menu page")!=nil && test_paint(&ctx,"the pause page")==nil)
+    testing.expect(t,test_paint(&ctx,"the a page")!=nil && test_paint(&ctx,"the b page")==nil)
+    s.values.screen=.Pause
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect(t,test_paint(&ctx,"the pause page")!=nil && test_paint(&ctx,"the menu page")==nil)
+    // The schema moves its choices when a later type makes it grow.
+    moved:=slice.clone_to_dynamic(s.schema.choices[:],s.schema.allocator)
+    for &choice in s.schema.choices {choice.name=""}
+    delete(s.schema.choices)
+    s.schema.choices=moved
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect(t,test_paint(&ctx,"the pause page")!=nil,"its page is found after the schema moved its choices")
+    s.values.screen=.Playing
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect(t,test_paint(&ctx,"the pause page")==nil && test_paint(&ctx,"the menu page")==nil,"a member without a page shows none")
 }
 
 @(test)

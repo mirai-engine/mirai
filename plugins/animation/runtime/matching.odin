@@ -23,7 +23,6 @@ MATCH_KIND :: asset.Fourcc(u32('A')|u32('M')<<8|u32('T')<<16|u32('C')<<24)
 MATCH_VERSION :: 7
 MATCH_OLDEST :: 6
 MATCH_CLIPS :: 64
-MATCH_GOAL_CAPACITY :: 4096 // rigs told in one tick
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.
 MATCH_LAG_CLOSE :: .5
 
@@ -222,36 +221,33 @@ Match_Play_Options :: struct {fade:f32,entry:Match_Entry,phase:f32,marker:string
 MATCH_PLAY_OPTIONS_DEFAULT :: Match_Play_Options{fade=.15,phase=1}
 Match_Play :: struct {rig:core.Entity,clip,marker:u64,mode:u16,fade,phase:f32,entry:Match_Entry,priority:i16,wait:bool}
 
-// Tells the matching of a rig what its body does in this tick. False, with nothing queued, for a
-// value that is not finite, a mode past 31 or a full queue.
-match_goal :: proc(requests:^Animation_Requests,goal:Match_Goal) -> bool {
-    if requests==nil || goal.rig==core.NONE || goal.mode>31 {return false}
-    for v in ([4]mm.Vec3{goal.velocity,goal.desired,goal.facing,goal.wall}) {if !finite(v.x) || !finite(v.y) || !finite(v.z) {return false}}
-    for value in ([4]f32{goal.acceleration,goal.braking,goal.turn_rate,goal.time_to_land}) {if !finite(value) || value<0 {return false}}
-    if !program_array_reserve(&requests.match_goals.items,MATCH_GOAL_CAPACITY) || len(requests.match_goals.items)>=MATCH_GOAL_CAPACITY {return false}
-    core.push(&requests.match_goals,goal);return true
+// Tells the matching of a rig what its body does in this tick.
+match_goal :: proc(requests:^Animation_Requests,goal:Match_Goal) {
+    if requests==nil {return}
+    valid:=goal.rig!=core.NONE && goal.mode<=31
+    for v in ([4]mm.Vec3{goal.velocity,goal.desired,goal.facing,goal.wall}) {valid&&=finite(v.x) && finite(v.y) && finite(v.z)}
+    for value in ([4]f32{goal.acceleration,goal.braking,goal.turn_rate,goal.time_to_land}) {valid&&=finite(value) && value>=0}
+    if !valid {core.refuse(&requests.match_goals);return}
+    core.offer(&requests.match_goals,goal)
 }
 // Plays a clip of the library of the .match of a rig with an inertial blend of options.fade
 // seconds, as the clip of mode, until matching takes over (Match_Play_Options says how). It plays
-// while the body stays in mode: leaving it hands the rig back to matching. False, with nothing
-// queued, for an empty or too long name or marker, an option out of range or a full queue.
-match_play :: proc(requests:^Animation_Requests,rig:core.Entity,clip:string,mode:u16,options:=MATCH_PLAY_OPTIONS_DEFAULT) -> bool {
-    if requests==nil || rig==core.NONE || len(clip)==0 || len(clip)>=64 || len(options.marker)>=64 || mode>31 || !finite(options.fade) || options.fade<0 || !finite(options.phase) || options.phase<0 || options.phase>1 || options.entry>max(Match_Entry) {return false}
-    for byte in clip {if byte==0 {return false}}
-    for byte in options.marker {if byte==0 {return false}}
-    if !program_array_reserve(&requests.match_plays.items,REQUEST_CAPACITY) || len(requests.match_plays.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.match_plays,Match_Play{rig=rig,clip=base.name_hash(clip),marker=base.name_hash(options.marker) if len(options.marker)>0 else 0,mode=mode,fade=options.fade,phase=options.phase,entry=options.entry,priority=options.priority,wait=options.wait})
-    return true
+// while the body stays in mode: leaving it hands the rig back to matching.
+match_play :: proc(requests:^Animation_Requests,rig:core.Entity,clip:string,mode:u16,options:=MATCH_PLAY_OPTIONS_DEFAULT) {
+    if requests==nil {return}
+    valid:=rig!=core.NONE && len(clip)>0 && len(clip)<64 && len(options.marker)<64 && mode<=31 && finite(options.fade) && options.fade>=0 && finite(options.phase) && options.phase>=0 && options.phase<=1 && options.entry<=max(Match_Entry)
+    for byte in clip {valid&&=byte!=0}
+    for byte in options.marker {valid&&=byte!=0}
+    if !valid {core.refuse(&requests.match_plays);return}
+    core.offer(&requests.match_plays,Match_Play{rig=rig,clip=base.name_hash(clip),marker=base.name_hash(options.marker) if len(options.marker)>0 else 0,mode=mode,fade=options.fade,phase=options.phase,entry=options.entry,priority=options.priority,wait=options.wait})
 }
 
 // Hands rig back to the matching in the next tick: the clip match_play plays ends (Exited), and
-// one waiting for a blend is dropped. A body that starts to move ends an idle this way. False
-// when the request does not fit.
-match_stop :: proc(requests:^Animation_Requests,rig:core.Entity) -> bool {
-    if requests==nil || rig==core.NONE {return false}
-    if !program_array_reserve(&requests.match_plays.items,REQUEST_CAPACITY) || len(requests.match_plays.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.match_plays,Match_Play{rig=rig})
-    return true
+// one waiting for a blend is dropped. A body that starts to move ends an idle this way.
+match_stop :: proc(requests:^Animation_Requests,rig:core.Entity) {
+    if requests==nil {return}
+    if rig==core.NONE {core.refuse(&requests.match_plays);return}
+    core.offer(&requests.match_plays,Match_Play{rig=rig})
 }
 
 // What the matching of a rig plays. clip is base.name_hash of its name; speed, m/s the pose

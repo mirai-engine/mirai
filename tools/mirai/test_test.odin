@@ -1,10 +1,13 @@
 package main
 
+import "core:fmt"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:cook/shaders"
+import "mirai:project"
 
 // A benchmark is a define of a name with BENCH that is not off; it runs alone.
 @(test)
@@ -211,4 +214,15 @@ the_threads_of_a_test_executable_get_the_stack_of_the_system_with_the_most :: pr
         testing.expect_value(t,test_link_flag({"-debug"}),"")
     }
     testing.expect_value(t,test_link_flag({"-extra-linker-flags:/DEBUG"}),"")
+}
+
+// A package is found relative to the working folder before the engine.
+@(test)
+a_package_is_found_relative_to_the_working_folder :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=project.path_absolute(fmt.tprintf("mirai-package-%d",os.get_pid()),context.temp_allocator)
+    testing.expect(t,os.make_directory_all(folder)==nil)
+    defer os.remove_all(folder)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/a.odin",folder),`package a`)==nil)
+    testing.expect_value(t,package_folder("/nowhere",os.base(folder)),folder)
 }

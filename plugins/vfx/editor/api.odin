@@ -70,7 +70,7 @@ api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params_schema=PARTICLE_PARAMS_SCHEMA,summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params_schema=PARTICLE_PARAMS_SCHEMA,summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},run=api_particle_set})
     bake:=Api_Grid_Bake_Params{}
-    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Asks for the cells of the grid of an entity of the edited world as the steps of the next frame leave them, written as a .grid at path (one there takes the new state) in an undo step of its own once they come back from the GPU, a few frames later: a Particle_Grid that names it in cached starts from that state. The result names the file and its id, pending.",run=api_grid_bake})
+    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",run=api_grid_bake})
     editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
@@ -445,7 +445,7 @@ particle_world :: proc(s:^editor.Session,call:^api.Call,world:Particle_World) ->
     if world==.Edit {return editor.edited_world(s),true}
     r,_:=editor.api_play_run(s,call)
     if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"Start a Play (play.start) before addressing its emitters, or use world Edit")
+        api.call_fail(call,api.INVALID_PARAMS,"Start a Play (play.start) before addressing its emitters, or use world Edit")
         return
     }
     return editor.run_ref(s,r),true
@@ -581,7 +581,7 @@ api_particle_instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     if editor.watching(s) {
-        api.call_fail(call,api.SERVER_ERROR,"Stop watching another run before editing the document")
+        api.call_fail(call,api.INVALID_PARAMS,"Stop watching another run before editing the document")
         return
     }
     request:editor.Rpc_Args

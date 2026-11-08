@@ -22,7 +22,7 @@ import terrain "plugins:terrain/runtime"
 // (terrain.Replay_Result). terrain does not know the network: in a session
 // this library routes every tick (terrain.Terrain_Replays.routed), so
 // terrain_replay applies what it orders and then the requests of
-// request_edit and request_layer, and says how each went.
+// dig and request_layer, and says how each went.
 //
 // A client follows the stream of each source in its order, the edits and the
 // parts the server sends it, where Terrain_Net_World (part of the World)

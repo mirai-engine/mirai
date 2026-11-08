@@ -78,7 +78,7 @@ Scenario_Step :: struct {
 
 @(private)
 api_play_scenario_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, play.capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
+    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
 }
 
 // The keys of a JSON object in values, in the order of keys; problem names a
@@ -155,7 +155,7 @@ scenario_method_refusal :: proc(name:string) -> string {
     switch {
     case name=="play.start" || name=="play.stop": return "the scenario starts the game before its steps and stops it after them: leave it out (start takes the params of play.start)"
     case strings.has_prefix(name,"play.scenario."): return "a scenario does not run scenarios"
-    case !strings.has_prefix(name,"play."): return "a scenario plays the game: its steps are play methods (play.input, play.step, play.check, play.spawn, play.set, play.capture...)"
+    case !strings.has_prefix(name,"play.") && name!="capture": return "a scenario plays the game: its steps are play methods and capture (play.input, play.step, play.check, play.spawn, play.set...)"
     }
     return ""
 }
@@ -333,13 +333,8 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,monitors:strin
             }
         }
     }
-    started,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
+    _,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
     if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0,""}
-    building:[1]string
-    api.object_values(context.temp_allocator,started,{"building"},building[:])
-    if building[0]=="true" {
-        return fmt.bprintf(buffer,"play.start: Odin sources changed since the last build, which runs now: run the scenario again once build.status says it stands"),0,""
-    }
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
     if monitors!="" {
         if _,armed,done:=api_scenario_call(server,"play.qa.start",monitors,answer_buffer[:]);!done {return fmt.bprintf(buffer,"qa: %s",armed.message),0,""}

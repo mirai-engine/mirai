@@ -17,23 +17,21 @@ sets, interfaces, prefabs and scenes. Art files go through `mirai import` instea
 ## Skeleton
 
 ```odin
-id_of :: proc(kind,name:string) -> base.Asset_Id {
-    return base.asset_id_named(fmt.tprintf("%s\x1fgame_content\x1f%s",kind,name))
-}
+PROJECT :: "game_content"
 main :: proc() {
-    types:asset.Types
-    asset.types_init(&types)
-    defer asset.types_destroy(&types)
+    c:asset.Content
+    asset.content_init(&c,PROJECT)
+    defer asset.content_destroy(&c)
     os.make_directory_all("assets/textures")
-    // ... write assets; on any error set failed
-    if failed {os.exit(1)}
+    // ... write assets
+    if c.failed {os.exit(1)}
 }
 ```
 
-- An id from `base.asset_id_named` is the same on every run: write the id constants of what code
-  uses (`PLAYER_PREFAB :: base.Asset_Id{...}`) once and make the tool use them.
-- Every `*_save(path,&types,desc)` returns `asset.Error`; `.None` is success. Print the path on
-  success and the error on failure, and exit 1 if any failed.
+- `asset.content_id(PROJECT,kind,name)` is the same on every run, so what the tool writes keeps
+  naming the same assets. Game code names a prefab or a scene by its path, not by this id.
+- Every `*_save(path,&c.types,desc)` returns `asset.Error`: pass it to
+  `asset.content_check(&c,path,error)`, which prints the path or the error and sets `c.failed`.
 - The tool writes the same bytes twice: do not add time or random numbers to what it writes.
 
 ## Texture
@@ -41,8 +39,9 @@ main :: proc() {
 ```odin
 pixels:=make([]u8,64*64*4,context.temp_allocator) // RGBA8, rows from the top
 // fill pixels
-err:=asset.texture_save("assets/textures/badge.tex",&types,
-    {id=id_of("texture","badge"),width=64,height=64,format=.RGBA8,flags={.Srgb},mips={pixels}})
+err:=asset.texture_save("assets/textures/badge.tex",&c.types,
+    {id=asset.content_id(PROJECT,"texture","badge"),width=64,height=64,format=.RGBA8,
+     flags={.Srgb},mips={pixels}})
 ```
 
 - `flags={.Srgb}` for color; leave it off for data maps; `.Normal_Map` for normals.
@@ -69,8 +68,8 @@ hum:=report.assets[0].id // random the first time, kept after
 ```odin
 info:=asset.SOUND_SET_DEFAULTS
 info.sounds[0],info.sounds[1]={sound=step_a},{sound=step_b}
-err:=asset.sound_set_save("assets/sounds/steps.sound_set",&types,
-    {id=id_of("sound_set","steps"),info=info})
+err:=asset.sound_set_save("assets/sounds/steps.sound_set",&c.types,
+    {id=asset.content_id(PROJECT,"sound_set","steps"),info=info})
 ```
 
 `Sound_Set_Info` also has `volume_min`, `volume_max`, `pitch_min`, `pitch_max`, `no_repeat`
@@ -79,22 +78,23 @@ and a `weight` per sound. A set that is invalid returns `.Invalid`.
 ## Prefab and scene
 
 ```odin
-s:asset.Scene
-asset.scene_init(&s,&types,asset.KIND_PREFAB,PLAYER_PREFAB) // KIND_SCENE for a scene
-defer asset.scene_destroy(&s)
-root:=asset.scene_new_id(&s)
-asset.scene_entity_add(&s,root,0,"Player")             // id, parent (0: none), name
-s.info.root=root                                       // a prefab has exactly one root
-asset.scene_set(&s,root,"Transform",&core.Transform{{0,0,0},1,{1,1,1}})
-asset.scene_set(&s,root,"Collider",&phys.collider_character())
-asset.scene_save(&s,"assets/prefabs/Player.prefab")
+b:asset.Scene_Builder
+asset.builder_init(&b,&c,asset.KIND_PREFAB,PLAYER_PREFAB) // KIND_SCENE for a scene
+defer asset.builder_destroy(&b)
+root:=asset.builder_entity(&b,"Player")
+eyes:=asset.builder_entity(&b,"Eyes",{position={0,1.6,0}},root)
+asset.builder_set(&b,root,phys.collider_character())
+asset.builder_save(&b,"assets/prefabs/Player.prefab")
 ```
 
-- A component is named by its type name as a string; the value is a pointer to the same struct
-  the game declares. Check the name and fields with `engine.describe`.
+- `builder_entity` also writes the `Transform`: a rotation or a scale left out is the identity.
+  The entity without a parent of a prefab is its root.
+- `builder_set` takes the component from the type of the value, the struct the game declares.
+- The first error is printed, naming the entity and the component; `builder_save` then writes
+  nothing and `c.failed` is set.
 - References to assets inside components are `base.Asset_Id` values: use the ids above.
 - A `Spawn_Point` names a prefab id, a `UI_Screen` a `.ui`, an `Audio_Source` a `.sound`: each
-  field is an id you wrote or imported. `asset.scene_get` reads a component back.
+  field is an id you wrote or imported. `asset.scene_get` on `b.scene` reads a component back.
 
 ## Import
 
@@ -110,5 +110,4 @@ report,error:=sources.import_source("source/models/crate.glb","assets/models/cra
 ## Pitfalls that fail silently
 
 - Write assets first, then prefabs, then scenes: a scene names the ids the earlier ones return.
-- A prefab needs `s.info.root`; without it the prefab has no root entity.
-- Rerunning the tool rewrites the same files: after it, call `asset.reload` in an open editor.
+- Rerunning the tool rewrites the same files: an open editor picks them up at its next call.

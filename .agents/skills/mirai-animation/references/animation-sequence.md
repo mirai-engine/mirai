@@ -41,7 +41,7 @@ the common transform: do not activate both as writers of the same transform.
 - To capture relative offsets, `Reference` is an entity different from the captured origin, with an
   invertible scale. The origin of a gizmo is not inferred nor is the mode of the sequence converted;
   the reference is tool state and the component stores only the pose.
-- `animation.sequence.set`, `.capture` and `.preview` share implementation with the runtime and the
+- `animation.sequence.set`, `.frame.set` and `.preview` share implementation with the runtime and the
   editor transactions; the control is `sequence` of
   [`animation.request`](animation-authoring.md#per-instance-control-and-preview). `.preview` returns
   a pose without touching the scene; configuring and capturing are one undo step, and an invalid

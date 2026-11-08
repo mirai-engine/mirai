@@ -3,7 +3,6 @@ package game
 import "mirai:core"
 import gui "mirai:engine/gui"
 import render "mirai:engine/render"
-import save "mirai:engine/save"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:platform"
@@ -12,15 +11,12 @@ import "mirai:std/base"
 // The shell of the game: main menu, pause and graphics settings, with mouse
 // and keyboard. assets/ui/shell.ui (tools/content writes it) is one screen with
 // a page per Shell_Page; Shell.page says which shows, and shell_frame is the
-// only code that changes it. Add a screen by adding a page there and a member
-// of Shell_Page before Playing.
+// only code that changes it. Add a screen by adding a member of Shell_Page and
+// a page named like it there.
 //
-// Settings have one route: the player's choices are Shell_Options, kept in the
-// profile (save.request_profile_save, read back on the first frame), and
-// shell_apply turns them into Graphics_Settings and Display_Settings. Nothing
-// else writes those two or saves them.
-
-SHELL_START_SCENE :: "scenes/main.scene"  // what Quit to Menu loads, which puts the world as it started
+// Settings have one route: the player's choices are Shell_Options, which the
+// profile keeps by itself (@(storage,persist)), and shell_apply turns them into
+// Graphics_Settings and Display_Settings. Nothing else writes those two.
 
 // The options of each selector of the settings page, in the order tools/content writes them.
 SHELL_SCALES :: [3]f32{0.5,0.75,1}         // Render scale
@@ -36,8 +32,8 @@ SHELL_QUALITIES :: [Shell_Preset]Shell_Quality{
     .Custom={},
 }
 
-// The pages of shell.ui, by the order of the nodes of its Switcher. While
-// Playing, no page shows and the screen is hidden.
+// The pages of shell.ui: its Switcher shows the page named like the member.
+// While Playing there is none and the screen is hidden.
 Shell_Page :: enum i32 {Menu,Pause,Settings,Playing}
 
 Shell_Preset :: enum i32 {Low,Medium,High,Custom}
@@ -97,54 +93,34 @@ shell_apply :: proc(options:Shell_Options,graphics:^render.Graphics_Settings,dis
     display.mode=options.fullscreen?.Fullscreen:.Project
 }
 
-// One event of shell.ui; true when it changed an option.
+// What shell.ui asked for in this frame; true when it changed an option.
 @(private="file")
-shell_event :: proc(event:gui.UI_Event,shell:^Shell,options:^Shell_Options,solo:bool,scenes:^scene.Scene_Requests,app:^host.App) -> (changed:bool) {
-    #partial switch event.kind {
-    case .Clicked:
-        switch event.name {
-        case base.name_hash("menu_play"),base.name_hash("pause_resume"): shell.page=.Playing
-        case base.name_hash("menu_exit"):                                host.app_exit(app,0)
-        case base.name_hash("pause_settings"):                           shell.page=.Settings
-        case base.name_hash("settings_back"):                            shell.page=.Pause
-        case base.name_hash("pause_quit"):
-            // A network session has no menu to go back to: it leaves.
-            if !solo {host.app_exit(app,0);return}
-            scene.request_path(scenes,SHELL_START_SCENE)
-            shell.page=.Menu
-        }
-    case .Changed:
-        index:=i32(event.value)
-        switch event.name {
-        case base.name_hash("settings_preset"):
-            shell_preset_take(options,Shell_Preset(index))
-            return true
-        case base.name_hash("settings_limit"):
-            options.limit=index
-            return true
-        case base.name_hash("settings_fullscreen"):
-            options.fullscreen=event.on
-            return true
-        case base.name_hash("settings_vsync"):
-            options.vsync=event.on
-            return true
-        case base.name_hash("settings_scale"):       options.scale=index
-        case base.name_hash("settings_shadows"):     options.shadows=index
-        case base.name_hash("settings_aa"):          options.antialiasing=index
-        case base.name_hash("settings_reflections"): options.reflections=render.Reflections(index)
-        case: return false
-        }
-        // What a preset sets, changed by hand, is no longer that preset.
-        options.preset=.Custom
-        return true
+shell_events :: proc(events:[]gui.UI_Event,screen:core.Entity,shell:^Shell,options:^Shell_Options,solo:bool,scenes:^scene.Scene_Requests,app:^host.App) -> (changed:bool) {
+    if gui.clicked(events,screen,"menu_play") || gui.clicked(events,screen,"pause_resume") {shell.page=.Playing}
+    if gui.clicked(events,screen,"pause_settings") {shell.page=.Settings}
+    if gui.clicked(events,screen,"settings_back") {shell.page=.Pause}
+    if gui.clicked(events,screen,"menu_exit") {host.app_exit(app,0)}
+    if gui.clicked(events,screen,"pause_quit") {
+        // A network session has no menu to go back to: it leaves.
+        if !solo {host.app_exit(app,0);return}
+        scene.request_restart(scenes)
+        shell.page=.Menu
     }
-    return false
-}
-
-@(private="file")
-shell_show :: proc(hidden:^core.Table(render.Hidden),e:core.Entity,shown:bool) {
-    if core.has(core.read(hidden),e)!=shown {return}
-    if shown {core.remove(hidden,e)} else {core.add(hidden,e,render.Hidden{})}
+    if value,ok:=gui.changed_value(events,screen,"settings_preset");ok {
+        shell_preset_take(options,Shell_Preset(i32(value)))
+        changed=true
+    }
+    if value,ok:=gui.changed_value(events,screen,"settings_limit");ok {options.limit=i32(value);changed=true}
+    if on,ok:=gui.changed(events,screen,"settings_fullscreen");ok {options.fullscreen=on;changed=true}
+    if on,ok:=gui.changed(events,screen,"settings_vsync");ok {options.vsync=on;changed=true}
+    // What a preset sets, changed by hand, is no longer that preset.
+    custom:=false
+    if value,ok:=gui.changed_value(events,screen,"settings_scale");ok {options.scale=i32(value);custom=true}
+    if value,ok:=gui.changed_value(events,screen,"settings_shadows");ok {options.shadows=i32(value);custom=true}
+    if value,ok:=gui.changed_value(events,screen,"settings_aa");ok {options.antialiasing=i32(value);custom=true}
+    if value,ok:=gui.changed_value(events,screen,"settings_reflections");ok {options.reflections=render.Reflections(i32(value));custom=true}
+    if custom {options.preset=.Custom}
+    return changed || custom
 }
 
 // Runs every frame, also while the clock is stopped: it is what Escape and the
@@ -153,7 +129,7 @@ shell_show :: proc(hidden:^core.Table(render.Hidden),e:core.Entity,shown:bool) {
 shell_frame :: proc(
     shell:^Shell,options:^Shell_Options,g:^gui.Gui,screens:core.Read(Shell_Screen),huds:core.Read(Shell_Hud),
     frame_input:core.Frame_Input,clock:core.Ref(core.Clock),clock_requests:^core.Clock_Requests,network:core.Ref(core.Network),
-    saves:^save.Save_Requests,scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),
+    scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),
     display:^render.Display_Settings,graphics:^render.Graphics_Settings,app:^host.App,
 ) {
     if !shell.applied {
@@ -171,15 +147,8 @@ shell_frame :: proc(
     solo:=network.role==.Standalone
     if !solo && shell.page==.Menu {shell.page=.Playing}
 
-    screen:=core.count(screens)>0?core.entity_at(screens,0):core.NONE
-    changed:=false
-    for event in gui.events_this_frame(g) {
-        if event.entity==screen && shell_event(event,shell,options,solo,scenes,app) {changed=true}
-    }
-    if changed {
-        shell_apply(options^,graphics,display)
-        save.request_profile_save(saves)
-    }
+    screen,_:=core.sole(screens)
+    if shell_events(gui.events_this_frame(g),screen,shell,options,solo,scenes,app) {shell_apply(options^,graphics,display)}
 
     if core.key_pressed(frame_input.input,.Escape) {
         #partial switch shell.page {
@@ -199,6 +168,6 @@ shell_frame :: proc(
         shell.captured=captured
         platform.window_set_relative_mouse(app.platform,captured)
     }
-    if screen!=core.NONE {shell_show(hidden,screen,shell.page!=.Playing)}
-    if core.count(huds)>0 {shell_show(hidden,core.entity_at(huds,0),shell.page!=.Menu)}
+    render.set_hidden(hidden,screen,shell.page==.Playing)
+    if hud,found:=core.sole(huds);found {render.set_hidden(hidden,hud,shell.page==.Menu)}
 }

@@ -15,7 +15,6 @@ EVENT_BATCH :: 16     // markers one entity crosses in a tick
 PLAY_EVENT_BATCH :: 8 // match_play events one entity reports in a tick
 POSE_CAPACITY :: 1024 // properties one entity drives
 CLIP_CAPACITY :: 64
-REQUEST_CAPACITY :: 256
 ANIMATION_LAYERS :: 3 // clips played over the one of the component
 
 // Plays a clip of an asset. While playing is set the library advances the
@@ -246,10 +245,6 @@ animation_tick :: proc(
 ) {
     playback.frame+=1
     clear(&events.items);clear(&events.plays.items)
-    if app.assets!=nil && !program_array_reserve(&requests.distances.items,REQUEST_CAPACITY) {
-        memory_problem(problems,core.NONE,"the animation requests, so nothing is animated in this tick")
-        return
-    }
     if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.driven_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}};return}
     // The editor runs this once a frame with dt 0: a preview advances by the frame.
     tick_dt:=time.dt
@@ -951,12 +946,35 @@ bind :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,h
 }
 
 // Asks for the entity to be at a time of its clip in the next tick, without firing the markers it skips.
-animation_seek :: proc(requests:^Animation_Requests,entity:core.Entity,time:f32) -> bool {
-    if !finite(time) {return false}
-    if cap(requests.seeks.items)==0 {if reserve(&requests.seeks.items,REQUEST_CAPACITY)!=nil {return false}}
-    if len(requests.seeks.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.seeks,Animation_Seek{entity,time})
-    return true
+animation_seek :: proc(requests:^Animation_Requests,entity:core.Entity,time:f32) {
+    if requests==nil {return}
+    if !finite(time) {core.refuse(&requests.seeks);return}
+    core.offer(&requests.seeks,Animation_Seek{entity,time})
+}
+
+@(storage,setting)
+Animation_Settings :: struct {
+    requests:u32 `mirai:"advanced"`,    // of each kind a tick can ask for: seeks, poses, plays, goals, actions and targets; past it they are dropped and reported
+    match_goals:u32 `mirai:"advanced"`, // rigs whose motion matching a tick is told of; as many
+}
+ANIMATION_SETTINGS_DEFAULT :: Animation_Settings{requests=256,match_goals=4096}
+
+// The room of the requests of a tick, and what did not fit or was invalid in them.
+@(step="input fixed",loops="game editor",stage="begin")
+animation_requests_serve :: proc(requests:^Animation_Requests,actions:^Action_Requests,motion:^Motion_Requests,modifiers:^Modifier_Requests,paths:^Keyframe_Path_Requests,settings:Animation_Settings,problems:^core.Problems) {
+    code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
+    core.queue_serve(&requests.seeks,capacity,problems,code,"animation seeks",setting,"a seek asks for a finite time")
+    core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its motion profile")
+    core.queue_serve(&requests.poses,capacity,problems,code,"bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
+    core.queue_serve(&requests.final_poses,capacity,problems,code,"final bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
+    core.queue_serve(&requests.match_goals,int(settings.match_goals),problems,code,"motion matching goals","Animation_Settings.match_goals","it names a rig and a mode up to 31, with finite values and rates of 0 or more")
+    core.queue_serve(&requests.match_plays,capacity,problems,code,"motion matching plays",setting,"it names a rig, a clip of under 64 bytes, a mode up to 31, a finite fade and a phase from 0 to 1")
+    core.queue_serve(&actions.queue,capacity,problems,code,"action requests",setting,"it names an entity and an action of under 64 bytes, and a section for a section change")
+    core.queue_serve(&motion.targets,capacity,problems,code,"motion warp targets",setting,"it names a rig, a target of under 32 bytes and a valid spatial target")
+    core.queue_serve(&motion.locomotion,capacity,problems,code,"motion locomotion inputs",setting,"it names a rig, with finite velocities and a weight from 0 to 1")
+    core.queue_serve(&modifiers.queue,capacity,problems,code,"pose goals",setting,"it names a rig and a slot of its kind, with finite values and a weight from 0 to 1")
+    core.queue_serve(&modifiers.controls,capacity,problems,code,"pose controls",setting,"it names a rig and a slot of its kind, with a weight from 0 to 1 and a fade of 0 or more")
+    core.queue_serve(&paths.queue,capacity,problems,code,"keyframe path commands",setting,"it names an entity and a finite value")
 }
 
 // Plays a clip of the asset of the component. Layer 0 is the clip of the

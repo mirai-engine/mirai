@@ -70,6 +70,7 @@ Field :: struct {
     bits:u8,       // replication width of an integer; 0 sends it whole
     label,unit:string,
     description:string, // what the comment on the line of the field says; not in the binary schema
+    asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
 }
@@ -105,7 +106,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
 
 schema_destroy :: proc(s:^Schema) {
     for type in s.types {delete(type.name,s.allocator)}
-    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator)}
+    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator);delete(field.asset_kinds,s.allocator)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
     delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
@@ -401,6 +402,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
         case "label":     field.label=strings.clone(value,s.allocator)
         case "unit":      field.unit=strings.clone(value,s.allocator)
+        case "kind":      field.asset_kinds=strings.clone(value,s.allocator)
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}
         }
     }

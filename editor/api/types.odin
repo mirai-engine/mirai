@@ -78,7 +78,7 @@ Method_Flag :: enum u8 {
     Read_Only,
     Destructive,
     Idempotent,
-    Core,      // tools/list gives it always: the basics of a scene; the rest go through the tool call
+    Core,      // tools/list gives it always: what agents use most, as each costs its schema every turn; the rest go through the tool call
     Turn,      // only for the turn of an agent of the editor: tools/list does not give it to another request
 }
 Method_Flags :: bit_set[Method_Flag;u8]
@@ -158,6 +158,7 @@ Init_Error :: enum u8 {
 Server_Desc :: struct {
     port:int,                    // 0: the system picks one
     name,version,instructions:string,
+    docs_root:string,            // the engine whose game documentation the MCP tool docs reads; "": no such tool
     max_methods:int,             // 256
     max_connections:int,         // 8
     max_request:int,             // body bytes: 256 KiB
@@ -200,7 +201,7 @@ Conn :: struct {
 
 Server :: struct {
     allocator:runtime.Allocator,
-    name,version,instructions:string,
+    name,version,instructions,docs_root:string,
     listener:net.TCP_Socket,
     listening:bool,
     port:int,
@@ -227,6 +228,9 @@ Server :: struct {
     image:string,          // Call.image of the call that ran last; in its scratch
     plugins:[]Plugin,
     guides:[]Guide,
+    assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
+    pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
+    user:rawptr,                             // of pause
 }
 
 // A plugin the project finds; active: the project uses it.
@@ -246,6 +250,12 @@ method_find :: proc(s:^Server,name:string) -> ^Method {
         if method.name_hash==hash && method.name==name {return &method}
     }
     return nil
+}
+
+// A reader of text that came with a call: asset fields take a path as well as an id.
+call_reader_init :: proc(call:^Call,r:^serial.Text_Reader,text:string) {
+    serial.text_reader_init(r,text,call.allocator)
+    if call.server!=nil {r.assets=call.server.assets}
 }
 
 call_params :: #force_inline proc(call:^Call,$T:typeid) -> ^T {

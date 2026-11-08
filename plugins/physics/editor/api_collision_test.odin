@@ -58,9 +58,10 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     }
     info:=core.World_Info{entities=offset_of(Collision_Test_World,entities),tables=tables[:],storages=storages[:],settle=collision_test_settle,names=names[:],named_types=named_types[:]}
     entity,held:=core.create(&world.entities),core.create(&world.entities)
+    alone:=core.create(&world.entities)
     collider:=phys.COLLIDER_DEFAULT;collider.group=held;collider.friction=.8
     config:=Collision_Test_Filter{filter=phys.QUERY_FILTER_DEFAULT,unchanged=93};config.filter.debris=true
-    core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.colliders,entity,collider)
+    core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.ids,alone,{value=11});core.add(&world.colliders,entity,collider);core.add(&world.colliders,alone,phys.COLLIDER_DEFAULT)
     core.add(&world.filters,entity,config);core.add(&world.nested,entity,{region=config});core.add(&world.wrong,entity,{1,2})
     collision_test_settle(&world,nil,nil)
     selection:editor.Selection;defer delete(selection.entities)
@@ -90,6 +91,16 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out))
     testing.expectf(t,strings.contains(text,`"preset":"default","sensor":false,"belongs":["default"],"collides":["*"],"pushes":{},"group":"0x0000000000000009"`),"%s",text)
+    // Without component: the only one of the entity, or an error that lists them.
+    error=execute(state,&out,"physics.collision.get",`{"id":"b"}`)
+    testing.expect_value(t,error.code,0)
+    text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"component":"Collider"`),"%s",text)
+    error=execute(state,&out,"physics.collision.get",`{"id":"7"}`)
+    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    testing.expectf(t,strings.contains(error.message,"Collider, Collision_Test_Filter"),"%s",error.message)
+    error=execute(state,&out,"physics.collision.get",`{"id":"9"}`)
+    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    testing.expectf(t,strings.contains(error.message,"no collision component"),"%s",error.message)
     error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
     if !testing.expect_value(t,error.code,0) {return}
     value,_:=core.get(core.read(&world.colliders),entity)
@@ -148,6 +159,9 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collision_Test_Nested","prefix":"region.filter"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
+    error=execute(state,&out,"physics.collision.set",`{"id":"b","sensor":true}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,core.get(&world.colliders,alone).sensor)
     session.mode=.Play;session.runs[0]={world=&world}
     error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collider"}`)
     testing.expect_value(t,error.code,0)

@@ -229,18 +229,37 @@ executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> 
 // Checks the types of a package with the collections plugins and project it
 // reaches, like mirai test.
 cmd_check :: proc(root:string,args:[]string) -> int {
-    if len(args)==0 {fmt.eprintln("Usage: mirai check <package> [-flag...]");return 2}
+    if len(args)==0 || strings.has_prefix(args[0],"-") {
+        if owner:=project_of(project.path_absolute(".",context.temp_allocator));owner!="" && len(args)==0 {return check_project(root,owner)}
+        fmt.eprintln("Usage: mirai check [<package> [-flag...]]; without a package, inside a project: its game, editor and plugins")
+        return 2
+    }
     if !engine_shaders(root,backends=target_backends(args[1:])) {return 1}
-    command:=odin_command(root,"check",args[0])
+    folder:=package_folder(root,args[0])
+    command:=odin_command(root,"check",folder!=""?folder:args[0])
     // A check is no test build: the tests that run generated shaders are asked for (rhi.TEST_SHADERS).
     append(&command,"-no-entry-point","-define:MIRAI_TEST_SHADERS=true","-ignore-unused-defineables")
-    if folder:=package_folder(root,args[0]);folder!="" {
+    if folder!="" {
         collections,ok:=package_collections(root,folder,args[1:])
         if !ok {return 1}
         append(&command,..collections)
     }
     append(&command,..args[1:])
     return run(root,command[:])
+}
+
+// The code of a project, as build.check checks it: the world generated from
+// it, with its game, editor and plugins.
+@(private="file")
+check_project :: proc(root,folder:string) -> int {
+    opened,error:=project.open(folder,root,context.temp_allocator)
+    if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    defer build.job_destroy(job)
+    for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
+    if job.result.status==.Built {return 0}
+    if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
+    return 1
 }
 
 cmd_deps :: proc(root:string,args:[]string) -> int {

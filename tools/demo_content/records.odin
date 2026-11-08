@@ -29,7 +29,7 @@ Text_Out :: struct {
 record_id_of :: proc(file,name:string) -> u64 {return base.name_hash(fmt.tprintf("%s\x1frecords\x1f%s",file,name))&(1<<53-1)}
 
 @(private)
-records_table_of :: proc(file:string) -> base.Asset_Id {return id_of("records",file)}
+records_table_of :: proc(file:string) -> base.Asset_Id {return asset.content_id(PROJECT,"records",file)}
 
 // The row name of the table of file, as a field that names it.
 record_ref :: proc($T:typeid,file,name:string) -> core.Record(T) {
@@ -44,10 +44,10 @@ record_text_of :: proc(file,name,en:string,es:="") -> Text_Out {
 // Writes demo/<file>.records: rows of type, which names the struct as
 // "game.Name", with their texts.
 write_records :: proc(o:^Out,file,type:string,$T:typeid,rows:[]Row_Out(T),texts:[]Text_Out) {
-    index,ok:=asset.types_index(&o.types,T)
+    index,ok:=asset.types_index(&o.content.types,T)
     if !ok {
         fmt.eprintfln("demo_content: %s: %v has no schema",file,typeid_of(T))
-        o.failed=true
+        o.content.failed=true
         return
     }
     ids:=make([]u64,len(rows),context.temp_allocator)
@@ -73,13 +73,13 @@ write_records :: proc(o:^Out,file,type:string,$T:typeid,rows:[]Row_Out(T),texts:
     // A table keeps its texts ordered by id, then by language: "" before "es", as they were added.
     slice.stable_sort_by(entries[:],proc(a,b:asset.Records_Text) -> bool {return a.text<b.text})
     images:=make([]u8,len(rows)*size_of(T),context.temp_allocator)
-    if len(rows)>0 {serial.value_write(asset.types_layout(&o.types,index),images,raw_data(values),len(rows))}
+    if len(rows)>0 {serial.value_write(asset.types_layout(&o.content.types,index),images,raw_data(values),len(rows))}
     desc:=asset.Records_Desc{
         id=records_table_of(file),type=type,ids=ids,names=names,
-        schema=&o.types.schema,value_type=index,images=images,
+        schema=&o.content.types.schema,value_type=index,images=images,
         texts=entries[:],text=transmute([]u8)strings.to_string(text),
     }
-    bytes,error:=asset.records_bytes(&o.types,desc,context.temp_allocator)
+    bytes,error:=asset.records_bytes(&o.content.types,desc,context.temp_allocator)
     if error==.None && os.write_entire_file(path(o,file),bytes)!=nil {error=.IO}
-    check(o,file,error)
+    asset.content_check(&o.content,file,error)
 }

@@ -256,7 +256,7 @@ prefab show the lit image, and on returning to Edit the chosen mode returns.
   (`world_debug_draw`), with color per body type. It rebuilds the lines only when the physics
   (`synced`, `epoch`, tick, teleports) or the layers change, and counts those that do not fit.
   Without ready physics it is not available and without the plugin it does not exist; images
-  without UI (`editor.capture` with `ui:false`, `mirai capture`) carry no lines.
+  without UI (`capture` without `ui`, `mirai capture`) carry no lines.
 - A plugin adds modes [from its editor step](extensions.md#an-inspection-mode); one that stops
   being declared returns to Lit.
 - API: `editor.view_mode.list` and `editor.view_mode.set`.
@@ -500,8 +500,7 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   folders and its other files as they are.
 - Rename and move are rejected like delete and also with an invalid or taken name, a folder inside
   itself or the root of the assets; duplicate, only outside Edit, while watching and with assets of
-  a plugin, the engine or the editor. The methods are `asset.rename`, `asset.move` and
-  `asset.duplicate`.
+  a plugin, the engine or the editor. The method is `asset.move`.
 
 **Cards:**
 
@@ -634,7 +633,7 @@ browser cards and asset fields):
   card's menu while it is open in a tab (`scene_thumbnail_update`: if it is not in front, it
   brings its tab and takes the view that tab kept). On saving it, a notice says "Scene thumbnail
   updated". `THUMBNAIL_CAPTURE_WAIT` frames after opening it, or between the frames of the action,
-  `thumbnail_scene_capture` draws the world alone from the viewport's camera, like `editor.capture`
+  `thumbnail_scene_capture` draws the world alone from the viewport's camera, like `capture`
   without the UI (`host.app_capture_world`, 512×512 and `API_CAPTURE_SETTLE` frames), reduces it
   to the two sizes, stores it in `.mirai/thumbs` with the fixed key `THUMBNAIL_CAPTURED` and puts
   it in the cells that already show the scene. It is not taken if by then there is a Play, another
@@ -811,7 +810,7 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its
   history.
-- API: `graphics.status` and `graphics.set`.
+- API: `graphics.status` and `settings.set`.
 
 ## Project settings
 

@@ -5,6 +5,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -506,10 +507,10 @@ document_nodes_read :: proc(args:^Tree_Args,text:string,parent:int,path:string,o
         if text,has_widget,widget_ok:=tree_arg_string(&node_args,"widget");!widget_ok {
             return document_failed(call,d.path)
         } else if has_widget {
-            widget,parsed:=serial.text_parse_asset_id(text)
+            widget,problem:=editor.asset_resolve(args.session,text,".ui")
             is_ui:=false
             if args.registry!=nil {if record,found:=asset.registry_find(args.registry,widget);found {is_ui=record.kind==asset.KIND_UI}}
-            if !parsed || !is_ui || widget==args.asset {api.call_failf(call,api.INVALID_PARAMS,"%s.widget: '%s' is not another .ui of the project",d.path,text);return false}
+            if problem!="" || !is_ui || widget==args.asset {api.call_failf(call,api.INVALID_PARAMS,"%s.widget: '%s' is not another .ui of the project",d.path,text);return false}
             d.kind,d.widget=.Component,widget
         } else {
             kind_text,has_kind,kind_ok:=tree_arg_string(&node_args,"kind")

@@ -1,8 +1,9 @@
 # Menus, pause and settings
 
 The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.ui` the look, a
-`Switcher` with one page per `Shell_Page`, written by `write_shell` of `tools/content`. Change
-both, run the content tool, then `asset.reload` in an open editor ([UI](../ui.md)).
+`Switcher` whose pages are named after the members of `Shell_Page`, written by `write_shell` of
+`tools/content`. Change both and run the content tool; an open editor picks it up
+([UI](../ui.md)).
 
 ## Map
 
@@ -70,32 +71,31 @@ display.mode=.Fullscreen                           // ^render.Display_Settings; 
 
 ## Persist
 
-The player's choices are a `@(storage,persist)` struct of plain data, written to the player's
-profile and read back when the world first runs:
+The player's choices are a `@(storage,persist)` struct of plain data, read back when the world
+first runs and written to the player's profile by itself when it changes, which a dragged slider
+does not do at every step. Only bring the engine to them:
 
 ```odin
-if changed {
-    shell_apply(options^,graphics,display)
-    save.request_profile_save(saves)               // saves: ^save.Save_Requests
-}
+if changed {shell_apply(options^,graphics,display)}
 ```
 
 On a first run (`options.chosen` false) the shell picks the preset of the machine from
-`graphics.textures`, then sets `chosen`. `save.request_options_save` instead keeps the machine
-settings themselves, when the game has no options struct of its own.
+`graphics.textures`, then sets `chosen`. A game with no options struct of its own writes the
+machine settings directly: they are kept the same way.
 
 ## Pause
 
 `shell_frame` runs every frame, also with the clock stopped, because Escape and the buttons must
 reach it. It maps `Shell.page` to the clock (`core.pause(clock_requests)` and `core.resume`), to
 the mouse (captured only while `Playing`) and to the `render.Hidden` of the screens.
-`scene.request_path(scenes,path)` loads a scene, which is how Quit to Menu starts over.
+`scene.request_restart(scenes)` loads the scene again, which is how Quit to Menu starts over;
+`scene.request_path(scenes,path)` loads another.
 
 ## Pitfalls that fail silently
 
 - Menu logic in a fixed step never runs while the clock is stopped: use `@(step="frame")`.
-- A new page that is not in the same position in `Shell_Page` and in `shell.ui` shows the wrong
-  page: the `Switcher` counts its nodes.
+- A `Switcher` bound to an enum shows the page named like the member, and nothing when there is
+  none, so a new member needs a page of its name in `shell.ui`.
 - Writing `Graphics_Settings` from another step is overwritten by the next `shell_apply`.
 - A preset sets `render_megapixels`; leave it at 0 when the scale is the player's choice.
 - In a network game the clock is not stopped and Quit leaves the game instead of loading a scene.

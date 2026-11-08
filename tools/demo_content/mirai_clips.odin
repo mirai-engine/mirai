@@ -173,14 +173,14 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
 // pulse curve, a faster jog, a wave and the stride that root motion moves.
 @(private)
 mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride,stride_time:f32) {
-    id=id_of("animation","mirai_gallery")
+    id=asset.content_id(PROJECT,"animation","mirai_gallery")
     rig,valid:=mirai_rig(model)
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
     walk,has_walk:=mirai_clip_find(locomotion,"walk")
     left,right:=mirai_bone(model,"LeftFoot"),mirai_bone(model,"RightFoot")
-    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.failed=true;return}
+    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.content.failed=true;return}
     frames,times,sampled:=mirai_clip_frames(rig,walk,60)
-    if !sampled {o.failed=true;return}
+    if !sampled {o.content.failed=true;return}
     steps,advance:=mirai_steps(frames,times,left,right)
     duration:=times[len(times)-1]
     walk.markers=steps
@@ -190,11 +190,11 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     walk.tracks=tracks
     wave,waved:=mirai_wave(model,rig,idle)
     stride_clip,strode:=mirai_stride(model,rig,walk,advance)
-    if !waved || !strode {o.failed=true;return}
+    if !waved || !strode {o.content.failed=true;return}
     clips:=[]asset.Animation_Clip_Desc{idle,walk,mirai_clip_scaled(walk,"jog",.72,1.2),wave,stride_clip}
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/animations/mirai_gallery.anim"
-    check(o,file,asset.animation_save(path(o,file),&o.types,{id=id,clips=clips}))
+    asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
     // What the stride covers and how long it lasts: the window of its warp (mirai_reach.motion).
     return id,advance,duration
 }

@@ -20,7 +20,7 @@ import animation_editor "plugins:animation/editor"
 gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
     o,s:=g.o,g.s
     folder:="assets/models/procedural-spider";os.make_directory_all(path(o,folder))
-    skeleton_id,mesh_id:=id_of("skeleton","spider"),id_of("mesh","spider")
+    skeleton_id,mesh_id:=asset.content_id(PROJECT,"skeleton","spider"),asset.content_id(PROJECT,"mesh","spider")
     bones:[25]asset.Skeleton_Bone
     rest:[25]mm.Transform
     joints:[25]asset.Rig_Joint
@@ -45,7 +45,7 @@ gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
         if bone.parent>=0 {rest[i]=mm.transform_compose(rest[bone.parent],rest[i])}
         joints[i]={node=u32(i),inverse_bind=linalg.inverse(mm.transform_matrix(rest[i]))}
     }
-    check(o,"spider.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/spider.skeleton",folder)),&o.types,{id=skeleton_id,bones=bones[:]}))
+    asset.content_check(&o.content,"spider.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/spider.skeleton",folder)),&o.content.types,{id=skeleton_id,bones=bones[:]}))
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube,context.temp_allocator);geom.cube_build(&cube)
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator);indices:=make([dynamic]u32,context.temp_allocator);skin:=make([dynamic]asset.Skin_Vertex,context.temp_allocator)
     gallery_skin_box(&cube,&vertices,&indices,&skin,{rest[0].position,1,{.5,.24,1.1}},0,0xff70b3e6)
@@ -57,10 +57,10 @@ gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
         }
         foot:=3+i*3;gallery_skin_box(&cube,&vertices,&indices,&skin,{rest[foot].position,1,{.14,.06,.14}},u16(foot),0xff39302d)
     }
-    if !asset.mesh_tangents(&vertices,indices[:],&skin) {check(o,"spider.mesh",.Out_Of_Memory);return {}}
+    if !asset.mesh_tangents(&vertices,indices[:],&skin) {asset.content_check(&o.content,"spider.mesh",.Out_Of_Memory);return {}}
     mesh_write_built(o,"spider.mesh",fmt.tprintf("%s/spider.mesh",folder),{id=mesh_id,joints=joints[:],skeleton=skeleton_id},{vertices=vertices[:],skin=skin[:]},indices[:])
-    root:=entity(s,"Procedural eight leg spider",place.origin+mm.Vec3{0,0,1.2})
-    put(s,root,"Mesh_Renderer",&render.Mesh_Renderer{mesh=mesh_id})
+    root:=asset.builder_entity(s,"Procedural eight leg spider",{position=place.origin+mm.Vec3{0,0,1.2}})
+    asset.builder_set(s,root,render.Mesh_Renderer{mesh=mesh_id})
     grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.mode=.Procedural;grounding.count=8;grounding.body=anim.bone_ref("body")
     grounding.cycle_duration=.6;grounding.prediction=.12;grounding.body_height=.57;grounding.trace_above=.6;grounding.trace_below=1.2;grounding.max_swinging=4;grounding.max_drop=.25;grounding.max_rise=.25
     for i in 0..<8 {
@@ -69,14 +69,14 @@ gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
         grounding.legs[i]=leg
     }
     gallery_profile(o,s,root,"spider_grounding",{grounding={grounding}})
-    capsule:=phys.collider_character(.22,.8);put(s,root,"Collider",&capsule)
+    capsule:=phys.collider_character(.22,.8);asset.builder_set(s,root,capsule)
     character:=phys.character_default();character.step_height=.22;character.move_relative_to=.Game
     walk:=phys.WALK_DEFAULT;walk.max_speed=1;walk.acceleration=6;walk.braking=8;walk.jump_height=.5
-    put(s,root,"Character",&character);put(s,root,"Walk",&walk)
-    camera:=entity(s,"Spider camera")
-    lens:=render.CAMERA_DEFAULT;lens.active=false;lens.fov=60*mm.RAD_PER_DEG;put(s,camera,"Camera",&lens)
+    asset.builder_set(s,root,character);asset.builder_set(s,root,walk)
+    camera:=asset.builder_entity(s,"Spider camera")
+    lens:=render.CAMERA_DEFAULT;lens.active=false;lens.fov=60*mm.RAD_PER_DEG;asset.builder_set(s,camera,lens)
     follow:=cam.CAMERA_FOLLOW_DEFAULT;follow.target=core.Entity(root);follow.offset={0,.5,0};follow.distance=3;follow.pitch=.3;follow.min_pitch=-.5;follow.max_pitch=1.1;follow.turn=true
-    put(s,camera,"Camera_Follow",&follow);put(s,root,"Drivable",&inp.Drivable{camera=core.Entity(camera)})
+    asset.builder_set(s,camera,follow);asset.builder_set(s,root,inp.Drivable{camera=core.Entity(camera)})
     gallery_cube(s,"Spider low step",place.origin+mm.Vec3{0,.06,-.5},{1.7,.2,.45},{.2,.3,.3,1},true)
     gallery_item(g,root,.Spider,place,"5.1  Procedural eight leg gait","no clips / eight contact anchors / E: drive it")
     return root
@@ -99,13 +99,13 @@ gallery_skin_box :: proc(cube:^geom.Mesh_Buffer,vertices:^[dynamic]asset.Vertex,
 // A Mirai stretched upward, with its skeleton stretched the same, and the clips of the gallery
 // baked for it: the same paths, with the translations scaled to its proportions.
 @(private)
-gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,source:string,root:base.Entity_Id) {
+gallery_retarget :: proc(o:^Out,s:^asset.Scene_Builder,model:^importer.Imported_Model,source:string,root:base.Entity_Id) {
     folder:="assets/models/retarget-mirai";os.make_directory_all(path(o,folder))
-    skeleton_id,mesh_id:=id_of("skeleton","tall_mirai"),id_of("mesh","tall_mirai")
+    skeleton_id,mesh_id:=asset.content_id(PROJECT,"skeleton","tall_mirai"),asset.content_id(PROJECT,"mesh","tall_mirai")
     rig,valid:=mirai_rig(model)
     body:=-1
     for node in model.nodes {if node.mesh>=0 {body=node.mesh;break}}
-    if !valid || body<0 {o.failed=true;return}
+    if !valid || body<0 {o.content.failed=true;return}
     bones:=make([]asset.Skeleton_Bone,len(model.skeletons[0].bones),context.temp_allocator);copy(bones,model.skeletons[0].bones)
     world:=make([]mm.Transform,len(bones),context.temp_allocator);copy(world,rig.rest_world)
     for &placed in world {placed.position.y*=GALLERY_TALL}
@@ -114,7 +114,7 @@ gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,sour
         parent:=world[bone.parent]
         bone.translation=mm.quat_rotate(mm.quat_inverse(parent.rotation),world[i].position-parent.position)/parent.scale
     }
-    check(o,"tall_mirai.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/tall_mirai.skeleton",folder)),&o.types,{id=skeleton_id,bones=bones}))
+    asset.content_check(&o.content,"tall_mirai.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/tall_mirai.skeleton",folder)),&o.content.types,{id=skeleton_id,bones=bones}))
     mesh:=model.meshes[body]
     vertices:=make([]asset.Vertex,len(mesh.vertices),context.temp_allocator);copy(vertices,mesh.vertices)
     joints:=make([]asset.Rig_Joint,len(mesh.joints),context.temp_allocator);copy(joints,mesh.joints)
@@ -137,23 +137,23 @@ gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,sour
     levels:=importer.mesh_levels(vertices,mesh.indices,mesh.skin,mesh.submeshes,true,context.temp_allocator,mesh.morphs,mesh.morph_deltas)
     desc:=asset.Mesh_Desc{id=mesh_id,joints=joints,skeleton=skeleton_id,slots=slots}
     if importer.levels_geometry(levels,mesh.flags,&desc.geometry,context.temp_allocator) {
-        check(o,"tall_mirai.mesh",asset.mesh_save(path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),&o.types,desc))
-    } else {check(o,"tall_mirai.mesh",.Invalid)}
-    put(s,root,"Mesh_Renderer",&render.Mesh_Renderer{mesh=mesh_id})
+        asset.content_check(&o.content,"tall_mirai.mesh",asset.mesh_save(path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),&o.content.types,desc))
+    } else {asset.content_check(&o.content,"tall_mirai.mesh",.Invalid)}
+    asset.builder_set(s,root,render.Mesh_Renderer{mesh=mesh_id})
     constraint:=anim.RETARGET_MAPPING_DEFAULT;constraint.mode=.Paths;constraint.translation=.Scaled
     profile:=anim.Pose_Profile{retarget={constraint}}
     input:asset.Asset
-    if error:=asset.asset_load(&input,path(o,"assets/animations/mirai_gallery.anim"));error!=.None {check(o,"mirai retarget input",error);return}
+    if error:=asset.asset_load(&input,path(o,"assets/animations/mirai_gallery.anim"));error!=.None {asset.content_check(&o.content,"mirai retarget input",error);return}
     defer asset.asset_close(&input)
-    clips,read:=asset.animation_view(&input,&o.types)
-    if read!=.None {check(o,"mirai retarget clips",read);return}
+    clips,read:=asset.animation_view(&input,&o.content.types)
+    if read!=.None {asset.content_check(&o.content,"mirai retarget clips",read);return}
     source_info:=asset.Skeleton_Info{u32(len(model.skeletons[0].bones))};target_info:=asset.Skeleton_Info{u32(len(bones))}
     baked:asset.Document
-    baked_id:=id_of("animation","tall_mirai")
-    error:=animation_editor.retarget_bake(&baked,&o.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},profile,skeleton=skeleton_id)
-    if error!=.None {check(o,"mirai retarget bake",error);return}
+    baked_id:=asset.content_id(PROJECT,"animation","tall_mirai")
+    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},profile,skeleton=skeleton_id)
+    if error!=.None {asset.content_check(&o.content,"mirai retarget bake",error);return}
     defer asset.document_destroy(&baked)
-    check(o,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/animations/tall_mirai.anim")))
+    asset.content_check(&o.content,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/animations/tall_mirai.anim")))
     player:=anim.ANIMATION_DEFAULT;player.asset=baked_id;base.text_set(player.clip[:],"walk")
-    put(s,root,"Animation",&player)
+    asset.builder_set(s,root,player)
 }

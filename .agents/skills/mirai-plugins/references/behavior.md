@@ -22,7 +22,8 @@ reservations) belongs to
 - `Mind_Agent` carries the name and the `ai.Mind` of the agent, which is copied with the world. It
   is shared: each library that runs minds writes those of its agents.
 - Before each tick, `w.entity` is the agent and `ctx.holder` too, owner of what it reserves.
-  `Act_World` is the start of the actions' context (the game puts it first with `using`):
+  `Act_World` is the start of the actions' context (the game puts `Mind_Tick`, which holds it and
+  what minds read, first with `using`, from the `Mind_World` params of its loop function):
   `move_act`, `follow_act`, `path_status` and `agent_path` request paths from `navigation` and
   read `Nav_Path`.
 - What those actions request goes on when the agent's section unloads

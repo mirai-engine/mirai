@@ -19,7 +19,7 @@ time. The first step that fails ends it.
   {"name": "the game opens", "method": "play.step", "params": {"ticks": 30}},
   {"name": "walk forward", "method": "play.step", "params": {"seconds": 1, "keys": ["W"]}},
   {"name": "the player walked", "method": "play.check", "params": {"conditions": [
-    {"name": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}}
+    {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}}
 ]}
 ```
 
@@ -35,14 +35,14 @@ time. The first step that fails ends it.
 `play.check` reads conditions on the game now; all must hold.
 
 ```json
-{"name": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}
+{"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}
 {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"}
 {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}
-{"name": "Door", "component": "Open", "compare": "Exists"}
-{"name": "Pickup", "compare": "Gone"}
+{"entity": "Door", "component": "Open", "compare": "Exists"}
+{"entity": "Pickup", "compare": "Gone"}
 ```
 
-- The subject is an entity by `name` (the first with it), by `id` or by `entity` handle, or a
+- The subject is an `entity`, by its name, a path Parent/Child, its id or its handle, or a
   `storage`; `component` and `field` go inside it, joined by dots (`velocity.1`).
 - `compare`: `Exists` (the default), `Gone`, `Equal`, `Not_Equal`, `Below`, `At_Most`, `Above`,
   `At_Least`. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
@@ -56,7 +56,7 @@ none run when they hold already. If they never hold, the step and the scenario f
 
 ```json
 {"name": "the scene starts over", "method": "play.step", "params": {"ticks": 900, "until": [
-  {"name": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}}
+  {"entity": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}}
 ```
 
 ## Input

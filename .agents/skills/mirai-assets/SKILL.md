@@ -33,7 +33,7 @@ types, scene/prefab, registry).
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
    ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes and
-   prefabs.
+   prefabs. A content tool writes new ones with `asset.Scene_Builder`.
 3. **Changing a serialized struct.** Adding, removing, reordering or changing the type of a field
    requires neither a version nor a converter: the reader migrates by field name.
    - Renaming a field makes it another one: the previous value is lost and the new one takes the

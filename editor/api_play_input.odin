@@ -18,11 +18,14 @@ import "mirai:std/base"
 // their taps, holds and thresholds, and play out over the ticks the next
 // steps run (Run_Script).
 
+API_HOLD_TICKS :: 3600 // the most ticks an action is held
+
 Api_Play_Input_Action :: struct {
     name:[64]u8 `mirai:"text,label=The action by its name as input.get lists it"`,
     value:f32 `mirai:"optional,label=Axis: where it is held; not 0"`,
     vector:[2]f32 `mirai:"optional,label=Axis2: where it is held with x right and y up (forward for a move); not both 0"`,
     ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it is held from the next one on; 0: until it is released"`,
+    seconds:f32 `mirai:"optional,min=0,unit=s,label=Game time it is held in place of ticks: the nearest whole ticks and at least 1"`,
     release:bool `mirai:"optional,label=Lets go of it on the next tick"`,
 }
 
@@ -31,7 +34,6 @@ Api_Play_Input_Params :: struct {
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Devices along the next ticks as a person plays them: each segment holds its input for its ticks or seconds and the next one follows; the ticks the next steps run without input of their own play them and nothing is held after them. Replaces what was left of the previous ones"`,
     release_all:bool `mirai:"optional,label=Lets go of everything the seat holds and drops the segments left before the actions"`,
     slot:int `mirai:"optional,min=-1,max=3,label=The local seat by its slot; -1: the one with the focus"`,
-    seat:[16]u8 `mirai:"optional,text,label=A local seat by its handle in place of slot"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
@@ -45,13 +47,13 @@ Api_Play_Input_Result :: struct {
 @(private)
 api_play_input_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Play_Input_Params{slot=-1}
-    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released, or schedules the keys, buttons, mouse and gamepads a person presses along the next ticks (a click, a double click, a hold of some seconds, a look) through the path of real input. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
+    api_register(s,st,{name="play.input",flags={.Core},summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released, or schedules the keys, buttons, mouse and gamepads a person presses along the next ticks (a click, a double click, a hold of some seconds, a look) through the path of real input. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
 }
 
-// The seat of a run a call names by its handle, or the local seat of slot
-// (-1: the focused one); false after failing the call. on_client is why a
-// method does not take the run of a client; "" when it does.
-play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,handle:string,on_client:="") -> (seat:core.Entity,ok:bool) {
+// The local seat of slot (-1: the focused one) of a run; false after failing
+// the call. on_client is why a method does not take the run of a client; ""
+// when it does.
+play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:="") -> (seat:core.Entity,ok:bool) {
     seats,state:=core.world_table_of(w,input.Seat),core.world_storage_of(w,input.Seats)
     if seats==nil || state==nil {
         api.call_fail(call,api.INVALID_PARAMS,"This game has no seats: its world does not take engine/input")
@@ -61,14 +63,8 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,handle:str
         api.call_fail(call,api.INVALID_PARAMS,on_client)
         return
     }
-    if handle!="" {
-        e,problem:=api_play_entity(w,handle,0,"seat")
-        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-        if !core.has(seats,e) {api.call_failf(call,api.INVALID_PARAMS,"seat %s is not a Seat: play.inspect with the component Seat lists the seats",handle);return}
-        return e,true
-    }
     if state.local_count==0 {
-        api.call_fail(call,api.INVALID_PARAMS,"The game has no local seat (a server without players): name a seat by its handle, or play.start with players")
+        api.call_fail(call,api.INVALID_PARAMS,"The game has no local seat (a server without players): play.start with players")
         return
     }
     at:=slot<0?state.focus:slot
@@ -147,16 +143,15 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,`give actions, as [{"name": "jump", "ticks": 1}], segments, as [{"ticks": 3, "mouse_buttons": ["Left"]}], or release_all`)
         return
     }
-    handle:=base.text_get(p.seat[:])
     seats:=core.world_table_of(w,input.Seat)
     seat:=core.NONE
     requests:^input.Hold_Requests
     holds:[input.HOLD_CAPACITY]input.Hold_Request
     if count>0 || (p.release_all && seats!=nil) {
         found:bool
-        if seat,found=play_seat(s,call,w,p.slot,handle);!found {return}
+        if seat,found=play_seat(s,call,w,p.slot);!found {return}
         if value,_:=core.get(core.read(seats),seat);!input.seat_local(value) {
-            api.call_failf(call,api.INVALID_PARAMS,"seat %s is of a player at another end, which takes the actions its client sends: give play.input the player of that client's run and its local seat",handle)
+            api.call_failf(call,api.INVALID_PARAMS,"the seat of slot %d is of a player at another end, which takes the actions its client sends: give play.input the player of that client's run",p.slot)
             return
         }
         m:^input.Input_Map
@@ -165,10 +160,16 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
         for &entry,i in p.actions[:count] {
             action,value,problem:=api_play_hold_of(s,m,&entry,i)
             if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-            holds[i]={seat=seat,action=action,value=value,ticks=u32(entry.ticks)}
+            ticks:=entry.ticks
+            if entry.seconds!=0 {
+                if entry.ticks!=0 {api.call_failf(call,api.INVALID_PARAMS,"actions.%d: ticks and seconds both say how long it is held: give one",i);return}
+                timed:bool
+                if ticks,timed=api_seconds_ticks(call,fmt.tprintf("actions.%d: ",i),f64(entry.seconds),s.app.tick_dt,API_HOLD_TICKS);!timed {return}
+            }
+            holds[i]={seat=seat,action=action,value=value,ticks=u32(ticks)}
         }
-    } else if p.slot>=0 || handle!="" {
-        api.call_fail(call,api.INVALID_PARAMS,"slot and seat name the seat of actions; segments go to the devices: keys and mouse to the focused local seat (focus of play.step) and gamepad i to the seat of slot i. Leave them out")
+    } else if p.slot>=0 {
+        api.call_fail(call,api.INVALID_PARAMS,"slot names the seat of actions; segments go to the devices: keys and mouse to the focused local seat (focus of play.step) and gamepad i to the seat of slot i. Leave them out")
         return
     }
     script:=run_script(s,r)

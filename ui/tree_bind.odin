@@ -116,7 +116,15 @@ Bound :: struct {
     count:u32,    // of an array: a color has 4
     elem:serial.Type_Kind,
     stride:u32,   // of an array of options: the size of each
-    choices:[]serial.Choice, // of an enum, or of the enums of an array of options: shown by name
+    // Of an enum, or of the enums of an array of options, shown by name: found
+    // again each time, because the schema moves its choices as it grows.
+    choices_of:^serial.Schema,
+    choices_type:serial.Type_Index,
+}
+
+@(private)
+bound_choices :: proc(b:Bound) -> []serial.Choice {
+    return serial.schema_choices(b.choices_of,b.choices_type) if b.choices_of!=nil else nil
 }
 @(private)
 Node_Bound :: struct {text,value,visible,selected,disabled,image,tint,variant:Bound,options:Bound}
@@ -279,7 +287,7 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     case .Bool,.Int,.Uint,.Float,.Enum:
         if t.kind==.Float && t.size!=4 && t.size!=8 {return {},false}
         if want==.Asset || want==.Color || want==.Entity {return {},false}
-        if t.kind==.Enum && want!=.Number {bound.choices=serial.schema_choices(schema,field_type)}
+        if t.kind==.Enum && want!=.Number {bound.choices_of,bound.choices_type=schema,field_type}
         if want==.Name && t.kind!=.Enum {return {},false}
     case .Array:
         elem:=serial.schema_type(schema,t.elem)
@@ -321,7 +329,7 @@ tree_bind_options :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) 
         bound.text=true
     case .Enum:
         if e.size!=1 && e.size!=2 && e.size!=4 && e.size!=8 {return {},false}
-        bound.choices=serial.schema_choices(schema,t.elem)
+        bound.choices_of,bound.choices_type=schema,t.elem
     case:
         return {},false
     }
@@ -625,7 +633,7 @@ tree_template_parse :: proc(parts:^[dynamic]Template_Part,text:string,instance:^
             part.format,part.spec=.Choice,spec
         case kind==.Enum && strings.index_byte(spec,'=')>=0:
             part.format,part.spec=.Choice,spec
-            if !format_names_valid(spec,part.bound.choices) {return true,false}
+            if !format_names_valid(spec,bound_choices(part.bound)) {return true,false}
         case number && strings.index_byte(spec,'=')>=0:
             part.format,part.spec=.Plural,spec
             if !format_names_valid(spec,nil) {return true,false}
@@ -715,7 +723,7 @@ bound_bytes :: proc(values:rawptr,b:Bound) -> string {
 @(private)
 bound_choice :: proc(values:rawptr,b:Bound) -> string {
     value:=i64(bound_number(values,b))
-    for choice in b.choices {if choice.value==value {return choice.name}}
+    for choice in bound_choices(b) {if choice.value==value {return choice.name}}
     return ""
 }
 
@@ -757,7 +765,7 @@ template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template
         return
     case .Default,.Decimals,.Percent,.Clock,.Clock_Hours:
     }
-    if b.text || b.kind==.Bool || b.kind==.Enum && len(b.choices)>0 && part.format==.Default {
+    if b.text || b.kind==.Bool || b.kind==.Enum && len(bound_choices(b))>0 && part.format==.Default {
         text:string
         switch {
         case b.text:        text=bound_bytes(values,b)
@@ -835,8 +843,13 @@ bound_entity :: proc(values:rawptr,b:Bound) -> base.Entity {
 // The name of the variant a binding chooses: a text, or the name of an enum value.
 @(private)
 bound_variant :: proc(values:rawptr,b:Bound) -> u64 {
-    name:=bound_bytes(values,b) if b.text else bound_choice(values,b)
-    return style_variant(name)
+    return style_variant(bound_name(values,b))
+}
+
+// A text, or the name of an enum value.
+@(private)
+bound_name :: proc(values:rawptr,b:Bound) -> string {
+    return bound_bytes(values,b) if b.text else bound_choice(values,b)
 }
 
 // ---------------------------------------------------------------- formats of a language

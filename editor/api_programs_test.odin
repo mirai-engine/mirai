@@ -107,10 +107,16 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     _,_,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)
     testing.expect(t,!ok,"an undone program is not there")
 
-    // A shader changed outside the editor: build.shaders publishes again and answers with what that left.
+    // Publishing again answers with what that left.
     published:=build.programs.serial
-    _,failure,ok=programs_test_call(t,state,"build.shaders",`{"seconds":5}`)
-    testing.expect(t,!ok && strings.contains(failure.message,"could not be published") && build.programs.serial==published+1,failure.message)
+    method:=api.Method{result_id=Api_Build_Result}
+    result:Api_Build_Result
+    publish:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
+    {
+        context.logger=log.nil_logger()
+        api_build_shaders(s,&publish,5)
+    }
+    testing.expect(t,publish.failed && strings.contains(publish.error.message,"could not be published") && build.programs.serial==published+1,publish.error.message)
 }
 
 @(private="file")

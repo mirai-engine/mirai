@@ -1,9 +1,12 @@
 package editor
 
+import "core:fmt"
+import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -13,24 +16,21 @@ import "mirai:std/serial"
 // path, a file or inside the assets folder.
 
 Api_Prefab_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional"`,
-    asset:base.Asset_Id `mirai:"optional"`,
+    asset:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The prefab: its file, a path inside the assets folder or its asset id; none: all of them"`,
 }
 
 Api_Prefab_Inspect_Params :: struct {
     id:base.Entity_Id `mirai:"optional,label=An entity: its prefab links and overrides"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional"`,
-    asset:base.Asset_Id `mirai:"optional"`,
+    asset:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A prefab: its file, a path inside the assets folder or its asset id"`,
 }
 
 Api_Prefab_Create_Params :: struct {
     id:base.Entity_Id `mirai:"label=The root of the subtree that becomes the prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=A new file inside the assets folder"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: prefabs/ and the name of the entity"`,
 }
 
 Api_Prefab_Instantiate_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The prefab by its file; give path or asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=The prefab by its id; give path or asset"`,
+    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The prefab: its file, a path inside the assets folder or its asset id"`,
     parent:base.Entity_Id `mirai:"optional"`,
     position:[3]f32 `mirai:"optional"`,
     rotation_deg:[3]f32 `mirai:"optional"`,
@@ -50,7 +50,7 @@ Api_Prefab_Apply_Params :: struct {
 
 Api_Prefab_Variant_Params :: struct {
     prefab:[API_PATH_BYTES]u8 `mirai:"text,label=The base: its file, a path inside the assets folder or its asset id"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=A new file inside the assets folder"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: prefabs/ and the name of the base with _variant"`,
 }
 
 Api_Prefab_Variant_Result :: struct {
@@ -136,10 +136,10 @@ Api_Prefab_Entity :: struct {
 @(private)
 prefab_api_register :: proc(s:^Session,st:^Api_State) {
     instantiate:=Api_Prefab_Instantiate_Params{scale_multiplier={1,1,1}}
-    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=Api_Prefab_List,writes_result=true,flags={.Core,.Read_Only},run=api_prefab_list})
+    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=Api_Prefab_List,writes_result=true,flags={.Read_Only},run=api_prefab_list})
     api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=Api_Prefab_Inspect_Params,result=Api_Prefab_Inspect_Result,writes_result=true,flags={.Read_Only},run=api_prefab_inspect})
     api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=Api_Prefab_Create_Params,result=Api_Prefab_Created_Result,run=api_prefab_create})
-    api_register(s,st,{name="prefab.instantiate",flags={.Core},summary="Places an instance of a prefab with new ids.",params=Api_Prefab_Instantiate_Params,result=Api_Prefab_Created_Result,defaults=&instantiate,run=api_prefab_instantiate})
+    api_register(s,st,{name="prefab.instantiate",summary="Places an instance of a prefab with new ids.",params=Api_Prefab_Instantiate_Params,result=Api_Prefab_Created_Result,defaults=&instantiate,run=api_prefab_instantiate})
     api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=Api_Prefab_Apply_Params,result=Api_Prefab_Count_Result,run=api_prefab_apply})
     api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=Api_Prefab_Entity_Params,result=Api_Prefab_Count_Result,run=api_prefab_revert})
     api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=Api_Prefab_Params,result=Api_Prefab_Refresh_Result,run=api_prefab_refresh})
@@ -262,7 +262,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         serial.text_write_raw(w,"]}")
         return
     }
-    id,error:=prefab_locate(s,base.text_get(params.path[:]),params.asset)
+    id,error:=prefab_locate(s,base.text_get(params.asset[:]))
     if error!=.None {
         api_prefab_fail(call,error)
         return
@@ -310,6 +310,24 @@ api_prefab_entity :: proc(s:^Session,call:^api.Call,id:base.Entity_Id) -> (e:cor
     return e,true
 }
 
+// A file for a new prefab of this name that no asset takes.
+@(private)
+api_prefab_new_path :: proc(s:^Session,name:string) -> string {
+    clean:=strings.builder_make(context.temp_allocator)
+    for c in strings.trim_space(name) {
+        if strings.contains_rune(`<>:"/\|?*`,c) {strings.write_byte(&clean,'_')} else {strings.write_rune(&clean,c)}
+    }
+    stem:=strings.to_string(clean)
+    if stem=="" {stem="prefab"}
+    path:=fmt.tprintf("prefabs/%s.prefab",stem)
+    r:=&s.app.assets.registry
+    for i:=2;;i+=1 {
+        _,taken:=asset.registry_find_path(r,path)
+        if !taken && !os.exists(project.path(r.root,path,allocator=context.temp_allocator)) {return path}
+        path=fmt.tprintf("prefabs/%s_%d.prefab",stem,i)
+    }
+}
+
 @(private)
 api_prefab_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Create_Params)
@@ -317,6 +335,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
     e,found:=api_prefab_entity(s,call,params.id)
     if !found {return}
     path:=base.text_get(params.path[:])
+    if path=="" {path=api_prefab_new_path(s,entity_name(edited_world(s),e))}
     id,error:=prefab_create(s,e,path)
     if error!=.None {
         api_prefab_fail(call,error)
@@ -330,13 +349,8 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Instantiate_Params)
-    path:=base.text_get(params.path[:])
-    if (path=="") == (params.asset=={}) {
-        api.call_fail(call,api.INVALID_PARAMS,"exactly one of path and asset")
-        return
-    }
     if !api_guard_edit(s,call) {return}
-    id,locate_error:=prefab_locate(s,path,params.asset)
+    id,locate_error:=prefab_locate(s,base.text_get(params.asset[:]))
     if locate_error!=.None {
         api_prefab_fail(call,locate_error)
         return
@@ -390,14 +404,17 @@ api_prefab_apply :: proc(s:^Session,call:^api.Call) {
 api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Variant_Params)
     if !api_guard_edit(s,call) {return}
-    named:=base.text_get(params.prefab[:])
-    asset_id,is_id:=base.asset_id_parse(named)
-    base_id,locate_error:=prefab_locate(s,is_id?"":named,is_id?asset_id:{})
+    base_id,locate_error:=prefab_locate(s,base.text_get(params.prefab[:]))
     if locate_error!=.None {
         api_prefab_fail(call,locate_error)
         return
     }
-    id,error:=prefab_variant_create(s,base_id,base.text_get(params.path[:]))
+    path:=base.text_get(params.path[:])
+    if path=="" {
+        file,_,_:=prefab_file(s,base_id)
+        path=api_prefab_new_path(s,fmt.tprintf("%s_variant",asset_name(file.path)))
+    }
+    id,error:=prefab_variant_create(s,base_id,path)
     if error!=.None {
         api_prefab_fail(call,error)
         return
@@ -426,8 +443,8 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Params)
     if !api_guard_edit(s,call) {return}
     id:base.Asset_Id
-    if path:=base.text_get(params.path[:]);path!="" || params.asset!={} {
-        located,error:=prefab_locate(s,path,params.asset)
+    if named:=base.text_get(params.asset[:]);named!="" {
+        located,error:=prefab_locate(s,named)
         if error!=.None {
             api_prefab_fail(call,error)
             return

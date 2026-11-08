@@ -13,8 +13,6 @@ MCP_MAX_LINE :: 16<<20
 MCP_USAGE :: "mcp [--project P|--port N] [--timeout S] [--plugins A,B|*] [--client NAME]"
 MCP_PROJECT_POLL :: 1 // seconds between readings of the port file of --project
 MCP_NO_EDITOR_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"additionalProperties":true}`
-MCP_DOCS_TOOL :: "docs"
-MCP_DOCS_ENTRY :: `{"name":"docs","description":"Reads the game documentation of this engine, with or without an editor. Without arguments, the index of topics; with topic, that topic; with section too, one heading of it by its anchor or one of its task files (a link core/wiring.md is topic core, section wiring).","inputSchema":{"type":"object","properties":{"topic":{"type":"string"},"section":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}`
 
 // An editor of a project, as its port file names it; zero when it has none.
 Mcp_Editor :: struct {port,pid:int}
@@ -42,6 +40,8 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
         fmt.eprintfln("Usage: mirai %s",MCP_USAGE)
         return 2
     }
+    // A tool may answer when a build or an import ends: the client bounds its own calls.
+    if !connection.timed {connection.timeout_ms=api.WAIT_TIMEOUT_MS}
     bridge:=Mcp_Bridge{root=root,connection=connection,plugins=plugins,client=connection.client}
     bridge.named=bridge.client!=""
     if !bridge.named {bridge.client=client_environment()}
@@ -77,7 +77,7 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     if name:=api.bridge_client_name(context.temp_allocator,text);name!="" && !bridge.named {bridge.client=strings.clone(name)}
     c:=bridge.connection
     editor:=mcp_editor(c)
-    method,_:=json_string(json_member(text,"method"))
+    method,_:=api.json_string(api.json_member(text,"method"))
     reply:string
     answer,unlisted:bool
     if method=="tools/call" {reply,answer=mcp_docs_call(bridge.root,text)}
@@ -113,42 +113,37 @@ mcp_lists_changes :: proc(reply:string) -> string {
     return changed
 }
 
-// The answer to a call of the docs tool, which never reaches an editor;
-// answered is false for any other tool.
+// The answer to a call of the docs tool, the same with or without an editor,
+// which never reaches it; answered is false for any other tool.
 mcp_docs_call :: proc(root,message:string) -> (reply:string,answered:bool) {
-    id:=json_member(message,"id")
-    params:=json_member(message,"params")
-    name,_:=json_string(json_member(params,"name"))
-    if id=="" || name!=MCP_DOCS_TOOL {return}
-    arguments:=json_member(params,"arguments")
-    values:[2]string
-    text:=""
-    ok:=true
-    for field,i in ([2]string{"topic","section"}) {
-        value:=json_member(arguments,field)
-        if value=="" || value=="null" {continue}
-        if values[i],ok=json_string(value);!ok {text=fmt.tprintf("%s must be a string",field);break}
-    }
-    if ok {text,ok=docs_answer(root,values[0],values[1])}
-    return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":{{"content":[{{"type":"text","text":%s}}],"isError":%s}}}}`,id,serial.text_quote(text),ok?"false":"true"),true
+    id:=api.json_member(message,"id")
+    params:=api.json_member(message,"params")
+    name,_:=api.json_string(api.json_member(params,"name"))
+    if id=="" || name!=api.MCP_DOCS_TOOL {return}
+    w:serial.Writer
+    serial.writer_init(&w,4096,context.temp_allocator)
+    api.docs_tool_write(&w,root,api.json_member(params,"arguments"))
+    return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":%s}}`,id,string(serial.writer_bytes(&w))),true
 }
 
-// The answer to a tools/list with the docs tool first; on the first page only.
+// The answer to a tools/list with the docs tool first, on the first page,
+// unless the editor that answered already gives it.
 mcp_docs_listed :: proc(reply,message:string) -> string {
-    if json_member(json_member(message,"params"),"cursor")!="" {return reply}
+    if api.json_member(api.json_member(message,"params"),"cursor")!="" {return reply}
+    if strings.contains(reply,`"name":"docs"`) {return reply}
     KEY :: `"tools":[`
     at:=strings.index(reply,KEY)+len(KEY)
     if at<len(KEY) || at>=len(reply) {return reply}
-    return strings.concatenate({reply[:at],MCP_DOCS_ENTRY,reply[at]==']'?"":",",reply[at:]},context.temp_allocator)
+    return strings.concatenate({reply[:at],api.MCP_DOCS_ENTRY,reply[at]==']'?"":",",reply[at:]},context.temp_allocator)
 }
 
 // The answer to an initialize with the index of the documentation after what
 // it says of the editor.
 mcp_docs_instructions :: proc(root,reply:string) -> string {
-    quoted:=json_member(json_member(reply,"result"),"instructions")
-    compact:=docs_compact(root)
-    if quoted=="" || compact=="" {return reply}
-    instructions,_:=json_string(quoted)
+    quoted:=api.json_member(api.json_member(reply,"result"),"instructions")
+    compact:=api.docs_compact(root)
+    if quoted=="" || compact=="" || strings.contains(reply,api.DOCS_INSTRUCTION) {return reply}
+    instructions,_:=api.json_string(quoted)
     KEY :: `"instructions":`
     added:=serial.text_quote(strings.trim_space(fmt.tprintf("%s\n\n%s",instructions,compact)))
     changed,_:=strings.replace(reply,strings.concatenate({KEY,quoted},context.temp_allocator),strings.concatenate({KEY,added},context.temp_allocator),1,context.temp_allocator)
@@ -160,13 +155,13 @@ mcp_docs_instructions :: proc(root,reply:string) -> string {
 // it that says how to start the editor. answered is false for what
 // api.bridge_handle answers the same with or without a project.
 mcp_no_editor :: proc(project,message:string) -> (reply:string,answered:bool) {
-    id:=json_member(message,"id")
+    id:=api.json_member(message,"id")
     if id=="" {return}
-    method,_:=json_string(json_member(message,"method"))
+    method,_:=api.json_string(api.json_member(message,"method"))
     hint:=no_editor_text(project)
     switch method {
     case "initialize":
-        requested,_:=json_string(json_member(json_member(message,"params"),"protocolVersion"))
+        requested,_:=api.json_string(api.json_member(api.json_member(message,"params"),"protocolVersion"))
         w:serial.Writer
         serial.writer_init(&w,512,context.temp_allocator)
         api.mcp_initialize_write(&w,requested,"mirai","1",fmt.tprintf("%s. The tools are listed when it runs.",hint),true)

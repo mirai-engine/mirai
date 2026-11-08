@@ -87,4 +87,4 @@ A `Localized` node keeps its translations in the `.ui`. `mirai texts export|impo
 - Controls need distinct `name`s: events carry only the hash of the name.
 - Random ids break every scene that names the `.ui`: use `base.asset_id_named`.
 - Running the content tool again overwrites the file; API edits to a `.ui` it writes are lost.
-- After a run, `asset.reload` in an open editor, or it shows the old file.
+- After a run, an open editor shows the new file at its next call.

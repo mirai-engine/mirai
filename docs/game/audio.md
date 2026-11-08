@@ -59,8 +59,8 @@ are linear), `lowpass`, `reverb`, ducking
 (`duck_by`, `duck_amount`, `duck_threshold`). Edit it in Project Settings, with `settings.set`
 (`settings.get` shows the shape) or `audio.audio_bus_setting_set`.
 
-`Audio_Volumes` is the player's choice per bus, in dB, saved with their options: an options
-menu calls `audio.audio_volume_set(volumes, audio.BUS_MUSIC, audio.volume_db(slider))`.
+`Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
+options: a slider binds `Audio_Volumes.music` and the step writes what it asks on `Changed` there.
 
 ## Rooms and occlusion
 

@@ -15,30 +15,30 @@ a_project_without_an_editor_says_how_to_start_one :: proc(t:^testing.T) {
     start:="mirai session start C:/games/mine"
     reply,answered:=mcp_no_editor("C:/games/mine",`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
     testing.expect(t,answered)
-    result:=json_member(reply,"result")
-    testing.expect_value(t,json_member(reply,"id"),"1")
-    testing.expect_value(t,json_member(result,"protocolVersion"),`"2025-03-26"`)
-    testing.expect_value(t,json_member(json_member(json_member(result,"capabilities"),"tools"),"listChanged"),"true")
-    instructions,_:=json_string(json_member(result,"instructions"))
+    result:=api.json_member(reply,"result")
+    testing.expect_value(t,api.json_member(reply,"id"),"1")
+    testing.expect_value(t,api.json_member(result,"protocolVersion"),`"2025-03-26"`)
+    testing.expect_value(t,api.json_member(api.json_member(api.json_member(result,"capabilities"),"tools"),"listChanged"),"true")
+    instructions,_:=api.json_string(api.json_member(result,"instructions"))
     testing.expect(t,strings.contains(instructions,start),instructions)
 
     reply,answered=mcp_no_editor("C:/games/mine",`{"jsonrpc":"2.0","id":"l","method":"tools/list"}`)
     testing.expect(t,answered)
-    tools,_:=json_elements(json_member(json_member(reply,"result"),"tools"))
+    tools,_:=api.json_elements(api.json_member(api.json_member(reply,"result"),"tools"))
     if testing.expect_value(t,len(tools),1) {
-        name,_:=json_string(json_member(tools[0],"name"))
+        name,_:=api.json_string(api.json_member(tools[0],"name"))
         testing.expect_value(t,name,api.MCP_CALL_TOOL)
-        description,_:=json_string(json_member(tools[0],"description"))
+        description,_:=api.json_string(api.json_member(tools[0],"description"))
         testing.expect(t,strings.contains(description,start),description)
-        testing.expect(t,api.json_valid(context.allocator,json_member(tools[0],"inputSchema")))
+        testing.expect(t,api.json_valid(context.allocator,api.json_member(tools[0],"inputSchema")))
     }
 
     reply,answered=mcp_no_editor("C:/games/mine",`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scene_inspect"}}`)
     testing.expect(t,answered)
-    testing.expect_value(t,json_member(json_member(reply,"result"),"isError"),"true")
-    content,_:=json_elements(json_member(json_member(reply,"result"),"content"))
-    text,_:=json_string(json_member(content[0],"text"))
-    message,_:=json_string(json_member(json_member(text,"error"),"message"))
+    testing.expect_value(t,api.json_member(api.json_member(reply,"result"),"isError"),"true")
+    content,_:=api.json_elements(api.json_member(api.json_member(reply,"result"),"content"))
+    text,_:=api.json_string(api.json_member(content[0],"text"))
+    message,_:=api.json_string(api.json_member(api.json_member(text,"error"),"message"))
     testing.expect(t,strings.contains(message,start),message)
 
     for other in ([]string{`{"jsonrpc":"2.0","id":2,"method":"ping"}`,`{"jsonrpc":"2.0","method":"notifications/initialized"}`,`not json`}) {
@@ -82,7 +82,7 @@ a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
     testing.expect(t,!mcp_list_stale(true,first,{}),"an editor that closed changes no list until another one opens")
 
     editor_said:=`{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{"listChanged":false}}}}`
-    testing.expect_value(t,json_member(json_member(json_member(mcp_lists_changes(editor_said),"result"),"capabilities"),"tools"),`{"listChanged":true}`)
+    testing.expect_value(t,api.json_member(api.json_member(api.json_member(mcp_lists_changes(editor_said),"result"),"capabilities"),"tools"),`{"listChanged":true}`)
 
     without,_:=connection_args({"scene.inspect"},{})
     testing.expect_value(t,without.project,"")

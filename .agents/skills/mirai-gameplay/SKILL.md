@@ -45,7 +45,7 @@ the same attributes and no private paths. Declaration and parameter binding:
   no state machines, trees or planners.
 - Mining, craters and excavation (digging deeper gives another material, veins, caves, debris):
   a Volume with an [interior](../mirai-plugins/references/terrain.md#volume-interior), the
-  game that calls `terrain.request_edit` and adds up `terrain.Terrain_Digs`, and the dust, pieces
+  game that calls `terrain.dig` and adds up `terrain.Terrain_Digs`, and the dust, pieces
   and drops per layer
   ([what digging leaves](../mirai-plugins/references/terrain.md#what-digging-leaves)); the example
   is the `dig` scene of the [demo](references/demo.md#code-demogame).
@@ -87,12 +87,12 @@ the same attributes and no private paths. Declaration and parameter binding:
    sound, a message) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`,
    `multiplayer.send(&outbox, time, ...)`), which does nothing while a rollback replays the tick
    (`time.resimulating`); the game does not ask.
-7. Runtime prefab: `scene.Spawns` (request) or `scene.spawn(commands, app, ...)` with
+7. Runtime prefab: `scene.request_spawn` (no root) or `scene.spawn(spawner, path, ...)` with
    `core.Commands`; its rows wait until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
-8. Assets are named by `base.Asset_Id`. An id that only code refers to (a prefab that gets
-   instantiated) goes as a root in `cook.mirai` so that `mirai build game` ships it.
+8. Game code names a prefab or a scene by its path in the assets; data fields hold its
+   `base.Asset_Id`.
 
 ## Invariants
 

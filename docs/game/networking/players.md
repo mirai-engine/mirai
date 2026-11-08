@@ -22,7 +22,7 @@ give_bodies :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),
 }
 ```
 
-`PLAYER_PREFAB` is a `base.Asset_Id` of a prefab that carries `multiplayer.Replicate`.
+`PLAYER_PREFAB` is the path in the assets of a prefab that carries `multiplayer.Replicate`.
 `inp.seat_of(drivables,body)` gives the seat of a body. A client takes only bodies it predicts;
 `spawn.spawn` on a client is refused (`spawn.client_spawn`).
 

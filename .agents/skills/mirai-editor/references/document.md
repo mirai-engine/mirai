@@ -379,7 +379,7 @@ edited afterwards, without overwriting what another wrote later.
 
 - **Author** (`Edit_Step.author`). `Edits.author` is that of what changes now: `EDIT_AUTHOR_USER`
   (0) in the editor; while an API method runs, the task id of its AI turn (`X-Mirai-Ai-Task`) or
-  `EDIT_AUTHOR_API`, and afterwards it returns to the user. `editor.input`, `editor.capture` and
+  `EDIT_AUTHOR_API`, and afterwards it returns to the user. `editor.input`, `capture` and
   `engine.*` run frames and editor input as the user and do not change it. It stays with the front
   document on changing tabs. A gesture belongs to whoever opened it (`Edits.opener`). What arrives
   from a collaborator is not a step of whoever receives it.
@@ -409,7 +409,7 @@ edited afterwards, without overwriting what another wrote later.
 - The labels and state of Undo and Redo, `status`, `editor.inspect` and the counters of `history.*`
   are the author's.
 - Before an API method that can edit (all but the read-only ones, `engine.*`, `editor.input`,
-  `editor.capture`, `editor.select`, `camera.set` and `finish`), the user's pending gesture is
+  `capture`, `editor.select`, `camera.set` and `finish`), the user's pending gesture is
   recorded as a step of theirs, with its tools cancelled (a gizmo drag goes back); a gesture the
   method ended is recorded on return.
 

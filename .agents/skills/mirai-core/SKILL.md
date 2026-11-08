@@ -152,6 +152,9 @@ A game is a struct in memory and a list of functions that transform it
 - **The clock of a world is `core.Time`**, the only one: it is copied with it, so a Play and a
   rollback carry it with the copy, and a save stores its tick and its seconds. `core.time_advance`
   advances it after each tick; there is no other per-world clock in `host`.
+- **Outside `fixed` the input of the tick is stale, and frame events do not reach `fixed`.** In the
+  game loop `core.Input` and `Input_Of` outside `fixed`, and a `fixed` reader of an `events` storage
+  only other phases fill, are generator errors.
 - **What belongs to the frame is not simulation and is not copied.** `core.Frame_Time` and
   `core.Frame_Input` are `copy=false`: a Play, a correction and opening a document do not overwrite
   them, and nobody saves them or restores them by hand. A function reads `Time` to simulate and

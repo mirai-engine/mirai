@@ -121,8 +121,8 @@ the_ground_of_foliage_follows_the_chunks_of_the_terrain_that_change :: proc(t:^t
     h,_,ok=foliage.ground_at(tile,20,20)
     testing.expect(t,ok && abs(h-terrain.source_height(s,20,20))<1e-3 && h>0.5)
     // A cell asked for gets its tile; one off every terrain does not.
-    testing.expect(t,foliage.ground_request(&b.requests,b.plant,{-1,0}))
-    testing.expect(t,foliage.ground_request(&b.requests,b.plant,{20,0}))
+    foliage.ground_request(&b.requests,b.plant,{-1,0})
+    foliage.ground_request(&b.requests,b.plant,{20,0})
     bridge_step(&b)
     testing.expect(t,foliage.ground_tile_find(owner,{-1,0})>=0)
     testing.expect_value(t,foliage.ground_tile_find(owner,{20,0}),-1)
@@ -242,7 +242,7 @@ the_ground_far_from_the_sources_is_coarse_and_fine_near_them :: proc(t:^testing.
     testing.expect(t,ok && known && abs(h-coarse)<1e-3,"the coarse grid of the terrain")
     testing.expect(t,abs(coarse-terrain.source_height(s,-20,-16))>1e-2,"which is not its samples there")
     // The editor asks for a cell: it is fine.
-    testing.expect(t,foliage.ground_request(&b.requests,b.plant,{0,0}))
+    foliage.ground_request(&b.requests,b.plant,{0,0})
     bridge_step(&b)
     testing.expect_value(t,foliage.ground_tile_samples(owner,{0,0}),owner.samples)
     // A source comes: the tiles near it are fine.

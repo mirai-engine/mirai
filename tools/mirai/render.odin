@@ -1000,8 +1000,8 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
         capture:=make(json.Object,context.temp_allocator)
         capture["path"]=path
         capture["ui"]=true
-        capture["warmup_frames"]=json.Integer(i==0?1:plan.interval)
-        if _,ok:=render_call(e,"editor.capture",capture);!ok {m.failure="editor.capture failed";return}
+        capture["frames"]=json.Integer(i==0?1:plan.interval)
+        if _,ok:=render_call(e,"capture",capture);!ok {m.failure="capture failed";return}
         append(&images,path)
     }
     m.images=images[:]
@@ -1039,7 +1039,7 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
         at:=make([]f64,3,context.temp_allocator)
         for i in 0..<3 {at[i]=push.from[i]+(push.to[i]-push.from[i])*share}
         params:=make(json.Object,context.temp_allocator)
-        params["id"]=push.entity
+        params["entity"]=push.entity
         params["position"]=render_vector(at)
         _,ok:=render_call(e,"scene.set",params)
         return ok
@@ -1049,8 +1049,8 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
         params:=make(json.Object,context.temp_allocator)
         params["path"]=path
         params["ui"]=true
-        params["warmup_frames"]=json.Integer(frames)
-        _,ok=render_call(e,"editor.capture",params)
+        params["frames"]=json.Integer(frames)
+        _,ok=render_call(e,"capture",params)
         return
     }
     if !place(e,push,0) || !headless_step(e,plan.warmup) {return "the push could not start"}
@@ -1060,20 +1060,20 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
         if !place(e,push,f64(k)/f64(push.frames)) {return "scene.set failed during the push"}
         if k==midway {
             ok:bool
-            if moving,ok=capture(e,folder,fmt.tprintf("%s-push-moving.png",view.name),1);!ok {return "editor.capture failed during the push"}
+            if moving,ok=capture(e,folder,fmt.tprintf("%s-push-moving.png",view.name),1);!ok {return "capture failed during the push"}
         } else if !headless_step(e,1) {return "engine.step failed during the push"}
     }
     frames:=RENDER_PUSH_AFTER
     after:[len(frames)]string
     for count,i in frames {
         ok:bool
-        if after[i],ok=capture(e,folder,fmt.tprintf("%s-push-after-%d.png",view.name,count),count-(i>0?frames[i-1]:0));!ok {return "editor.capture failed after the push"}
+        if after[i],ok=capture(e,folder,fmt.tprintf("%s-push-after-%d.png",view.name,count),count-(i>0?frames[i-1]:0));!ok {return "capture failed after the push"}
     }
     settled,settled_ok:=capture(e,folder,fmt.tprintf("%s-push-settled.png",view.name),plan.warmup)
-    if !settled_ok {return "editor.capture failed once the push settled"}
+    if !settled_ok {return "capture failed once the push settled"}
     if !place(e,push,f64(midway)/f64(push.frames)) {return "scene.set failed going back midway"}
     moving_settled,moving_ok:=capture(e,folder,fmt.tprintf("%s-push-moving-settled.png",view.name),plan.warmup)
-    if !moving_ok {return "editor.capture failed midway settled"}
+    if !moving_ok {return "capture failed midway settled"}
     _=place(e,push,0)
     distance :: proc(a,b:string,region:img.Region) -> (mae:f64,ok:bool) {
         first,first_error:=img.image_load(a)
@@ -1160,8 +1160,8 @@ render_fly :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:str
         capture:=make(json.Object,context.temp_allocator)
         capture["path"]=path
         capture["ui"]=true
-        capture["warmup_frames"]=json.Integer(i==1?RENDER_MOTTLE_AFTER-1:1)
-        if _,ok:=render_call(e,"editor.capture",capture);!ok {return "editor.capture failed during the flight"}
+        capture["frames"]=json.Integer(i==1?RENDER_MOTTLE_AFTER-1:1)
+        if _,ok:=render_call(e,"capture",capture);!ok {return "capture failed during the flight"}
         paths[i]=path
     }
     images:[3]img.Image

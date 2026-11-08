@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -743,6 +744,10 @@ input_timing_rows :: proc(s:^Session) {
 
 // ---------------------------------------------------------------- API
 
+Api_Input_Get_Params :: struct {
+    actions:[API_SECTIONS][64]u8 `mirai:"text,optional,label=Only these actions by their names; none: every action"`,
+}
+
 Api_Input :: struct {
     tap_ticks:u32 `mirai:"label=Ticks a press may be held and still be a tap"`,
     hold_ticks:u32 `mirai:"label=Ticks a press is held before it is a hold"`,
@@ -769,18 +774,28 @@ API_INPUT_SET_SCHEMA :: `{"type":"object","properties":{` +
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
 }
 
 @(private)
 api_input_get :: proc(s:^Session,call:^api.Call) {
     input_settings_load(s)
-    input_api_write(s,call.out)
+    only:=make([dynamic]string,context.temp_allocator)
+    for &name in api.call_params(call,Api_Input_Get_Params).actions {
+        wanted:=base.text_get(name[:])
+        if wanted=="" {continue}
+        if _,declared:=core.name_value(s.info,input.Action,wanted);!declared {
+            api.call_failf(call,api.INVALID_PARAMS,"%q is not an input action: the code declares %s",wanted,input_action_names(s))
+            return
+        }
+        append(&only,wanted)
+    }
+    input_api_write(s,call.out,len(only)>0,only[:])
 }
 
 @(private)
-input_api_write :: proc(s:^Session,out:^serial.Writer) {
+input_api_write :: proc(s:^Session,out:^serial.Writer,filtered:=false,only:[]string={}) {
     st:=&s.settings_dialog.input
     m:=&st.current
     serial.write_u8(out,'{')
@@ -792,6 +807,7 @@ input_api_write :: proc(s:^Session,out:^serial.Writer) {
     first:=true
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
+        if filtered && !slice.contains(only,entry.name) {continue}
         action:=input.Action(entry.value)
         if !first {serial.write_u8(out,',')}
         first=false
@@ -836,7 +852,11 @@ api_input_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    input_api_write(s,call.out)
+    values:[1]string
+    api.object_values(call.allocator,call.raw,{"action"},values[:])
+    action:=strings.trim(values[0],`"`)
+    only:=[1]string{action}
+    input_api_write(s,call.out,true,action!=""?only[:]:nil)
 }
 
 // Reads the params of input.set into a map over the code of the session;

@@ -23,7 +23,7 @@ Decal_Image :: enum {Arrow,Ring,Splat,Stripes}
 // An image of DECAL_SIZE made from the coverage and the color `shade` gives each texel, between -1 and 1.
 @(private)
 write_decal_image :: proc(o:^Out,name:string,shade:proc(x,y:f32) -> [4]f32) -> base.Asset_Id {
-    id:=id_of("texture",name)
+    id:=asset.content_id(PROJECT,"texture",name)
     pixels:=make([]u8,DECAL_SIZE*DECAL_SIZE*4,context.temp_allocator)
     for y in 0..<DECAL_SIZE {
         for x in 0..<DECAL_SIZE {
@@ -43,7 +43,7 @@ write_decal_image :: proc(o:^Out,name:string,shade:proc(x,y:f32) -> [4]f32) -> b
         }
     }
     file:=fmt.tprintf("assets/textures/%s.tex",name)
-    check(o,file,asset.texture_save(path(o,file),&o.types,{id=id,width=DECAL_SIZE,height=DECAL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
+    asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=DECAL_SIZE,height=DECAL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
 
@@ -104,71 +104,63 @@ write_decal_images :: proc(o:^Out) -> (images:[Decal_Image]base.Asset_Id) {
 // starts, the sun and the sky in the units of the scene, and the EV their
 // views take over the meter.
 @(private)
-feature_scene_begin :: proc(s:^Scene_Out,o:^Out,name:string,sky:Sky,sun_color:[3]f32,sun:f32,towards:[3]f32,u:Light_Units,exposure:f32=0) {
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene",name))
+feature_scene_begin :: proc(s:^asset.Scene_Builder,o:^Out,name:string,sky:Sky,sun_color:[3]f32,sun:f32,towards:[3]f32,u:Light_Units,exposure:f32=0) {
+    asset.builder_init(s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene",name))
     environment,turn,to_sun,disc:=sky_of(o,sky,towards,u,sun)
     meter:=render.EXPOSURE_DEFAULT
     meter.compensation=exposure
     sky_set(s,&environment,turn,meter)
     sun:=render.Sun{color=sun_color,illuminance=lux(u,sun),disc=disc}
-    sun_entity:=entity(s,"Sun",{0,10,0})
+    sun_entity:=asset.builder_entity(s,"Sun",{position={0,10,0}})
     pose:=sun_pose(to_sun,{0,10,0})
-    put(s,sun_entity,"Transform",&pose)
-    put(s,sun_entity,"Sun",&sun)
+    asset.builder_set(s,sun_entity,pose)
+    asset.builder_set(s,sun_entity,sun)
 }
 
 @(private)
-feature_scene_end :: proc(s:^Scene_Out,o:^Out,name:string) {
-    defer asset.scene_destroy(&s.scene)
-    if s.failed {
-        fmt.eprintfln("demo_content: the %s scene could not be built",name)
-        o.failed=true
-        return
-    }
+feature_scene_end :: proc(s:^asset.Scene_Builder,o:^Out,name:string) {
+    defer asset.builder_destroy(s)
     file:=fmt.tprintf("assets/scenes/%s.scene",name)
-    check(o,file,asset.scene_save(&s.scene,path(o,file)))
+    asset.builder_save(s,path(o,file))
 }
 
 // An entity with a rotation besides its place and its size.
 @(private)
-placed :: proc(s:^Scene_Out,name:string,position:[3]f32,rotation:mm.Quat,scale:[3]f32,parent:base.Entity_Id=0) -> base.Entity_Id {
-    id:=entity(s,name,position,scale,parent)
-    transform:=core.Transform{position,rotation,scale}
-    put(s,id,"Transform",&transform)
-    return id
+placed :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Quat,scale:[3]f32,parent:base.Entity_Id=0) -> base.Entity_Id {
+    return asset.builder_entity(s,name,{position,rotation,scale},parent)
 }
 
 @(private)
-shape :: proc(s:^Scene_Out,id:base.Entity_Id,kind:render.Shape,material:string) {
+shape :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,kind:render.Shape,material:string) {
     mesh:=render.Mesh_Renderer{shape=kind}
     mesh.materials[0]=game.material_asset(material)
-    put(s,id,"Mesh_Renderer",&mesh)
+    asset.builder_set(s,id,mesh)
 }
 
 @(private)
-decal :: proc(s:^Scene_Out,name:string,position:[3]f32,rotation:mm.Quat,size:[3]f32,value:decals.Decal) {
+decal :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Quat,size:[3]f32,value:decals.Decal) {
     value:=value
-    put(s,placed(s,name,position,rotation,size),"Decal",&value)
+    asset.builder_set(s,placed(s,name,position,rotation,size),value)
 }
 
 // A yard with markings on its floor, stains, a glowing dial on a wall and
 // decals that go over steps and corners.
 write_decals_scene :: proc(o:^Out) {
     images:=write_decal_images(o)
-    s:Scene_Out
+    s:asset.Scene_Builder
     feature_scene_begin(&s,o,"decals",.Day,{1,0.93,0.82},2.2,{0.5,0.7,0.45},LAMPLIT)
     slab(&s,o,"Floor",{0,-0.25,0},{24,0.5,24},"Cobblestone")
     slab(&s,o,"Wall north",{0,2,-8},{24,4,0.5},"Bricks")
     slab(&s,o,"Wall east",{8,2,0},{0.5,4,16},"Bricks")
-    solid(&s,entity(&s,"Step low",{-3,0.15,-4},{4,0.3,3}),"Matte paint")
-    solid(&s,entity(&s,"Step high",{-3,0.45,-5},{4,0.3,1.5}),"Matte paint")
-    solid(&s,entity(&s,"Crate",{3.5,0.6,-3},{1.2,1.2,1.2}),"Planks")
-    shape(&s,entity(&s,"Ball",{5.2,0.7,0.5},{1.4,1.4,1.4}),.Sphere,"Polished metal")
-    shape(&s,entity(&s,"Column",{-6,1.5,1},{0.9,3,0.9}),.Cylinder,"Satin paint")
+    solid(&s,asset.builder_entity(&s,"Step low",{position={-3,0.15,-4},scale={4,0.3,3}}),"Matte paint")
+    solid(&s,asset.builder_entity(&s,"Step high",{position={-3,0.45,-5},scale={4,0.3,1.5}}),"Matte paint")
+    solid(&s,asset.builder_entity(&s,"Crate",{position={3.5,0.6,-3},scale={1.2,1.2,1.2}}),"Planks")
+    shape(&s,asset.builder_entity(&s,"Ball",{position={5.2,0.7,0.5},scale={1.4,1.4,1.4}}),.Sphere,"Polished metal")
+    shape(&s,asset.builder_entity(&s,"Column",{position={-6,1.5,1},scale={0.9,3,0.9}}),.Cylinder,"Satin paint")
     lamp:=render.Point_Light{color={1,0.8,0.55},intensity=candela(LAMPLIT,10),range=12,radius=0.1}
-    put(&s,entity(&s,"Lamp",{-5,3,-5.5}),"Point_Light",&lamp)
+    asset.builder_set(&s,asset.builder_entity(&s,"Lamp",{position={-5,3,-5.5}}),lamp)
     cool:=render.Point_Light{color={0.5,0.75,1},intensity=candela(LAMPLIT,7),range=10,radius=0.1}
-    put(&s,entity(&s,"Lamp cool",{6,2.5,-6}),"Point_Light",&cool)
+    asset.builder_set(&s,asset.builder_entity(&s,"Lamp cool",{position={6,2.5,-6}}),cool)
 
     flat:=mm.Quat(1)
     on_north:=mm.quat_axis_angle({1,0,0},math.PI/2)   // its axis out of the north wall
@@ -196,11 +188,11 @@ write_decals_scene :: proc(o:^Out) {
 
 write_feature_scenes :: proc(o:^Out) {
     meshes:=write_feature_meshes(o)
-    if !o.failed {write_decals_scene(o)}
-    if !o.failed {write_deform_scene(o,meshes)}
-    if !o.failed {write_monitors_scene(o,meshes)}
-    if !o.failed {write_portals_scene(o,meshes)}
-    if !o.failed {write_portal_lab_scene(o)}
-    if !o.failed {write_church_scene(o,meshes,"church",false)}
-    if !o.failed {write_church_scene(o,meshes,"church_fog",true)}
+    if !o.content.failed {write_decals_scene(o)}
+    if !o.content.failed {write_deform_scene(o,meshes)}
+    if !o.content.failed {write_monitors_scene(o,meshes)}
+    if !o.content.failed {write_portals_scene(o,meshes)}
+    if !o.content.failed {write_portal_lab_scene(o)}
+    if !o.content.failed {write_church_scene(o,meshes,"church",false)}
+    if !o.content.failed {write_church_scene(o,meshes,"church_fog",true)}
 }

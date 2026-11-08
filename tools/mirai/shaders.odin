@@ -24,7 +24,7 @@ option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matc
     return "",false,false
 }
 
-SHADERS_EDITOR_MS :: 610_000 // the 600 s build.shaders waits by default, and the answer
+SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
 SHADERS_USAGE :: "shaders [--project <path> [--whole]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"
 
@@ -96,7 +96,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
 // others go on compiling in the editor. --whole generates them all here.
 @(private="file")
 shaders_publish_editor :: proc(folder:string,port:int) -> int {
-    result,err,called:=api.rpc_call(port,"build.shaders","{}",1,SHADERS_EDITOR_MS,context.temp_allocator)
+    result,err,called:=api.rpc_call(port,"build.start",`{"target":"shaders"}`,1,SHADERS_EDITOR_MS,context.temp_allocator)
     if !called || err.code!=0 {
         fmt.eprintfln("mirai shaders: the editor of %s did not publish them: %s",folder,err.message!=""?err.message:"it did not answer")
         return 1

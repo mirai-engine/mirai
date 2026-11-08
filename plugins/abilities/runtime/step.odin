@@ -463,11 +463,11 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
     if name:=ability_name_text(&a.action);name!="" {
-        if !anim.action_fire(t.w.actions,e,name) {core.report(t.w.problems,e,"abilities.animation","the action %q of the ability %s did not fit in the animation requests: fewer abilities should start in one tick",name,core.record_name(t.abilities,ref))}
+        anim.action_fire(t.w.actions,e,name)
     } else if name:=ability_name_text(&a.clip);name!="" {
         mode:u16
         if c,found:=core.get(t.w.characters,e);found {mode=u16(c.mode)}
-        if !anim.match_play(t.w.animations,e,name,mode) {core.report(t.w.problems,e,"abilities.animation","the clip %q of the ability %s did not fit in the animation requests: fewer abilities should start in one tick",name,core.record_name(t.abilities,ref))}
+        anim.match_play(t.w.animations,e,name,mode)
     }
 }
 
@@ -554,7 +554,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Tim
             u.hit_count+=1
             event_push(t,{kind=.Hit,entity=e,ability=u.ability,window=i8(i),cue=w.cue,target=target})
             if w.hitbox.effect!={} {
-                if !ability_effect(t.requests,target,w.hitbox.effect,e) {core.report(t.w.problems,e,"abilities.requests","the requests of abilities are full (%d): fewer hits or effects in one tick",REQUEST_CAPACITY)}
+                ability_effect(t.requests,target,w.hitbox.effect,e)
             }
         }
     }

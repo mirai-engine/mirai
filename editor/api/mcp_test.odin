@@ -437,6 +437,27 @@ mcp_process_reply :: proc(t:^testing.T,s:^Server,body:string) -> json.Value {
     return parse_json(t,string(serial.writer_bytes(&s.out)))
 }
 
+// The editor serves the docs tool itself, from the documentation of its
+// engine, the same one mirai mcp answers without an editor.
+@(test)
+mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
+    root:=fmt.tprintf(".mirai/test-mcp-docs-%d",os.get_pid())
+    defer os.remove_all(root)
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s",root,DOCS_FOLDER))==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core.md",root,DOCS_FOLDER),transmute([]u8)string("---\ndescription: Entities and tables.\n---\n# Core\n\nBody.\n"))==nil)
+    s,ok:=test_server(t);if !ok {return}
+    defer server_destroy(&s)
+    s.docs_root=strings.clone(root,s.allocator)
+    reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+    testing.expect_value(t,string_of(at(reply,"result","tools",0,"name")),MCP_DOCS_TOOL)
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"docs","arguments":{"topic":"core"}}}`)
+    testing.expect(t,strings.contains(string_of(at(reply,"result","content",0,"text")),"Body."),string_of(at(reply,"result","content",0,"text")))
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs","arguments":{"topic":"nope"}}}`)
+    testing.expect(t,is_bool(at(reply,"result","isError"),true))
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+    testing.expect(t,strings.contains(string_of(at(reply,"result","instructions")),DOCS_INSTRUCTION))
+}
+
 @(test)
 mcp_explicit_object_output_schemas_share_the_method_contract :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}

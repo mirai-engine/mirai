@@ -12,6 +12,7 @@ import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
 import escene "mirai:engine/scene"
+import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -20,17 +21,20 @@ import "mirai:std/serial"
 // The agent API of the editor: the server of editor/api (JSON-RPC and MCP on
 // 127.0.0.1) with the methods of the editor registered on it. The server is
 // polled once per frame between frames, so every handler runs on the main
-// thread and may advance frames itself (engine.step, editor.capture). A
+// thread and may advance frames itself (engine.step, capture). A
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "9"
-API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with method, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. scene.inspect gives the ids of the entities."
+API_VERSION :: "10"
+API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with method, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and _wait_until, a condition (phase=Built) it is called again until. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
 API_STORAGE_BYTES :: 256*1024 // the largest storage the API reads and writes
 API_IDLE_WAIT :: 10*time.Millisecond // a manual editor without calls: how often it looks at builds, imports and collaboration
 API_ACTIVE :: 2*time.Second // after a call, how long the editor keeps the rate of a window with focus
+API_SETTLE_FRAMES :: 600 // the most frames a handler runs to finish what it asked of the next ones
+API_BUILD_SECONDS :: 600 // how long a call waits for a build it needs
+API_SHADERS_SECONDS :: 600 // how long a call that draws waits for shaders that changed on disk
 
 Api_Handler :: #type proc(s:^Session,call:^api.Call)
 
@@ -60,8 +64,10 @@ Api_State :: struct {
     in_call:int,
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
     stepping:bool,
+    waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
+    restart:bool,   // a Build asked to start the editor again while a call waits for it
     step_frames:u64, // app.stats.frames when the times of the functions were last read
-    manual:bool,       // frames advance only when asked to: engine.step, editor.capture, editor.input
+    manual:bool,       // frames advance only when asked to: engine.step, capture, editor.input
     port:int,
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
@@ -103,10 +109,11 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
-    if error:=api.server_init(&st.server,{port=port,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
+    if error:=api.server_init(&st.server,{port=port,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server
     }
+    st.server.assets={s,asset_text_resolve}
     api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
@@ -121,6 +128,8 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
         return .Methods
     }
     st.library_generation=s.library_generation
+    st.server.pause,st.server.user=api_server_pause,s
+    api_disk_baseline(s)
     api_port_file_write(s,st.port)
     return .None
 }
@@ -247,6 +256,14 @@ api_idle :: proc(s:^Session) -> bool {
         restart(s,{"--built"})
         return true
     }
+    api_jobs(s)
+    api.server_wait(&st.server,API_IDLE_WAIT)
+    return true
+}
+
+// What runs beside the frames of a manual editor, between frames.
+@(private)
+api_jobs :: proc(s:^Session) {
     import_poll(s)
     git_poll(s)
     projects_poll(s)
@@ -255,8 +272,102 @@ api_idle :: proc(s:^Session) -> bool {
     runs_pump(s)
     collab_update(s)
     recovery_update(s)
-    api.server_wait(&st.server,API_IDLE_WAIT)
+}
+
+// Keeps the editor going from inside a handler until pending says false:
+// frames with a window, so the user and other work go on, and only the jobs
+// in a manual editor, whose frames advance when asked. The library a build
+// left loads meanwhile: the handler holds nothing of the worlds, and no text
+// of the temporary allocator, across this. False when the time ran out or the
+// editor is ending.
+api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool) -> bool {
+    st:=api_state(s)
+    if st==nil {return !pending(s,user)}
+    started:=time.tick_now()
+    st.waiting+=1
+    defer {
+        st.waiting-=1
+        if st.waiting==0 && st.restart {
+            st.restart=false
+            s.requests+={.Restart}
+        }
+    }
+    for pending(s,user) {
+        if s.quit || time.duration_seconds(time.tick_since(started))>seconds {return false}
+        if st.manual {
+            temp:=runtime.default_temp_allocator_temp_begin()
+            build_poll(s)
+            api_jobs(s)
+            runtime.default_temp_allocator_temp_end(temp)
+            time.sleep(API_IDLE_WAIT)
+        } else if api_frames(s,1,0)==0 {
+            return false
+        }
+    }
     return true
+}
+
+// Advances whole frames from inside a handler until pending says false or
+// frames ran out: what the handler asked of the next frames is done when it
+// answers, also in a manual editor. False when they ran out or the editor is
+// ending.
+api_settle :: proc(s:^Session,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,frames:=API_SETTLE_FRAMES) -> bool {
+    if api_state(s)==nil {return !pending(s,user)}
+    for _ in 0..<frames {
+        if !pending(s,user) {return true}
+        if api_frames(s,1,0)==0 || s.quit {return false}
+    }
+    return !pending(s,user)
+}
+
+// Between two calls of _wait_until the editor goes on as a handler that waits does.
+@(private)
+api_server_pause :: proc(server:^api.Server,seconds:f64) -> bool {
+    s:=(^Session)(server.user)
+    st:=api_state(s)
+    context.temp_allocator=st.poll_temp
+    st.in_call+=1
+    defer st.in_call-=1
+    going_on :: proc(s:^Session,user:rawptr) -> bool {return !s.quit}
+    api_wait(s,seconds,nil,going_on)
+    return !s.quit
+}
+
+// What is on disk when the editor opens, against which api_disk_sync looks.
+@(private)
+api_disk_baseline :: proc(s:^Session) {
+    if s.app!=nil {host.app_assets_watch_now(s.app)}
+    if s.build!=nil && s.has_project {s.build.shader_sources=shaders_fingerprint(s.project_root)}
+}
+
+// What changed on disk since the last call is there for this one, whoever
+// changed it: assets are read again where they are loaded, with unsaved ones
+// kept, and shaders are published; a call that draws waits for them. False,
+// with the call failed, when they could not be published.
+@(private)
+api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
+    if s.app==nil {return true}
+    host.app_assets_watch_now(s.app)
+    if s.build==nil || !s.has_project {return true}
+    sources:=shaders_fingerprint(s.project_root)
+    if sources==s.build.shader_sources {return true}
+    s.build.shader_sources=sources
+    programs_publish_request(s)
+    if !api_call_draws(call) {return true}
+    if ok,message:=programs_wait(s,API_SHADERS_SECONDS,true);!ok {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return false
+    }
+    return true
+}
+
+// Whether a method draws the scene or starts what draws it.
+@(private)
+api_call_draws :: proc(call:^api.Call) -> bool {
+    switch call.method.name {
+    case "capture","play.start","play.record","view.viewport","material.preview.capture","animation.capture","ui.capture": return true
+    }
+    return false
 }
 
 // Whether an agent drives the editor: a call runs, or one arrived within API_ACTIVE.
@@ -312,7 +423,7 @@ api_trampoline :: proc(call:^api.Call) {
     if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?Edit_Author(turn.id):EDIT_AUTHOR_API}
     collab_held_begin(entry.session)
     event(entry.session,"api",call.method.name)
-    entry.run(entry.session,call)
+    if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
     collab_held_end(entry.session,call)
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
@@ -329,7 +440,7 @@ api_trampoline :: proc(call:^api.Call) {
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
     if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
-    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && call.method.name!="editor.capture" && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
+    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
@@ -352,7 +463,7 @@ api_call_edits :: proc(call:^api.Call) -> bool {
 @(private)
 api_call_as_user :: proc(call:^api.Call) -> bool {
     name:=call.method.name
-    return name=="editor.input" || name=="editor.capture" || strings.has_prefix(name,"engine.")
+    return name=="editor.input" || name=="capture" || strings.has_prefix(name,"engine.")
 }
 
 Api_Method :: struct {
@@ -512,7 +623,7 @@ Rpc_Object :: struct {started:bool}
 
 rpc_init :: proc(a:^Rpc_Args,call:^api.Call,text:string) {
     a^={call=call,text=text}
-    serial.text_reader_init(&a.r,text,call.allocator)
+    api.call_reader_init(call,&a.r,text)
 }
 
 rpc_fail :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
@@ -521,6 +632,18 @@ rpc_fail :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
         api.call_failf(a.call,api.INVALID_PARAMS,format,..args)
     }
     return false
+}
+
+// A key the object does not take: which ones it does, the nearest first when
+// the key looks like it.
+rpc_fail_unknown :: proc(a:^Rpc_Args,key:string,valid:..string) -> bool {
+    nearest:=""
+    closest:=max(len(key)/2,2)+1
+    for name in valid {
+        if distance:=strings.levenshtein_distance(key,name,context.temp_allocator);distance<closest {nearest,closest=name,distance}
+    }
+    if nearest!="" {return rpc_fail(a,"unknown field %q; did you mean %s? It takes %s",key,nearest,strings.join(valid,", ",context.temp_allocator))}
+    return rpc_fail(a,"unknown field %q; it takes %s",key,strings.join(valid,", ",context.temp_allocator))
 }
 
 rpc_object_begin :: proc(a:^Rpc_Args,what:string) -> bool {

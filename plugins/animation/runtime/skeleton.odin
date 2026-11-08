@@ -331,23 +331,20 @@ animation_bone_transform :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Re
 Bone_Handle :: struct {rig:core.Entity,index:i32,revision:u64}
 Pose_Request :: struct {rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32,binding:Bone_Handle}
 
-animation_pose :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || rig==core.NONE {return false}
-    if _,valid:=bone_ref_hash(bone);!valid {return false}
-    return pose_request_push(&requests.poses,{rig=rig,bone=bone,transform=transform,weight=weight})
+animation_pose :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.poses);return}
+    pose_request_offer(&requests.poses,{rig=rig,bone=bone,transform=transform,weight=weight})
 }
 
 @(private)
-pose_request_push :: proc(queue:^core.Queue(Pose_Request),request:Pose_Request) -> bool {
+pose_request_offer :: proc(queue:^core.Queue(Pose_Request),request:Pose_Request) {
     transform,weight:=request.transform,request.weight
-    if !finite(weight) || weight<0 || weight>1 {return false}
-    for value in transform.position {if !finite(value) {return false}}
-    for value in transform.scale {if !finite(value) {return false}}
-    if !(abs(linalg.dot(transform.rotation,transform.rotation)-1)<0.002) {return false}
-    if cap(queue.items)==0 && reserve(&queue.items,REQUEST_CAPACITY)!=nil {return false}
-    if len(queue.items)>=cap(queue.items) {return false}
-    core.push(queue,request)
-    return true
+    valid:=finite(weight) && weight>=0 && weight<=1 && abs(linalg.dot(transform.rotation,transform.rotation)-1)<0.002
+    for value in transform.position {valid&&=finite(value)}
+    for value in transform.scale {valid&&=finite(value)}
+    if !valid {core.refuse(queue);return}
+    core.offer(queue,request)
 }
 
 animation_bone_bind :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Ref) -> (Bone_Handle,bool) {
@@ -369,22 +366,24 @@ animation_sample_pose :: proc(playback:^Playback,rig:core.Entity,out:[]mm.Transf
     return
 }
 
-animation_requests_reserve :: proc(requests:^Animation_Requests,poses:int=REQUEST_CAPACITY,final_poses:int=REQUEST_CAPACITY) -> bool {
-    if requests==nil || poses<0 || final_poses<0 || poses>65536 || final_poses>65536 {return false}
-    return reserve(&requests.poses.items,poses)==nil && reserve(&requests.final_poses.items,final_poses)==nil
+// Room for final_poses in a tick, past the room of Animation_Settings: what a library that sends one per bone keeps.
+animation_requests_reserve :: proc(requests:^Animation_Requests,final_poses:int) -> bool {
+    if requests==nil || final_poses<0 || final_poses>65536 {return false}
+    return final_poses<=cap(requests.final_poses.items) || reserve(&requests.final_poses.items,final_poses)==nil
 }
 
 animation_pose_final :: proc{animation_pose_final_ref,animation_pose_final_binding}
 
-animation_pose_final_ref :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,world:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || rig==core.NONE {return false}
-    if _,valid:=bone_ref_hash(bone);!valid {return false}
-    return pose_request_push(&requests.final_poses,{rig=rig,bone=bone,transform=world,weight=weight})
+animation_pose_final_ref :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,world:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.final_poses);return}
+    pose_request_offer(&requests.final_poses,{rig=rig,bone=bone,transform=world,weight=weight})
 }
 
-animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_Handle,world:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || binding.rig==core.NONE || binding.index<0 || binding.revision==0 {return false}
-    return pose_request_push(&requests.final_poses,{rig=binding.rig,transform=world,weight=weight,binding=binding})
+animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_Handle,world:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if binding.rig==core.NONE || binding.index<0 || binding.revision==0 {core.refuse(&requests.final_poses);return}
+    pose_request_offer(&requests.final_poses,{rig=binding.rig,transform=world,weight=weight,binding=binding})
 }
 
 @(private)

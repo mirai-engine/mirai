@@ -40,9 +40,9 @@ motion_authoring_uses_array_lengths_defaults_and_monotonic_distance_diagnostics 
     text=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,"0.5") && strings.contains(text,"walk"))
     bad,_:=strings.replace_all(definition,`"distance":1`,`"distance":3`,context.allocator)
     defer delete(bad)
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s",%s}}`,identity,bad))
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actor.motion",%s}}`,bad))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"distances[0].keys"));testing.expect_value(t,authoring_test_revision(f,"actor.motion"),revision)
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","windows":[]}}`,identity));testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actor.motion","windows":[]}}`));testing.expect_value(t,result.code,0)
     testing.expect_value(t,authoring_test_id(f,"actor.motion"),id)
 }
 
@@ -61,7 +61,7 @@ motion_authoring_derives_pose_spine_and_leg_counts_and_rejects_transient_control
     result=authoring_test_execute(f,"set",`{"path":"invalid-pole.motion","pose":{"pelvis":{"path":"hip"},"legs":[{"hip":{"path":"left/hip"},"knee":{"path":"left/knee"},"foot":{"path":"left/foot"},"pole":[0,0,1]}],"stride":true}}`)
     testing.expect_value(t,result.code,api.INVALID_PARAMS)
     result=authoring_test_execute(f,"request",`{"id":"0000000000000001","motion":[{"name":"ledge"}]}`)
-    testing.expect_value(t,result.code,api.SERVER_ERROR)
+    testing.expect_value(t,result.code,api.INVALID_PARAMS)
 }
 
 @(private)
@@ -95,5 +95,5 @@ motion_distance_api_queues_forward_playback_rejects_backward_clock_and_allows_ex
     result=authoring_test_execute(f,"request",`{"id":"11","distance":{"name":"stop","distance":3,"seek":true}}`)
     testing.expect_value(t,result.code,0);testing.expect_value(t,len(world.requests.distances.items),2)
     if len(world.requests.distances.items)>1 {testing.expect_value(t,world.requests.distances.items[1],anim.Animation_Distance_Request{entity=entity,clip=base.name_hash("walk"),time=0,seek=true})}
-    f.session.mode=.Edit;testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","distance":{"name":"stop","distance":1}}`).code,api.SERVER_ERROR)
+    f.session.mode=.Edit;testing.expect_value(t,authoring_test_execute(f,"request",`{"id":"11","distance":{"name":"stop","distance":1}}`).code,api.INVALID_PARAMS)
 }

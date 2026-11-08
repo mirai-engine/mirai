@@ -19,9 +19,7 @@ API_PLAY_CONDITIONS :: 16
 Api_Compare :: enum u8 {Exists,Gone,Equal,Not_Equal,Below,At_Most,Above,At_Least}
 
 Api_Play_Condition :: struct {
-    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle as play.inspect gives it"`,
-    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene"`,
-    name:[64]u8 `mirai:"optional,text,label=The entity by its name: the first with it in the order of play.inspect"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     component:[64]u8 `mirai:"optional,text,label=A component of the entity; empty: the entity itself or its world_position"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of an entity"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of a storage or an entity: the entity named is its point (points.0)"`,
@@ -48,9 +46,7 @@ Api_Play_Check_Entry :: struct {
 }
 
 Api_Play_Get_Params :: struct {
-    name:[64]u8 `mirai:"optional,text,label=The entity by its name: the first with it in the order of play.inspect; give name or entity or id"`,
-    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle as play.inspect gives it"`,
-    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     field:[128]u8 `mirai:"text,label=A component and the path inside it (Transform.position or Motion.linear[1]) or a path of the document of the entity as play.inspect writes it (world_position)"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
@@ -64,7 +60,7 @@ Api_Play_Get_Result :: struct {
 @(private)
 api_play_wait_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=Api_Play_Get_Params,result=Api_Play_Get_Result,writes_result=true,flags={.Read_Only},run=api_play_get})
-    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Read_Only},run=api_play_check})
+    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_check})
 }
 
 // What a condition read of a world: whether it holds, and the value as JSON.
@@ -80,13 +76,12 @@ Api_Condition_Read :: struct {
 @(private)
 api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,allocator:=context.temp_allocator) -> (read:Api_Condition_Read,problem:string) {
     st:=api_state(s)
-    handle,name,component,storage:=base.text_get(c.entity[:]),base.text_get(c.name[:]),base.text_get(c.component[:]),base.text_get(c.storage[:])
+    entity,component,storage:=base.text_get(c.entity[:]),base.text_get(c.component[:]),base.text_get(c.storage[:])
     field,text:=base.text_get(c.field[:]),base.text_get(c.text[:])
-    named:=int(handle!="")+int(c.id!=0)+int(name!="")
+    named:=int(entity!="")
     if c.view && (storage!="" || component!="") {return {},"view reads what the player sees: leave storage and component out; an entity named is its point"}
     if c.qa && (c.view || storage!="" || component!="" || named>0) {return {},"qa reads the violations of play.qa.start: leave view, storage, component and the entity out"}
-    if !c.view && !c.qa && (named>0) == (storage!="") {return {},"name what it reads: an entity (by entity, id or name), a storage, the view or qa"}
-    if named>1 {return {},"name the entity once: by entity, by id or by name"}
+    if !c.view && !c.qa && (named>0) == (storage!="") {return {},"name what it reads: an entity, a storage, the view or qa"}
     if storage!="" && component!="" {return {},"a storage has no components: leave component out, or name an entity"}
     if text!="" && c.compare!=.Equal && c.compare!=.Not_Equal && c.compare!=.Exists && c.compare!=.Gone {return {},"a text is compared with Equal or Not_Equal; give number for the others"}
     out:serial.Writer
@@ -96,7 +91,7 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
     case c.qa:
         run:^Run
         for &r in s.runs {if r.world==w.data {run=&r;break}}
-        if run==nil || run.qa==nil {return {},"qa reads the violations of play.qa.start, and this game has no monitors: call play.qa.start first"}
+        if run==nil || run.qa==nil || !run.qa.armed {return {},"qa reads the violations of play.qa.start, and this game has no monitors: call play.qa.start first"}
         qa_counts_write(&out,run.qa)
         found=true
     case storage!="":
@@ -110,14 +105,10 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
         found=true
     case:
         e:=core.NONE
-        switch {
-        case handle!="":
-            value,parsed:=serial.text_parse_hex(handle)
-            if !parsed {return {},fmt.tprintf("entity %q is not a handle: give the 16 hexadecimal digits play.inspect writes as entity",handle)}
-            if core.alive(core.world_entities(w),core.Entity(value)) {e=core.Entity(value)}
-        case c.id!=0: e=api_entity(w,c.id)
-        case name!="":
-            e=api_entity_named(w,name,allocator)
+        if entity!="" {
+            several:string
+            e,several=api_entity_find(w,entity,true,allocator)
+            if several!="" {return {},several}
         }
         if c.view {
             // An entity that is not there is a reading of null, as without view.
@@ -258,8 +249,8 @@ api_play_get :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,p.player)
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     w:=run_ref(s,r)
-    e,problem:=api_play_entity_of(w,base.text_get(p.entity[:]),p.id,base.text_get(p.name[:]))
-    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    e,known:=api_call_entity(call,w,p.entity[:],game=true)
+    if !known {return}
     value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
     if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
     out:=call.out

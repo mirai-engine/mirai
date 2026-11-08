@@ -223,12 +223,13 @@ Settings > Input changed, and SDL3, which the executable links.
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
 texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
 
-- **Roots.** Every `.scene` of the folder and what `cook.mirai` (`COOK_FILE`) names: the assets that
-  only code refers to (a material chosen by name, a prefab instantiated by id).
+- **Roots.** Every `.scene`, `.prefab` (code reaches one only by instantiating it) and `.records`
+  of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
+  material chosen by name).
 
   ```json
   {
-    "roots": ["materials/Chrome.mat", "prefabs/", "3b4cb4195321a2f7fe61aa57ece0c255"],
+    "roots": ["materials/Chrome.mat", "sounds/", "3b4cb4195321a2f7fe61aa57ece0c255"],
     "textures": "blocks"
   }
   ```

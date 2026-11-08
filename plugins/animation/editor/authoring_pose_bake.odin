@@ -14,8 +14,7 @@ import anim "plugins:animation/runtime"
 Pose_Bake_Root :: enum u8 {Preserve,In_Place}
 Pose_Bake_Params :: struct {
     id:base.Entity_Id,
-    asset:base.Asset_Id `mirai:"optional,label=An .anim to add the clip to; or path"`,
-    path:[1024]u8 `mirai:"optional,text,label=A new .anim"`,
+    path:[1024]u8 `mirai:"text,label=An .anim: the clip is added to what is there"`,
     clip:[64]u8 `mirai:"text,label=A clip of that name is replaced"`,
     start,end:f32 `mirai:"min=0,unit=s"`,
     rate:f32 `mirai:"optional,min=1,max=240,unit=Hz"`,
@@ -57,10 +56,10 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     steps64:=math.ceil(f64((p.end-p.start)*p.rate))
     if steps64>3600 {authoring_failure(call,"range","Capacity","at most 3600 sample intervals",fmt.tprintf("%.0f",steps64),"Shorten the bake range or reduce its rate");return}
     if base.text_get(p.clip[:])=="" {authoring_failure(call,"clip","Required","a nonempty output clip name","empty","Name the baked clip");return}
-    if (p.asset=={})==(base.text_get(p.path[:])=="") {authoring_failure(call,"path","Conflicting_Fields","exactly one of path or asset","both or neither","Choose a new .anim file or an existing .anim asset");return}
     destination:Authoring_File;defer asset.asset_close(&destination.file)
-    output_id:=p.asset;existing:asset.Animation_View
-    if p.asset!={} {loaded:bool;existing,loaded=authoring_clip_open(s,call,p.asset,&destination);if !loaded {return}} else {
+    output_id,there,at:=authoring_at(s,call,base.text_get(p.path[:]),asset.KIND_ANIMATION,".anim");if !at {return}
+    existing:asset.Animation_View
+    if there {loaded:bool;existing,loaded=authoring_clip_open(s,call,output_id,&destination);if !loaded {return}} else {
         created:bool;destination,output_id,created=authoring_create_target(s,call,base.text_get(p.path[:]),".anim");if !created {return}
     }
     source,entity,found:=subject(s,call,p.id);if !found {return}
@@ -77,7 +76,8 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     world:=core.world_ref(clone,s.info)
     if !request_source_check(s,call,world,entity) || !request_apply(s,call,world,entity,preview,preview.ticks,nil) {return}
     requests:=core.world_storage_of(world,anim.Animation_Requests)
-    if requests==nil || !anim.animation_seek(requests,entity,p.start) {authoring_failure(call,"bake","Evaluation_Failed","an available animation request queue","missing or full queue","The bake could not seek to its initial pose",api.SERVER_ERROR);return}
+    if requests==nil {authoring_failure(call,"bake","Evaluation_Failed","an available animation request queue","missing or full queue","The bake could not seek to its initial pose",api.SERVER_ERROR);return}
+    anim.animation_seek(requests,entity,p.start)
     if !pose_bake_evaluate(call,world,s.app,0) {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
     if !pose_bake_sample(s,call,world,entity,p,preview,&doc,output_id,existing) {return}

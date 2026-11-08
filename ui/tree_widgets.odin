@@ -124,7 +124,7 @@ tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Op
     o:=&b.instance.bounds[index].options
     if !o.bound {return {joined=content}}
     options:=Options{array=rawptr(uintptr(values)+uintptr(o.offset)),count=int(o.count),stride=int(o.stride)}
-    if o.elem==.Enum {options.size,options.names,options.joined=int(o.stride),o.choices,content}
+    if o.elem==.Enum {options.size,options.names,options.joined=int(o.stride),bound_choices(o^),content}
     return options
 }
 

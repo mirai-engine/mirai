@@ -19,8 +19,8 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
    downloaded from the pinned commit to `<project>/.mirai/library/mesh2motion/<rig>` (`--list` names
    them) and joined into `<rig>.glb`. Importing it with `asset.import` gives an `.anim` with all of
    them and the `.skeleton` that animates them, the origin of the bake.
-3. **The character.** `asset.import` with `rig`, and `asset.import_status --wait-until
-   importing=false`: `warnings` says what the fit assumed.
+3. **The character.** `asset.import` with `rig`: `warnings` of its answer says what the fit
+   assumed.
    - Humanoid: a crotch covered by clothing or a neck that was not found are corrected by importing
      again with `rig_crotch` or `rig_neck` (heights in meters in the model); arms stuck to the body
      have no fix by adjustment: the mesh has to separate them.

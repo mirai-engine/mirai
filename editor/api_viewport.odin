@@ -4,47 +4,57 @@ import "base:runtime"
 import "core:encoding/base64"
 import "core:fmt"
 import "core:os"
+import img "mirai:cook/image"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
+import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 Api_Viewport_Params :: struct {
-    request:[64]u8 `mirai:"text,label=Message snapshot identifier provided in the editor prompt"`,
+    request:[64]u8 `mirai:"optional,text,label=An older message of the turn by the folder of its snapshot under .mirai/ai; empty: the message of the turn of the caller"`,
 }
 
 @(private)
 API_VIEWPORT_RESULT :: `{"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"type":{"const":"image"},"data":{"type":"string"},"mimeType":{"const":"image/png"}},"required":["type","data","mimeType"],"additionalProperties":false}},"isError":{"const":false}},"required":["content","isError"],"additionalProperties":false}`
 
-Api_Play_Capture_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write and the answer is only where it is and its size; without it one under .mirai/captures and MCP also returns the image"`,
-    frames:int `mirai:"optional,min=1,max=120,label=Frames drawn first so that what builds up over time settles"`,
+Api_Capture_Of :: enum u8 {Auto,Scene,Game}
+
+Api_Capture_Params :: struct {
+    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
+    ui:bool `mirai:"optional,label=The whole window with the editor around what it shows, as the user sees it; false: the image alone"`,
+    of:Api_Capture_Of `mirai:"optional,label=What the image alone shows. Game: the game of the caller through its camera with its own interfaces. Scene: what the viewport shows through its camera without panels or gizmos or grid or selection. Auto: Game while the caller has one playing, otherwise Scene"`,
+    frames:int `mirai:"optional,min=0,max=3600,label=Frames drawn first so that what builds up over time settles; 0: as many as the image needs. At most 120 of a game"`,
+    dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Not of a game: the step of each frame of a manual editor"`,
+    seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
+    generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
     every:int `mirai:"optional,min=0,max=3600,label=Filmstrip: the ticks the game runs between two cells of one image; 0: an image of now"`,
+    every_seconds:f32 `mirai:"optional,min=0,unit=s,label=Filmstrip: the game time between two cells in place of every"`,
     count:int `mirai:"optional,min=0,max=64,label=Filmstrip: its cells; the first shows the game before the first tick"`,
     columns:int `mirai:"optional,min=0,max=64,label=Filmstrip: cells across; 0: as square as they fit"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Filmstrip: the input along its ticks as play.step takes it; after them nothing is held"`,
-    follow:[64]u8 `mirai:"optional,text,label=Filmstrip: every cell is centered on where this entity shows; by its name (the first in the order of play.inspect)"`,
-    follow_id:base.Entity_Id `mirai:"optional,label=Filmstrip: the entity to follow by its id in the scene"`,
-    follow_entity:[16]u8 `mirai:"optional,text,label=Filmstrip: the entity to follow by its handle as play.inspect gives it"`,
+    follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
     size:[2]f32 `mirai:"optional,min=8,max=4096,label=Filmstrip that follows an entity: width and height of a cell in points of the image"`,
-    region:[4]f32 `mirai:"optional,label=Filmstrip: x y width height in points of the image that every cell shows in place of following an entity; none: the whole image"`,
-    ui:bool `mirai:"optional,label=The Play of the user: the whole window with the editor around the game, as the user sees it; false: the game alone through its camera, with its own interfaces"`,
-    width:int `mirai:"optional,min=0,max=4096,label=Pixels of an image of the game alone: the window it draws in scaled to them; 0 keeps its aspect (its size when height is 0 too)"`,
-    height:int `mirai:"optional,min=0,max=4096,label=Pixels of an image of the game alone: the window it draws in scaled to them; 0 keeps its aspect (its size when width is 0 too)"`,
+    region:[4]f32 `mirai:"optional,label=x y width height of the part written, in pixels from the top left of the image; of a filmstrip, in points, what every cell shows in place of following an entity. None: all of it"`,
+    width:int `mirai:"optional,min=0,max=4096,label=Pixels of the image alone; 0 keeps the aspect of what it shows (its size when height is 0 too)"`,
+    height:int `mirai:"optional,min=0,max=4096,label=Pixels of the image alone; 0 keeps the aspect of what it shows (its size when width is 0 too)"`,
 }
 
-Api_Play_Capture_Result :: struct {
+// A game draws at most these frames for an image.
+API_CAPTURE_GAME_FRAMES :: 120
+
+Api_Capture_Result :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
     width:int `mirai:"label=Pixels of the image"`,
     height:int `mirai:"label=Pixels of the image"`,
     columns:int `mirai:"optional,label=A filmstrip: its cells across"`,
     rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
-    cells:[1]Api_Play_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
+    cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
 }
-Api_Play_Capture_Cell :: struct {
+Api_Capture_Cell :: struct {
     tick:u64 `mirai:"label=The tick of the game it shows"`,
     at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
 }
@@ -52,45 +62,97 @@ Api_Play_Capture_Cell :: struct {
 @(private)
 api_viewport_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result_schema=API_VIEWPORT_RESULT,flags={.Core,.Read_Only,.Idempotent},mcp_content=true,run=api_view_viewport})
-    capture_default:=Api_Play_Capture_Params{frames=8,size={256,256}}
-    api_register(s,st,{name="play.capture",summary="see the game of the caller as its camera shows it, alone with its own interfaces: the run of its turn, or the Play of the user outside a turn, drawn without showing it on the user's screen (ui shows the editor's window around the Play of the user instead). Writes the PNG: with path the answer is only where it is and its size; without path MCP also returns the image. With every and count it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Play_Capture_Params,result=Api_Play_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_play_capture})
+    capture_default:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,size={256,256}}
+    api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Capture_Params,result=Api_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_capture})
 }
 
-// The game of the caller as an image, drawn off the screen through its camera with its own
-// interfaces; with ui, the Play of the user is the next frames of the window, editor and all.
+// What the caller is playing as an image, the scene the viewport shows or the
+// window: all the images of the editor and the game come out of here.
 @(private)
-api_play_capture :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Play_Capture_Params)
+api_capture :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Capture_Params)
     r,own:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if p.ui && p.of!=.Auto {api.call_fail(call,api.INVALID_PARAMS,"of chooses what the image alone shows: leave it out with ui");return}
+    if p.ui && (p.width>0 || p.height>0) {api.call_fail(call,api.INVALID_PARAMS,"width and height size the image alone: leave ui out with them, or leave them out for the window");return}
+    if p.generated && !p.ui {api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it");return}
+    filmstrip:=p.every>0 || p.every_seconds>0
+    if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
+    game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
+    if (game || filmstrip) && r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if game || filmstrip {
+        if p.seconds>=0 || p.dt!=HEADLESS_DT {api.call_fail(call,api.INVALID_PARAMS,"dt and seconds are the clock of the window: a game runs by its ticks, so leave them out");return}
+        if p.frames>API_CAPTURE_GAME_FRAMES {api.call_failf(call,api.INVALID_PARAMS,"frames: a game draws at most %d for an image",API_CAPTURE_GAME_FRAMES);return}
+    }
     strip,ok:=api_filmstrip_read(s,call,r,own,p)
     if !ok {return}
-    if p.width>0 || p.height>0 {
-        if p.ui {api.call_fail(call,api.INVALID_PARAMS,"width and height size the game alone: leave ui out, or leave them out for the window");return}
-        if strip!=nil {api.call_fail(call,api.INVALID_PARAMS,"width and height size one image: a filmstrip takes the size of its cell or a region");return}
+    region:img.Region
+    if strip!=nil {
+        if p.width>0 || p.height>0 {api.call_fail(call,api.INVALID_PARAMS,"width and height size one image: a filmstrip takes the size of its cell or a region");return}
+        if p.ui && r.owner!=0 {api.call_fail(call,api.INVALID_PARAMS,"The window does not show the game of a turn: leave ui out of its filmstrip");return}
+    } else if p.region!={} {
+        q:=p.region
+        if !rpc_finite(q.x) || !rpc_finite(q.y) || !rpc_finite(q.z) || !rpc_finite(q.w) || q.x<0 || q.y<0 || q.z<1 || q.w<1 {
+            api.call_fail(call,api.INVALID_PARAMS,"region is x, y, width and height in pixels, from the top left: give it a width and a height, or leave it out for the whole image")
+            return
+        }
+        region={int(q.x),int(q.y),int(q.z),int(q.w)}
     }
-    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.capture requires a GPU; start without --no-gpu");return}
+    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"capture requires a GPU; start without --no-gpu");return}
     given:=base.text_get(p.path[:])
-    // As editor.capture: relative to the project, its folder made. The frames drawn below free the temporary memory.
-    path,writable:=api_capture_file(s,call,given,fmt.tprintf("play-%d%s.png",r.owner,strip!=nil?"-strip":""),s.app.allocator)
+    // Relative to the project, its folder made. The frames drawn below free the temporary memory.
+    name:="editor.png"
+    if game || strip!=nil {name=fmt.tprintf("play-%d%s.png",r.owner,strip!=nil?"-strip":"")}
+    path,writable:=api_capture_file(s,call,given,name,s.app.allocator)
     if !writable {return}
     defer delete(path,s.app.allocator)
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
-    pixels,width,height,drawn:=api_play_pixels(s,r,p.frames,p.ui)
-    if !drawn {api.call_fail(call,api.SERVER_ERROR,"The game could not be drawn");return}
-    if size:=api_capture_size({i32(width),i32(height)},p.width,p.height);int(size.x)!=width || int(size.y)!=height {
-        scaled,made:=api_pixels_scale(pixels,width,height,size,s.app.allocator)
-        delete(pixels,s.app.allocator)
-        if !made {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be made: out of memory",size.x,size.y);return}
-        pixels,width,height=scaled,int(size.x),int(size.y)
+    pixels:[]u8
+    width,height:int
+    if game {
+        drawn:bool
+        pixels,width,height,drawn=api_play_pixels(s,r,p.frames>0?p.frames:API_CAPTURE_SETTLE)
+        if !drawn {api.call_fail(call,api.SERVER_ERROR,"The game could not be drawn");return}
+        if size:=api_capture_size({i32(width),i32(height)},p.width,p.height);int(size.x)!=width || int(size.y)!=height {
+            scaled,made:=api_pixels_scale(pixels,width,height,size,s.app.allocator)
+            delete(pixels,s.app.allocator)
+            if !made {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be made: out of memory",size.x,size.y);return}
+            pixels,width,height=scaled,int(size.x),int(size.y)
+        }
+    } else {
+        drawn:=s.app.stats.frames_drawn
+        if p.seconds>=0 {s.app.seconds=p.seconds}
+        api_frames(s,max(p.frames,1),p.dt)
+        // A frame that drew a program as its rows while its pipelines were made: one more with them.
+        for gpu.renderer_pipelines_pending(s.app.renderer) {
+            gpu.renderer_pipelines_wait(s.app.renderer)
+            api_frames(s,1,p.dt)
+        }
+        if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",s.app.renderer.error);return}
+        if p.generated && !gpu.renderer_stats(s.app.renderer).generated {
+            api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing, frame_generation on in Graphics_Settings and a frame with history")
+            return
+        }
+        size:=api_capture_size(api_capture_viewport(s.app),p.width,p.height)
+        read:bool
+        pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated)
+        if !read {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read",size.x,size.y);return}
     }
-    if !api_png_write(s,path,pixels,width,height) {api.call_fail(call,api.SERVER_ERROR,"The capture could not be written");return}
-    api_play_capture_answer(call,path,width,height,given=="")
+    if region!={} {
+        cropped,error:=img.image_crop({pixels=pixels,width=width,height=height},region,s.app.allocator)
+        delete(pixels,s.app.allocator)
+        if error==.Bad_Region {
+            api.call_failf(call,api.INVALID_PARAMS,"region %d,%d,%d,%d falls outside the image of %dx%d: x plus width may be %d at most and y plus height %d",region.x,region.y,region.w,region.h,width,height,width,height)
+            return
+        }
+        if error!=.None {api.call_fail(call,api.SERVER_ERROR,"The region could not be cut: out of memory");return}
+        pixels,width,height=cropped.pixels,cropped.width,cropped.height
+    }
+    api_capture_answer(s,call,path,pixels,width,height,given=="")
 }
 
-// What play.capture answers for one image; shown: MCP also gives the image.
+// What capture answers for one image; shown: MCP also gives the image.
 @(private)
-api_play_capture_answer :: proc(call:^api.Call,path:string,width,height:int,shown:bool) {
+api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool) {
     serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path)
     api.write_int(call.out,"width",i64(width));api.write_int(call.out,"height",i64(height))
     serial.write_u8(call.out,'}')
@@ -193,6 +255,11 @@ ai_snapshot_name_valid :: proc "contextless" (request:string) -> bool {
 @(private)
 api_view_viewport :: proc(s:^Session,call:^api.Call) {
     request:=base.text_get(api.call_params(call,Api_Viewport_Params).request[:])
+    if request=="" {
+        task:=ai_task_named(s.ai,call.client_tag)
+        if task==nil {api.call_fail(call,api.INVALID_PARAMS,"view.viewport shows the message of a turn: outside one give request, the folder of its snapshot under .mirai/ai");return}
+        request=base.text_get(task.name[:])
+    }
     if !ai_snapshot_name_valid(request) {api.call_fail(call,api.INVALID_PARAMS,"request must identify a saved message snapshot");return}
     if s.project_root=="" {api.call_fail(call,api.SERVER_ERROR,"The editor has no project folder");return}
     if s.ai!=nil {

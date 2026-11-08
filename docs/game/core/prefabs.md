@@ -1,8 +1,8 @@
 # Hierarchy, prefabs and spawning
 
-A prefab is a `.prefab` asset named by a `base.Asset_Id` constant that your content tool wrote
-([assets](../assets.md)). One that only code names must be a root in
-`cook.mirai`, or the built game lacks it.
+A prefab is a `.prefab` asset ([assets](../assets.md)). Code names it by its path in the assets,
+as the file is spelled (`"prefabs/Dog.prefab"`); a field of data (`Spawn_Point.prefab`) holds its
+`base.Asset_Id`. Every prefab of the project ships, whether a scene names it or not.
 
 ## Spawn and forget
 
@@ -13,35 +13,38 @@ import "mirai:engine/scene"
 game_burst :: proc(impacts:core.Read(Impact),spawns:^scene.Spawns) {
     for row in 0..<core.count(impacts) {
         at:=core.at(impacts,row).point
-        core.push(&spawns.queue,scene.Spawn{prefab=BURST,transform={at,1,{1,1,1}},transient=true})
+        scene.request_spawn(spawns,"prefabs/Burst.prefab",{position=at},transient=true)
     }
 }
 ```
 
-`transform` is `core.Transform{position, rotation, scale}` (`1` is no rotation); `parent` hangs
-the root under an entity. `transient=true`: no `Id` of its own, for effects and projectiles.
-A spawn that fails is the problem `scene.spawn` of the parent or of the world.
+The third argument is the `core.Transform{position, rotation, scale}` of the root; a zero rotation
+is none and a zero scale is 1. `parent=` hangs the root under an entity. `transient=true`: no `Id`
+of its own, for effects and projectiles. A spawn that fails is the problem `scene.spawn` of the
+parent or of the world.
 
 ## Spawn and keep the root
 
-To give the new entity components, spawn with `core.Commands`:
+To give the new entity components, receive a `scene.Spawner`:
 
 ```odin
 @(step="fixed",server)
-game_dogs :: proc(commands:core.Commands,app:^host.App,owners:core.Read(Owner)) {
+game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
     for row in 0..<core.count(owners) {
-        at:=core.Transform{core.at(owners,row).home,1,{1,1,1}}
-        if report,error:=scene.spawn(commands,app,{prefab=DOG,transform=at});error==.None {
-            core.commands_add(commands,report.root,Follow{leader=core.entity_at(owners,row)})
+        dog:=scene.spawn(spawner,"prefabs/Dog.prefab",{position=core.at(owners,row).home})
+        if dog!=core.NONE {
+            core.commands_add(spawner.commands,dog,Follow{leader=core.entity_at(owners,row)})
         }
     }
 }
 ```
 
+- `scene.spawn` returns `core.NONE` when it fails, and that is the problem `scene.spawn`.
 - The rows appear when the function ends. `core.commands_add` gives only a component the root
-  lacks; for one the prefab already has, `core.commands_added(commands,e,Follow)` returns the
-  row to finish. Put a component in the prefab when it is always there.
-- Create without a prefab: `core.commands_create(commands)`, then `commands_add` for
+  lacks; for one the prefab already has, `core.commands_added(spawner.commands,e,Follow)` returns
+  the row to finish. Put a component in the prefab when it is always there.
+- Create without a prefab: `core.commands_create(commands)`, then `commands_add` (or
+  `commands_add_default`, the row of the component at its default) for
   `core.Transform`, `core.Parent{entity=parent}` and the rest.
 - Players' bodies are not spawned by code: a `Spawn_Point` and `Spawn_Settings`
   ([character](../character.md)).
@@ -76,6 +79,6 @@ game_glow :: proc(hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),
 
 - `scene.Spawns` gives no handle: the root exists next tick. Use `scene.spawn` to keep it.
 - The `Hierarchy` shows a `Parent` only after the function that wrote it ends.
-- A hard-coded id of an imported prefab matches nothing in another checkout (ids are random).
+- A path is the file's, spelled the same, with its capitals and spaces.
 - A spawned entity does not exist in this function's tables: do not `core.get` it in the same
   function that spawned it.

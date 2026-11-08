@@ -11,26 +11,26 @@ import render "mirai:engine/render"
 // A box of the house the player walks on and into: a cube of the engine's
 // material with a tint.
 @(private = "file")
-horror_block :: proc(s: ^Scene_Out, name: string, center, size, color: [3]f32, emission: [3]f32 = {}) -> base.Entity_Id {
+horror_block :: proc(s: ^asset.Scene_Builder, name: string, center, size, color: [3]f32, emission: [3]f32 = {}) -> base.Entity_Id {
     id := placed(s, name, center, 1, size)
-    put(s, id, "Mesh_Renderer", &render.Mesh_Renderer{shape = .Cube})
+    asset.builder_set(s, id, render.Mesh_Renderer{shape = .Cube})
     tinted(s, id, color, emission)
     collider := phys.collider_box({0.5, 0.5, 0.5})
-    put(s, id, "Collider", &collider)
+    asset.builder_set(s, id, collider)
     return id
 }
 
 // A lamp of the house: a globe that glows, its light inside, given by its switch.
 @(private = "file")
-horror_lamp :: proc(s: ^Scene_Out, name: string, position: [3]f32, light_switch: base.Entity_Id, flicker: f32 = 0) {
+horror_lamp :: proc(s: ^asset.Scene_Builder, name: string, position: [3]f32, light_switch: base.Entity_Id, flicker: f32 = 0) {
     color := [3]f32{1, 0.82, 0.6}
     glow := color * 400
     globe := placed(s, name, position, 1, {0.25, 0.25, 0.25})
-    put(s, globe, "Mesh_Renderer", &render.Mesh_Renderer{shape = .Sphere})
+    asset.builder_set(s, globe, render.Mesh_Renderer{shape = .Sphere})
     tinted(s, globe, {1, 1, 1}, glow)
-    light := entity(s, fmt.tprintf("%s light", name), position)
-    put(s, light, "Point_Light", &render.Point_Light{color = color, intensity = 150, range = 10, radius = 0.12})
-    put(s, light, "House_Lamp", &game.House_Lamp{light_switch = core.Entity(light_switch), intensity = 150, globe = core.Entity(globe), glow = glow, flicker = flicker})
+    light := asset.builder_entity(s, fmt.tprintf("%s light", name), {position=position})
+    asset.builder_set(s, light, render.Point_Light{color = color, intensity = 150, range = 10, radius = 0.12})
+    asset.builder_set(s, light, game.House_Lamp{light_switch = core.Entity(light_switch), intensity = 150, globe = core.Entity(globe), glow = glow, flicker = flicker})
 }
 
 // The horror house: a dark room of 8 by 6 metres under the moon through a
@@ -38,9 +38,9 @@ horror_lamp :: proc(s: ^Scene_Out, name: string, position: [3]f32, light_switch:
 // all on a switch by the door, and a flashlight the player carries. A fixed
 // exposure keeps the dark dark: the eye does not open up when the lights go.
 write_horror_scene :: proc(o: ^Out) {
-    s: Scene_Out
-    asset.scene_init(&s.scene, &o.types, asset.KIND_SCENE, id_of("scene", "horror"))
-    defer asset.scene_destroy(&s.scene)
+    s: asset.Scene_Builder
+    asset.builder_init(&s, &o.content, asset.KIND_SCENE, asset.content_id(PROJECT,"scene","horror"))
+    defer asset.builder_destroy(&s)
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = {0.1, 0.12, 0.25}, {0.01, 0.015, 0.04}
     environment.atmosphere = false
@@ -48,10 +48,10 @@ write_horror_scene :: proc(o: ^Out) {
     exposure.mode, exposure.aperture, exposure.shutter = .Manual, 2, 0.2
     sky_set(&s, &environment, 0, exposure)
     moon := render.Sun{color = {0.75, 0.85, 1}, illuminance = 10}
-    moon_entity := entity(&s, "Moon", {-6, 4, 1})
+    moon_entity := asset.builder_entity(&s, "Moon", {position={-6, 4, 1}})
     pose := sun_pose({-0.8, 0.45, 0.2}, {-6, 4, 1})
-    put(&s, moon_entity, "Transform", &pose)
-    put(&s, moon_entity, "Sun", &moon)
+    asset.builder_set(&s, moon_entity, pose)
+    asset.builder_set(&s, moon_entity, moon)
 
     walls := [3]f32{0.55, 0.52, 0.48}
     horror_block(&s, "Ground", {0, -0.1, 0}, {16, 0.2, 14}, {0.35, 0.3, 0.26})
@@ -73,24 +73,19 @@ write_horror_scene :: proc(o: ^Out) {
     // The switch by the door, which the lamps name.
     light_switch := horror_block(&s, "Light switch", {2.2, 1.3, 2.97}, {0.12, 0.18, 0.06}, {0.85, 0.82, 0.75})
     turned := game.LIGHT_SWITCH_DEFAULT
-    put(&s, light_switch, "Light_Switch", &turned)
+    asset.builder_set(&s, light_switch, turned)
     exhibit := game.Exhibit{reach = 2}
     base.text_set(exhibit.caption[:], "E: luz   F: linterna")
-    put(&s, light_switch, "Exhibit", &exhibit)
+    asset.builder_set(&s, light_switch, exhibit)
     horror_lamp(&s, "Lamp west", {-1.5, 2.6, 0}, light_switch)
     horror_lamp(&s, "Lamp east", {2.0, 2.6, -1}, light_switch)
     horror_lamp(&s, "Lamp corner", {3.6, 2.5, 2.6}, light_switch, flicker = 3)
 
     // The flashlight: a spot that horror_lights takes to the eyes of the player.
-    flashlight := entity(&s, "Flashlight", {0.25, 1.45, 2.2})
-    put(&s, flashlight, "Spot_Light", &render.Spot_Light{color = {1, 0.97, 0.9}, intensity = 600, range = 15, radius = 0.03, angle = 0.3})
-    put(&s, flashlight, "Flashlight", &game.Flashlight{intensity = 600, on = true})
+    flashlight := asset.builder_entity(&s, "Flashlight", {position={0.25, 1.45, 2.2}})
+    asset.builder_set(&s, flashlight, render.Spot_Light{color = {1, 0.97, 0.9}, intensity = 600, range = 15, radius = 0.03, angle = 0.3})
+    asset.builder_set(&s, flashlight, game.Flashlight{intensity = 600, on = true})
 
     spawn_point(&s, {1.5, 0, 2.2})
-    if s.failed {
-        fmt.eprintln("demo_content: the horror scene could not be built")
-        o.failed = true
-        return
-    }
-    check(o, "assets/scenes/horror.scene", asset.scene_save(&s.scene, path(o, "assets/scenes/horror.scene")))
+    asset.builder_save(&s,path(o, "assets/scenes/horror.scene"))
 }

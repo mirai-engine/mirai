@@ -12,7 +12,7 @@ import "mirai:std/base"
 // Edits another library orders, as a bridge of the network does: terrain
 // does not know the network. While a tick is routed (Terrain_Replays.routed,
 // asked again each tick), terrain_replay applies the replays in their order
-// and then takes the requests of request_edit, which terrain_update then
+// and then takes the requests of dig, which terrain_update then
 // finds empty, and says how each went with the check of what it left
 // (Terrain_Replay_Events). A replay is an edit of a brush, a change of the
 // layers, the values of a whole page of a grid or of a section of a Mesh, or
@@ -46,14 +46,14 @@ Replay :: struct {
 
 @(storage,queue)
 Terrain_Replays :: struct {
-    routed:bool, // this tick: the requests of request_edit and request_layer go through terrain_replay
+    routed:bool, // this tick: the requests of dig and request_layer go through terrain_replay
     asked:bool,  // this tick, routed: the requests of request_layer are results without being applied, for who routes them to apply them when they come back
     items:core.Queue(Replay),
 }
 
 Replay_Result :: struct {
     kind:Replay_Kind,
-    request:bool, // a request of request_edit or request_layer, not a replay
+    request:bool, // a request of dig or request_layer, not a replay
     owner:core.Entity,
     source:base.Asset_Id,
     tag:u64,
@@ -315,7 +315,7 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
     return
 }
 
-// The replays, and while the tick is routed the requests of request_edit and
+// The replays, and while the tick is routed the requests of dig and
 // request_layer, before terrain_update: what they change shows as an edit does.
 @(step="fixed",loops="game",stage="simulate",before="terrain_update")
 terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,digs:^Terrain_Digs,requests:^Terrain_Requests,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform),app:^host.App,problems:^core.Problems) {
@@ -354,7 +354,8 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
         core.push(&events.results,result)
     }
     if !routed {return}
-    for request in core.take(&requests.edits) {
+    for asked_edit in core.take(&requests.edits) {
+        request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
         result:=Replay_Result{request=true,owner=request.owner,brush=request.brush}
         entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
         result.source,result.loaded=entry.id,true

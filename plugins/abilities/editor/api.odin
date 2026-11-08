@@ -301,10 +301,11 @@ use :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     requests:=core.world_storage_of(world,ab.Ability_Requests)
-    if requests==nil || !ab.ability_use(requests,e,found) {
-        api.call_failf(call,api.SERVER_ERROR,"the requests of abilities are full: step the game and ask again")
+    if requests==nil || len(requests.queue.items)>=cap(requests.queue.items) {
+        api.call_failf(call,api.SERVER_ERROR,"the requests of abilities are full: step the game and ask again, or raise Ability_Settings.requests")
         return
     }
+    ab.ability_use(requests,e,found)
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_text(w,"ability",name,true)

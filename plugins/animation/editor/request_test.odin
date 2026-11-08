@@ -96,7 +96,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     testing.expect(t,result.code==api.INVALID_PARAMS && len(f.world.modifier_requests.queue.items)==2)
     a.session.mode=.Edit
     result=authoring_test_execute(a,"request",`{"id":"11","look":{"target":{"position":[0,1,1]}}}`)
-    testing.expect(t,result.code==api.SERVER_ERROR && strings.contains(result.data,"Runtime_Required") && strings.contains(result.data,"animation.preview"))
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Runtime_Required") && strings.contains(result.data,"animation.preview"))
     testing.expect_value(t,len(f.world.modifier_requests.queue.items),2)
 }
 
