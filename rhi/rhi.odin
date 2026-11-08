@@ -690,6 +690,13 @@ align_up :: proc "contextless" (value, alignment: u64) -> u64 {
 	return (value + alignment - 1) / alignment * alignment
 }
 
+// The bytes of a mip of a texture, tightly packed, of all its layers.
+texture_level_bytes :: proc(desc: Texture_Desc, mip: u32) -> u64 {
+	area, _ := texture_region_resolve(desc, mip, {})
+	row, rows := format_rows(desc.format, area.width, area.height)
+	return row * rows * u64(max(desc.layers, 1))
+}
+
 // Typed wrappers over the byte-oriented transfer procedures.
 buffer_upload_slice :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []$T) -> bool {
 	return buffer_upload(d, buffer, offset, ([^]u8)(raw_data(data))[:len(data) * size_of(T)])

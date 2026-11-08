@@ -614,6 +614,36 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 	return immediate_end(d, cmd)
 }
 
+// The levels of a texture from its mip 0, tightly packed, in one transaction:
+// one staging buffer and one submission for all of them. A load of thousands
+// of textures would otherwise wait for the GPU once per level of each.
+texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> bool {
+	t := pool_get(&d.textures, base.Handle(texture))
+	if t == nil {return false}
+	if t.desc.depth > 1 {set_error(d, "texture_upload_levels: a 3D texture is written by shaders"); return false}
+	if u32(len(levels)) > t.desc.mip_levels {set_error(d, "texture_upload_levels: %d levels for %d mips", len(levels), t.desc.mip_levels); return false}
+	total: u64
+	for level, mip in levels {
+		size := texture_level_bytes(t.desc, u32(mip))
+		if u64(len(level)) < size {set_error(d, "texture_upload_levels: %d bytes do not cover mip %d", len(level), mip); return false}
+		total = align_up(total, 16) + size
+	}
+	staging := mtl_create_buffer(d, {size = total, memory = .Staging, name = "texture staging"})
+	if staging == 0 {return false}
+	defer mtl_release_buffer_now(d, staging)
+	dst := cast([^]u8)buffer_mapped(d, staging)
+	cmd := immediate_begin(d)
+	at: u64
+	for level, mip in levels {
+		at = align_up(at, 16)
+		size := texture_level_bytes(t.desc, u32(mip))
+		mem.copy(&dst[at], raw_data(level), int(size))
+		cmd_copy_buffer_to_texture(cmd, staging, at, texture, u32(mip))
+		at += size
+	}
+	return immediate_end(d, cmd)
+}
+
 // Blocking readback of a whole buffer range into out. The copy is queued after
 // every submitted frame, and tracked hazards order it after their writes.
 buffer_read :: proc(d: ^Device, buffer: Buffer, offset: u64, out: []u8) -> bool {

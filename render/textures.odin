@@ -295,13 +295,10 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	layered := data.layers > 1 || data.cube
 	texture := rhi.texture_create(d, {width = u32(width), height = u32(height), layers = u32(max(data.layers, 1)), cube = data.cube, mip_levels = u32(len(levels)), format = data.format, usage = {.Sampled}, name = name})
 	if texture == 0 {set_error(r, "texture %s: %s", name, rhi.device_error(d)); return 0, false}
-	for level, mip in levels {
-		row, _ := rhi.format_rows(data.format, u32(max(width >> uint(mip), 1)), u32(max(height >> uint(mip), 1)))
-		if !rhi.texture_upload(d, texture, level, u32(row), u32(mip)) {
-			set_error(r, "texture %s: %s", name, rhi.device_error(d))
-			rhi.texture_destroy(d, texture)
-			return 0, false
-		}
+	if !rhi.texture_upload_levels(d, texture, levels) {
+		set_error(r, "texture %s: %s", name, rhi.device_error(d))
+		rhi.texture_destroy(d, texture)
+		return 0, false
 	}
 	index := texture_slot(state)
 	if !rhi.texture_table_set(d, texture_entry(index), 0 if layered else texture) {

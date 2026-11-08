@@ -640,13 +640,8 @@ texture_levels_set :: proc(r: ^Renderer, request: Texture_Request, data: Texture
 	texture, result := texture_levels_check(r, request, data)
 	if result != .Set {return result}
 	bytes: u64
-	uploaded := true
-	for level, mip in data.levels {
-		row, _ := rhi.format_rows(data.format, u32(max(data.width >> uint(mip), 1)), u32(max(data.height >> uint(mip), 1)))
-		bytes += u64(len(level))
-		uploaded &&= rhi.texture_upload(r.device, texture, level, u32(row), u32(mip))
-	}
-	if !uploaded {
+	for level in data.levels {bytes += u64(len(level))}
+	if !rhi.texture_upload_levels(r.device, texture, data.levels[:]) {
 		set_error(r, "texture levels: %s", rhi.device_error(r.device))
 		rhi.texture_destroy(r.device, texture)
 		return .Failed
