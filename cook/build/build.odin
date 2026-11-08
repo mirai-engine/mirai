@@ -101,6 +101,8 @@ Result :: struct {
     cook:Cook_Report,         // Game: the assets it ships (cook.odin)
     plugins_built:int,        // libraries of plugins it compiled or copied from the shared cache: a program that loaded the previous ones starts again to use them
     plugins_restored:int,     // of those, the ones copied from the cache
+    plugins_relinked:int,     // of those, the ones whose objects were linked again (relink.odin)
+    relinked:bool,            // the output was linked again from the objects of its last compile
     tests:Test_Report,        // Test
     seconds:f64,
 }
@@ -130,12 +132,19 @@ Job :: struct {
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
     plugin_hashes:[]u64,
+    plugin_compile_hashes:[]u64, // into plugins: what their objects are compiled from (plugin_library_compile_hash), of those that do not stand
+    plugin_relink:[]bool,        // into plugins: it links the objects of its last compile again (relink.odin)
     plugin_published:[]bool,     // into plugins: it stands as built, so what links against it may compile
     plugin_queue:[dynamic]int,   // into plugins: the ones to compile that have not started, in order
     plugin_limit:int,            // how many of them compile at once
+    link_limit:int,              // how many of them link again at once: a linker takes little memory
     plugin_flags:[]string,
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
+    plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
+    masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
+    link_file:string,            // the record of the last compile of the target
+    compiled:bool,               // linking the target again failed, and it compiles
     force:bool,
     compiles:[dynamic]Compile,   // the compilers running
     started:time.Time,
@@ -151,6 +160,8 @@ Compile :: struct {
     process:os.Process,
     library:int,
     staged:string,     // what it writes
+    folder:string,     // of a library: where its objects stay (relink.odin)
+    relink:bool,       // it links again the objects of folder
     streams:[2]string, // its error and output streams
 }
 
@@ -192,6 +203,8 @@ job_start :: proc(desc:Desc) -> ^Job {
     job.sources_file=project.path(job.work,fmt.tprintf("%s.sources.json",name),allocator=a)
     job.stamp_file=project.path(job.work,fmt.tprintf("%s.stamp",name),allocator=a)
     job.sources_staged=project.path(job.work,fmt.tprintf("%s.sources.json",job.prefix),allocator=a)
+    job.link_file=project.path(job.work,fmt.tprintf("%s.link",name),allocator=a)
+    job.masked=plugins_decl(p.root,plugins_mode(p,desc.dev),a)
     job.stream_files={
         project.path(job.work,fmt.tprintf("%s.err",job.prefix),allocator=a),
         project.path(job.work,fmt.tprintf("%s.out",job.prefix),allocator=a),
@@ -256,8 +269,11 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     job.plugins=plugin_libraries(p,desc.target,desc.dev,a)
     job.plugin_queue=make([dynamic]int,a)
     job.plugin_hashes=make([]u64,len(job.plugins),a)
+    job.plugin_compile_hashes=make([]u64,len(job.plugins),a)
+    job.plugin_relink=make([]bool,len(job.plugins),a)
     job.plugin_published=make([]bool,len(job.plugins),a)
     job.plugin_limit=compilers_at_once()
+    job.link_limit=links_at_once()
     decl:=plugins_decl(p.root,plugins_mode(p,desc.dev),context.temp_allocator)
     if os.make_directory_all(decl)!=nil && !os.is_dir(decl) {return .Write_Failed}
     libraries:=plugins_libraries_folder(p.root,context.temp_allocator)
@@ -287,6 +303,12 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // Another checkout built it from the same sources: its declarations
         // are the ones just written, and the library is copied.
         if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
+        // The declarations of what it links against are written by now.
+        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine.stamp)
+        if !desc.force {
+            record,recorded:=link_record_read(plugin_link_file(&lib),context.temp_allocator)
+            job.plugin_relink[i]=recorded && link_record_stands(record,job.plugin_compile_hashes[i])
+        }
         append(&job.plugin_queue,i)
     }
     return .None
@@ -352,7 +374,13 @@ job_plugin_stamp :: proc(job:^Job,index:int) {
 job_schedule :: proc(job:^Job) -> ^Job {
     if job.result.status!=.Running {return job}
     job_plugins_start(job)
-    if job.result.status==.Running && len(job.compiles)==0 && len(job.plugin_queue)==0 {return job_project_start(job)}
+    if job.result.status==.Running && len(job.compiles)==0 && len(job.plugin_queue)==0 {
+        if job.plugin_stored {
+            plugin_cache_trim(job.engine_root)
+            job.plugin_stored=false
+        }
+        return job_project_start(job)
+    }
     return job
 }
 
@@ -360,9 +388,14 @@ job_schedule :: proc(job:^Job) -> ^Job {
 // has every library it links against.
 @(private)
 job_plugins_start :: proc(job:^Job) {
-    for i:=0;i<len(job.plugin_queue) && (len(job.compiles)<job.plugin_limit || len(job.compiles)==0); {
+    for i:=0;i<len(job.plugin_queue); {
         index:=job.plugin_queue[i]
-        if len(job.compiles)>0 && !job_plugin_ready(job,index) {
+        compiling,linking:=0,0
+        for compile in job.compiles {
+            if compile.relink {linking+=1} else {compiling+=1}
+        }
+        room:=linking<job.link_limit if job.plugin_relink[index] else compiling<job.plugin_limit
+        if len(job.compiles)>0 && (!room || !job_plugin_ready(job,index)) {
             i+=1
             continue
         }
@@ -394,16 +427,51 @@ job_plugin_spawn :: proc(job:^Job,index:int) -> bool {
         return false
     }
     name:=job_plugin_name(job,index)
-    compile:=Compile{
-        library=index,
-        staged=project.path(job.work,strings.concatenate({name,project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a),
-        streams={
-            project.path(job.work,fmt.tprintf("%s.err",name),allocator=a),
-            project.path(job.work,fmt.tprintf("%s.out",name),allocator=a),
-        },
+    streams:=[2]string{
+        project.path(job.work,fmt.tprintf("%s.err",name),allocator=a),
+        project.path(job.work,fmt.tprintf("%s.out",name),allocator=a),
     }
-    command:=plugin_command(lib,job.compiler,job.engine_decl,compile.staged,job.plugin_flags,context.temp_allocator)
-    return job_spawn(job,compile,command,lib.stage)
+    // What it compiles to is what the last compile left but for the names
+    // of what it links against: it links that again.
+    if job.plugin_relink[index] {
+        if record,ok:=link_record_read(plugin_link_file(lib),a);ok && link_record_stands(record,job.plugin_compile_hashes[index]) {
+            compile:=Compile{library=index,staged=link_staged(record.folder,a),folder=record.folder,relink=true,streams=streams}
+            link_outputs_remove(compile.staged)
+            command:=link_command_args(link_command_rename(record.command,job_link_names(job),context.temp_allocator),context.temp_allocator)
+            return job_spawn(job,compile,command,lib.stage)
+        }
+        job.plugin_relink[index]=false
+    }
+    folder:=project.path(objects_root(job.root,context.temp_allocator),name,allocator=a)
+    if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {
+        job_fail(job,.Write_Failed)
+        return false
+    }
+    compile:=Compile{library=index,staged=link_staged(folder,a),folder=folder,streams=streams}
+    command:=make([dynamic]string,context.temp_allocator)
+    append(&command,..plugin_command(lib,job.compiler,job.engine_decl,compile.staged,job.plugin_flags,context.temp_allocator))
+    keep:=LINK_KEEP_FLAGS
+    append(&command,..keep[:])
+    return job_spawn(job,compile,command[:],lib.stage)
+}
+
+// The name of now of every plugin library of the job, by its family: what
+// the command of a linker that ran before names otherwise.
+@(private)
+job_link_names :: proc(job:^Job) -> map[string]string {
+    names:=make(map[string]string,context.temp_allocator)
+    for &lib in job.plugins {
+        if lib.file!="" {names[lib.family]=lib.file}
+    }
+    return names
+}
+
+// Removes what a link leaves before it links again: the library and its
+// import library on Windows.
+@(private)
+link_outputs_remove :: proc(staged:string) {
+    _=os.remove(staged)
+    when ODIN_OS==.Windows {_=os.remove(plugin_import_staged(staged))}
 }
 
 // Runs a compiler with its streams, in working_dir (empty: where this process is).
@@ -454,17 +522,41 @@ job_project_start :: proc(job:^Job) -> ^Job {
                     }
                     return job_done(job)
                 }
+                // What the library compiles to is what its last compile
+                // left but for the names of the plugin libraries: it links that again.
+                if job.target!=.Game && !job.compiled {
+                    masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
+                    if record,ok:=link_record_read(job.link_file,virtual.arena_allocator(&job.arena));ok && link_record_stands(record,masked) {
+                        a:=virtual.arena_allocator(&job.arena)
+                        compile:=Compile{library=-1,staged=link_staged(record.folder,a),folder=record.folder,relink=true,streams=job.stream_files}
+                        link_outputs_remove(compile.staged)
+                        command:=link_command_args(link_command_rename(record.command,job_link_names(job),context.temp_allocator),context.temp_allocator)
+                        job.started=time.now()
+                        job_spawn(job,compile,command)
+                        return job
+                    }
+                }
             }
         }
     }
     if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return job_fail(job,.Write_Failed)}
+    compile:=Compile{library=-1,staged=job.staged,streams=job.stream_files}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,job.compiler)
     append(&command,..job.flags)
-    append(&command,fmt.tprintf("-out:%s",job.staged),"-json-errors","-export-dependencies:json",fmt.tprintf("-export-dependencies-file:%s",job.sources_staged))
+    // A library keeps its objects, to be linked again (relink.odin).
+    if job.target!=.Game {
+        a:=virtual.arena_allocator(&job.arena)
+        compile.folder=project.path(objects_root(job.root,context.temp_allocator),job.prefix,allocator=a)
+        if os.make_directory_all(compile.folder)!=nil && !os.is_dir(compile.folder) {return job_fail(job,.Write_Failed)}
+        compile.staged=link_staged(compile.folder,a)
+        keep:=LINK_KEEP_FLAGS
+        append(&command,..keep[:])
+    }
+    append(&command,fmt.tprintf("-out:%s",compile.staged),"-json-errors","-export-dependencies:json",fmt.tprintf("-export-dependencies-file:%s",job.sources_staged))
     // What is saved from here on is not what this job builds.
     job.started=time.now()
-    job_spawn(job,{library=-1,staged=job.staged,streams=job.stream_files},command[:])
+    job_spawn(job,compile,command[:])
     return job
 }
 
@@ -590,8 +682,17 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
         if strings.has_prefix(diagnostic.file,lib.stage) {diagnostic.file=project.path(sources,diagnostic.file[len(lib.stage):],allocator=a)}
         if diagnostic.severity==.Error {failed=true}
     }
+    if failed && compile.relink {
+        // The objects do not link again: it compiles.
+        job.result.diagnostics=nil
+        job.plugin_relink[compile.library]=false
+        link_record_remove(plugin_link_file(lib))
+        inject_at(&job.plugin_queue,0,compile.library)
+        return
+    }
     if failed {
-        job.result.text=strings.trim_space(strings.concatenate({rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
+        remove_later({compile.folder})
+        job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
         if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
         job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
         return
@@ -601,9 +702,23 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
         job_fail(job,.Output_Locked)
         return
     }
+    if compile.relink {
+        job.result.plugins_relinked+=1
+    } else if command,found:=link_command_find(streams[0]);found {
+        link_folder_trim(compile.folder)
+        link_record_write(plugin_link_file(lib),{hash=job.plugin_compile_hashes[compile.library],folder=compile.folder,command=command})
+    } else {
+        remove_later({compile.folder})
+        link_record_remove(plugin_link_file(lib))
+    }
     job_plugin_stamp(job,compile.library)
     job.plugin_published[compile.library]=true
-    if job.plugin_cache {plugin_cache_store(job.engine_root,lib,job.plugin_hashes[compile.library])}
+    // What links again goes to the shared cache with the library it was
+    // compiled as: linking it again takes less than storing it.
+    if job.plugin_cache && !compile.relink {
+        plugin_cache_store(job.engine_root,lib,job.plugin_hashes[compile.library])
+        job.plugin_stored=true
+    }
     job.result.plugins_built+=1
 }
 
@@ -627,7 +742,7 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
         compile:=job.compiles[i]
         ordered_remove(&job.compiles,i)
         if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
-        else if compile.library<0 {job_finish(job,state.exit_code)}
+        else if compile.library<0 {job_finish(job,compile,state.exit_code)}
         else {job_plugin_finish(job,compile,state.exit_code)}
     }
     job_schedule(job)
@@ -807,7 +922,7 @@ job_file_pid :: proc(name:string) -> int {
 }
 
 @(private)
-job_finish :: proc(job:^Job,exit_code:int) {
+job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
     streams:[2]string
     for file,i in job.stream_files {
@@ -816,17 +931,26 @@ job_finish :: proc(job:^Job,exit_code:int) {
     }
     rest:string
     job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    job.result.text=strings.trim_space(strings.concatenate({rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-    failed:=exit_code!=0 || !os.is_file(job.staged)
+    job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
+    failed:=exit_code!=0 || !os.is_file(compile.staged)
     for diagnostic in job.result.diagnostics {
         if diagnostic.severity==.Error {failed=true}
     }
+    if failed && compile.relink {
+        // The objects do not link again: it compiles.
+        job.result.diagnostics,job.result.text=nil,""
+        job.compiled=true
+        link_record_remove(job.link_file)
+        job_project_start(job)
+        return
+    }
     if failed {
+        if compile.folder!="" {remove_later({compile.folder})}
         if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
         job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
         return
     }
-    sources,_:=dependencies_read(job.sources_staged,context.temp_allocator)
+    sources,_:=dependencies_read(compile.relink?job.sources_file:job.sources_staged,context.temp_allocator)
     if job.target==.Game {
         if job.result.engine_time=engine_time_packages(sources,job.root,job.engine_root,job.development[:],a);len(job.result.engine_time)>0 {
             job_fail(job,.Engine_Time_Code)
@@ -838,11 +962,11 @@ job_finish :: proc(job:^Job,exit_code:int) {
         job_fail(job,.Output_Locked)
         return
     }
-    if os.rename(job.staged,job.published)!=nil {
+    if os.rename(compile.staged,job.published)!=nil {
         // Windows does not replace a file a program has loaded, and lets it
         // be renamed: the previous one leaves, and is removed once it is free.
         retired:=project.path(job.work,fmt.tprintf("%s.old",job.prefix),allocator=context.temp_allocator)
-        if os.rename(job.published,retired)!=nil || os.rename(job.staged,job.published)!=nil {
+        if os.rename(job.published,retired)!=nil || os.rename(compile.staged,job.published)!=nil {
             job_fail(job,.Output_Locked)
             return
         }
@@ -850,11 +974,24 @@ job_finish :: proc(job:^Job,exit_code:int) {
     // A source saved while the compiler ran is not what was built: without
     // the fingerprint the next job builds again.
     hash,latest:=fingerprint(job.engine_root,job.compiler,job.flags,sources)
-    stamped:=len(sources)>0 && time.diff(latest,job.started)>0 && os.rename(job.sources_staged,job.sources_file)==nil
+    stamped:=len(sources)>0 && time.diff(latest,job.started)>0 && (compile.relink || os.rename(job.sources_staged,job.sources_file)==nil)
     if stamped {stamped=os.write_entire_file(job.stamp_file,fmt.tprintf("%x %s",hash,job.published))==nil}
     if !stamped {_=os.remove(job.stamp_file)}
+    job.result.relinked=compile.relink
+    if compile.folder!="" && !compile.relink {
+        command,found:=link_command_find(streams[0])
+        if stamped && found {
+            masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
+            link_folder_trim(compile.folder)
+            link_record_write(job.link_file,{hash=masked,folder=compile.folder,command=command})
+        } else {
+            remove_later({compile.folder})
+            link_record_remove(job.link_file)
+        }
+    }
     job.result.status=.Built
     job_files_remove(job)
+    objects_sweep(job.root,link_records(job.root))
     if job.target==.Game {
         if failure:=job_ship(job);failure!=.None {job.result.status,job.result.failure=.Failed,failure}
     }

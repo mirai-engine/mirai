@@ -312,11 +312,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         for diagnostic in result.diagnostics {
             fmt.eprintfln("%s(%d:%d) %s: %s",diagnostic.file,diagnostic.line,diagnostic.column,diagnostic.severity==.Error?"Error":"Warning",diagnostic.message)
         }
-        if compiled:=result.plugins_built-result.plugins_restored;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
+        if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
+        if result.plugins_relinked>0 {fmt.printfln("%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
         if result.plugins_restored>0 {fmt.printfln("%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
         switch result.status {
         case .Running:
-        case .Built:      fmt.printfln("%s ready (%.1f s).",result.output,result.seconds)
+        case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
         case .Up_To_Date: fmt.printfln("%s unchanged.",result.output)
         case .Failed:
             if result.text!="" {fmt.eprintln(result.text)}
