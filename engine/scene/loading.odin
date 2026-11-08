@@ -89,6 +89,7 @@ Load_Job :: struct {
     cooked:bool,
     far:bool, // only what draws a far form of its own, kept (far_keep), and what that names
     gated:bool, // a section: it waits for the libraries before it ends (Load_Phase.Waiting)
+    whole:bool, // nothing on the screen to keep smooth: it has the job workers and the frames (host.assets_load_whole)
     passes:int, // frames it waited
     ready:bool, // a frame passed in which no library waited for what it names
     phase:Load_Phase,
@@ -364,9 +365,11 @@ load_named :: proc(job:^Load_Job) {
     job.limits=host.assets_limits(a,tail=job.salt!=0)
     job.phase=.Warming
     job.budget=host.assets_load_open(a)
+    if job.whole {host.assets_load_whole(a,job.budget)}
     if workers:=jobs.worker_count(&app.jobs);workers>1 {
         asset.piece_decoders_init(&job.pieces,&app.jobs,runtime.heap_allocator())
-        for _ in 0..<min(max(workers/LOAD_WORKERS_SHARE,1),count) {jobs.run(&app.jobs,jobs.OWNER,load_prepare,job,&job.counter)}
+        share:=workers if job.whole else max(workers/LOAD_WORKERS_SHARE,1)
+        for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,load_prepare,job,&job.counter)}
     }
 }
 

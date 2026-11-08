@@ -187,6 +187,9 @@ load_open :: proc(app:^App,kind:Load_Kind,name:string) -> u64 {
     return r.id
 }
 
+// Whether a load is not resident yet: what a loading screen stays up for.
+load_under_way :: proc "contextless" (app:^App) -> bool {return app.load_profile.loading}
+
 // The record of kind is the document or the world now, with its entities
 // (-1: those of App.world). Again while it loads, it is ready later.
 load_ready :: proc(app:^App,kind:Load_Kind,entities:=-1) {

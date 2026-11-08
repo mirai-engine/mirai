@@ -123,6 +123,8 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
         launch.first=false
         return
     }
+    // The scene the player starts with: there is no game yet to keep smooth.
+    job.whole=launched
     loads.job=job
     if loading!=nil {loading^=load_progress(job)}
 }

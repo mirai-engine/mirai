@@ -5,10 +5,14 @@ package host
 // (assets_take). Each load gets its part of what the ones before it left. A
 // load whose next asset does not fit its part, though it took nothing in the
 // frame, gets the next frame to itself: a large asset goes alone, and no load
-// waits forever behind the others.
+// waits forever behind the others. A load with nothing on the screen to keep
+// smooth has the frames to itself (assets_load_whole): in the small part of
+// the others, a scene of thousands of assets would take one per frame and
+// wait for the frame rate, not for its work.
 
 LOAD_FRAME_SECONDS :: 0.002
 LOAD_FRAME_BYTES :: 16<<20
+LOAD_WHOLE_FRAME_SECONDS :: 0.033 // what still lets a loading screen move
 
 Load_Budget :: struct {
     frame:u64,   // the frame what it counts is of
@@ -17,6 +21,7 @@ Load_Budget :: struct {
     loads:int,   // that ask for parts
     served:int,  // of them, those that took their part in that frame
     alone:u64,   // the load the next frame is for; 0: none
+    whole:u64,   // the load the frames are for while it lasts; 0: none
     next:u64,    // the id of the next load
 }
 
@@ -39,13 +44,21 @@ assets_load_close :: proc(a:^Assets,load:u64) {
     if load==0 || b.loads==0 {return}
     b.loads-=1
     if b.alone==load {b.alone=0}
+    if b.whole==load {b.whole=0}
 }
+
+// The load has the frames to itself until it closes.
+assets_load_whole :: proc(a:^Assets,load:u64) {a.loads.whole=load}
 
 // The part of the frame a load may take now: what the loads that took theirs
 // in the frame left, shared with those that did not yet.
 assets_load_share :: proc(a:^Assets,frame:u64,load:u64) -> (share:Load_Share) {
     b:=&a.loads
     if b.frame!=frame {b.frame,b.seconds,b.bytes,b.served=frame,0,0,0}
+    if b.whole==load && load!=0 {
+        b.served+=1
+        return {max(LOAD_WHOLE_FRAME_SECONDS-b.seconds,0),max(LOAD_FRAME_BYTES-b.bytes,0),false}
+    }
     if b.alone!=0 && b.alone!=load {return}
     left:=max(b.loads-b.served,1)
     b.served+=1

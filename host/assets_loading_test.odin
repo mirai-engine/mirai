@@ -44,6 +44,23 @@ loads_share_each_frame_and_one_that_does_not_fit_gets_the_next_alone :: proc(t:^
     testing.expect_value(t,a.loads.loads,0)
 }
 
+// A load with nothing on the screen to keep smooth takes far more of each
+// frame than the part of any other, and gives it back when it closes.
+@(test)
+a_load_with_the_whole_frame_takes_more_than_a_shared_part :: proc(t:^testing.T) {
+    a:Assets
+    load:=assets_load_open(&a)
+    shared:=assets_load_share(&a,1,load)
+    assets_load_whole(&a,load)
+    whole:=assets_load_share(&a,2,load)
+    testing.expect(t,whole.seconds>shared.seconds*10 && whole.bytes==LOAD_FRAME_BYTES)
+    // What it took of the frame counts.
+    assets_load_spend(&a,LOAD_WHOLE_FRAME_SECONDS,0)
+    testing.expect_value(t,assets_load_share(&a,2,load).seconds,0)
+    assets_load_close(&a,load)
+    testing.expect_value(t,a.loads.whole,0)
+}
+
 // A mesh larger than the bytes of a frame, read and checked on another
 // thread and given to the assets on this one, loads as asking for it would;
 // one whose file changed after it was read is left to whoever asks for it.
