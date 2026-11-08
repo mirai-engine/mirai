@@ -77,6 +77,10 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     for p in packages {
         if p.file!="" {fmt.eprintfln("mirai test: a file (%s) only goes with --list",p.file);return 2}
     }
+    // The tests that build something (cook/image, asset, the importer) run the
+    // compiler this run builds the suites with: MIRAI_ODIN names it, as
+    // MIRAI_ROOT names the engine, so Odin needs no place in PATH.
+    _=os.set_env("MIRAI_ODIN",odin_executable(root))
     if !test_names_check(root,packages[:],failed_only) {return 2}
     benchmark:=benchmark_asked(flags[:])
     // A benchmark may take long: only --timeout bounds it.
