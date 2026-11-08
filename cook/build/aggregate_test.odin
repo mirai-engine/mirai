@@ -80,8 +80,73 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
             large+=1
             if large<=20 {testing.expectf(t,false,"%s: %s stores %s (%d bytes) at once",info.name,store.function,store.type,store.size)}
         }
+        for split in ir_split_aggregates(string(data),IR_SPLIT_LIMIT,context.temp_allocator) {
+            large+=1
+            if large<=20 {testing.expectf(t,false,"%s: %s copies an aggregate element by element in %d lines",info.name,split.function,split.lines)}
+        }
     }
     testing.expectf(t,large==0,"%d stores of aggregates of more than 64 bytes; write one value per assignment (ODIN_WORKAROUNDS, odin-lang/Odin#7937)",large)
+}
+
+// How many lines of a function copy aggregates element by element before it
+// counts as the split form of the defect: the largest function that is not
+// one has 3806, and those that were had from 9930 to 45469.
+IR_SPLIT_LIMIT :: 5000
+
+// A value that comes out of a call into a temporary leaves no store of the
+// aggregate at -o:minimal: it is already split, one %.fca. line per element.
+@(test)
+ir_split_aggregates_counts_the_lines_of_each_function :: proc(t:^testing.T) {
+    text:=`define void @"p::split"(ptr %0) {
+decls:
+  %.fca.0.extract = extractvalue %"p::Big" %x, 0
+  %.fca.1.extract = extractvalue %"p::Big" %x, 1
+  store i64 %.fca.1.extract, ptr %0, align 8
+  ret void
+}
+
+define void @"p::small"(ptr %0) {
+decls:
+  %.fca.0.extract = extractvalue %"p::Big" %x, 0
+  ret void
+}
+`
+    splits:=ir_split_aggregates(text,2,context.temp_allocator)
+    if !testing.expect_value(t,len(splits),1) {return}
+    testing.expect_value(t,splits[0].function,"p::split")
+    testing.expect_value(t,splits[0].lines,3)
+}
+
+Ir_Split :: struct {function:string,lines:int}
+
+// The functions of a module of LLVM IR with more than limit lines that copy
+// an aggregate element by element.
+ir_split_aggregates :: proc(text:string,limit:int,allocator:=context.allocator) -> []Ir_Split {
+    splits:=make([dynamic]Ir_Split,allocator)
+    function:=""
+    lines:=0
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if strings.has_prefix(line,"define ") {
+            at:=strings.index_byte(line,'@')
+            if at<0 {continue}
+            name:=line[at+1:]
+            if strings.has_prefix(name,`"`) {
+                name=name[1:]
+                name=name[:max(strings.index_byte(name,'"'),0)]
+            } else {
+                name=name[:max(strings.index_byte(name,'('),0)]
+            }
+            function,lines=name,0
+            continue
+        }
+        if strings.contains(line,".fca.") {lines+=1}
+        if strings.has_prefix(line,"}") && function!="" {
+            if lines>limit {append(&splits,Ir_Split{strings.clone(function,allocator),lines})}
+            function=""
+        }
+    }
+    return splits[:]
 }
 
 // A function and the stores the IR shows in it.

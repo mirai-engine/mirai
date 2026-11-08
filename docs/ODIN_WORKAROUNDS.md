@@ -45,6 +45,9 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
       `-o:speed` in 24 minutes;
     - the generated `swap_world`, with about 46 KB of storages, took the demo library to
       `-o:speed` in more than 70 s;
+    - `p.manifest,error=manifest_read(…)` in `project.open`, of a `Manifest`, took the runtime
+      library to 13 minutes at `-o:speed -debug` (254 s of its 290 on one thread at
+      `-use-separate-modules`);
     - `profile,error=motion_profile_read(…)` in `anim.motion_content`, with a `Motion_Profile` of
       16,712 bytes, took the runtime library of `animation` from 1 to 15 s.
   - Workaround: one assignment per value at the sites marked
@@ -53,10 +56,12 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
   - Detecting it: `mirai test cook/build no_store_of_an_aggregate_of_more_than_64_bytes` compiles
     to IR with `-o:minimal` the engine libraries, the demo editor library with its world and the
     library of each demo plugin, and fails on every `store` of an aggregate of more than 64 bytes.
-    The split form is still not detected, which does not leave a `store` either: the value that
-    comes out of a call into a temporary is copied as a `load` and a `store` of the aggregate that
-    `-o:minimal` already splits into one per element (`%.fca.…`, with a GEP over the integer
-    type), and that is how `motion_content` got in (66 thousand lines of IR). The form through
+    The split form leaves no `store` either: the value that comes out of a call into a temporary
+    is copied as a `load` and a `store` of the aggregate that `-o:minimal` already splits into one
+    per element (`%.fca.…`, with a GEP over the integer type), which is how `motion_content` (66
+    thousand lines of IR) and `project.open` (`p.manifest,error=manifest_read(…)`, which took the
+    runtime library to 13 minutes at `-o:speed -debug`) got in. The same test fails on a function
+    with more than `IR_SPLIT_LIMIT` of those lines. The form through
     temporaries leaves no `store`: the generator test covers `swap_world`, and in the rest there
     remain pairs of `llvm.memcpy` to and from an unnamed `alloca`, of more than 64 bytes:
     `physics.state_swap` (`a^,b^=b^,a^`, 6064 bytes), `physics_step` and `state_copy` (2624),

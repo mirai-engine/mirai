@@ -158,7 +158,7 @@ engine_shaders :: proc(root:string,turn_held:=false,backends:shaders.Backends={}
     defer workspace.lock_release(&lock)
     if !turn_held {
         if shaders.current(options) {return true}
-        lock=build_lock(root,"shaders")
+        lock=shaders_lock(root)
     }
     result:=shaders.generate(options)
     defer shaders.result_destroy(&result)
@@ -230,7 +230,7 @@ plugin_test_shaders :: proc(root,folder:string) -> bool {
         }
     }
     output:=join(root,".mirai","tmp",fmt.tprintf("%s-test-shaders",name))
-    lock:=build_lock(root,"shaders")
+    lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
     result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output)})
     defer shaders.result_destroy(&result)

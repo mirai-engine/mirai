@@ -489,7 +489,11 @@ override_field_set :: proc(u:^Ui_Inspector,a:^host.Assets,override:int,field:ui.
     data,nodes,ok:=override_nodes(u,a,int(o.instance))
     node:ui.Tree_Node
     found:=false
-    if ok {node,found=data_node(data,nodes,serial.text_field(o.node[:]))}
+    if ok {
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        named,named_found:=data_node(data,nodes,serial.text_field(o.node[:]))
+        node=named;found=named_found
+    }
     if !found {
         if on {o.fields+={field}} else {o.fields-={field}}
         return

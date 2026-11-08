@@ -265,14 +265,17 @@ sync_needed :: proc(root:string) -> bool {
 // links, a range of the engine that takes this one, and the same of each of
 // its companions. name: the one it must have; empty: any.
 plugin_check :: proc(folder,name:string) -> (plugin:project.Plugin_Manifest,problem:string) {
-    if plugin,problem=plugin_check_one(folder,name);problem!="" {return}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    checked,failure:=plugin_check_one(folder,name)
+    plugin=checked;problem=failure
+    if problem!="" {return}
     if link:=link_find(folder);link!="" {return {},fmt.tprintf("%s is a link: a plugin has only files and folders",link)}
     companions:=project.path(folder,project.PLUGIN_COMPANIONS,allocator=context.temp_allocator)
     entries,_:=os.read_all_directory_by_path(companions,context.temp_allocator)
     for entry in entries {
         if entry.type!=.Directory || !os.is_file(project.path(companions,entry.name,project.PLUGIN_FILE,allocator=context.temp_allocator)) {continue}
-        if _,failure:=plugin_check_one(project.path(companions,entry.name,allocator=context.temp_allocator),entry.name);failure!="" {
-            return {},fmt.tprintf("its companion %s/%s: %s",project.PLUGIN_COMPANIONS,entry.name,failure)
+        if _,companion:=plugin_check_one(project.path(companions,entry.name,allocator=context.temp_allocator),entry.name);companion!="" {
+            return {},fmt.tprintf("its companion %s/%s: %s",project.PLUGIN_COMPANIONS,entry.name,companion)
         }
     }
     return
@@ -280,8 +283,10 @@ plugin_check :: proc(folder,name:string) -> (plugin:project.Plugin_Manifest,prob
 
 @(private)
 plugin_check_one :: proc(folder,name:string) -> (plugin:project.Plugin_Manifest,problem:string) {
-    error:project.Error
-    if plugin,error=project.plugin_read(project.path(folder,project.PLUGIN_FILE,allocator=context.temp_allocator));error.code!=.None {
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    read,error:=project.plugin_read(project.path(folder,project.PLUGIN_FILE,allocator=context.temp_allocator))
+    plugin=read
+    if error.code!=.None {
         if error.code==.Not_Found {return {},fmt.tprintf("it has no %s at its root",project.PLUGIN_FILE)}
         return {},fmt.tprintf("its %s: %v %s",project.PLUGIN_FILE,error.code,base.text_get(error.subject[:]))
     }

@@ -418,7 +418,7 @@ tools come from `.deps`, also from a worktree.
 
 - `edit` and `play` without a flag compile with `--release`, because a person uses them; an agent
   passes `--dev` ([AGENTS.md](../../../../AGENTS.md#common-commands)).
-- The builds of all checkouts take turns by themselves; do not set `-thread-count`. Tests and
+- The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
   builds do not wait for a measurement: they run with low priority while it lasts.
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
   `mirai session stop`; after a change of project code, `build.start` loads it into the open

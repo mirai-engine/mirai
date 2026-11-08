@@ -58,7 +58,10 @@ open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Pro
     p.root=path_absolute(root,allocator)
     if engine_root!="" {p.engine_root=path_absolute(engine_root,allocator)}
     defer if error.code!=.None {close(&p)}
-    if p.manifest,error=manifest_read(path(p.root,PROJECT_FILE,allocator=context.temp_allocator));error.code!=.None {return}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    manifest,read_error:=manifest_read(path(p.root,PROJECT_FILE,allocator=context.temp_allocator))
+    p.manifest=manifest;error=read_error
+    if error.code!=.None {return}
     names:=FOLDER_NAMES
     found:=make([dynamic]Plugin,allocator)
     defer if error.code!=.None {

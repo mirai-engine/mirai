@@ -228,12 +228,18 @@ tree_component_record :: proc(name:string,first,count:u32) -> (component:Tree_Co
     return
 }
 tree_override_record :: proc(text:^[dynamic]u8,instance:u32,node:string,fields:Node_Fields,values:Node_Desc) -> (override:Tree_Override) {
-    override.instance,override.fields,override.values=instance,fields,tree_node_record(text,-1,values)
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    override.instance=instance
+    override.fields=fields
+    override.values=tree_node_record(text,-1,values)
     tree_text_set(override.node[:],node)
     return
 }
 tree_variant_record :: proc(style:u16,variant:string,states:Style_States,patch:Style_Patch) -> (rule:Tree_Style_Variant) {
-    rule.style,rule.states,rule.patch=style,states,patch
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    rule.style=style
+    rule.states=states
+    rule.patch=patch
     tree_text_set(rule.variant[:],variant)
     return
 }

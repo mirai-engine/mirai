@@ -74,8 +74,11 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
 - The locks (`workspace.lock_*`, in `<main>/.mirai/cache/locks/`) are between processes and the
   system releases them when the process ends; `<lock>.owner` says who holds it and the one waiting
   reports it, like `mirai locks`.
-- The builds of all checkouts take turns with `build.lock`, and only when there is something to
-  compile:
+- The builds of a machine share up to four turns (`build.lock`, `build-1.lock`…), one per two
+  physical cores, those after the first only with 4 GB free; a generation of shaders has
+  `shaders.lock` and waits for no compilation. Within a checkout or a project they go one at a
+  time (`<folder>/.mirai/build-turn.lock`), because they write the same files. They take them only
+  when there is something to compile:
   - `build`, `edit`, `play`, `session start` and `import` first check, without the lock, the C
     libraries, the engine and its shaders (`build.engine_current`), the project shaders
     (`build.shaders_current`) and the library (`target_state`). If everything is up to date they

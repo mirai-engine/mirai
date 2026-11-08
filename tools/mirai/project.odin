@@ -276,7 +276,7 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
 // library were built again.
 @(private="file")
 build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed,engine_failed,rebuilt:bool) {
-    lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root))
+    lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
     if !ensure_runtime_dependencies(root) {return 1,"",false,true,false}

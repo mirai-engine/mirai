@@ -9,21 +9,39 @@ import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-// The compilations of every checkout of the repository take turns: at once,
-// each one is slower and together they can run out of memory. One that waits
-// says for whom. A measurement does not stop them: what they compile while it
-// runs runs at low priority (build.compiler_limits), and it can tell that they
-// ran (workspace.builds_since). When the lock cannot be taken the build goes
-// on without it.
-build_lock :: proc(root,what:string) -> workspace.Lock {
+// The compilations of every checkout of the repository share a few turns,
+// as many as the memory holds, and go one at a time within a checkout or a
+// project (workspace.build_acquire). One that waits says for whom. A
+// measurement does not stop them: what they compile while it runs runs at low
+// priority (build.compiler_limits), and it can tell that they ran
+// (workspace.builds_since). When the lock cannot be taken the build goes on
+// without it. also: the folders of what it writes besides root.
+build_lock :: proc(root,what:string,also:=[]string{}) -> workspace.Lock {
     holder:=fmt.tprintf("pid %d, mirai %s in %s",os.get_pid(),what,root)
-    lock,_:=workspace.build_acquire(root,holder,proc(holder:string) {
-        fmt.eprintfln("mirai: waiting for another build to finish (%s)",holder!=""?holder:"another process")
-    })
+    lock,_:=workspace.build_acquire(root,holder,build_wait_notice,also)
+    build_lock_measured(root)
+    return lock
+}
+
+// The turn of a generation of shaders, which waits for no compilation of
+// another checkout.
+shaders_lock :: proc(root:string) -> workspace.Lock {
+    holder:=fmt.tprintf("pid %d, mirai shaders in %s",os.get_pid(),root)
+    lock,_:=workspace.shaders_acquire(root,holder,build_wait_notice)
+    build_lock_measured(root)
+    return lock
+}
+
+@(private="file")
+build_wait_notice :: proc(holder:string) {
+    fmt.eprintfln("mirai: waiting for another build to finish (%s)",holder!=""?holder:"another process")
+}
+
+@(private="file")
+build_lock_measured :: proc(root:string) {
     if measured,measurer:=workspace.measurement_running(root,context.temp_allocator);measured {
         fmt.eprintfln("mirai: a measurement is running (%s); building at low priority",measurer!=""?measurer:"another process")
     }
-    return lock
 }
 
 // Takes the measurement lock: waits for another measurement and then for the
@@ -35,7 +53,7 @@ measure_lock :: proc(root,what:string) -> workspace.Lock {
     lock,_:=workspace.lock_acquire(workspace.lock_path(root,workspace.MEASURE_LOCK,context.temp_allocator),holder,proc(holder:string) {
         fmt.eprintfln("mirai: waiting for another measurement to finish (%s)",holder!=""?holder:"another process")
     })
-    workspace.lock_wait(workspace.lock_path(root,workspace.BUILD_LOCK,context.temp_allocator),proc(holder:string) {
+    workspace.builds_wait(root,proc(holder:string) {
         fmt.eprintfln("mirai: waiting for the builds to finish before measuring (%s)",holder!=""?holder:"another process")
     })
     return lock
