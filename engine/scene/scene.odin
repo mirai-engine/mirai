@@ -658,6 +658,9 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         clear(&table_rows);clear(&images)
+        // resize asks for exactly what it is given, and this allocator frees
+        // nothing: growing row by row would cost the square of the rows.
+        if reserve(&images,core.raw_count(table)*size)!=nil {return report,.Out_Of_Memory}
         for visit,row in placed {
             value:=core.raw_find(table,info.info,visit.entity)
             if value==nil {continue}
