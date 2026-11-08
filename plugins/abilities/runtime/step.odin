@@ -472,7 +472,9 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
-// stops unless next plays one of the same kind.
+// stops unless next plays the same action, or a clip of its own. An action next does not fire again
+// is cancelled even when next fires another: on another layer nothing would replace it, and a
+// looping section would play on, and on the same layer the one next fires takes the layer.
 @(private)
 ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Time,kind:Ability_Event_Kind,next:^Ability) {
     ref:=u.ability
@@ -483,7 +485,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
             if w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)=="") {anim.action_cancel(t.w.actions,e,name)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.action_cancel(t.w.actions,e,name)}
             if ability_name_text(&a.clip)!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.match_stop(t.w.animations,e)}
         }
     }
