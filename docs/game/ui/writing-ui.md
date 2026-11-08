@@ -63,7 +63,8 @@ keys cannot see where they are.
 
 `Button` reports `Clicked`; `Checkbox`, `Slider`, `Selector`, `Dropdown`, `Radio`, `Number` and
 `Field` report `Changed`; `Field` also `Submitted`. A `Selector` takes its options in `text`
-separated by `|` and binds the index. The game answers on each event:
+separated by `|` and binds the index, or the value of options written `Label=Value`; bound to a
+setting (`Graphics_Settings.vsync`) it writes it itself. The game answers on each event:
 [events](../ui.md#events). First control of each page: `flags={.Focus_First}`.
 
 ## API

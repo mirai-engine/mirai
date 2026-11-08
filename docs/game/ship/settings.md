@@ -55,24 +55,16 @@ test ([player.md](player.md)).
 
 ## An options menu in the game
 
-A game step may write the settings storages; the engine brings the window and the renderer to
-them at once, and keeps them for the next run by itself. Choices that are the game's own go in a
-`@(storage,persist)` ([core](../core/saves.md)).
+A settings screen is data: its `.ui` selectors and checkboxes bind the fields of these storages
+([options](../ui/menus-settings.md#add-an-option)) and the engine keeps them. A game step may also
+write them, and the engine brings the window and the renderer to them at once.
 
-```odin
-@(step="frame")
-game_apply_options :: proc(graphics:^render.Graphics_Settings,display:^render.Display_Settings,
-                           options:core.Ref(My_Options)) {
-    render.graphics_preset_apply(graphics,options.preset)   // .Low, .Medium, .High, .Ultra
-    graphics.frame_limit,graphics.vsync=options.limit,options.vsync       // 0: no limit
-    display.mode=options.fullscreen?.Fullscreen:.Project
-}
-```
-
-`render.graphics_preset_apply` sets only the quality fields; `render_scale`, `antialiasing`
-(`base.text_set(graphics.antialiasing[:],render.ANTIALIASING_TAA)`, or `ANTIALIASING_OFF`),
-`frame_limit`, `vsync` and `show_fps` stay as they were. Volume is a field of `Audio_Volumes`
-([audio](../audio.md)); language and interface scale are `gui.UI_Preferences`.
+`Graphics_Settings.render_scale` is the fraction of the window that is drawn. 0 follows the target
+of the preset, a height of lines over the window, never above a pixel per point. `quality` reads
+the preset the fields are at; naming one applies it and resets the scale to 0, and changing a field
+by hand reads as `Custom`. Choices that are the game's own go in a `@(storage,persist)`
+([core](../core/saves.md)). Volume is a field of `Audio_Volumes` ([audio](../audio.md)); language
+and interface scale are `gui.UI_Preferences`.
 
 ## Pitfalls that fail silently
 

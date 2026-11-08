@@ -378,7 +378,10 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
   resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
-  writes it; they show what was asked until the game has had a tick to write it. A `Selector` or a
+  writes it; they show what was asked until the game has had a tick to write it. A control bound to
+  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A `Selector` or a
+  `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
+  enum, a text for a text field), not its index. A `Selector` or a
   `Dropdown` with `bind_items` takes its options from a game array.
 - **Containers.**
   - A `Scroll` scrolls horizontally if its direction is `Row` and downward if it is another; with

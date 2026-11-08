@@ -29,8 +29,10 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     }
     if .Draggable in node.flags {tree_drag_source(ctx,b,node,index,node_id,item)}
     defer if .Draggable in node.flags {tree_drag_ghost(ctx,b,node,index,node_id,values,slot-int(instance.slots[index]),item)}
-    changed :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index:int,item:i32,style:^Node_Style,value:f64,on:=false) {
-        tree_emit(b,{name=node.name,node=i32(index),kind=.Changed,item=item,value=value,on=on})
+    changed :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index:int,item:i32,style:^Node_Style,value:f64,on:=false,text:="") {
+        event:=Tree_Event{name=node.name,node=i32(index),kind=.Changed,item=item,value=value,on=on}
+        base.text_set(event.text[:],text)
+        tree_emit(b,event)
         tree_sound(ctx,style,.Change)
     }
     control:=Game_Control{style=style,width=node.layout.width,height=node.layout.height,disabled=disabled}
@@ -75,15 +77,26 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         tree_field(ctx,b,node,index,node_id,values,item,base_style,control)
     case .Selector,.Dropdown:
         options:=tree_options(b,index,values,content)
-        chosen:=int(current) if bound.value.bound else int(instance.slot[slot].held)
+        spec:=string(tree.strings[node.text_offset:][:node.text_length])
+        valued:=bound.value.bound && !bound.options.bound && strings.index_byte(spec,'=')>=0
+        chosen:=tree_option_chosen(values,bound.value,spec) if valued else int(current) if bound.value.bound else int(instance.slot[slot].held)
         next:=chosen
         if node.kind==.Selector {game_selector(ctx,node_id,options,&next,control)} else {
             game_dropdown(ctx,node_id,options,&next,control)
             if popup_is_open(ctx,id_derive(ctx,node_id,"list")) {b.animating=true}
         }
         if next!=chosen {
-            if bound.value.bound {bound_write(values,bound.value,f64(next))} else {instance.slot[slot].held=f32(next)}
-            changed(ctx,b,node,index,item,base_style,f64(next))
+            written,text:=f64(next),""
+            if valued {
+                value:=option_value(spec,next)
+                if bound.value.text {text=value} else {written=bound_option_number(bound.value,value)}
+            }
+            switch {
+            case bound.value.text:  bound_write_text(values,bound.value,text)
+            case bound.value.bound: bound_write(values,bound.value,written)
+            case:                   instance.slot[slot].held=f32(next)
+            }
+            changed(ctx,b,node,index,item,base_style,written,text=text)
         }
     case .Radio:
         chosen:=bound.value.bound && int(current)==int(node.choice) || !bound.value.bound && selected

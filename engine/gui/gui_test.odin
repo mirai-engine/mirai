@@ -61,7 +61,9 @@ the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
         {entity=entity,name=base.name_hash("play"),kind=.Clicked},
         {entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
         {entity=entity,kind=.Back},
+        {kind=.Menu},
     }
+    testing.expect(t,menu_pressed(events))
     testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
     value,ok:=changed_value(events,entity,"volume")
     testing.expect(t,ok && value==0.5)
@@ -211,7 +213,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     core.add(&w.healths,e,Bind_Test_Health{3,10})
     core.table_settle(&w.healths,&w.es)
     tables:=[]core.Table_Info{{name="Bind_Test_Health",type=Bind_Test_Health,info=type_info_of(Bind_Test_Health),offset=offset_of(Bind_Test_World,healths)}}
-    storages:=[]core.Storage_Info{{name="Bind_Test_Match",type=Bind_Test_Match,info=type_info_of(Bind_Test_Match),offset=offset_of(Bind_Test_World,match)}}
+    storages:=[]core.Storage_Info{{name="Bind_Test_Match",type=Bind_Test_Match,info=type_info_of(Bind_Test_Match),offset=offset_of(Bind_Test_World,match),setting=.Machine}}
     info:=core.World_Info{entities=offset_of(Bind_Test_World,es),tables=tables,storages=storages}
     gui:Gui
     gui.allocator=context.allocator
@@ -236,6 +238,8 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && storage)
     data,stamp=host.fetch(host.user,base.name_hash("Bind_Test_Match"),0)
     testing.expect(t,data==&w.match && stamp==0)
+    // A control bound to a setting writes it; a component, or anything else, asks the game.
+    testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
     testing.expect(t,!found)
 }

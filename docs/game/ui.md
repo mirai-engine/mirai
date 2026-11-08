@@ -39,6 +39,9 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
 - Show or hide a screen with `render.set_hidden(hidden,entity,true)`: it plays its hide
   animations; turning off `UI_Screen` or `core.Disabled` removes it at once.
 - `back=true` makes Escape or East report `Back` while it is on top.
+- `pause=true` on a `Modal` screen stops the clock while it shows, unless in a network session.
+  The engine captures the mouse while the seat with it drives a body whose look the mouse turns
+  and no `Modal` is up: [Mouse](ui/menus-settings.md#mouse) for a free cursor.
 
 ## Events
 
@@ -56,9 +59,11 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), volumes:^audio.Au
 
 - Names are `base.name_hash` of the node name. Controls never write their bound value: the game
   writes it on `Changed`, or the control goes back to what the field holds.
-- The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`...) take a
-  frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a fixed step reads the
-  storage and sees nothing while the clock is stopped, as under a pause menu.
+- The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
+  `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
+  fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.
+- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `input.mirai` like
+  any other) when no interface used that Escape: what opens and closes a menu.
 
 ## Focus
 
@@ -71,6 +76,5 @@ Keyboard and gamepad move a ring over the controls. Mark the first control of ea
 - A path that names a component or field the game lacks hides the whole screen; the reason is a
   problem `gui.bind` in `engine.diagnostics`. A `.ui` that does not load is `gui.asset`.
 - A screen with no `Focus_First` can be clicked but not driven by keys.
-- The game, not the screen, holds the mouse: release it while a menu shows (the shell does).
 - More screens than fit leave out the lowest `order` (`gui.screens`): hide the unused ones.
 - An open editor picks up rewritten `.ui` files at its next call.

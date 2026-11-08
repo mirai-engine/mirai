@@ -29,8 +29,9 @@ Reflections :: enum u8 {
 
 @(storage,setting="machine")
 Graphics_Settings :: struct {
-    render_scale:f32 `mirai:"min=0,max=2,section=Resolution"`, // the 3D image per point of the window along each axis, 0.25 to 2 (0: 1); render_megapixels then caps the pixels of the result
-    render_megapixels:f32 `mirai:"min=0,max=100"`, // the most pixels of the 3D image, in millions, below one per point of the window; 0: one per point
+    quality:Graphics_Quality `mirai:"section=Resolution"`, // the preset the fields are at, or Custom; naming a preset applies it (graphics_quality_settle)
+    render_scale:f32 `mirai:"min=0,max=2"`,                // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
+    preset_height:u32 `mirai:"min=0,max=16384,advanced"`,  // the lines the last preset aims for in the views of the window, never above one pixel per point (only graphics_preset_apply writes it); 0: one per point
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting"`,
     light_probes:Light_Probes,
@@ -51,19 +52,19 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    render_scale=1,render_megapixels=2.0736,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
+    quality=.High,preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
     sun_shadows=true,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
 Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
+Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom} // the presets, in their order, and what none matches
 // Of each preset only the fields of the quality count: graphics_preset_apply.
 // The technique of antialiasing is not one of them: it is the same in all.
-// Its pixels are those of a 16:9 image 720, 900, 1080 or 1440 tall.
 GRAPHICS_PRESETS :: [Graphics_Preset]Graphics_Settings{
-    .Low   ={render_megapixels=0.9216,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={render_megapixels=1.44,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={render_megapixels=2.0736,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={render_megapixels=3.6864,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -82,15 +83,39 @@ graphics_generates :: proc(graphics:Graphics_Settings,app:^host.App) -> bool {
     return shown==0 || shown>=2*FRAME_GENERATION_BASE_MIN-0.5
 }
 
-// Gives the fields of the quality the values of the preset; the others stay.
+// Gives the fields of the quality the values of the preset, with a scale that
+// follows its target; the others stay.
 graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Preset) {
     presets:=GRAPHICS_PRESETS
     p:=presets[preset]
-    g.render_megapixels=p.render_megapixels
+    g.quality,g.render_scale,g.preset_height=Graphics_Quality(u8(preset)),0,p.preset_height
+    g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
     g.shadowed_lights,g.glass_shadows,g.glass_layers=p.shadowed_lights,p.glass_shadows,p.glass_layers
     g.textures,g.detail=p.textures,p.detail
     g.frame_generation=p.frame_generation
+}
+
+// The preset the fields of g are at, or Custom.
+graphics_quality_of :: proc(g:Graphics_Settings) -> Graphics_Quality {
+    for preset in Graphics_Preset {
+        at,compared:=g,g
+        graphics_preset_apply(&at,preset)
+        compared.quality=at.quality
+        if compared==at {return at.quality}
+    }
+    return .Custom
+}
+
+// Keeps quality derived from the fields: a preset named there since seen, the
+// quality last read, is applied, and anything else reads as what the fields are.
+graphics_quality_settle :: proc(g:^Graphics_Settings,seen:Graphics_Quality) {
+    fields:=graphics_quality_of(g^)
+    if g.quality!=seen && g.quality!=.Custom && g.quality!=fields {
+        graphics_preset_apply(g,Graphics_Preset(u8(g.quality)))
+        return
+    }
+    g.quality=fields
 }
 
 // The default on a device: Medium on a GPU without hardware ray tracing or an
@@ -113,7 +138,8 @@ GRAPHICS_TEXTURE_POOL_MIN :: u32(256)
 graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings,device:rhi.Device_Info) -> gpu.Settings {
     s:=settings
     probes,sizes,pixels:=GRAPHICS_PROBES,GRAPHICS_TEXTURE_SIZES,GRAPHICS_DETAIL_PIXELS
-    s.render_scale,s.render_megapixels=quality.render_scale>0?clamp(quality.render_scale,0.25,2):1,max(quality.render_megapixels,0)
+    s.render_scale,s.render_height=1,quality.preset_height
+    if quality.render_scale>0 {s.render_scale,s.render_height=clamp(quality.render_scale,0.25,2),0}
     // A plugin that resolves the technique replaces the Resolve stage, where the TAA runs, in its pipeline.
     technique:=quality.antialiasing
     s.taa=base.text_get(technique[:])!=gpu.ANTIALIASING_OFF
@@ -141,8 +167,10 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 
 // Brings the renderer and the pacing to the graphics settings of the world when they change.
 @(step="render",loops="game editor",before="render_sync")
-graphics_apply :: proc(graphics:Graphics_Settings,sync:^Render_Sync,app:^host.App) {
-    if sync.graphics_applied && sync.graphics==graphics {return}
+graphics_apply :: proc(settings:^Graphics_Settings,sync:^Render_Sync,app:^host.App) {
+    if sync.graphics_applied && sync.graphics==settings^ {return}
+    graphics_quality_settle(settings,sync.graphics_applied?sync.graphics.quality:.Custom)
+    graphics:=settings^
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {
         before:=r.settings

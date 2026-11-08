@@ -109,6 +109,10 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Re
             entity=c.entity,instance=index,content=content,order=c.screen.order,player=int(c.screen.player),input=c.screen.input,
             input_context=c.screen.input_context,hiding=c.hiding,back=c.screen.back,variant=ui.style_variant(base.text_get(c.screen.variant[:])),mesh=-1,
         })
+        gui.pausing||=screen_pauses(c.screen,c.hiding)
+        if c.screen.pause && c.screen.input!=.Modal {
+            core.report(problems,c.entity,"gui.pause_modal","its UI_Screen.pause does nothing: only a Modal screen stops the clock; set UI_Screen.input to Modal, or turn pause off")
+        }
     }
     stack_resolve(gui.plan[:])
     for entry in gui.plan {
@@ -377,7 +381,7 @@ bind_host :: proc(b:^Bind) -> ui.Bind_Host {
         clear(&gui.sources)
         clear(&gui.source_index)
     }
-    return {user=b,schema=&gui.schema,source=bind_source,fetch=bind_fetch,rows=bind_rows}
+    return {user=b,schema=&gui.schema,source=bind_source,fetch=bind_fetch,rows=bind_rows,commits=bind_commits}
 }
 
 // The component or the storage of the world called by name, its type added
@@ -394,7 +398,7 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     }
     if !ok {
         for &s in world.info.storages {
-            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true},true;break}
+            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true,setting=s.setting!=.None},true;break}
         }
     }
     if !ok {return nil}
@@ -404,6 +408,12 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     append(&gui.sources,found)
     gui.source_index[name]=len(gui.sources)-1
     return &gui.sources[len(gui.sources)-1]
+}
+
+@(private)
+bind_commits :: proc(user:rawptr,name:u64) -> bool {
+    source:=bind_named((^Bind)(user),name)
+    return source!=nil && source.setting
 }
 
 @(private)
@@ -469,9 +479,10 @@ values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,instance:^Ins
 
 // Builds the tree of an interface where the UI is, with the copy of what it
 // binds, and queues what its widgets did: what they bind is of the game,
-// which writes what they ask for.
+// which writes what they ask for, except a setting, which a control bound to
+// it writes itself. The event is queued all the same.
 @(private)
-screen_build :: proc(gui:^Gui,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
+screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
     content:=entry.content
     focus_restore(ctx,instance,entry.top)
     requests_apply(gui,ctx,instance,content,problems)
@@ -491,12 +502,18 @@ screen_build :: proc(gui:^Gui,ctx:^ui.Context,s:^Surface,instance:^Instance,entr
     if built.dropped>0 {
         core.report(problems,entry.entity,"gui.events","%d events of the interface of this entity were lost in a frame: its widgets gave more than %d at once; give the interface fewer widgets that change in one frame",built.dropped,EVENT_BATCH)
     }
+    bind:=Bind{gui=gui,app=app,world=world}
+    host_of:=bind_host(&bind)
     for event in events[:built.count] {
         append(&gui.pending,event_of(entry.entity,event,1 if entry.world else ctx.scale))
-        if event.kind==.Changed {instance.edited,instance.edited_at=true,gui.deliveries}
+        if event.kind==.Changed {
+            instance.edited,instance.edited_at=true,gui.deliveries
+            ui.tree_commit_event(&instance.instance,event,&host_of)
+        }
     }
     if entry.top && entry.back && !ctx.escape_used && (.Escape in ctx.input.keys_pressed || .Cancel in ctx.input.pad) {
         append(&gui.pending,UI_Event{entity=entry.entity,kind=.Back,item=-1,from_item=-1})
+        ctx.escape_used=true
     }
 }
 

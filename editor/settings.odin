@@ -7,6 +7,7 @@ import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
 import "mirai:rhi"
@@ -1036,6 +1037,9 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
         if error:=project.settings_parse(sections,next,strict=true);error.code!=.None {
             api.call_failf(call,api.INVALID_PARAMS,"settings: %s at line %d, column %d",error.detail,error.line,error.column)
             return
+        }
+        for setting,i in next {
+            if setting.name=="Graphics_Settings" {erender.graphics_quality_settle((^erender.Graphics_Settings)(setting.value),(^erender.Graphics_Settings)(current[i].value).quality)}
         }
     }
     for setting in next {

@@ -225,6 +225,7 @@ App :: struct {
     has_script_input:bool,
     script_devices:bool, // script_input holds the pointer, the gamepads and the device: they replace those of the window
     game_input_blocked:bool, // the pointer is on the editor: the game gets no input this frame
+    game_mouse_off:bool,     // the editor has the mouse (Play paused or released, Simulate, Watch): the game does not capture it
     game_input_excluded:core.Keys,
 }
 

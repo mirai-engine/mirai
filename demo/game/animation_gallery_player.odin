@@ -56,6 +56,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         body:=inp.body_of(seats.drivables,core.entity_at(players,row))
+        if player.focus!=core.NONE {body=player.mirai} // it let go of it to free the mouse
         owner,driven:=core.get(seats.drivables,body)
         input:=core.get(inputs,body)
         placed,exists:=core.get(worlds,body)
@@ -91,6 +92,7 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(A
             } else if player.focus!=core.NONE {
                 cam.camera_override_remove(cameras,seat)
                 next.focus=core.NONE
+                inp.drive(requests,seat,player.mirai)
             } else if near!=core.NONE {
                 if near==player.spider {inp.drive(requests,seat,player.spider)}
                 for at in 0..<core.count(panels) {
@@ -99,6 +101,7 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(A
                     entity:=core.entity_at(panels,at)
                     cam.camera_override(cameras,seat,seat,panel.camera,blend=GALLERY_FOCUS_BLEND)
                     next.focus=entity
+                    inp.release(requests,seat)
                 }
             }
         }
@@ -117,7 +120,7 @@ gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Galle
     player,found:=core.first(players)
     if !found {return}
     focus:=core.at(players,0).focus
-    body,_:=core.get(worlds,inp.body_of(drivables,player))
+    body,_:=core.get(worlds,inp.body_of(drivables,player) if focus==core.NONE else core.at(players,0).mirai)
     for row in 0..<core.count(labels) {
         e:=core.entity_at(labels,row)
         placed,exists:=core.get(worlds,e)

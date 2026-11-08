@@ -939,8 +939,8 @@ instance" are `-32602`; the rest, `-32000`
 
 ## Graphics and settings
 
-- `graphics.status`: `preset` is `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_megapixels`
-  is the scene budget (0: one pixel per point); the size it is drawn at is given by
+- `graphics.status`: `preset` is `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_scale` and
+  `preset_height` say how the scene resolution is chosen; the size it is drawn at is given by
   `engine.status` (`render_width`, `render_height`). `options` lists every option of the popup with
   its current choice and its choices.
 - `settings.get` (read-only): `{machine, settings, engine, project}`, narrowed to `sections`

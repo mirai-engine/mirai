@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:hash"
 import "core:math"
 import "core:mem"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -29,7 +30,7 @@ Node_Kind :: enum u8 {
     Prompt,   // the prompts of its action, as the device the player holds shows them
     Slider,   // edits its bound number between range[0] and range[1], in steps of range[2]
     Field,    // edits its bound text, as an ASCII keyboard types it, with its own text as the placeholder; Enter reports Submitted
-    Selector, // steps through its options (bind_items, or its text separated by '|'); its bound value is the index
+    Selector, // steps through its options (bind_items, or its text separated by '|'): its bound value is the index, or, for options written Label=Value, the value of the one chosen (a number, the name of a member of an enum, or a text for a text field)
     Dropdown, // picks one of its options, as a Selector has them, from a list that opens under it
     Radio,    // selected while its bound value equals choice; choosing it writes choice there
     Tooltip,  // a container built next to the node that holds it while that one is hovered or focused
@@ -466,7 +467,8 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o:[Binding]bool
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
-        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),.Entity if node.kind==.View else .Shown if node.kind==.Switcher else .Number)
+        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
         b.disabled,o[.Disabled]=tree_bind_field(instance,scope,name(tree,&node,.Disabled),.Number)
@@ -572,11 +574,11 @@ Tree_Event :: struct {
     kind:Tree_Event_Kind,
     on:bool,   // Changed: what a checkbox holds now
     item:i32,  // the element of the List the node is in; -1: in none
-    value:f64, // Changed: the number written, or the index of the option chosen
+    value:f64, // Changed: the number written, or the index of the option chosen (of one written Label=Value: its value)
     from:u64,  // Dropped: the name of the node dragged; Finished: of the animation
     from_item:i32,
     from_owner:u64, // Dropped: Context.owner while the tree of the node dragged was built
-    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds
+    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds; Changed by an option of a text field: its value
     rect:Rect, // where the node was laid out in the last frame, in layout units of its surface; zero before
 }
 TREE_EVENT_TEXT :: 256
@@ -987,6 +989,17 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         scroll_end(ctx,area,&instance.scrolls[slot])
     }
     box_end(ctx,box^)
+}
+
+// What the bound value of a node of this kind must hold.
+@(private)
+tree_value_want :: proc "contextless" (kind:Node_Kind) -> Bound_Want {
+    #partial switch kind {
+    case .View:              return .Entity
+    case .Switcher:          return .Shown
+    case .Selector,.Dropdown:return .Option
+    }
+    return .Number
 }
 
 // The position of the node a Switcher builds: by name when it binds an enum or

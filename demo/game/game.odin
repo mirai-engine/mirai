@@ -12,7 +12,6 @@ import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
-import "mirai:platform"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -143,9 +142,7 @@ Palette :: struct {
 
 @(storage)
 Game :: struct {
-    mouse_set:bool,
-    captured:bool,
-    mouse_focus:core.Entity,
+    left:core.Entity, // the body the Menu action let go of
 }
 
 SPIN_DEFAULT :: Spin{degrees_per_second={0,90,0}}
@@ -181,7 +178,7 @@ Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
     Gallery_Previous,Gallery_Next,Gallery_Overview,Physics_Reset,
     Portal_Blue,Portal_Orange,Grab,Camera_Mode,Aim,
-    Hud_Style,Menu,Inventory,Talk,
+    Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
 // The bindings of the actions of the demo. The editor (Project Settings > Input), input.set and
@@ -211,27 +208,27 @@ demo_actions_default :: proc "contextless" () -> Demo_Actions {
         .Camera_Mode=inp.action_default(.Button,key(.C),pad(.Left_Stick)),
         .Aim=inp.action_default(.Button,mouse(.Right),trigger(.Left_Trigger)),
         .Hud_Style=inp.action_default(.Button,key(.H),pad(.Dpad_Up)),
-        .Menu=inp.action_default(.Button,key(.M),pad(.Start)),
+        .Interface_Menu=inp.action_default(.Button,key(.M),pad(.Dpad_Down)),
         .Inventory=inp.action_default(.Button,key(.I),pad(.Back)),
         .Talk=inp.action_default(.Button,key(.T),pad(.Right_Stick)),
     }}
 }
 
-// Keeps the mouse for the camera until Escape frees it; the animation gallery frees it while its
-// player adjusts a panel.
-@(step="input")
-game_mouse :: proc(game:^Game,app:^host.App,input:core.Frame_Input,gallery_players:core.Read(Gallery_Player)) {
-    if app.platform==nil {return}
-    focus:=core.NONE
-    gallery:=core.count(gallery_players)>0
-    if gallery {focus=core.at(gallery_players,0).focus}
-    if !game.mouse_set || gallery && game.mouse_focus!=focus {
-        game.mouse_set,game.mouse_focus=true,focus
-        game.captured=focus==core.NONE
-        platform.window_set_relative_mouse(app.platform,game.captured)
-    } else if core.key_pressed(input.input,.Escape) {
-        game.captured=!game.captured
-        platform.window_set_relative_mouse(app.platform,game.captured)
+// The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
+// the body back. The animation gallery lets go too while its player adjusts a panel.
+@(step="frame")
+game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+    if !gui.menu_pressed(gui.events_this_frame(g)) {return}
+    seat:=inp.focused(state.ptr,seats)
+    if seat==core.NONE {return}
+    if body:=inp.body_of(drivables,seat);body!=core.NONE {
+        game.left=body
+        inp.release(requests,seat)
+        // Nobody writes the Move_Input of a body no seat drives: it would keep walking.
+        if move:=core.get(moves,body);move!=nil {move.move,move.buttons={},{}}
+    } else if game.left!=core.NONE {
+        inp.drive(requests,seat,game.left)
+        game.left=core.NONE
     }
 }
 

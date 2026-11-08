@@ -111,7 +111,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   kind and default bindings (`[E]inp.Action_Default`), read by member through `inp.Input_Of(E)`;
   nobody writes an action's number. `input.mirai` is not
   written by hand: it holds only what Project Settings > Input, `input.set` or the player changed.
-  Reading raw `core.Input` is for cases like Escape.
+  The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
+  the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
   without telling them apart; it drives a body with `Drivable` and carries its actions. Locomotion
   turns the body's `Move_Input` into movement: the seat writes it according to `move_relative_to`,

@@ -56,6 +56,7 @@ UI_Screen :: struct {
     player:u8 `mirai:"max=4"`, // 0: the window; n: the part of local player n
     variant:[VARIANT_CAPACITY]u8 `mirai:"text"`, // of the styles of its nodes that choose none
     back:bool,           // Escape, or East of a gamepad, reports Back while it is on top
+    pause:bool,          // Modal: while it shows, the clock of the world stops, unless the game plays in a network session
 }
 
 // What a World_Widget takes from the player that points at it.
@@ -180,6 +181,7 @@ UI_Event_Kind :: enum u8 {
     Closed,
     Link,      // a link of a rich text: from is its name
     Back,      // Escape or East on the screen on top, when it reports it; name is 0
+    Menu,      // the player pressed the Menu action and no interface used it; entity and name are 0
 }
 #assert(int(UI_Event_Kind.Clicked)==int(ui.Tree_Event_Kind.Clicked) && int(UI_Event_Kind.Changed)==int(ui.Tree_Event_Kind.Changed))
 #assert(int(UI_Event_Kind.Submitted)==int(ui.Tree_Event_Kind.Submitted) && int(UI_Event_Kind.Hovered)==int(ui.Tree_Event_Kind.Hovered))
@@ -187,7 +189,7 @@ UI_Event_Kind :: enum u8 {
 #assert(int(UI_Event_Kind.Unfocused)==int(ui.Tree_Event_Kind.Unfocused) && int(UI_Event_Kind.Dragged)==int(ui.Tree_Event_Kind.Dragged))
 #assert(int(UI_Event_Kind.Dropped)==int(ui.Tree_Event_Kind.Dropped) && int(UI_Event_Kind.Finished)==int(ui.Tree_Event_Kind.Finished))
 #assert(int(UI_Event_Kind.Right_Clicked)==int(ui.Tree_Event_Kind.Right_Clicked) && int(UI_Event_Kind.Link)==int(ui.Tree_Event_Kind.Link))
-#assert(len(UI_Event_Kind)==len(ui.Tree_Event_Kind)+1)
+#assert(len(UI_Event_Kind)==len(ui.Tree_Event_Kind)+2)
 
 // What a widget of a UI_Screen or a World_Widget did.
 UI_Event :: struct {
@@ -282,6 +284,7 @@ Bound_Source :: struct {
     info:^runtime.Type_Info,
     index:serial.Type_Index,
     storage:bool,
+    setting:bool, // a setting (@(storage,setting)): a control bound to it writes it
 }
 
 Action_Name :: struct {hash:u64,action:inp.Action}
@@ -325,7 +328,10 @@ Gui :: struct {
     actions:[dynamic]Action_Name, // the input actions by the name_hash of their names
     actions_ready:bool,
     pointer_consumed,keyboard_consumed:bool,
-    released_mouse:bool,       // a Modal let the relative mouse go: it comes back when none is on top
+    pausing:bool,              // a Modal screen with pause shows this frame
+    clock_held:bool,           // it stopped the clock, and gives it back when none shows
+    modal_up:bool,             // a Modal is on top this frame
+    escape_used:bool,          // an interface used the Escape of this frame
     cursor:ui.Cursor,          // the last one given to the window
     skipped:u64,               // frames of a context that showed its last one again
     kept:u64,                  // screens drawn again from what they drew, without being built
@@ -467,6 +473,13 @@ back_frame :: proc(events:[]UI_Event,entity:core.Entity) -> bool {
     return event_find(events,entity,"",.Back)!=nil
 }
 
+// Whether the player pressed the Menu action (Menu_Action: Escape, Start of a
+// gamepad, rebound like any action) and no interface used that Escape. What a
+// game does with it is its own: open or close a menu.
+menu_pressed :: proc{menu_pressed_tick,menu_pressed_frame}
+menu_pressed_tick :: proc(events:^UI_Events) -> bool {return menu_pressed_frame(events.items[:])}
+menu_pressed_frame :: proc(events:[]UI_Event) -> bool {return event_find(events,core.NONE,"",.Menu)!=nil}
+
 // The events that reached the game in this frame, each once: read them from a
 // frame step, not a fixed one, and the ticks of the frame (none while the clock
 // is stopped, or several) make no difference. Valid until the next frame phase.
@@ -570,6 +583,7 @@ frame_begin :: proc(
     if gui==nil {return}
     if effects!=nil {clear(&effects.items)}
     gui.frame+=1
+    gui.pausing=false
     gui.settings,gui.preferences=settings,preferences
     gui.prompts=base.hash64(mem.slice_to_bytes(gui.settings.prompt_images[:]),base.hash64(mem.ptr_to_bytes(&gui.settings.prompts)))
     for &s in gui.surfaces {s.open,s.skipped=false,false}
@@ -630,18 +644,18 @@ frame_begin :: proc(
 
 // Builds what gui_frame_begin planned in the contexts it opened.
 @(step="ui")
-gui_widgets :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
-    widgets_build(gui,app,problems)
+gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
+    widgets_build(world,gui,app,problems)
 }
 
 @(step="ui",loops="editor",after="gui_preview_begin")
-gui_preview_widgets :: proc(gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
+gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
-    widgets_build(gui,app,problems)
+    widgets_build(world,gui,app,problems)
 }
 
 @(private)
-widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
+widgets_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
     if gui==nil {return}
     for &s,p in gui.surfaces {
         if !s.open {continue}
@@ -666,7 +680,7 @@ widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
                 if !entry.top && instance.top && ctx.focus==instance.focus {ui.focus_set(ctx,0)}
                 if !ui.world_panel_begin(ctx,id,entry.panel) {continue}
                 ui.id_push(ctx,id)
-                screen_build(gui,ctx,&s,instance,&entry,problems)
+                screen_build(world,gui,app,ctx,&s,instance,&entry,problems)
                 ui.id_pop(ctx)
                 ui.world_panel_end(ctx)
                 continue
@@ -691,7 +705,7 @@ widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
             } else {
                 ui.box_begin(ctx,root)
                 // What floats on the screen or its safe area floats on the part of its player.
-                screen_build(gui,ctx,&s,instance,&entry,problems,root.id,{s.rect.x/scale,s.rect.y/scale,s.rect.z/scale,s.rect.w/scale})
+                screen_build(world,gui,app,ctx,&s,instance,&entry,problems,root.id,{s.rect.x/scale,s.rect.y/scale,s.rect.z/scale,s.rect.w/scale})
                 ui.box_end(ctx,root)
                 if retain {ui.retained_end(ctx,retained)}
             }
@@ -748,12 +762,14 @@ frame_end :: proc(
     if gui==nil {return}
     gui.wanted,gui.asked=gui.asked,false
     gui.pointer_consumed,gui.keyboard_consumed=false,false
+    gui.escape_used=false
     cursor:=ui.Cursor.Default
     for i in 1..=CONTEXT_CAPACITY {
         p:=i%CONTEXT_CAPACITY
         s:=&gui.surfaces[p]
         if s.open {
             s.open=false
+            gui.escape_used||=s.ctx.escape_used
             frame:=ui.frame_end(s.ctx)
             s.pointer,s.keyboard,s.cursor=frame.pointer_consumed,frame.keyboard_consumed,s.ctx.cursor
             host.app_ui_font_sync(app,s.ctx)
@@ -778,17 +794,10 @@ frame_end :: proc(
         meshes_sweep(gui,app)
         return
     }
-    modal:=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
+    gui.modal_up=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
     if app.platform!=nil {
-        if modal && platform.window_relative_mouse(app.platform) {
-            platform.window_set_relative_mouse(app.platform,false)
-            gui.released_mouse=true
-        } else if !modal && gui.released_mouse {
-            platform.window_set_relative_mouse(app.platform,true)
-            gui.released_mouse=false
-        }
         // The player's: in the editor, the cursor is that of the editor.
-        if app.world!=nil && (cursor!=gui.cursor || modal) {
+        if app.world!=nil && (cursor!=gui.cursor || gui.modal_up) {
             CURSORS :: [ui.Cursor]platform.Cursor{.Default=.Default,.Text=.Text,.Resize_Horizontal=.Resize_Horizontal}
             cursors:=CURSORS
             platform.window_set_cursor(app.platform,cursors[cursor])

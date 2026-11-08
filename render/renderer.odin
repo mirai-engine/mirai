@@ -42,7 +42,7 @@ Settings :: struct {
 	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
 	render_scale:         f32,    // internal 3D resolution relative to the window
-	render_megapixels:    f32,    // the most pixels the views of the window take in all, in millions: it lowers render_scale where they have more (0: no limit)
+	render_height:        u32,    // the lines the views of the window aim for together; while it is over 0 it stands for render_scale, up to one pixel per point (0: render_scale)
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	occlusion_culling:    bool,   // two-phase depth pyramid occlusion culling
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
@@ -706,7 +706,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.scene.tlas_off = r.hardware_rt
 	r.window_width = max(width, 1)
 	r.window_height = max(height, 1)
-	if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_width) * f32(r.window_height)), true) {return false}
+	if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	r.scene.instances_dirty = true
 	r.scene.lights_dirty = true
 	r.scene.tlas_dirty = true
@@ -1303,7 +1303,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // Changes settings between frames. Returns false (and keeps the old settings)
 // when the request is invalid.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.render_scale < 0.25 || settings.render_scale > 2 || !(settings.render_megapixels >= 0) || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	if settings.render_scale < 0.25 || settings.render_scale > 2 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if !(settings.reflection_detail_roughness >= 0 && settings.reflection_detail_roughness <= 1) {return false}
@@ -1357,9 +1357,9 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	// A mesh registered while rays were traced by software has no native structure yet: the next publication builds it.
 	if r.hardware_rt {r.scene.geometry_dirty = true}
 	if r.hardware_rt {r.scene.tlas_dirty = true; r.scene.instance_capacity = 0}
-	if old.render_scale != settings.render_scale || old.render_megapixels != settings.render_megapixels {
+	if old.render_scale != settings.render_scale || old.render_height != settings.render_height {
 		destroy_targets(r, &r.main.targets)
-		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_width) * f32(r.window_height)), true) {return false}
+		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	}
 	if old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget {
 		ddgi_release(r)
@@ -1543,18 +1543,21 @@ ui_layer_targets :: proc(r: ^Renderer, layers, blur: []rhi.Texture, width, heigh
 	return false
 }
 
-// Of the device pixels of the window, what its views are drawn at: the render
-// scale, relative to window points, lowered so that the views, which show
-// that many pixels in all, take at most render_megapixels; never below the
-// least render scale.
+// Of the device pixels of the window, what its views are drawn at. height: the
+// device pixels the views span from top to bottom.
 @(private)
-window_render_scale :: proc(r: ^Renderer, pixels: f32) -> f32 {
-	density := pixel_density(r)
-	scale := clamp(r.settings.render_scale, 0.25, 2) / density
-	if r.settings.render_megapixels > 0 && pixels > 0 {
-		scale = min(scale, max(math.sqrt(r.settings.render_megapixels * 1e6 / pixels), 0.25 / density))
+window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
+	return views_render_scale(r.settings.render_scale, r.settings.render_height, height, pixel_density(r))
+}
+
+// The render scale relative to window points; a target of lines replaces it,
+// as a fraction of height, never over one pixel per point nor under the
+// least render scale.
+views_render_scale :: proc "contextless" (render_scale: f32, render_height: u32, height, density: f32) -> f32 {
+	if render_height > 0 && height > 0 {
+		return min(max(f32(render_height) / height, 0.25 / density), 1 / density)
 	}
-	return scale
+	return clamp(render_scale, 0.25, 2) / density
 }
 
 @(private)
@@ -1627,7 +1630,7 @@ renderer_resize :: proc(r: ^Renderer, requested_width, requested_height: u32, ui
 	rhi.device_wait_idle(r.device)
 	destroy_view_targets(r)
 	destroy_targets(r, &r.main.targets)
-	create_targets(r, &r.main, width, height, window_render_scale(r, f32(width) * f32(height)), true)
+	create_targets(r, &r.main, width, height, window_render_scale(r, f32(height)), true)
 	rhi.swapchain_resize(r.device, width, height)
 }
 

@@ -128,7 +128,7 @@ interface_demo :: proc(
     styles:=INTERFACE_STYLES
     if inp.pressed(actions,.Hud_Style) {demo.style=(demo.style+1)%%i32(len(styles))}
     menu_was:=!core.has(hidden,menu)
-    if inp.pressed(actions,.Menu) {ask_hidden(shows,menu,menu_was)}
+    if inp.pressed(actions,.Interface_Menu) {ask_hidden(shows,menu,menu_was)}
     if inp.pressed(actions,.Inventory) {ask_hidden(shows,inventory,!core.has(hidden,inventory))}
 
     // The menu: what its controls wrote, and the buttons that close it.

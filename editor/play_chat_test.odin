@@ -64,5 +64,9 @@ the_chat_opens_only_while_the_game_is_paused :: proc(t:^testing.T) {
     ctx.edit.id=0x1234
     play_pause(&s,false)
     testing.expect(t,!s.play_chat_open && !ai.chat_open && !gui.layout.left_open && ctx.edit.id==0)
-    testing.expect(t,s.mode==.Play && !s.play_input_released && platform.window_relative_mouse(p))
+    testing.expect(t,s.mode==.Play && !s.play_input_released && !platform.window_relative_mouse(p))
+    // Playing again the mouse is the game's, which captures it in its frame.
+    testing.expect(t,app.game_mouse_off,"the frame that resumed is still the editor's")
+    key(&s,p,.Tab,false)
+    testing.expect(t,!app.game_mouse_off)
 }

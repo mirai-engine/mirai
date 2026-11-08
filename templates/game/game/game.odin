@@ -54,7 +54,7 @@ Game_Actions :: struct {defaults:[Action]inp.Action_Default}
 game_actions_default :: proc "contextless" () -> Game_Actions {
     return {defaults={
         .Hit=inp.action_default(.Button,inp.binding_mouse_button(.Left),inp.binding_gamepad_axis(.Right_Trigger)),
-        .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Start)),
+        .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Dpad_Up)),
         .Load=inp.action_default(.Button,inp.binding_key(.F9),inp.binding_gamepad_button(.Back)),
     }}
 }

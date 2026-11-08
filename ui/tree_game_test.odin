@@ -619,3 +619,83 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         testing.expect_value(t,reds,1)
     }
 }
+
+// Options written Label=Value bind what they name, a number or a text, and a
+// value no option has shows none of them until a step moves it.
+@(test)
+options_written_label_equals_value_bind_that_value :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Selector,name="scale",style=style,bind_value="Test.volume",text="Half = 0.5|Full=1",layout={width=fixed(160),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Selector,name="mood",style=style,bind_value="Test.mood",text="Calm=calm|Angry=angry",layout={width=fixed(160),height=fixed(24)}})
+    testing.expect(t,test_game_instance(&s))
+    s.values.volume=0.5
+    copy(s.values.mood[:],"angry")
+    ctx:Context
+    test_game_context(t,&ctx,&s,font=true)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,test_paint(&ctx,"Half")!=nil && test_paint(&ctx,"Angry")!=nil)
+    ctx.focus,ctx.focus_ring=tree_element_id(&ctx,"scale"),true
+    test_key(&input,.Right)
+    test_frame(&ctx,&input,test_game_build,&s)
+    event,count:=test_game_events(&s,.Changed,"scale")
+    testing.expect(t,count==1 && event.value==1)
+    testing.expect_value(t,test_game_number(&s,1),1.0)
+    ctx.focus=tree_element_id(&ctx,"mood")
+    test_key(&input,.Right)
+    test_frame(&ctx,&input,test_game_build,&s)
+    event,count=test_game_events(&s,.Changed,"mood")
+    testing.expect(t,count==1 && base.text_get(event.text[:])=="calm")
+    testing.expect(t,bound_bytes(raw_data(s.instance.values),s.instance.bounds[2].value)=="calm")
+    // A value no option has shows none, and stepping left takes the last.
+    s.values.volume=0.75
+    ctx.focus=tree_element_id(&ctx,"scale")
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,test_paint(&ctx,"Full")==nil && test_paint(&ctx,"Half")==nil)
+    test_key(&input,.Left)
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect_value(t,test_game_number(&s,1),1.0)
+    // A value on a text field needs its options to name it.
+    bad:Test_Game
+    test_game_init(t,&bad)
+    defer test_game_destroy(&bad)
+    tree_node(&bad.tree,-1,{kind=.Selector,name="plain",bind_value="Test.mood",text="Calm|Angry"})
+    testing.expect(t,!test_game_instance(&bad) && bad.instance.failure.binding==.Value)
+}
+
+// A control bound to a storage its host commits writes the game itself, for a
+// text as for a number; a host that does not leaves the event to the game.
+@(test)
+a_commit_writes_the_field_of_a_storage_the_host_lets_write :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Slider,name="volume",style=style,bind_value="Test.volume",range={0,1,0.25},layout={width=fixed(112),height=fixed(20)}})
+    tree_node(&s.tree,root,{kind=.Selector,name="mood",style=style,bind_value="Test.mood",text="Calm=calm|Angry=angry",layout={width=fixed(160),height=fixed(24)}})
+    host:=test_host(&s.host,&s.schema,s.type,&s.values)
+    host.source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
+        if name!=base.name_hash("Test") {return}
+        return (^Test_Host)(user).type,true,true
+    }
+    host.commits=proc(user:rawptr,name:u64) -> bool {return name==base.name_hash("Test")}
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host,TEST_LANGUAGE))
+    tree_values_refresh(&s.instance,host,0)
+    node:=[2]i32{1,2}
+    testing.expect(t,tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.5},host))
+    testing.expect_value(t,s.values.volume,f32(0.5))
+    event:=Tree_Event{node=node[1],kind=.Changed}
+    base.text_set(event.text[:],"angry")
+    testing.expect(t,tree_commit_event(&s.instance,event,host))
+    testing.expect(t,string(s.values.mood[:5])=="angry")
+    testing.expect(t,!tree_commit_event(&s.instance,{node=-1,kind=.Changed,value=9},host))
+    host.commits=nil
+    testing.expect(t,!tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.75},host))
+    testing.expect_value(t,s.values.volume,f32(0.5))
+}

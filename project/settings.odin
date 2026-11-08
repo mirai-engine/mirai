@@ -33,7 +33,7 @@ SETTINGS_FILE :: "settings.mirai" // next to PROJECT_FILE, in the machine_folder
 // The format of the files of the machine (Engine and Player layers), their
 // first member: a file of another version is not read and the next save
 // writes it anew. The file of a project has none: it is read by its fields.
-SETTINGS_VERSION :: 2
+SETTINGS_VERSION :: 3
 @(private) SETTINGS_VERSION_KEY :: "version"
 
 // The files of the settings: SETTINGS_FROM_TOP gives their order.

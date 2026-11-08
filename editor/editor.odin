@@ -178,7 +178,7 @@ Session :: struct {
     events_turns:u64,             // the turns of the history whose steps were noted
     editor_world:rawptr,
     mode:Mode,
-    edit_relative_mouse,play_relative_mouse:bool,
+    edit_relative_mouse:bool,
     play_input_released,play_capture_click:bool,
     play_stepped:bool, // paused by play.step or play.record: the viewport keeps the view of the game
     camera_run:Camera_Preview_Run,

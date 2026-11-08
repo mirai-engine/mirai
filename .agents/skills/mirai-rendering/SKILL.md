@@ -79,7 +79,7 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
   [display](references/display.md#units); display transform (ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
-- Scene resolution, pixel budget (`render_megapixels`) →
+- Scene resolution, `render_scale` and a preset's target of lines →
   [resolution](references/settings.md#scene-resolution)
 - `render.Settings` → [settings](references/settings.md#settings); inspection modes of a view
   (`View_Inspection`, `Debug_View`) → [modes](references/settings.md#inspection-modes)

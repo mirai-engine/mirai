@@ -601,7 +601,8 @@ one per local player that has screens or sees a `World_Widget`.
   has shows its image (`host.prompts_find`); one it does not have is drawn.
 - **Events.** `UI_Events` brings those of `ui.Tree_Event_Kind` (`Clicked`, `Changed`, `Submitted`,
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
-  (Escape or East on the top screen with `back`, if the UI did not use them), with the entity of
+  (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,
+  `gui.menu_pressed`), with the entity of
   the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen, panel
   units for a world panel), `item`, `on`, `value`, `text` (of a field),
   `from`, `from_item` and `from_entity`: in a `Dropped`, the entity of the interface it came from

@@ -12,91 +12,103 @@ The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.
 - A new option on the settings page: [Add an option](#add-an-option).
 - Quality, scale, shadows, frame limit, fullscreen: [Apply settings](#apply-settings).
 - Keep the player's choices: [Persist](#persist).
-- Escape, frozen clock, mouse: [Pause](#pause).
+- Escape or Start, frozen clock: [Pause](#pause).
+- A free cursor, mouse capture: [Mouse](#mouse).
 
 ## Restyle
 
 All styles, colors and control sizes are in `write_shell`: the constants at its top
 (`PANEL_FILL`, `ACCENT`, ...), the `styles` list and the `lit` hover, focus and press variants.
 Change values there (`text={size=22,color=...}`, `fill`, `stroke`, `radius`); keep the node
-names, since `shell_event` matches them.
+names, since `shell_events` matches them.
 
 ## Add a page
 
 1. A member of `Shell_Page` before `Playing`, in the order of the pages of `shell.ui`.
 2. A `page(&t,pages,"controls","Controls")` call in `write_shell`, in the same order, with its
    controls; `button(&t,panel,"menu_controls","Controls")` on the page that opens it.
-3. A `case` in `shell_event` that sets `shell.page`, and one for Escape in `shell_frame` if the
-   page should go back.
+3. A line in `shell_events` that sets `shell.page`, and one in the `gui.menu_pressed` switch of
+   `shell_frame` if the page should go back.
 
 ```odin
-case base.name_hash("menu_controls"): shell.page=.Controls
-case base.name_hash("controls_back"): shell.page=.Menu
+if gui.clicked(events,screen,"menu_controls") {shell.page=.Controls}
+if gui.clicked(events,screen,"controls_back") {shell.page=.Menu}
 ```
 
 The first control of a page is `button(...,true)`, which sets `.Focus_First`: keys work at once.
 
 ## Add an option
 
+One line of the content tool, no game code: a selector bound to a field of a setting
+(`Graphics_Settings`, `Display_Settings`, `Audio_Volumes`, `UI_Preferences` or your own
+`@(storage,setting)`) writes it, and the engine keeps it for the next run.
+
 ```odin
-// content tool: label, node name, bound field, options in the order of the code
-selector(&t,settings,"Shadows","settings_shadows","Shell_Options.shadows","Off|Low|High")
-// shell.odin: the field in Shell_Options, then the case of shell_event
-case base.name_hash("settings_shadows"): options.shadows=index
+// label, node name, the field, options
+selector(&t,settings,"Rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|High=16")
+selector(&t,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
+checkbox(&t,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
 ```
 
-A selector's value is the index into its options, so the table the code reads
-(`SHELL_SHADOW_RAYS`) and the text of the options list the same entries. After the `case`,
-`shell_event` marks the preset `Custom`; `shell_apply` then reads the field.
-A checkbox binds a `bool` and arrives as `event.on`.
+`Label=Value` names what the option writes: a number, the name of a member of an enum, or text for
+a text field. Without values the selector binds the index, as an enum declared in that order does.
+A value no option has shows as empty. Bound to anything else, a control reports `Changed` and the
+game writes the field.
 
 ## Apply settings
 
-One procedure turns the options into the settings storages and nothing else writes them. The
-engine brings the window and the renderer to them at once, from a frame step:
+The settings page writes the settings directly. To set them from code, in a frame step, write the
+fields; the engine brings the window and the renderer to them at once:
 
 ```odin
-g:=graphics^                                       // ^render.Graphics_Settings
-render.graphics_preset_apply(&g,.Medium)           // quality fields only
-g.render_scale,g.render_megapixels=0.75,0          // 0: no pixel cap, the scale is what shows
-g.sun_shadows=false                                // no ray goes to the sun
-g.shadowed_lights=4
-g.frame_limit,g.vsync=60,true                      // 0: no limit
-graphics^=g
-display.mode=.Fullscreen                           // ^render.Display_Settings; .Project as authored
+graphics.quality=.Medium        // ^render.Graphics_Settings: naming a preset applies it
+graphics.render_scale=0.75      // the fraction of the window drawn; 0: the target of the preset
+graphics.sun_shadows=false      // no ray goes to the sun
+graphics.frame_limit,graphics.vsync=60,true // 0: no limit
+display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
 ```
 
-`graphics_preset_apply` leaves `render_scale`, `frame_limit`, `vsync` and `antialiasing`
-(`base.text_set(g.antialiasing[:],render.ANTIALIASING_TAA)`) alone. Fields: `engine.describe`.
+`quality` reads as `Custom` when a field of the preset is changed by hand; a preset also sets
+`render_scale` back to 0. `frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a
+preset. A preset's target is a height of lines, the same on any window: `render_scale` above 0
+replaces it and is used as it is. Fields: `engine.describe`.
 
 ## Persist
 
-The player's choices are a `@(storage,persist)` struct of plain data, read back when the world
-first runs and written to the player's profile by itself when it changes, which a dragged slider
-does not do at every step. Only bring the engine to them:
-
-```odin
-if changed {shell_apply(options^,graphics,display)}
-```
-
-On a first run (`options.chosen` false) the shell picks the preset of the machine from
-`graphics.textures`, then sets `chosen`. A game with no options struct of its own writes the
-machine settings directly: they are kept the same way.
+The machine settings a settings page binds are kept by themselves, and a first run starts at the
+preset the engine gives the machine. Choices that are the game's own go in a `@(storage,persist)`
+struct of plain data ([core](../core/saves.md)), read back when the world first runs and written
+to the player's profile by itself when it changes, which a dragged slider does not do at every
+step.
 
 ## Pause
 
-`shell_frame` runs every frame, also with the clock stopped, because Escape and the buttons must
-reach it. It maps `Shell.page` to the clock (`core.pause(clock_requests)` and `core.resume`), to
-the mouse (captured only while `Playing`) and to the `render.Hidden` of the screens.
+A `Modal` screen with `pause=true` stops the clock while it shows and gives it back when it hides.
+A network session does not stop it. `shell_frame` turns `UI_Screen.pause` on for the pause and
+settings pages, and off for the main menu, behind which the world runs. It runs every frame, also
+with the clock stopped, because the `Menu` action and the buttons must reach it: `gui.menu_pressed`
+is Escape or Start when no interface used that Escape, and the game changes the page with it.
 `scene.request_restart(scenes)` loads the scene again, which is how Quit to Menu starts over;
 `scene.request_path(scenes,path)` loads another.
+
+## Mouse
+
+The engine captures the mouse while the seat with it drives a body whose look the mouse turns and
+no `Modal` screen is up; a game does not call the window for it. For a free cursor, in the order
+to try:
+
+- Over gameplay for a moment: a `Modal` screen, the one way to free it while a body is driven.
+- For good, a cursor game: leave the look without a mouse binding in `input.mirai`, or let the seat
+  drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
+- A `Menu` or `Passive` screen leaves the mouse where it is.
 
 ## Pitfalls that fail silently
 
 - Menu logic in a fixed step never runs while the clock is stopped: use `@(step="frame")`.
 - A `Switcher` bound to an enum shows the page named like the member, and nothing when there is
   none, so a new member needs a page of its name in `shell.ui`.
-- Writing `Graphics_Settings` from another step is overwritten by the next `shell_apply`.
-- A preset sets `render_megapixels`; leave it at 0 when the scale is the player's choice.
+- Stepping a Quality selector onto `Custom` does nothing: it reads what the fields are, and only
+  a change of a field or a preset moves it.
+- `UI_Screen.pause` on a screen that is not `Modal` does nothing: problem `gui.pause_modal`.
 - In a network game the clock is not stopped and Quit leaves the game instead of loading a scene.
 - Verify with a scenario, not by hand: [testing](../testing.md#ui-and-menus).

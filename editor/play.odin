@@ -15,8 +15,8 @@ play_shown :: proc "contextless" (s:^Session) -> bool {return s.mode==.Play || s
 
 play_release_input :: proc(s:^Session) {
     if s.mode!=.Play || s.play_input_released {return}
-    s.play_relative_mouse=platform.window_relative_mouse(s.app.platform)
     s.play_input_released=true
+    s.app.game_mouse_off=true
     platform.window_set_relative_mouse(s.app.platform,false)
 }
 
@@ -43,6 +43,7 @@ play_chat_set :: proc(s:^Session,open:bool) {
 play_input_update :: proc(s:^Session) {
     app,g:=s.app,s.gui
     frame:=platform.input_frame(app.platform)
+    app.game_mouse_off=true
     if simulating(s) || s.mode==.Watch {
         app.game_input_blocked=true
         if s.mode==.Watch {_=platform.input_tick_take(app.platform)}
@@ -75,10 +76,10 @@ play_input_update :: proc(s:^Session) {
         if !over_panel && player_process_at(s,point)==0 {
             s.play_input_released=false
             s.play_capture_click=true
-            platform.window_set_relative_mouse(app.platform,s.play_relative_mouse)
         }
     }
     app.game_input_blocked=s.play_input_released || s.play_capture_click
+    app.game_mouse_off=s.play_input_released
     if app.game_input_blocked {_=platform.input_tick_take(app.platform)}
 }
 
@@ -91,14 +92,12 @@ play_pause :: proc(s:^Session,paused:bool,here:=false,stepped:=false) {
     if !playing(s) {return}
     r:=run_find(s,0)
     if paused && (s.mode==.Play || s.mode==.Simulate) {
-        if !s.play_input_released {s.play_relative_mouse=platform.window_relative_mouse(s.app.platform)}
         platform.window_set_relative_mouse(s.app.platform,false)
         s.mode=simulating(s)?.Simulation_Paused:.Paused
         if r!=nil && r.history!=nil {r.history.held=true}
     } else if !paused && play_paused(s) {
         play_chat_set(s,false)
         if r!=nil {history_resume(s,r,here)}
-        platform.window_set_relative_mouse(s.app.platform,!s.play_input_released && s.play_relative_mouse)
         s.mode=simulating(s)?.Simulate:.Play
     }
 }

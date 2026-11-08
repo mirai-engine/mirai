@@ -72,7 +72,7 @@ settings_layers_read_from_the_code_up_and_keep_what_differs :: proc(t:^testing.T
     testing.expect(t,!strings.contains(text,`"count"`) && !strings.contains(text,`"on"`) && !strings.contains(text,`"Rule"`),text)
 
     // A setting of the project in the file of the engine is kept, not read.
-    testing.expect(t,os.write_entire_file(engine_file,`{"version": 2, "Sample": {"scale": 5, "inner": {"level": 3}}, "Rule": {"count": 8}}`)==nil)
+    testing.expect(t,os.write_entire_file(engine_file,`{"version": 3, "Sample": {"scale": 5, "inner": {"level": 3}}, "Rule": {"count": 8}}`)==nil)
     settings_load(settings,root,engine)
     testing.expect_value(t,rule,Rule{})
     misplaced:=settings_misplaced(settings,root,engine)
@@ -121,7 +121,7 @@ settings_layers_read_from_the_code_up_and_keep_what_differs :: proc(t:^testing.T
     text=file_text(project_file)
     testing.expect(t,!strings.contains(text,`"Sample"`) && strings.contains(text,`"Plugin"`),text)
 
-    testing.expect(t,os.write_entire_file(engine_file,`{"version": 2, "Sample": {"scale": }}`)==nil)
+    testing.expect(t,os.write_entire_file(engine_file,`{"version": 3, "Sample": {"scale": }}`)==nil)
     failed:Settings_Layer
     error,failed=settings_save(settings,.Project,root,engine)
     testing.expect_value(t,error.code,Error_Code.Text)
@@ -149,7 +149,7 @@ settings_files_of_the_machine_of_another_version_are_not_read :: proc(t:^testing
     error,_:=settings_save(settings,.Engine,root,engine)
     testing.expect_value(t,error.code,Error_Code.None)
     text:=file_text(engine_file)
-    testing.expect(t,strings.has_prefix(strings.trim_left_space(text[1:]),`"version": 2`) && strings.contains(text,`"Other": {"x": 1}`) && strings.count(text,`"version"`)==1,text)
+    testing.expect(t,strings.has_prefix(strings.trim_left_space(text[1:]),`"version": 3`) && strings.contains(text,`"Other": {"x": 1}`) && strings.count(text,`"version"`)==1,text)
     sample={}
     error,_=settings_load(settings,root,engine)
     testing.expect_value(t,error.code,Error_Code.None)
@@ -198,7 +198,7 @@ settings_merge_gives_what_the_layers_read :: proc(t:^testing.T) {
     testing.expect_value(t,merged,"{}\n")
 
     project_file,engine_file:=settings_file(.Project,root,engine,context.temp_allocator),settings_file(.Engine,root,engine,context.temp_allocator)
-    testing.expect(t,os.write_entire_file(engine_file,`{"version": 2, "Sample": {"count": 2, "scale": 5, "inner": {"level": 3}}, "Engine_Only": {"x": [1, 2]}}`)==nil)
+    testing.expect(t,os.write_entire_file(engine_file,`{"version": 3, "Sample": {"count": 2, "scale": 5, "inner": {"level": 3}}, "Engine_Only": {"x": [1, 2]}}`)==nil)
     testing.expect(t,os.write_entire_file(project_file,`{"Sample": {"count": 7, "inner": {"on": true}}, "Plugin": {"y": "z"}}`)==nil)
     merged,error,_=settings_merge(root,engine,machine,context.temp_allocator)
     testing.expect_value(t,error.code,Error_Code.None)

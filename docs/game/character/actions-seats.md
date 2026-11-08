@@ -1,7 +1,8 @@
 # Actions and seats
 
-The engine gives `move`, `look`, `jump`, `sprint` and `crouch`; the game adds its own. Nobody
-writes an action's number: members of an `@(actions)` enum, bound by default in code.
+The engine gives `move`, `look`, `jump`, `sprint`, `crouch` and `menu` (Escape, Start); the game
+adds its own. Nobody writes an action's number: members of an `@(actions)` enum, bound by default
+in code. A game reads `menu` with `gui.menu_pressed` ([UI](../ui.md#events)).
 
 ## Declare
 

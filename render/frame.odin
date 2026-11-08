@@ -443,7 +443,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
         if ddgi_ensure(r) {ddgi_place(r,focus)}
     } else if !r.settings.gi_enabled && r.ddgi.valid {ddgi_release(r)}
-    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_width)*f32(r.window_height)),true) {return false}
+    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
     alone:=frame.offscreen && len(frame.views)>0

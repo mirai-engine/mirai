@@ -182,16 +182,17 @@ write_shell :: proc(c:^asset.Content) -> base.Asset_Id {
     button(&t,pause,"pause_settings","Settings")
     button(&t,pause,"pause_quit","Quit to Menu")
 
-    // The options of each selector are in the order of the SHELL_ tables of game/shell.odin.
+    // Bound to the settings of the engine: choosing writes them, and "Label=Value" is what each option writes.
     settings:=page(&t,pages,.Settings,"Graphics")
-    selector(&t,settings,"Quality","settings_preset","Shell_Options.preset","Low|Medium|High|Custom",true)
-    selector(&t,settings,"Render scale","settings_scale","Shell_Options.scale","50%|75%|100%")
-    selector(&t,settings,"Shadows","settings_shadows","Shell_Options.shadows","Off|Low|Medium|High")
-    selector(&t,settings,"Anti-aliasing","settings_aa","Shell_Options.antialiasing","Off|TAA")
-    selector(&t,settings,"Reflections","settings_reflections","Shell_Options.reflections","Off|Traced|Detailed")
-    selector(&t,settings,"Frame limit","settings_limit","Shell_Options.limit","30|60|120|None")
-    checkbox(&t,settings,"Fullscreen","settings_fullscreen","Shell_Options.fullscreen")
-    checkbox(&t,settings,"VSync","settings_vsync","Shell_Options.vsync")
+    selector(&t,settings,"Quality","settings_quality","Graphics_Settings.quality","Low|Medium|High|Ultra|Custom",true)
+    selector(&t,settings,"Render scale","settings_scale","Graphics_Settings.render_scale","Auto=0|50%=0.5|75%=0.75|100%=1")
+    selector(&t,settings,"Shadow rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|Medium=8|High=16")
+    checkbox(&t,settings,"Sun shadows","settings_sun","Graphics_Settings.sun_shadows")
+    selector(&t,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
+    selector(&t,settings,"Reflections","settings_reflections","Graphics_Settings.reflections","Off|Traced|Detailed")
+    selector(&t,settings,"Frame limit","settings_limit","Graphics_Settings.frame_limit","30=30|60=60|120=120|None=0")
+    selector(&t,settings,"Window","settings_window","Display_Settings.mode","Project=Project|Windowed=Windowed|Fullscreen=Fullscreen")
+    checkbox(&t,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
     button(&t,settings,"settings_back","Back")
 
     id:=asset.content_id(PROJECT,"ui","shell")
@@ -306,7 +307,8 @@ write_scene :: proc(c:^asset.Content,hud,sign,hum,shell:base.Asset_Id) {
     asset.builder_set(&b,overlay,status)
     asset.builder_set(&b,overlay,game.Shell_Hud{})
 
-    // Over the HUD, and Modal: while it shows the seats get no actions and the pointer is free.
+    // Over the HUD, and Modal: while it shows the seats get no actions and the mouse is free;
+    // shell_frame turns UI_Screen.pause on for the pause and settings pages.
     menus:=asset.builder_entity(&b,"Shell")
     asset.builder_set(&b,menus,gui.UI_Screen{asset=shell,order=10,input=.Modal})
     asset.builder_set(&b,menus,game.Shell_Screen{})
