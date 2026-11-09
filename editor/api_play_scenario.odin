@@ -190,7 +190,7 @@ scenario_files :: proc(root,path:string,allocator:=context.allocator) -> (files:
         if root=="" {return nil,"path: give the scenario file or folder; the editor has no project to look in"}
         given=SCENARIO_FOLDER
     }
-    file,wrong:=api_output_path(root,given,allocator)
+    file,wrong:=api_file_path(root,given,allocator)
     if wrong!="" {return nil,wrong}
     if !os.is_dir(file) {
         if !os.is_file(file) {return nil,fmt.aprintf("%s is not there: write the scenario there, or give the path of one",file,allocator=allocator)}

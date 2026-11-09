@@ -154,6 +154,37 @@ bindings_choose_the_image_the_tint_and_the_variant :: proc(t:^testing.T) {
 }
 
 @(test)
+a_text_draws_what_its_style_fills_behind_it_with_its_padding :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    pill,_:=tree_style(&s.tree,{fill={10,20,30,200},radius={6,6,6,6},text={size=12,color={255,255,255,255}}})
+    plain,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="root",layout={direction=.Column,width=fixed(300),height=fixed(200)}})
+    tree_node(&s.tree,root,{kind=.Text,name="pill",style=pill,text="Coconut 1 of 10",layout={padding=padding_xy(10,4)}})
+    tree_node(&s.tree,root,{kind=.Text,name="bare",style=plain,text="Plain text"})
+    testing.expect(t,test_game_instance(&s))
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    test_frame(&ctx,&input,test_game_build,&s)
+    fills:=0
+    for &p in ctx.paints[:ctx.paint_count] {
+        if (p.kind==.Rect || p.kind==.Panel) && (p.fill==Color{10,20,30,200}) {
+            fills+=1
+            testing.expect_value(t,p.corners,[4]f32{6,6,6,6})
+        }
+    }
+    testing.expect(t,fills>0,"the fill of the style is behind the text")
+    words:=test_paint(&ctx,"Coconut 1 of 10")
+    if !testing.expect(t,words!=nil && test_paint(&ctx,"Plain text")!=nil) {return}
+    area:=test_rect(t,&ctx,tree_element_id(&ctx,"pill"))
+    testing.expect(t,area.w>=text_width(&ctx.font,"Coconut 1 of 10",12,int(FONT_TREE)) && area.h>=24,"the box holds the text and its padding")
+}
+
+@(test)
 links_wraps_and_orders_decide_where_the_focus_goes :: proc(t:^testing.T) {
     s:Test_Game
     test_game_init(t,&s)

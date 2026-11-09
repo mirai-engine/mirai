@@ -612,16 +612,11 @@ choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
 // A Foliage with a new .foliage of no types, at the target of the view. The
 // new file is part of the step: undo takes it away, and it stays in the
 // memory of the registry until it is saved.
-foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false) -> core.Entity {
+foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false,name:="") -> core.Entity {
     a:=app.assets
     table:=core.world_table_of(world,foliage.Foliage)
     if a==nil || table==nil {editor.notify(s,"The project has no foliage library");return core.NONE}
-    label,path:="",""
-    for number:=1;;number+=1 {
-        label=number==1?"Foliage":fmt.tprintf("Foliage %d",number)
-        path=fmt.tprintf("%s/foliage/%s%s",a.registry.root,label,foliage.EXTENSION)
-        if !editor.file_exists(s,path) {break}
-    }
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/foliage",a.registry.root),name!=""?name:"Foliage",foliage.EXTENSION,name!="")
     seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Foliage"))}
     source:foliage.Source

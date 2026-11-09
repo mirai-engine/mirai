@@ -2,16 +2,17 @@
 
 A content tool is a program of the project (`tools/content`, an `odin run` target) that writes
 the assets of a game from code, so the same bytes come out every run and the game can be rebuilt
-from source. Use it for what no art source holds: procedural textures, generated sounds, sound
-sets, interfaces, prefabs and scenes. Art files go through `mirai import` instead
-([assets](../assets.md#import)). The command that runs a tool is at the top of the project's
-`tools/content/main.odin`; run it from the project folder.
+from source. Use it for what no art source holds: procedural textures, generated sounds, sets of
+sounds, interfaces, meshes made from code, prefabs and scenes. Art files go through
+`mirai import` instead ([assets](../assets.md#import)). The command that runs a tool is at the top
+of the project's `tools/content/main.odin`; run it from the project folder.
 
 ## Map
 
 - Skeleton and ids: [Skeleton](#skeleton). Texture: [Texture](#texture).
 - Sound from a generated WAV: [Sound](#sound). Several sounds as one: [Sound set](#sound-set).
-- Prefab and scene: [Prefab and scene](#prefab-and-scene).
+- Prefab and scene: [Prefab and scene](#prefab-and-scene). A whole scene, with terrain, foliage
+  and sea: [whole-scene.md](whole-scene.md). Meshes from code: [props.md](props.md).
 - Importing art from the tool: [Import](#import).
 
 ## Skeleton
@@ -110,4 +111,5 @@ report,error:=sources.import_source("source/models/crate.glb","assets/models/cra
 ## Pitfalls that fail silently
 
 - Write assets first, then prefabs, then scenes: a scene names the ids the earlier ones return.
+- Materials a terrain layer names can be written with `asset.material_save` in the tool too.
 - Rerunning the tool rewrites the same files: an open editor picks them up at its next call.

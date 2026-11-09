@@ -11,6 +11,7 @@ A scene is entities with components, written by a content tool
 
 ## Map
 
+- A whole scene in one run of a content tool: [whole-scene.md](assets/whole-scene.md).
 - Ground, hills, paths, trees and grass: [terrain-foliage.md](world/terrain-foliage.md).
   **Use the terrain and foliage plugins for natural ground and vegetation; never build them
   from cubes, planes or hand-made meshes.**

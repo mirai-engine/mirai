@@ -2,6 +2,7 @@ package terrain_editor
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
@@ -271,6 +272,42 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
 
 // A Volume made on a Heightfield joins it and its field is the ground,
 // solid down to the bottom of its box: what is dug there has a floor.
+@(test)
+a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^testing.T) {
+    directory,_:=os.temp_directory(context.temp_allocator)
+    root:=fmt.tprintf("%s/mirai-terrain-named-%d",directory,os.get_pid())
+    testing.expect_value(t,os.make_directory_all(root),nil)
+    defer os.remove_all(root)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
+    defer host.assets_destroy(&assets)
+    world:Create_Test_World
+    create_test_world_init(&world);defer create_test_world_destroy(&world)
+    tables:=create_test_tables()
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    ref:=core.world_ref(&world,&info)
+    app:=host.App{allocator=context.allocator,assets=&assets}
+    selection:editor.Selection;defer delete(selection.entities)
+    edits:editor.Edits;defer editor.edits_free(&edits)
+    editor.edits_reset(&edits,ref)
+    viewport:editor.Viewport
+    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=631}
+    tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
+    tool.create_kind,tool.create_source=.Heightfield,.Heightmap
+    missing:=fmt.tprintf("%s/source/none.png",root)
+    tool.heightmap_length=copy(tool.heightmap_path[:],missing)
+    s.toast_length=0
+    testing.expect_value(t,terrain_create(&s,&tool,ref,&app,name="Island"),core.NONE)
+    said:=string(s.toast[:s.toast_length])
+    testing.expectf(t,strings.contains(said,missing),"the error names the file it tried: %s",said)
+    tool.create_source,tool.samples,tool.chunk_cells=.Plane,5,4
+    e:=terrain_create(&s,&tool,ref,&app,at={0,0,0},placed=true,name="Island")
+    if !testing.expect(t,e!=core.NONE && editor.edits_commit(&edits,ref,&selection)) {return}
+    name:=core.get(&world.names,e)
+    testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
+    testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
+}
+
 @(test)
 a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T) {
     directory,_:=os.temp_directory(context.temp_allocator)

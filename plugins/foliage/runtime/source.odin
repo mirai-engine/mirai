@@ -215,6 +215,20 @@ source_cell :: proc(s:^Source,coord:[2]i32,make_it:=false) -> ^Cell {
     return &s.cells[low]
 }
 
+// Turns the generator on or off in the cells whose square meets a disc around
+// center, in x and z. True when one changed.
+source_generate_area :: proc(s:^Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
+    low,_:=cell_of(center-{radius,0,radius})
+    high,_:=cell_of(center+{radius,0,radius})
+    for z in low.y..=high.y {for x in low.x..=high.x {
+        corner:=cell_corner({x,z})
+        nearest:=[2]f32{clamp(center.x,corner.x,corner.x+CELL_SIZE),clamp(center.z,corner.z,corner.z+CELL_SIZE)}
+        d:=nearest-center.xz
+        if d.x*d.x+d.y*d.y<=radius*radius {changed|=source_cell_generate(s,{x,z},on)}
+    }}
+    return
+}
+
 // Turns the generator of a cell on or off: on makes the cell, and off takes
 // out one that holds nothing else. False when it already was so.
 source_cell_generate :: proc(s:^Source,coord:[2]i32,on:bool) -> bool {

@@ -114,23 +114,9 @@ disc_point :: proc "contextless" (center,normal:[3]f32,radius:f32,random:^mm.Rng
 }
 
 
-// The cells whose square meets the disc of a brush, in x and z.
-cells_under :: proc(center:[3]f32,radius:f32,out:^[dynamic][2]i32) {
-    low,high:=cells_around(center,radius)
-    for z in low.y..=high.y {for x in low.x..=high.x {
-        corner:=foliage.cell_corner({x,z})
-        nearest:=[2]f32{clamp(center.x,corner.x,corner.x+foliage.CELL_SIZE),clamp(center.z,corner.z,corner.z+foliage.CELL_SIZE)}
-        d:=nearest-center.xz
-        if d.x*d.x+d.y*d.y<=radius*radius {append(out,[2]i32{x,z})}
-    }}
-}
-
 // Turns the generator on or off in the cells under a brush. True when one changed.
 generate_touch :: proc(s:^foliage.Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
-    cells:=make([dynamic][2]i32,context.temp_allocator)
-    cells_under(center,radius,&cells)
-    for coord in cells {changed|=foliage.source_cell_generate(s,coord,on)}
-    return
+    return foliage.source_generate_area(s,center,radius,on)
 }
 
 // An instance a selection names: its cell and its id (foliage.Placed.id).

@@ -1080,7 +1080,7 @@ api_capture_file :: proc(s:^Session,call:^api.Call,path,name:string,allocator:=c
 // as Windows or Git Bash (/c/...) writes it, or relative to root, the folder
 // of the project, or to the working folder without one. problem says what
 // is wrong with path.
-api_output_path :: proc(root,path:string,allocator:=context.allocator) -> (file,problem:string) {
+api_file_path :: proc(root,path:string,allocator:=context.allocator) -> (file,problem:string) {
     inside:=root!=""?fmt.tprintf("the folder of the project, %s",root):"the working folder"
     if path=="" {return "",fmt.tprintf("path is required: a file absolute or relative to %s",inside)}
     native,ok:=project.path_native(path)
@@ -1089,12 +1089,12 @@ api_output_path :: proc(root,path:string,allocator:=context.allocator) -> (file,
     return project.path_absolute(native,allocator),""
 }
 
-// The file a method is about to write, from path (api_output_path), in
+// The file a method is about to write, from path (api_file_path), in
 // allocator: its folder is made, and the call fails saying why when the file
 // cannot be written, before the work that would be lost.
 api_output_file :: proc(s:^Session,call:^api.Call,path:string,allocator:=context.allocator) -> (file:string,ok:bool) {
     problem:string
-    file,problem=api_output_path(s.project_root,path,context.temp_allocator)
+    file,problem=api_file_path(s.project_root,path,context.temp_allocator)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return "",false}
     if problem,code:=api_output_prepare(file);problem!="" {api.call_fail(call,code,problem);return "",false}
     return strings.clone(file,allocator),true

@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
@@ -294,6 +295,24 @@ file_set :: proc(s:^Session,path:string,bytes:[]u8,remove:=false) -> bool {
 
 // Whether a file of the project is there now: in the memory of the registry
 // for one it keeps, else on disk.
+// The name and the file of a new asset of a tool, beside the scene (scene_folder,
+// folder without one): prefix, with a number when a file has it. What a caller
+// named keeps its name, and only its file takes the number.
+asset_new_file :: proc(s:^Session,folder,prefix,extension:string,named:bool) -> (label,path:string) {
+    folder:=scene_folder(s,folder)
+    for number:=1;;number+=1 {
+        stem:=number==1?prefix:fmt.tprintf("%s %d",prefix,number)
+        path=fmt.tprintf("%s/%s%s",folder,stem,extension)
+        if !file_exists(s,path) {return named?prefix:stem,path}
+    }
+}
+
+// Whether a name can be the stem of a file on every system: what makes one of
+// a tool (terrain.create, foliage.create) takes it as it is written.
+asset_stem_valid :: proc(name:string) -> bool {
+    return name!="" && len(name)<128 && name[0]!='.' && !strings.contains_any(name,"/\\:*?\"<>|")
+}
+
 file_exists :: proc(s:^Session,path:string) -> bool {
     _,present,_:=file_contents(files_registry(s),path,context.temp_allocator)
     return present

@@ -137,7 +137,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
     folder:string
     if path:=strings.trim_space(base.text_get(p.path[:]));path!="" {
         problem:string
-        folder,problem=api_output_path(s.project_root,path,context.temp_allocator)
+        folder,problem=api_file_path(s.project_root,path,context.temp_allocator)
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     } else {
         if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return}

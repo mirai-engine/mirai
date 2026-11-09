@@ -45,7 +45,6 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
     core.add(&worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
     core.table_settle(&worlds,&world.entities)
-    editor.selection_set(&selection,{owner})
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,worlds:^core.Table(core.World_Transform),owner:core.Entity) -> bool {
         terrain_sync(s,tool,core.read(&world.terrains),s.app)
         return testing.expect(t,stroke_prepare(tool,s.app,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner}))

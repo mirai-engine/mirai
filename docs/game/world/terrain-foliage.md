@@ -5,23 +5,27 @@ the plugins stream, draw with levels of detail and collide. Add `"terrain"` and 
 `plugins` in `project.mirai`. Never make ground or vegetation from cubes, planes or imported
 meshes placed one by one: they do not stream, paint, scatter or collide as these do.
 
-`ID` is the `id` the `create` call returned.
+Terrain, foliage and sea can be written all at once by a
+[content tool](../assets/whole-scene.md). Through the API, name what you make:
+later calls find it by that name, so one `--batch` file of JSON lines builds a whole scene, with no
+ids to pass between calls.
 
 ## Ground
 
 ```sh
 P="mirai rpc --project ."
-$P terrain.create '{"kind":"heightfield","samples":257,"spacing":2,"height_scale":60}'
-# -> {"id":ID,...}; from a heightmap: '{"kind":"heightfield","heightmap":"source/hills.png"}'
-$P terrain.edit '{"entity":ID,"brush":"noise","at":[256,0,256],"radius":200,"scale":40}'
-$P terrain.edit '{"entity":ID,"brush":"flatten","at":[0,0,0],"radius":12}'
-$P terrain.layer '{"entity":ID,"material":"materials/grass.mat","tiling":4}'
-$P terrain.layer '{"entity":ID,"material":"materials/rock.mat","automatic":true,"slope":[35,90]}'
+$P terrain.create '{"name":"Hills","samples":257,"spacing":2,"height_scale":60}'
+# from a heightmap of the project: '{"name":"Hills","heightmap":"source/hills.png"}'
+$P terrain.edit '{"entity":"Hills","brush":"noise","at":[256,0,256],"radius":200,"scale":40}'
+$P terrain.edit '{"entity":"Hills","brush":"flatten","at":[0,0,0],"radius":12}'
+$P terrain.layer '{"entity":"Hills","material":"hills/grass.mat","tiling":4}'
+$P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true,"slope":[35,90]}'
 $P asset.save '{"all":true}'; $P scene.save '{}'
 ```
 
 - Kinds: `heightfield` (heights over x and z: hills, valleys, plains), `mesh` (a 3D terrain: caves
   and overhangs) and `volume` (solid and air: digging). Size is `samples` minus 1 times `spacing`.
+  `name` names the entity and its file, which goes beside the scene.
 - Brushes of `terrain.edit`: `raise`, `lower`, `smooth`, `flatten`, `set_height`, `ramp` (from `at`
   to `to`), `terrace`, `noise`, `erode`, `paint` and `erase` (a layer), `hole`, `fill`. A stroke
   goes from `at` to `to`; `radius`, `strength`, `falloff`, `passes` shape it.
@@ -37,10 +41,10 @@ $P asset.save '{"all":true}'; $P scene.save '{}'
 ## Vegetation
 
 ```sh
-$P foliage.create '{}'                                      # -> {"id":ID}
-$P foliage.type_add '{"entity":ID,"mesh":"meshes/pine.mesh","name":"pine","density":0.05,
+$P foliage.create '{"name":"Woods"}'
+$P foliage.type_add '{"entity":"Woods","mesh":"meshes/pine.mesh","name":"pine","density":0.05,
   "scale":[0.8,1.4],"yaw":360,"align":0.3,"rule":true,"slope":[0,30],"wind":0.5}'
-$P foliage.paint '{"entity":ID,"mode":"generate","at":[256,0,256],"radius":200}'
+$P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":200}'
 ```
 
 - `foliage.type_add` makes a type from a `.mesh` with the settings given (its name, by default that

@@ -105,6 +105,17 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
         testing.expect(t,read(file)==written)
     }
 
+    // What a change that started a build says of it: still running, or the first error once it failed.
+    building.phase=.Running
+    still,failed:=api_project_build_state(&session)
+    testing.expect(t,still && failed=="")
+    building.phase=.Failed
+    defer delete(building.diagnostics)
+    append(&building.diagnostics,Build_Diagnostic{.Error,"game/game.odin",3,9,"could not find the plugin spawn"})
+    still,failed=api_project_build_state(&session)
+    testing.expect(t,!still && strings.contains(failed,"could not find the plugin spawn") && strings.contains(failed,"game/game.odin"),failed)
+    building.phase=.Idle
+
     error=api_test_execute(state,&out,"project.set",`{"plugins":{"beta":false}}`)
     testing.expect_value(t,error.code,0)
     written=read(file)
