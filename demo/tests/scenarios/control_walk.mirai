@@ -2,7 +2,7 @@
   "scene": "scenes/control.scene",
   "steps": [
     {"name": "the intro ends", "method": "play.step", "params": {"for": 600, "until": [
-      {"entity": "Control intro", "component": "Cinematic", "field": "status",
+      {"entity": "Control intro", "field": "Cinematic.status",
        "compare": "Equal", "text": "Completed"}]}},
     {"name": "the person stands at its spawn", "method": "play.check", "params": {"conditions": [
       {"entity": "Person", "field": "world_position.2", "compare": "Above", "number": 1.9}]}},

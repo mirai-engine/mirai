@@ -206,7 +206,7 @@ positions misses both.
   params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one
   a_limit_past_its_maximum_takes_it_and_the_answer_says_so
   an_invalid_params_error_says_what_the_method_takes_and_only_it_does
-  a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes
+  a_param_that_names_an_entity_says_so_in_its_schema
   an_example_is_written_with_key_value_unless_it_needs_json`; names of a registry:
   `mirai test std/base`, `mirai test std/serial
   a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does` and

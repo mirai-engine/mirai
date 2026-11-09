@@ -1415,6 +1415,7 @@ an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc
         {"crate","",""},
         {id,".prefab",""},
         {"crat",".prefab","crate.prefab"},
+        {"prefabs/crat",".prefab","crate.prefab"},
         {"crate",".mesh","no .mesh"},
     }
     for c in cases {

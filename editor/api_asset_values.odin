@@ -133,7 +133,8 @@ asset_nearest :: proc(r:^asset.Registry,name,kinds:string) -> string {
         append(&stems,asset_path_stem(file.path))
     }
     nearest:[base.NAME_NEAREST]int
-    count:=base.names_nearest(asset_path_stem(name),stems[:],nearest[:])
+    last:=asset_path_stem(name)
+    count:=base.names_nearest(last[strings.last_index_byte(last,'/')+1:],stems[:],nearest[:])
     b:=strings.builder_make(context.temp_allocator)
     for at,i in nearest[:count] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",paths[at])}
     return strings.to_string(b)
@@ -164,7 +165,7 @@ asset_resolve :: proc(s:^Session,name,kinds:string) -> (id:base.Asset_Id,problem
     if nearest:=asset_nearest(r,name,kinds);nearest!="" {
         return {},fmt.tprintf("%q is no %sasset; the nearest paths are %s",name,kind,nearest)
     }
-    return {},fmt.tprintf("%q is no %sasset, and the project has none of that kind; asset.import brings one",name,kind)
+    return {},fmt.tprintf("%q is no %sasset and none is near that name: asset.list lists them and asset.import brings one",name,kind)
 }
 
 // asset_resolve for a reader of params.
