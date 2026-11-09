@@ -12,6 +12,7 @@ A player is a seat (`inp.Seat`) that drives a body (`inp.Drivable`); a body that
 
 ## Map
 
+- A whole third-person game, prefab, camera and rules: [third-person](third-person.md).
 - The prefab of a walking body: [Body](#body). Speed, jump, sprint, crouch: [Walk](#walk).
 - Your own actions, reading them, who drives what: [actions-seats.md](character/actions-seats.md).
 - First or third person, changing view, the sign of `pitch`: [camera.md](character/camera.md).

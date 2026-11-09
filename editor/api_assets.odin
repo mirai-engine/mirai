@@ -1,6 +1,7 @@
 package editor
 
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -12,18 +13,21 @@ import "mirai:std/serial"
 // What the API tells of the building blocks of the project: the components
 // of its world with their fields, and the assets of its registry.
 
+API_COMPONENT_NAMES :: 16 // components component.list gives whole in one call
+
 Api_Component_Params :: struct {
-    name:[64]u8 `mirai:"text,optional,label=Only this component"`,
+    names:[API_COMPONENT_NAMES][64]u8 `mirai:"text,optional,label=The components to give with defaults and fields (name for one); without any: all their names with what each is"`,
     include_runtime:bool `mirai:"optional,label=Include the components the engine derives and the hidden and transient fields with their defaults"`,
 }
 
 Api_Component_List :: struct {
     components:[1]Api_Component_Entry `mirai:"list"`,
+    left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
 }
 Api_Component_Entry :: struct {
     name:[64]u8 `mirai:"text"`,
     library:[64]u8 `mirai:"text,label=The package that declares it"`,
-    description:[1024]u8 `mirai:"text"`,
+    description:[1024]u8 `mirai:"text,optional"`,
     plain_data:bool `mirai:"optional,label=Present and false when the component is not plain data: it has no default nor fields"`,
     default:u8 `mirai:"any,optional,label=The value of a new component"`,
     fields:[1]Api_Component_Field `mirai:"list,optional,label=Every field down to those of nested structs"`,
@@ -160,33 +164,41 @@ api_schema_derived :: proc(schema:^serial.Schema,type:serial.Type_Index) -> bool
 @(private)
 api_component_list :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Component_Params)
-    name:=base.text_get(params.name[:])
     st:=api_state(s)
     w:=call.out
-    named:^core.Table_Info
-    if name!="" {
-        problem:string
-        named,problem=api_component_named(shown_world(s),name)
-        if named==nil {
+    named:[API_COMPONENT_NAMES]^core.Table_Info
+    count:=0
+    for &entry in params.names {
+        name:=base.text_get(entry[:])
+        if name=="" {continue}
+        table,problem:=api_component_named(shown_world(s),name)
+        if table==nil {
             api.call_failf(call,api.INVALID_PARAMS,"%s; component.list without a name lists them",problem)
             return
         }
-        if type:=st.types[api_table_index(s,named)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
-            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",named.name)
+        if type:=st.types[api_table_index(s,table)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
+            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",table.name)
             return
         }
+        named[count]=table
+        count+=1
     }
     serial.text_write_raw(w,`{"components":[`)
     first:=true
     for &t,i in s.info.tables {
-        if t.place!=.World || name!="" && &t!=named {continue}
+        if t.place!=.World || count>0 && !slice.contains(named[:count],&t) {continue}
         type:=st.types[i]
         // A derived component is not added nor written: play.inspect reads it.
         if !params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {continue}
         if !first {serial.write_u8(w,',')}
         first=false
-        size:=t.info.size
         serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,t.name)
+        if count==0 {
+            if brief:=api.summary_brief(t.description);brief!="" {api.write_key(w,"description");serial.text_write_string(w,brief)}
+            serial.write_u8(w,'}')
+            continue
+        }
+        size:=t.info.size
         api.write_key(w,"library");serial.text_write_string(w,t.library)
         api.write_key(w,"description");serial.text_write_string(w,t.description)
         if type==serial.TYPE_NONE {
@@ -205,7 +217,12 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(w,']')
         serial.write_u8(w,'}')
     }
-    serial.text_write_raw(w,"]}")
+    serial.write_u8(w,']')
+    if count==0 {
+        api.write_key(w,"left_out")
+        serial.text_write_string(w,"the library, default and fields of each: ask for them with name or names (up to 16)")
+    }
+    serial.write_u8(w,'}')
 }
 
 // ---------------------------------------------------------------- asset.list

@@ -408,7 +408,7 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
         for name in AI_PROMPT_SCHEMAS {
             method:=api.method_find(&st.server,name)
             if method==nil {continue}
-            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it lists the methods and the plugins, and `methods`, `plugin` or `prefix` give the schemas of a few):\n");listed=true}
+            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it is a short index of the methods and the plugins, and `methods` gives the schemas of a few):\n");listed=true}
             w:serial.Writer
             serial.writer_init(&w,0,context.temp_allocator)
             api.method_schema_write(&w,&st.server,method,false)
@@ -416,7 +416,7 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
         }
     }
     if len(entities)>0 {
-        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the whole scene and the values of the components.\n")
+        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the scene (a few entities at a time: `name`, `component`, `offset` and `limit` give the rest) and the values of the components.\n")
         for &entity in entities {
             selected:=false
             if s.selection!=nil {for e in s.selection.entities {if ai_entity_id_text(shown_world(s),e)==entity.id {selected=true;break}}}

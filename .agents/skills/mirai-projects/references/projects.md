@@ -463,9 +463,10 @@ tools come from `.deps`, also from a worktree.
   is none, that of the main checkout) and in the `PATH`. It compiles aside and puts the executable
   in place by renaming the one in use (an open `mirai mcp` does not block it); if it does not
   compile, it continues with the previous one.
-- `mirai.cmd`, for PowerShell and cmd, runs the launcher with the `bash.exe` of Git for Windows, not
-  with the `bash` of the `PATH`, which on Windows is usually WSL's; without Git Bash it fails and
-  says what to install.
+- `mirai.cmd`, for PowerShell, cmd and Python `subprocess` (by its absolute path: `cmd` takes a
+  relative `./mirai.cmd` for a switch), runs the launcher with the `bash.exe` of Git for Windows,
+  not with the `bash` of the `PATH`, which on Windows is usually WSL's; without Git Bash it fails
+  and says what to install. The extensionless `mirai` is a shell script Windows cannot run.
 - **Tool refresh.** On start, the tool compares those sources (without the `*_test.odin`) with its
   executable and, if any changed, it recompiles itself and runs the command with the new one. It
   compiles with `-ignore-unknown-attributes` and without `-custom-attribute`: the new sources may

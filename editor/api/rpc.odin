@@ -398,7 +398,7 @@ string_value :: proc(allocator:runtime.Allocator,text:string) -> (value:string,o
 describe_register :: proc(s:^Server) -> bool {
     return method_register(s,{
         name="engine.describe",
-        summary="Lists every method with its plugin and the plugins of the project; methods, plugin or prefix give the JSON Schema of their params and result.",
+        summary="A short index of the methods and the plugins of the project; methods gives the JSON Schema of the params and the result of those it names, plugin or prefix the summaries of an area.",
         params=Describe_Params,result=Describe_Result,writes_result=true,handler=describe_handler,flags={.Read_Only,.Idempotent,.Core},
     })==.None
 }
@@ -417,9 +417,21 @@ Describe_Params :: struct {
 
 Describe_Result :: struct {
     server:struct {name,version:[MAX_NAME]u8 `mirai:"text"`},
-    methods:[1]Describe_Method `mirai:"list"`,
-    plugins:[1]Describe_Plugin `mirai:"list,optional,label=Without params: every plugin the project finds"`,
+    methods:[1]Describe_Method `mirai:"list,optional,label=With methods; prefix or plugin"`,
     guides:[1][8192]u8 `mirai:"text,list,optional,label=How to use the methods given: read before using them"`,
+    core:[1]Describe_Brief `mirai:"list,optional,label=Without params: the methods used most and what each is for"`,
+    others:[1]Describe_Group `mirai:"list,optional,label=Without params: the names of the other methods by plugin"`,
+    active_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins the project uses"`,
+    other_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins it finds and does not use"`,
+    more:[256]u8 `mirai:"text,optional,label=Without params: how to ask for the rest"`,
+}
+Describe_Brief :: struct {
+    name:[MAX_NAME]u8 `mirai:"text"`,
+    summary:[128]u8 `mirai:"text"`,
+}
+Describe_Group :: struct {
+    plugin:[MAX_NAME]u8 `mirai:"text"`,
+    methods:[16384]u8 `mirai:"text,label=Their names separated by spaces"`,
 }
 Describe_Method :: struct {
     name:[MAX_NAME]u8 `mirai:"text"`,
@@ -430,11 +442,6 @@ Describe_Method :: struct {
     params:u8 `mirai:"any,optional,label=The JSON Schema of its params"`,
     result:u8 `mirai:"any,optional,label=The JSON Schema of its result"`,
 }
-Describe_Plugin :: struct {
-    name:[MAX_NAME]u8 `mirai:"text"`,
-    active:bool `mirai:"label=The project uses it"`,
-}
-
 @(private)
 tool_name :: proc(name:string,buffer:[]u8) -> string {
     n:=min(len(name),len(buffer))
@@ -491,7 +498,8 @@ describe_handler :: proc(call:^Call) {
     }
     if matched==0 && plugin!="" {call_failf(call,INVALID_PARAMS,"no method of plugin %q starts with %q",plugin,prefix);return}
     if matched==0 {call_failf(call,INVALID_PARAMS,"no method starts with %q; engine.describe without params lists them all",prefix);return}
-    whole:=count>0 || prefix!="" || plugin!=""
+    if count==0 && prefix=="" && plugin=="" {describe_index_write(call);return}
+    schemas:=count>0 || matched==1
     raw(w,`{"server":{"name":`);serial.text_write_string(w,s.name)
     raw(w,`,"version":`);serial.text_write_string(w,s.version)
     raw(w,`},"methods":[`)
@@ -503,42 +511,101 @@ describe_handler :: proc(call:^Call) {
         first=false
         raw(w,`{"name":`);serial.text_write_string(w,method.name)
         raw(w,`,"plugin":`);serial.text_write_string(w,method_plugin(&method))
-        if whole {raw(w,`,"tool":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))}
+        if schemas {raw(w,`,"tool":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))}
         raw(w,`,"summary":`);serial.text_write_string(w,method.summary)
-        if whole {
-            raw(w,`,"flags":`);write_flags(w,method.flags)
+        raw(w,`,"flags":`);write_flags(w,method.flags)
+        if schemas {
             raw(w,`,"params":`);method_schema_write(w,s,&method,false)
             raw(w,`,"result":`);method_schema_write(w,s,&method,true)
         }
         raw(w,"}")
     }
     raw(w,"]")
-    if whole {
-        listed:=false
-        for &guide in s.guides {
-            about:=guide.topic==plugin
-            for &method in s.methods[:s.method_count] {
-                if about {break}
-                if !describe_listed(&method,names,prefix,plugin) {continue}
-                about=method.plugin==guide.topic || method.name==guide.topic || strings.has_prefix(method.name,guide.topic) && len(method.name)>len(guide.topic) && method.name[len(guide.topic)]=='.'
-            }
-            if !about {continue}
-            raw(w,listed?",":`,"guides":[`)
-            listed=true
-            serial.text_write_string(w,guide.text)
+    listed:=false
+    for &guide in s.guides {
+        about:=guide.topic==plugin
+        for &method in s.methods[:s.method_count] {
+            if about {break}
+            if !describe_listed(&method,names,prefix,plugin) {continue}
+            about=method.plugin==guide.topic || method.name==guide.topic || strings.has_prefix(method.name,guide.topic) && len(method.name)>len(guide.topic) && method.name[len(guide.topic)]=='.'
         }
-        if listed {raw(w,"]")}
+        if !about {continue}
+        raw(w,listed?",":`,"guides":[`)
+        listed=true
+        serial.text_write_string(w,guide.text)
     }
-    if !whole {
-        raw(w,`,"plugins":[`)
-        for found,i in s.plugins {
-            if i>0 {raw(w,",")}
-            raw(w,`{"name":`);serial.text_write_string(w,found.name)
-            raw(w,`,"active":`);raw(w,found.active?"true":"false");raw(w,"}")
+    if listed {raw(w,"]")}
+    raw(w,"}")
+}
+
+// How many bytes of a summary an index shows at most.
+DESCRIBE_BRIEF :: 72
+
+// A text up to its first sentence or clause, cut at a word when it is longer
+// than at most: what an index shows of a summary or a description.
+summary_brief :: proc(text:string,at_most:=DESCRIBE_BRIEF) -> string {
+    end:=len(text)
+    for i in 0..<len(text) {
+        if text[i]==';' || text[i]=='.' && (i+1==len(text) || text[i+1]==' ') {end=i;break}
+    }
+    if end<=at_most {return text[:end]}
+    space:=strings.last_index_byte(text[:at_most],' ')
+    return space>0?text[:space]:text[:at_most]
+}
+
+// engine.describe without params: the core methods with what each is for,
+// the names of the others by plugin, the plugins and how to ask for the rest.
+@(private)
+describe_index_write :: proc(call:^Call) {
+    s:=call.server
+    w:=call.out
+    raw(w,`{"server":{"name":`);serial.text_write_string(w,s.name)
+    raw(w,`,"version":`);serial.text_write_string(w,s.version)
+    raw(w,`},"core":[`)
+    first:=true
+    for &method in s.methods[:s.method_count] {
+        if .Core not_in method.flags {continue}
+        if !first {raw(w,",")}
+        first=false
+        raw(w,`{"name":`);serial.text_write_string(w,method.name)
+        raw(w,`,"summary":`);serial.text_write_string(w,summary_brief(method.summary))
+        raw(w,"}")
+    }
+    raw(w,`],"others":[`)
+    first=true
+    for &method,i in s.methods[:s.method_count] {
+        if .Core in method.flags {continue}
+        plugin:=method_plugin(&method)
+        seen:=false
+        for &earlier in s.methods[:i] {
+            if .Core not_in earlier.flags && method_plugin(&earlier)==plugin {seen=true;break}
+        }
+        if seen {continue}
+        names:=strings.builder_make(call.allocator)
+        for &other in s.methods[i:s.method_count] {
+            if .Core in other.flags || method_plugin(&other)!=plugin {continue}
+            if strings.builder_len(names)>0 {strings.write_byte(&names,' ')}
+            strings.write_string(&names,other.name)
+        }
+        if !first {raw(w,",")}
+        first=false
+        raw(w,`{"plugin":`);serial.text_write_string(w,plugin)
+        raw(w,`,"methods":`);serial.text_write_string(w,strings.to_string(names))
+        raw(w,"}")
+    }
+    raw(w,"]")
+    for active in ([]bool{true,false}) {
+        raw(w,active?`,"active_plugins":[`:`,"other_plugins":[`)
+        first=true
+        for found in s.plugins {
+            if found.active!=active {continue}
+            if !first {raw(w,",")}
+            first=false
+            serial.text_write_string(w,found.name)
         }
         raw(w,"]")
     }
-    raw(w,"}")
+    raw(w,`,"more":"methods (a list of names) gives their params and results; prefix or plugin the summaries and guides of an area"}`)
 }
 
 // The plugin engine.describe names for a method.

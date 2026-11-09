@@ -13,6 +13,14 @@ crushed and clipped pixels. In a played game, `capture` with a `path`. Look at t
 a good mean can still hide a black corner. `engine.status` gives the `ev100` the editor's view
 uses.
 
+## How it is exposed
+
+`Auto` meters the light between `min_ev100` and `max_ev100` and adapts over `adaptation` seconds;
+`Manual` uses `aperture`, `shutter` and `iso` (f/16, 1/125, ISO 100 is a sunny day). `compensation`
+adds EV to both: +1 doubles the light of the image. Set them in the `View_Volume` of the whole
+scene, not in the camera; a night or a lamp-lit scene meters whatever lamps are in view, so give it
+`Manual` or a narrow range.
+
 ## 2. Find the cause
 
 - **Black, `black_percent` near 100:** no enabled `Sky` or `Sun`, a `Sun` with `illuminance` 0,

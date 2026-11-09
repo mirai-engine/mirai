@@ -59,21 +59,14 @@ asset.scene_set(&s,look_entity,"View_Volume",&look)                          // 
 
 ## Exposure
 
-The image is exposed per view: a camera's own `Exposure` replaces everything; otherwise the
-`View_Volume` where it stands (a `Volume` with `priority`; one that `Add`s adds its
-`compensation`); otherwise the default. `Auto` meters the light (a white room does
-not turn gray, a dark one is not lifted by what it reflects) between `min_ev100` and `max_ev100`
-and adapts over `adaptation` seconds; `Manual` uses `aperture`, `shutter` and `iso` (f/16, 1/125,
-ISO 100 is a sunny day). `compensation` adds EV to both: +1 doubles the light of the image.
-
-- Fix brightness in the `View_Volume` of the whole scene, not in the camera.
-- A night or a lamp-lit scene meters whatever lamps are in view: use `Manual`, or a narrow range.
-- Check with `mirai capture . --out shot.png` (its `stats`) before and after each change.
+Auto by default, and a sunny scene needs nothing else: it meters the light, and in the sun a shadow
+in view does not brighten what is lit. A camera's own `Exposure` replaces everything; otherwise
+the `View_Volume` where it stands; otherwise the default. Details, and an image too dark or too
+bright, step by step: [exposure.md](world/exposure.md).
 
 ## Pitfalls that fail silently
 
 - No enabled `Sky` and `Sun` (or a `Sun` with `illuminance` 0): a black image, not an error.
 - A zeroed `Sky`, `Sun` or `View_Volume` literal is not the default: copy the `*_DEFAULT`.
 - A camera `Exposure` added to fix one scene stays when the scene changes.
-- `Fog_Volume` defaults are a heavy fog: lower `density` for haze.
 - Terrain, foliage and edited assets stay unsaved until `asset.save` and `scene.save`.

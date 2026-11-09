@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -418,11 +419,9 @@ rpc_similar_names :: proc(describe,name:string) -> string {
     dot:=strings.last_index_byte(name,'.')
     namespace:=name[:dot+1]
     word:=strings.to_lower(name[dot+1:],context.temp_allocator)
-    methods,_:=api.json_elements(api.json_member(describe,"methods"))
     first:=make([dynamic]string,context.temp_allocator)
     second:=make([dynamic]string,context.temp_allocator)
-    for method in methods {
-        method_name,_:=api.json_string(api.json_member(method,"name"))
+    for method_name in rpc_listed_names(describe) {
         switch {
         case word!="" && strings.contains(strings.to_lower(method_name,context.temp_allocator),word): append(&first,method_name)
         case namespace!="" && strings.has_prefix(method_name,namespace): append(&second,method_name)
@@ -457,7 +456,9 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     }
     name:=args[0]
     key:=rpc_describe_is_plugin(listing,name)?"plugin":"prefix"
-    result,err,called=rpc_call_waiting(connection,"engine.describe",fmt.tprintf(`{{"%s":%s}}`,key,serial.text_quote(name)),1)
+    params:=fmt.tprintf(`{{"%s":%s}}`,key,serial.text_quote(name))
+    if slice.contains(rpc_listed_names(listing),name) {params=fmt.tprintf(`{{"methods":[%s]}}`,serial.text_quote(name))}
+    result,err,called=rpc_call_waiting(connection,"engine.describe",params,1)
     if !called {
         if err.code!=api.INVALID_PARAMS || key=="plugin" {return rpc_fail(err)}
         message:=fmt.tprintf("no method starts with '%s'",name)
@@ -468,55 +469,68 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     return 0
 }
 
-// Whether name is editor or a plugin engine.describe lists without params.
-rpc_describe_is_plugin :: proc(listing,name:string) -> bool {
-    if name=="editor" {return true}
-    plugins,_:=api.json_elements(api.json_member(listing,"plugins"))
-    for plugin in plugins {
-        if plugin_name,_:=api.json_string(api.json_member(plugin,"name"));plugin_name==name {return true}
-    }
-    return false
-}
-
-// What mirai rpc describe prints without arguments: the methods of each
-// plugin under its name, editor first, and the plugins the project does not use.
-rpc_describe_list_text :: proc(listing:string) -> string {
-    methods,_:=api.json_elements(api.json_member(listing,"methods"))
-    groups:=make([dynamic]string,context.temp_allocator)
-    append(&groups,"editor")
-    width:=0
-    for method in methods {
-        name,_:=api.json_string(api.json_member(method,"name"))
-        plugin,_:=api.json_string(api.json_member(method,"plugin"))
-        width=max(width,len(name))
-        known:=false
-        for group in groups {if group==plugin {known=true;break}}
-        if !known && plugin!="" {append(&groups,plugin)}
-    }
-    b:=strings.builder_make(context.temp_allocator)
-    for group in groups {
-        listed:=false
-        for method in methods {
-            name,_:=api.json_string(api.json_member(method,"name"))
-            plugin,_:=api.json_string(api.json_member(method,"plugin"))
-            if plugin!=group && !(group=="editor" && plugin=="") {continue}
-            if !listed {
-                if strings.builder_len(b)>0 {strings.write_byte(&b,'\n')}
-                fmt.sbprintf(&b,"%s\n",group)
-                listed=true
-            }
-            summary,_:=api.json_string(api.json_member(method,"summary"))
-            fmt.sbprintf(&b,"  %s%s  %s\n",name,strings.repeat(" ",width-len(name),context.temp_allocator),summary)
+// The names of the methods of an answer of engine.describe: the entries of
+// methods, or those of the index without params.
+rpc_listed_names :: proc(describe:string) -> []string {
+    names:=make([dynamic]string,context.temp_allocator)
+    for key in ([]string{"methods","core"}) {
+        entries,_:=api.json_elements(api.json_member(describe,key))
+        for entry in entries {
+            if name,ok:=api.json_string(api.json_member(entry,"name"));ok {append(&names,name)}
         }
     }
-    inactive:=make([dynamic]string,context.temp_allocator)
-    plugins,_:=api.json_elements(api.json_member(listing,"plugins"))
-    for plugin in plugins {
-        if api.json_compact(api.json_member(plugin,"active"))=="true" {continue}
-        name,_:=api.json_string(api.json_member(plugin,"name"))
-        append(&inactive,name)
+    groups,_:=api.json_elements(api.json_member(describe,"others"))
+    for group in groups {
+        text,_:=api.json_string(api.json_member(group,"methods"))
+        for name in strings.fields(text,context.temp_allocator) {append(&names,name)}
     }
-    if len(inactive)>0 {fmt.sbprintf(&b,"\ninactive plugins: %s\n",strings.join(inactive[:],", ",context.temp_allocator))}
+    return names[:]
+}
+
+// The names of a list of strings of the index of engine.describe.
+@(private="file")
+rpc_listed_strings :: proc(listing,key:string) -> []string {
+    entries,_:=api.json_elements(api.json_member(listing,key))
+    names:=make([dynamic]string,context.temp_allocator)
+    for entry in entries {
+        if name,ok:=api.json_string(entry);ok {append(&names,name)}
+    }
+    return names[:]
+}
+
+// Whether name is editor or a plugin engine.describe lists without params.
+rpc_describe_is_plugin :: proc(listing,name:string) -> bool {
+    return name=="editor" || slice.contains(rpc_listed_strings(listing,"active_plugins"),name) || slice.contains(rpc_listed_strings(listing,"other_plugins"),name)
+}
+
+// What mirai rpc describe prints without arguments: the core methods with
+// what each is for, the names of the others by plugin and the plugins the
+// project does not use.
+rpc_describe_list_text :: proc(listing:string) -> string {
+    core_methods,_:=api.json_elements(api.json_member(listing,"core"))
+    width:=0
+    for method in core_methods {
+        name,_:=api.json_string(api.json_member(method,"name"))
+        width=max(width,len(name))
+    }
+    b:=strings.builder_make(context.temp_allocator)
+    if len(core_methods)>0 {strings.write_string(&b,"core\n")}
+    for method in core_methods {
+        name,_:=api.json_string(api.json_member(method,"name"))
+        summary,_:=api.json_string(api.json_member(method,"summary"))
+        fmt.sbprintf(&b,"  %s%s  %s\n",name,strings.repeat(" ",width-len(name),context.temp_allocator),summary)
+    }
+    groups,_:=api.json_elements(api.json_member(listing,"others"))
+    for group in groups {
+        plugin,_:=api.json_string(api.json_member(group,"plugin"))
+        methods,_:=api.json_string(api.json_member(group,"methods"))
+        if strings.builder_len(b)>0 {strings.write_byte(&b,'\n')}
+        fmt.sbprintf(&b,"%s\n  %s\n",plugin,methods)
+    }
+    if inactive:=rpc_listed_strings(listing,"other_plugins");len(inactive)>0 {
+        fmt.sbprintf(&b,"\ninactive plugins: %s\n",strings.join(inactive,", ",context.temp_allocator))
+    }
+    strings.write_string(&b,"\nmirai rpc describe <method> gives its params and result; <plugin> or <prefix> the summaries of an area.\n")
     return strings.to_string(b)
 }
 
@@ -543,6 +557,7 @@ rpc_describe_text :: proc(result,name:string) -> string {
         strings.write_byte(&b,'\n')
         if summary,_:=api.json_string(api.json_member(method,"summary"));summary!="" {fmt.sbprintf(&b,"  %s\n",summary)}
         params:=api.json_member(method,"params")
+        if params=="" {continue}
         api.describe_params(&b,params)
         api.describe_example(&b,method_name,params)
         result_schema:=api.json_member(method,"result")

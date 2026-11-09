@@ -4,7 +4,10 @@
 // open sky and sun (sky_card), the luminance of a middle gray card, between the
 // darkest EXPOSURE_LOW and the brightest EXPOSURE_HIGH of its pixels, is made
 // middle gray (a light meter of K = 12.5 gives EV100 = log2(L * 100 / K)) and
-// kept to the range of the camera. The view comes to it exponentially, as in
+// kept to the range of the camera. Where the sun is up and much of the view is
+// lit by it or is the open sky, shade does not count (daylight_shade): a
+// photographer in the sun does not open up for the shadow of a tree, and
+// sunlit surfaces in view would burn. The view comes to it exponentially, as in
 // Unity and Godot: whatever the change, 95 % of the way in params.adaptation
 // seconds when the light falls and in EXPOSURE_UP of that when it grows. At
 // params.speed, as in Unreal and Bevy: params.adaptation seconds for each EV
@@ -23,6 +26,12 @@
 #define EXPOSURE_HIGH 0.9
 // The share of params.adaptation the view takes to come to more light.
 #define EXPOSURE_UP 0.5
+// A pixel at least this many EV under the open sky and sun is in shade.
+#define EXPOSURE_SHADE 1.5
+// The share of the metered pixels out of shade between which shade stops
+// counting: a window or a skylight in a dark room is below it.
+#define EXPOSURE_DAYLIGHT_LOW 0.25
+#define EXPOSURE_DAYLIGHT_HIGH 0.5
 // Time constants in params.adaptation: exp(-3) leaves 5 % of a change.
 #define EXPOSURE_SETTLE 3.0
 // At params.speed: how many times faster the view adapts to more light than
@@ -59,6 +68,21 @@ float sky_card() {
     return MIDDLE_GRAY * luminance(light) / params.light_scale;
 }
 
+// The first bin out of shade, and how much the bins under it count: 1 away
+// from daylight, 0 in it.
+void daylight_shade(float card, out uint first, out float shade) {
+    first = 0u;
+    shade = 1.0;
+    if (card <= 0.0 || frame.sun_direction.w <= 0.5 || frame.sun_direction.y <= 0.0) return;
+    first = exposure_bin(card * exp2(-EXPOSURE_SHADE));
+    float total = 0.0, lit = 0.0;
+    for (uint i = 0u; i < EXPOSURE_BINS; i++) {
+        total += float(counts[i]);
+        if (i >= first) lit += float(counts[i]);
+    }
+    if (total > 0.0) shade = 1.0 - smoothstep(EXPOSURE_DAYLIGHT_LOW, EXPOSURE_DAYLIGHT_HIGH, lit / total);
+}
+
 // From `current` toward `target`, EV100, over dt seconds.
 float exposure_adapt(float current, float target, float dt) {
     float apart = target - current;
@@ -80,21 +104,22 @@ void main(uint index : SV_GroupIndex) {
     if (index != 0u) return;
     uint sky = histogram[EXPOSURE_SKY];
     histogram[EXPOSURE_SKY] = 0u;
-    if (sky != 0u) {
-        float nits = sky_card();
-        if (nits > 0.0) counts[exposure_bin(nits)] += sky;
-    }
+    float card = sky_card();
+    if (sky != 0u && card > 0.0) counts[exposure_bin(card)] += sky;
     Exposure_State s = state[0];
     bool held = s.valid != 0u && s.generation == params.generation;
     float ev100 = params.ev100;
     if (params.manual == 0u) {
+        uint first;
+        float shade;
+        daylight_shade(card, first, shade);
         float total = 0.0;
-        for (uint i = 0u; i < EXPOSURE_BINS; i++) total += float(counts[i]);
+        for (uint i = 0u; i < EXPOSURE_BINS; i++) total += float(counts[i]) * (i < first ? shade : 1.0);
         float low = total * EXPOSURE_LOW;
         float high = total * EXPOSURE_HIGH;
         float below = 0.0, sum = 0.0, weight = 0.0;
         for (uint i = 0u; i < EXPOSURE_BINS; i++) {
-            float count = float(counts[i]);
+            float count = float(counts[i]) * (i < first ? shade : 1.0);
             float kept = clamp(below + count, low, high) - clamp(below, low, high);
             sum += kept * lerp(EXPOSURE_LOG_MIN, EXPOSURE_LOG_MAX, (float(i) + 0.5) / float(EXPOSURE_BINS));
             weight += kept;
