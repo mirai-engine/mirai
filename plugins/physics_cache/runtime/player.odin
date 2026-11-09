@@ -88,7 +88,11 @@ cache_content_find :: proc(library:^Cache_Library,app:^host.App,id:base.Asset_Id
     for content,i in library.contents {if content.source==id {index=i;break}}
     if index<0 {
         if len(library.contents)>=CACHE_SOURCES {return nil,.Too_Large}
-        if library.contents.allocator.procedure==nil {library.contents=make([dynamic]Cache_Content,0,CACHE_SOURCES,app.allocator)}
+        if library.contents.allocator.procedure==nil {
+            contents,error:=make([dynamic]Cache_Content,0,CACHE_SOURCES,app.allocator)
+            if error!=nil {return nil,.Out_Of_Memory}
+            library.contents=contents
+        }
         index=len(library.contents)
         if append(&library.contents,Cache_Content{source=id})!=1 {return nil,.Out_Of_Memory}
     }
