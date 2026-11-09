@@ -20,11 +20,49 @@ describe_params :: proc(b:^strings.Builder,params:string) {
     }
 }
 
-// The line with valid params of a method.
+// The line with valid params of a method: key=value arguments, and JSON only
+// when they cannot write them.
 describe_example :: proc(b:^strings.Builder,method,params:string) {
     example:=strings.builder_make(context.temp_allocator)
     describe_value(&example,params,0)
-    fmt.sbprintf(b,"  example: mirai rpc %s '%s'\n",method,strings.to_string(example))
+    arguments:=strings.builder_make(context.temp_allocator)
+    if describe_arguments(&arguments,strings.to_string(example),"") {
+        fmt.sbprintf(b,"  example: mirai rpc %s%s\n",method,strings.to_string(arguments))
+    } else {
+        fmt.sbprintf(b,"  example: mirai rpc %s '%s'\n",method,strings.to_string(example))
+    }
+}
+
+// Writes a JSON object of an example as key=value arguments, a space before
+// each one, with dots for the objects inside; false when a value needs the
+// JSON form: a list with texts, or a text a shell or key=value would change.
+@(private="file")
+describe_arguments :: proc(b:^strings.Builder,object,prefix:string) -> bool {
+    members,_:=json_members(object)
+    for member in members {
+        path:=prefix==""?member.name:fmt.tprintf("%s.%s",prefix,member.name)
+        switch {
+        case member.value[0]=='{':
+            if !describe_arguments(b,member.value,path) {return false}
+            continue
+        case member.value[0]=='"':
+            text,_:=json_string(member.value)
+            if !describe_plain(text) {return false}
+            fmt.sbprintf(b," %s=%s",path,text)
+            continue
+        case member.value[0]=='[' && strings.contains_any(member.value,"\" "):
+            return false
+        }
+        fmt.sbprintf(b," %s=%s",path,member.value)
+    }
+    return true
+}
+
+// Whether a text reaches its field as it is when written bare after key=.
+@(private="file")
+describe_plain :: proc(text:string) -> bool {
+    if text=="" || text=="null" || text[0]=='{' || text[0]=='[' {return false}
+    return !strings.contains_any(text," \t\n\"'`$&|;<>()*?!#~\\")
 }
 
 // Whether the properties of a schema of params have some besides those every method takes.
@@ -39,13 +77,14 @@ describe_params_own :: proc(properties:string) -> bool {
 
 // A line per field of an object schema, after it those of an object inside,
 // with their path (a.b, or a[].b for the objects of an array).
-describe_fields :: proc(b:^strings.Builder,schema,prefix:string,result:bool,depth:int) {
+describe_fields :: proc(b:^strings.Builder,schema,prefix:string,result:bool,depth:int,brief:=false) {
     properties,_:=json_members(json_member(schema,"properties"))
     required,_:=json_elements(json_member(schema,"required"))
     for property in properties {
         if !result && param_reserved(property.name) {continue}
         path:=prefix==""?property.name:fmt.tprintf("%s.%s",prefix,property.name)
-        fmt.sbprintf(b,"    %s: %s",path,describe_type(property.value))
+        if !brief {strings.write_string(b,"    ")}
+        fmt.sbprintf(b,"%s: %s",path,describe_type(property.value))
         if !result {
             needed:=false
             for field in required {
@@ -53,19 +92,20 @@ describe_fields :: proc(b:^strings.Builder,schema,prefix:string,result:bool,dept
             }
             if needed {
                 strings.write_string(b,", required")
+            } else if brief {
             } else if default:=json_member(property.value,"default");default!="" {
                 fmt.sbprintf(b,", default %s",json_compact(default))
             } else if each:=json_member(json_member(property.value,"items"),"default");each!="" {
                 fmt.sbprintf(b,", default %s each",json_compact(each))
             }
         }
-        if description,_:=json_string(json_member(property.value,"description"));description!="" {fmt.sbprintf(b,". %s",description)}
+        if description,_:=json_string(json_member(property.value,"description"));description!="" && !brief {fmt.sbprintf(b,". %s",description)}
         strings.write_byte(b,'\n')
         if depth>=4 {continue}
         if json_member(property.value,"properties")!="" {
-            describe_fields(b,property.value,path,result,depth+1)
+            describe_fields(b,property.value,path,result,depth+1,brief)
         } else if items:=json_member(property.value,"items");json_member(items,"properties")!="" {
-            describe_fields(b,items,fmt.tprintf("%s[]",path),result,depth+1)
+            describe_fields(b,items,fmt.tprintf("%s[]",path),result,depth+1,brief)
         }
     }
 }
@@ -98,6 +138,7 @@ describe_words :: proc(schema:string) -> string {
         if asset,is_asset:=json_string(json_member(schema,"x-asset"));is_asset {
             return asset=="any"?"asset path or id":fmt.tprintf("asset path or id (%s)",asset)
         }
+        if json_member(schema,"x-entity")!="" {return "entity name, path or id"}
         pattern,_:=json_string(json_member(schema,"pattern"))
         switch pattern {
         case "^(0x)?[0-9a-fA-F]{1,16}$": return "entity id (up to 16 hex)"
@@ -170,6 +211,7 @@ describe_value :: proc(b:^strings.Builder,schema:string,depth:int) {
         }
         strings.write_string(b,value)
     case "string":
+        if json_member(schema,"x-entity")!="" {strings.write_string(b,`"Floor"`);break}
         pattern,_:=json_string(json_member(schema,"pattern"))
         switch pattern {
         case "^(0x)?[0-9a-fA-F]{1,16}$": strings.write_string(b,`"0000000000000001"`)

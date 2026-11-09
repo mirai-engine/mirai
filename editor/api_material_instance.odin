@@ -15,7 +15,7 @@ import "mirai:std/serial"
 // edits it.
 
 @(private)
-MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{"type":"string","description":"The entity with the Mesh_Renderer"},"slot":{"type":"integer","minimum":0,"description":"The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"},"values":{"type":"object","description":"Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"},"parameters":{"type":"object","description":"Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"},"textures":{"type":"object","description":"Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, \"\" for none, null takes it away"},"overlays":{"type":["array","null"],"description":"Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"}},"required":["entity"],"additionalProperties":false}`
+MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Mesh_Renderer"},"slot":{"type":"integer","minimum":0,"description":"The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"},"values":{"type":"object","description":"Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"},"parameters":{"type":"object","description":"Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"},"textures":{"type":"object","description":"Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, \"\" for none, null takes it away"},"overlays":{"type":["array","null"],"description":"Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"}},"required":["entity"],"additionalProperties":false}`
 
 @(private)
 Api_Material_Slot_Params :: struct {
@@ -177,7 +177,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         case "parameters": parameters,_=rpc_raw(&request)
         case "textures": textures,_=rpc_raw(&request)
         case "overlays": overlays,_=rpc_raw(&request)
-        case: rpc_fail(&request,"%s is not a parameter: entity, slot, values, parameters, textures, overlays",key)
+        case: rpc_fail_type(&request,"%s is not a parameter: entity, slot, values, parameters, textures, overlays",key)
         }
     }
     if request.failed {return}

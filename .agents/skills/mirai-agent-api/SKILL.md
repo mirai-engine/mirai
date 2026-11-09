@@ -79,7 +79,8 @@ difference with the catalog, it rules.
    project uses; `mirai rpc describe <plugin>` gives those of an area. Before calling a method for
    the first time, `mirai rpc describe <method|prefix>` (several methods at once:
    `mirai rpc describe a b c`): names, params or result fields are not
-   guessed. Read: `scene.inspect` (ids and values), `component.list` (components, fields, ranges
+   guessed. Read: `scene.inspect` (ids, names, places and the names of the components; the values
+   with `components`), `component.list` (components, fields, ranges
    and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
    and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
 3. Edit: each edit touches only the fields it names. Edits that succeed or fail together go in
@@ -157,9 +158,9 @@ positions misses both.
 
 ## Invariants
 
-- The caller names things as a person does: an entity by the text `entity` (name, path, id or
-  handle) and an asset by its path. The engine resolves them and a name that fits several is an
-  error, never the first match.
+- The caller names things as a person does: an entity by its name, a path, an id or a handle,
+  in every param that takes one (`entity`, or its role: `parent`, `target`...), and an asset by its
+  path. The engine resolves them and a name that fits several is an error, never the first match.
 - What is written for the API is taken as it can only be meant, in one place, never per method
   ([conventions](references/api.md#method-conventions)); saved assets and binary data are read
   exactly.
@@ -174,7 +175,8 @@ positions misses both.
 - The caller does not pass revisions: a field edited by two authors keeps the last one's, and the
   user reverts it with the turn's change review or with undo; a replacement of a whole file, the
   same ([protocol](references/api.md#concurrency-transactions-and-undo)).
-- Entities by `core.Id` (16 hexadecimal digits in a string); assets by `Asset_Id` (32).
+- Answers name entities by `core.Id` (16 hexadecimal digits in a string) and assets by `Asset_Id`
+  (32).
 - Methods and their schemas are server data; they are not duplicated by hand elsewhere.
 - Each method belongs to the editor or to the plugin whose provider registers it. MCP lists only
   the editor core (the methods with the `Core` flag: the basics of a scene) and the `call` tool,
@@ -197,7 +199,9 @@ positions misses both.
 - What is written for the API as it can only be meant: `mirai test editor/api
   params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one
   a_limit_past_its_maximum_takes_it_and_the_answer_says_so
-  an_invalid_params_error_says_what_the_method_takes_and_only_it_does`; names of a registry:
+  an_invalid_params_error_says_what_the_method_takes_and_only_it_does
+  a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes
+  an_example_is_written_with_key_value_unless_it_needs_json`; names of a registry:
   `mirai test std/base`, `mirai test std/serial
   a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does` and
   `mirai test editor a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest`.

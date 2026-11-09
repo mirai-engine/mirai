@@ -773,27 +773,27 @@ api_key_from_name :: proc(name:string) -> (key:platform.Key,ok:bool) {
 
 @(private)
 api_keys :: proc(a:^Rpc_Args,what:string) -> (keys:platform.Keys,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail(a,"%s must be an array of key names",what)}
+    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
     if serial.text_accept(&a.r,']') {return {},true}
     for {
         name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail(a,"%s must be an array of key names",what)}
+        if !read {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
         key,known:=api_key_from_name(name)
         if !known {return {},rpc_fail(a,"%s: %s; keys go by their platform.Key name, such as A, F5, Enter, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,base.name_problem(name,"a key",reflect.enum_field_names(platform.Key)))}
         keys+={key}
         if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail(a,"%s must be an array of key names",what)}
+        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
         return keys,true
     }
 }
 
 @(private)
 api_buttons :: proc(a:^Rpc_Args,what:string) -> (buttons:platform.Mouse_Buttons,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
     if serial.text_accept(&a.r,']') {return {},true}
     for {
         name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+        if !read {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
         switch {
         case strings.equal_fold(name,"left"):   buttons+={.Left}
         case strings.equal_fold(name,"right"):  buttons+={.Right}
@@ -801,7 +801,7 @@ api_buttons :: proc(a:^Rpc_Args,what:string) -> (buttons:platform.Mouse_Buttons,
         case: return {},rpc_fail(a,"%s: unknown button %q",what,name)
         }
         if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
         return buttons,true
     }
 }

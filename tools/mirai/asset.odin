@@ -133,6 +133,7 @@ code_text :: proc(code:serial.Text_Error_Code) -> string {
     case .Text_Too_Long: return "the text does not fit the field"
     case .Invalid_Id: return "malformed id"
     case .Unknown_Asset: return "no such asset"
+    case .Unknown_Entity: return "no such entity"
     case .Too_Deep: return "too many nested levels"
     case .Invalid_Type: return "the type is not in the schema"
     }

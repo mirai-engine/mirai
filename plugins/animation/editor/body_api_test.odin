@@ -94,7 +94,7 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","parts":[{{"part":"Head","bone":"skull"}}]}}`,identity))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"parts[0].bone"`) && strings.contains(result.data,`"code":"Missing_Bone"`) && strings.contains(result.data,`root/pelvis/spine_01/neck_01/head`))
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","parts":[{{"part":"Tail","bone":"head"}}]}}`,identity))
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"Hand_L"))
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"Tail"))
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","forward":[0,1,0],"up":[0,1,0]}}`,identity))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Invalid_Axes"`))
     f.session.mode=.Play

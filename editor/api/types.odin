@@ -235,6 +235,7 @@ Server :: struct {
     plugins:[]Plugin,
     guides:[]Guide,
     assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
+    entities:serial.Text_Entities, // how params take a name where an Entity_Id goes
     pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
     user:rawptr,                             // of pause
 }

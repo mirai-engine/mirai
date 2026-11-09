@@ -136,7 +136,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         case "position":     has_position=rpc_vector(&a,key,position[:])
         case "rotation_deg": has_rotation=rpc_vector(&a,key,rotation_deg[:])
         case "components":   components,_=rpc_raw(&a)
-        case:                rpc_fail(&a,"unknown field %q: play.set takes entity, position, rotation_deg, components and player",key)
+        case:                rpc_fail_type(&a,"unknown field %q: play.set takes entity, position, rotation_deg, components and player",key)
         }
     }
     if a.failed {return}
@@ -272,7 +272,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
             value,_:=rpc_unsigned(&a,key)
             if value>3 {rpc_fail(&a,"player is 0 to 3")}
             player=int(value)
-        case: rpc_fail(&a,"unknown field %q: play.push takes storage, items and player",key)
+        case: rpc_fail_type(&a,"unknown field %q: play.push takes storage, items and player",key)
         }
     }
     if a.failed {return}

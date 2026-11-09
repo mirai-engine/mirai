@@ -7,11 +7,10 @@ import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// How the params of a method name an entity, in one place for scene.*,
-// editor.select, camera.set and play.*: by its name, by a path of names
-// (Parent/Child, as long as it needs to be to say which), by its id or by its
-// handle. A name that several entities have is an error, never the first of
-// them.
+// How the params of a method name an entity, in one place for every param
+// that holds one: by its name, by a path of names (Parent/Child, as long as
+// it needs to be to say which), by its id or by its handle. A name that
+// several entities have is an error, never the first of them.
 
 API_ENTITY_TEXT :: 256          // bytes of the text that names an entity
 API_ENTITY_SEVERAL_SHOWN :: 8   // how many of the entities a name fits an error lists
@@ -76,16 +75,35 @@ api_entity_find :: proc(w:core.World_Ref,text:string,game:=false,allocator:=cont
     return core.NONE,strings.to_string(b)
 }
 
+// The entity a text names; problem says what is wrong for whoever gave it.
+@(private="file")
+api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
+    lister:=game?"play.inspect":"scene.inspect"
+    if text=="" {return core.NONE,fmt.aprintf("it must be the name of an entity, a path Parent/Child, an id or a handle; %s lists them",lister,allocator=allocator)}
+    several:string
+    if e,several=api_entity_find(w,text,game,allocator);e!=core.NONE {return e,""}
+    if several!="" {return core.NONE,several}
+    of:=game?"the game":"the scene"
+    return core.NONE,fmt.aprintf("%q names no entity of %s; %s lists their names and ids",text,of,lister,allocator=allocator)
+}
+
 // The entity a text names; problem says what is wrong for whoever gave it,
 // after what, the name of the param.
 api_entity_select :: proc(w:core.World_Ref,text:string,what:="entity",game:=false,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
-    lister:=game?"play.inspect":"scene.inspect"
-    if text=="" {return core.NONE,fmt.aprintf("%s is required: the name of an entity, a path Parent/Child, an id or a handle; %s lists them",what,lister,allocator=allocator)}
-    several:string
-    if e,several=api_entity_find(w,text,game,allocator);e!=core.NONE {return e,""}
-    if several!="" {return core.NONE,fmt.aprintf("%s: %s",what,several,allocator=allocator)}
-    of:=game?"the game":"the scene"
-    return core.NONE,fmt.aprintf("%s: %q names no entity of %s; %s lists their names and ids",what,text,of,lister,allocator=allocator)
+    if e,problem=api_entity_named(w,text,game,allocator);problem!="" {problem=fmt.aprintf("%s: %s",what,problem,allocator=allocator)}
+    return
+}
+
+// What the reader of params does with a text where a base.Entity_Id goes: the
+// id of the entity of the shown world it names, so every handler gets an id
+// and needs no code of its own.
+api_entity_text_resolve :: proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string) {
+    s:=(^Session)(user)
+    w:=shown_world(s)
+    e:core.Entity
+    if e,problem=api_entity_named(w,text,s.mode!=.Edit);problem!="" {return}
+    if id=api_entity_id(w,e);id==0 {problem=fmt.tprintf("%q is an entity the game made, which has no id: this method takes those of the scene",text)}
+    return
 }
 
 // api_entity_select of a text of the params; false after failing the call.
@@ -103,7 +121,7 @@ rpc_entity :: proc(a:^Rpc_Args,w:core.World_Ref,what:string,game:=false) -> (e:c
     if a.failed {return}
     if serial.text_keyword(&a.r,"null") {return core.NONE,true}
     text,read:=serial.text_string(&a.r)
-    if !read {return core.NONE,rpc_fail(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
+    if !read {return core.NONE,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
     problem:string
     if e,problem=api_entity_select(w,text,what,game,a.call.allocator);problem!="" {return core.NONE,rpc_fail(a,"%s",problem)}
     return e,true

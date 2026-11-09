@@ -81,7 +81,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     _,failure,ok=programs_test_call(t,state,"material.program.create",`{"program":"Other","source":"//! mirai ui Else\n"}`)
     testing.expect(t,!ok && strings.contains(failure.message,"//! mirai ui Other"),failure.message)
     _,failure,ok=programs_test_call(t,state,"material.program.create",`{"program":"Bad","kind":"light"}`)
-    testing.expect(t,!ok && strings.contains(failure.message,`"light" is not one of its names`) && strings.contains(failure.message,"postprocess"),failure.message)
+    testing.expect(t,!ok && strings.contains(failure.message,`"light" is not one of its names`),failure.message)
 
     // It is found by its name before it is saved, as its domain.
     reply,failure,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)

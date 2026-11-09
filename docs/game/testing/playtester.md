@@ -48,7 +48,7 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
   `targets` match component or entity names; `*` stands for any run of characters.
 - `play.step` with `observe:true` is act plus observe in one call: use only it in a loop.
 - Cost grows down the list: `play.check` (yes or no), `play.get` (one value), `play.observe`,
-  `play.inspect` (whole entities), an image. Take the cheapest that answers.
+  `play.inspect` (with `components`, whole entities), an image. Take the cheapest that answers.
 - `--select a,b.c,d[0]` keeps only those fields of any answer.
 
 ## Images

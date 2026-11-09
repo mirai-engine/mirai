@@ -46,7 +46,7 @@ write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components
     method:=api.Method{params_id=Api_Inspect_Params}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,raw=components?"{}":`{"components":false}`,params=&params,out=&out,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,out=&out,allocator=context.temp_allocator}
     api_scene_inspect(&f.s,&call)
     if !testing.expect(t,!call.failed,call.error.message) {return}
     text:=string(serial.writer_bytes(&out))

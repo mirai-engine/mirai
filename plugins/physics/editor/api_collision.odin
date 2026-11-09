@@ -13,7 +13,7 @@ import "mirai:std/serial"
 
 @(private) API_COLLISION_LIST :: `"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":31}`
 @(private) API_COLLISION_NAMES :: `{`+API_COLLISION_LIST+`}`
-@(private) API_COLLISION_TARGET :: `"entity":{"type":"string"},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
+@(private) API_COLLISION_TARGET :: `"entity":{`+api.ENTITY_SCHEMA+`},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
 @(private) API_COLLISION_GET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`},"required":["entity"],"additionalProperties":false}`
 @(private) API_COLLISION_SET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`,"preset":{"type":"string","minLength":1,"maxLength":31,"description":"Of a Collider; 'custom' keeps what it is as its own"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: of its own, which make it custom from what it is"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits; '*' is all"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["entity"],"additionalProperties":false}`
 @(private) API_COLLISION_SETTINGS_SCHEMA :: `{"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"},"description":"Declared in code; names.create declares one"},"presets":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"sensor":{"type":"boolean"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`},"required":["name","sensor","belongs","collides"]},"description":"What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"},"pushes":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"},"force":{"type":"number","exclusiveMinimum":0,"x-unit":"N","description":"The most they push with"}},"required":["a","b","force"]},"description":"Pairs of categories whose dynamic bodies yield to each other"},"undeclared":{"type":"array","items":{"type":"object","properties":{"field":{"enum":["presets","pushes"]},"index":{"type":"integer","minimum":0},"value":{"type":"integer","minimum":0}},"required":["field","index","value"]},"description":"Entries of Collision_Settings for values no code declares"}},"required":["categories","presets","pushes","undeclared"],"additionalProperties":false}`
@@ -55,10 +55,10 @@ api_collision_register :: proc(s:^editor.Session) {
 
 @(private)
 api_collision_names_read :: proc(a:^editor.Rpc_Args,key:string,names:[]string) -> (count:int,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return 0,editor.rpc_fail(a,"%s must be an array of collision category names",key)}
+    if !serial.text_accept(&a.r,'[') {return 0,editor.rpc_fail_type(a,"%s must be an array of collision category names",key)}
     for !serial.text_accept(&a.r,']') {
         if count>=len(names) {return 0,editor.rpc_fail(a,"%s accepts at most %d collision category names",key,len(names))}
-        if count>0 && !serial.text_accept(&a.r,',') {return 0,editor.rpc_fail(a,"%s must be an array of collision category names",key)}
+        if count>0 && !serial.text_accept(&a.r,',') {return 0,editor.rpc_fail_type(a,"%s must be an array of collision category names",key)}
         name,read:=serial.text_string(&a.r)
         if !read || len(name)==0 || len(name)>31 {return 0,editor.rpc_fail(a,"%s[%d] must be a collision category name of 1 to 31 bytes",key,count)}
         names[count]=name
@@ -85,12 +85,12 @@ api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Coll
         case "collides":at=6
         case "hits":at=7
         case "sensors":at=8
-        case:editor.rpc_fail(&a,"unknown parameter %q",key);return
+        case:editor.rpc_fail_type(&a,"unknown parameter %q",key);return
         }
         bit:=u16(1)<<uint(at)
-        if seen&bit!=0 {editor.rpc_fail(&a,"%s was supplied more than once",key);return}
+        if seen&bit!=0 {editor.rpc_fail_type(&a,"%s was supplied more than once",key);return}
         seen|=bit
-        if !set && at>=3 {editor.rpc_fail(&a,"unknown parameter %q",key);return}
+        if !set && at>=3 {editor.rpc_fail_type(&a,"unknown parameter %q",key);return}
         switch key {
         case "entity":
             request.id=editor.rpc_id(&a,key) or_return

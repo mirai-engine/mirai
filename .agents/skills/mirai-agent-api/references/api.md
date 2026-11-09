@@ -156,8 +156,9 @@ mirai rpc --batch <calls.jsonl> [the same options]
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
   `key=value` needs no quoting in any shell: a value that parses as JSON is that JSON and any
   other is text, and dots in a key make objects inside
-  (`mirai rpc scene.set entity=Floor name=Ground transform.position=[0,1,0]`). To send text that
-  looks like JSON, quote it as JSON or use the object form.
+  (`mirai rpc scene.set entity=Floor name=Ground position=[0,1,0]`); a number or a boolean goes as
+  its text to a field that takes only a string. A value that a shell would split or that needs a
+  list of texts goes in the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
   starts its headless `--dev` session as `mirai session start` does and then makes the call,
   saying so on stderr; `engine.shutdown` never starts one. Without `--project` or `--port`, the
@@ -276,23 +277,28 @@ Plugins add methods with
 [API providers](../../mirai-editor/references/extensions.md#api-methods). They are registered
 when the server opens; code reload rebuilds methods and schemas without closing connections.
 
-- **An entity is named once, as `entity`.** Everywhere a method takes one (`entity`, `parent`,
-  `entities`, `follow`, `target`) the text is its name, a path of names `Parent/Child`, its id or
-  its handle. A name several entities have is an error that lists them and how to tell them apart;
-  a text of 16 hexadecimal digits or starting with `0x` is tried as an id and a handle first.
+- **An entity is named once, as `entity`.** Every param that names one (`entity`, `entities`, or
+  by its role `parent`, `target`, `ground`, `around`...) takes its name, a path of names
+  `Parent/Child`, its id or its handle: the reader of params resolves a `base.Entity_Id` through
+  the resolver the editor installs (`Server.entities`), so handlers get an id, and hand-read params
+  with `rpc_id`, and their schemas say `x-entity`. A name several entities have is an error that
+  lists them and how to tell them apart; a text of 16 hexadecimal digits or starting with `0x` is
+  tried as an id and a handle first; `scene.write` keeps `id` in its documents, which are what
+  `scene.inspect` gives back. Results always give ids.
 - **An asset field takes a path or an id.** Asset_Id params and component fields also take the path
   under the assets folder, with or without its extension, checked against the field's `kind`;
   results keep ids. A miss lists the nearest paths of that kind.
 - **Params are taken as they can only be meant**, in one place before anything reads them
   (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
   the singular or the plural of one field (`id` and `ids` also of `entity` and `entities`), a
-  single value where a list goes and a list of one where a single value goes. A list of several
-  for a single value fails saying so.
+  single value where a list goes, a list of one where a single value goes, and a number or a
+  boolean, as its text, where the schema takes only a string. A list of several for a single
+  value fails saying so.
 - **A name of a registry is matched as a person writes it** (`base.name_find`): components, enum
   members of params and values, input keys and presets, without minding case, underscores, spaces
   or hyphens. It resolves only when exactly one candidate fits; otherwise the error says which
-  fit or the nearest ones. It is for what comes through the API: assets and binary data are read
-  exactly.
+  fit or the nearest ones, when any is close for the length of the name. It is for what comes
+  through the API: assets and binary data are read exactly.
 - **Params and result are flat structs.** A field is required unless its tag carries `optional`;
   when absent, it takes the value from the method's `defaults`, or zero.
   - Text: `[N]u8` with tag `text`, up to N bytes.
@@ -309,8 +315,10 @@ when the server opens; code reload rebuilds methods and schemas without closing 
     method reads (settings, components, particles), says where it is
     (`View_Volume.exposure.adaptation_mode`), what fails and, for a name that does not exist, the
     fields or the nearest members that exist (`serial.text_error_message`), with the line and
-    column. `data.usage` of every `-32602` of a method is what `mirai rpc describe` gives of its
-    params, with a valid example, when the answer has room for it.
+    column. A `-32602` for the shape or the type of the params (unknown field, wrong type,
+    missing required field) carries in `data.usage` its fields with their types and a valid
+    example, when the answer has room for it; a name that names nothing and what a handler
+    refuses do not.
 - **Enums by name** (`"Edit"`), **bit sets as arrays of names** (`["W","Left_Shift"]`). A NaN or
   infinite float is written `"nan"`, `"inf"` or `"bits:0x…"`.
 - **Hexadecimal ids.** An entity (`core.Id`) is a string of up to 16 digits

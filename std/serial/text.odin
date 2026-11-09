@@ -337,6 +337,7 @@ Text_Error_Code :: enum u8 {
     Text_Too_Long,
     Invalid_Id,
     Unknown_Asset,     // a text a reader with assets could not take for one: names says why
+    Unknown_Entity,    // a text a reader with entities could not take for one: names says why
     Too_Deep,
     Invalid_Type,      // the type is not of the schema, or the destination is shorter than it
 }
@@ -366,6 +367,7 @@ Text_Reader :: struct {
     names:[dynamic]u8, // of the error
     assets:Text_Assets,
     asset_kinds:string, // of the field being read
+    entities:Text_Entities,
     loose_names:bool,   // text a person or an agent wrote: members of enums and bit sets as base.name_find takes them
 }
 
@@ -375,6 +377,14 @@ Text_Reader :: struct {
 Text_Assets :: struct {
     user:rawptr,
     resolve:proc(user:rawptr,name,kinds:string) -> (id:base.Asset_Id,problem:string),
+}
+
+// How a reader that knows the entities takes the text that goes where an
+// Entity_Id does, which only it can read. problem says what is wrong with the
+// text; "": found.
+Text_Entities :: struct {
+    user:rawptr,
+    resolve:proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string),
 }
 
 text_reader_init :: proc(r:^Text_Reader,text:string,allocator:=context.allocator) {
@@ -422,6 +432,16 @@ text_error_prefix :: proc(e:^Text_Error,head,joint:string) {
     copy(e.path[:],head)
     copy(e.path[len(head):],joint)
     e.path_length=total
+}
+
+// Fails with what the reader of a name said of it, for whoever wrote it.
+@(private="file")
+text_fail_problem :: proc(r:^Text_Reader,code:Text_Error_Code,offset:int,problem:string) -> bool {
+    if r.error.code!=.None {return false}
+    clear(&r.names)
+    append(&r.names,problem)
+    r.error={code=code,offset=offset,names=string(r.names[:]),whole=true}
+    return false
 }
 
 // Fails with the names of the members or fields a type has, for a name it
@@ -500,7 +520,6 @@ text_error_message :: proc(r:^Text_Reader,prefix:="",allocator:=context.allocato
     case e.whole:                                         parts={e.names}
     case e.code==.Unknown_Member && named && e.names!="": parts={`"`,name,`" is not one of `,e.names}
     case e.code==.Unknown_Field && named && e.names!="":  parts={`"`,name,`" is not a field: the fields are `,e.names}
-    case e.code==.Unknown_Asset:                          parts={e.names}
     case:                                                 parts={text_error_words(e.code)}
     }
     for part in parts {append(&out,part)}
@@ -525,6 +544,7 @@ text_error_words :: proc(code:Text_Error_Code) -> string {
     case .Text_Too_Long: return "text too long"
     case .Invalid_Id: return "invalid id"
     case .Unknown_Asset: return "no such asset"
+    case .Unknown_Entity: return "no such entity"
     case .Too_Deep: return "nesting too deep"
     case .Invalid_Type: return "a type that is not of the schema, or a destination shorter than it"
     }
@@ -823,6 +843,13 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
         intrinsics.mem_copy_non_overlapping(raw_data(bytes),&bits,len(bytes))
         return true
     case .Entity,.Entity_Id:
+        if type.kind==.Entity_Id && r.entities.resolve!=nil {
+            text:=text_string(r) or_return
+            id,problem:=r.entities.resolve(r.entities.user,text)
+            if problem!="" {return text_fail_problem(r,.Unknown_Entity,start,problem)}
+            scalar_store(bytes,u64(id))
+            return true
+        }
         if text_peek(r)=='"' {
             text:=text_string(r) or_return
             value,ok:=text_parse_hex(text)
@@ -839,15 +866,7 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
         id,ok:=text_parse_asset_id(text)
         if !ok && r.assets.resolve!=nil {
             problem:string
-            if id,problem=r.assets.resolve(r.assets.user,text,r.asset_kinds);problem!="" {
-                if r.error.code==.None {
-                    r.error={code=.Unknown_Asset,offset=start}
-                    clear(&r.names)
-                    append(&r.names,problem)
-                    r.error.names=string(r.names[:])
-                }
-                return false
-            }
+            if id,problem=r.assets.resolve(r.assets.user,text,r.asset_kinds);problem!="" {return text_fail_problem(r,.Unknown_Asset,start,problem)}
             ok=true
         }
         if !ok {return text_fail(r,.Invalid_Id,start)}

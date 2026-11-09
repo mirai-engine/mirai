@@ -25,7 +25,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "11"
+API_VERSION :: "12"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with method, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and _wait_until, a condition (phase=Built) it is called again until. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -114,6 +114,7 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
         return .Server
     }
     st.server.assets={s,asset_text_resolve}
+    st.server.entities={s,api_entity_text_resolve}
     api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
@@ -618,6 +619,17 @@ rpc_fail :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
     return false
 }
 
+// A failure of the shape or the type of params read by hand: its data says
+// what the method takes.
+rpc_fail_type :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
+    if !a.failed {
+        a.failed=true
+        usage:=a.call.server!=nil && a.call.method!=nil?api.params_usage(a.call.server,a.call.method):""
+        api.call_fail(a.call,api.INVALID_PARAMS,fmt.aprintf(format,..args,allocator=a.call.allocator),usage)
+    }
+    return false
+}
+
 // A key the object does not take: which ones it does, the nearest first when
 // the key looks like it.
 rpc_fail_unknown :: proc(a:^Rpc_Args,key:string,valid:..string) -> bool {
@@ -626,13 +638,13 @@ rpc_fail_unknown :: proc(a:^Rpc_Args,key:string,valid:..string) -> bool {
     for name in valid {
         if distance:=strings.levenshtein_distance(key,name,context.temp_allocator);distance<closest {nearest,closest=name,distance}
     }
-    if nearest!="" {return rpc_fail(a,"unknown field %q; did you mean %s? It takes %s",key,nearest,strings.join(valid,", ",context.temp_allocator))}
-    return rpc_fail(a,"unknown field %q; it takes %s",key,strings.join(valid,", ",context.temp_allocator))
+    if nearest!="" {return rpc_fail_type(a,"unknown field %q; did you mean %s? It takes %s",key,nearest,strings.join(valid,", ",context.temp_allocator))}
+    return rpc_fail_type(a,"unknown field %q; it takes %s",key,strings.join(valid,", ",context.temp_allocator))
 }
 
 rpc_object_begin :: proc(a:^Rpc_Args,what:string) -> bool {
     if a.failed {return false}
-    if !serial.text_accept(&a.r,'{') {return rpc_fail(a,"%s must be an object",what)}
+    if !serial.text_accept(&a.r,'{') {return rpc_fail_type(a,"%s must be an object",what)}
     return true
 }
 
@@ -646,7 +658,7 @@ rpc_next :: proc(a:^Rpc_Args,o:^Rpc_Object) -> (key:string,more:bool) {
     name,read:=serial.text_string(r)
     if !separated || !read || !serial.text_accept(r,':') {
         line,column:=serial.text_position(a.text,r.offset)
-        rpc_fail(a,"malformed JSON at line %d column %d",line,column)
+        rpc_fail_type(a,"malformed JSON at line %d column %d",line,column)
         return
     }
     count:=copy(a.key[:],name)
@@ -661,19 +673,19 @@ rpc_number :: proc(a:^Rpc_Args,what:string) -> (value:f32,ok:bool) {
     if a.failed {return}
     bits,read:=serial.text_read_float(&a.r,4)
     value=transmute(f32)u32(bits)
-    if !read || !rpc_finite(value) {return 0,rpc_fail(a,"%s must be a finite number",what)}
+    if !read || !rpc_finite(value) {return 0,rpc_fail_type(a,"%s must be a finite number",what)}
     return value,true
 }
 
 @(private)
 rpc_vector :: proc(a:^Rpc_Args,what:string,out:[]f32) -> bool {
     if a.failed {return false}
-    if !serial.text_accept(&a.r,'[') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+    if !serial.text_accept(&a.r,'[') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
     for &value,i in out {
-        if i>0 && !serial.text_accept(&a.r,',') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+        if i>0 && !serial.text_accept(&a.r,',') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
         value=rpc_number(a,what) or_return
     }
-    if !serial.text_accept(&a.r,']') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+    if !serial.text_accept(&a.r,']') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
     return true
 }
 
@@ -681,35 +693,40 @@ rpc_bool :: proc(a:^Rpc_Args,what:string) -> (value,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"true") {return true,true}
     if serial.text_keyword(&a.r,"false") {return false,true}
-    return false,rpc_fail(a,"%s must be true or false",what)
+    return false,rpc_fail_type(a,"%s must be true or false",what)
 }
 
 rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     if a.failed {return}
     negative,magnitude,read:=serial.text_integer(&a.r)
-    if !read || negative {return 0,rpc_fail(a,"%s must be a non negative integer",what)}
+    if !read || negative {return 0,rpc_fail_type(a,"%s must be a non negative integer",what)}
     return magnitude,true
 }
 
-// An id as a hexadecimal string or a number; null is none.
+// The id of the entity a param read by hand names, as any param of type
+// base.Entity_Id takes it; null is none.
 rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"null") {return 0,true}
-    if serial.text_peek(&a.r)=='"' {
-        text,read:=serial.text_string(&a.r)
+    text,read:=serial.text_string(&a.r)
+    if !read {return 0,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
+    entities:serial.Text_Entities
+    if a.call.server!=nil {entities=a.call.server.entities}
+    if entities.resolve==nil {
         value,parsed:=serial.text_parse_hex(text)
-        if !read || !parsed {return 0,rpc_fail(a,"%s must be an entity id",what)}
+        if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
         return base.Entity_Id(value),true
     }
-    value:=rpc_unsigned(a,what) or_return
-    return base.Entity_Id(value),true
+    problem:string
+    if id,problem=entities.resolve(entities.user,text);problem!="" {return 0,rpc_fail(a,"%s: %s",what,problem)}
+    return id,true
 }
 
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {
     if a.failed {return}
     value,read:=serial.text_string(&a.r)
-    if !read {return "",rpc_fail(a,"%s must be a string",what)}
-    if len(value)>len(out) {return "",rpc_fail(a,"%s is longer than %d bytes",what,len(out))}
+    if !read {return "",rpc_fail_type(a,"%s must be a string",what)}
+    if len(value)>len(out) {return "",rpc_fail_type(a,"%s is longer than %d bytes",what,len(out))}
     return string(out[:copy(out,value)]),true
 }
 
@@ -720,7 +737,7 @@ rpc_raw :: proc(a:^Rpc_Args) -> (text:string,ok:bool) {
     start:=a.r.offset
     if !serial.text_skip(&a.r) {
         line,column:=serial.text_position(a.text,a.r.error.offset)
-        return "",rpc_fail(a,"malformed JSON at line %d column %d",line,column)
+        return "",rpc_fail_type(a,"malformed JSON at line %d column %d",line,column)
     }
     return a.text[start:a.r.offset],true
 }

@@ -8,8 +8,10 @@ import "mirai:std/serial"
 // JSON Schema (2020-12) of a type of the registry. Types are written inline:
 // plain data has no cycles. Integers carry the range of their type narrowed by
 // the field's min and max; enums are their member names; bit sets are lists of
-// names; ids are strings; an asset is a string, its id or its path, with
-// x-asset the extensions its field holds; a text field is a string of at most N bytes; an
+// names; ids are strings, and a param that holds an Entity_Id is a string that
+// says with x-entity how it names the entity; an asset is a string, its id or
+// its path, with x-asset the extensions its field holds; a text field is a
+// string of at most N bytes; an
 // array of numbers has exactly its length and any other array at most that.
 // An array has no default of its own: its items carry the default of an
 // element when every element has the same one. A list (an array tagged list)
@@ -79,8 +81,9 @@ array_element :: proc(sc:^serial.Schema,type:serial.Type,image:[]u8) -> []u8 {
 // field: the field that holds the value; it gives the bounds, the text flag
 // and, when decor is set, the description. image: the value of a struct or
 // an array as the defaults hold it. default: the value to show as the
-// default of an optional field. list: an array of any length.
-schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false) {
+// default of an optional field. list: an array of any length. params: the
+// value is of the params of a method.
+schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false,params:=false) {
     sc:=&s.schema
     type:=sc.types[index]
     count:=0
@@ -122,7 +125,11 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"uniqueItems");raw(w,"true")
     case .Entity,.Entity_Id:
         entry(w,&count,"type");raw(w,`"string"`)
-        entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
+        if params && type.kind==.Entity_Id {
+            entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)
+        } else {
+            entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
+        }
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
         entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
@@ -146,7 +153,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             if image!=nil {part=image[f.offset:][:sc.types[f.type].size]}
             value:[]u8
             if part!=nil && .Optional in tags && sc.types[f.type].kind!=.Struct && !all_zero(part) {value=part}
-            schema_write(w,s,f.type,&f,part,true,value,.List in tags)
+            schema_write(w,s,f.type,&f,part,true,value,.List in tags,params)
         }
         raw(w,"}")
         required:=0
@@ -174,7 +181,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             element_default:[]u8
             if default!=nil && elem.kind!=.Struct && value!=nil && !all_zero(value) {element_default=value}
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default)
+            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,false,params)
             if !list {
                 if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
                     entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
@@ -215,8 +222,13 @@ method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:boo
         raw(w,written!=""?written:result?"{}":`{"type":"object"}`)
         return
     }
-    schema_write(w,s,index,nil,result?nil:method.defaults)
+    schema_write(w,s,index,nil,result?nil:method.defaults,params=!result)
 }
+
+// x-entity says of a param what it takes; a schema written by hand spreads
+// ENTITY_SCHEMA into the object of the param.
+@(private="file") ENTITY_NAMES :: `"a name, a path Parent/Child or an id"`
+ENTITY_SCHEMA :: `"type":"string","x-entity":` + ENTITY_NAMES
 
 // The key of a result that says which params took their maximum.
 @(private) CLAMPED_SCHEMA :: `"_clamped":{"type":"object","description":"The params past their maximum by name: what was asked and what was used"}`

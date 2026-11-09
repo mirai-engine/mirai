@@ -136,7 +136,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     Document :: struct {path:string,dirty:bool}
     document:Document
     if scene=="" && repeat {
-        if text,ok:=call(file.port,"scene.inspect",struct{summary:bool,limit:int}{true,1});ok {_=json.unmarshal_string(text,&document,allocator=context.temp_allocator)}
+        if text,ok:=call(file.port,"scene.inspect",struct{limit:int}{1});ok {_=json.unmarshal_string(text,&document,allocator=context.temp_allocator)}
     }
     reload:=scene if scene!="" else (document.dirty?"":document.path)
     if scene!="" {

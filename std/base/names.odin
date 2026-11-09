@@ -72,21 +72,34 @@ name_inside :: proc "contextless" (a,b:string) -> bool {
     return at==len(a)
 }
 
-// The indices of the candidates nearest to a name in out, the nearest first;
-// how many. A candidate with slashes is compared by its last part, and one
-// that holds the name anywhere comes before one that only resembles it.
+// The indices of the candidates near a name in out, the nearest first; how
+// many. A candidate with slashes is compared by its last part. Near is holding
+// the name, having its letters in order and being at most three times as
+// long, or an edit distance small for its length; nothing near lists nothing.
 names_nearest :: proc(name:string,candidates:[]string,out:[]int,allocator:=context.temp_allocator) -> int {
     Near :: struct {index,kind,distance:int}
     near,_:=make([]Near,len(candidates),allocator)
     if near==nil {return 0}
     wanted:=name_fold(name,allocator)
+    room:=max(len(wanted)/3,1)
+    count:=0
     for candidate,i in candidates {
         folded:=name_fold(candidate,allocator)
         last:=folded[strings.last_index_byte(folded,'/')+1:]
-        near[i]={i,strings.contains(folded,wanted)?0:name_inside(wanted,last)?1:2,strings.levenshtein_distance(wanted,last,allocator)}
+        distance:=strings.levenshtein_distance(wanted,last,allocator)
+        kind:int
+        switch {
+        case len(wanted)>=3 && strings.contains(folded,wanted):         kind=0
+        case len(wanted)*3>=len(last) && name_inside(wanted,last):      kind=1
+        case distance<=room:                                            kind=2
+        case: continue
+        }
+        near[count]={i,kind,distance}
+        count+=1
     }
+    near=near[:count]
     slice.stable_sort_by(near,proc(a,b:Near) -> bool {return a.kind!=b.kind?a.kind<b.kind:a.distance<b.distance})
-    count:=min(len(near),len(out))
+    count=min(count,len(out))
     for i in 0..<count {out[i]=near[i].index}
     return count
 }

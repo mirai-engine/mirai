@@ -336,7 +336,7 @@ entity_roots :: proc(w:core.World_Ref) -> []core.Entity {
 }
 
 Api_Section_Preview_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose sky, sun and look the editor draws; 0 goes back to those on"`,
+    entity:base.Entity_Id `mirai:"optional,label=The entity of a Scene_Reference whose sky, sun and look the editor draws; omitted goes back to those on"`,
 }
 
 api_section_preview :: proc(s:^Session,call:^api.Call) {
@@ -632,7 +632,7 @@ sections_save :: proc(s:^Session) -> bool {
 }
 
 Api_Section_Edit_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; 0 stops"`,
+    entity:base.Entity_Id `mirai:"optional,label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; omitted stops"`,
 }
 
 api_section_edit :: proc(s:^Session,call:^api.Call) {

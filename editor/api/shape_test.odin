@@ -3,6 +3,7 @@ package api
 import "core:strings"
 import "core:fmt"
 import "core:testing"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file")
@@ -49,8 +50,14 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"hand",`{"entity":["x"],"kind":"beta"}`,`{"entity":"x","kind":"Beta"}`,""},
         {"hand",`{"parent":null,"position":[1,2,3]}`,`{"parent":null,"position":[1,2,3]}`,""},
         {"hand",`{"parent":["x"]}`,`{"parent":"x"}`,""},
-        {"hand",`{"kind":"gama"}`,"",`kind "gama" is not one of its names; the nearest are Beta, Alpha`},
+        {"hand",`{"kind":"gama"}`,"",`kind "gama" is not one of its names`},
         {"hand",`{"entity":["a","b"]}`,"","entity takes one value"},
+        {"typed",`{"entity":123}`,`{"entity":"123"}`,""},
+        {"typed",`{"entity":true}`,`{"entity":"true"}`,""},
+        {"typed",`{"methods":[1,"a"]}`,`{"methods":["1","a"]}`,""},
+        {"hand",`{"entity":-1.5}`,`{"entity":"-1.5"}`,""},
+        {"hand",`{"parent":5}`,`{"parent":5}`,""},
+        {"hand",`{"kind":1}`,`{"kind":1}`,""},
     }
     buffer:=make([]u8,4096,context.temp_allocator)
     for c in cases {
@@ -63,6 +70,80 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         }
         testing.expectf(t,ran,"%s: %s",c.params,err.message)
         testing.expect_value(t,string(serial.writer_bytes(&w)),c.shaped)
+    }
+}
+
+@(private="file")
+Named_Params :: struct {
+    entity:base.Entity_Id,
+    parent:base.Entity_Id `mirai:"optional"`,
+    list:[3]base.Entity_Id `mirai:"optional"`,
+}
+
+@(private="file")
+named_resolve :: proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string) {
+    switch text {
+    case "Floor": return 7,""
+    case "123":   return 8,""
+    case "0000000000000009": return 9,""
+    }
+    return 0,fmt.tprintf("%q names no entity",text)
+}
+
+@(private="file")
+named_echo :: proc(call:^Call) {
+    p:=call_params(call,Named_Params)
+    raw(call.out,fmt.tprintf("%d %d %d",p.entity,p.parent,p.list[1]))
+}
+
+@(test)
+a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes :: proc(t:^testing.T) {
+    s,ok:=test_server(t);if !ok {return}
+    defer server_destroy(&s)
+    s.entities={nil,named_resolve}
+    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=named_echo}),Register_Error.None)
+    cases:=[]struct{params,echo,error:string}{
+        {`{"entity":"Floor"}`,"7 0 0",""},
+        {`{"entity":123}`,"8 0 0",""},
+        {`{"entity":"0000000000000009","parent":"Floor","list":["Floor","123"]}`,"9 7 8",""},
+        {`{"id":"Floor"}`,"7 0 0",""},
+        {`{"entity":"Nope"}`,"",`entity: "Nope" names no entity`},
+        {`{"entity":"Floor","list":["Floor","Nope"]}`,"",`list[1]: "Nope" names no entity`},
+    }
+    buffer:=make([]u8,4096,context.temp_allocator)
+    for c in cases {
+        w:serial.Writer
+        serial.writer_init_fixed(&w,buffer)
+        err,ran:=method_execute(&s,method_find(&s,"named"),c.params,&w)
+        if c.error!="" {
+            testing.expectf(t,!ran && err.message==c.error,"%s: %s",c.params,err.message)
+            continue
+        }
+        testing.expectf(t,ran,"%s: %s",c.params,err.message)
+        testing.expect_value(t,string(serial.writer_bytes(&w)),c.echo)
+    }
+    schema:=params_schema_text(&s,method_find(&s,"named"))
+    testing.expectf(t,strings.contains(schema,`"x-entity":`) && !strings.contains(schema,"pattern"),"the schema of a param says how it names: %s",schema)
+    described:=strings.builder_make(context.temp_allocator)
+    describe_params(&described,schema)
+    describe_example(&described,"named",schema)
+    testing.expectf(t,strings.contains(strings.to_string(described),"entity: entity name, path or id, required") && strings.contains(strings.to_string(described),"example: mirai rpc named entity=Floor\n"),"%s",strings.to_string(described))
+}
+
+@(test)
+an_example_is_written_with_key_value_unless_it_needs_json :: proc(t:^testing.T) {
+    SCHEMA :: `{{"type":"object","properties":{{%s}},"required":[%s]}}`
+    cases:=[]struct{properties,required,example:string}{
+        {`"count":{"type":"integer","minimum":2},"on":{"type":"boolean"},"name":{"type":"string"},"at":{"type":"array","items":{"type":"number"},"minItems":3}`,`"count","on","name","at"`,"example: mirai rpc m count=2 on=false name=x at=[0,0,0]"},
+        {`"to":{"type":"object","properties":{"a":{"type":"integer","minimum":1},"b":{"enum":["Up","Down"]}},"required":["a","b"]}`,`"to"`,"example: mirai rpc m to.a=1 to.b=Up"},
+        {`"tags":{"type":"array","items":{"type":"string"},"minItems":1}`,`"tags"`,`example: mirai rpc m '{"tags":["x"]}'`},
+        {`"text":{"type":"string","default":"two words"}`,`"text"`,`example: mirai rpc m '{"text":"two words"}'`},
+        {`"text":{"type":"string"}`,"",`example: mirai rpc m`},
+    }
+    for c in cases {
+        b:=strings.builder_make(context.temp_allocator)
+        describe_example(&b,"m",fmt.tprintf(SCHEMA,c.properties,c.required))
+        testing.expectf(t,strings.has_suffix(strings.trim_space(strings.to_string(b)),c.example),"%s",strings.to_string(b))
     }
 }
 
@@ -134,17 +215,23 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     testing.expect(t,!ran)
     usage,is_text:=json_string(json_member(err.data,"usage"))
     testing.expect(t,is_text,"the data of the error has usage")
-    testing.expectf(t,strings.contains(usage,"count: integer 1..9, required") && strings.contains(usage,`example: mirai rpc small '{"count":1}'`),"%s",usage)
-    schema:=params_schema_text(&s,method_find(&s,"small"))
-    described:=strings.builder_make(context.temp_allocator)
-    describe_params(&described,schema)
-    testing.expectf(t,strings.has_prefix(usage,strings.to_string(described)),"the text mirai rpc describe gives: %s",usage)
-    err,ran=run(&s,"small",`{"count":1}`,buffer)
-    testing.expect(t,ran && err.data=="")
-    err,_=run(&s,"refuses",`{"count":1}`,buffer)
-    testing.expect(t,strings.contains(err.data,"usage"),"a handler that refuses its params gets it too")
-    err,_=run(&s,"own",`{"count":1}`,buffer)
-    testing.expect_value(t,err.data,`{"own":1}`)
+    testing.expectf(t,strings.contains(usage,"count: integer 1..9, required\n") && strings.contains(usage,"example: mirai rpc small count=1\n"),"%s",usage)
+    testing.expectf(t,!strings.contains(usage,"Count") && !strings.contains(usage,"unit"),"the labels stay out: %s",usage)
+    failures:=[]struct{method,params,data:string}{
+        {"small",`{"count":"x"}`,"usage"},
+        {"small",`{"ratio":1}`,"usage"},
+        {"small",`{"count":99}`,""},
+        {"refuses",`{"count":1}`,""},
+        {"own",`{"count":1}`,"own"},
+        {"named",`{"entity":"Nope"}`,""},
+        {"named",`{"entity":"Floor","bogus":1}`,"usage"},
+    }
+    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=noop}),Register_Error.None)
+    s.entities={nil,named_resolve}
+    for c in failures {
+        err,ran=run(&s,c.method,c.params,buffer)
+        testing.expectf(t,!ran && (c.data=="" && err.data=="" || c.data!="" && strings.contains(err.data,c.data)),"%s %s: %s",c.method,c.params,err.data)
+    }
     err,_=run(&s,"no_schema",`{}`,buffer)
     testing.expect_value(t,err.data,"")
     err,_=run(&s,"long",`{"field0":"x"}`,buffer)

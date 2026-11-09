@@ -408,8 +408,8 @@ a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does 
         {`{"mode":"Run_Fast"}`,false,.None,"",.Run_Fast,{}},
         {`{"mode":"run fast","flags":["ICE-COLD"]}`,true,.None,"",.Run_Fast,{.Ice_Cold}},
         {`{"mode":"runfast"}`,false,.Unknown_Member,`mode: "runfast" is not one of Walk, Run_Fast`,.Walk,{}},
-        {`{"mode":"swim"}`,true,.Unknown_Member,`mode: "swim" is not one of its names; the nearest are `,.Walk,{}},
-        {`{"flags":["Rain"]}`,true,.Unknown_Member,`flags: "Rain" is not one of its names; the nearest are `,.Walk,{}},
+        {`{"mode":"swim"}`,true,.Unknown_Member,`mode: "swim" is not one of its names`,.Walk,{}},
+        {`{"flags":["Rain"]}`,true,.Unknown_Member,`flags: "Rain" is not one of its names`,.Walk,{}},
     }
     for c in cases {
         value:Loose

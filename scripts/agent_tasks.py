@@ -125,7 +125,7 @@ class Scene:
     def __init__(self, session: Session):
         self.entities: list[dict] = []
         while True:
-            page = session.rpc(INSPECT, {"offset": len(self.entities), "limit": 4096})
+            page = session.rpc(INSPECT, {"offset": len(self.entities), "limit": 4096, "components": True})
             self.entities += page["entities"]
             if not page["omitted"]:
                 break

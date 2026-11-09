@@ -708,7 +708,7 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
         case "channel":
             channel,_=rpc_text(&a,"channel",channel_text[:])
         case:
-            rpc_fail(&a,"%s is not a parameter: material, parameters or channel",key)
+            rpc_fail_type(&a,"%s is not a parameter: material, parameters or channel",key)
         }
     }
     if a.failed {return}
@@ -814,7 +814,7 @@ api_material_variants :: proc(s:^Session,call:^api.Call) {
                 count+=1
             }
         case:
-            rpc_fail(&a,"%s is not a parameter: material or variants",key)
+            rpc_fail_type(&a,"%s is not a parameter: material or variants",key)
         }
     }
     if a.failed {return}

@@ -76,7 +76,7 @@ api_write_failed :: proc(call:^api.Call,path:string) -> bool {
 @(private)
 api_write_read :: proc(a:^Rpc_Args,parent:int,path:string,out:^[dynamic]Api_Write_Entity) -> bool {
     if a.failed {return false}
-    if !serial.text_accept(&a.r,'[') {return rpc_fail(a,"%s must be an array of entities",path)}
+    if !serial.text_accept(&a.r,'[') {return rpc_fail_type(a,"%s must be an array of entities",path)}
     if serial.text_accept(&a.r,']') {return true}
     for at:=0;;at+=1 {
         d:=Api_Write_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=a.call.allocator),parent=parent,card=-1}
@@ -84,7 +84,7 @@ api_write_read :: proc(a:^Rpc_Args,parent:int,path:string,out:^[dynamic]Api_Writ
         api_write_entity_read(a,len(out)-1,out) or_return
         if serial.text_accept(&a.r,',') {continue}
         if serial.text_accept(&a.r,']') {return true}
-        return rpc_fail(a,"%s must be an array of entities",path)
+        return rpc_fail_type(a,"%s must be an array of entities",path)
     }
 }
 
@@ -183,7 +183,7 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
         case "root":
             if e,read:=rpc_entity(&a,edited_world(s),key);read {root=api_entity_id(edited_world(s),e)}
         case "entities": api_write_read(&a,-1,"entities",&decls)
-        case:            rpc_fail(&a,"unknown field %q; scene.write takes root and entities",key)
+        case:            rpc_fail_type(&a,"unknown field %q; scene.write takes root and entities",key)
         }
     }
     if a.failed {return}
@@ -538,14 +538,15 @@ api_card_place :: proc(s:^Session,card:int) -> (rotation:mm.Quat,scale:[3]f32) {
 // scene.inspect gives of the whole scene.
 @(private)
 api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_Inspect_Params) {
-    if base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!="" || params.summary || params.offset!=0 || params.include_runtime || params.storages || base.text_get(params.storage[:])!="" {
-        api.call_fail(call,api.INVALID_PARAMS,"root gives the whole subtree as the document scene.write takes: leave out entity, name, component, summary, offset, include_runtime and storages; components false gives it without components")
+    if base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!="" || params.offset!=0 || params.include_runtime || params.storages || base.text_get(params.storage[:])!="" {
+        api.call_fail(call,api.INVALID_PARAMS,"root gives the whole subtree as the document scene.write takes: leave out entity, name, component, offset, include_runtime and storages; components [] gives it without components")
         return
     }
     root,known:=api_call_entity(call,w,params.root[:],"root")
     if !known {return}
     values,read:=api_inspect_values(s,call,w,false)
     if !read {return}
+    if !values.listed {values.every=true}
     if text:=section_lock_text(s,w,root,true);text!="" {api.call_failf(call,api.SERVER_ERROR,"root: %s",text);return}
     part:=api_part(s,w,root,call.allocator)
     if len(part)>params.limit {

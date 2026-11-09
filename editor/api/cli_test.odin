@@ -186,7 +186,7 @@ rpc_result_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     testing.expect_value(t,integer(at(waited,"error","data","value")),5)
     code,out,err=run_tool(tool,"","rpc","describe","test.echo","--port",port)
     testing.expectf(t,code==0,"%d %s",code,err)
-    for line in ([]string{"test.echo (core)\n","    times: integer 1..4, default 1\n","  example: mirai rpc test.echo '{\"text\":\"x\"}'\n","    text: string up to 160\n"}) {
+    for line in ([]string{"test.echo (core)\n","    times: integer 1..4, default 1\n","  example: mirai rpc test.echo text=x\n","    text: string up to 160\n"}) {
         testing.expectf(t,strings.contains(out,line),"%q in:\n%s",line,out)
     }
     code,out,err=run_tool(tool,"","rpc","describe","test.echo","test.add","--port",port)

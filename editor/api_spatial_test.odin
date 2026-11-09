@@ -342,4 +342,16 @@ entities_are_named_by_name_path_id_or_handle :: proc(t:^testing.T) {
     }
     _,several:=api_entity_select(w,"Crate")
     testing.expect(t,strings.contains(several,"Crate/Crate") && strings.contains(several,"Parent/"),several)
+    ids:=[?]struct{text:string,want:base.Entity_Id,says:string}{
+        {"Lamp",4,""},
+        {"Crate/Crate",3,""},
+        {fmt.tprintf("%016x",u64(2)),2,""},
+        {"Crate",0,several[len("entity: "):]},
+        {"Nobody",0,`"Nobody" names no entity of the scene`},
+        {"",0,"it must be the name of an entity"},
+    }
+    for c in ids {
+        id,problem:=api_entity_text_resolve(&f.s,c.text)
+        testing.expectf(t,id==c.want && strings.contains(problem,c.says),"%s: %v %s",c.text,id,problem)
+    }
 }

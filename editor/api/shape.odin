@@ -8,9 +8,10 @@ import "mirai:std/serial"
 // What a caller writes that the schema of a method can only mean one way,
 // made into what the schema declares, before anything reads it: a key in the
 // singular or the plural of a field, a single value where a list goes, a list
-// of one where a single value goes, and an enum name as base.name_find takes
-// it. One rule over the JSON Schema of the params, so a method whose handler
-// reads them by hand gets it too.
+// of one where a single value goes, a number or a boolean as its text where
+// only a string goes, and an enum name as base.name_find takes it. One rule
+// over the JSON Schema of the params, so a method whose handler reads them by
+// hand gets it too.
 
 @(private="file")
 SHAPE_DEPTH :: 16
@@ -21,7 +22,7 @@ Shape_Field :: struct {name:string,node:^Shape_Node}
 // A schema as this needs it. Unknown: it does not say which types it takes.
 @(private="file")
 Shape_Node :: struct {
-    known,list,other,vector:bool, // list: takes an array; other: takes something else; vector: an array of a fixed length over one
+    known,list,other,vector,text:bool, // list: takes an array; other: takes something else; vector: an array of a fixed length over one; text: takes a string and nothing else
     items:^Shape_Node,
     fields:[]Shape_Field,
     names:[]string,
@@ -50,6 +51,7 @@ shape_node :: proc(schema:string,c:^Shaper,depth:int) -> ^Shape_Node {
             node.known=true
             if kind,single:=json_string(member.value);single {
                 if kind=="array" {node.list=true} else {node.other=true}
+                node.text=kind=="string"
                 continue
             }
             kinds,_:=json_elements(member.value)
@@ -214,6 +216,11 @@ shape_value :: proc(c:^Shaper,node:^Shape_Node) -> bool {
         return shape_object(c,node)
     case kind=='"' && len(node.names)>0 && c.names:
         return shape_name(c,node)
+    case node.text && len(node.names)==0 && (kind=='t' || kind=='f' || kind=='-' || kind>='0' && kind<='9'):
+        at:=r.offset
+        serial.text_skip(r) or_return
+        append(&c.edits,Shape_Edit{at,r.offset,serial.text_quote(r.text[at:r.offset],c.checker.allocator)})
+        return true
     }
     return serial.text_skip(r)
 }
@@ -252,9 +259,9 @@ params_shape :: proc(s:^Server,schema,params:string,names:=true) -> (shaped,prob
     return strings.to_string(b),""
 }
 
-// What engine.describe says of the params of a method, for the data of an
-// error; "" when it has no schema or the answer could not take it. Long ones
-// keep their first fields and their example.
+// What the params of a method are, by name and type, with an example, for the
+// data of an error; "" when it has no schema or the answer could not take it.
+// Long ones keep their first fields and their example.
 params_usage :: proc(s:^Server,method:^Method) -> string {
     if s.out.count+2*USAGE_BYTES>len(s.out.data) {return ""}
     schema:=params_schema_text(s,method)
@@ -262,7 +269,7 @@ params_usage :: proc(s:^Server,method:^Method) -> string {
     allocator:=base.arena_allocator(&s.scratch)
     fields:=strings.builder_make(allocator)
     example:=strings.builder_make(allocator)
-    describe_params(&fields,schema)
+    describe_fields(&fields,schema,"",false,0,brief=true)
     describe_example(&example,method.name,schema)
     text:=strings.to_string(fields)
     room:=USAGE_BYTES-strings.builder_len(example)-len(USAGE_CUT)

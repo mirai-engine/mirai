@@ -224,7 +224,7 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
         if !known {
             taken:=make([dynamic]string,context.temp_allocator)
             for each in keys {append(&taken,names[each])}
-            rpc_fail(&a,"%s is not a parameter of %s: it takes %s",key,method,strings.join(taken[:],", ",context.temp_allocator))
+            rpc_fail_type(&a,"%s is not a parameter of %s: it takes %s",key,method,strings.join(taken[:],", ",context.temp_allocator))
             return
         }
         p.given+={k}
@@ -248,7 +248,7 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
             p.rows=list[:]
         case:
             text,read:=serial.text_string(&a.r)
-            if !read {return p,rpc_fail(&a,"%s must be a string: %s",names[k],hints[k])}
+            if !read {return p,rpc_fail_type(&a,"%s must be a string: %s",names[k],hints[k])}
             text=strings.clone(text,context.temp_allocator)
             #partial switch k {
             case .Records: p.records=text

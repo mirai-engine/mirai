@@ -28,8 +28,10 @@ a_name_resolves_only_to_the_one_candidate_it_can_mean :: proc(t:^testing.T) {
 what_is_wrong_with_a_name_lists_those_it_could_mean_or_the_nearest :: proc(t:^testing.T) {
     names:=[]string{"A","B","L","Enter","Left_Control","Right_Control","Point_Light","Spot_Light","Foo_Bar","FooBar"}
     cases:=[]struct{name,says:string}{
-        {"LCtrl",`"LCtrl" is not one; the nearest are Left_Control,`},
-        {"Light",`"Light" is not one; the nearest are Spot_Light, Point_Light,`},
+        {"LCtrl",`"LCtrl" is not one; the nearest are Left_Control`},
+        {"Light",`"Light" is not one; the nearest are Spot_Light, Point_Light`},
+        {"Fobar",`"Fobar" is not one; the nearest are Foo_Bar, FooBar`},
+        {"Nope",`"Nope" is not one`},
         {"foobar",`"foobar" fits several: Foo_Bar, FooBar;`},
     }
     for c in cases {
@@ -38,6 +40,8 @@ what_is_wrong_with_a_name_lists_those_it_could_mean_or_the_nearest :: proc(t:^te
     }
     nearest:[NAME_NEAREST]int
     paths:=[]string{"textures/grass","meshes/grass_rock","meshes/stone"}
-    testing.expect_value(t,names_nearest("grass rock",paths,nearest[:],context.temp_allocator),3)
+    testing.expect_value(t,names_nearest("grass rock",paths,nearest[:],context.temp_allocator),1)
     testing.expect_value(t,nearest[0],1)
+    testing.expect_value(t,names_nearest("Nope",{"Animation_Progress","Name","Boss","Bob","Door"},nearest[:],context.temp_allocator),0)
+    testing.expect_value(t,names_nearest("a",{"Alpha","Be","a_"},nearest[:],context.temp_allocator),1)
 }

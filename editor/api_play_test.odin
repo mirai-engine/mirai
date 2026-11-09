@@ -304,7 +304,7 @@ play_set_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused
     testing.expect_value(t,placed(f),[3]f32{7,8,9})
     refused:=[?]struct{method,params,says:string}{
         {"play.set",`{"entity":"Nobody","position":[0,0,0]}`,"Nobody"},
-        {"play.set",`{"position":[0,0,0]}`,"entity is required"},
+        {"play.set",`{"position":[0,0,0]}`,"entity: it must be the name of an entity"},
         {"play.set",`{"entity":"Hero","position":[0,0,0],"speed":3}`,"speed"},
         {"play.check",`{"conditions":[{"storage":"Probe_Score"}],"speed":3}`,"speed"},
     }

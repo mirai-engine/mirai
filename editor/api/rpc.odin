@@ -252,9 +252,19 @@ params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial
     mem.zero_slice(bytes)
     if method.defaults!=nil {copy(bytes,method.defaults)}
     serial.text_reader_init(r,params,base.arena_allocator(&s.scratch))
-    r.assets=s.assets
+    r.assets,r.entities=s.assets,s.entities
     r.loose_names=true
     return serial.text_read(r,&s.schema,method.params,bytes) && serial.text_end(r)
+}
+
+// A failure of the reader of params: says what the method takes for a failure
+// of shape or type, not for a name that names nothing.
+@(private="file")
+params_parse_error :: proc(s:^Server,method:^Method,text:string,r:^serial.Text_Reader) -> Error {
+    if r.error.code==.Unknown_Entity {return {INVALID_PARAMS,serial.text_error_message(r,allocator=base.arena_allocator(&s.scratch)),""}}
+    err:=text_error(s,"invalid params",text,r)
+    if r.error.code!=.Unknown_Asset {err.data=params_usage(s,method)}
+    return err
 }
 
 // Reads params as the params of method into the scratch of the server, with
@@ -270,7 +280,7 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
         problem:string
         shaped,problem=params_shape(s,method.params_schema,params)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        if problem!="" {return nil,params,{INVALID_PARAMS,problem,""},false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
         return nil,shaped,{},true
     }
     sc:=&s.schema
@@ -280,22 +290,26 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
     r:serial.Text_Reader
     if !params_parse(s,method,params,bytes,&r) {
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        first:=text_error(s,"invalid params",params,&r)
+        first:=params_parse_error(s,method,params,&r)
         problem:string
         shaped,problem=params_shape(s,params_schema_text(s,method),params,names=false)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        if problem!="" {return nil,params,{INVALID_PARAMS,problem,""},false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
         if shaped==params {return nil,params,first,false}
         if !params_parse(s,method,shaped,bytes,&r) {
             if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-            return nil,params,text_error(s,"invalid params",shaped,&r),false
+            return nil,params,params_parse_error(s,method,shaped,&r),false
         }
     }
     if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
     checker:=Checker{server=s,schema=sc,allocator=allocator}
     again:serial.Text_Reader
     serial.text_reader_init(&again,shaped,allocator)
-    if !check_required(&checker,&again,method.params) || !check_value(&checker,method.params,bytes[:type.size],nil) {
+    if !check_required(&checker,&again,method.params) {
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",params_usage(s,method)},false
+    }
+    if !check_value(&checker,method.params,bytes[:type.size],nil) {
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
     }
@@ -309,16 +323,8 @@ scratch_error :: proc(s:^Server) -> Error {
     return {INTERNAL_ERROR,"the request needs more scratch memory than the server has",""}
 }
 
-// Reads the params of the method, runs its handler and writes its result to
-// out. A failure for its params says in its data what the method takes.
+// Reads the params of the method, runs its handler and writes its result to out.
 method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool) {
-    err,ok=method_run(s,method,params,out)
-    if !ok && err.code==INVALID_PARAMS && err.data=="" {err.data=params_usage(s,method)}
-    return
-}
-
-@(private="file")
-method_run :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool) {
     s.stats.calls+=1
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed

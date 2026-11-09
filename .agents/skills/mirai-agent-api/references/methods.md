@@ -76,7 +76,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
   world of the open scene, `scene.save` also writes its scene (and that of each section edited
-  this way that changed) and the rest stays read-only; `id` 0 ends it. Only in Edit and in a
+  this way that changed) and the rest stays read-only; without `entity` it ends. Only in Edit and in a
   scene. Returns `{editing,unsaved}`: `unsaved` is the section it stopped editing with unsaved
   changes.
 - `editor.sections`: the map of the World tab: each section with its rule, what it asks for
@@ -89,7 +89,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   what asks for it does not ask for it active, loaded when it answers.
 - `editor.section_preview`: `entity` with `Scene_Reference`: the editor draws the `Sky`
   and the `Sun` of its section instead of the enabled ones, and the view takes the look of the
-  inside of its box; `id` 0 goes back. Only in Edit; returns the `{sky,sun}` drawn (0 where the
+  inside of its box; without `entity` it goes back. Only in Edit; returns the `{sky,sun}` drawn (0 where the
   section has none).
 - `editor.select`: selects `entities`; the last one becomes active and none clears. What names no
   entity is `-32602`. A different selection is an undo step of the caller
@@ -350,7 +350,7 @@ Reading a capture:
 
 ## Scene
 
-An entity is named by its hexadecimal Id. Each edit is a transaction
+An entity is named as [the API names it](api.md#method-conventions). Each edit is a transaction
 ([protocol](api.md#concurrency-transactions-and-undo)).
 
 - `scene.inspect` (`read_only`): free-form result
@@ -358,10 +358,9 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
   - Filters: `entity` (only that one); `name` (exact name; `*` stands for any sequence and case is
     significant); `component` (only the entities that have it, by its name as
     [names of the API](api.md#method-conventions) take it; an unknown one is `-32602`).
-  - `summary` (false): each entity is only `{id,name,parent,components:[names]}`, without place,
-    prefab or values. `components` is `true` (every value), `false` (none) or a list of names
-    (only those, the way to keep an answer small); `include_runtime` also names those of runtime
-    state.
+  - Each entity gives `id`, `name`, `parent`, its `position` and the names of its components.
+    `components` is `true` (every value, with the rest of the entity) or a list of names (only
+    those); `include_runtime` also names those of runtime state.
   - Page: `offset` and `limit` (1 to 4096, 256). `total` counts the live entities of the world,
     `matched` those that pass the filters, `offset` is counted over them and `omitted` says how
     many remain after the page (the next one starts at `offset` + `shown`).
@@ -369,8 +368,8 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
     `children` in their order, each with what differs from a new entity (its place local to the
     parent when it is not the identity, `visible` and `enabled` only when false, `off`) and its
     components with the fields that differ from the value they start with; a member of an
-    instance gives `prefab:{asset,root}`, and `components:false` gives only the shape of the tree.
-    No filters, `summary` nor page: a subtree of more than `limit` entities fails. Entities
+    instance gives `prefab:{asset,root}`, and `components:[]` gives only the shape of the tree.
+    No filters nor page: a subtree of more than `limit` entities fails. Entities
     without an `Id` and what a section holds are left out.
 - `play.inspect` (`read_only`): the same over the world of the caller's Play, with the params and
   the default `limit` of `scene.inspect` plus `player`, which picks the run of that player in a
@@ -382,8 +381,8 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
   - `storages` adds `storages`, the value of each storage of the world that is plain data (score,
     game state, queues), by name; `storage` filters with `*` and already requests them. Those of
     `scene.inspect` are the document's.
-- On a large game, `summary:true` with `name` or `component`; `omitted` says how many were left
-  out.
+- On a large game, `name` or `component`, and `components` for the values of those; `omitted`
+  says how many were left out.
 - `scene.add`: creates an entity; everything is optional. Returns `{id}`.
 - `scene.set`: changes `entity`; `name` renames it and `parent:null` makes it a root. A member of an instance that is
   not its root keeps the `parent` the prefab gives it.
@@ -419,7 +418,8 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
 - `scene.open`: opens a scene or a prefab in the active document, with an empty history; without
   `path` it rereads the document's file. Fails as a guest.
 
-**Entity of `scene.inspect`.**
+**Entity of `scene.inspect`** with `components` true or a list of names; without it, `id`, `name`,
+`parent`, `position` and the names of its `components`.
 
 - `enabled` is `false` if the entity has its own `Disabled`; `active`, if it or something above it
   has it ([turned off](../../mirai-core/references/core.md#disabled-entities)). `off` lists the

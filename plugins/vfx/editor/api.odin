@@ -28,7 +28,7 @@ import "plugins:vfx/runtime/effect"
 PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"},"resources":{"type":"object","description":"What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"}},"additionalProperties":false}`
 
 @(private)
-PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{"type":"string","description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
+PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
 
 // The keys of the params of an effect besides its name, path and values.
 @(private)
@@ -596,7 +596,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
         case "entity": id,has_id=editor.rpc_id(&request,"entity")
         case "values": values,_=editor.rpc_raw(&request)
         case "parameters": parameters,_=editor.rpc_raw(&request)
-        case: editor.rpc_fail(&request,"%s is not a parameter: entity, values, parameters",key)
+        case: editor.rpc_fail_type(&request,"%s is not a parameter: entity, values, parameters",key)
         }
     }
     if request.failed {return}
