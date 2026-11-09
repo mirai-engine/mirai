@@ -40,7 +40,7 @@ the_tool_is_built_without_a_list_of_attributes :: proc(t:^testing.T) {
 a_content_tool_runs_with_its_collections_and_its_arguments :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     command:=content_command("C:/engine","C:/game","C:/game/tools/content","",{"--fast"})
-    for wanted in ([]string{"-collection:mirai=C:/engine","-collection:plugins=C:/engine/plugins","-collection:project=C:/game","-ignore-unknown-attributes","--","--fast"}) {
+    for wanted in ([]string{"-collection:mirai=C:/engine",fmt.tprintf("-collection:plugins=%s",join("C:/engine","plugins")),"-collection:project=C:/game","-ignore-unknown-attributes","--","--fast"}) {
         testing.expectf(t,slice.contains(command[:],wanted),"%s in %v",wanted,command)
     }
     alone:=content_command("C:/engine","C:/game","C:/game/tools/content","",nil)

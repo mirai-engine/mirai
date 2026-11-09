@@ -18,13 +18,8 @@ Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP 
 the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
 
 The assets of `templates/game` but its `.ui` (written with `ui.write` and kept in the repository)
-are written by its `tools/content`, from the project folder. It does
+are written by its `tools/content`, which `mirai content <project>` runs. It does
 not go into the game: only `game/`, `editor/` and the plugins are compiled.
-
-```sh
-odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins \
-  -collection:project=. -custom-attribute:<attributes>
-```
 
 ## Demo
 
@@ -234,11 +229,10 @@ Play, F1 releases the mouse and the click that returns it chooses who receives k
 run:
 
 ```sh
-odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins \
-  -ignore-unknown-attributes -- .
+mirai content demo
 ```
 
-A `--<part>-only` flag after the path regenerates only one part
+A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
 - `--prefabs-only`: `Player.prefab`, `Person.prefab`, `Dog.prefab` and `Thrown cube.prefab`.
