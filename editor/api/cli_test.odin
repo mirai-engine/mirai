@@ -163,6 +163,49 @@ rpc_command_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
     testing.expect_value(t,code,0)
     testing.expect_value(t,out,"{\n  \"sum\": 42\n}\n")
     rpc_result_cases(t,tool,port)
+    rpc_stdin_cases(t,tool,f,port)
+    rpc_batch_cases(t,tool,port)
+}
+
+// One connection and one line per call: a line gets its line of JSON, an
+// error stays on its line and the next call goes on.
+rpc_stdin_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
+    connections:=f.server.stats.connections
+    script:="test.add a=2 b=3\ntest.add {\"a\": 4, \"b\": 5}\nmissing.method\ntest.shapes {\"position\":[1,2,3],\"flags\":[\"Ice\"]} --select position[-1]\n\ntest.add a=1 b=1"
+    code,out,err:=run_tool(tool,script,"rpc","--stdin","--port",port)
+    testing.expectf(t,code==0,"%d %s",code,err)
+    lines:=strings.split_lines(strings.trim_right(out,"\n"),context.temp_allocator)
+    if !testing.expectf(t,len(lines)==5,"%q",out) {return}
+    testing.expect_value(t,integer(at(parse_json(t,lines[0]),"sum")),5)
+    testing.expect_value(t,integer(at(parse_json(t,lines[1]),"sum")),9)
+    testing.expect_value(t,integer(at(parse_json(t,lines[2]),"error","code")),METHOD_NOT_FOUND)
+    testing.expect_value(t,integer(at(parse_json(t,lines[3]),"position[-1]")),3)
+    testing.expect_value(t,integer(at(parse_json(t,lines[4]),"sum")),2)
+    testing.expect_value(t,f.server.stats.connections-connections,1)
+    code,_,_=run_tool(tool,"","rpc","--stdin","extra","--port",port)
+    testing.expect_value(t,code,2)
+}
+
+// A call of a batch can name a result of the one before it.
+rpc_batch_cases :: proc(t:^testing.T,tool:Tool,port:string) {
+    folder,_:=os.make_directory_temp("","mirai-batch",context.temp_allocator)
+    defer os.remove_all(folder)
+    file:=strings.concatenate({folder,"/calls.jsonl"},context.temp_allocator)
+    write :: proc(file,text:string) {_=os.write_entire_file(file,transmute([]u8)text)}
+    write(file,`{"method":"test.add","params":{"a":2,"b":3}}`+"\n"+`{"method":"test.add","params":{"a":"$0.sum","b":10}}`+"\n"+`{"method":"test.shapes","params":{"position":["$0.sum",0,0]}}`+"\n")
+    code,out,err:=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    testing.expectf(t,code==0,"%d %s %s",code,out,err)
+    answers:=parse_json(t,out)
+    testing.expect_value(t,integer(at(answers,1,"result","sum")),15)
+    testing.expect_value(t,integer(at(answers,2,"result","position",0)),5)
+    write(file,`{"method":"test.add","params":{"a":2,"b":3}}`+"\n"+`{"method":"test.add","params":{"a":"$0.total","b":1}}`+"\n")
+    code,out,err=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    testing.expect_value(t,code,1)
+    testing.expect(t,strings.contains(out,"$0.total"),out)
+    write(file,`{"method":"test.add","params":{"a":"$1.sum","b":1}}`+"\n")
+    code,out,err=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    testing.expect_value(t,code,1)
+    testing.expect(t,strings.contains(out,"$1.sum: the batch has 0 results"),out)
 }
 
 // --select, --wait-until, describe and the hints of the errors.

@@ -205,7 +205,9 @@ conn_reject :: proc(s:^Server,conn:^Conn,status:int,message:string,now:time.Tick
 
 @(private)
 conn_read :: proc(s:^Server,conn:^Conn,now:time.Tick) {
-    if time.tick_diff(conn.started,now)>s.timeout {s.stats.timeouts+=1;conn_close(conn);return}
+    // A connection a client keeps between requests waits for it without limit.
+    idle:=conn.keep && conn.used==0
+    if !idle && time.tick_diff(conn.started,now)>s.timeout {s.stats.timeouts+=1;conn_close(conn);return}
     for conn.state==.Reading {
         if conn.used>=len(conn.buffer) {conn_reject(s,conn,431,"request header too large",now);return}
         n,err:=net.recv_tcp(conn.socket,conn.buffer[conn.used:])
@@ -298,6 +300,8 @@ head_parse :: proc(s:^Server,conn:^Conn,head:string) -> (status:int,message:stri
             length,has_length=parsed,true
         case strings.equal_fold(name,"transfer-encoding"):
             return 411,"Content-Length is required; chunked bodies are not accepted"
+        case strings.equal_fold(name,"connection"):
+            conn.keep=strings.equal_fold(value,"keep-alive")
         case strings.equal_fold(name,"content-type"):
             kind:=value
             if semicolon:=strings.index_byte(kind,';');semicolon>=0 {kind=strings.trim_space(kind[:semicolon])}
@@ -353,7 +357,9 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
     text:string
     for entry in HTTP_STATUS {if entry.code==status {text=entry.text}}
     allow:=status==405?"Allow: POST\r\n":""
-    head:=fmt.bprintf(head_buffer[:],"HTTP/1.1 %d %s\r\n%sContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",status,text,allow,len(body_bytes))
+    keep:=conn.keep && conn.reject==0 && conn.used==conn.head+conn.length
+    conn.keep=keep
+    head:=fmt.bprintf(head_buffer[:],"HTTP/1.1 %d %s\r\n%sContent-Type: application/json\r\nContent-Length: %d\r\nConnection: %s\r\n\r\n",status,text,allow,len(body_bytes),keep?"keep-alive":"close")
     start:=HEAD_ROOM-len(head)
     copy(s.response[start:],head)
     s.sending=index
@@ -372,6 +378,11 @@ send_progress :: proc(s:^Server,now:time.Tick) {
         if err!=nil || n==0 {conn_close(conn);s.sending=-1;return}
     }
     s.sending=-1
+    if conn.keep {
+        // The next request of the same client: everything per-request starts over.
+        conn^={socket=conn.socket,state=.Reading,buffer=conn.buffer,started=now,keep=true}
+        return
+    }
     if conn.reject!=0 || conn.used>conn.head+conn.length {
         net.shutdown(conn.socket,.Send)
         conn.state=.Draining

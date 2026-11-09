@@ -199,6 +199,7 @@ Conn :: struct {
     reject_message:string,
     started:time.Tick,
     drained:int,
+    keep:bool, // Connection: keep-alive: a request after another on the same connection
     client_tag:[64]u8,
     client_name:[CLIENT_NAME_BYTES]u8,
     plugins:[512]u8, // X-Mirai-Plugins: the plugins whose tools tools/list adds to those of the editor

@@ -11,6 +11,19 @@ import "mirai:std/serial"
 // A blocking client for a Server on this machine, for the command line. What
 // it returns is allocated with the allocator it is given: pass an arena.
 
+// A connection a client keeps open across calls (Connection: keep-alive),
+// which the editor serves requests on one after the other; zero is not open.
+Client_Connection :: struct {
+    socket:net.TCP_Socket,
+    open:bool,
+    port:int,
+}
+
+client_connection_close :: proc(connection:^Client_Connection) {
+    if connection!=nil && connection.open {net.close(connection.socket)}
+    if connection!=nil {connection^={}}
+}
+
 CLIENT_MAX_RESPONSE :: 32<<20
 CLIENT_POLL_MS :: 1000      // between looks at the editor while no answer comes
 CLIENT_HUNG_SECONDS :: 30   // without any CPU use by the editor: it hung, it is not busy
@@ -50,17 +63,29 @@ client_error :: proc(allocator:runtime.Allocator,code:int,format:string,args:..a
 // X-Mirai-Client. timeout_ms bounds the whole wait for the answer; with a
 // watch an editor that ended or hung fails it at once. status is 0 when no
 // answer arrived.
-client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{}) -> (status:int,response:[]u8,error:Error) {
-    socket,dial_error:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,port)
-    if dial_error!=nil {return 0,nil,client_error(allocator,UNREACHABLE,"cannot reach the Mirai editor at 127.0.0.1:%d (%v)",port,dial_error)}
-    defer net.close(socket)
+client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil) -> (status:int,response:[]u8,error:Error) {
+    socket:net.TCP_Socket
+    if connection!=nil && connection.open && connection.port==port {
+        socket=connection.socket
+    } else {
+        client_connection_close(connection)
+        dial_error:net.Network_Error
+        socket,dial_error=net.dial_tcp_from_address_and_port(net.IP4_Loopback,port)
+        if dial_error!=nil {return 0,nil,client_error(allocator,UNREACHABLE,"cannot reach the Mirai editor at 127.0.0.1:%d (%v)",port,dial_error)}
+        if connection!=nil {connection^={socket=socket,open=true,port=port}}
+    }
+    // A connection kept for the next call closes on any failure: that call makes another.
+    defer if connection==nil || error.code!=0 || !connection.open {
+        net.close(socket)
+        if connection!=nil {connection^={}}
+    }
     timeout:=time.Duration(timeout_ms)*time.Millisecond
     net.set_option(socket,.Receive_Timeout,timeout)
     net.set_option(socket,.Send_Timeout,timeout)
     turn:=fmt.aprintf("X-Mirai-Ai-Task: %s\r\n",task,allocator=allocator) if task!="" else ""
     named:=fmt.aprintf("X-Mirai-Plugins: %s\r\n",plugins,allocator=allocator) if plugins!="" else ""
     caller:=fmt.aprintf("X-Mirai-Client: %s\r\n",client,allocator=allocator) if client!="" && task=="" else ""
-    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%sContent-Length: %d\r\nConnection: close\r\n\r\n%s",path,port,turn,named,caller,len(body),body,allocator=allocator)
+    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%sContent-Length: %d\r\nConnection: %s\r\n\r\n%s",path,port,turn,named,caller,len(body),connection!=nil?"keep-alive":"close",body,allocator=allocator)
     for sent:=0;sent<len(request); {
         n,err:=net.send_tcp(socket,transmute([]u8)request[sent:])
         if timed_out(err) {return 0,nil,client_error(allocator,TIMEOUT,"the Mirai editor at 127.0.0.1:%d did not take the request in %d ms",port,timeout_ms)}
@@ -82,8 +107,10 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
         if head_end<0 {
             if end:=strings.index(string(data[:]),"\r\n\r\n");end>=0 {
                 head_end=end+4
-                status,length=response_head(string(data[:end]))
+                closes:bool
+                status,length,closes=response_head(string(data[:end]))
                 if status==0 {return 0,nil,client_error(allocator,BAD_RESPONSE,"the answer is not HTTP")}
+                if closes && connection!=nil {connection.open=false}
             }
         }
         if head_end>=0 && length>=0 && len(data)>=head_end+length {break}
@@ -169,17 +196,21 @@ timed_out :: proc(err:net.Network_Error) -> bool {
 }
 
 @(private)
-response_head :: proc(head:string) -> (status,length:int) {
+response_head :: proc(head:string) -> (status,length:int,closes:bool) {
     rest:=head
     line,_:=strings.split_lines_iterator(&rest)
-    if len(line)<12 || !strings.has_prefix(line,"HTTP/1.") {return 0,-1}
+    if len(line)<12 || !strings.has_prefix(line,"HTTP/1.") {return 0,-1,false}
     status,_=strconv.parse_int(line[9:12],10)
     length=-1
     for header in strings.split_lines_iterator(&rest) {
         name,value,ok:=header_value(header)
-        if ok && strings.equal_fold(name,"content-length") {
+        switch {
+        case !ok:
+        case strings.equal_fold(name,"content-length"):
             parsed,valid:=strconv.parse_int(value,10)
             if valid {length=parsed}
+        case strings.equal_fold(name,"connection"):
+            closes=strings.equal_fold(value,"close")
         }
     }
     return
@@ -210,13 +241,13 @@ error_read :: proc(allocator:runtime.Allocator,text:string) -> Error {
 // is not empty, or as the agent client names. params is a JSON object. The
 // result is JSON text. watch tells an editor that ended or hung from one that
 // works, and its label names on stderr the note of an answer.
-rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:runtime.Allocator,task:string="",client:string="",watch:=Client_Watch{}) -> (result:string,error:Error,ok:bool) {
+rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:runtime.Allocator,task:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil) -> (result:string,error:Error,ok:bool) {
     w:serial.Writer
     serial.writer_init(&w,len(params)+128,allocator)
     raw(&w,`{"jsonrpc":"2.0","id":`);serial.text_write_int(&w,i64(id))
     raw(&w,`,"method":`);serial.text_write_string(&w,method)
     raw(&w,`,"params":`);raw(&w,params==""?"{}":params);raw(&w,"}")
-    status,body,post_error:=client_post(port,"/rpc",string(serial.writer_bytes(&w)),timeout_ms,allocator,task,"",client,watch)
+    status,body,post_error:=client_post(port,"/rpc",string(serial.writer_bytes(&w)),timeout_ms,allocator,task,"",client,watch,connection)
     if post_error.code!=0 {return "",post_error,false}
     envelope,valid:=envelope_read(allocator,string(body))
     if !valid {
