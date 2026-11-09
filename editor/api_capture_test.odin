@@ -16,7 +16,7 @@ capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^te
     context.allocator=context.temp_allocator
     root:="C:/games/demo" when ODIN_OS==.Windows else "/games/demo"
     resolved :: proc(t:^testing.T,root,path,expected:string,loc:=#caller_location) {
-        file,problem:=api_output_path(root,path)
+        file,problem:=api_file_path(root,path)
         testing.expectf(t,problem=="" && file==expected,"%s: %s %s",path,file,problem,loc=loc)
     }
     resolved(t,root,"shots/a.png",fmt.tprintf("%s/shots/a.png",root))
@@ -24,12 +24,12 @@ capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^te
     when ODIN_OS==.Windows {
         resolved(t,root,"/c/Users/me/shots/a.png","C:/Users/me/shots/a.png")
         resolved(t,root,"D:\\shots\\b.png","D:/shots/b.png")
-        _,rooted:=api_output_path(root,"/tmp/a.png")
+        _,rooted:=api_file_path(root,"/tmp/a.png")
         testing.expect(t,strings.contains(rooted,"C:/...") && strings.contains(rooted,"the folder of the project, C:/games/demo"),rooted)
     } else {
         resolved(t,root,"/tmp/a.png","/tmp/a.png")
     }
-    _,problem:=api_output_path(root,"")
+    _,problem:=api_file_path(root,"")
     testing.expect(t,strings.contains(problem,"path is required"),problem)
 }
 

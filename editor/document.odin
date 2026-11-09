@@ -56,6 +56,17 @@ Document :: struct {
 document_path :: proc(d:^Document) -> string {return string(d.path[:d.path_length])}
 document_file :: proc(d:^Document) -> string {return string(d.file[:d.file_length])}
 
+// The folder of the file of the open scene, absolute: a new asset of the scene
+// goes beside it, so assets stay together by what they belong to. otherwise
+// while the scene has no file.
+scene_folder :: proc(s:^Session,otherwise:string) -> string {
+    if s.document!=nil {
+        file:=document_file(s.document)
+        if at:=strings.last_index_byte(file,'/');at>0 {return file[:at]}
+    }
+    return otherwise
+}
+
 document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || edits_scene_state(s.edits)!=s.document.saved}
 
 // The name a person reads for the scene.

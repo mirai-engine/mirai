@@ -26,6 +26,7 @@ Foliage_Api :: struct {provider:editor.Api_Provider}
 FOLIAGE_API_DEFAULT :: Foliage_Api{provider={register=foliage_api_register}}
 
 Create_Params :: struct {
+    name:[128]u8 `mirai:"text,optional,label=The name of its entity and of its file; omitted: Foliage and a number"`,
     at:[3]f32 `mirai:"optional,label=Where its entity stands; omitted: under the target of the view"`,
 }
 
@@ -189,11 +190,29 @@ type_named :: proc(call:^api.Call,source:^foliage.Source,name:string) -> ^foliag
     return &source.types[at]
 }
 
+// The ground of a Foliage as the next frames find it: a terrain just made
+// reaches it with them.
+@(private)
+ground_settled :: proc(s:^editor.Session,e:core.Entity) -> ^foliage.Ground_Owner {
+    Waited :: struct {e:core.Entity}
+    held :: proc(s:^editor.Session,user:rawptr) -> ^foliage.Ground_Owner {
+        grounds:=core.world_storage_of(editor.edited_world(s),foliage.Foliage_Ground)
+        return grounds!=nil?foliage.ground_owner(grounds,(^Waited)(user).e):nil
+    }
+    waited:=Waited{e}
+    missing :: proc(s:^editor.Session,user:rawptr) -> bool {
+        owner:=held(s,user)
+        return owner==nil || owner.layer_count==0
+    }
+    editor.api_settle(s,&waited,missing)
+    return held(s,&waited)
+}
+
 // The bits of the layers of its rule that the names of a type stand for.
 @(private)
 rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owner,names:[][LAYER_NAME_BYTES]u8,count:int) -> (bits:u32,ok:bool) {
     for &name in names[:clamp(count,0,len(names))] {
-        if ground==nil || ground.layer_count==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain yet, so its rule has no layers to name: make the terrain first and step a frame");return}
+        if ground==nil || ground.layer_count==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain, so its rule has no layers to name: make the terrain first");return}
         at,problem:=asset.slot_named(asset.slot_names(&s.app.assets.registry,ground.layers[:ground.layer_count]),ground.layers[:ground.layer_count],base.text_get(name[:]),"layers of the terrain under the foliage")
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
         bits|=1<<u32(at)
@@ -231,7 +250,12 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     tool_ready(tool)
     s.toast_length=0
     world:=editor.edited_world(s)
-    e:=foliage_create(s,tool,world,s.app,p.at,editor.tool_call_given(call,"at"))
+    name:=base.text_get(p.name[:])
+    if name!="" {
+        if !editor.asset_stem_valid(name) {api.call_failf(call,api.INVALID_PARAMS,"name %q cannot name a file: leave out / \\ : * ? \" < > | and a leading dot",name);return}
+        if found,several:=editor.api_entity_find(world,name);found!=core.NONE || several!="" {api.call_failf(call,api.INVALID_PARAMS,"An entity is already named %q: give this one another name, or edit that one",name);return}
+    }
+    e:=foliage_create(s,tool,world,s.app,p.at,editor.tool_call_given(call,"at"),name)
     if e==core.NONE {editor.tool_call_fail(s,call,"The foliage could not be made");return}
     core.world_settle(world)
     w:=call.out
@@ -243,9 +267,10 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_add :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Add_Params)
-    tool,world,_,_,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     count,_:=api.params_array_count(call,"layers")
+    if count>0 {ground=ground_settled(s,e)}
     layers,named:=rule_layers(s,call,ground,p.layers[:],count)
     if !named {return}
     s.toast_length=0
@@ -263,12 +288,13 @@ api_type_add :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Set_Params)
-    tool,world,_,_,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     source:=&tool.edit.source
     t:=type_named(call,source,base.text_get(p.type[:]))
     if t==nil {return}
     count,_:=api.params_array_count(call,"layers")
+    if count>0 {ground=ground_settled(s,e)}
     layers,named:=rule_layers(s,call,ground,p.layers[:],count)
     if !named {return}
     if name:=base.text_get(p.name[:]);name!="" && name!=type_name(t) {

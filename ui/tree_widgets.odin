@@ -11,6 +11,26 @@ import "mirai:std/base"
 // controls are those of a game (game.odin), in the parts of the style the
 // node resolves to.
 
+// A Text: what its style fills, strokes or shades goes behind it as on a Box, a
+// box of the size of the node with its padding around the text.
+@(private)
+tree_build_text :: proc(ctx:^Context,node:^Node,style:^Node_Style,node_id:Id,content:string,reveal:f32) {
+    width,height:=node.layout.width,node.layout.height
+    if style.fill[3]==0 && style.fill2[3]==0 && style.stroke[3]==0 && !style.shadow {
+        text(ctx,content,style.text,width,height,node_id,reveal)
+        return
+    }
+    box:=tree_box(node,style,node_id)
+    box.float={}
+    padding:=node.layout.padding
+    if width.kind==.Fixed {width=fixed(max(width.value-padding[0]-padding[2],0))} else if width.kind!=.Fit {width=GROW}
+    if height.kind==.Fixed {height=fixed(max(height.value-padding[1]-padding[3],0))} else if height.kind!=.Fit {height=GROW}
+    widget_add(ctx,node_id,{.Passive})
+    box_begin(ctx,box)
+    text(ctx,content,style.text,width,height,0,reveal)
+    box_end(ctx,box)
+}
+
 @(private)
 tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,variant:u64,image_ref:Node_Image,content:string,selected,disabled:bool,anim:^Anim_Value) {
     tree,instance:=b.tree,b.instance
@@ -42,7 +62,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     reveal:=anim.reveal if anim!=nil && .Reveal in anim.set else 1
     #partial switch node.kind {
     case .Text:
-        text(ctx,content,style.text,node.layout.width,node.layout.height,node_id,reveal)
+        tree_build_text(ctx,node,style,node_id,content,reveal)
     case .Image:
         image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size})
     case .Progress:

@@ -746,7 +746,7 @@ qa_repro_write :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,v:^Qa_Viol
     text,wrong:=qa_repro_text(s,r,qa_of(s,r),v,allocator)
     if wrong!="" {return "",wrong}
     path:=fmt.tprintf("%s/bug_%d%s",editor.SCENARIO_FOLDER,v.tick,editor.SCENARIO_EXTENSION)
-    target,bad:=editor.api_output_path(s.project_root,path,context.temp_allocator)
+    target,bad:=editor.api_file_path(s.project_root,path,context.temp_allocator)
     if bad!="" {return "",bad}
     if why,_:=editor.api_output_prepare(target);why!="" {return "",why}
     if error:=os.write_entire_file(target,transmute([]u8)text);error!=nil {return "",fmt.tprintf("%s could not be written: %s",target,os.error_string(error))}

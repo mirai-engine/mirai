@@ -28,12 +28,13 @@ Terrain_Api :: struct {provider:editor.Api_Provider}
 TERRAIN_API_DEFAULT :: Terrain_Api{provider={register=terrain_api_register}}
 
 Create_Params :: struct {
+    name:[128]u8 `mirai:"text,optional,label=The name of its entity and of its file; omitted: of its kind and a number"`,
     kind:[16]u8 `mirai:"text,optional,label=heightfield or mesh (a 3D Terrain that may have caves) or volume; omitted: heightfield"`,
     samples:u32 `mirai:"optional,min=3,max=16385,label=Samples on a side over x and z"`,
     depth:u32 `mirai:"optional,min=3,max=129,label=Samples along y of a volume"`,
     spacing:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Between two samples"`,
     chunk_cells:u32 `mirai:"optional,min=4,max=256,label=Cells on a side of a chunk"`,
-    heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP whose heights it takes in place of samples"`,
+    heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP of the project whose heights it takes in place of samples"`,
     height_scale:f32 `mirai:"optional,unit=m,label=How far the white of the heightmap stands over its black"`,
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
     base_depth:f32 `mirai:"optional,min=0,unit=m,label=Of a 3D Terrain: how deep its solid goes under its lowest point; 0 an open surface"`,
@@ -209,6 +210,15 @@ layer_named :: proc(s:^editor.Session,call:^api.Call,source:^terrain.Source,name
     return at,true
 }
 
+// Whether a name can be that of a new terrain: its file takes it, and no other
+// entity has it, so the calls that name it find it.
+@(private)
+api_name_free :: proc(s:^editor.Session,call:^api.Call,name:string) -> bool {
+    if !editor.asset_stem_valid(name) {api.call_failf(call,api.INVALID_PARAMS,"name %q cannot name a file: leave out / \\ : * ? \" < > | and a leading dot",name);return false}
+    if e,several:=editor.api_entity_find(editor.edited_world(s),name);e!=core.NONE || several!="" {api.call_failf(call,api.INVALID_PARAMS,"An entity is already named %q: give this one another name, or edit that one",name);return false}
+    return true
+}
+
 @(private)
 api_create :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Create_Params)
@@ -222,7 +232,14 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     case "volume":      kind=.Volume
     case: api.call_fail(call,api.INVALID_PARAMS,"kind is heightfield, mesh or volume");return
     }
+    name:=base.text_get(p.name[:])
+    if name!="" && !api_name_free(s,call,name) {return}
     path:=base.text_get(p.heightmap[:])
+    if path!="" {
+        file,problem:=editor.api_file_path(s.project_root,path,context.temp_allocator)
+        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,fmt.tprintf("heightmap: %s",problem));return}
+        path=file
+    }
     if path!="" && kind==.Volume {api.call_fail(call,api.INVALID_PARAMS,"A volume starts as a solid block: a heightmap makes a heightfield or a mesh");return}
     tool.create_kind,tool.create_source=kind,path!=""?.Heightmap:.Plane
     tool.samples,tool.depth,tool.cell,tool.chunk_cells=int(p.samples),int(p.depth),p.spacing,int(p.chunk_cells)
@@ -236,7 +253,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
         ground=editor.api_entity(editor.edited_world(s),p.ground)
         if ground==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"ground %x is no entity: scene.inspect lists the terrains",p.ground);return}
     }
-    e:=terrain_create(s,tool,editor.edited_world(s),s.app,p.at,placed,ground)
+    e:=terrain_create(s,tool,editor.edited_world(s),s.app,p.at,placed,ground,name)
     if e==core.NONE {editor.tool_call_fail(s,call,"The terrain could not be made");return}
     world:=editor.edited_world(s)
     core.world_settle(world)
@@ -676,9 +693,14 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
     if imported=="" && exported=="" {api.call_fail(call,api.INVALID_PARAMS,"Give import_path or export_path");return}
     s.toast_length=0
     if imported!="" {
-        // Import works on the selected terrain, as the panel does.
-        editor.selection_set(editor.document_selection(s),{tool.stroke.entity})
-        if !heightmap_import(s,tool,world,s.app,imported) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
+        file,problem:=editor.api_file_path(s.project_root,imported,context.temp_allocator)
+        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+        if !heightmap_import(s,tool,world,s.app,file) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
+    }
+    if exported!="" {
+        file,problem:=editor.api_file_path(s.project_root,exported,context.temp_allocator)
+        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+        exported=file
     }
     if exported!="" && !heightmap_export(s,tool,exported) {editor.tool_call_fail(s,call,"The heightmap could not be written");return}
     w:=call.out
@@ -694,8 +716,6 @@ api_resize :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Resize_Params)
     tool,world,ok:=api_terrain(s,call,p.entity)
     if !ok {return}
-    e:=tool.stroke.entity
-    editor.selection_set(editor.document_selection(s),{e})
     s.toast_length=0
     if !terrain_resize(s,tool,world,s.app,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
     w:=call.out
