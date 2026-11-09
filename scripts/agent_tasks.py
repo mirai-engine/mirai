@@ -36,10 +36,21 @@ A task file is a JSON object:
   {"play": [<conditions of the play check method>]}                         the running game
   {"camera": {"target": [...]}}                                             the viewport's camera
   {"file": "folder/a.png", "png": [width, height]}                          a file the agent wrote
+  {"ui": "hud/a.ui", "nodes": {"name": {...}}, "document": {...}}           what ui.inspect gives
+  {"scenario": {"steps": [...]}}                                            a play scenario passes
 
 An entity is named by the names from its root joined by "/". An expected value is a number (within
 `tolerance`, 0.01 by default), a text, a list or object of expected values, null for anything,
 {"min": a, "max": b} or {"any": [values]}.
+
+A `ui` check names a .ui by its path under assets. `nodes` expects nodes of its document by name,
+wherever they nest: the keys of each as the document says them (a use has the name of its widget as
+`kind` and its parameters as keys) and `parent`, the name of the node that holds it, "" for a root.
+`document` expects the rest of it (tokens, styles, params). It also fails on each problem ui.check
+finds in that file, so an interface that binds what the game lacks never passes.
+
+A `scenario` check is a scenario of docs/game/testing/scenario.md, played from its first tick on the
+scene that is open: a step presses a button by its name and a play.check reads what the game did.
 """
 
 import argparse
@@ -66,6 +77,9 @@ WRITE = "scene.write"
 SAVE = "scene.save"
 PLAY_CHECK = "play.check"
 CAMERA = "camera.set"
+UI_INSPECT = "ui.inspect"
+UI_CHECK = "ui.check"
+SCENARIO = "play.scenario.run"
 
 RPC_TIMEOUT = 120
 TOLERANCE = 0.01
@@ -285,8 +299,55 @@ def check_file(check: dict, scene: Scene, session: Session) -> list[str]:
     return []
 
 
+def check_ui(check: dict, scene: Scene, session: Session) -> list[str]:
+    name = check["ui"]
+    tolerance = check.get("tolerance", TOLERANCE)
+    try:
+        document = session.rpc(UI_INSPECT, {"asset": name})["document"]
+        problems = session.rpc(UI_CHECK, {})["problems"]
+    except (RuntimeError, urllib.error.URLError) as error:
+        return [f"{name}: expected a .ui that reads, found {error}"]
+    # ui.check names a file as the editor shows it: without folder or extension.
+    failures = [f"{name}: expected no problem, found {problem['message']}"
+                for problem in problems if problem["asset"] == Path(name).stem]
+    nodes = {}
+
+    def walk(listed: list[dict], holder: str):
+        for node in listed:
+            nodes[node.get("name", "")] = {**node, "parent": holder}
+            walk(node.get("children", []), node.get("name", ""))
+
+    walk(document.get("nodes", []), "")
+    for node, expected in check.get("nodes", {}).items():
+        if node not in nodes:
+            failures.append(f"{name}: expected a node {node}, found {sorted(nodes)}")
+            continue
+        found = {key: value for key, value in nodes[node].items() if key != "children"}
+        if not matches(expected, found, tolerance):
+            failures.append(f"{name} node {node}: expected {json.dumps(expected)}, "
+                            f"found {json.dumps(found)}")
+    for key, expected in check.get("document", {}).items():
+        if not matches(expected, document.get(key), tolerance):
+            failures.append(f"{name} {key}: expected {json.dumps(expected)}, "
+                            f"found {json.dumps(document.get(key))}")
+    return failures
+
+
+def check_scenario(check: dict, scene: Scene, session: Session) -> list[str]:
+    path = session.project / ".mirai" / "tmp" / "task_scenario.mirai"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(check["scenario"]), "utf-8")
+    try:
+        answer = session.rpc(SCENARIO, {"path": path.as_posix()})
+    except (RuntimeError, urllib.error.URLError) as error:
+        return [f"the scenario: expected it to play, found {error}"]
+    return [f"the scenario: expected every step to pass, found {report['failure']}"
+            for report in answer["scenarios"] if not report["passed"]]
+
+
 CHECKS = {"entity": check_entity, "gone": check_gone, "count": check_count, "each": check_each,
-          "spread": check_spread, "play": check_play, "camera": check_camera, "file": check_file}
+          "spread": check_spread, "play": check_play, "camera": check_camera, "file": check_file,
+          "ui": check_ui, "scenario": check_scenario}
 
 
 def substituted(value, n: int):
@@ -310,17 +371,23 @@ def expanded(checks: list[dict]) -> list[dict]:
     return result
 
 
+def form_of(task: dict, check: dict) -> str:
+    """The form of a check, by the one key of it that names a form."""
+    kinds = [kind for kind in (*CHECKS, "unchanged") if kind in check]
+    if len(kinds) != 1:
+        raise Fatal(f"{task['name']}: a check needs one form of {[*CHECKS, 'unchanged']}: {check}")
+    return kinds[0]
+
+
 def evaluate(task: dict, session: Session, start: Scene) -> list[str]:
     scene = Scene(session)
     failures = []
     for check in expanded(task["checks"]):
-        if "unchanged" in check:
+        form = form_of(task, check)
+        if form == "unchanged":
             failures += check_unchanged(check, scene, session, start)
-            continue
-        kinds = [kind for kind in CHECKS if kind in check]
-        if len(kinds) != 1:
-            raise Fatal(f"{task['name']}: a check needs one form of {list(CHECKS)}: {check}")
-        failures += CHECKS[kinds[0]](check, scene, session)
+        else:
+            failures += CHECKS[form](check, scene, session)
     return failures
 
 
@@ -463,6 +530,12 @@ def load_tasks(names: list[str] | None) -> list[dict]:
     for path in sorted(TASKS.glob("*.json")):
         task = json.loads(path.read_text("utf-8"))
         task["name"] = path.stem
+        # A file no session could judge fails here, before any agent runs.
+        for key in ("prompt", "project", "checks"):
+            if key not in task:
+                raise Fatal(f"{task['name']}: a task needs {key}")
+        for check in expanded(task["checks"]):
+            form_of(task, check)
         tasks.append(task)
     known = [task["name"] for task in tasks]
     for name in names or []:
