@@ -112,13 +112,15 @@ Tree_Token_Use :: struct {
     key:Style_Key,
     token:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
 }
-// A parameter of a component: what a use of it says by name and where it
-// goes, a field of one of its nodes (empty node: its root).
+// A parameter of the widget of this file: what a use says by name and where it
+// goes, a field of one of its nodes (empty node: its root) or, past a use it
+// holds, a parameter of that widget. tree_link leaves them flat: each a path of
+// names and a field, as an override reaches them.
 Tree_Param :: struct {
-    component:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     node:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     field:Tree_Param_Field,
+    param:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a parameter of the use at node; empty: field of node
 }
 Tree_Param_Field :: enum u8 {Text,Style,Data,Bind_Text,Bind_Value,Bind_Visible,Bind_Selected,Bind_Disabled,Bind_Items,Bind_Image,Bind_Tint,Bind_Variant,Variant,Action,Tag,Accepts}
 Tree_Font :: struct {
@@ -151,7 +153,7 @@ Tree_Data :: struct {
     styles:[]Node_Style,
     variants:[]Tree_Style_Variant,
     components:[]Tree_Component,
-    component_nodes:[]Tree_Node,
+    component_nodes:[]Tree_Node, // what tree_link expands the widgets of components into; no file holds it
     overrides:[]Tree_Override,
     images:[]Tree_Image,
     anims:[]Tree_Anim,     // an Anim is its row plus one
@@ -166,7 +168,7 @@ Tree_Data :: struct {
     text:[]u8, // the texts of nodes and translations
     tokens:[]Tree_Token,         // values by name that styles and other files take
     token_uses:[]Tree_Token_Use, // which values of styles name them
-    params:[]Tree_Param,         // of its components, by name
+    params:[]Tree_Param,         // of the widget of this file
 }
 
 // A text of the records; empty when it is outside them.

@@ -486,27 +486,29 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
-### Authoring components
+### Widgets
 
-- A component is a range of `component_nodes` with a single root of any kind; a `Component` node
-  instantiates it, and one with `widget` takes its template from another `.ui`, named like one of
-  its components or its whole tree (`tree_link` expands it with its styles, variants, images, fonts
-  and animations before loading, once per file).
-- A row of `style_infos` with `from` is the named style of the file of that component: its look and
-  rules are copied into the row at link. A component with `library` only lends that, without
-  instances. A node flagged `Slot`, the last of its template, holds what the instance holds.
-- `tree_load` expands the components during the load into the same flat arrays: the frame neither
-  interprets templates nor allocates. There is no inheritance or virtual objects per widget.
-- The instance name is mandatory and gives the root (`menu`); local nodes become `menu/action` and
-  nested ones `menu/nested/action`, the name that identifies elements and events. The template's
-  paths read the sources of the interface that uses it; those that start with `@`, what the
-  instance's `data` names.
-- `component_fields` chooses properties of the instance that replace the template's root, and the
-  overrides change fields of a node by its local name. The load validates ranges, preorder, depth,
-  cycles (also in unused templates), override targets and the `TREE_EXPANDED_NODES` budget; errors
-  leave the tree empty.
-- Examples: the interfaces in `demo/assets/ui/interface/` (HUD variants, a button from another file
-  with overrides, controls, grid list with drag, localized texts).
+- A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
+  `Tree_Component.widget` names the file and its name is the name of the file. `library` is a file
+  that only lends its styles and tokens (`use` without a use); a style row with `from` is a named
+  style of that file, copied into the row at link.
+- `tree_link` expands each use into `component_nodes` (with the styles, variants, images, fonts
+  and animations of the file, once per file) and `tree_load` into the flat arrays: the frame
+  neither interprets uses nor allocates. There is no inheritance or virtual objects per widget.
+- A file holds no `component_nodes`; `first,count` exist only once linked.
+- `params` of a file: a name and a `node.field`, `field` of its root, or `node.param`, a parameter
+  of the widget that a use it holds uses. `tree_link` makes them flat, a path and a field, as an
+  override reaches them, and a use writes them as overrides.
+- A node flagged `Slot`, the last of the file, holds what a use holds.
+- The name of a use is mandatory and gives the root (`menu`); inner nodes become `menu/action` and
+  nested ones `menu/nested/action`, the name that identifies elements and events. Paths of the
+  widget read the sources of the interface that uses it; those that start with `@`, what the use's
+  `data` names.
+- `component_fields` chooses properties of the use that replace the root of its widget, and the
+  overrides change fields of a node by its path. The load validates rows, preorder, depth, cycles,
+  override targets and the `TREE_EXPANDED_NODES` budget; errors leave the tree empty.
+- Examples: `templates/game/assets/ui/` (`panel.ui`, `select_row.ui`, `check_row.ui`, `button.ui`)
+  and the interfaces in `demo/assets/ui/interface/`.
 
 ### World panels
 

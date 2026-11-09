@@ -64,7 +64,7 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     if !records_read(a,p.asset,&records,context.temp_allocator) {api.call_failf(call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the id of a .ui of the project (asset.list kind ui)",fmt.tprintf("%016x%016x",p.asset[0],p.asset[1]));return}
     data:=records_data(&records)
     imports,imported:=host.ui_tree_imports(a,data)
-    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",WIDGET_MISSING);return}
+    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",widget_why(a,data));return}
     preview:Preview
     defer preview_free(&preview)
     if !preview_load(&preview,app,data,imports,app.allocator) {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",load_why(a,data,imports));return}

@@ -51,7 +51,7 @@ nodes_chosen_together_are_deleted_and_duplicated_together :: proc(t:^testing.T) 
     r:Records
     if !ux_sample(t,&r) {return}
     defer records_destroy(&r)
-    copies:=records_duplicate_rows(&r,-1,{2,4})
+    copies:=records_duplicate_rows(&r,{2,4})
     testing.expect_value(t,len(copies),2)
     names:=ux_names(r.nodes[:])
     // bar and fuel are copied after fuel; menu after menu, two rows further.
@@ -62,7 +62,7 @@ nodes_chosen_together_are_deleted_and_duplicated_together :: proc(t:^testing.T) 
     testing.expect_value(t,copies[1],7)
     testing.expect_value(t,names[7],"menu1")
     testing.expect(t,ux_loads(&r))
-    records_delete_rows(&r,-1,{copies[0],copies[1],5})
+    records_delete_rows(&r,{copies[0],copies[1],5})
     testing.expect_value(t,len(r.nodes),7)
     testing.expect(t,ux_loads(&r))
 }

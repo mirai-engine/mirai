@@ -12,6 +12,7 @@ import "mirai:ui"
 // would refuse: what is written always loads. imports: the records of the
 // widgets its components name, as ui.tree_link takes them.
 ui_tree_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,imports:[]ui.Tree_Data={},allocator:=context.allocator) -> asset.Error {
+    for component in data.components {if component.widget=={} {return .Invalid}}
     linked,linked_ok:=ui.tree_link(data,imports)
     if !linked_ok {return .Invalid}
     textures:=make([]u32,len(linked.images),context.temp_allocator)
@@ -32,7 +33,6 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLES,data.styles) or_return
     asset.document_put(doc,types,asset.UI_TABLE_VARIANTS,data.variants) or_return
     asset.document_put(doc,types,asset.UI_TABLE_COMPONENTS,data.components) or_return
-    asset.document_put(doc,types,asset.UI_TABLE_COMPONENT_NODES,data.component_nodes,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_OVERRIDES,data.overrides) or_return
     asset.document_put(doc,types,asset.UI_TABLE_IMAGES,data.images) or_return
     asset.document_put(doc,types,asset.UI_TABLE_ANIMS,data.anims) or_return
@@ -79,7 +79,6 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.styles=rows(a,types,asset.UI_TABLE_STYLES,ui.Node_Style) or_return
     data.variants=rows(a,types,asset.UI_TABLE_VARIANTS,ui.Tree_Style_Variant) or_return
     data.components=rows(a,types,asset.UI_TABLE_COMPONENTS,ui.Tree_Component) or_return
-    data.component_nodes=rows(a,types,asset.UI_TABLE_COMPONENT_NODES,ui.Tree_Node) or_return
     data.overrides=rows(a,types,asset.UI_TABLE_OVERRIDES,ui.Tree_Override) or_return
     data.images=rows(a,types,asset.UI_TABLE_IMAGES,ui.Tree_Image) or_return
     data.anims=rows(a,types,asset.UI_TABLE_ANIMS,ui.Tree_Anim) or_return

@@ -106,7 +106,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     p:=Pane{s=s,u=u,needle=string(u.search[:u.search_length]),width=width-28}
     // A node inside a widget: its records are the widget's, and nothing of them changes here.
     x:=&u.ux
-    if x.peek.instance>=0 && x.peek.instance==u.selected && u.scope<0 {
+    if x.peek.instance>=0 && x.peek.instance==u.selected {
         if w:=widget_records(u,a,x.peek.widget);w!=nil && x.peek.row<len(w.nodes) {
             records:=u.records
             selected,pending,change,label:=u.selected,u.pending,u.change,u.label
@@ -125,7 +125,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     for &problem,i in u.problem[:u.problem_count] {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(th.danger,36),stroke=ui.color_alpha(th.danger,120),radius=4}) {
             ui.paragraph(ctx,bind_problem_text(a,&problem),th.font_small,th.text)
-            if problem.row>=0 && problem.row!=u.selected && u.scope<0 {
+            if problem.row>=0 && problem.row!=u.selected {
                 if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",style=.Ghost,height=th.row,size=th.font_small}).clicked {choose_rows(u,{problem.row})}
             }
         }
@@ -151,6 +151,11 @@ properties_node :: proc(p:^Pane,a:^host.Assets) {
     section_end(p)
     if n.kind==.Component {
         if section(p,.Component,"Widget",.Prefab,whole=true) {section_component(p,a,n)}
+        section_end(p)
+    }
+    // What a file with one root declares of itself as a widget: on its root, or once it declares it.
+    if widget_declares(p.u) && (p.u.selected==0 || len(p.u.records.params)>0 || records_slot_row(&p.u.records)>=0) {
+        if section(p,.Parameters,"Parameters",.Prefab,whole=true) {section_parameters(p,a,n)}
         section_end(p)
     }
     if section(p,.Layout,"Layout",.Grid) {section_layout(p,n)}

@@ -16,13 +16,9 @@ Node_Fields :: bit_set[Node_Field; u32]
 NODE_FIELDS_UNKNOWN :: ~u32(1<<len(Node_Field)-1) // bits of Node_Fields that name no field
 Tree_Component :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
-    first,count:u32, // component_nodes range; parents are relative to this range
-    // A .ui whose tree is the template instead: one Box at its root. Its
-    // records join these when the tree is linked (tree_link); first and
-    // count are then the range they took.
-    widget:base.Asset_Id,
-    named:bool,   // widget: it is the component of the file called as this one, not the tree of the file
-    library:bool, // its file only lends its styles (Tree_Style_Info.from): no instance of it
+    first,count:u32, // the range of component_nodes tree_link expanded it into; 0 in a file
+    widget:base.Asset_Id, // the .ui whose one root is the widget; empty only once linked
+    library:bool, // its file only lends its styles and tokens (Tree_Style_Info.from): no instance of it
 }
 Tree_Override :: struct {
     instance:u32, // row in nodes, whose kind is Component
@@ -208,8 +204,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
 
 // The nodes of linked records (tree_link) with their components expanded, as
 // tree_load builds them: row i is node i of the Widget_Tree, named by its path.
-// part>=0: those of that component, row as in components, named from its root.
-tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator,part:int=-1) -> (nodes:[]Tree_Node,ok:bool) {
+tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree_Node,ok:bool) {
     if len(data.components)>=int(max(u16)) || len(data.nodes)>TREE_EXPANDED_NODES {return nil,false}
     for &component,i in data.components {
         // A widget names a file the records must be linked with first.
@@ -238,21 +233,14 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator,part:int=-1) -> (
         _,valid:=tree_expand_range(&e,data.component_nodes[component.first:][:component.count],-1,"","",-2,1)
         if !valid {return nil,false}
     }
-    run:=data.nodes
-    instance,depth:=i32(-1),0
-    if part>=0 {
-        if part>=len(data.components) || data.components[part].library {return nil,false}
-        run,instance,depth=data.component_nodes[data.components[part].first:][:data.components[part].count],-2,1
-        e.components[0]=u16(part+1)
-    }
     e.count=0
-    _,valid:=tree_expand_range(&e,run,-1,"","",instance,depth)
+    _,valid:=tree_expand_range(&e,data.nodes,-1,"","",-1,0)
     if !valid {return nil,false}
-    if part<0 {for found in matched {if !found {return nil,false}}}
+    for found in matched {if !found {return nil,false}}
     nodes,error=make([]Tree_Node,e.count,allocator)
     if error!=nil {return nil,false}
     e.output,e.count=nodes,0
-    _,valid=tree_expand_range(&e,run,-1,"","",instance,depth)
+    _,valid=tree_expand_range(&e,data.nodes,-1,"","",-1,0)
     if !valid {delete(nodes,allocator);return nil,false}
     return nodes,true
 }

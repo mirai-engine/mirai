@@ -63,7 +63,6 @@ Preview :: struct {
     tree:ui.Widget_Tree,
     instance:ui.Tree_Instance,
     change:u64,      // of the records it was made from; 0: none
-    scope:Scope,
     assets:u64,      // revision of the assets its images and programs were resolved at
     info:^core.World_Info, // of the game its samples were made from
     valid:bool,      // the records load
@@ -379,25 +378,20 @@ samples_shown :: proc(p:^Preview) {
 
 // ---------------------------------------------------------------- the tree
 
-// Makes the tree again when the records, the scope, the assets or the game changed.
+// Makes the tree again when the records, the assets or the game changed.
 @(private)
 preview_update :: proc(u:^Ui_Inspector,app:^host.App,allocator:runtime.Allocator) {
     a:=app.assets
     p:=&u.preview
-    if p.change==u.change && p.scope==u.scope && p.assets==a.revision && p.info==app.info {return}
+    if p.change==u.change && p.assets==a.revision && p.info==app.info {return}
     // An edit does not play again what the nodes animate when they appear.
     states:[]ui.Anim_State
     if p.valid {states=make([]ui.Anim_State,len(p.instance.states),context.temp_allocator);copy(states,p.instance.states)}
     center,drawn,scale,game:=p.center,p.drawn,p.scale,p.game
     preview_free(p)
-    p.change,p.scope,p.assets,p.info=u.change,u.scope,a.revision,app.info
+    p.change,p.assets,p.info=u.change,a.revision,app.info
     p.center,p.drawn,p.scale,p.game=center,drawn,scale,game
     data:=records_data(&u.records)
-    if u.scope>=0 {
-        list:=records_list(&u.records,u.scope)
-        if list==nil {return}
-        data.nodes,data.overrides=list[:],nil
-    }
     imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
     if !imported {return}
     preview_load(p,app,data,imports,allocator)

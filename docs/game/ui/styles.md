@@ -1,9 +1,10 @@
 # Styles, tokens and shared components
 
 The look of a `.ui` is by name, in its document ([writing-ui.md](writing-ui.md)): tokens, styles
-that extend others, states inline, the layout nodes share, components with parameters and named
-animations. Each resolves when the file is written and linked, never per frame. The template's
-`assets/ui/theme.ui` is the example: read it with `ui.inspect asset=ui/theme.ui`.
+that extend others, states inline, the layout nodes share, and named animations. Each resolves when
+the file is written and linked, never per frame. A reusable piece is a widget, a `.ui` of its own.
+The template's `assets/ui/theme.ui` is the example of tokens and styles, and `assets/ui/panel.ui`,
+`select_row.ui`, `check_row.ui` and `button.ui` of widgets: read them with `ui.inspect`.
 
 ## Tokens and styles
 
@@ -44,37 +45,41 @@ animations. Each resolves when the file is written and linked, never per frame. 
 
 ## Share across files
 
-A document that says `"use": ["ui/theme.ui"]` names the tokens, styles and components of that file;
-no file is special. A node that takes a style of it follows the changes of that file when it loads.
+A document that says `"use": ["ui/theme.ui"]` names the tokens and styles of that file. No file is
+special. A node that takes a style of it follows the changes of that file when it loads.
 
-## Components
+## Widgets
 
-A component is a piece a screen uses by name, declared with what it takes and where each goes:
-
-```json
-"components": {
-  "panel": {"params": {"heading": "heading.text"}, "kind": "Box", "style": "panel", "slot": true,
-    "children": [{"name": "heading", "kind": "Text", "style": "heading"}]},
-  "select_row": {"params": {"label": "label.text", "options": "control.text", "bind": "data"},
-    "kind": "Box", "style": "row",
-    "children": [{"name": "label", "kind": "Text", "style": "row_label"},
-                 {"name": "control", "kind": "Selector", "style": "selector", "bind_value": "@"}]}
-}
-```
+A component is a widget: a `.ui` of its own, made and edited like any other, one root and what a
+use says by name. `use` it and name it by its file, without an extension. This is
+`assets/ui/select_row.ui`:
 
 ```json
-{"name": "pause", "kind": "panel", "heading": "Paused", "width": 470, "children": [
-  {"name": "resume", "kind": "Button", "style": "button", "text": "Resume"}]}
-{"name": "quality", "kind": "select_row", "label": "Quality", "options": "Low|High",
- "bind": "Graphics_Settings.quality"}
+{"use": ["ui/theme.ui"],
+ "params": {"label": "label.text", "options": "control.text", "bind": "data"},
+ "nodes": [{"name": "row", "kind": "Box", "style": "row", "children": [
+   {"name": "label", "kind": "Text", "style": "row_label"},
+   {"name": "control", "kind": "Selector", "style": "selector", "bind_value": "@"}]}]}
 ```
 
-- A use says the parameters by name, the keys of a node for its root, and `children` for what it
-  holds. A parameter goes to `node.field` (`text`, `style`, `bind_text`, `bind_value`, `data`...) or
-  to `field` of the root. A node with `"slot": true`, the last of the template, holds what a use
-  holds.
-- `data` gives what paths in `@` read in the template: a path of the game. The visual editor shows
-  the parameters of a use in its Widget card.
+And a screen that uses it:
+
+```json
+{"use": ["ui/theme.ui", "ui/select_row.ui"],
+ "nodes": [{"name": "quality", "kind": "select_row", "label": "Quality",
+            "options": "Low|High", "bind": "Graphics_Settings.quality"}]}
+```
+
+- `params` says where each goes: `node.field` (`text`, `style`, `bind_text`, `bind_value`,
+  `data`...) or `field` of its root. Past a widget it uses, `node.parameter` hands a parameter of
+  that one to its own uses. A use says them by name, and the keys of a node for its root;
+  `children` is what it holds.
+- A node with `"slot": true`, the last of its file, holds what a use holds.
+- `data` gives what paths that start with `@` read: `@` is that path of the game, `@hp` its field
+  `hp`. Paths of the rest of the widget read what the screen reads.
+- The visual editor shows them: a root has a Parameters card, each use a row per parameter in its
+  Widget card, and "Make widget" makes one of a Box with a parameter per named text or binding.
+  What a use gave follows a parameter moved or renamed.
 
 ## Animations
 
@@ -90,5 +95,6 @@ tracks, sequences and parallels are in `ui.anim.set`.
 ## Pitfalls that fail silently
 
 - A name that resolves to nothing fails `ui.write` with what to fix, and `ui.check` says it for
-  every `.ui` of the project (a style renamed in the theme after a screen named it).
+  every `.ui` of the project (a style renamed in the theme after a screen named it; a parameter
+  whose node is gone; a file that uses another that uses it back or is missing).
 - A `.ui` that uses another needs that file at runtime: keep it in `assets/`.

@@ -8,9 +8,9 @@ changes `shell.ui` with `ui.write` (or the visual editor edits it) and the game 
 
 Read the look with `mirai rpc --project . ui.inspect asset=ui/theme.ui --select document`, change
 what you want and write it back with `ui.write` and `save=true`: tokens first (the colors and
-sizes), then the `button`, `control` and `panel` styles and the `select_row`, `check_row` and
-`panel` components the screens use ([styles.md](styles.md)). `shell.ui` only names them; keep its
-node names, since `shell_events` matches them.
+sizes), then the `button`, `control` and `panel` styles the widgets take; `button.ui`, `panel.ui`,
+`select_row.ui` and `check_row.ui` are the widgets the screens use ([styles.md](styles.md#widgets)).
+`shell.ui` only names them; keep its node names, since `shell_events` matches them.
 
 ## Add a page
 

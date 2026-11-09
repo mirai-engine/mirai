@@ -15,26 +15,27 @@ import "mirai:ui"
 
 // A .ui, or the subtree of one of its nodes, as a document: what ui.inspect
 // gives and ui.write takes back. It is the one way an agent writes a .ui:
-// tokens, styles with extends, states and layouts inline, components with
-// parameters, named animations, what it takes from other files by name, and
-// nodes nested that say what differs from a new node of their kind. Every
+// tokens, styles with extends, states and layouts inline, named animations,
+// the files it uses, the parameters the widget of this file takes, and nodes
+// nested that say what differs from a new node of their kind. Every
 // name stays in the file (ui.tree_settle resolves them), so ui.inspect gives
 // them back and ui.write of what it gave changes nothing. ui.write declares
 // what the document names: the nodes of the file, or of one node, become
 // those of the document, matched by name; what the file keeps of a node (its
-// translations, the overrides of an instance) stays; the styles, components
-// and animations it names become those, null takes one away, and those it
-// does not name stay.
+// translations, the overrides of an instance) stays; the styles and
+// animations it names become those, null takes one away, and those it does
+// not name stay.
 
 // A .ui a document takes names from.
 Doc_Lib :: struct {
     id:base.Asset_Id,
     records:Records,
+    linked:ui.Tree_Data, // linked with what it uses: its parameters, flat
 }
 
 // What a node gives by keys of its own, or keeps: none of it goes flat.
 @(private) DOCUMENT_NODE_SKIP :: [?]string{"kind","parent","name","text","text_id","style","image","anims","component","component_fields","layout","layout_own"}
-@(private) DOCUMENT_NODE_KEYS :: [?]string{"name","kind","widget","text","style","look","image","events","children","slot"}
+@(private) DOCUMENT_NODE_KEYS :: [?]string{"name","kind","text","style","look","image","events","children","slot"}
 @(private) DOCUMENT_EVENTS :: [?]string{"shown","hidden","hovered","unhovered","pressed","released","focused","unfocused","selected","unselected","clicked"}
 
 // The keys of a style in a document, in the order they are written.
@@ -51,7 +52,7 @@ Doc_Lib :: struct {
 }
 @(private) DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
 @(private) DOC_LAYOUT_FLAT :: [?]string{"width","height","direction","padding","gap","align_x","align_y","columns","span","self_x","self_y","aspect"}
-// The fields a parameter of a component can go to.
+// The fields a parameter of a widget can go to.
 @(private) DOC_PARAM_FIELDS :: [ui.Tree_Param_Field]string{.Text="text",.Style="style",.Data="data",.Bind_Text="bind_text",.Bind_Value="bind_value",.Bind_Visible="bind_visible",.Bind_Selected="bind_selected",.Bind_Disabled="bind_disabled",.Bind_Items="bind_items",.Bind_Image="bind_image",.Bind_Tint="bind_tint",.Bind_Variant="bind_variant",.Variant="variant",.Action="action",.Tag="tag",.Accepts="accepts"}
 
 @(private)
@@ -214,24 +215,96 @@ doc_padding_write :: proc(out:^serial.Writer,p:[4]f32) {
 
 // ---------------------------------------------------------------- names
 
-// The files a document takes names from: those the records already link, and
+// A .ui as a document takes names from it, linked with what it uses.
+doc_lib_read :: proc(a:^host.Assets,id:base.Asset_Id,allocator:mem.Allocator) -> (lib:Doc_Lib,ok:bool) {
+    lib.id=id
+    if !records_read(a,id,&lib.records,allocator) {return}
+    data:=records_data(&lib.records)
+    lib.linked=data
+    imports,imported:=host.ui_tree_imports(a,data,nil,allocator)
+    if !imported {return lib,true} // ui.check says why
+    if linked,linked_ok:=ui.tree_link(data,imports,allocator);linked_ok {lib.linked=linked}
+    return lib,true
+}
+
+// The files a document takes names from: those the records already name, and
 // those its "use" adds.
 @(private)
 doc_libs :: proc(args:^Tree_Args,r:^Records,extra:[]base.Asset_Id={}) -> [dynamic]Doc_Lib {
-    libs:=make([dynamic]Doc_Lib,args.call.allocator)
-    if args.session==nil || args.session.app.assets==nil {return libs}
-    a:=args.session.app.assets
+    libs:=make([dynamic]Doc_Lib,context.temp_allocator) // what a call allocates is bounded; these are whole files
+    if args.assets==nil {return libs}
     add :: proc(libs:^[dynamic]Doc_Lib,a:^host.Assets,id:base.Asset_Id,allocator:mem.Allocator) {
         if id=={} {return}
         for &lib in libs {if lib.id==id {return}}
-        records:Records
-        if records_read(a,id,&records,allocator) {append(libs,Doc_Lib{id,records})}
+        if lib,read:=doc_lib_read(a,id,allocator);read {append(libs,lib)}
     }
-    for &template in r.templates {
-        if template.component.widget!={} {add(&libs,a,template.component.widget,args.call.allocator)}
-    }
-    for id in extra {add(&libs,a,id,args.call.allocator)}
+    for &c in r.components {add(&libs,args.assets,c.widget,context.temp_allocator)}
+    for id in extra {add(&libs,args.assets,id,context.temp_allocator)}
     return libs
+}
+
+@(private)
+doc_lib_of :: proc(libs:[]Doc_Lib,id:base.Asset_Id) -> ^Doc_Lib {
+    for &lib in libs {if lib.id==id {return &lib}}
+    return nil
+}
+
+// The name a file goes by: its name without folder or extension.
+@(private)
+doc_use_name :: proc(a:^host.Assets,id:base.Asset_Id,fallback:string) -> string {
+    if a==nil {return fallback}
+    file,found:=asset.registry_find(&a.registry,id)
+    if !found {return fallback}
+    path:=file.path
+    path=path[strings.last_index_byte(path,'/')+1:]
+    if dot:=strings.last_index_byte(path,'.');dot>0 {path=path[:dot]}
+    return path
+}
+
+// The file a kind names, of those a document takes names from; none: no kind.
+@(private)
+doc_use_find :: proc(args:^Tree_Args,name:string) -> base.Asset_Id {
+    if args.libs==nil {return {}}
+    for &lib in args.libs {if doc_use_name(args.assets,lib.id,"")==name {return lib.id}}
+    return {}
+}
+
+// The id of a .ui a document names by its path.
+@(private)
+doc_use_resolve :: proc(args:^Tree_Args,path,what:string) -> (id:base.Asset_Id,ok:bool) {
+    call:=args.call
+    if args.assets==nil {api.call_failf(call,api.INVALID_PARAMS,"%s: no project to read '%s' from",what,path);return}
+    if args.session!=nil {
+        problem:string
+        if id,problem=editor.asset_resolve(args.session,path,".ui");problem!="" {api.call_failf(call,api.INVALID_PARAMS,"%s: %s",what,problem);return}
+    } else {
+        file,found:=asset.registry_find_path(&args.assets.registry,path)
+        if !found {api.call_failf(call,api.INVALID_PARAMS,"%s: no .ui at '%s'",what,path);return}
+        id=file.id
+    }
+    return id,true
+}
+
+// A file that names, itself or through what it uses, target: how it does it,
+// the files from the first to target; empty: it does not.
+@(private)
+doc_reaches :: proc(a:^host.Assets,from,target:base.Asset_Id) -> string {
+    walk :: proc(a:^host.Assets,id,target:base.Asset_Id,depth:int,chain:^[dynamic]string) -> bool {
+        if depth>=ui.TREE_DEPTH {return false}
+        append(chain,doc_path(a,id))
+        records:Records
+        if records_read(a,id,&records,context.temp_allocator) {
+            for &c in records.components {
+                if c.widget==target {return true}
+                if c.widget!={} && walk(a,c.widget,target,depth+1,chain) {return true}
+            }
+        }
+        pop(chain)
+        return false
+    }
+    chain:=make([dynamic]string,context.temp_allocator)
+    if !walk(a,from,target,0,&chain) {return ""}
+    return strings.join(chain[:]," -> ",context.temp_allocator)
 }
 
 @(private)
@@ -261,68 +334,14 @@ doc_style_row :: proc(args:^Tree_Args,r:^Records,name:string) -> int {
     return -1
 }
 
-// The template of the component called name: its row (plus one) of this file,
-// or a row made that names a file it takes components from; 0: none.
-@(private)
-doc_component_row :: proc(args:^Tree_Args,r:^Records,name:string) -> u16 {
-    for &template,i in r.templates {
-        if !template.component.library && serial.text_field(template.component.name[:])==name {return u16(i+1)}
-    }
-    if args.libs==nil {return 0}
-    for &lib in args.libs {
-        for &template in lib.records.templates {
-            if template.component.library || template.component.widget!={} || serial.text_field(template.component.name[:])!=name {continue}
-            row:=Template{component={widget=lib.id,named=true},nodes=make([dynamic]ui.Tree_Node,r.allocator)}
-            ui.tree_text_set(row.component.name[:],name)
-            append(&r.templates,row)
-            return u16(len(r.templates))
-        }
-    }
-    return 0
-}
-
-// The parameters of a component, of this file or of the file it is taken from.
-@(private)
-doc_params :: proc(args:^Tree_Args,r:^Records,name:string,allocator:=context.temp_allocator) -> []ui.Tree_Param {
-    list:=make([dynamic]ui.Tree_Param,allocator)
-    for &p in r.params {if serial.text_field(p.component[:])==name {append(&list,p)}}
-    if len(list)>0 || args.libs==nil {return list[:]}
-    for &lib in args.libs {
-        for &p in lib.records.params {if serial.text_field(p.component[:])==name {append(&list,p)}}
-        if len(list)>0 {break}
-    }
-    return list[:]
-}
-
-// The node of the template of a component, by its name, and the records it is in.
-@(private)
-doc_template_node :: proc(args:^Tree_Args,r:^Records,component:string,node:string) -> (found:ui.Tree_Node,source:^Records,ok:bool) {
-    look :: proc(rec:^Records,component,node:string) -> (found:ui.Tree_Node,ok:bool) {
-        for &template in rec.templates {
-            if template.component.widget!={} || serial.text_field(template.component.name[:])!=component {continue}
-            for &n in template.nodes {if serial.text_field(n.name[:])==node {return n,true}}
-        }
-        return
-    }
-    if found,ok=look(r,component,node);ok {return found,nil,true}
-    if args.libs!=nil {
-        for &lib in args.libs {
-            if found,ok=look(&lib.records,component,node);ok {return found,&lib.records,true}
-        }
-    }
-    return
-}
-
-// The row of the library component that lends the styles of a file, made the
-// first time.
+// The row of a component that names a file, to take its styles: one made the
+// first time lends them and makes no use.
 records_library :: proc(r:^Records,id:base.Asset_Id) -> u16 {
-    for &template,i in r.templates {
-        if template.component.widget==id && template.component.library {return u16(i+1)}
-    }
-    template:=Template{component={widget=id,library=true},nodes=make([dynamic]ui.Tree_Node,r.allocator)}
-    ui.tree_text_set(template.component.name[:],records_component_name(r,fmt.tprintf("use:%x",id[1])))
-    append(&r.templates,template)
-    return u16(len(r.templates))
+    for &c,i in r.components {if c.widget==id {return u16(i+1)}}
+    component:=ui.Tree_Component{widget=id,library=true}
+    ui.tree_text_set(component.name[:],records_component_name(r,fmt.tprintf("use:%x",id[1])))
+    append(&r.components,component)
+    return u16(len(r.components))
 }
 
 // A value of a style names a token: the one for that key, replaced. An empty
@@ -388,14 +407,29 @@ document_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,root:int
     key :: proc(out:^serial.Writer,name:string,comma:^bool) {api.write_key(out,name,!comma^);comma^=true}
     if root<0 {
         written:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        for &template in r.templates {
-            c:=&template.component
-            if c.widget=={} || !c.library && !c.named || slice.contains(written[:],c.widget) {continue}
+        for &template in r.components {
+            c:=&template
+            if c.widget=={} || slice.contains(written[:],c.widget) {continue}
             if len(written)==0 {key(out,"use",&comma);serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
             append(&written,c.widget)
             serial.text_write_string(out,doc_path(a,c.widget))
         }
         if len(written)>0 {serial.write_u8(out,']')}
+        if len(r.params)>0 {
+            key(out,"params",&comma);serial.write_u8(out,'{')
+            fields:=DOC_PARAM_FIELDS
+            for &p,i in r.params {
+                if i>0 {serial.write_u8(out,',')}
+                api.write_key(out,serial.text_field(p.name[:]),true)
+                node,param:=serial.text_field(p.node[:]),serial.text_field(p.param[:])
+                switch {
+                case param!="": serial.text_write_string(out,fmt.tprintf("%s.%s",node,param))
+                case node=="":  serial.text_write_string(out,fields[p.field])
+                case:           serial.text_write_string(out,fmt.tprintf("%s.%s",node,fields[p.field]))
+                }
+            }
+            serial.write_u8(out,'}')
+        }
         if len(r.tokens)>0 {
             key(out,"tokens",&comma);serial.write_u8(out,'{')
             for &t,i in r.tokens {
@@ -415,16 +449,6 @@ document_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,root:int
         document_style_write(out,types,r,row,true,a)
     }
     serial.write_u8(out,'}')
-    if root<0 {
-        locals:=false
-        for &template,i in r.templates {
-            if template.component.widget!={} {continue}
-            if !locals {key(out,"components",&comma);serial.write_u8(out,'{')} else {serial.write_u8(out,',')}
-            locals=true
-            document_component_write(out,types,r,i,libs,a)
-        }
-        if locals {serial.write_u8(out,'}')}
-    }
     key(out,"animations",&comma);serial.write_u8(out,'{')
     written=false
     for wanted,row in anims {
@@ -436,9 +460,7 @@ document_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,root:int
     serial.write_u8(out,'}')
     key(out,"nodes",&comma);serial.write_u8(out,'[')
     written=false
-    args:=Tree_Args{types=types}
-    if len(libs)>0 {l:=libs;args.libs=(^[dynamic]Doc_Lib)(nil);_=l}
-    w:=Doc_Write{out=out,types=types,r=r,libs=libs,assets=a,list=r.nodes[:],scope=-1}
+    w:=Doc_Write{out=out,types=types,r=r,libs=libs,assets=a,list=r.nodes[:]}
     for &n,row in r.nodes[first:last] {
         if root<0 && n.parent>=0 || root>=0 && first+row!=root {continue}
         if written {serial.write_u8(out,',')}
@@ -458,29 +480,6 @@ Doc_Write :: struct {
     libs:[]Doc_Lib,
     assets:^host.Assets,
     list:[]ui.Tree_Node,
-    scope:int,
-}
-
-@(private)
-document_component_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,row:int,libs:[]Doc_Lib,a:^host.Assets) {
-    template:=&r.templates[row]
-    name:=serial.text_field(template.component.name[:])
-    api.write_key(out,name,row==0 || true)
-    serial.write_u8(out,'{')
-    fields:=DOC_PARAM_FIELDS
-    written:=false
-    for &p in r.params {
-        if serial.text_field(p.component[:])!=name {continue}
-        if !written {api.write_key(out,"params",true);serial.write_u8(out,'{')} else {serial.write_u8(out,',')}
-        written=true
-        api.write_key(out,serial.text_field(p.name[:]),true)
-        node:=serial.text_field(p.node[:])
-        serial.text_write_string(out,node=="" ? fields[p.field] : fmt.tprintf("%s.%s",node,fields[p.field]))
-    }
-    if written {serial.write_u8(out,'}');serial.write_u8(out,',')}
-    w:=Doc_Write{out=out,types=types,r=r,libs=libs,assets=a,list=template.nodes[:],scope=row}
-    if len(template.nodes)>0 {document_node_body_write(&w,0,true)}
-    serial.write_u8(out,'}')
 }
 
 // A style: what it extends, each key it sets, its states, variants and rules.
@@ -818,32 +817,30 @@ doc_anim_short :: proc(r:^Records,row:int) -> bool {
 @(private)
 document_node_write :: proc(w:^Doc_Write,row:int) {
     serial.write_u8(w.out,'{')
-    document_node_body_write(w,row,false)
+    document_node_body_write(w,row)
     serial.write_u8(w.out,'}')
 }
 
-// What a node says, without its braces. inside: inside a component, whose
-// name and kind are the key that names it... the root keeps its keys.
+// What a node says, without its braces.
 @(private)
-document_node_body_write :: proc(w:^Doc_Write,row:int,component_root:bool) {
+document_node_body_write :: proc(w:^Doc_Write,row:int) {
     out:=w.out
     r:=w.r
     n:=w.list[row]
-    first:=true
-    if serial.text_field(n.name[:])!="" || !component_root {
-        api.write_text(out,"name",serial.text_field(n.name[:]),true);first=false
-    }
+    first:=false
+    api.write_text(out,"name",serial.text_field(n.name[:]),true)
     template:=int(n.component)-1
-    component_name:=""
+    widget:base.Asset_Id
     if n.kind==.Component {
-        if template>=0 && template<len(r.templates) {component_name=serial.text_field(r.templates[template].component.name[:])}
-        if template>=0 && template<len(r.templates) && r.templates[template].component.widget!={} && !r.templates[template].component.named {
-            doc_first(out,&first,"widget");serial.text_write_string(out,doc_path(w.assets,r.templates[template].component.widget))
-        } else {
-            api.write_text(out,"kind",component_name,first);first=false
+        component_name:=""
+        if template>=0 && template<len(r.components) {
+            c:=&r.components[template]
+            widget=c.widget
+            component_name=doc_use_name(w.assets,c.widget,serial.text_field(c.name[:]))
         }
+        api.write_text(out,"kind",component_name,first)
     } else {
-        api.write_text(out,"kind",fmt.tprintf("%v",n.kind),first);first=false
+        api.write_text(out,"kind",fmt.tprintf("%v",n.kind),first)
     }
     if text:=records_text(r,n.text);text!="" {api.write_text(out,"text",text)}
     style:=int(n.style)
@@ -877,9 +874,8 @@ document_node_body_write :: proc(w:^Doc_Write,row:int,component_root:bool) {
     // The values of the parameters of a use, by their names.
     root_fields:=make([dynamic]string,context.temp_allocator)
     fields:=DOC_PARAM_FIELDS
-    if n.kind==.Component && component_name!="" {
-        libs:=w.libs
-        for &p in doc_params_of(r,libs,component_name) {
+    if lib:=doc_lib_of(w.libs,widget);lib!=nil {
+        for &p in lib.linked.params {
             if value,has:=doc_param_value(w,row,&p);has {api.write_text(out,serial.text_field(p.name[:]),value)}
             if serial.text_field(p.node[:])=="" {append(&root_fields,fields[p.field])}
         }
@@ -895,18 +891,6 @@ document_node_body_write :: proc(w:^Doc_Write,row:int,component_root:bool) {
         document_node_write(w,child)
     }
     if children {serial.write_u8(out,']')}
-}
-
-@(private)
-doc_params_of :: proc(r:^Records,libs:[]Doc_Lib,name:string) -> []ui.Tree_Param {
-    list:=make([dynamic]ui.Tree_Param,context.temp_allocator)
-    for &p in r.params {if serial.text_field(p.component[:])==name {append(&list,p)}}
-    if len(list)>0 {return list[:]}
-    for &lib in libs {
-        for &p in lib.records.params {if serial.text_field(p.component[:])==name {append(&list,p)}}
-        if len(list)>0 {break}
-    }
-    return list[:]
 }
 
 // The group of fields of an instance or an override a field of a parameter is in.
@@ -955,7 +939,6 @@ doc_param_value :: proc(w:^Doc_Write,row:int,p:^ui.Tree_Param) -> (value:string,
         if group not_in n.component_fields {return "",false}
         target=n
     } else {
-        if w.scope>=0 {return "",false}
         for &o in r.overrides {
             if int(o.instance)==row && serial.text_field(o.node[:])==node && group in o.fields {target=&o.values;break}
         }
@@ -1093,8 +1076,7 @@ Document_Node :: struct {
     path:string,  // where it is in the document, for errors
     name:string,  // as declared; empty: none
     kind:ui.Node_Kind,
-    widget:base.Asset_Id,
-    component:string, // the component of a use, by its name
+    widget:base.Asset_Id, // the file of a use
     parent:int,   // index of the node that holds it; -1: one of the top
     row:int,      // of the node of the file it is matched to; -1: a new one
     current:string, // its name in the file while it is placed
@@ -1120,20 +1102,23 @@ document_row_of :: proc(r:^Records,name:string) -> int {
 document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made,removed:int,ok:bool) {
     call:=args.call
     keys,values:=tree_object(call,text,"document") or_return
-    use,tokens,styles,anims,components,nodes:string
+    use,params,tokens,styles,anims,nodes:string
     for key,i in keys {
         switch key {
         case "use":        use=values[i]
+        case "params":     params=values[i]
         case "tokens":     tokens=values[i]
         case "styles":     styles=values[i]
         case "animations": anims=values[i]
-        case "components": components=values[i]
         case "nodes":      nodes=values[i]
         case "widgets","fonts":
             api.call_failf(call,api.INVALID_PARAMS,"document.%s is what ui.inspect says beside the document; write back its document alone",key)
             return
+        case "components":
+            api.call_fail(call,api.INVALID_PARAMS,"document has no 'components': a component is a widget, a .ui of its own; write it as a file and name it in use")
+            return
         case:
-            api.call_failf(call,api.INVALID_PARAMS,"document has no '%s'; it has use, tokens, styles, components, animations and nodes",key)
+            api.call_failf(call,api.INVALID_PARAMS,"document has no '%s'; it has use, params, tokens, styles, animations and nodes",key)
             return
         }
     }
@@ -1145,10 +1130,15 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
         for item,i in items {
             path,is_text:=doc_string(call,item)
             if !is_text {api.call_failf(call,api.INVALID_PARAMS,"use[%d] must be the path of a .ui",i);return}
-            if args.session==nil {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: no project to read '%s' from",i,path);return}
-            id,problem:=editor.asset_resolve(args.session,path,".ui")
-            if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: %s",i,problem);return}
+            what:=fmt.tprintf("use[%d]",i)
+            id:=doc_use_resolve(args,path,what) or_return
             if id==args.asset {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: a .ui takes names from other files, not from itself",i);return}
+            if chain:=doc_reaches(args.assets,id,args.asset);chain!="" {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: '%s' uses this file back, a cycle: %s",i,path,chain);return}
+            name:=doc_use_name(args.assets,id,"")
+            for k in ui.Node_Kind {if fmt.tprintf("%v",k)==name {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: a node kind goes by the name '%s'; give the file another",i,name);return}}
+            for other,j in used {
+                if other!=id && doc_use_name(args.assets,other,"")==name {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: '%s' goes by the name of use[%d]; a use names a widget by its file: give one another name",i,path,j);return}
+            }
             append(&used,id)
             records_library(r,id)
         }
@@ -1159,7 +1149,6 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
     if tokens!="" && !doc_tokens_apply(call,r,tokens) {return}
     gone_styles:=make([dynamic]string,call.allocator)
     gone_anims:=make([dynamic]string,call.allocator)
-    gone_components:=make([dynamic]string,call.allocator)
     if styles!="" {
         style_keys,style_values:=tree_object(call,styles,"styles") or_return
         // Every name first, so that a style can extend one declared after it.
@@ -1193,9 +1182,6 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
             if !document_anim_apply(args,r,name,anim_values[i]) {ok=document_failed(call,what);return}
         }
     }
-    if components!="" {
-        if !document_components_apply(args,r,components,&gone_components) {return}
-    }
     if nodes!="" {
         made,removed=document_nodes_apply(args,r,root,nodes) or_return
     }
@@ -1213,18 +1199,6 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
         for &a,i in r.anims {if serial.text_field(a.name[:])==name {row=i;break}}
         if row>=0 {records_anim_remove(r,row)}
     }
-    for name in gone_components {
-        for &template,i in r.templates {
-            if template.component.widget!={} || serial.text_field(template.component.name[:])!=name {continue}
-            for &n in r.nodes {
-                if n.kind==.Component && int(n.component)==i+1 {api.call_failf(call,api.INVALID_PARAMS,"components.%s: nodes still use it; give them another component in the same document",name);return}
-            }
-            for i:=len(r.params)-1;i>=0;i-=1 {if serial.text_field(r.params[i].component[:])==name {ordered_remove(&r.params,i)}}
-            ordered_remove(&r.templates,i)
-            for &n in r.nodes {if n.kind==.Component && int(n.component)>i {n.component-=1}}
-            break
-        }
-    }
     for name in gone_styles {
         row:=tree_style_row(r,name)
         if row>=0 && !records_style_delete(r,row) {
@@ -1235,7 +1209,8 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
     // A named style a node of the file takes is of the family of that node.
     if root<0 {
         for &n in r.nodes {doc_style_family(r,&n)}
-        for &template in r.templates {for &n in template.nodes {doc_style_family(r,&n)}}
+        if params!="" && !document_params_apply(args,r,params) {return made,removed,false}
+        if !document_widget_shape(call,r) {return made,removed,false}
     }
     return made,removed,true
 }
@@ -1796,29 +1771,19 @@ document_nodes_read :: proc(args:^Tree_Args,r:^Records,text:string,parent:int,pa
         name,_,named:=tree_arg_string(&node_args,"name")
         if !named {return document_failed(call,d.path)}
         d.name=name
-        if text,has_widget,widget_ok:=tree_arg_string(&node_args,"widget");!widget_ok {
-            return document_failed(call,d.path)
-        } else if has_widget {
-            widget,problem:=editor.asset_resolve(args.session,text,".ui")
-            is_ui:=false
-            if args.registry!=nil {if record,found:=asset.registry_find(args.registry,widget);found {is_ui=record.kind==asset.KIND_UI}}
-            if problem!="" || !is_ui || widget==args.asset {api.call_failf(call,api.INVALID_PARAMS,"%s.widget: '%s' is not another .ui of the project",d.path,text);return false}
-            d.kind,d.widget=.Component,widget
-        } else {
-            kind_text,has_kind,kind_ok:=tree_arg_string(&node_args,"kind")
-            if !kind_ok {return document_failed(call,d.path)}
-            if !has_kind {api.call_failf(call,api.INVALID_PARAMS,"%s: kind is required: a Node_Kind or the name of a component; widget for an instance of another .ui",d.path);return false}
-            known:bool
-            for k in ui.Node_Kind {if k!=.Component && fmt.tprintf("%v",k)==kind_text {d.kind,known=k,true}}
-            if !known {
-                row:=doc_component_row(args,r,kind_text)
-                if row==0 {
-                    if kind_text=="Component" {api.call_failf(call,api.INVALID_PARAMS,"%s: give the name of the component in kind, or widget",d.path);return false}
-                    api.call_failf(call,api.INVALID_PARAMS,"%s: kind '%s' is no Node_Kind and no component of this file or of a file it uses; components declares one, and use takes a file",d.path,kind_text)
-                    return false
-                }
-                d.kind,d.component=.Component,kind_text
+        if _,has_widget:=tree_arg(&node_args,"widget");has_widget {api.call_failf(call,api.INVALID_PARAMS,"%s.widget: name the file in use and the widget by the name of its file in kind",d.path);return false}
+        kind_text,has_kind,kind_ok:=tree_arg_string(&node_args,"kind")
+        if !kind_ok {return document_failed(call,d.path)}
+        if !has_kind {api.call_failf(call,api.INVALID_PARAMS,"%s: kind is required: a Node_Kind or the name of a widget the document uses",d.path);return false}
+        known:bool
+        for k in ui.Node_Kind {if k!=.Component && fmt.tprintf("%v",k)==kind_text {d.kind,known=k,true}}
+        if !known {
+            d.widget=doc_use_find(args,kind_text)
+            if d.widget=={} {
+                api.call_failf(call,api.INVALID_PARAMS,"%s: kind '%s' is no Node_Kind and no widget of a file this one uses; use names a file, and its name without folder or extension is the kind",d.path,kind_text)
+                return false
             }
+            d.kind=.Component
         }
         if children,found:=tree_arg(&node_args,"children");found {
             index:=len(out)
@@ -1838,10 +1803,8 @@ document_same_kind :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node) 
     if n.kind!=d.kind {return false}
     if n.kind!=.Component {return true}
     template:=int(n.component)-1
-    if template<0 || template>=len(r.templates) {return false}
-    c:=&r.templates[template].component
-    if d.widget!={} {return c.widget==d.widget}
-    return serial.text_field(c.name[:])==d.component
+    if template<0 || template>=len(r.components) {return false}
+    return r.components[template].widget==d.widget
 }
 
 // The nodes of the file, or of root, become those of the document: matched
@@ -1935,13 +1898,10 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
         }
         row:int
         if d.kind==.Component {
-            if d.widget!={} {
-                row=records_widget(r,-1,parent,d.widget,d.name if d.name!="" else "widget")
-            } else {
-                row=doc_instance_add(r,parent,doc_component_row(args,r,d.component),d.name)
-            }
+            file:=doc_use_name(args.assets,d.widget,"widget")
+            row=records_widget(r,parent,d.widget,d.name if d.name!="" else file,file)
         } else {
-            row=records_insert(r,-1,parent,d.kind)
+            row=records_insert(r,parent,d.kind)
         }
         if row<0 {api.call_failf(call,api.SERVER_ERROR,"%s: the node could not be made",d.path);return}
         if d.name!="" {ui.tree_text_set(r.nodes[row].name[:],d.name)}
@@ -1957,7 +1917,7 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
         for &d in decls {if name!="" && d.current==name {kept=true;break}}
         if !kept {
             removed+=1+records_subtree(r.nodes[:],row)
-            records_delete(r,-1,row)
+            records_delete(r,row)
         }
     }
     for &d in decls {
@@ -1970,26 +1930,12 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
     return made,removed,true
 }
 
-// A Component holds what its template's Slot holds; a Box and the other
+// A use holds what the Slot of its widget holds; a Box and the other
 // containers hold their own.
 @(private)
 doc_takes :: proc(call:^api.Call,r:^Records,parent:int) -> bool {
     if parent>=0 && r.nodes[parent].kind==.Component {return true}
     return tree_takes(call,r,parent)
-}
-
-// An instance of a component of the file as the last node inside parent.
-@(private)
-doc_instance_add :: proc(r:^Records,parent:int,component:u16,name:string) -> int {
-    list:=&r.nodes
-    if component==0 || parent<-1 || parent>=len(list) {return -1}
-    at:=len(list) if parent<0 else parent+records_subtree(list[:],parent)+1
-    node:=ui.Tree_Node{kind=.Component,parent=-1,component=component}
-    ui.tree_text_set(node.name[:],name if name!="" else "instance")
-    nodes:=[1]ui.Tree_Node{node}
-    if !records_put(r,-1,at,parent,nodes[:]) {return -1}
-    records_name_free(r,-1,at)
-    return at
 }
 
 // The Node_Field a flat key of an instance sets.
@@ -2068,7 +2014,7 @@ document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node)
         if !tree_name_free(call,r,row,d.name) {return false}
         ui.tree_text_set(n.name[:],d.name)
     }
-    if !doc_node_keys_apply(args,r,n,-1,row,d) {return false}
+    if !doc_node_keys_apply(args,r,n,row,d) {return false}
     n=&r.nodes[row]
     n.flags=n.flags-{.Localized}+old.flags&{.Localized}
     node_args:=args^
@@ -2092,14 +2038,15 @@ document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node)
 }
 
 // What a node declares, written into n: its text, style name, image, events
-// and flat fields; a use of a component also its parameters. n is a node of
-// the tree (row>=0) or of a template (scope>=0).
+// and flat fields; a use of a widget also its parameters.
 @(private)
-doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,scope,row:int,d:^Document_Node) -> bool {
+doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d:^Document_Node) -> bool {
     call:=args.call
     n_args:=args^
     n_args.keys,n_args.values=d.keys,d.values
-    params:=doc_params(args,r,d.component) if d.component!="" else nil
+    lib:=doc_lib_of(doc_libs_slice(args),d.widget)
+    params:=lib.linked.params if lib!=nil else nil
+    use_name:=doc_use_name(args.assets,d.widget,"") if d.widget!={} else ""
     flat:=make([dynamic]string,call.allocator)
     param_values:=make([dynamic]string,call.allocator)
     reserved:=DOCUMENT_NODE_KEYS
@@ -2127,12 +2074,9 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,scope,row
         if is_instance {
             field,known:=doc_instance_field(key)
             if !known {
-                if d.component!="" {
-                    names:=make([dynamic]string,context.temp_allocator)
-                    for &p in params {append(&names,serial.text_field(p.name[:]))}
-                    return doc_failed(call,"%s has no parameter '%s'; it has %s, and the keys of a node",d.component,key,strings.join(names[:],", ",context.temp_allocator))
-                }
-                return doc_failed(call,"a widget of another .ui has no key '%s'",key)
+                names:=make([dynamic]string,context.temp_allocator)
+                for &p in params {append(&names,serial.text_field(p.name[:]))}
+                return doc_failed(call,"%s has no parameter '%s'; it has %s, and the keys of a node",use_name,key,strings.join(names[:],", ",context.temp_allocator))
             }
             n.component_fields+={field}
         }
@@ -2180,13 +2124,8 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,scope,row
         if !tree_fields_read(call,args.types,ui.Tree_Node,n,strings.to_string(b),"the node",refused[:],why[:]) {return false}
     }
     if slot {n.flags+={.Slot}}
-    if is_instance && d.component!="" {
-        if scope>=0 && len(param_values)>0 {
-            for &p in params {
-                if serial.text_field(p.node[:])!="" {return doc_failed(call,"a use inside a component takes its parameters from the component that holds it; give the nodes of this template their values there")}
-            }
-        }
-        if !doc_params_apply(args,r,n,row,scope,params,d,param_values[:]) {return false}
+    if is_instance {
+        if !doc_params_apply(args,r,n,row,params,d,param_values[:]) {return false}
     } else if len(param_values)>0 {
         return doc_failed(call,"this node takes no parameters")
     }
@@ -2257,21 +2196,19 @@ doc_node_events_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,events:
 // The values of the parameters a use gives, into its instance or the
 // overrides of the nodes they go to; those it does not give are taken away.
 @(private)
-doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row,scope:int,params:[]ui.Tree_Param,d:^Document_Node,given:[]string) -> bool {
+doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,params:[]ui.Tree_Param,d:^Document_Node,given:[]string) -> bool {
     call:=args.call
-    if scope<0 {
-        // What a parameter set before and this use does not name goes.
-        for &p in params {
-            node:=serial.text_field(p.node[:])
-            if node=="" {continue}
-            group:=doc_param_group(p.field)
-            for &o in r.overrides {
-                if int(o.instance)==row && serial.text_field(o.node[:])==node {o.fields-={group}}
-            }
+    // What a parameter set before and this use does not name goes.
+    for &p in params {
+        node:=serial.text_field(p.node[:])
+        if node=="" {continue}
+        group:=doc_param_group(p.field)
+        for &o in r.overrides {
+            if int(o.instance)==row && serial.text_field(o.node[:])==node {o.fields-={group}}
         }
-        for i:=len(r.overrides)-1;i>=0;i-=1 {
-            if int(r.overrides[i].instance)==row && r.overrides[i].fields=={} {ordered_remove(&r.overrides,i)}
-        }
+    }
+    for i:=len(r.overrides)-1;i>=0;i-=1 {
+        if int(r.overrides[i].instance)==row && r.overrides[i].fields=={} {ordered_remove(&r.overrides,i)}
     }
     for key in given {
         value_text:=doc_value_of(d,key)
@@ -2286,9 +2223,8 @@ doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row,scope:in
             target=n
             n.component_fields+={group}
         } else {
-            if scope>=0 {return doc_failed(call,"%s goes to a node of its template: a use inside a component says only what goes to the root",key)}
-            template,source,found:=doc_template_node(args,r,d.component,node)
-            if !found {return doc_failed(call,"%s goes to node '%s', which the component does not have",key,node)}
+            template,source,found:=doc_widget_node(args,d.widget,node)
+            if !found {return doc_failed(call,"%s goes to node '%s', which its widget does not have",key,node)}
             at:=records_override(r,row,node,{})
             if group not_in r.overrides[at].fields {records_override_field(r,at,group,true,source,template)}
             target=&r.overrides[at].values
@@ -2308,132 +2244,86 @@ doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row,scope:in
     return true
 }
 
-// The components a document declares, each a template built from its root
-// node, and the parameters that say where what a use gives goes.
+// The node a path of names reaches in a widget as a use expands it, and the
+// records its rows are of.
 @(private)
-document_components_apply :: proc(args:^Tree_Args,r:^Records,text:string,gone:^[dynamic]string) -> bool {
-    call:=args.call
-    keys,values:=tree_object(call,text,"components") or_return
-    for name in keys {
-        if strings.trim_space(values[slice.linear_search(keys[:],name) or_else 0])=="null" {
-            append(gone,name)
-        }
+doc_widget_node :: proc(args:^Tree_Args,widget:base.Asset_Id,path:string) -> (found:ui.Tree_Node,source:^Records,ok:bool) {
+    lib:=doc_lib_of(doc_libs_slice(args),widget)
+    if lib==nil {return}
+    expanded,expanded_ok:=ui.tree_expand(lib.linked,context.temp_allocator)
+    if !expanded_ok {return}
+    for &n in expanded {
+        if serial.text_field(n.name[:])!=path {continue}
+        source=new(Records,context.temp_allocator)
+        if !records_load(source,lib.linked,context.temp_allocator) {return}
+        return n,source,true
     }
-    for name,i in keys {
-        if strings.trim_space(values[i])=="null" {continue}
-        what:=fmt.tprintf("components.%s",name)
-        if name=="" || len(name)>=ui.TREE_NAME_CAPACITY {return doc_failed(call,"%s: a component has a name shorter than %d bytes",what,ui.TREE_NAME_CAPACITY)}
-        for k in ui.Node_Kind {
-            if fmt.tprintf("%v",k)==name {return doc_failed(call,"%s: a node kind goes by that name; give the component another",what)}
+    return
+}
+
+// The parameters the widget of this file takes, as the document declares
+// them; what the keys of a node name goes by another: each says where it
+// goes, a field of a node or, past a use, a parameter of its widget.
+@(private)
+document_params_apply :: proc(args:^Tree_Args,r:^Records,text:string) -> bool {
+    call:=args.call
+    keys,values:=tree_object(call,text,"params") or_return
+    clear(&r.params)
+    fields:=DOC_PARAM_FIELDS
+    for param,i in keys {
+        place:=fmt.tprintf("params.%s",param)
+        if len(param)>=ui.TREE_NAME_CAPACITY || param=="" {return doc_failed(call,"%s: give a name shorter than %d bytes",place,ui.TREE_NAME_CAPACITY)}
+        target,is_text:=doc_string(call,values[i])
+        if !is_text {return doc_failed(call,"%s must say where it goes: node.field, node.parameter of a use, or field for its root",place)}
+        node,last:=target,""
+        if dot:=strings.last_index_byte(target,'.');dot>=0 {node,last=target[:dot],target[dot+1:]} else {node,last="",target}
+        field:ui.Tree_Param_Field
+        is_field:=false
+        for f in ui.Tree_Param_Field {if fields[f]==last {field,is_field=f,true}}
+        p:ui.Tree_Param
+        ui.tree_text_set(p.name[:],param)
+        if node!="" {
+            n:=records_node_named(r,node)
+            if n==nil {
+                names:=make([dynamic]string,context.temp_allocator)
+                for &each in r.nodes {if name:=serial.text_field(each.name[:]);name!="" {append(&names,name)}}
+                return doc_failed(call,"%s: this file has no node '%s'; it has %s. To reach inside a use give its parameter: node.parameter",place,node,strings.join(names[:],", ",context.temp_allocator))
+            }
+            ui.tree_text_set(p.node[:],node)
+            if !is_field {
+                inner:=doc_lib_of(doc_libs_slice(args),r.components[n.component-1].widget) if n.kind==.Component && int(n.component)>0 && int(n.component)<=len(r.components) else nil
+                found:=false
+                names:=make([dynamic]string,context.temp_allocator)
+                if inner!=nil {for &q in inner.linked.params {append(&names,serial.text_field(q.name[:]));found||=serial.text_field(q.name[:])==last}}
+                if !found {return doc_failed(call,"%s: '%s' is no field a parameter can give and no parameter of '%s' (it has %s)",place,last,node,strings.join(names[:],", ",context.temp_allocator))}
+                ui.tree_text_set(p.param[:],last)
+                is_field=true
+            }
         }
-        row:=-1
-        for &template,t in r.templates {
-            if template.component.widget=={} && serial.text_field(template.component.name[:])==name {row=t;break}
+        if !is_field {
+            names:=make([dynamic]string,context.temp_allocator)
+            for f in ui.Tree_Param_Field {append(&names,fields[f])}
+            return doc_failed(call,"%s: '%s' is no field a parameter can give: %s",place,last,strings.join(names[:],", ",context.temp_allocator))
         }
-        if row<0 {
-            template:=Template{nodes=make([dynamic]ui.Tree_Node,r.allocator)}
-            ui.tree_text_set(template.component.name[:],name)
-            append(&r.templates,template)
-            row=len(r.templates)-1
-        }
-        if !doc_component_apply(args,r,row,name,values[i],what) {return false}
+        p.field=field
+        append(&r.params,p)
+        if why:=records_param_valid_name(r,len(r.params)-1);why!="" {return doc_failed(call,"%s: %s; give the parameter another",place,why)}
     }
     return true
 }
 
+// A file that declares parameters or a slot is a widget: one root, and the
+// slot the last node of it.
 @(private)
-doc_component_apply :: proc(args:^Tree_Args,r:^Records,row:int,name,text,what:string) -> bool {
-    call:=args.call
-    keys,values:=tree_object(call,text,what) or_return
-    params_text:=""
-    root_keys:=make([dynamic]string,call.allocator)
-    root_values:=make([dynamic]string,call.allocator)
-    for key,i in keys {
-        switch key {
-        case "params": params_text=values[i]
-        case: append(&root_keys,key);append(&root_values,values[i])
-        }
-    }
-    // The root node, as a node of a document is: it nests its children.
-    b:=strings.builder_make(call.allocator)
-    strings.write_byte(&b,'{')
-    for key,i in root_keys {
-        if i>0 {strings.write_byte(&b,',')}
-        fmt.sbprintf(&b,"%q:%s",key,root_values[i])
-    }
-    strings.write_byte(&b,'}')
-    decls:=make([dynamic]Document_Node,call.allocator)
-    array:=fmt.tprintf("[%s]",strings.to_string(b))
-    if !document_nodes_read(args,r,array,-1,what,&decls) {return false}
-    if len(decls)==0 || decls[0].kind==.Component {return doc_failed(call,"%s: its root is a node of a kind, not a use of another component",what)}
-    tops:=0
-    for &d in decls {tops+=int(d.parent<0)}
-    if tops!=1 {return doc_failed(call,"%s: a component has one root",what)}
-    template:=&r.templates[row]
-    resize(&template.nodes,0)
-    for &d in decls {
-        n:=node_default(d.kind)
-        n.parent=-1
-        if d.parent>=0 {n.parent=i32(d.parent)}
-        if d.name!="" {ui.tree_text_set(n.name[:],d.name)}
-        if d.kind==.Component {
-            if d.widget!={} {return doc_failed(call,"%s: a whole .ui inside a component is not taken yet: give it as a node of the screen",what)}
-            n.component=doc_component_row(args,r,d.component)
-            if n.component==0 {return doc_failed(call,"%s: no component '%s'",what,d.component)}
-        }
-        if !doc_node_keys_apply(args,r,&n,row,-1,&d) {return document_failed(call,d.path)}
-        node_args:=args^
-        node_args.keys,node_args.values=d.keys,d.values
-        if _,has_style:=tree_arg(&node_args,"style");!has_style && n.kind!=.Component {n.style=records_kind_look(r,n.kind)}
-        append(&r.templates[row].nodes,n)
-    }
-    template=&r.templates[row]
-    for &n,i in template.nodes {
-        if .Slot in n.flags {
-            if end:=i+records_subtree(template.nodes[:],i);end!=len(template.nodes)-1 {return doc_failed(call,"%s: a node after the Slot of a component: the Slot is the last of its template",what)}
-        }
-    }
-    // Its parameters, declared with where each goes.
-    for i:=len(r.params)-1;i>=0;i-=1 {
-        if serial.text_field(r.params[i].component[:])==name {ordered_remove(&r.params,i)}
-    }
-    if params_text=="" {return true}
-    fields:=DOC_PARAM_FIELDS
-    param_keys,param_values:=tree_object(call,params_text,"params") or_return
-    reserved:=DOCUMENT_NODE_KEYS
-    for param,i in param_keys {
-        place:=fmt.tprintf("%s.params.%s",what,param)
-        if len(param)>=ui.TREE_NAME_CAPACITY || param=="" {return doc_failed(call,"%s: too long",place)}
-        known_keys:=DOC_LAYOUT_FLAT
-        if slice.contains(reserved[:],param) || slice.contains(known_keys[:],param) {return doc_failed(call,"%s: a node has a key of that name; give the parameter another",place)}
-        if _,is_node:=doc_instance_field(param);is_node {return doc_failed(call,"%s: a node has a key of that name; give the parameter another",place)}
-        target,is_text:=doc_string(call,param_values[i])
-        if !is_text {return doc_failed(call,"%s must say where it goes: node.field or field for its root",place)}
-        node,field_text:string
-        if dot:=strings.last_index_byte(target,'.');dot>=0 {node,field_text=target[:dot],target[dot+1:]} else {field_text=target}
-        field:ui.Tree_Param_Field
-        ok:=false
-        for f in ui.Tree_Param_Field {if fields[f]==field_text {field,ok=f,true}}
-        if !ok {
-            names:=make([dynamic]string,context.temp_allocator)
-            for f in ui.Tree_Param_Field {append(&names,fields[f])}
-            return doc_failed(call,"%s: '%s' is no field a parameter can give: %s",place,field_text,strings.join(names[:],", ",context.temp_allocator))
-        }
-        if node!="" {
-            found:=false
-            for &n in r.templates[row].nodes {found||=serial.text_field(n.name[:])==node}
-            if !found {
-                names:=make([dynamic]string,context.temp_allocator)
-                for &n in r.templates[row].nodes {if name:=serial.text_field(n.name[:]);name!="" {append(&names,name)}}
-                return doc_failed(call,"%s: the component has no node '%s'; it has %s",place,node,strings.join(names[:],", ",context.temp_allocator))
-            }
-        }
-        p:ui.Tree_Param
-        ui.tree_text_set(p.component[:],name)
-        ui.tree_text_set(p.name[:],param)
-        ui.tree_text_set(p.node[:],node)
-        p.field=field
-        append(&r.params,p)
+document_widget_shape :: proc(call:^api.Call,r:^Records) -> bool {
+    slot:=records_slot_row(r)
+    if len(r.params)==0 && slot<0 {return true}
+    roots:=0
+    for &n in r.nodes {roots+=int(n.parent<0)}
+    if roots!=1 {return doc_failed(call,"nodes: a file with params or a slot is a widget: it has one root and has %d",roots)}
+    if slot>=0 {
+        if slot+records_subtree(r.nodes[:],slot)!=len(r.nodes)-1 {return doc_failed(call,"nodes: a node after the slot; the slot is the last of its file")}
+        for &n,i in r.nodes {if i!=slot && .Slot in n.flags {return doc_failed(call,"nodes: two nodes are slots; a widget has one")}}
     }
     return true
 }

@@ -157,13 +157,9 @@ THEME_DOCUMENT :: `{"tokens":{"ink":"#102030","round":8},
     "focus":{"extends":"hover","stroke":"#00ff00","border":3},"pressed":{"scale":0.9},"variants":{"gold":{"fill":"#ffd700"}}},
 "row":{"width":"grow","gap":22,"align_y":"center"},
 "label":{"size":12,"color":"#000000"}},
-"components":{"select_row":{"params":{"label":"label.text","options":"control.text","bind":"control.bind_value","dim":"bind_visible"},"kind":"Box","style":"row","children":[
-    {"name":"label","kind":"Text","style":"label"},{"name":"control","kind":"Selector","style":"button","width":310}]}},
 "animations":{"pulse":{"scale":[1,1.2],"seconds":0.6,"ease":"In_Out_Quad","loop":"Ping_Pong"}},
 "nodes":[{"name":"panel","kind":"Box","style":"base","float":{"to":"Surface"},"children":[
-    {"name":"play","kind":"Button","style":"button","text":"Play","height":64,"events":{"shown":"pulse"}},
-    {"name":"quality","kind":"select_row","label":"Quality","options":"Low|High","bind":"Graphics_Settings.quality","dim":"Shell.settings_on"},
-    {"name":"vsync","kind":"select_row","label":"VSync","options":"Off|On","bind":"Graphics_Settings.vsync"}]}]}`
+    {"name":"play","kind":"Button","style":"button","text":"Play","height":64,"events":{"shown":"pulse"}}]}]}`
 
 @(private="file")
 document_of :: proc(t:^testing.T,types:^asset.Types,r:^Records,text:string) -> bool {
@@ -183,7 +179,7 @@ a_document_with_names_comes_back_the_same_and_changes_nothing_when_written :: pr
     r:Records
     if !document_of(t,&types,&r,THEME_DOCUMENT) {return}
     first:=document_text(&types,&r,-1)
-    for expected in ([]string{`"extends":"base"`,`"fill":"ink"`,`"focus":{"extends":"hover"`,`"pressed":{"scale":0.9`,`"width":"grow"`,`"radius":"round"`,`"pulse":{"scale":[1,1.2]`,`"label":"Quality"`,`"bind":"Graphics_Settings.vsync"`,`"params":{"label":"label.text"`,`"height":64`,`"kind":"select_row"`}) {
+    for expected in ([]string{`"extends":"base"`,`"fill":"ink"`,`"focus":{"extends":"hover"`,`"pressed":{"scale":0.9`,`"width":"grow"`,`"radius":"round"`,`"pulse":{"scale":[1,1.2]`,`"height":64`}) {
         testing.expectf(t,strings.contains(first,expected),"the document names %s: %s",expected,first)
     }
     testing.expect(t,!strings.contains(first,"#ff0000\",\"fields"),"no field masks")
@@ -229,51 +225,5 @@ what_a_style_extends_reaches_its_values_rules_and_nodes_when_they_change :: proc
     testing.expect_value(t,r.nodes[play].layout.width,ui.GROW)
     panel:=document_row_of(&r,"panel")
     testing.expect_value(t,r.nodes[panel].layout.padding,[4]f32{4,4,4,4})
-    testing.expect(t,records_load_as_tree(&r))
-}
-
-@(test)
-a_use_of_a_component_by_name_writes_its_parameters_and_they_are_read_back :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    r:Records
-    if !document_of(t,&types,&r,THEME_DOCUMENT) {return}
-    quality:=document_row_of(&r,"quality")
-    label:=-1
-    for &o,i in r.overrides {if int(o.instance)==quality && serial.text_field(o.node[:])=="label" {label=i}}
-    if !testing.expect(t,label>=0,"a parameter that goes to a node is an override of it") {return}
-    testing.expect_value(t,records_text(&r,r.overrides[label].values.text),"Quality")
-    testing.expect_value(t,serial.text_field(r.nodes[quality].bind_visible[:]),"Shell.settings_on")
-    testing.expect(t,.Bindings in r.nodes[quality].component_fields,"a parameter that goes to the root is the instance's")
-    // A use with fewer takes back what it does not say.
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
-    _,_,ok:=document_apply(&args,&r,quality,`{"nodes":[{"name":"quality","kind":"select_row","label":"Render scale"}]}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
-    quality=document_row_of(&r,"quality")
-    testing.expect_value(t,serial.text_field(r.nodes[quality].bind_visible[:]),"")
-    rows:=0
-    for &o in r.overrides {if int(o.instance)==quality {rows+=1}}
-    testing.expect_value(t,rows,1)
-    // An unknown parameter says what it has.
-    wrong:api.Call
-    wrong_args:=call_args(&wrong,&types,"{}")
-    _,_,failed:=document_apply(&wrong_args,&r,quality,`{"nodes":[{"name":"quality","kind":"select_row","colour":"x"}]}`)
-    testing.expect(t,!failed)
-    testing.expectf(t,strings.contains(wrong.error.message,"has no parameter 'colour'"),"%s",wrong.error.message)
-}
-
-@(test)
-a_parameter_changed_in_the_editor_writes_where_its_component_says_and_reads_back :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    r:Records
-    if !document_of(t,&types,&r,THEME_DOCUMENT) {return}
-    row:=document_row_of(&r,"quality")
-    params:=doc_params_of(&r,nil,"select_row")
-    if !testing.expect_value(t,len(params),4) {return}
-    testing.expect(t,records_param_set(&r,row,&params[0],"Quality level",nil,"select_row"))
-    testing.expect(t,records_param_set(&r,row,&params[3],"Shell.other",nil,"select_row"))
-    text:=document_text(&types,&r,-1)
-    testing.expect(t,strings.contains(text,`"label":"Quality level"`),"a parameter that goes to a node reads back by name")
-    testing.expect(t,strings.contains(text,`"dim":"Shell.other"`),"one that goes to the root too")
     testing.expect(t,records_load_as_tree(&r))
 }

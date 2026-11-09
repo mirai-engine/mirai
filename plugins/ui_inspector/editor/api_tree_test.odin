@@ -50,15 +50,15 @@ a_new_node_takes_the_style_the_file_names_for_its_kind :: proc(t:^testing.T) {
     // A box next to a card is not a card unless the file says so.
     append(&r.styles,ui.Node_Style{radius=8})
     append(&r.style_infos,ui.Tree_Style_Info{family=.Box})
-    card:=records_insert(&r,-1,0,.Box)
+    card:=records_insert(&r,0,.Box)
     r.nodes[card].style=u16(len(r.styles)-1)
-    beside:=records_insert(&r,-1,0,.Box)
+    beside:=records_insert(&r,0,.Box)
     testing.expect_value(t,r.nodes[beside].style,u16(0))
     // The first button brings the look of its kind, and the file names it for the next ones.
-    first:=records_insert(&r,-1,0,.Button)
+    first:=records_insert(&r,0,.Button)
     look:=int(r.nodes[first].style)
     testing.expect(t,look>0 && .Button in r.style_infos[look].defaults)
-    second:=records_insert(&r,-1,0,.Button)
+    second:=records_insert(&r,0,.Button)
     testing.expect_value(t,int(r.nodes[second].style),look)
     // A style named for them takes its place.
     call:api.Call
@@ -66,9 +66,9 @@ a_new_node_takes_the_style_the_file_names_for_its_kind :: proc(t:^testing.T) {
     primary:=tree_style_apply(&args,&r)
     if !testing.expectf(t,primary>0,"%s",call.error.message) {return}
     testing.expect(t,.Button not_in r.style_infos[look].defaults)
-    third:=records_insert(&r,-1,0,.Button)
+    third:=records_insert(&r,0,.Button)
     testing.expect_value(t,int(r.nodes[third].style),primary)
-    check:=records_insert(&r,-1,0,.Checkbox)
+    check:=records_insert(&r,0,.Checkbox)
     testing.expect_value(t,int(r.nodes[check].style),primary)
     // A kind takes only a style of its family.
     wrong:=call_args(&call,&types,`{"style":"primary","defaults":["Text"]}`)

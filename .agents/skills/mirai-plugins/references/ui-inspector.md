@@ -33,7 +33,8 @@ texts and the paths in their own file, and the authoring API in `api_tree.odin`.
   itself. The nodes of an unfolded instance are read-only (their own document changes them).
 - Copy, Paste, Duplicate and Delete act on all the chosen ones (a node inside another chosen one
   goes with it). **Make widget** moves a Box and what it has into a new `.ui` next to the file,
-  unsaved, and puts an instance in its place: what is reusable is another `.ui`.
+  unsaved, with a parameter per named text or binding, and puts a use in its place: what is
+  reusable is another `.ui`.
 - Copy stores the nodes as records of their own (`Clip_Nodes`) with the rows and texts that they
   use, so they paste into any `.ui` (`records_paste_rows`, `merge_put`): a named style of the same
   family, an animation with the same name, a font or a widget are those of the destination if it
@@ -172,8 +173,8 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`api_document.odin`): tokens, the files it `use`s, named styles with
-  `extends` and their states, layouts, components with `params`, named animations, and the nodes
+  `ui.write` takes back (`api_document.odin`): tokens, the files it `use`s, its `params`, named
+  styles with `extends` and their states, layouts, named animations, and the nodes
   nested by `children`, each with what differs from a new node of its type and what its style does
   not give. Reading back names: what is written and read back is the same, and what the visual
   editor changed reads back by name too.
@@ -186,15 +187,18 @@ changes nothing and says why.
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
     ([styles](#styles)), and an empty `style` is none.
-  - The tokens, styles, components and animations it names become what it says, `null` removes them
+  - The tokens, styles and animations it names become what it says, `null` removes them
     (a style that some node takes is not removed) and those it does not name stay. Without
     `nodes`, no node changes.
   - A name of the part cannot be outside it, and a name that resolves to nothing (style, token,
     component, parameter) fails: an error says where (`nodes[0].children[2]: …`) and changes
     nothing. `ui.check` says the same for every `.ui` of the project.
-  - A use says a component's parameters by name (`Tree_Param`): one that goes to a node of it is
-    an override of that node, one that goes to its root is the instance's; a use that does not say
-    one takes it away. The visual editor shows them in the Widget card.
+  - A use says the parameters of its widget by name (`Tree_Param`, flat after `tree_link`): one
+    that goes to a node of it, also past another use, is an override of that node, one that goes
+    to its root is the use's; a use that does not say one takes it away. The visual editor shows
+    them in the Widget card and the widget's own in the Parameters card of its root (add, rename,
+    remove, the node and field each drives, the slot); a parameter moved or removed follows in the
+    files that use it (`widget_params_follow`).
 - `ui.node.*` changes a node and what the call does not name stays. `fields` does not accept what
   has another key or its own method (parent, type, text, style, image, events): the error says
   which to use. `children` of `ui.node.add` adds a whole subtree in the same call: each child

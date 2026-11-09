@@ -269,7 +269,30 @@ BIND_PROBLEMS :: 16 // problems a check of one .ui reports at most
 // component or a parameter that resolves to nothing.
 Bind_Fault :: enum u8 {Path,Template,Widget,Load,Name}
 
-WIDGET_MISSING :: "a widget it uses is missing, does not load or uses it back"
+// Why the widgets the records name do not read: the first one missing, one
+// that is not a .ui that loads, or one that uses the file back.
+widget_why :: proc(a:^host.Assets,data:ui.Tree_Data) -> string {
+    walk :: proc(a:^host.Assets,data:ui.Tree_Data,stack:^[dynamic]base.Asset_Id,depth:int) -> string {
+        for &component in data.components {
+            id:=component.widget
+            if id=={} || depth>=ui.TREE_DEPTH {continue}
+            name:=serial.text_field(component.name[:])
+            record,found:=asset.registry_find(&a.registry,id)
+            if !found || record.kind!=asset.KIND_UI {return fmt.tprintf("it uses '%s', whose file is missing",name)}
+            if slice.contains(stack[:],id) {return fmt.tprintf("'%s' uses a file that uses it back: a cycle",record.path)}
+            records:Records
+            if !records_read(a,id,&records,context.temp_allocator) {return fmt.tprintf("'%s', which it uses, does not load",record.path)}
+            append(stack,id)
+            why:=walk(a,records_data(&records),stack,depth+1)
+            pop(stack)
+            if why!="" {return why}
+        }
+        return ""
+    }
+    stack:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    why:=walk(a,data,&stack,0)
+    return why if why!="" else "a widget it uses does not load"
+}
 
 // What the paths of a .ui fail at, against the types of the world: a node
 // of its records whose binding the game does not have, or why it does not load.
@@ -293,9 +316,9 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
         ui.tree_text_set(out[0].path[:],why)
         return 1
     }
-    if !imported {return fail(out,.Widget,WIDGET_MISSING)}
+    if !imported {return fail(out,.Widget,widget_why(a,data))}
     linked,linked_ok:=ui.tree_link(data,imports)
-    if !linked_ok {return fail(out,.Widget,"a widget it uses has no single root Box")}
+    if !linked_ok {return fail(out,.Widget,"a widget it uses has no single root")}
     tree:ui.Widget_Tree
     textures:=make([]u32,len(linked.images),context.temp_allocator)
     fonts:=make([]u8,len(linked.fonts),context.temp_allocator)
@@ -311,6 +334,11 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
         failure:=instance.failure
         if failure.capacity || failure.node<0 || failure.node>=tree.node_count {return}
         node:=&tree.nodes[failure.node]
+        // A path that starts with @ reads the data its uses give, and each use is checked where it is.
+        if !failure.template && strings.has_prefix(ui.tree_binding(&tree,node,failure.binding),"@") {
+            node.binds[failure.binding]={}
+            continue
+        }
         problem:=Bind_Problem{row=-1,node=failure.node,binding=failure.binding,fault=.Template if failure.template else .Path}
         if !failure.template {ui.tree_text_set(problem.path[:],ui.tree_binding(&tree,node,failure.binding))}
         // The row of the records it comes from, as the preview counts them.
@@ -355,7 +383,7 @@ bind_problem_name :: proc(problem:^Bind_Problem,linked:ui.Tree_Data,row:int,node
 // node its widget does not have, or records that contradict themselves.
 load_why :: proc(a:^host.Assets,data:ui.Tree_Data,imports:[]ui.Tree_Data) -> string {
     linked,ok:=ui.tree_link(data,imports)
-    if !ok {return "a widget it uses has no single root Box"}
+    if !ok {return "a widget it uses has no single root"}
     for &o in data.overrides {
         name:=serial.text_field(o.node[:])
         if int(o.instance)>=len(data.nodes) || data.nodes[o.instance].kind!=.Component {return fmt.tprintf("the override of '%s' is of a node that is not an instance",name)}
@@ -365,7 +393,7 @@ load_why :: proc(a:^host.Assets,data:ui.Tree_Data,imports:[]ui.Tree_Data) -> str
         if found {continue}
         c:=int(instance.component)-1
         widget:=data.components[c].widget if c>=0 && c<len(data.components) else {}
-        return fmt.tprintf("%s overrides '%s', which %s does not have",serial.text_field(instance.name[:]),name,editor.asset_name_of(a,widget,"missing") if widget!={} else "its template")
+        return fmt.tprintf("%s sets '%s', which %s does not have",serial.text_field(instance.name[:]),name,editor.asset_name_of(a,widget,"missing") if a!=nil else "its widget")
     }
     return "its records contradict themselves"
 }
@@ -477,8 +505,8 @@ bind_check_changed :: proc(u:^Ui_Inspector,allocator:runtime.Allocator,a:^host.A
         entry:=Ui_Checked{id=id,stamp={file.size,file.time},first=len(u.checked_uses)}
         records:Records
         if records_read(a,id,&records,context.temp_allocator) {
-            for &template in records.templates {
-                if template.component.widget!={} {append(&u.checked_uses,template.component.widget)}
+            for &template in records.components {
+                if template.widget!={} {append(&u.checked_uses,template.widget)}
             }
         }
         entry.count=len(u.checked_uses)-entry.first
@@ -534,13 +562,13 @@ records_names_check :: proc(a:^host.Assets,r:^Records,out:[]Bind_Problem) -> (co
     }
     libs:=make([dynamic]Doc_Lib,context.temp_allocator)
     args.libs=&libs
-    for &template in r.templates {
-        if template.component.widget=={} {continue}
+    for &template in r.components {
+        if template.widget=={} {continue}
         seen:=false
-        for &lib in libs {seen||=lib.id==template.component.widget}
+        for &lib in libs {seen||=lib.id==template.widget}
         if seen {continue}
         records:Records
-        if records_read(a,template.component.widget,&records,context.temp_allocator) {append(&libs,Doc_Lib{template.component.widget,records})}
+        if lib,read:=doc_lib_read(a,template.widget,context.temp_allocator);read {append(&libs,lib)}
     }
     has_style :: proc(r:^Records,libs:[]Doc_Lib,name:string) -> bool {
         if tree_style_row(r,name)>=0 {return true}
@@ -569,55 +597,30 @@ records_names_check :: proc(a:^host.Assets,r:^Records,out:[]Bind_Problem) -> (co
         }
     }
     for &p in r.params {
-        component:=serial.text_field(p.component[:])
         node:=serial.text_field(p.node[:])
+        param:=serial.text_field(p.param[:])
+        name:=serial.text_field(p.name[:])
         if node=="" {continue}
-        found:=false
-        for &template in r.templates {
-            if template.component.widget!={} || serial.text_field(template.component.name[:])!=component {continue}
-            for &n in template.nodes {found||=serial.text_field(n.name[:])==node}
-        }
-        if !found {report(out,&count,"the parameter '%s' of '%s' goes to node '%s', which the component does not have",serial.text_field(p.name[:]),component,node)}
-    }
-    for &n in r.nodes {
-        if n.kind!=.Component || n.component==0 || int(n.component)>len(r.templates) {continue}
-        c:=&r.templates[n.component-1].component
-        name:=serial.text_field(c.name[:])
-        if !c.named && c.widget=={} {continue}
-        if c.named {
-            found:=false
-            for &lib in libs {
-                if lib.id!=c.widget {continue}
-                for &other in lib.records.templates {found||=!other.component.library && serial.text_field(other.component.name[:])==name}
-            }
-            if !found {report(out,&count,"node '%s' uses the component '%s', which its file no longer has",serial.text_field(n.name[:]),name)}
-        }
-        // A parameter a use gives: that its node still exists is the check of the load.
-    }
-    for &o in r.overrides {
-        n:=&r.nodes[o.instance] if int(o.instance)<len(r.nodes) else nil
-        if n==nil || n.kind!=.Component || n.component==0 || int(n.component)>len(r.templates) {continue}
-        c:=&r.templates[n.component-1].component
-        if !c.named {continue}
-        name:=serial.text_field(c.name[:])
-        target:=serial.text_field(o.node[:])
+        n:=records_node_named(r,node)
+        if n==nil {report(out,&count,"the parameter '%s' goes to node '%s', which this file does not have",name,node);continue}
+        if param=="" {continue}
+        if n.kind!=.Component || int(n.component)==0 || int(n.component)>len(r.components) {report(out,&count,"the parameter '%s' goes to the parameter '%s' of node '%s', which is not the use of a widget",name,param,node);continue}
         found:=false
         for &lib in libs {
-            if lib.id!=c.widget {continue}
-            for &other in lib.records.templates {
-                if other.component.library || serial.text_field(other.component.name[:])!=name {continue}
-                for &tn in other.nodes {found||=serial.text_field(tn.name[:])==target}
-            }
+            if lib.id!=r.components[n.component-1].widget {continue}
+            for &inner in lib.linked.params {found||=serial.text_field(inner.name[:])==param}
         }
-        if !found {report(out,&count,"node '%s' sets node '%s' of '%s', which the component does not have",serial.text_field(n.name[:]),target,name)}
+        if !found {report(out,&count,"the parameter '%s' goes to '%s' of node '%s', which its widget no longer has",name,param,node)}
     }
+    roots:=0
+    for &n in r.nodes {roots+=int(n.parent<0)}
+    if (len(r.params)>0 || records_slot_row(r)>=0) && roots!=1 {report(out,&count,"it declares parameters or a slot, so it is a widget: it needs one root and has %d",roots)}
     return
 }
 
 // Whether the game lacks what a binding of the node chosen names.
 @(private)
 bind_failing :: proc(u:^Ui_Inspector,binding:ui.Binding) -> bool {
-    if u.scope>=0 {return false}
     for &problem in u.problem[:u.problem_count] {
         if problem.fault==.Path && problem.row==u.selected && problem.binding==binding {return true}
     }
@@ -649,8 +652,8 @@ widget_scope_of :: proc(a:^host.Assets,info:^core.World_Info,id:base.Asset_Id) -
         if file.kind!=asset.KIND_UI || file.id=={} || file.id==id {continue}
         records:Records
         if !records_read(a,file.id,&records,context.temp_allocator) {continue}
-        for &template,component in records.templates {
-            if template.component.widget!=id {continue}
+        for &template,component in records.components {
+            if template.widget!=id {continue}
             for &n,row in records.nodes {
                 data:=serial.text_field(n.data[:])
                 if n.kind!=.Component || int(n.component)!=component+1 || data=="" || strings.has_prefix(data,"@") {continue}
@@ -1198,8 +1201,9 @@ records_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,label:
     if !found {return "the .ui is not in the assets",false}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     records_tidy(records)
+    params:=widget_params(a,id)
     imports,imported:=records_settle(records,a)
-    if !imported {return WIDGET_MISSING,false}
+    if !imported {return widget_why(a,records_data(records)),false}
     data:=records_data(records)
     bytes,error:=host.ui_tree_bytes(&a.types,id,data,imports,context.temp_allocator)
     if error==.Invalid {return fmt.tprintf("the interface would not load: %s",load_why(a,data,imports)),false}
@@ -1212,6 +1216,7 @@ records_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,label:
     }
     if !opened {written=editor.file_write(s,path,bytes,label)}
     if !written {return "the file could not be written",false}
+    widget_params_follow(s,a,id,params_changes(params,data_params(data,imports)),0)
     return "",true
 }
 
@@ -1269,7 +1274,6 @@ api_rename :: proc(s:^editor.Session,call:^api.Call) {
             return count
         }
         for &n in records.nodes {count+=each(&n,from,to)}
-        for &template in records.templates {for &n in template.nodes {count+=each(&n,from,to)}}
         for &o in records.overrides {count+=each(&o.values,from,to)}
         if count==0 {continue}
         if _,written:=records_write(s,file.id,&records,"Rename path");!written {continue}

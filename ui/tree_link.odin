@@ -4,7 +4,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // A tree whose components name other .ui files (Tree_Component.widget) as
-// one set of records: the template of each of those components is the tree
+// one set of records, the form tree_load takes: the template of each of those components is the tree
 // of its file, with its own components and overrides expanded, and the
 // styles, variants, images, fonts and animations of the file join those of the
 // tree. Overrides of an instance reach the nodes of the file by their names
@@ -113,13 +113,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
             component.widget={}
             continue
         }
-        part:=-1
-        if component.named {
-            name:=serial.text_field(component.name[:])
-            for &c,i in widget.components {if !c.library && serial.text_field(c.name[:])==name {part=i;break}}
-            if part<0 {return {},false}
-        }
-        expanded,expanded_ok:=tree_expand(widget,allocator,part)
+        expanded,expanded_ok:=tree_expand(widget,allocator)
         if !expanded_ok || len(expanded)==0 || expanded[0].parent!=-1 {return {},false}
         for node in expanded[1:] {if node.parent<0 {return {},false}}
         first:=u32(len(component_nodes))
@@ -186,7 +180,30 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         append(&tokens,..file.tokens)
     }
     tree_settle(styles[:],style_infos[:],&variants,tokens[:],data.token_uses)
+    // A parameter that goes past a use is flat from here on: where the
+    // parameter of its widget goes, under the name of the use. One that
+    // resolves to nothing is for ui.check to say.
+    params:=make([dynamic]Tree_Param,0,len(data.params),allocator)
+    for &p in data.params {
+        param:=serial.text_field(p.param[:])
+        if param=="" {append(&params,p);continue}
+        at:=-1
+        for &n,row in data.nodes {if n.kind==.Component && serial.text_field(n.name[:])==serial.text_field(p.node[:]) {at=row;break}}
+        if at<0 || int(data.nodes[at].component)==0 || int(data.nodes[at].component)>len(imports) {continue}
+        for &inner in imports[data.nodes[at].component-1].params {
+            if serial.text_field(inner.name[:])!=param {continue}
+            buffer:[TREE_NAME_CAPACITY]u8
+            path,fits:=tree_path(buffer[:],serial.text_field(p.node[:]),serial.text_field(inner.node[:]))
+            if !fits {break}
+            flat:=p
+            flat.field,flat.param=inner.field,{}
+            tree_text_set(flat.node[:],path)
+            append(&params,flat)
+            break
+        }
+    }
     linked=data
+    linked.params=params[:]
     linked.style_infos=style_infos[:]
     linked.components,linked.component_nodes,linked.styles,linked.variants=components[:],component_nodes[:],styles[:],variants[:]
     linked.images,linked.fonts,linked.anims,linked.tracks,linked.keys,linked.parts,linked.anim_sets=images[:],fonts[:],anims[:],tracks[:],keys[:],parts[:],anim_sets[:]

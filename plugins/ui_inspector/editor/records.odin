@@ -11,20 +11,13 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The records of the .ui of the document, as the document edits them: the
-// nodes of the tree and of each template in lists of their own, joined into
-// the tables of the file when it is written. Adding, moving or removing
-// nodes keeps them in pre-order and fixes the rows that refer to them.
-
-// A component of the file: its template, or a .ui it names.
-Template :: struct {
-    component:ui.Tree_Component, // first and count are made when the records are joined
-    nodes:[dynamic]ui.Tree_Node, // of a template of the file; none for a widget
-}
+// The records of the .ui of the document, as the document edits them, the
+// tables of the file. Adding, moving or removing nodes keeps them in
+// pre-order and fixes the rows that refer to them.
 
 Records :: struct {
     nodes:[dynamic]ui.Tree_Node,
-    templates:[dynamic]Template,
+    components:[dynamic]ui.Tree_Component, // the .ui it names: a widget it uses, a library it takes names from
     styles:[dynamic]ui.Node_Style,
     style_infos:[dynamic]ui.Tree_Style_Info, // one by style
     variants:[dynamic]ui.Tree_Style_Variant,
@@ -45,11 +38,8 @@ Records :: struct {
     allocator:runtime.Allocator,
 }
 
-// Where nodes are edited: the tree itself (-1), or a template.
-Scope :: int
-
 // Copies the records of a tree. A transaction: false, leaving nothing, when
-// they contradict themselves (a template outside its table) or memory runs out.
+// memory runs out.
 records_load :: proc(r:^Records,data:ui.Tree_Data,allocator:runtime.Allocator) -> bool {
     r^={allocator=allocator}
     ok:=true
@@ -75,15 +65,7 @@ records_load :: proc(r:^Records,data:ui.Tree_Data,allocator:runtime.Allocator) -
     list(&r.tokens,data.tokens,&ok,allocator)
     list(&r.token_uses,data.token_uses,&ok,allocator)
     list(&r.params,data.params,&ok,allocator)
-    r.templates=make([dynamic]Template,0,len(data.components),allocator)
-    for component in data.components {
-        template:=Template{component=component}
-        if component.widget=={} {
-            if u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {ok=false;break}
-            list(&template.nodes,data.component_nodes[component.first:][:component.count],&ok,allocator)
-        } else {template.nodes=make([dynamic]ui.Tree_Node,allocator)}
-        append(&r.templates,template)
-    }
+    list(&r.components,data.components,&ok,allocator)
     // Style 0 is what nodes without a style take: there is always one.
     if ok && len(r.styles)==0 {append(&r.styles,ui.Node_Style{})}
     if ok {resize(&r.style_infos,len(r.styles))}
@@ -96,26 +78,13 @@ records_destroy :: proc(r:^Records) {
     delete(r.nodes);delete(r.styles);delete(r.style_infos);delete(r.variants);delete(r.overrides);delete(r.images)
     delete(r.anims);delete(r.tracks);delete(r.keys);delete(r.parts);delete(r.anim_sets);delete(r.fonts);delete(r.translations);delete(r.grid_tracks);delete(r.text)
     delete(r.tokens);delete(r.token_uses);delete(r.params)
-    for &template in r.templates {delete(template.nodes)}
-    delete(r.templates)
+    delete(r.components)
     r^={}
 }
 
 // The records as a tree takes them, joined in the temporary allocator.
 records_data :: proc(r:^Records) -> ui.Tree_Data {
-    components:=make([]ui.Tree_Component,len(r.templates),context.temp_allocator)
-    total:=0
-    for &template in r.templates {total+=len(template.nodes)}
-    component_nodes:=make([]ui.Tree_Node,total,context.temp_allocator)
-    at:=0
-    for &template,i in r.templates {
-        components[i]=template.component
-        components[i].first,components[i].count=u32(at),u32(len(template.nodes))
-        if template.component.widget!={} {components[i].first,components[i].count=0,0}
-        copy(component_nodes[at:],template.nodes[:])
-        at+=len(template.nodes)
-    }
-    return {nodes=r.nodes[:],styles=r.styles[:],variants=r.variants[:],components=components,component_nodes=component_nodes,
+    return {nodes=r.nodes[:],styles=r.styles[:],variants=r.variants[:],components=r.components[:],
         overrides=r.overrides[:],images=r.images[:],anims=r.anims[:],tracks=r.tracks[:],keys=r.keys[:],parts=r.parts[:],anim_sets=r.anim_sets[:],fonts=r.fonts[:],style_infos=r.style_infos[:],translations=r.translations[:],
         grid_tracks=r.grid_tracks[:],text=r.text[:],tokens=r.tokens[:],token_uses=r.token_uses[:],params=r.params[:]}
 }
@@ -129,13 +98,11 @@ records_text_set :: proc(r:^Records,s:^ui.Tree_String,text:string) {
     s^=ui.tree_string_add(&r.text,text)
 }
 
-// Keeps in the texts only what nodes, templates, overrides and translations
-// name, in that order: what an edit left behind goes.
+// Keeps in the texts only what nodes, overrides and translations name, in that order: what an edit left behind goes.
 records_text_compact :: proc(r:^Records) {
     kept:=make([dynamic]u8,0,len(r.text),r.allocator)
     keep :: proc(r:^Records,kept:^[dynamic]u8,s:^ui.Tree_String) {s^=ui.tree_string_add(kept,records_text(r,s^))}
     for &n in r.nodes {keep(r,&kept,&n.text)}
-    for &template in r.templates {for &n in template.nodes {keep(r,&kept,&n.text)}}
     for &o in r.overrides {keep(r,&kept,&o.values.text)}
     for &t in r.translations {keep(r,&kept,&t.text)}
     delete(r.text)
@@ -193,15 +160,7 @@ records_settle :: proc(r:^Records,a:^host.Assets) -> (imports:[]ui.Tree_Data,ok:
     take :: proc(nodes:[]ui.Tree_Node,infos:[]ui.Tree_Style_Info) {ui.tree_nodes_take_styles(nodes,infos)}
     infos:=r.style_infos[:] if imports==nil else linked.style_infos
     take(r.nodes[:],infos)
-    for &template in r.templates {take(template.nodes[:],infos)}
     return imports,true
-}
-
-// The nodes a scope edits; nil for a widget or a scope that is not there.
-records_list :: proc(r:^Records,scope:Scope) -> ^[dynamic]ui.Tree_Node {
-    if scope<0 {return &r.nodes}
-    if scope>=len(r.templates) || r.templates[scope].component.widget!={} {return nil}
-    return &r.templates[scope].nodes
 }
 
 // Rows of nodes inside row, which follow it in pre-order.
@@ -223,11 +182,10 @@ records_depth :: proc(nodes:[]ui.Tree_Node,row:int) -> int {
     return depth
 }
 
-// The rows the instances of the tree's overrides follow when rows from at
-// move by count (count negative: they went away).
+// The rows the instances of the overrides follow when rows from at move by
+// count (count negative: they went away).
 @(private)
-records_shift :: proc(r:^Records,scope:Scope,at,count:int) {
-    if scope>=0 {return}
+records_shift :: proc(r:^Records,at,count:int) {
     for i:=len(r.overrides)-1;i>=0;i-=1 {
         o:=&r.overrides[i]
         switch {
@@ -240,16 +198,15 @@ records_shift :: proc(r:^Records,scope:Scope,at,count:int) {
 // Inserts copies of nodes (a subtree, parents relative to it, the first a
 // root) at row at inside parent, and fixes the rows after them.
 @(private)
-records_put :: proc(r:^Records,scope:Scope,at,parent:int,subtree:[]ui.Tree_Node) -> bool {
-    list:=records_list(r,scope)
-    if list==nil || len(subtree)==0 {return false}
-    if _,error:=inject_at(list,at,..subtree);error!=nil {return false}
+records_put :: proc(r:^Records,at,parent:int,subtree:[]ui.Tree_Node) -> bool {
+    if len(subtree)==0 {return false}
+    if _,error:=inject_at(&r.nodes,at,..subtree);error!=nil {return false}
     count:=len(subtree)
-    for &n in list[at+count:] {if int(n.parent)>=at {n.parent+=i32(count)}}
-    for &n,i in list[at:at+count] {
+    for &n in r.nodes[at+count:] {if int(n.parent)>=at {n.parent+=i32(count)}}
+    for &n,i in r.nodes[at:at+count] {
         n.parent=i32(parent) if i==0 else n.parent+i32(at)
     }
-    records_shift(r,scope,at,count)
+    records_shift(r,at,count)
     return true
 }
 
@@ -323,54 +280,58 @@ records_kind_look :: proc(r:^Records,kind:ui.Node_Kind) -> u16 {
 
 // Adds a node of a kind as the last one inside parent (-1: the last root) and
 // returns its row; -1 when parent holds nothing or there is no memory.
-records_insert :: proc(r:^Records,scope:Scope,parent:int,kind:ui.Node_Kind) -> int {
-    list:=records_list(r,scope)
-    if list==nil || parent<-1 || parent>=len(list) || kind==.Component {return -1}
+records_insert :: proc(r:^Records,parent:int,kind:ui.Node_Kind) -> int {
+    list:=&r.nodes
+    if parent<-1 || parent>=len(list) || kind==.Component {return -1}
     if parent>=0 && !ui.node_kind_holds(list[parent].kind) && list[parent].kind!=.Component {return -1}
     // A List holds one node.
     if parent>=0 && list[parent].kind==.List && records_subtree(list[:],parent)>0 {return -1}
     at:=len(list) if parent<0 else parent+records_subtree(list[:],parent)+1
     node:=node_default(kind)
     records_text_set(r,&node.text,node_default_text(kind))
-    if kind==.Box && parent<0 && scope<0 {node.float={to=.Safe,anchor=.Center,pivot=.Center}}
+    if kind==.Box && parent<0 {node.float={to=.Safe,anchor=.Center,pivot=.Center}}
     node.style=records_kind_look(r,kind)
     nodes:=[1]ui.Tree_Node{node}
-    if !records_put(r,scope,at,parent,nodes[:]) {return -1}
+    if !records_put(r,at,parent,nodes[:]) {return -1}
     names:=KIND_NAMES
-    records_name_unique(r,scope,at,names[kind])
+    records_name_unique(r,at,names[kind])
     return at
 }
 
-// Adds an instance of a .ui as the last node inside parent: the component
-// that names the file is made the first time.
-records_widget :: proc(r:^Records,scope:Scope,parent:int,widget:base.Asset_Id,name:string) -> int {
-    list:=records_list(r,scope)
-    if list==nil || widget=={} || parent<-1 || parent>=len(list) {return -1}
+// Adds a use of the widget of a .ui as the last node inside parent, called
+// name; the component that names the file, called as it, is made the first
+// time.
+records_widget :: proc(r:^Records,parent:int,widget:base.Asset_Id,name,file:string) -> int {
+    list:=&r.nodes
+    if widget=={} || parent<-1 || parent>=len(list) {return -1}
     if parent>=0 && !ui.node_kind_holds(list[parent].kind) && list[parent].kind!=.Component {return -1}
-    component:=-1
-    for &template,i in r.templates {if template.component.widget==widget {component=i;break}}
-    if component<0 {
-        template:=Template{component={widget=widget},nodes=make([dynamic]ui.Tree_Node,r.allocator)}
-        ui.tree_text_set(template.component.name[:],records_component_name(r,name))
-        append(&r.templates,template)
-        component=len(r.templates)-1
-    }
+    component:=records_use_row(r,widget,file)
     at:=len(list) if parent<0 else parent+records_subtree(list[:],parent)+1
     node:=ui.Tree_Node{kind=.Component,parent=-1,component=u16(component+1)}
     ui.tree_text_set(node.name[:],name)
     nodes:=[1]ui.Tree_Node{node}
-    if !records_put(r,scope,at,parent,nodes[:]) {return -1}
-    records_name_free(r,scope,at)
+    if !records_put(r,at,parent,nodes[:]) {return -1}
+    records_name_free(r,at)
     return at
+}
+
+// The row of the component of the uses of a widget: the one that is not a
+// library, made the first time.
+records_use_row :: proc(r:^Records,widget:base.Asset_Id,file:string) -> int {
+    for &c,i in r.components {if c.widget==widget && !c.library {return i}}
+    component:=ui.Tree_Component{widget=widget}
+    ui.tree_text_set(component.name[:],records_component_name(r,file))
+    append(&r.components,component)
+    return len(r.components)-1
 }
 
 // A name for a component no other has.
 @(private)
 records_component_name :: proc(r:^Records,name:string) -> string {
-    for n in 1..=len(r.templates)+1 {
+    for n in 1..=len(r.components)+1 {
         candidate:=name if n==1 else fmt.tprintf("%s%d",name,n)
         taken:=false
-        for &template in r.templates {if serial.text_field(template.component.name[:])==candidate {taken=true;break}}
+        for &c in r.components {if serial.text_field(c.name[:])==candidate {taken=true;break}}
         if !taken {return candidate}
     }
     return name
@@ -378,26 +339,25 @@ records_component_name :: proc(r:^Records,name:string) -> string {
 
 // Takes a node and what it holds out of the rows of its scope.
 @(private)
-records_remove :: proc(r:^Records,scope:Scope,row:int) {
-    list:=records_list(r,scope)
-    if list==nil || row<0 || row>=len(list) {return}
-    count:=records_subtree(list[:],row)+1
+records_remove :: proc(r:^Records,row:int) {
+    if row<0 || row>=len(r.nodes) {return}
+    count:=records_subtree(r.nodes[:],row)+1
     end:=row+count
-    remove_range(list,row,end)
-    for &n in list[row:] {if int(n.parent)>=end {n.parent-=i32(count)}}
-    records_shift(r,scope,row,-count)
+    remove_range(&r.nodes,row,end)
+    for &n in r.nodes[row:] {if int(n.parent)>=end {n.parent-=i32(count)}}
+    records_shift(r,row,-count)
 }
 
 // Removes a node and what it holds, with their translations; the focus and
 // the ghost of the other nodes that named them name nothing.
-records_delete :: proc(r:^Records,scope:Scope,row:int) {
-    list:=records_list(r,scope)
-    if list==nil || row<0 || row>=len(list) {return}
+records_delete :: proc(r:^Records,row:int) {
+    list:=&r.nodes
+    if row<0 || row>=len(list) {return}
     names:=make([dynamic]string,context.temp_allocator)
     for &n in list[row:row+records_subtree(list[:],row)+1] {
         if name:=serial.text_field(n.name[:]);name!="" {append(&names,strings.clone(name,context.temp_allocator))}
     }
-    records_remove(r,scope,row)
+    records_remove(r,row)
     for &n in list {
         for &nav in n.nav {if slice_has(names[:],serial.text_field(nav[:])) {nav={}}}
         if slice_has(names[:],serial.text_field(n.ghost[:])) {n.ghost={}}
@@ -407,20 +367,18 @@ records_delete :: proc(r:^Records,scope:Scope,row:int) {
 
 // Copies a node and what it holds right after it, with the overrides of its
 // instances and an image and animations of its own; returns the copy.
-records_duplicate :: proc(r:^Records,scope:Scope,row:int) -> int {
-    list:=records_list(r,scope)
-    if list==nil || row<0 || row>=len(list) {return -1}
+records_duplicate :: proc(r:^Records,row:int) -> int {
+    list:=&r.nodes
+    if row<0 || row>=len(list) {return -1}
     count:=records_subtree(list[:],row)+1
     at,parent:=row+count,int(list[row].parent)
-    block:=records_block(r,scope,row)
-    if !records_block_put(r,scope,block,at,parent) {return -1}
+    block:=records_block(r,row)
+    if !records_block_put(r,block,at,parent) {return -1}
     for i in at..<at+count {
-        if name:=serial.text_field(list[i].name[:]);name!="" {records_name_unique(r,scope,i,name)}
+        if name:=serial.text_field(list[i].name[:]);name!="" {records_name_unique(r,i,name)}
         records_rows_own(r,&list[i],{.Image,.Animations})
     }
-    if scope<0 {
-        for &o in r.overrides {if int(o.instance)>=at && int(o.instance)<at+count {records_rows_own(r,&o.values,o.fields)}}
-    }
+    for &o in r.overrides {if int(o.instance)>=at && int(o.instance)<at+count {records_rows_own(r,&o.values,o.fields)}}
     records_texts_renew(r,list[at:at+count],r.translations[:])
     return at
 }
@@ -465,12 +423,11 @@ records_texts_renew :: proc(r:^Records,nodes:[]ui.Tree_Node,from:[]ui.Tree_Trans
     }
 }
 
-// The translations no node, override or template names any more go.
+// The translations no node or override names any more go.
 records_texts_prune :: proc(r:^Records) {
     used :: proc(r:^Records,id:u64) -> bool {
         for &n in r.nodes {if n.text_id==id {return true}}
         for &o in r.overrides {if o.values.text_id==id {return true}}
-        for &template in r.templates {for &n in template.nodes {if n.text_id==id {return true}}}
         return false
     }
     for i:=len(r.translations)-1;i>=0;i-=1 {
@@ -494,8 +451,8 @@ KIND_NAMES :: [ui.Node_Kind]string{.Box="box",.Text="text",.Image="image",.Progr
 
 // Names a node after base_name and the first number no other node of its scope uses.
 @(private)
-records_name_unique :: proc(r:^Records,scope:Scope,row:int,base_name:string) {
-    list:=records_list(r,scope)
+records_name_unique :: proc(r:^Records,row:int,base_name:string) {
+    list:=&r.nodes
     buffer:[ui.TREE_NAME_CAPACITY]u8
     for n in 1..<len(list)+2 {
         name:=serial_name(buffer[:],base_name,n)
@@ -513,9 +470,9 @@ records_name_taken :: proc(nodes:[]ui.Tree_Node,row:int,name:string) -> bool {
 // Keeps the name of a node when no other node of its scope has it; gives it a
 // number otherwise.
 @(private)
-records_name_free :: proc(r:^Records,scope:Scope,row:int) {
-    list:=records_list(r,scope)
-    if name:=serial.text_field(list[row].name[:]);name!="" && records_name_taken(list[:],row,name) {records_name_unique(r,scope,row,name)}
+records_name_free :: proc(r:^Records,row:int) {
+    list:=&r.nodes
+    if name:=serial.text_field(list[row].name[:]);name!="" && records_name_taken(list[:],row,name) {records_name_unique(r,row,name)}
 }
 
 @(private)
@@ -531,25 +488,21 @@ serial_name :: proc(buffer:[]u8,base_name:string,n:int) -> string {
 }
 
 // Gives the node of a row the name its field has now, or that name with a
-// number when another node of its scope has it, and points at it what named
-// it by from: the focus and the ghost of the nodes of its scope and, in a
-// template, the overrides of its instances. Returns the name it has.
-records_rename :: proc(r:^Records,scope:Scope,row:int,from:string) -> string {
-    list:=records_list(r,scope)
-    if list==nil || row<0 || row>=len(list) {return ""}
+// number when another node has it, and points at it what named it by from:
+// the focus and the ghost of the nodes and the parameters that go to it.
+// Returns the name it has.
+records_rename :: proc(r:^Records,row:int,from:string) -> string {
+    list:=&r.nodes
+    if row<0 || row>=len(list) {return ""}
     from:=strings.clone(from,context.temp_allocator)
-    records_name_free(r,scope,row)
+    records_name_free(r,row)
     name:=strings.clone(serial.text_field(list[row].name[:]),context.temp_allocator)
     if from=="" || from==name {return name}
     for &n in list {
         for &nav in n.nav {if serial.text_field(nav[:])==from {ui.tree_text_set(nav[:],name)}}
         if serial.text_field(n.ghost[:])==from {ui.tree_text_set(n.ghost[:],name)}
     }
-    if scope>=0 {
-        for &o in r.overrides {
-            if int(o.instance)<len(r.nodes) && int(r.nodes[o.instance].component)==scope+1 {path_part_rename(o.node[:],0,from,name)}
-        }
-    }
+    for &p in r.params {path_part_rename(p.node[:],0,from,name)}
     return name
 }
 
@@ -572,9 +525,9 @@ records_same :: proc(x,y:^$T) -> bool {return mem.compare_ptrs(x,y,size_of(T))==
 // (an undo, a redo): the first node that changed, or that was added or
 // removed there, or else one that takes a style, a variant or an image that
 // changed; the node chosen when it takes it. -1: no node changed.
-records_changed_row :: proc(before,after:^Records,scope:Scope,chosen:int) -> int {
-    a,b:=records_list(before,scope),records_list(after,scope)
-    if a==nil || b==nil || len(b)==0 {return -1}
+records_changed_row :: proc(before,after:^Records,chosen:int) -> int {
+    a,b:=before.nodes,after.nodes
+    if len(b)==0 {return -1}
     for i in 0..<min(len(a),len(b)) {
         if !records_same(&a[i],&b[i]) {return i}
     }
@@ -663,10 +616,9 @@ records_style_base :: proc(r:^Records,row:int) -> int {
     return base if base>=0 && base<len(r.styles) && base!=row else -1
 }
 
-// How many nodes of the file, templates and overrides of instances use a style.
+// How many nodes of the file and overrides of instances use a style.
 records_style_users :: proc(r:^Records,row:int) -> (users:int) {
     for &n in r.nodes {users+=int(int(n.style)==row)}
-    for &template in r.templates {for &n in template.nodes {users+=int(int(n.style)==row)}}
     for &o in r.overrides {users+=int(.Style in o.fields && int(o.values.style)==row)}
     return
 }
@@ -719,7 +671,6 @@ records_style_save :: proc(r:^Records,row:int) -> int {
 // Points what uses the style from at the style to.
 records_style_retarget :: proc(r:^Records,from,to:int) {
     for &n in r.nodes {if int(n.style)==from {n.style=u16(to)}}
-    for &template in r.templates {for &n in template.nodes {if int(n.style)==from {n.style=u16(to)}}}
     for &o in r.overrides {if int(o.values.style)==from {o.values.style=u16(to)}}
 }
 
@@ -735,7 +686,6 @@ records_style_remove :: proc(r:^Records,row,keep:int) -> int {
     shift :: proc(style:^u16,row:int) {if int(style^)>row {style^-=1}}
     for &v in r.variants {shift(&v.style,row)}
     for &n in r.nodes {shift(&n.style,row)}
-    for &template in r.templates {for &n in template.nodes {shift(&n.style,row)}}
     for &o in r.overrides {shift(&o.values.style,row)}
     for i:=len(r.token_uses)-1;i>=0;i-=1 {
         if int(r.token_uses[i].style)==row {ordered_remove(&r.token_uses,i)} else {shift(&r.token_uses[i].style,row)}
@@ -755,8 +705,8 @@ records_style_delete :: proc(r:^Records,row:int) -> bool {
     return true
 }
 
-// Renames a variant of a style: its rules, and the variant the nodes, the
-// templates and the overrides that take that style show.
+// Renames a variant of a style: its rules, and the variant the nodes and the
+// overrides that take that style show.
 records_variant_rename :: proc(r:^Records,style:int,from,to:string) {
     from:=strings.clone(from,context.temp_allocator)
     for &v in r.variants {
@@ -766,17 +716,15 @@ records_variant_rename :: proc(r:^Records,style:int,from,to:string) {
         if int(n.style)==style && serial.text_field(n.variant[:])==from {ui.tree_text_set(n.variant[:],to)}
     }
     for &n in r.nodes {rename(&n,style,from,to)}
-    for &template in r.templates {for &n in template.nodes {rename(&n,style,from,to)}}
     for &o in r.overrides {if .Style in o.fields && .Variant in o.fields {rename(&o.values,style,from,to)}}
 }
 
-// How many nodes, template nodes and overrides that set it take an image
+// How many nodes and overrides that set it take an image
 // (field .Image) or a set of animations (.Animations), by row plus one.
 @(private)
 records_row_users :: proc(r:^Records,field:ui.Node_Field,row:u16) -> (users:int) {
     takes :: proc(n:^ui.Tree_Node,field:ui.Node_Field,row:u16) -> bool {return (n.image if field==.Image else n.anims)==row}
     for &n in r.nodes {users+=int(takes(&n,field,row))}
-    for &template in r.templates {for &n in template.nodes {users+=int(takes(&n,field,row))}}
     for &o in r.overrides {users+=int(field in o.fields && takes(&o.values,field,row))}
     return
 }
@@ -900,33 +848,19 @@ records_keys_sort :: proc(r:^Records) {
 }
 
 // Writes what a parameter of the use at row gives: on the instance when it
-// goes to its root, or on the override of the node it goes to. A style goes
-// by name, as a style of the file. False when the name of a style does not
-// resolve.
-records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,component:string) -> bool {
-    node:=serial.text_field(p.node[:])
+// goes to its root, or on the override of the node it goes to, node as the
+// widget has it and its rows those of source. A style goes by name, as a style
+// of the file. False when the name of a style does not resolve.
+records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,node:ui.Tree_Node) -> bool {
+    path:=serial.text_field(p.node[:])
     group:=doc_param_group(p.field)
     target:^ui.Tree_Node
-    if node=="" {
+    if path=="" {
         target=&r.nodes[row]
         r.nodes[row].component_fields+={group}
     } else {
-        template_node:ui.Tree_Node
-        found:=false
-        look :: proc(list:[]ui.Tree_Node,name:string) -> (n:ui.Tree_Node,ok:bool) {
-            for &each in list {if serial.text_field(each.name[:])==name {return each,true}}
-            return
-        }
-        for &template in r.templates {
-            if serial.text_field(template.component.name[:])==component {template_node,found=look(template.nodes[:],node)}
-        }
-        if !found && source!=nil {
-            for &template in source.templates {
-                if serial.text_field(template.component.name[:])==component {template_node,found=look(template.nodes[:],node)}
-            }
-        }
-        at:=records_override(r,row,node,{})
-        if group not_in r.overrides[at].fields {records_override_field(r,at,group,true,source,template_node)}
+        at:=records_override(r,row,path,{})
+        if group not_in r.overrides[at].fields {records_override_field(r,at,group,true,source,node)}
         target=&r.overrides[at].values
     }
     #partial switch p.field {
@@ -943,6 +877,12 @@ records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,sourc
     return true
 }
 
+// The row of the node that holds what a use holds; -1: none.
+records_slot_row :: proc(r:^Records) -> int {
+    for &n,i in r.nodes {if .Slot in n.flags {return i}}
+    return -1
+}
+
 // The overrides of an instance of the tree, by row.
 records_overrides :: proc(r:^Records,instance:int,allocator:=context.temp_allocator) -> []int {
     rows:=make([dynamic]int,allocator)
@@ -950,7 +890,7 @@ records_overrides :: proc(r:^Records,instance:int,allocator:=context.temp_alloca
     return rows[:]
 }
 
-// The override of node (its name in the template) of an instance: the one it
+// The override of node (its name in its widget) of an instance: the one it
 // has, or one made with values.
 records_override :: proc(r:^Records,instance:int,node:string,values:ui.Tree_Node) -> int {
     for &o,i in r.overrides {
@@ -963,8 +903,8 @@ records_override :: proc(r:^Records,instance:int,node:string,values:ui.Tree_Node
 }
 
 // Turns a field of an override on or off. On, it takes the values the node
-// of the widget has (node, whose rows are of source; nil: of r, a template
-// of the file), so it changes nothing until one of them changes.
+// of the widget has (node, whose rows are of source), so it changes nothing
+// until one of them changes.
 records_override_field :: proc(r:^Records,override:int,field:ui.Node_Field,on:bool,source:^Records,node:ui.Tree_Node) {
     if override<0 || override>=len(r.overrides) {return}
     o:=&r.overrides[override]
@@ -1015,8 +955,8 @@ Block :: struct {
 
 // The subtree of a row of a scope, with the overrides of its instances.
 @(private)
-records_block :: proc(r:^Records,scope:Scope,row:int) -> (block:Block) {
-    list:=records_list(r,scope)
+records_block :: proc(r:^Records,row:int) -> (block:Block) {
+    list:=&r.nodes
     block.nodes=make([dynamic]ui.Tree_Node,context.temp_allocator)
     block.overrides=make([dynamic]ui.Tree_Override,context.temp_allocator)
     count:=records_subtree(list[:],row)+1
@@ -1025,7 +965,6 @@ records_block :: proc(r:^Records,scope:Scope,row:int) -> (block:Block) {
         moved.parent=-1 if i==0 else n.parent-i32(row)
         append(&block.nodes,moved)
     }
-    if scope>=0 {return}
     for o in r.overrides {
         if int(o.instance)<row || int(o.instance)>=row+count {continue}
         moved:=o
@@ -1037,8 +976,8 @@ records_block :: proc(r:^Records,scope:Scope,row:int) -> (block:Block) {
 
 // Puts a block at row at of a scope inside parent, with its overrides.
 @(private)
-records_block_put :: proc(r:^Records,scope:Scope,block:Block,at,parent:int) -> bool {
-    if !records_put(r,scope,at,parent,block.nodes[:]) {return false}
+records_block_put :: proc(r:^Records,block:Block,at,parent:int) -> bool {
+    if !records_put(r,at,parent,block.nodes[:]) {return false}
     for o in block.overrides {
         moved:=o
         moved.instance=u32(int(o.instance)+at)
@@ -1066,13 +1005,13 @@ records_place :: proc(r:^Records,row,parent,before:int) -> int {
     inside :: proc(at,row,count:int) -> bool {return at>=row && at<row+count}
     if parent>=0 && inside(parent,row,count) || before>=0 && inside(before,row,count) {return -1}
     if int(list[row].parent)!=parent && !records_takes(list,parent) {return -1}
-    block:=records_block(r,-1,row)
-    records_remove(r,-1,row)
+    block:=records_block(r,row)
+    records_remove(r,row)
     after :: proc(at,row,count:int) -> int {return at-count if at>row else at}
     parent,before:=after(parent,row,count) if parent>=0 else -1,after(before,row,count) if before>=0 else -1
     at:=before
     if at<0 {at=len(r.nodes) if parent<0 else parent+records_subtree(r.nodes[:],parent)+1}
-    if !records_block_put(r,-1,block,at,parent) {return -1}
+    if !records_block_put(r,block,at,parent) {return -1}
     return at
 }
 
@@ -1113,6 +1052,7 @@ records_widget_data :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Al
     if row<0 || row>=len(r.nodes) || r.nodes[row].kind!=.Box || !records_extract(r,row,out,allocator,true) {return false}
     // The root of a widget lays out where its instance puts it.
     out.nodes[0].float={}
+    records_widget_params(out)
     return true
 }
 
@@ -1121,7 +1061,7 @@ records_widget_data :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Al
 records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Allocator,renew:bool) -> bool {
     style:=[1]ui.Node_Style{r.styles[0]}
     if !records_load(out,{styles=style[:]},allocator) {return false}
-    block:=records_block(r,-1,row)
+    block:=records_block(r,row)
     m:=merge_begin(out,r,renew)
     if merge_put(&m,block.nodes[:],block.overrides[:],0,-1)<0 {
         records_destroy(out)
@@ -1150,7 +1090,7 @@ Merge :: struct {
 @(private)
 merge_begin :: proc(dst,src:^Records,renew:bool) -> Merge {
     return {dst=dst,src=src,renew=renew,styles=make([]int,len(src.styles),context.temp_allocator),anims=make([]int,len(src.anims),context.temp_allocator),
-        fonts=make([]int,len(src.fonts),context.temp_allocator),components=make([]int,len(src.templates),context.temp_allocator)}
+        fonts=make([]int,len(src.fonts),context.temp_allocator),components=make([]int,len(src.components),context.temp_allocator)}
 }
 
 // Puts copies of nodes of src (a subtree: parents relative to it, the first
@@ -1163,7 +1103,7 @@ merge_put :: proc(m:^Merge,nodes:[]ui.Tree_Node,overrides:[]ui.Tree_Override,at,
         copied[i]=n
         merge_node(m,&copied[i])
     }
-    if m.failed || !records_put(m.dst,-1,at,parent,copied) {return -1}
+    if m.failed || !records_put(m.dst,at,parent,copied) {return -1}
     for o in overrides {
         moved:=o
         merge_override(m,&moved)
@@ -1352,29 +1292,16 @@ merge_anim :: proc(m:^Merge,played:ui.Anim) -> ui.Anim {
 merge_component :: proc(m:^Merge,component:u16) -> u16 {
     src,dst:=m.src,m.dst
     row:=int(component)-1
-    if row<0 || row>=len(src.templates) {return 0}
+    if row<0 || row>=len(src.components) {return 0}
     if m.components[row]>0 {return u16(m.components[row])}
-    widget:=src.templates[row].component.widget
-    name:=serial.text_field(src.templates[row].component.name[:])
-    for &other,i in dst.templates {
-        if widget!={} && other.component.widget==widget || widget=={} && other.component.widget=={} && serial.text_field(other.component.name[:])==name {
-            m.components[row]=i+1
-            return u16(i+1)
-        }
+    if len(dst.components)>=int(max(u16))-1 {m.failed=true;return 0}
+    c:=&src.components[row]
+    if c.library {
+        m.components[row]=int(records_library(dst,c.widget))
+    } else {
+        m.components[row]=records_use_row(dst,c.widget,serial.text_field(c.name[:]))+1
     }
-    if len(dst.templates)>=int(max(u16))-1 {m.failed=true;return 0}
-    template:=Template{component={widget=widget},nodes=make([dynamic]ui.Tree_Node,dst.allocator)}
-    ui.tree_text_set(template.component.name[:],records_component_name(dst,name))
-    append(&dst.templates,template)
-    to:=len(dst.templates)-1
-    // Before its nodes: a template does not hold itself.
-    m.components[row]=to+1
-    for n in src.templates[row].nodes {
-        copied:=n
-        merge_node(m,&copied)
-        append(&dst.templates[to].nodes,copied)
-    }
-    return u16(to+1)
+    return u16(m.components[row])
 }
 
 @(private)
@@ -1390,7 +1317,7 @@ merge_grid :: proc(m:^Merge,tracks:u16) -> u16 {
 // ---------------------------------------------------------------- garbage
 
 @(private="file")
-Collect :: struct {styles,images,sets,grids,templates:[]int} // by row: kept, then its new row plus one; 0: it goes
+Collect :: struct {styles,images,sets,grids,components:[]int} // by row: kept, then its new row plus one; 0: it goes
 
 @(private="file")
 collect_mark :: proc(c:^Collect,n:^ui.Tree_Node,fields:ui.Node_Fields) {
@@ -1399,7 +1326,7 @@ collect_mark :: proc(c:^Collect,n:^ui.Tree_Node,fields:ui.Node_Fields) {
     if .Image in fields {mark(c.images,int(n.image)-1)}
     if .Animations in fields {mark(c.sets,int(n.anims)-1)}
     if .Layout in fields {mark(c.grids,int(n.layout.tracks)-1)}
-    if n.kind==.Component {mark(c.templates,int(n.component)-1)}
+    if n.kind==.Component {mark(c.components,int(n.component)-1)}
 }
 
 @(private="file")
@@ -1409,7 +1336,7 @@ collect_move :: proc(c:^Collect,n:^ui.Tree_Node) {
     n.image=u16(at(c.images,int(n.image)-1))
     n.anims=u16(at(c.sets,int(n.anims)-1))
     n.layout.tracks=u16(at(c.grids,int(n.layout.tracks)-1))
-    if n.component!=0 {n.component=u16(at(c.templates,int(n.component)-1))}
+    if n.component!=0 {n.component=u16(at(c.components,int(n.component)-1))}
 }
 
 // The rows kept, numbered; the others go.
@@ -1426,20 +1353,16 @@ collect_compact :: proc(list:^[dynamic]$T,keep:[]int) {
 }
 
 // Takes away the rows nothing uses, and what refers to the rows after them
-// follows: own looks and overrides of styles no node, template or override
-// takes (named styles and row 0 stay), images (one with a name stays, for
+// follows: own looks and overrides of styles no node or override takes (named styles and row 0 stay), images (one with a name stays, for
 // <img=...>), sets of animations and tracks of grids, and the widgets no
 // instance is of.
 records_collect :: proc(r:^Records) {
     c:=Collect{styles=make([]int,len(r.styles),context.temp_allocator),images=make([]int,len(r.images),context.temp_allocator),sets=make([]int,len(r.anim_sets),context.temp_allocator),
-        grids=make([]int,len(r.grid_tracks),context.temp_allocator),templates=make([]int,len(r.templates),context.temp_allocator)}
+        grids=make([]int,len(r.grid_tracks),context.temp_allocator),components=make([]int,len(r.components),context.temp_allocator)}
     every:=~ui.Node_Fields{}
     for &n in r.nodes {collect_mark(&c,&n,every)}
-    for &template,i in r.templates {
-        if template.component.widget=={} || template.component.library {c.templates[i]=1}
-        for &n in template.nodes {collect_mark(&c,&n,every)}
-    }
-    for &info in r.style_infos {if int(info.from)>0 && int(info.from)<=len(c.templates) {c.templates[info.from-1]=1}}
+    for &component,i in r.components {if component.library {c.components[i]=1}}
+    for &info in r.style_infos {if int(info.from)>0 && int(info.from)<=len(c.components) {c.components[info.from-1]=1}}
     for &o in r.overrides {collect_mark(&c,&o.values,o.fields)}
     if len(c.styles)>0 {c.styles[0]=1}
     for i in 0..<len(r.styles) {if records_style_named(r,i) {c.styles[i]=1}}
@@ -1448,7 +1371,6 @@ records_collect :: proc(r:^Records) {
     for i:=len(r.variants)-1;i>=0;i-=1 {
         if int(r.variants[i].style)>=len(c.styles) || c.styles[r.variants[i].style]==0 {ordered_remove(&r.variants,i)}
     }
-    for &template,i in r.templates {if c.templates[i]==0 {delete(template.nodes)}}
     for i:=len(r.token_uses)-1;i>=0;i-=1 {
         if int(r.token_uses[i].style)>=len(c.styles) || c.styles[r.token_uses[i].style]==0 {ordered_remove(&r.token_uses,i)}
     }
@@ -1457,14 +1379,13 @@ records_collect :: proc(r:^Records) {
     collect_compact(&r.images,c.images)
     collect_compact(&r.anim_sets,c.sets)
     collect_compact(&r.grid_tracks,c.grids)
-    collect_compact(&r.templates,c.templates)
+    collect_compact(&r.components,c.components)
     for &v in r.variants {v.style=u16(c.styles[v.style]-1)}
     for &u in r.token_uses {u.style=u16(c.styles[u.style]-1)}
     for &info in r.style_infos {
         if info.base>0 && int(info.base)<=len(c.styles) {info.base=u16(c.styles[info.base-1])} else {info.base=0}
-        if int(info.from)>0 && int(info.from)<=len(c.templates) {info.from=u16(c.templates[info.from-1])} else {info.from=0}
+        if int(info.from)>0 && int(info.from)<=len(c.components) {info.from=u16(c.components[info.from-1])} else {info.from=0}
     }
     for &n in r.nodes {collect_move(&c,&n)}
-    for &template in r.templates {for &n in template.nodes {collect_move(&c,&n)}}
     for &o in r.overrides {collect_move(&c,&o.values)}
 }

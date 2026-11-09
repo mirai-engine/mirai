@@ -29,11 +29,7 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
   },
   "animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
                            "loop": "Ping_Pong"}},
-  "components": {
-    "stat": {"params": {"label": "name.text", "value": "amount.bind_text"}, "kind": "Box", "gap": 6,
-      "children": [{"name": "name", "kind": "Text", "style": "title"},
-                   {"name": "amount", "kind": "Text", "style": "title"}]}
-  },
+  "use": ["ui/stat.ui"],
   "nodes": [
     {"name": "root", "kind": "Box", "style": "card",
      "float": {"to": "Safe", "anchor": "Center", "pivot": "Center"},
@@ -46,10 +42,20 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
 }
 ```
 
+`stat` is a widget, a `.ui` of its own, written first as `stat.json` and named by its file:
+
+```json
+{"params": {"label": "name.text", "value": "amount.bind_text"},
+ "nodes": [{"name": "stat", "kind": "Box", "gap": 6, "children": [
+   {"name": "name", "kind": "Text", "style": "title"},
+   {"name": "amount", "kind": "Text", "style": "title"}]}]}
+```
+
 - Read it back with `mirai rpc --project . ui.inspect asset=ui/screen.ui --select document`, change
   what you want and write it again. `ui.check` says what does not resolve.
 - A node is `{name, kind, text, style, children}` plus what it sets by the name of its keys. `kind`
-  is a `ui.Node_Kind` (`Box`, `Text`, `Button`, `Image`, `Selector`...) or the name of a component.
+  is a `ui.Node_Kind` (`Box`, `Text`, `Button`, `Image`, `Selector`...) or the name of the file of
+  a widget it uses: [styles.md](styles.md#widgets).
 - Keys of a node: `width`, `height` (`"grow"`, `"fit"`, `"50%"` or a number for fixed),
   `direction`, `gap`, `padding` (a number, `[x, y]` or four numbers), `align_x`, `align_y`,
   `float`, `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items`, `image`
