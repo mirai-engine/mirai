@@ -5,7 +5,9 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
+import "mirai:host"
 import "mirai:project"
+import "mirai:std/jobs"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -40,10 +42,11 @@ a_capture_given_a_path_answers_where_it_is_and_no_image :: proc(t:^testing.T) {
         serial.writer_init(&out)
         defer serial.writer_destroy(&out)
         play:=api.Call{out=&out,allocator=context.temp_allocator}
-        api_capture_reply(&play,file,64,32,shown)
+        api_capture_reply(&play,file,64,32,shown,Api_Capture_Seen{textures_pending=2,instances_drawn=0,instances_culled=5})
         text:=string(serial.writer_bytes(&out))
         api_result_shape_expect(t,text,Api_Capture_Result)
         testing.expect(t,strings.contains(text,file) && !strings.contains(text,"content") && !strings.contains(text,"data"),text)
+        testing.expect(t,strings.contains(text,`"textures_pending":2`) && strings.contains(text,`"instances_culled":5`),text)
         testing.expect_value(t,play.image,shown?file:"")
     }
 }
@@ -98,4 +101,16 @@ a_capture_makes_its_folder_and_says_why_it_cannot_write :: proc(t:^testing.T) {
     testing.expect(t,os.write_entire_file(blocker,"x")==nil)
     problem,code=api_output_prepare(fmt.tprintf("%s/inside/a.png",blocker))
     testing.expectf(t,code==api.SERVER_ERROR && strings.contains(problem,"could not be made: "),"a file where a folder goes: %s",problem)
+
+    // The file is taken after the check: the write says why it could not, and leaves no part of it.
+    app:=host.App{allocator=context.allocator}
+    if !testing.expect(t,jobs.system_init(&app.jobs,{threads=0,allocator=context.allocator})) {return}
+    defer jobs.system_destroy(&app.jobs)
+    session:=Session{app=&app}
+    taken:=fmt.tprintf("%s/inside/a.png",blocker)
+    problem=api_png_write(&session,taken,make([]u8,4),1,1)
+    testing.expectf(t,strings.contains(problem,taken) && strings.contains(problem,"could not be written: "),"%s",problem)
+    written:=fmt.tprintf("%s/new/a.png",folder)
+    testing.expect_value(t,api_png_write(&session,written,make([]u8,4),1,1),"")
+    testing.expect(t,os.is_file(written),"and it writes the file")
 }

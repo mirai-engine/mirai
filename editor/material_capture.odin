@@ -7,7 +7,6 @@ import "core:os"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -131,6 +130,10 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
     if s.app==nil || s.app.renderer==nil || a==nil {api.call_fail(call,api.SERVER_ERROR,"material.preview.capture requires a GPU; start without --no-gpu");return}
     id,found:=asset_named(s,call,base.text_get(p.material[:]),asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
+    name:="material"
+    if record,known:=asset.registry_find(&a.registry,id);known {name=asset_name(record.path)}
+    path,writable:=api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("material-%s.png",name),call.allocator)
+    if !writable {return}
     if ok,message:=programs_wait(s,f64(p.wait));!ok {api.call_fail(call,api.SERVER_ERROR,message);return}
     views:=p.views
     if views=={} {views={.Lit,.Albedo,.Roughness,.Metallic,.Normal,.Emission}}
@@ -151,7 +154,7 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
         return
     }
     // The stats of each view over the covered pixels.
-    shown:=make([dynamic]Material_View,context.temp_allocator)
+    shown:=make([dynamic]Material_View,call.allocator)
     stats:[Material_View]View_Stats
     for view in Material_View {
         if view not_in views {continue}
@@ -188,17 +191,7 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
             }
         }
     }
-    path:=base.text_get(p.path[:])
-    if path!="" {os.make_directory_all(project_folder(path))}
-    if path=="" {
-        if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");delete(image,s.app.allocator);return}
-        folder:=project.path(s.project_root,".mirai","captures",allocator=context.temp_allocator)
-        if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {api.call_fail(call,api.SERVER_ERROR,"The captures folder could not be created");delete(image,s.app.allocator);return}
-        name:="material"
-        if record,known:=asset.registry_find(&a.registry,id);known {name=asset_name(record.path)}
-        path=project.path(folder,fmt.tprintf("material-%s.png",name),allocator=context.temp_allocator)
-    }
-    if !api_png_write(s,path,image,width,height) {api.call_fail(call,api.SERVER_ERROR,"The capture could not be written");return}
+    if problem:=api_png_write(s,path,image,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     // What it shows, as text for the agent and as structured content.
     info,_:=material_file(s,id)
     program:=base.text_get(info.program[:])

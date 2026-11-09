@@ -10,7 +10,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:project"
 import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
@@ -188,6 +187,8 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     }
     side:=int(p.size)
     width,height:=side*frames,side*len(views)
+    path,writable:=editor.api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("animation-%x.png",p.id),call.allocator)
+    if !writable {return}
     // The vertices and images outgrow the scratch of a call.
     turned,turned_error:=make([]gpu.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
     defer delete(turned,app.allocator)
@@ -213,16 +214,9 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
             }
         }
     }
-    path:=base.text_get(p.path[:])
-    if path=="" {
-        if s.project_root=="" {delete(image,app.allocator);api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return}
-        folder:=project.path(s.project_root,".mirai","captures",allocator=context.temp_allocator)
-        os.make_directory_all(folder)
-        path=project.path(folder,fmt.tprintf("animation-%x.png",p.id),allocator=context.temp_allocator)
-    }
     write:host.Png_Write
     host.app_png_write_start(app,&write,path,image,width,height)
-    if !host.app_png_write_wait(app,&write) {api.call_fail(call,api.SERVER_ERROR,"The capture could not be written");return}
+    if error:=host.app_png_write_wait(app,&write);error!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written: %s",path,os.error_string(error));return}
     report:serial.Writer;serial.writer_init(&report,0,context.temp_allocator)
     serial.write_u8(&report,'{');api.write_key(&report,"id",true);api.write_id(&report,p.id);api.write_text(&report,"image",path)
     api.write_int(&report,"size",i64(side));api.write_bool(&report,"short",st.sub.short)

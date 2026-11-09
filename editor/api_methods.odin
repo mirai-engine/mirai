@@ -1062,12 +1062,9 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
 // Writes pixels of the allocator of the application as the PNG at file, of
 // api_output_file, and answers the call with it as capture does: its path and
 // size and, when shown, the image over MCP.
-api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true) {
-    if !api_png_write(s,file,pixels,width,height) {
-        api.call_failf(call,api.SERVER_ERROR,"%s could not be written although it could be opened: the disk may be full",file)
-        return
-    }
-    api_capture_reply(call,file,width,height,shown)
+api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true,seen:Maybe(Api_Capture_Seen)=nil) {
+    if problem:=api_png_write(s,file,pixels,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    api_capture_reply(call,file,width,height,shown,seen)
 }
 
 // The file a capture writes: path as api_output_file takes it, or name under
@@ -1143,11 +1140,12 @@ api_capture_size :: proc "contextless" (window:[2]i32,width,height:int) -> [2]i3
 
 // The image capture writes after its frames: the window as the last
 // one drew it, or the world shown alone at size, through the camera of the
-// viewport. The pixels are of the allocator of the application.
+// viewport. The pixels are of the allocator of the application. wait: as
+// app_capture_world, for the world alone.
 @(private)
-api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false) -> (pixels:[]u8,width,height:int,ok:bool) {
+api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     if ui {return host.app_capture_pixels(s.app,s.app.allocator,generated)}
-    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator)
+    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator,wait)
 }
 
 // ---------------------------------------------------------------- play

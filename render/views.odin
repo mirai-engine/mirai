@@ -27,9 +27,15 @@ view_exposure_release :: proc(r:^Renderer,view:^View_State) {
 // material shows it as any other color texture. Black until a frame draws
 // it. A load transaction between frames.
 view_texture_add :: proc(r:^Renderer,width,height:u32,name:string) -> (Texture_Handle,bool) {
-    if width==0 || height==0 || width>8192 || height>8192 {return 0,false}
+    if width==0 || height==0 || width>8192 || height>8192 {
+        set_error(r,"view texture %s: %dx%d is outside 1 to 8192 pixels a side",name,width,height)
+        return 0,false
+    }
     blank,error:=make([]u8,int(width)*int(height)*4,r.allocator)
-    if error!=nil {return 0,false}
+    if error!=nil {
+        set_error(r,"view texture %s: no memory for %dx%d pixels",name,width,height)
+        return 0,false
+    }
     defer delete(blank,r.allocator)
     r.view_textures_made+=1
     return texture_image(r,VIEW_TEXTURE_KEY|r.view_textures_made,blank,int(width),int(height),name)
@@ -63,7 +69,10 @@ VIEW_READBACK :: "view texture"
 // caller owns the pixels. False while no frame has drawn it.
 view_texture_capture :: proc(r:^Renderer,texture:Texture_Handle,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
     state:=texture_view_find(r,texture)
-    if state==nil || state.frames==0 {return}
+    if state==nil || state.frames==0 {
+        set_error(r,"capture: no frame drew the view of texture %d",texture)
+        return
+    }
     return targets_capture(r,&state.targets,allocator)
 }
 

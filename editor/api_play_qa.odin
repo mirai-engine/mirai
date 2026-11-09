@@ -793,8 +793,8 @@ qa_filmstrip :: proc(s:^Session,call:^api.Call,r:^Run,v:^Qa_Violation,path:strin
     if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
     sheet:=strip.sheet
     strip.sheet={}
-    if !api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height) {api.call_fail(call,api.SERVER_ERROR,"The filmstrip could not be written");return ""}
-    return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator)
+    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
+    return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator,strip.counted)
 }
 
 @(private)
