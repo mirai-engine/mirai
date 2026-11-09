@@ -97,18 +97,20 @@ bytes.
 ## Git
 
 **Document kinds merge and diff through `mirai`; the other kinds are whole files to git.** Which
-is which is one fact per kind: `asset.Kind_Info.merged` for a kind of the engine and
-`editor.Asset_Kind.merged` for one a plugin declares. A document is rows that a person or an agent
-edits; what an import, a bake or a recording makes is kept whole.
+is which is one fact per kind: `asset.Kind_Info.merged` for a kind of the engine and `merged` in
+the `asset_kinds` of its `plugin.mirai` for one a plugin adds, which is read without loading the
+plugin. A document is rows that a person or an agent edits; what an import, a bake or a recording
+makes is kept whole.
 
 - `build.git_attributes` (`cook/build/git.odin`) writes the `.gitattributes` from those facts: a
   document kind gets `merge=mirai diff=mirai -text`, the others `binary`, or the LFS filter with
   the sources of imports when the repository uses LFS. It keeps the lines of other files, so it
-  can run over a file a person edited. `mirai new` writes it, `mirai setup git` writes it again
-  and the editor's [Initialize](../../mirai-editor/references/git.md#operations) adds the kinds of
-  the project's plugins, which the CLI does not know. The engine's own `.gitattributes` carries
-  the lines of the kinds of the first-party plugins, written by hand: a test of each plugin's
-  editor part fails without them (`the_git_attributes_of_the_engine_have_the_kinds_of_the_plugin`).
+  can run over a file a person edited. The plugin kinds are those of the plugins the repository
+  holds or uses (`build.git_plugin_kinds`): every plugin under `plugins/` of a checkout of the
+  engine, the plugins a project uses. `mirai new`, `mirai setup git` and the editor's
+  [Initialize](../../mirai-editor/references/git.md#operations) write it; after a project starts
+  to use a plugin that adds a kind, `mirai setup git` adds its line and `mirai doctor` says when
+  one is missing.
 - The drivers live in the local configuration of each clone, so **every clone runs
   `mirai setup git [folder]` once** (`build.git_setup`): `merge.mirai.driver` is
   [`mirai asset merge`](#merge) and `diff.mirai.textconv` is `mirai asset dump --textconv`, so

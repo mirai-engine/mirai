@@ -1,18 +1,7 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
-# Asset kinds of the first-party plugins, as each declares them (Asset_Kind.merged).
-*.particle merge=mirai diff=mirai -text
-*.grid binary
-*.match merge=mirai diff=mirai -text
-*.agraph merge=mirai diff=mirai -text
-*.blend merge=mirai diff=mirai -text
-*.motion merge=mirai diff=mirai -text
-*.pose merge=mirai diff=mirai -text
-*.action merge=mirai diff=mirai -text
-*.terrain binary
-*.foliage binary
-*.navmesh binary
-# Asset kinds of the engine (asset.KINDS). `./mirai setup git` writes them and sets the drivers.
+# The asset kinds of the engine (asset.KINDS) and of its plugins (asset_kinds of each plugin.mirai)
+# follow: `./mirai setup git` writes them and sets the drivers of the clone.
 *.mesh binary
 *.tex binary
 *.mat merge=mirai diff=mirai -text
@@ -29,3 +18,14 @@
 *.strings merge=mirai diff=mirai -text
 *.prompts merge=mirai diff=mirai -text
 *.records merge=mirai diff=mirai -text
+*.match merge=mirai diff=mirai -text
+*.agraph merge=mirai diff=mirai -text
+*.blend merge=mirai diff=mirai -text
+*.motion merge=mirai diff=mirai -text
+*.pose merge=mirai diff=mirai -text
+*.action merge=mirai diff=mirai -text
+*.foliage binary
+*.navmesh binary
+*.terrain binary
+*.particle merge=mirai diff=mirai -text
+*.grid binary

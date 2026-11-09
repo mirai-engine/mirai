@@ -63,7 +63,7 @@ cmd_new :: proc(root:string,args:[]string) -> int {
         }
     }
     if folder=="" {fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2}
-    switch build.project_create(build.template_folder(root,template),folder,name) {
+    switch build.project_create(build.template_folder(root,template),folder,name,root) {
     case .None:
     case .Template_Missing: fmt.eprintfln("mirai new: there is no template %q in %s; mirai new --list shows them",template,build.template_folder(root,template));return 1
     case .Folder_Not_Empty: fmt.eprintfln("mirai new: %s already exists and is not an empty folder",folder);return 1

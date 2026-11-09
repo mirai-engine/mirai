@@ -67,7 +67,7 @@ effect_create :: proc(s:^editor.Session,kind:asset.Fourcc,id:base.Asset_Id) -> [
 Vfx_Kinds :: struct {provider:editor.Asset_Kind_Provider}
 VFX_KINDS_DEFAULT :: Vfx_Kinds{provider={
     kinds={
-        0={kind=effect.KIND,label="Particle",color=EFFECT_COLOR,icon=.Particles,extension=effect.EXTENSION,field="particle",merged=true},
+        0={kind=effect.KIND,label="Particle",color=EFFECT_COLOR,icon=.Particles,extension=effect.EXTENSION,field="particle"},
         1={kind=gridfile.KIND,label="Grid state",color=GRID_STATE_COLOR,icon=.Grid,extension=gridfile.EXTENSION,field="cached"},
     },
     count=2,

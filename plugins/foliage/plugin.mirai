@@ -2,5 +2,6 @@
   "name": "foliage",
   "version": "0.1.0",
   "dependencies": ["physics"],
-  "parts": ["Runtime", "Editor", "Shaders"]
+  "parts": ["Runtime", "Editor", "Shaders"],
+  "asset_kinds": [{"extension": ".foliage"}]
 }

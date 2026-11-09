@@ -1,12 +1,11 @@
 package navigation_editor
 
-import "core:os"
 import "core:strings"
 import "core:testing"
-import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:project"
 import "mirai:std/ai"
 import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
@@ -84,13 +83,10 @@ a_route_is_the_next_corner_and_what_is_left :: proc(t:^testing.T) {
     testing.expect_value(t,route_of(nil,{}).state,editor.Route_State.None)
 }
 
-// The engine's own repository merges and diffs the kinds of this plugin as it declares them.
+// What git and the tools know of the kinds of the plugin without loading it.
 @(test)
-the_git_attributes_of_the_engine_have_the_kinds_of_the_plugin :: proc(t:^testing.T) {
-    text,_:=os.read_entire_file(#directory+"../../../.gitattributes",context.temp_allocator)
-    provider:=NAV_KINDS_DEFAULT.provider
-    for kind in provider.kinds[:provider.count] {
-        line:=build.git_attributes_line({kind.extension,kind.merged},allocator=context.temp_allocator)
-        testing.expectf(t,strings.contains(string(text),strings.concatenate({line,"\n"},context.temp_allocator)),"the .gitattributes of the engine lacks the line %q",line)
-    }
+the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
+    m,error:=project.plugin_read(#directory+"../plugin.mirai")
+    testing.expect_value(t,error.code,project.Error_Code.None)
+    testing.expect_value(t,editor.asset_kinds_differ(NAV_KINDS_DEFAULT.provider,&m),"")
 }

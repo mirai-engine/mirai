@@ -6,6 +6,7 @@ import vmem "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/build"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import "mirai:project"
@@ -122,13 +123,14 @@ git_merge_compute :: proc(s:^Session) {
     m:=&g.merge
     a:=s.app.assets
     m.loaded=true
+    plugins:=git_plugin_kinds(s)
     for &file,f in m.files {
         name:=base.text_get(file.path[:])
         file.text=file.stages[1]!=nil
         for b in file.stages[1] {
             if b==0 {file.text=false;break}
         }
-        if a==nil || file.stages[1]==nil || file.stages[2]==nil || !git_merges_entities(s,name) {
+        if a==nil || file.stages[1]==nil || file.stages[2]==nil || !git_merges_entities(plugins,name) {
             git_merge_item_add(m,f,0,name,0,0)
             continue
         }
@@ -191,14 +193,15 @@ git_merge_item_add :: proc(m:^Git_Merge,file:int,key:base.Entity_Id,name:string,
 }
 
 // Whether a file is of a kind of asset that merges row by row and field by
-// field: asset.Kind_Info.merged, or Asset_Kind.merged for one of a plugin.
-git_merges_entities :: proc(s:^Session,path:string) -> bool {
+// field: asset.Kind_Info.merged, or what the manifest of its plugin declares
+// (plugins: git_plugin_kinds).
+git_merges_entities :: proc(plugins:[]build.Git_Kind,path:string) -> bool {
     if kind,found:=asset.kind_of_extension(path);found {
         info,_:=asset.kind_info(kind)
         return info.merged
     }
-    for &declared in asset_plugin_kinds(s) {
-        if declared.merged && declared.extension!="" && strings.has_suffix(path,declared.extension) {return true}
+    for declared in plugins {
+        if declared.merged && strings.has_suffix(path,declared.extension) {return true}
     }
     return false
 }
