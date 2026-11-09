@@ -468,17 +468,30 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
   wildcard, and then the last row.
-- With `Node_Style.transition`, a node's colors go from the style it showed to the new one when its
-  state or variant changes; a change under way starts from where it was and a transparent end only
-  fades.
+- With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
+  the style it showed to the new one when its state or variant changes; a change under way starts
+  from where it was and a transparent end only fades.
+- `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
+  the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
+  does not lose it.
+- A shadow without blur and with an offset is a solid copy of its shape; without blur or offset, the
+  theme's default shadow.
+- `Sheet` (`sheet.odin`) writes those tables by name: tokens, styles that extend others and states
+  that list only what changes. It builds `Node_Style`, `Tree_Style_Variant` and `Tree_Style_Info`
+  at write time and nothing of it exists in the frame. Game documentation:
+  `docs/game/ui/styles.md`.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
 ### Authoring components
 
-- A component is a range of `component_nodes` with a single root `Box`; a `Component` node
-  instantiates it, and one with `widget` takes its template from another `.ui` (`tree_link` expands
-  it with its styles, variants, images, fonts and animations before loading).
+- A component is a range of `component_nodes` with a single root of any kind; a `Component` node
+  instantiates it, and one with `widget` takes its template from another `.ui`, named like one of
+  its components or its whole tree (`tree_link` expands it with its styles, variants, images, fonts
+  and animations before loading, once per file).
+- A row of `style_infos` with `from` is the named style of the file of that component: its look and
+  rules are copied into the row at link. A component with `library` only lends that, without
+  instances. A node flagged `Slot`, the last of its template, holds what the instance holds.
 - `tree_load` expands the components during the load into the same flat arrays: the frame neither
   interprets templates nor allocates. There is no inheritance or virtual objects per widget.
 - The instance name is mandatory and gives the root (`menu`); local nodes become `menu/action` and

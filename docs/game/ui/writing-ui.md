@@ -7,22 +7,17 @@ The template's `tools/content` writes `hud.ui`, `sign.ui` and `shell.ui`: copy t
 ## Content tool
 
 ```odin
-texts:=make([dynamic]u8,context.temp_allocator)
-styles:=[]ui.Node_Style{               // style 0 is the plain one; nodes name a style by index
-    {},
-    {fill={16,22,34,220},radius=8},
-    {text={size=18,color={255,255,255,255}}},
-}
-nodes:=[]ui.Tree_Node{                 // parents first; the parent is an index of this list
-    ui.tree_node_record(&texts,-1,{kind=.Box,name="panel",style=1,
-        float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,offset={16,16}},
-        layout={width=ui.fixed(260),gap=12,padding=ui.padding_all(12)}}),
-    ui.tree_node_record(&texts,0,{kind=.Text,name="message",style=2,bind_text="Status.message"}),
-}
-err:=host.ui_tree_save("assets/ui/hud.ui",&types,id_of("ui","hud"),
-    ui.Tree_Data{nodes=nodes,styles=styles,text=texts[:]})      // asset.Error; .None is success
+s:=ui.sheet_make("hud")
+ui.sheet_styles(&s,{{name="value",size=18,color="#ffffff"}})
+panel:=ui.sheet_node(&s,-1,"",{kind=.Box,name="panel",
+    float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,offset={16,16}},
+    layout={width=ui.fixed(260),gap=12,padding=ui.padding_all(12)}})
+ui.sheet_node(&s,panel,"value",{kind=.Text,name="message",bind_text="Status.message"})
+host.ui_sheet_save(c,"assets/ui/hud.ui",id_of("ui","hud"),&s) // c: ^asset.Content, as the template
 ```
 
+- Styles, tokens, states and shared components: [styles.md](styles.md). A node names its style by
+  name; `sheet_node` returns what its children name as `parent`.
 - `id_of` (the template's helper over `base.asset_id_named`) gives the same id every run; the
   scene's `UI_Screen.asset` or `World_Widget.asset` takes it. Write the `.ui` before the scene.
 - Sizes are `ui.fixed(n)`, `ui.grow()`; `layout.direction` is `.Row` or `.Column`, `gap` and
@@ -31,15 +26,6 @@ err:=host.ui_tree_save("assets/ui/hud.ui",&types,id_of("ui","hud"),
   with the `padding` of its `layout` around the text: a pill needs no parent `Box`.
 - `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items` take paths:
   [hud-panels.md](hud-panels.md#hud). The kinds are the members of `ui.Node_Kind`.
-
-## Variants
-
-A variant changes some fields of a style while a state holds: `lit` in the template's
-`write_shell` makes one with `ui.tree_variant_record`. Pass them as `variants` in `ui.Tree_Data`
-and set `transition=0.08` on the style to fade between looks.
-
-`Focused` is the keyboard ring and looks different from `Hovered`: define both, or a player on
-keys cannot see where they are.
 
 ## Controls
 
@@ -63,8 +49,7 @@ A `Localized` node keeps its translations in the `.ui`. `mirai texts export|impo
 
 ## Pitfalls that fail silently
 
-- A parent index after its child, or a style index past the list, makes the whole `.ui` fail to
-  load: the screen does not show and `engine.diagnostics` has `gui.asset`.
+- A `.ui` that does not load shows nothing: `engine.diagnostics` has `gui.asset`.
 - Controls need distinct `name`s: events carry only the hash of the name.
 - Random ids break every scene that names the `.ui`: use `base.asset_id_named`.
 - Running the content tool again overwrites the file; API edits to a `.ui` it writes are lost.

@@ -6,16 +6,16 @@ The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.
 
 ## Restyle
 
-All styles, colors and control sizes are in `write_shell`: the constants at its top
-(`PANEL_FILL`, `ACCENT`, ...), the `styles` list and the `lit` hover, focus and press variants.
-Change values there (`text={size=22,color=...}`, `fill`, `stroke`, `radius`); keep the node
-names, since `shell_events` matches them.
+The look of every screen is `write_theme` of `tools/content`: tokens first (the colors and sizes
+to change), then the styles and the `button`, `panel` and setting rows the screens use
+([styles.md](styles.md)). `write_shell` only names them; keep its node names, since `shell_events`
+matches them.
 
 ## Add a page
 
 1. A member of `Shell_Page` before `Playing`, in the order of the pages of `shell.ui`.
-2. A `page(&t,pages,"controls","Controls")` call in `write_shell`, in the same order, with its
-   controls; `button(&t,panel,"menu_controls","Controls")` on the page that opens it.
+2. A `panel(&s,pages,.Controls,"Controls",560)` call in `write_shell`, in the same order, with its
+   controls; `button(&s,menu,"menu_controls","Controls")` on the page that opens it.
 3. A line in `shell_events` that sets `shell.page`, and one in the `gui.menu_pressed` switch of
    `shell_frame` if the page should go back.
 
@@ -34,9 +34,9 @@ One line of the content tool, no game code: a selector bound to a field of a set
 
 ```odin
 // label, node name, the field, options
-selector(&t,settings,"Rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|High=16")
-selector(&t,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
-checkbox(&t,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
+select(&s,settings,"Rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|High=16")
+select(&s,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
+check(&s,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
 ```
 
 `Label=Value` names what the option writes: a number, the name of a member of an enum, or text for
