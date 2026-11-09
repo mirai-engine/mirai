@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import anim "mirai:std/anim"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // A format of tests: any file named .test is a node with a child that holds a
@@ -80,6 +81,40 @@ test_import_ok :: proc(t:^testing.T,format:Format) -> (model:Imported_Model,ok:b
 
 @(private="file")
 near :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-5}
+
+// A skeleton of a body with its left at +X: it faces +Z in the space of the source.
+@(private="file")
+test_facing_read :: proc(r:^Reader,bytes:[]u8) -> bool {
+    FIGURE :: [?]struct {name:string,parent:i32,at:[3]f32}{
+        {"Hips",-1,{0,1,0}},{"Spine",0,{0,1.2,0}},{"Neck",1,{0,1.5,0}},{"Head",2,{0,1.6,0}},
+        {"LeftUpLeg",0,{.1,.95,0}},{"LeftLeg",4,{.1,.5,0}},{"LeftFoot",5,{.1,.08,0}},{"LeftToeBase",6,{.1,.02,.12}},
+        {"RightUpLeg",0,{-.1,.95,0}},{"RightLeg",8,{-.1,.5,0}},{"RightFoot",9,{-.1,.08,0}},{"RightToeBase",10,{-.1,.02,.12}},
+    }
+    figure:=FIGURE
+    bones:=make([]asset.Skeleton_Bone,len(figure),r.out)
+    for bone,i in figure {
+        bones[i]={parent=bone.parent,rotation=1,scale=1,translation=bone.at-(bone.parent>=0?figure[bone.parent].at:{})}
+        base.text_set(bones[i].name[:],bone.name)
+        base.text_set(bones[i].path[:],bone.name)
+    }
+    append(&r.skeletons,Imported_Skeleton{name=own(r,"Rig"),bones=bones})
+    return true
+}
+
+@(test)
+a_rig_that_faces_another_axis_is_read_again_facing_minus_z :: proc(t:^testing.T) {
+    format:=TEST_FORMAT
+    format.space,format.read=ENGINE_SPACE,test_facing_read
+    model,ok:=test_import_ok(t,format)
+    if !ok {return}
+    defer model_destroy(&model)
+    body,found:=asset.skeleton_body_detect(model.skeletons[0].bones,anim.body_map_empty())
+    testing.expect(t,found)
+    testing.expect_value(t,body.forward,mm.Vec3{0,0,-1})
+    // Half a turn about +Y: the left of the rig goes to -X, its toes to -Z.
+    testing.expect(t,near(model.skeletons[0].bones[4].translation,{-.1,-.05,0}))
+    testing.expect(t,near(model.skeletons[0].bones[7].translation,{0,-.06,-.12}))
+}
 
 @(test)
 the_space_a_reader_declares_is_baked_once_into_what_the_import_gives :: proc(t:^testing.T) {

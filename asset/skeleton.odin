@@ -112,7 +112,7 @@ skeleton_bone_index :: proc(bones:[]Skeleton_Bone,path:[NODE_PATH_CAPACITY]u8) -
 skeleton_body_map :: proc(bones:[]Skeleton_Bone,body:^Skeleton_Body,parts:[]Skeleton_Body_Part) -> anim.Body_Map {
     map_:=anim.body_map_empty()
     if body==nil {return map_}
-    map_.forward,map_.up,map_.axes_confidence,map_.manual_axes=body.forward,body.up,body.confidence,body.manual
+    map_.forward,map_.up,map_.axes_confidence=body.forward,body.up,body.confidence
     for &row in parts {
         if row.part>max(anim.Body_Part) {continue}
         bone:=skeleton_bone_index(bones,row.bone)
@@ -137,7 +137,7 @@ skeleton_body_rows :: proc(bones:[]Skeleton_Bone,map_:anim.Body_Map,body:^Skelet
         count+=1
     }
     if !found {return 0,false}
-    body^={forward=map_.forward,up=map_.up,confidence=map_.axes_confidence,manual=map_.manual_axes}
+    body^={forward=map_.forward,up=map_.up,confidence=map_.axes_confidence}
     return count,true
 }
 

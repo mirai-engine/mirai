@@ -66,7 +66,7 @@ version asks to write it again). An effect is like a material: entities name it
 ## Game
 
 A `Particle_Emitter` on an entity shows an effect. An effect of several emitters is a prefab,
-placed with `scene.Spawns`.
+placed with `scene.spawn`.
 
 `Particle_Emitter`:
 

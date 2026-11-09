@@ -393,6 +393,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     chosen:=w.options.settings
     w.report.settings=chosen
     mesh_settings:=mesh_settings_hash(chosen)
+    // A model read turned to -Z is another mesh than the same source read as it was.
+    if model.facing!={} {
+        facing:=model.facing
+        mesh_settings~=base.hash64(mem.ptr_to_bytes(&facing))
+    }
     for warning in model.warnings {writer_warn(w,"%s",warning)}
     for program in model.programs {append(&w.report.programs,strings.clone(program,w.allocator))}
 

@@ -155,9 +155,7 @@ builder_save :: proc(b:^Scene_Builder,path:string) {
     content_check(b.content,path,scene_save(&b.scene,path))
 }
 
-// Reports what a part of the scene could not write and stops the builder;
-// the parts that plugins add (terrain.builder_terrain, foliage.builder_foliage)
-// fail through it.
+// Reports what a part of the scene could not write and stops the builder.
 builder_fail :: proc(b:^Scene_Builder,what:string,error:Error) {
     content_check(b.content,what,error)
     b.failed=true

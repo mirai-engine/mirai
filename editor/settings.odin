@@ -1041,7 +1041,7 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
             return
         }
         for setting,i in next {
-            if setting.name=="Graphics_Settings" {erender.graphics_quality_settle((^erender.Graphics_Settings)(setting.value),(^erender.Graphics_Settings)(current[i].value).quality)}
+            if setting.name=="Graphics_Settings" {erender.graphics_quality_follow((^erender.Graphics_Settings)(setting.value),(^erender.Graphics_Settings)(current[i].value).quality)}
         }
     }
     for setting in next {

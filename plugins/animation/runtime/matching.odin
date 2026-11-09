@@ -207,7 +207,7 @@ match_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Ma
 // wall, the normal of what blocks it, out of that (zero: nothing), which neither its trajectory
 // nor the root of its pose go into; time_to_land, the seconds until a body in the air lands (0:
 // none known), which the landing marker of the .match plays toward. World axes, m/s. The rig faces
-// the forward of its skeleton's body, -Z of its transform.
+// -Z of its transform.
 Match_Goal :: struct {rig:core.Entity,mode:u16,velocity,desired,facing,wall:mm.Vec3,acceleration,braking,turn_rate,time_to_land:f32}
 
 // How a clip played by match_play enters and when matching takes over again. A play enters at the
@@ -402,7 +402,7 @@ match_database :: proc(content:^Match_Content,library:^host.Content_Animation,st
         rest,rest_error:=make([]mm.Transform,len(state.rest));defer delete(rest)
         if rest_error!=nil {built.error=.Out_Of_Memory} else {
             copy(rest,state.rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
-            body:=lib.body_map_empty();body.forward,body.up=state.forward,state.up
+            body:=lib.body_map_empty();body.forward,body.up=mm.FORWARD,{0,1,0}
             for bone,part in state.body {if bone>0 {body.bones[part]=bone}}
             for part,i in ([3]lib.Body_Part{.Foot_L,.Foot_R,.Pelvis}) {
                 if body.bones[part]>=0 {continue}
@@ -456,7 +456,7 @@ match_marker_crossed :: proc(library:^host.Content_Animation,clip:lib.Clip,name:
 }
 
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
-// facing is the forward of the body of the rig in the world.
+// facing is the -Z of the rig in the world.
 @(private)
 match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,plays:[]Match_Play,facing:mm.Vec3,app:^host.App,events:^Animation_Events,playback:^Playback,problems:^core.Problems) -> bool {
     runtime:=&state.program;m:=&runtime.match;info:=content.profile.info

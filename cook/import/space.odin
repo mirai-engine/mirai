@@ -74,9 +74,33 @@ space_basis :: proc "contextless" (space:Source_Space) -> (b:Basis,ok:bool) {
     return b,true
 }
 
+@(private) FACING_BACK :: [3]f32{0,0,1}
+@(private) FACING_RIGHT :: [3]f32{1,0,0}
+@(private) FACING_LEFT :: [3]f32{-1,0,0}
+
+// The axes of a source whose rig stands facing an axis other than -Z, turned
+// about +Y so that it faces -Z: facing is what the read of those axes found;
+// zero leaves them as they are.
+space_faced :: proc "contextless" (axes:[3]Axis,facing:[3]f32) -> [3]Axis {
+    turned:=axes
+    switch facing {
+    case FACING_BACK:  turned[0],turned[2]=axis_opposite(axes[0]),axis_opposite(axes[2])
+    case FACING_RIGHT: turned[0],turned[2]=axes[2],axis_opposite(axes[0])
+    case FACING_LEFT:  turned[0],turned[2]=axis_opposite(axes[2]),axes[0]
+    }
+    return turned
+}
+
+// A facing space_faced can turn to -Z: an axis of the ground other than -Z.
+body_turnable :: proc "contextless" (facing:[3]f32) -> bool {
+    return facing==FACING_BACK || facing==FACING_RIGHT || facing==FACING_LEFT
+}
+
 // The space a file states of itself, for a format whose files each say theirs
 // (USD): it replaces Format.space. Before the first builder_triangle.
 source_space :: proc(r:^Reader,space:Source_Space) -> bool {
+    space:=space
+    space.axes=space_faced(space.axes,r.facing)
     basis,ok:=space_basis(space)
     if !ok {return fail(r,.Malformed,"%s: the space of the source needs positive units and three distinct axes",r.file_name)}
     r.space,r.basis=space,basis

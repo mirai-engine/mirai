@@ -79,7 +79,7 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
   --no-gpu      no window or renderer: only simulates
   --dedicated   a server nobody plays on: no window, renderer, audio or local players, at the pace of its
                 ticks and without the phases ui and render; the plugin of the network serves the game
-  --frames      exits after n frames, saying the effective graphics quality and the mean frame time; no window
+  --frames      exits after n frames, saying the last graphics preset named and the mean frame time; no window
   --capture     writes the last frame as a PNG on exit; no window
   --validation  enables graphics API validation; exits with code 6 if there are errors
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
@@ -287,7 +287,7 @@ player_run_summary :: proc(app:^App,frames:int,seconds:f64,allocator:=context.te
     file:=project.settings_file(.Player,app.root,app.engine_root,context.temp_allocator,player=app.options)
     applied:=file!="" && os.exists(file)?fmt.tprintf(", player options %s",file):", no player options"
     mean:=frames>0?1000*seconds/f64(frames):0
-    return fmt.aprintf("mirai: %d frames, graphics quality %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied,allocator=allocator)
+    return fmt.aprintf("mirai: %d frames, graphics preset %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied,allocator=allocator)
 }
 
 // The icon of the window: a PNG, read as 8 bits per channel with alpha.

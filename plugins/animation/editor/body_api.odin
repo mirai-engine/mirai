@@ -24,8 +24,6 @@ Body_Part_Assignment :: struct {
 Body_Set_Params :: struct {
     asset:base.Asset_Id,
     parts:[len(lib.Body_Part)]Body_Part_Assignment `mirai:"optional,label=What it sets becomes manual and survives detection and reimport"`,
-    forward:mm.Vec3 `mirai:"optional,label=Where the body faces at rest; with up"`,
-    up:mm.Vec3 `mirai:"optional"`,
     dry_run:bool `mirai:"optional"`,
 }
 Body_Part_Result :: struct {
@@ -37,7 +35,7 @@ Body_Part_Result :: struct {
 }
 Body_Result :: struct {
     asset:base.Asset_Id,path:[1024]u8 `mirai:"text"`,dry_run:bool `mirai:"optional"`,
-    forward,up:mm.Vec3 `mirai:"label=Where the body faces at rest"`,axes_confidence:f32 `mirai:"label=0 to 1"`,manual_axes:bool,
+    forward,up:mm.Vec3 `mirai:"label=Where the body faces at rest"`,axes_confidence:f32 `mirai:"label=0 to 1"`,
     parts:[len(lib.Body_Part)]Body_Part_Result,
     missing:[len(lib.Body_Part)]lib.Body_Part `mirai:"label=Parts without a bone"`,
     unassigned_total:u32,
@@ -131,12 +129,6 @@ body_set :: proc(s:^editor.Session,call:^api.Call) {
         map_.bones[assignment.part],map_.confidence[assignment.part]=bone,1
         map_.manual+={assignment.part}
     }
-    if p.forward!={} || p.up!={} {
-        forward,up:=p.forward,p.up
-        f,fok:=body_unit(forward);u,uok:=body_unit(up)
-        if !fok || !uok || abs(linalg.dot(f,u))>1e-3 {authoring_failure(call,"forward","Invalid_Axes","nonzero perpendicular forward and up",fmt.tprintf("forward %v up %v",forward,up),"The body axes must be perpendicular",fix="Pass both, at right angles, as unit vectors (for example forward [0,0,1] and up [0,1,0])");return}
-        map_.forward,map_.up,map_.axes_confidence,map_.manual_axes=f,u,1,true
-    }
     body_save(s,call,file,p.asset,view,map_)
 }
 
@@ -174,7 +166,7 @@ body_save :: proc(s:^editor.Session,call:^api.Call,file:Authoring_File,id:base.A
 body_write :: proc(call:^api.Call,view:aa.Skeleton_View,map_:lib.Body_Map) {
     out:=call.out
     api.write_numbers(out,"forward",map_.forward);api.write_numbers(out,"up",map_.up)
-    api.write_key(out,"axes_confidence");api.write_number(out,map_.axes_confidence);api.write_bool(out,"manual_axes",map_.manual_axes)
+    api.write_key(out,"axes_confidence");api.write_number(out,map_.axes_confidence)
     api.write_key(out,"parts");serial.text_write_raw(out,"[")
     written:=0
     for bone,part in map_.bones {

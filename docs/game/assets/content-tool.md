@@ -1,11 +1,12 @@
 # Content tool: write assets from code
 
 A content tool is a program of the project (`tools/content`, an `odin run` target) that writes
-the assets of a game from code, so the same bytes come out every run and the game can be rebuilt
-from source. Use it for what no art source holds: procedural textures, generated sounds, sets of
-sounds, meshes made from code, prefabs and scenes. Art files go through
-`mirai import` instead ([assets](../assets.md#import)). The command that runs a tool is at the top
-of the project's `tools/content/main.odin`; run it from the project folder.
+the generated assets of a game from code, so the same bytes come out every run and the game can be
+rebuilt from source. Use it for what no art source holds: procedural textures, generated sounds,
+sets of sounds and meshes made from code. Art files go through `mirai import`
+([assets](../assets.md#import)); a scene and a prefab are files of `assets/`, written through the
+API or in the editor, never by a tool ([whole-scene](whole-scene.md)). The command that runs a
+tool is at the top of the project's `tools/content/main.odin`; run it from the project folder.
 
 ## Skeleton
 
@@ -22,7 +23,7 @@ main :: proc() {
 ```
 
 - `asset.content_id(PROJECT,kind,name)` is the same on every run, so what the tool writes keeps
-  naming the same assets. Game code names a prefab or a scene by its path, not by this id.
+  naming the same assets.
 - Every `*_save(path,&c.types,desc)` returns `asset.Error`: pass it to
   `asset.content_check(&c,path,error)`, which prints the path or the error and sets `c.failed`.
 - The tool writes the same bytes twice: do not add time or random numbers to what it writes.
@@ -53,8 +54,7 @@ hum:=report.assets[0].id // random the first time, kept after
 
 - Write the WAV only when its bytes differ from the file on disk, so an unchanged source is
   imported as the same file.
-- The id an import returns is random: put it in the scene in the same run, or read it with
-  `asset.list`; never in a constant.
+- The id an import returns is random: read it with `asset.list`; never in a constant.
 
 ## Sound set
 
@@ -67,21 +67,6 @@ err:=asset.sound_set_save("assets/sounds/steps.sound_set",&c.types,
 
 `Sound_Set_Info` also has `volume_min`, `volume_max`, `pitch_min`, `pitch_max`, `no_repeat`
 and a `weight` per sound. A set that is invalid returns `.Invalid`.
-
-## Prefab and scene
-
-An `asset.Scene_Builder` writes both: `asset.builder_init(&b,&c,asset.KIND_PREFAB,id)` (`KIND_SCENE`
-for a scene), `builder_entity`, `builder_set`, `builder_save` and `builder_destroy`. A whole player:
-[third-person](../third-person.md#2-the-player).
-
-- `builder_entity` also writes the `Transform`: a rotation or a scale left out is the identity.
-  The entity without a parent of a prefab is its root.
-- `builder_set` takes the component from the type of the value, the struct the game declares.
-- The first error is printed, naming the entity and the component; `builder_save` then writes
-  nothing and `c.failed` is set.
-- References to assets inside components are `base.Asset_Id` values: use the ids above.
-- A `Spawn_Point` names a prefab id, a `UI_Screen` a `.ui`, an `Audio_Source` a `.sound`: each
-  field is an id you wrote or imported. `asset.scene_get` on `b.scene` reads a component back.
 
 ## Import
 
@@ -96,7 +81,6 @@ report,error:=sources.import_source("source/models/crate.glb","assets/models/cra
 
 ## Pitfalls that fail silently
 
-- Write assets first, then prefabs, then scenes: a scene names the ids the earlier ones return.
 - Materials a terrain layer names can be written in the tool too:
   `info:=asset.MATERIAL_DEFAULTS;info.maps.base_color.texture=tex`, then
   `asset.material_save(path,&c.types,{id=...,info=info})`; the maps are `base_color`,

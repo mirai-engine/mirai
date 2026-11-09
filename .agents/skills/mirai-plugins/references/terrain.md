@@ -466,9 +466,7 @@ ground in the color of the level it shows, a coarser node one.
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
 `terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
 world on the entity they name (no selection needed), each change an unsaved undo step like a
-stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A content tool
-writes a terrain and its entity with `terrain.builder_terrain` (`builder.odin`), in one pass with
-the scene. A layer is named by its material
+stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same). A Volume's interior is edited in Paint,
 under its layers: its rows hold what is changed until Apply. `terrain.edit` is a stroke of a brush
 by its name from `at` to `to`, touching every quarter of the radius with what a pass does; a ramp
@@ -741,9 +739,6 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
   without holes and the Volume has no nodes.
 
 ## Verification
-
-What a content tool writes: `a_content_tool_writes_a_terrain_and_its_entity_in_one_pass`
-(`plugins/terrain/runtime`).
 
 Runtime: `mirai test plugins/terrain/runtime` (CPU); `--release` only if a failure may depend on optimization. It covers
 persistence, clones, validation, memory, halo, raycast, masks, immutable publishing, empty chunks,

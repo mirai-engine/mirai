@@ -10,22 +10,23 @@ as the file is spelled (`"prefabs/Dog.prefab"`); a field of data (`Spawn_Point.p
 import "mirai:engine/scene"
 
 @(step="fixed")
-game_burst :: proc(impacts:core.Read(Impact),spawns:^scene.Spawns) {
+game_burst :: proc(impacts:core.Read(Impact),spawner:scene.Spawner) {
     for row in 0..<core.count(impacts) {
         at:=core.at(impacts,row).point
-        scene.request_spawn(spawns,"prefabs/Burst.prefab",{position=at},transient=true)
+        scene.spawn(spawner,"prefabs/Burst.prefab",{position=at},transient=true)
     }
 }
 ```
 
 The third argument is the `core.Transform{position, rotation, scale}` of the root; a zero rotation
 is none and a zero scale is 1. `parent=` hangs the root under an entity. `transient=true`: no `Id`
-of its own, for effects and projectiles. A spawn that fails is the problem `scene.spawn` of the
-parent or of the world.
+of its own, for effects and projectiles. The path or the `base.Asset_Id` of a prefab both work.
+A spawn that fails returns `core.NONE` and is the problem `scene.spawn` of the parent or of the
+world.
 
-## Spawn and keep the root
+## Keep the root
 
-To give the new entity components, receive a `scene.Spawner`:
+`scene.spawn` gives the root, to give the new entity components:
 
 ```odin
 @(step="fixed",server)
@@ -39,7 +40,6 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 }
 ```
 
-- `scene.spawn` returns `core.NONE` when it fails, and that is the problem `scene.spawn`.
 - The rows appear when the function ends. `core.commands_add` gives only a component the root
   lacks; for one the prefab already has, `core.commands_added(spawner.commands,e,Follow)` returns
   the row to finish. Put a component in the prefab when it is always there.
@@ -68,5 +68,4 @@ for c:=core.first_child(hierarchy,e);c!=core.NONE;c=core.next_sibling(hierarchy,
 
 ## Pitfalls that fail silently
 
-- `scene.Spawns` gives no handle: the root exists next tick. Use `scene.spawn` to keep it.
 - The `Hierarchy` shows a `Parent` only after the function that wrote it ends.

@@ -39,22 +39,17 @@ the name of their type) and a world (handles and tables).
   registry. Prefab instances are not resolved against their prefabs. A `Scene_Reference` may name
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
-- `spawn(spawner, path, at)` places a prefab while playing and returns its root (`NONE` is the
-  problem `scene.spawn`); `spawn_prefab(commands, app, Spawn{...})` is the route of what holds an id
-  in data or needs the report, and `request_spawn(spawns, path, at)` the one that needs no root.
-  A zero rotation is none and a zero scale is 1; its rows wait for the end of
-  the function that requested it. The root receives `Prefab_Source`, which a server sends with what
-  it replicates so that the client instantiates that prefab
-  ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)). One
-  requested through the `Spawns` queue that fails is the problem `scene.spawn` of its `parent` (or
-  of the world).
+- `spawn(spawner, path_or_id, at)` is the one way to place a prefab while playing and returns its
+  root; one that fails returns `NONE` and is the problem `scene.spawn` of its `parent` (or of the
+  world). A zero rotation is none and a zero scale is 1; its rows wait for the end of the function
+  that spawned it. The root receives `Prefab_Source`, which a server sends with what it replicates
+  so that the client instantiates that prefab
+  ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));
   without any, the file as is. With cooked assets (`Assets.indexed`) they load the file, which
   cooking already resolved.
-- `scene_spawns` takes `Spawns.queue` in `fixed` and `frame`; one that fails is the problem
-  `scene.spawn` of its `parent` (or of the world), with the prefab's path, the cause and the fix.
 - `capture(world, &scene, types, {root, previous, kind, id, entities, sections})` writes a document
   with the entities that have `Id`, in depth, without what hangs from a reference, which stores its
   scene; with `sections` (a save), everything. With `entities`, only those, as roots, without what

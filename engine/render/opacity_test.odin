@@ -19,6 +19,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
+    if !testing.expect(t,gpu.renderer_set_display_transform(app.renderer,.ACES_2),"the pixels below are calibrated to ACES 2.0") {return}
     es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
     worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
     meshes:core.Table(Mesh_Renderer);defer core.table_destroy(&meshes)

@@ -235,7 +235,7 @@ api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
 @(private)
 api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
-    base.text_set(result.preset[:],graphics_quality_label(g.quality))
+    base.text_set(result.preset[:],graphics_quality_label(erender.graphics_quality_of(g^)))
     result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
