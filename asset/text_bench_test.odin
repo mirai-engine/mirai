@@ -20,11 +20,30 @@ import "mirai:std/serial"
 
 @(private="file")
 Text_Bench :: struct {
-    save,load,write,read:f64, // seconds, the best round
+    save,load,write,read:Bench_Time,
     container,text:int,       // bytes
     bare:int,                 // of the text without its schema, which pack does not read
     bulk:int,                 // of the files next to the text
     packed:[Pack]int,         // of the text as one LZ stream of each level
+}
+
+// Seconds of the best round: on the clock, and of them those the thread had a processor.
+@(private="file") Bench_Time :: struct {wall,cpu:f64}
+@(private="file") Bench_Start :: struct {tick:time.Tick,thread,all:u64}
+
+@(private="file")
+bench_start :: proc() -> (s:Bench_Start) {
+    s.thread,s.all=bench_thread_ran()
+    s.tick=time.tick_now()
+    return
+}
+
+@(private="file")
+bench_stop :: proc(best:^Bench_Time,s:Bench_Start) {
+    wall:=seconds(s.tick)
+    thread,all:=bench_thread_ran()
+    best.wall=min(best.wall,wall)
+    best.cpu=min(best.cpu,wall*f64(thread-s.thread)/f64(max(all-s.all,1)))
 }
 
 // Every round builds what a save or a load builds: nothing is reused between rounds.
@@ -38,31 +57,31 @@ text_bench :: proc(t:^testing.T,doc:^Document,rounds:int) -> (b:Text_Bench,ok:bo
     testing.expect_value(t,document_text_write(doc,&text,options),Error.None) or_return
     source:=serial.writer_bytes(&text)
     loader:=test_bulk_loader(doc)
-    b.save,b.load,b.write,b.read=max(f64),max(f64),max(f64),max(f64)
+    b.save,b.load,b.write,b.read={max(f64),max(f64)},{max(f64),max(f64)},{max(f64),max(f64)},{max(f64),max(f64)}
     for round in 0..<rounds {
-        start:=time.tick_now()
+        start:=bench_start()
         bytes,_:=document_bytes(doc)
-        b.save=min(b.save,seconds(start))
+        bench_stop(&b.save,start)
         mem.free_bytes(bytes,context.allocator)
 
         back:Document
-        start=time.tick_now()
+        start=bench_start()
         error=document_read(&back,data)
-        b.load=min(b.load,seconds(start))
+        bench_stop(&b.load,start)
         testing.expect_value(t,error,Error.None) or_return
         document_destroy(&back)
 
         w:serial.Writer
-        start=time.tick_now()
+        start=bench_start()
         serial.writer_init(&w)
         error=document_text_write(doc,&w,options)
-        b.write=min(b.write,seconds(start))
+        bench_stop(&b.write,start)
         serial.writer_destroy(&w)
         testing.expect_value(t,error,Error.None) or_return
 
-        start=time.tick_now()
+        start=bench_start()
         problem,read:=document_text_read(&back,string(source),loader)
-        b.read=min(b.read,seconds(start))
+        bench_stop(&b.read,start)
         testing.expectf(t,read,"%v %v at %d",problem.code,problem.rule,problem.offset) or_return
         if round==0 {
             again,_:=document_bytes(&back)
@@ -88,9 +107,9 @@ text_bench :: proc(t:^testing.T,doc:^Document,rounds:int) -> (b:Text_Bench,ok:bo
 
 @(private="file")
 text_bench_print :: proc(name:string,b:Text_Bench) {
-    fmt.printfln("%s, container: save %.3f ms, load %.3f ms, %d bytes",name,b.save*1000,b.load*1000,b.container)
-    fmt.printfln("%s, text: write %.3f ms, read %.3f ms, %d bytes (%d without the schema, %d of bulk files; as LZ %d Edit, %d Quick, %d Ship)",name,b.write*1000,b.read*1000,b.text,b.bare,b.bulk,b.packed[.Edit],b.packed[.Quick],b.packed[.Ship])
-    fmt.printfln("%s, text / container: save %.1fx, load %.1fx, size %.1fx",name,b.write/b.save,b.read/b.load,f64(b.text)/f64(b.container))
+    fmt.printfln("%s, container: save %.3f ms (cpu %.3f), load %.3f ms (cpu %.3f), %d bytes",name,b.save.wall*1000,b.save.cpu*1000,b.load.wall*1000,b.load.cpu*1000,b.container)
+    fmt.printfln("%s, text: write %.3f ms (cpu %.3f), read %.3f ms (cpu %.3f), %d bytes (%d without the schema, %d of bulk files; as LZ %d Edit, %d Quick, %d Ship)",name,b.write.wall*1000,b.write.cpu*1000,b.read.wall*1000,b.read.cpu*1000,b.text,b.bare,b.bulk,b.packed[.Edit],b.packed[.Quick],b.packed[.Ship])
+    fmt.printfln("%s, text / container: save %.1fx, load %.1fx, size %.1fx",name,b.write.wall/b.save.wall,b.read.wall/b.load.wall,f64(b.text)/f64(b.container))
 }
 
 @(test)
@@ -112,19 +131,19 @@ text_source_against_the_container :: proc(t:^testing.T) {
 
             // What either encoding pays after its document to have the scene an editor edits.
             data,_:=document_bytes(&scene.doc)
-            adopt:=max(f64)
+            adopt:=Bench_Time{max(f64),max(f64)}
             for _ in 0..<rounds {
                 doc:Document
                 if !testing.expect_value(t,document_read(&doc,data),Error.None) {break}
                 loaded:Scene
-                start:=time.tick_now()
+                start:=bench_start()
                 error:=scene_from_document(&loaded,&types,&doc)
-                adopt=min(adopt,seconds(start))
+                bench_stop(&adopt,start)
                 testing.expect_value(t,error,Error.None)
                 scene_destroy(&loaded)
             }
             mem.free_bytes(data,context.allocator)
-            fmt.printfln("%d entities, document to scene: %.3f ms",count,adopt*1000)
+            fmt.printfln("%d entities, document to scene: %.3f ms (cpu %.3f)",count,adopt.wall*1000,adopt.cpu*1000)
             free_all(context.temp_allocator)
         }
         for name in TEXT_BENCH_FILES {
