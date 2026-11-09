@@ -12,29 +12,19 @@ per decision and a small, slow one plays as well as a fast one.
 
 ## Agent
 
-A project has `.claude/agents/playtester.md`. It runs on Haiku with a short tool list (the
-`mirai` MCP methods `play_start`, `play_stop`, `play_step`, `play_observe`, `capture`,
-`play_qa_start`, `play_qa_report`, `play_explore`, and `Write`) and never reads code.
+`.claude/agents/playtester.md` says how it plays. It needs the `playtest` plugin, which the game
+template enables; its tools reach the plugin through `call`, so nothing else pays for them.
 
 - Launch it with one goal that names what it needs, since it cannot look anything up: what to
   reach or do, the names of the entities to look for, when to stop, and a file to write a report
   to if you want one. "Reach the entity named Door and press Play from the main menu first."
-- Its loop: `play_start`, then `play_qa_start` (with `fall_below` under the lowest floor), then
-  `play_observe` once and `play_step` with `observe:true` for
-  every action. It stops at the first bug (`stuck`, a problem, a violation, a wrong screen),
-  calls `play_qa_report` with `repro:true` for each violation that matters, and answers in
-  under 150 words with the repro paths.
-- Pressing a button: one step puts `mouse_position` over the `rect` of the button from
-  `ui.buttons`; the next holds `Left` in `mouse_buttons` for 2 ticks.
-- Broad bug hunts: ask it to run `play_explore` in `World`, or in `Ui` for the menus
-  ([explore-qa.md](explore-qa.md#explore)).
 - When the goal needs judging the image, change `model: haiku` to `sonnet` in the file.
 
 ## Inspect
 
 ```bash
 mirai rpc --project . play.observe '{"targets":["Door*"],"nearest":3}'
-mirai rpc --project . play.step '{"ticks":20,"keys":["W"],"observe":true,"targets":["Door*"]}'
+mirai rpc --project . play.observe '{"step":{"ticks":20,"keys":["W"]},"targets":["Door*"]}'
 mirai rpc --project . play.get '{"entity": "Player","field":"world_position"}' --select value
 mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gone"}]}' \
   --select passed
@@ -46,7 +36,7 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
 - A target has `distance` in meters, `bearing` in degrees right of where the camera looks
   (negative: left) and `elevation`; turn with `mouse_delta` by that much, then step forward.
   `targets` match component or entity names; `*` stands for any run of characters.
-- `play.step` with `observe:true` is act plus observe in one call: use only it in a loop.
+- `play.observe` with `step` is act plus observe in one call: use only it in a loop.
 - Cost grows down the list: `play.check` (yes or no), `play.get` (one value), `play.observe`,
   `play.inspect` (with `components`, whole entities), an image. Take the cheapest that answers.
 - `--select a,b.c,d[0]` keeps only those fields of any answer.
@@ -73,5 +63,4 @@ mirai rpc --project . capture \
 
 - A goal with no entity names makes the agent wander: name what to reach.
 - Without `play_qa_start`, a violation the agent finds is not reported.
-- A step with no `observe:true` answers the bare state: the agent then needs a second call.
 - Time stands still between calls: a wait the agent wants is a `play_step` with `until`.

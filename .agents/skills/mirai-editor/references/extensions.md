@@ -359,6 +359,15 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
 - [Protocol conventions](../../mirai-agent-api/references/api.md) and
   [animation methods](../../mirai-animation/references/animation-api.md).
 
+## Runs the API drives
+
+An Editor storage whose only field is `editor.Run_Provider` hears the runs the API advances tick by
+tick (`play.step`, a scenario, a filmstrip, `editor.play_tick`): the input of a tick before it runs,
+that it ticked, the methods that changed the run between ticks, a change of focus and that it
+ended. What it keeps of a run goes in a storage of its own, keyed by `Run.id`. `editor.play_tick`
+with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its screen on top shows
+([`playtest`](../../mirai-plugins/references/plugins.md#first-party-plugins)).
+
 ## Importers of a plugin
 
 A plugin adds to the editor's import ([import](../../mirai-imports/SKILL.md)) with two providers;

@@ -39,7 +39,6 @@ play_chat_set :: proc(s:^Session,open:bool) {
 }
 
 // The click that recaptures the scene never reaches the game; Tab toggles the chat while it is paused.
-@(private)
 play_input_update :: proc(s:^Session) {
     app,g:=s.app,s.gui
     frame:=platform.input_frame(app.platform)

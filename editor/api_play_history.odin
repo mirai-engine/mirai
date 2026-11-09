@@ -106,7 +106,7 @@ api_play_history_register :: proc(s:^Session,st:^Api_State) {
 api_play_seek :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Seek_Params)
     r,own,stopped:=api_history_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     if !own && stopped {api.call_fail(call,api.SERVER_ERROR,"A turn reads the last Play of the user with play.history; it opens again only from outside a turn");return}
     if !own {api_play_refused(call);return}
     if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return}

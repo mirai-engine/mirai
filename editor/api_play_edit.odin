@@ -63,12 +63,11 @@ api_play_edit_register :: proc(s:^Session,st:^Api_State) {
 
 // The run of the caller that a method of the game changes; false after
 // failing the call.
-@(private)
 api_play_own_run :: proc(s:^Session,call:^api.Call,player:int) -> (r:^Run,ok:bool) {
     own:bool
     r,own=api_play_run(s,call,player)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
+    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
     case !own:   api_play_refused(call)
     case:        return r,true
     }
@@ -185,7 +184,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         if change.bytes==nil {core.raw_remove(table,e)} else {core.raw_add(table,change.table.info,e,raw_data(change.bytes))}
     }
     core.world_settle(w)
-    qa_log_call(s,r,"play.set",call.raw)
+    run_tell_call(s,r,"play.set",call.raw)
     result:=api.call_result(call,Api_Play_Set_Result)
     if has_position || has_rotation {
         if !core.place(placer,e,target,turn) {
@@ -218,7 +217,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %v",error)
         return
     }
-    qa_log_call(s,r,"play.spawn",call.raw)
+    run_tell_call(s,r,"play.spawn",call.raw)
     result:=api.call_result(call,Api_Play_Spawn_Result)
     api_handle_put(result.entity[:],report.root)
     result.entities=report.entities
@@ -232,7 +231,7 @@ api_play_destroy :: proc(s:^Session,call:^api.Call) {
     w:=run_ref(s,r)
     e,known:=api_call_entity(call,w,params.entity[:],game=true)
     if !known {return}
-    qa_log_call(s,r,"play.destroy",call.raw)
+    run_tell_call(s,r,"play.destroy",call.raw)
     before:=core.world_entities(w).alive
     core.world_destroy_tree(w,e)
     core.world_settle(w)
@@ -328,7 +327,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     for i in 0..<count {
         runtime.__dynamic_array_append(queue,size,item.align,&values[i*size],1)
     }
-    qa_log_call(s,r,"play.push",call.raw)
+    run_tell_call(s,r,"play.push",call.raw)
     api.call_result(call,Api_Play_Push_Result).pushed=count
 }
 

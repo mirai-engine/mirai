@@ -59,7 +59,7 @@ Api_File_Result :: struct {
 Api_Inspect_Result :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the document; empty before it has one"`,
     dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
-    playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: whether a game of the caller plays, without one the rest is empty"`,
+    playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: true"`,
     total:int `mirai:"label=Entities alive in the world"`,
     offset:int,
     entities:[1]Api_Inspect_Entity `mirai:"list,label=Parents before their children and siblings in their order"`,
@@ -94,7 +94,6 @@ Api_Inspect_Prefab :: struct {
 
 // What api_play_player writes: Play_Player_Snapshot as JSON.
 Api_Play_Player_Result :: struct {
-    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     available:bool `mirai:"label=Whether a local seat has focus; without one the rest is empty"`,
     tick:u64,
     seconds:f32 `mirai:"label=The time of the game"`,
@@ -274,7 +273,6 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
 }
 
 // The entities of a world depth first, parents before children, siblings in their order.
-@(private)
 api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator) -> []core.Entity {
     transforms:=core.world_table_of(w,core.Transform)
     parents:=core.world_table_of(w,core.Parent)
@@ -384,7 +382,6 @@ api_storage_named :: proc(s:^Session,pattern:string) -> bool {
 }
 
 // Whether a name is the pattern, where * stands for any run of characters.
-@(private)
 api_name_match :: proc "contextless" (pattern,name:string) -> bool {
     p,n:=0,0
     star,resume:=-1,0
@@ -412,13 +409,7 @@ api_scene_inspect :: proc(s:^Session,call:^api.Call) {api_inspect_run(s,call,edi
 @(private)
 api_play_inspect :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Inspect_Params).player)
-    if r==nil {
-        out:=call.out
-        serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
-        api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
-        serial.text_write_raw(out,`,"playing":false,"total":0,"offset":0,"entities":[],"shown":0,"matched":0,"omitted":0}`)
-        return
-    }
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     api_inspect_run(s,call,core.world_ref(r.world,s.info),true)
 }
 

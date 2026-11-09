@@ -1,0 +1,6 @@
+{
+  "name": "playtest",
+  "version": "0.1.0",
+  "parts": ["Editor"],
+  "development": true
+}

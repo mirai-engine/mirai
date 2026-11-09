@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:mem"
+import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -22,6 +23,7 @@ API_STEP_SEGMENTS :: 32
 API_TRACE_ENTITIES :: 4
 API_TRACE_FIELDS :: 8
 API_TRACE_ROWS :: 256
+API_PRESS_HELD :: 2 // ticks a press holds its button
 
 Api_Play_Segment :: struct {
     ticks:int `mirai:"optional,max=3600,label=Fixed ticks it holds this input; 1 or more; in place of seconds"`,
@@ -34,6 +36,7 @@ Api_Play_Segment :: struct {
     mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over its ticks: a look that turns along the segment"`,
     wheel:[2]f32 `mirai:"optional,label=Added to its first tick"`,
     text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in its first tick"`,
+    press:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The button of the screen on top to press by its name: the pointer goes over it and Left is held as a click takes; ticks or seconds run after the click; no other input with it"`,
     gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick of the segment"`,
 }
 
@@ -58,12 +61,10 @@ Api_Play_Step_Result :: struct {
     ticks_dropped:u64 `mirai:"optional"`,
     game_camera:bool `mirai:"optional"`,
     input_released:bool `mirai:"optional"`,
-    building:bool `mirai:"optional,label=An Odin source changed since the last build: the build runs and the game starts once it stands"`,
     ran:int `mirai:"label=The ticks it ran"`,
     met:bool `mirai:"label=With until: whether they held when it stopped"`,
     scripted:int `mirai:"optional,label=Ticks left of the input play.input scheduled: the next steps without input play them"`,
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
-    observe:Api_Play_Observe `mirai:"optional,label=With observe: what play.observe says after the ticks in place of the rest but ran and met; null when the game ended"`,
 }
 Api_Play_Trace_Table :: struct {
     columns:[1]Api_Play_Trace_Column `mirai:"list,label=What each value of a row is: every field of the first entity and then of the next"`,
@@ -82,7 +83,6 @@ Api_Play_Trace_Row :: struct {
 }
 
 // One segment of input of a step, checked.
-@(private)
 Api_Step_Input :: struct {
     ticks:int,
     keys:core.Keys,
@@ -96,6 +96,7 @@ Api_Step_Input :: struct {
     text:string,
     gamepads:[core.GAMEPAD_CAPACITY]core.Gamepad,
     pad_taps:[core.GAMEPAD_CAPACITY]platform.Gamepad_Buttons, // pressed and released inside the first tick
+    press:string, // the button whose middle the pointer goes to, found when its first tick comes
 }
 
 // A segment of the params; raw is its JSON object, at names it in errors and
@@ -110,6 +111,15 @@ api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:
         span,timed:=api_seconds_ticks(call,at,f64(segment.seconds),tick_dt,API_STEP_LIMIT)
         if !timed {return}
         step.ticks=span
+    }
+    step.press=base.text_get(segment.press[:])
+    if step.press!="" {
+        if step.keys!={} || step.buttons!={} || step.tap_keys!={} || step.tap_buttons!={} || step.placed || step.mouse_delta!={} || step.wheel!={} || segment.text[0]!=0 || values[1]!="" {
+            api.call_failf(call,api.INVALID_PARAMS,"%spress is a whole click: give other input in another segment or step",at)
+            return
+        }
+        if values[2]=="" && values[3]=="" {step.ticks=0}
+        return step,true
     }
     if step.ticks<1 {api.call_failf(call,api.INVALID_PARAMS,"%sticks: give the ticks it holds its input (1 or more) or seconds",at);return}
     if both:=step.keys&step.tap_keys;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%stap_keys: %v are in keys too; a key is held or tapped",at,both);return}
@@ -166,6 +176,7 @@ api_segments_read :: proc(call:^api.Call,segments:[]Api_Play_Segment,raw:string,
     for &step,i in timeline {
         step=api_segment_read(call,&segments[i],items[i],fmt.tprintf("segments[%d].",i),tick_dt) or_return
     }
+    timeline=api_timeline_presses(timeline,call.allocator)
     if total:=api_timeline_ticks(timeline);total>API_STEP_LIMIT {
         api.call_failf(call,api.INVALID_PARAMS,"segments run %d ticks and a step runs at most %d: split them into several calls",total,API_STEP_LIMIT)
         return
@@ -188,7 +199,7 @@ api_seconds_ticks :: proc(call:^api.Call,at:string,seconds:f64,tick_dt:f32,limit
 // The input of play.step along its ticks: its segments, or the input fields as one segment of ticks.
 @(private)
 api_step_timeline :: proc(call:^api.Call,params:^Api_Play_Step_Params,tick_dt:f32) -> (timeline:[]Api_Step_Input,ok:bool) {
-    keys:=[?]string{"segments","ticks","seconds","keys","mouse_buttons","tap_keys","tap_buttons","mouse_position","mouse_delta","wheel","text","gamepads"}
+    keys:=[?]string{"segments","ticks","seconds","keys","mouse_buttons","tap_keys","tap_buttons","mouse_position","mouse_delta","wheel","text","gamepads","press"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
     if values[0]!="" {
@@ -198,10 +209,63 @@ api_step_timeline :: proc(call:^api.Call,params:^Api_Play_Step_Params,tick_dt:f3
         return api_segments_read(call,params.segments[:],values[0],tick_dt)
     }
     flat:=new(Api_Play_Segment,call.allocator)
-    flat^={ticks=params.ticks,seconds=params.seconds,keys=params.keys,mouse_buttons=params.mouse_buttons,tap_keys=params.tap_keys,tap_buttons=params.tap_buttons,mouse_position=params.mouse_position,mouse_delta=params.mouse_delta,wheel=params.wheel,text=params.text,gamepads=params.gamepads}
+    flat^={ticks=params.ticks,seconds=params.seconds,keys=params.keys,mouse_buttons=params.mouse_buttons,tap_keys=params.tap_keys,tap_buttons=params.tap_buttons,mouse_position=params.mouse_position,mouse_delta=params.mouse_delta,wheel=params.wheel,text=params.text,gamepads=params.gamepads,press=params.press}
     timeline=make([]Api_Step_Input,1,call.allocator)
     timeline[0]=api_segment_read(call,flat,call.raw,"",tick_dt) or_return
+    timeline=api_timeline_presses(timeline,call.allocator)
+    if total:=api_timeline_ticks(timeline);total>API_STEP_LIMIT {
+        api.call_failf(call,api.INVALID_PARAMS,"it runs %d ticks and a step runs at most %d: split it into several calls",total,API_STEP_LIMIT)
+        return
+    }
     return timeline,true
+}
+
+// A press as the ticks of a person, so that hover and taps see it: the pointer
+// over the button, the button held, let go, and the ticks asked for after it.
+@(private)
+api_timeline_presses :: proc(timeline:[]Api_Step_Input,allocator:=context.allocator) -> []Api_Step_Input {
+    count:=len(timeline)
+    for step in timeline {if step.press!="" {count+=2}}
+    if count==len(timeline) {return timeline}
+    expanded:=make([]Api_Step_Input,count,allocator)
+    at:=0
+    for step in timeline {
+        if step.press=="" {
+            expanded[at]=step
+            at+=1
+            continue
+        }
+        expanded[at],expanded[at+1],expanded[at+2]={ticks=1,press=step.press},{ticks=API_PRESS_HELD,buttons={.Left}},{ticks=1+step.ticks}
+        at+=3
+    }
+    return expanded
+}
+
+// The middle of the button of a screen by its name; problem names the ones it shows.
+@(private)
+api_press_center :: proc(top:^Play_Ui_Top,name:string) -> (center:[2]f32,problem:string) {
+    names:=make([]string,len(top.buttons),context.temp_allocator)
+    for &b,i in top.buttons {names[i]=b.name}
+    index,_:=base.name_find(name,names)
+    if index<0 {return {},fmt.tprintf("press: %s",base.name_problem(name,"a button of the screen on top",names))}
+    b:=&top.buttons[index]
+    if b.disabled {return {},fmt.tprintf("press: %q is disabled",b.name)}
+    if !b.laid {return {},fmt.tprintf("press: %q has no place in the window: the last frame did not lay it out",b.name)}
+    return {b.rect[0]+b.rect[2]*0.5,b.rect[1]+b.rect[3]*0.5},""
+}
+
+// Puts the pointer of the first tick of a press over its button; "" or why not.
+@(private)
+api_press_aim :: proc(s:^Session,r:^Run,step:^Api_Step_Input) -> string {
+    arena:virtual.Arena
+    if virtual.arena_init_growing(&arena)!=nil {return "press: no memory to read the screen"}
+    defer virtual.arena_destroy(&arena)
+    top,found:=play_ui_screen(s,r,false,virtual.arena_allocator(&arena))
+    if !found {return "press: the game shows no screen with buttons now: play.ui says what it shows"}
+    center,problem:=api_press_center(&top,step.press)
+    if problem!="" {return problem}
+    step.mouse_position,step.placed=center,true
+    return ""
 }
 
 @(private)
@@ -214,7 +278,7 @@ api_timeline_ticks :: proc(timeline:[]Api_Step_Input) -> (ticks:int) {
 @(private)
 api_timeline_input :: proc(timeline:[]Api_Step_Input) -> bool {
     for step in timeline {
-        if step.keys!={} || step.buttons!={} || step.tap_keys!={} || step.tap_buttons!={} || step.mouse_delta!={} || step.wheel!={} || step.placed || step.text!="" || step.gamepads!={} {return true}
+        if step.keys!={} || step.buttons!={} || step.tap_keys!={} || step.tap_buttons!={} || step.mouse_delta!={} || step.wheel!={} || step.placed || step.text!="" || step.gamepads!={} || step.press!="" {return true}
     }
     return false
 }
@@ -277,7 +341,6 @@ run_script_take :: proc(script:^Run_Script) -> (step:Api_Step_Input,at:int) {
 }
 
 // Why a call that gives input of its own cannot run while r has a script; "" when it can.
-@(private)
 run_script_blocks :: proc(s:^Session,r:^Run) -> string {
     if ticks:=run_script_ticks(run_script(s,r));ticks>0 {
         return fmt.tprintf("play.input scheduled %d more ticks of input, which the next steps play: step without input to play them, or play.input with release_all to drop them",ticks)
@@ -334,13 +397,16 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
     for ran<total {
         if len(run.until)>0 && met {break}
         for at>=run.timeline[segment].ticks {segment+=1;at=0}
+        if at==0 && run.timeline[segment].press!="" {
+            if problem=api_press_aim(s,target,&run.timeline[segment]);problem!="" {return}
+        }
         api_step_tick(s,run.owner,run.player,scripted?nil:&run.timeline[segment],at)
         if !frame(s) {return}
         ran+=1;at+=1
         // The run ends with its turn or with the document.
         if run_find(s,run.owner)==nil {return}
         if target=run_player(s,run.owner,run.player);target==nil {return}
-        qa_tick(s,target)
+        run_tell_ticked(s,target)
         if len(run.until)>0 {
             if met,problem=api_conditions_read(s,run_ref(s,target),run.until,nil,"until");problem!="" {
                 problem=fmt.tprintf("%s, after %d ticks",problem,ran)
@@ -518,20 +584,6 @@ api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,tr
     if trace==nil {return}
     out.count-=1 // the brace that closes it
     api_trace_write(s,out,trace)
-    serial.write_u8(out,'}')
-}
-
-// The small answer of play.step with observe: its ticks and what play.observe
-// says after them, and its trace when it read one.
-@(private)
-api_play_step_observe_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,targets:[]string,trace:^Api_Trace) {
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_int(out,"ran",i64(ran),true)
-    api.write_bool(out,"met",met)
-    api.write_key(out,"observe")
-    if r!=nil {play_observe_write(s,out,r,targets,API_OBSERVE_NEAREST,call.allocator)} else {serial.text_write_raw(out,"null")}
-    if trace!=nil {api_trace_write(s,out,trace)}
     serial.write_u8(out,'}')
 }
 

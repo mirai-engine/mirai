@@ -25,7 +25,7 @@ Prefer the first that answers the question:
 ## Look
 
 - `play.observe`: tick, the body's place and facing, `stuck`, `problems`, the buttons of the top
-  screen and the nearest `targets`; `play.step` with `observe:true` runs ticks and answers it.
+  screen and the nearest `targets`; with `step` it runs those ticks first.
 - `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
 
 ## UI and menus

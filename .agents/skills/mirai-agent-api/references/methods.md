@@ -517,11 +517,12 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
 - `play.start`: saves a recovery copy if there are changes and clones the world; fails if the copy
   is not saved or the world is not created.
   - Outside a turn it opens the user's Play, which the editor shows; a game already playing answers
-    its state and is not started again.
+    its state while the document is as it was when it started, and starts again when it changed.
     `from` `Camera` or `Point` (with `point`) is Play from camera or from here: player 1 appears
     there before at a spawn point; in a turn or with `simulate` it fails.
   - In a turn it opens a run of the turn even if others play: the editor does not change, it
-    advances with `play.step`, ends with the turn and repeating `play.start` returns the same one.
+    advances with `play.step`, ends with the turn and repeating `play.start` returns the same one
+    unless the document changed since it started, when it starts again.
   - `online` without the `multiplayer` plugin fails. Outside a turn it is the user's networked
     Play, which returns while it compiles (`play.network.status` until `Running`) and also works
     without `online` while the editor shares its scene as host; in a turn it also creates a run per
@@ -633,11 +634,12 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - `verify` replays each span between keyframes and compares the transforms hash of every frame
     and, at the next keyframe, every entity and storage as `play.inspect` writes them, stopping at
     the first span that differs. A keyframe made from an edit while paused is not compared.
-- `play.observe` (`read_only`): one small answer for one decision; the rounded numbers are what a
-  model reads. `problems` lists what is new since the caller last observed this run; `stuck`
-  comes from the monitors when `play.qa.start` armed them, else from comparing the place
-  between two observes while the body asks to move. `play.step` with `observe` answers only
-  `ran`, `met` and this, so one call is act plus observe.
+- `play.observe`, `play.qa.*` and `play.explore` belong to the `playtest` plugin.
+- `play.observe`: one small answer for one decision; the rounded numbers are what a model reads.
+  `problems` lists what is new since the caller last observed this run; `stuck` comes from the
+  monitors when `play.qa.start` armed them, else from comparing the place between two observes
+  while the body asks to move. With `step` it first runs `play.step` with those params and adds
+  its `ran`, `met` and `trace`, so one call is act plus observe.
 - `play.qa.start` and `play.qa.report`: monitors of the ticks the API runs. The first call of the
   API on a run reserves the log of its inputs, which a tick writes into; a run the API never
   touched tests one pointer per tick.
@@ -647,12 +649,10 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
     repros do not fail reliably. The others are of the game and repeat with it.
   - A repro is a regression test: it fails while the bug exists and passes once it is fixed. It
     plays the inputs from tick 0 (holds, devices and the changes of `play.set`, `play.spawn`,
-    `play.destroy` and `play.push`), starts the monitors where the run did and ends in a
-    `play.check` with `qa` on the count of that kind; the monitors may start at any tick, but
-    every tick from the first must come from the API. Clicks replay at the same
-    window size.
-  - In a scenario, a step `play.qa.report` fails it on any violation; `qa` of `play.scenario.run`
-    arms them on every file and adds the report.
+    `play.destroy` and `play.push`), starts only the monitor of that kind where the run did and
+    ends in a `play.qa.report`; the monitors may start at any tick, but every tick from the
+    first must come from the API. Clicks replay at the same window size.
+  - In a scenario, a step `play.qa.report` fails it on any violation.
 - `play.explore`: no model; a game that reads only its World repeats it from the same seed.
   - `Ui` presses what it never pressed, then the button of the shortest way to a page with one
     left, then Escape twice, then stops.

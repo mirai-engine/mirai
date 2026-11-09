@@ -2,7 +2,8 @@
 
 `play.explore` is a bot with no model: it costs no tokens, and the same seed on the same game
 plays the same ticks. The QA monitors watch every tick the API runs (`play.step`, a scenario,
-`play.explore`, a filmstrip) and turn what goes wrong into a violation you can replay.
+`play.explore`, a filmstrip) and turn what goes wrong into a violation you can replay. Both come
+with the `playtest` plugin, which the game template enables.
 
 ## Map
 
@@ -30,7 +31,7 @@ mirai rpc --project . play.stop
 - `World` finds the action that moves (an `Axis2` bound to keys or the left stick) and the one
   that jumps (`Space` or the south button); name them with `move` and `jump` when it cannot.
   `input.get` lists the actions.
-- It arms the monitors itself when none are armed (stuck, non-finite, problems).
+- It arms the monitors itself when none are armed (stuck, falling, non-finite, problems).
 
 ## Read the result
 
@@ -52,7 +53,7 @@ mirai rpc --project . play.stop
 Arm right after `play.start`, before any tick, or a violation cannot write a repro:
 
 ```bash
-mirai rpc --project . play.qa.start '{"fall_below":-5,"frame_ms":50}'
+mirai rpc --project . play.qa.start '{"frame_ms":50}'
 mirai rpc --project . play.step '{"seconds":10,"keys":["W"]}'
 mirai rpc --project . play.qa.report '{}' --select passed,violations
 ```
@@ -60,10 +61,11 @@ mirai rpc --project . play.qa.report '{}' --select passed,violations
 - Monitors: `frame_ms`, `memory_mb`, `stuck_seconds` (the body asks to move and does not),
   `fall_below` (a height), `non_finite` (a NaN or infinite `Transform`) and `problems` (a
   `core.report` problem). `stuck_seconds` (3), `non_finite` and `problems` are on unless turned
-  off; `frame_ms` and `memory_mb` are off at 0 and `fall_below` when absent.
+  off; `frame_ms` and `memory_mb` are off at 0. `fall_below` is a little under the lowest of the
+  scene when absent, and `falls:false` turns it off.
 - A violation has `kind` (`Frame_Time`, `Memory`, `Stuck`, `Fell`, `Non_Finite`, `Problem`), a
   `severity`, the `tick` it first happened, the `position` of the body and, for a problem, its
-  `code` and `text`. `fall_below` goes under the lowest floor.
+  `code` and `text`.
 
 ## Repro and filmstrip
 
@@ -74,8 +76,8 @@ mirai rpc --project . play.qa.report '{"violation":0,"filmstrip":"C:/work/bug.pn
 ```
 
 - `repro` writes `tests/scenarios/bug_<tick>.mirai`: the inputs from tick 0 up to the violation,
-  ending in a `play.check` that its kind happened 0 times. It fails while the bug exists and
-  passes once fixed; keep it as a regression test, renamed.
+  ending in a `play.qa.report` that says whether its kind happened. It fails while the bug
+  exists and passes once fixed; keep it as a regression test, renamed.
 - `filmstrip` writes one PNG of the ticks around the violation, from the run's past; the game
   stays where it is. Open the image only if the position and tick are not enough.
 - `violation` is the `index` in the report; `-1` or absent writes neither.

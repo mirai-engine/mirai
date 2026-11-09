@@ -100,10 +100,9 @@ Run :: struct {
     frame_dt:f64,               // >0: the step asked for is a frame that lasts this long, as a recording advances it
     history:^Run_History,       // its past, once it kept a copy
     history_off:bool,           // it keeps none: its ring could not be made
-    qa:^Run_Qa,                 // its monitors, once play.qa.start armed them
-    observed:Run_Observed,      // what play.observe keeps between two calls
-    quit_asked:bool,            // the game asked to quit since play.explore last looked
-    quit_held:bool,             // play.explore plays it: asking to quit does not end it
+    document:u64,               // edits_scene_state of the document it copied
+    quit_asked:bool,            // the game asked to quit since what holds it last looked
+    quit_held:bool,             // a plugin drives it: asking to quit does not end it
 }
 
 @(private)
@@ -579,7 +578,6 @@ close :: proc(s:^Session) -> int {
 // user goes on as it was, without input. What a run that is not shown adds to
 // the frame (layers of its UI, views) is dropped. A game of the user that
 // quits stops the Play.
-@(private)
 game_frame :: proc(s:^Session) {
     app:=s.app
     phases:=host.ALL_PHASES-{.Render}
@@ -932,7 +930,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     simulation_settle(s,edited_world(s))
     if !s.info.copy(world,s.edit_world) {host.app_world_free(s.app,world);return nil}
     s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player}
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=edits_scene_state(s.edits)}
     return r
 }
 
@@ -959,8 +957,7 @@ play_stop :: proc(s:^Session,force:=false) {
     if (s.mode==.Play || s.mode==.Paused) && r.history!=nil && r.history.count>0 {
         eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app)
         replay_free(s)
-        qa_free(r.qa)
-        r.qa=nil
+        run_tell_ended(s,r)
         s.replay=r^
         r^={}
     } else {
@@ -985,8 +982,8 @@ run_stop :: proc(s:^Session,owner:int) {
 
 @(private)
 run_free :: proc(s:^Session,r:^Run) {
+    run_tell_ended(s,r)
     history_free(s,r)
-    qa_free(r.qa)
     host.app_world_free(s.app,r.world)
     r^={}
 }

@@ -1,4 +1,4 @@
-package editor
+package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
@@ -6,10 +6,9 @@ import "core:math/linalg"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor"
 import "mirai:editor/api"
-import egui "mirai:engine/gui"
 import input "mirai:engine/input"
-import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -69,7 +68,7 @@ Api_Play_Explore_Result :: struct {
     exits:[1]Api_Play_Explore_Exit `mirai:"list,label=Each time the game asked to quit: the run went on"`,
     passed:bool `mirai:"label=No violation"`,
     violations:[1]Api_Play_Qa_Violation `mirai:"list,label=As play.qa.report gives them"`,
-    repros:[1][API_PATH_BYTES]u8 `mirai:"list,text,label=A scenario per kind of violation"`,
+    repros:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=A scenario per kind of violation"`,
     repro_error:[256]u8 `mirai:"optional,text,label=Why some repro could not be written"`,
 }
 Api_Play_Explore_Exit :: struct {
@@ -122,9 +121,9 @@ Explore_Ui_Choice :: struct {kind:Explore_Ui_Choice_Kind,button:int,progress_los
 
 @(private)
 Explore_Run :: struct {
-    s:^Session,
+    s:^editor.Session,
     owner:int,
-    r:^Run,
+    r:^editor.Run,
     ran,total:int,
     stopped:Api_Explore_Stop,
     rng:base.Rng,
@@ -137,9 +136,9 @@ Explore_Run :: struct {
 }
 
 @(private)
-play_explore_api_register :: proc(s:^Session,st:^Api_State) {
+explore_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Explore_Params{seed=1,cell=2}
-    api_register(s,st,{name="play.explore",flags={.Core},summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World moves and jumps toward the least visited cells, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,result=Api_Play_Explore_Result,writes_result=true,defaults=&defaults,run=api_play_explore})
+    editor.api_method_register(s,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World moves and jumps toward the least visited cells, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,params_info=type_info_of(Api_Play_Explore_Params),result=Api_Play_Explore_Result,result_info=type_info_of(Api_Play_Explore_Result),writes_result=true,defaults=&defaults,run=api_play_explore})
 }
 
 // ---------------------------------------------------------------- cells
@@ -324,23 +323,20 @@ explore_ended :: proc(x:^Explore_Run) -> bool {
 
 // One tick with this input; false when the bot ends.
 @(private)
-explore_tick :: proc(x:^Explore_Run,step:Api_Step_Input) -> bool {
+explore_tick :: proc(x:^Explore_Run,step:editor.Api_Step_Input) -> bool {
     if x.ran>=x.total {
         x.stopped=.Ticks
         return false
     }
     step:=step
     step.ticks=1
-    api_step_tick(x.s,x.owner,0,&step,0)
-    if !api_step_frame(x.s) {return explore_ended(x)}
-    x.r=run_find(x.s,x.owner)
-    if x.r==nil {return explore_ended(x)}
+    if !editor.play_tick(x.s,x.r,&step) {return explore_ended(x)}
+    x.r=editor.run_find(x.s,x.owner)
     x.ran+=1
-    qa_tick(x.s,x.r)
     if x.r.quit_asked {
         x.r.quit_asked=false
         tick:u64
-        if t:=core.world_storage_of(run_ref(x.s,x.r),core.Time);t!=nil {tick=t.tick}
+        if t:=core.world_storage_of(editor.run_ref(x.s,x.r),core.Time);t!=nil {tick=t.tick}
         node:=x.last_node>=0?base.text_get(x.ui.nodes[x.last_node].key[:]):""
         append(&x.exits,Explore_Exit{strings.clone(node,x.allocator),tick})
     }
@@ -358,18 +354,14 @@ explore_idle :: proc(x:^Explore_Run,ticks:int) -> bool {
 // The buttons of the screen on top, with a key each; found false without one.
 @(private)
 explore_ui_read :: proc(x:^Explore_Run,buttons:^[dynamic]Explore_Ui_Button,rects:^[dynamic][4]f32,modal:^bool) -> bool {
-    s:=x.s
-    g:=host.app_world_storage(s.app,x.r.world,egui.Gui)
-    if g==nil {return false}
-    w:=run_ref(s,x.r)
     virtual.arena_free_all(&x.arena)
-    view:=Play_Ui_View{session=s,gui=g,world=w,allocator=virtual.arena_allocator(&x.arena)}
-    top,found:=play_ui_top(&view,play_ui_focused_context(w,g),true)
+    allocator:=virtual.arena_allocator(&x.arena)
+    top,found:=editor.play_ui_screen(x.s,x.r,true,allocator)
     if !found {return false}
     modal^=top.modal
     clear(buttons);clear(rects)
     for &b in top.buttons {
-        key:=b.name!=""?fmt.aprintf("%s|%s",top.screen,b.name,allocator=view.allocator):fmt.aprintf("%s#%d",top.screen,b.row,allocator=view.allocator)
+        key:=b.name!=""?fmt.aprintf("%s|%s",top.screen,b.name,allocator=allocator):fmt.aprintf("%s#%d",top.screen,b.row,allocator=allocator)
         if !b.shown {
             explore_ui_node_of(&x.ui,key)
             continue
@@ -450,8 +442,8 @@ explore_ui_play :: proc(x:^Explore_Run) {
 
 // The actions of the bot, named or found in the bindings of the map.
 @(private)
-explore_actions :: proc(s:^Session,m:^input.Input_Map,move_name,jump_name:string) -> (move,jump:input.Action,can_jump:bool,problem:string) {
-    named :: proc(s:^Session,m:^input.Input_Map,name:string,kind:input.Action_Kind,what:string) -> (action:input.Action,problem:string) {
+explore_actions :: proc(s:^editor.Session,m:^input.Input_Map,move_name,jump_name:string) -> (move,jump:input.Action,can_jump:bool,problem:string) {
+    named :: proc(s:^editor.Session,m:^input.Input_Map,name:string,kind:input.Action_Kind,what:string) -> (action:input.Action,problem:string) {
         found,declared:=core.name_value(s.info,input.Action,name)
         if !declared || m.kinds[found]!=kind || m.declared&input.action_bit(input.Action(found))==0 {return 0,fmt.tprintf("%s %q is not a %v action: input.get lists them",what,name,kind)}
         return input.Action(found),""
@@ -485,7 +477,7 @@ explore_actions :: proc(s:^Session,m:^input.Input_Map,move_name,jump_name:string
 @(private)
 explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (problem:string) {
     s:=x.s
-    w:=run_ref(s,x.r)
+    w:=editor.run_ref(s,x.r)
     m,requests:=core.world_storage_of(w,input.Input_Map),core.world_storage_of(w,input.Hold_Requests)
     if m==nil || requests==nil {return "This game has no input actions: its world does not take engine/input"}
     move,jump:input.Action
@@ -493,30 +485,30 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     move,jump,can_jump,problem=explore_actions(s,m,base.text_get(p.move[:]),base.text_get(p.jump[:]))
     if problem!="" {return}
     if !explore_idle(x,min(2,x.total)) {return}
-    seat,body:=play_focused(run_ref(s,x.r))
+    seat,body:=play_focused(editor.run_ref(s,x.r))
     for wait:=0;body==core.NONE;wait+=1 {
         if wait>=EXPLORE_WARM_TICKS {
             x.stopped=.No_Body
             return
         }
         if !explore_tick(x,{}) {return}
-        seat,body=play_focused(run_ref(s,x.r))
+        seat,body=play_focused(editor.run_ref(s,x.r))
     }
     directions:=EXPLORE_DIRECTIONS
     avoid:bit_set[0..<8]
     chosen:=0
-    previous:=entity_world(run_ref(s,x.r),body).position
+    previous:=editor.entity_world(editor.run_ref(s,x.r),body).position
     still,next:=0,0
     ui_previous,ui_node:=-1,-1
     for x.ran<x.total {
-        w=run_ref(s,x.r)
+        w=editor.run_ref(s,x.r)
         requests=core.world_storage_of(w,input.Hold_Requests)
         seat,body=play_focused(w)
         if body==core.NONE {
             if !explore_tick(x,{}) {return}
             continue
         }
-        at:=entity_world(w,body).position
+        at:=editor.entity_world(w,body).position
         explore_cell_enter(&x.cells,explore_cell_of(at,p.cell))
         if linalg.length(at-previous)>=EXPLORE_MOVED {still=0} else {still+=1}
         previous=at
@@ -571,12 +563,12 @@ explore_axes :: proc(w:core.World_Ref) -> (right,forward:[3]f32) {
 }
 
 @(private)
-api_play_explore :: proc(s:^Session,call:^api.Call) {
+api_play_explore :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Explore_Params)
-    r,own:=api_play_own_run(s,call,0)
+    r,own:=editor.api_play_own_run(s,call,0)
     if !own {return}
-    if r.owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-    if problem:=run_script_blocks(s,r);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    if r.owner==0 && editor.simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
+    if problem:=editor.run_script_blocks(s,r);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     values:[2]string
     api.object_values(call.allocator,call.raw,{"seconds","ticks"},values[:])
     if values[0]!="" && values[1]!="" {api.call_fail(call,api.INVALID_PARAMS,"seconds and ticks both say how long it plays: give one");return}
@@ -585,8 +577,11 @@ api_play_explore :: proc(s:^Session,call:^api.Call) {
     if values[0]!="" {total=int(f64(p.seconds)/tick_dt+0.5)}
     if values[1]!="" {total=p.ticks}
     if total<1 || total>API_EXPLORE_TICKS {api.call_failf(call,api.INVALID_PARAMS,"it plays from 1 to %d ticks: give ticks or seconds in that range",API_EXPLORE_TICKS);return}
-    if (r.qa==nil || !r.qa.armed) && qa_arm(s,r,{stuck_seconds=3,non_finite=true,problems=true})==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}
-    if r.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
+    if q:=qa_of(s,r);q==nil || !q.armed {
+        height,known:=qa_fall_default(s)
+        if qa_arm(s,r,{stuck_seconds=3,fall_below=height,falls=known,non_finite=true,problems=true})==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}
+    }
+    if r.owner==0 && !editor.play_paused(s) {editor.play_pause(s,true,stepped=true)}
     x:=new(Explore_Run,call.allocator)
     x.s,x.owner,x.r,x.total,x.last_node=s,r.owner,r,total,-1
     x.rng=base.rng_make(p.seed)
@@ -603,19 +598,19 @@ api_play_explore :: proc(s:^Session,call:^api.Call) {
     }
     defer virtual.arena_destroy(&x.arena)
     r.quit_held=true
-    defer if still:=run_find(s,x.owner);still!=nil {still.quit_held,still.quit_asked=false,false}
+    defer if still:=editor.run_find(s,x.owner);still!=nil {still.quit_held,still.quit_asked=false,false}
     switch p.mode {
     case .World:
         if problem:=explore_world_play(x,p);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     case .Ui:
         explore_ui_play(x)
     }
-    r=run_find(s,x.owner)
+    r=editor.run_find(s,x.owner)
     api_play_explore_write(s,call,x,p,r)
 }
 
 @(private)
-api_play_explore_write :: proc(s:^Session,call:^api.Call,x:^Explore_Run,p:^Api_Play_Explore_Params,r:^Run) {
+api_play_explore_write :: proc(s:^editor.Session,call:^api.Call,x:^Explore_Run,p:^Api_Play_Explore_Params,r:^editor.Run) {
     out:=call.out
     serial.write_u8(out,'{')
     api.write_text(out,"mode",fmt.tprint(p.mode),true)
@@ -638,7 +633,7 @@ api_play_explore_write :: proc(s:^Session,call:^api.Call,x:^Explore_Run,p:^Api_P
     }
     serial.write_u8(out,']')
     q:^Run_Qa
-    if r!=nil {q=r.qa}
+    if r!=nil {q=qa_of(s,r)}
     passed:=q==nil || q.violation_count==0 && q.dropped==0
     api.write_bool(out,"passed",passed)
     if q==nil {

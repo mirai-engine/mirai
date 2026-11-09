@@ -1,1 +1,1 @@
-{"mcpServers":{"mirai":{"command":"mirai","args":["mcp","--project",".","--timeout","600"]}}}
+{"mcpServers":{"mirai":{"command":"mirai","args":["mcp","--project","."]}}}
