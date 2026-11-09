@@ -111,10 +111,10 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - Keys by `core.Key` name (`W`, `Left_Control`, `F5`); the Mac Cmd is `Left_Super`.
 - `capture`: the only image of the editor and the game; requires a GPU. Draws `frames` frames (0:
   what the image needs) and writes a PNG. With `frames` at 0 it keeps drawing while textures stream
-  in, up to a bounded wait; `textures_pending` says how many were left when the image was taken.
-  `instances_drawn`, `instances_culled` and `instances_occluded` tell a camera that sees nothing
-  from a scene with nothing in it. A failure says the cause: the renderer's or the system's. What it
-  shows:
+  in, up to a bounded wait. Only when nothing was drawn or textures were left, the result adds
+  `textures_pending` and `instances_drawn`, `instances_culled` and `instances_occluded`, which tell
+  a camera that sees nothing from a scene with nothing in it. A failure says the cause: the
+  renderer's or the system's. What it shows:
   - `ui:true`: the last frame of the window with the editor around what it shows, as the user sees
     it; with a `.ui` in front (`editor.document`) the image is its document. `width`, `height` and
     `of` do not go with it. A turn's own run is never in the window.

@@ -7,7 +7,7 @@ description: Core of a Mirai game in Odin - project layout, components, storages
 # Game core
 
 A game is data (components, storages) and functions (`@(step)`) that transform it. The generator
-reads `game/` and the active plugins; `mirai generate` lists its errors. Fields: `engine.describe`.
+reads `game/` and the active plugins; `mirai generate` lists its errors.
 
 ## Map
 

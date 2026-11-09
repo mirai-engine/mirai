@@ -22,7 +22,6 @@ Api_Filmstrip_Cell :: struct {
     tick:u64,
     at:[2]f32, // where the followed entity shows, in window points
     seen:bool, // the entity was in front of the camera
-    instances_drawn:int,
 }
 
 @(private)
@@ -175,7 +174,6 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
     for &cell,i in cells {
         if i>0 {serial.write_u8(&out,',')}
         serial.text_write_raw(&out,`{"tick":`);serial.text_write_uint(&out,cell.tick)
-        api.write_int(&out,"instances_drawn",i64(cell.instances_drawn))
         if followed {
             api.write_key(&out,"at")
             if cell.seen {api.write_list(&out,cell.at[:])} else {serial.text_write_raw(&out,"null")}
@@ -207,7 +205,6 @@ api_filmstrip_take :: proc(s:^Session,data:rawptr,_:core.World_Ref,ran:int) -> s
     counted:=api_capture_seen(s.app)
     counted.textures_pending=max(counted.textures_pending,strip.counted.textures_pending)
     strip.counted=counted
-    cell.instances_drawn=counted.instances_drawn
     if t:=core.world_storage_of(w,core.Time);t!=nil {cell.tick=t.tick}
     region:img.Region
     switch {

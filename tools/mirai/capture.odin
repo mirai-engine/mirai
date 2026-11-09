@@ -197,7 +197,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     if text,ok:=call(file.port,"engine.diagnostics",struct{min_level:string,limit:int}{"Warning",20});ok {
         _=json.unmarshal_string(text,&diagnostics,allocator=context.temp_allocator)
     }
-    Size :: struct {width,height,textures_pending,instances_drawn,instances_culled,instances_occluded:int}
+    Size :: struct {width,height:int,textures_pending,instances_drawn,instances_culled,instances_occluded:Maybe(int)}
     size:Size
     _=json.unmarshal_string(captured,&size,allocator=context.temp_allocator)
 
@@ -205,7 +205,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     Report :: struct {
         png:string,
         width,height:int,
-        textures_pending,instances_drawn,instances_culled,instances_occluded:int,
+        textures_pending,instances_drawn,instances_culled,instances_occluded:Maybe(int) `json:",omitempty"`,
         validation_errors,loader_errors:int,
         validation_messages:[]string,
         console:[]Entry,
@@ -319,7 +319,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         return d.validation.errors,d.validation.messages
     }
     // What the renderer counted of a capture.
-    Counted :: struct {textures_pending,instances_drawn:int}
+    Counted :: struct {textures_pending,instances_drawn:Maybe(int)}
     // A capture of the view from its scene loaded anew, the clock at zero.
     shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string,counted:^Counted=nil) -> bool {
         if _,ok:=call(port,"scene.open",struct{path:string}{v.scene});!ok {return false}
@@ -340,7 +340,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         validation_errors:int,
         validation_messages:[]string,
         ssim,max_error,threshold,repeat_ssim:f64,
-        textures_pending,instances_drawn:int,
+        textures_pending,instances_drawn:Maybe(int) `json:",omitempty"`,
         written,passed:bool,
         problem:string,
     }

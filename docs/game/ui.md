@@ -7,7 +7,7 @@ description: HUD, main menu, pause, settings screens, world panels and keyboard 
 # Game UI
 
 Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:engine/save"`,
-`"mirai:ui"` (only in the content tool). Fields and defaults: `engine.describe`.
+`"mirai:ui"` (only in the content tool).
 
 **A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings,
 Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`, which
@@ -40,8 +40,7 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
   animations; turning off `UI_Screen` or `core.Disabled` removes it at once.
 - `back=true` makes Escape or East report `Back` while it is on top.
 - `pause=true` on a `Modal` screen stops the clock while it shows, unless in a network session.
-  The engine captures the mouse while the seat with it drives a body whose look the mouse turns
-  and no `Modal` is up: [Mouse](ui/menus-settings.md#mouse) for a free cursor.
+- A free cursor: [Mouse](ui/menus-settings.md#mouse).
 
 ## Events
 

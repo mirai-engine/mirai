@@ -27,7 +27,6 @@ impacts :: proc(hits:core.Read(Hit), channels:^vfx.Particle_Channels) {
   program.
 - The emitter that listens is in the scene (a prefab or the editor); `Particle_Channel` has
   `silent` for an effect whose program reads the births itself instead of starting particles.
-- Each channel is its own constant; give each kind of birth a number from `vfx.CHANNEL_GAME`.
 
 ## Pitfalls
 

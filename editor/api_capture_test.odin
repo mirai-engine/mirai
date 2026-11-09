@@ -37,17 +37,27 @@ capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^te
 a_capture_given_a_path_answers_where_it_is_and_no_image :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     file:="C:/shots/a.png"
-    for shown in ([2]bool{false,true}) {
-        out:serial.Writer
-        serial.writer_init(&out)
-        defer serial.writer_destroy(&out)
-        play:=api.Call{out=&out,allocator=context.temp_allocator}
-        api_capture_reply(&play,file,64,32,shown,Api_Capture_Seen{textures_pending=2,instances_drawn=0,instances_culled=5})
-        text:=string(serial.writer_bytes(&out))
-        api_result_shape_expect(t,text,Api_Capture_Result)
-        testing.expect(t,strings.contains(text,file) && !strings.contains(text,"content") && !strings.contains(text,"data"),text)
-        testing.expect(t,strings.contains(text,`"textures_pending":2`) && strings.contains(text,`"instances_culled":5`),text)
-        testing.expect_value(t,play.image,shown?file:"")
+    cases:=[?]struct{seen:Api_Capture_Seen,counted:bool}{
+        {{textures_pending=2,instances_culled=5},true},
+        {{textures_pending=1,instances_drawn=3},true},
+        {{},true},
+        {{instances_drawn=3,instances_culled=5,instances_occluded=2},false},
+    }
+    for c in cases {
+        for shown in ([2]bool{false,true}) {
+            out:serial.Writer
+            serial.writer_init(&out)
+            defer serial.writer_destroy(&out)
+            play:=api.Call{out=&out,allocator=context.temp_allocator}
+            api_capture_reply(&play,file,64,32,shown,c.seen)
+            text:=string(serial.writer_bytes(&out))
+            api_result_shape_expect(t,text,Api_Capture_Result)
+            testing.expect(t,strings.contains(text,file) && !strings.contains(text,"content") && !strings.contains(text,"data"),text)
+            for key in ([?]string{`"textures_pending"`,`"instances_drawn"`,`"instances_culled"`,`"instances_occluded"`}) {
+                testing.expectf(t,strings.contains(text,key)==c.counted,"%v: %s",c.seen,text)
+            }
+            testing.expect_value(t,play.image,shown?file:"")
+        }
     }
 }
 

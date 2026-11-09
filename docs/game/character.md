@@ -8,8 +8,7 @@ description: Player and character control in a Mirai game - Character, Walk (spe
 
 A player is a seat (`inp.Seat`) that drives a body (`inp.Drivable`); a body that walks is a physics
 `Character`. Plugins `physics` and `spawn` in `project.mirai`. Imports: `phys
-"plugins:physics/runtime"`, `inp "mirai:engine/input"`, `cam "mirai:engine/camera"`. Fields and
-defaults: `engine.describe`.
+"plugins:physics/runtime"`, `inp "mirai:engine/input"`, `cam "mirai:engine/camera"`.
 
 ## Map
 
@@ -52,7 +51,7 @@ writes the `inp.Move_Input`).
 
 ## Walk
 
-Start from `phys.WALK_DEFAULT`, then set `max_speed`, `jump_height` and the rest (`engine.describe`
+Start from `phys.WALK_DEFAULT`, then set `max_speed`, `jump_height` and the rest (`component.list`
 on `Walk`: sprint, air control, coyote time, crouch). A held jump keeps rising for `jump_rise`.
 **`jump_cut`** is the share of its upward speed a jump keeps when the button is let go while
 rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it, and a ledge jump is never
@@ -67,4 +66,3 @@ the velocity. Flying and swimming are components too (`phys.Fly`, `phys.Swim`).
 - A `Camera_Follow` owns the `Transform` of its entity; do not write it. The player sees through
   the `Drivable.camera` of the body its seat drives; `Camera.active` is only the fallback.
 - A `Spawn_Point` with no `prefab` only places bodies the game gives.
-- The sign of `pitch` differs by camera mode and body look: [camera.md](character/camera.md).

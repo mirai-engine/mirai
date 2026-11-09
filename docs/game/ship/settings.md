@@ -4,7 +4,7 @@ A **setting** is a storage of an engine library, a plugin or your game that the 
 and files can set by name. A **machine setting** is a preference of whoever uses the machine and
 not a design choice: graphics quality (`Graphics_Settings`), the window as the player chose it
 (`Display_Settings`), the volume of each bus (`Audio_Volumes`), the sound output (`Audio_Output`),
-the language and scale of interfaces (`UI_Preferences`). Fields and ranges: `engine.describe`.
+the language and scale of interfaces (`UI_Preferences`).
 
 ## Where a value comes from
 
@@ -34,7 +34,6 @@ sections of the engine file with the project's: the shipped game reads no engine
   `settings.set {"layer":"project","settings":{"Graphics_Settings":{"vsync":true}}}` writes the
   project's file; `"layer":"engine"` takes machine sections only and writes this machine's file.
   A field the project overrides does not change under `engine`.
-- The editor's Project Settings dialog and Graphics popup do the same.
 - Your own `@(storage,setting)` struct is a project setting: its type name is the section.
 
 ## The window
@@ -72,4 +71,4 @@ and interface scale are `gui.UI_Preferences`.
   is skipped when read and an error through `settings.set`.
 - `settings.set` with `"layer":"engine"` changes every project on this machine.
 - A fixed `Graphics_Settings` in `settings.mirai` of the project hides the machine's default for
-  the GPU; the player's own options still override it.
+  the GPU; the player's own options still override it. Leave quality to the player.

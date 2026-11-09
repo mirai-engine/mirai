@@ -675,6 +675,8 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
         testing.expect(t,strings.contains(answer,`"textures_pending":1`),answer)
     }
     api_result_shape_expect(t,answer,Api_Capture_Result)
+    complete:=api_filmstrip_result("strip.png",sheet,cells[:],true,context.temp_allocator,Api_Capture_Seen{instances_drawn=4})
+    testing.expect(t,!strings.contains(complete,"instances_drawn") && !strings.contains(complete,"textures_pending"),complete)
     // Segments say how long it runs: nothing else is padded or refused.
     spread:=[?]struct{given,every,count:int,ticks:[]int}{
         {30,0,4,{0,10,20,30}},

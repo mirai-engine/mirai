@@ -8,8 +8,7 @@ description: Multiplayer in a Mirai game - replicated entities and components, n
 
 The `multiplayer` plugin does the networking: list it in `plugins` of `project.mirai` and import
 `multiplayer "plugins:multiplayer/runtime"`. The game never opens sockets. One build runs alone, as
-a server or as a client; the server decides, a client predicts the body it drives. Fields and
-settings: `engine.describe`.
+a server or as a client; the server decides, a client predicts the body it drives.
 
 ## Map
 

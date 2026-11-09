@@ -107,8 +107,8 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
 `.mirai/captures` of the project, and the JSON says where) uses the project's session or
 opens one and closes it: it loads the scene, places the camera (`camera.set`), captures the world
 without UI (`capture` with `of:"Scene"`), reads `engine.diagnostics` and measures the image.
-It prints a JSON with the counters of the `capture`, the validation, the console, `stats` and,
-with `--reference`, `diff`
+It prints a JSON with the counters of the `capture` when it gives them, the validation, the
+console, `stats` and, with `--reference`, `diff`
 ([`mirai image`](image.md)). It exits with 1 if there are validation errors or if the SSIM against
 `--reference` is below `--threshold`. Each capture starts the window clock at zero (`seconds` of
 `capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads

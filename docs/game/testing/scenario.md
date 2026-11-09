@@ -27,8 +27,8 @@ time. The first step that fails ends it.
 - A step's `method` is any `play.*` method but `play.start`, `play.stop` and scenarios: the game
   starts before the first step and stops after the last. Params are checked against the method's
   schema before the game starts; a wrong key is refused with the keys it takes.
-- Write the whole file in one go, one step per intention, with a `name` that says it: a failure
-  prints that name. Begin with a step of about 30 ticks so the world and seats exist.
+- One step per intention, with a `name` that says it: a failure prints that name. Begin with a
+  step of about 30 ticks so the world and seats exist.
 
 ## Conditions
 
@@ -46,7 +46,7 @@ time. The first step that fails ends it.
   `storage`; `component` and `field` go inside it, joined by dots (`velocity.1`).
 - `compare`: `Exists` (the default), `Gone`, `Equal`, `Not_Equal`, `Below`, `At_Most`, `Above`,
   `At_Least`. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
-- Names of components, storages and fields: `engine.describe` and `play.inspect`; `Open`,
+- Names of components, storages and fields: `component.list` and `play.inspect`; `Open`,
   `Door` and `Pickup` above stand for your own.
 
 ## Wait
@@ -74,7 +74,7 @@ none run when they hold already. If they never hold, the step and the scenario f
 - Click a button: a segment with `mouse_position` at the center of its `rect` (from
   `play.observe`), then `{"ticks": 2, "mouse_buttons": ["Left"]}`.
 - Hold a game action by name for some ticks: `play.input`; teleport or change an entity:
-  `play.set`; place a prefab: `play.spawn`. Params: `mirai rpc --project . describe <method>`.
+  `play.set`; place a prefab: `play.spawn`.
 
 ## Run
 

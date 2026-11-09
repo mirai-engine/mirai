@@ -73,7 +73,6 @@ buoyancy too. A volume's `current` carries what is in it.
 ## Pitfalls that fail silently
 
 - No `Swim` on the prefab: the character wades and walks on the bottom.
-- `fluid_at` returns `found` false while physics is not ready (before the first tick).
 - A `Fluid_Volume` plane covers everything below the entity's height: put it at the water level.
   A box has no waves; a `Fluid_Waves` on a box is a problem (`physics.fluid_waves`).
 - A dry box (`phys.fluid_volume_dry`) removes the fluid of lower priority inside it, the air of

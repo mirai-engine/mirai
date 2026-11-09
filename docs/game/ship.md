@@ -15,7 +15,7 @@ says how to fix each finding.
 - Run the game headless, take a picture, press keys and click: [player.md](ship/player.md).
 - Graphics quality, window mode and size, which display, where each setting is stored:
   [settings.md](ship/settings.md).
-- A gameplay test that runs in CI: `mirai play test .` ([core](core.md)).
+- A gameplay test that runs in CI: `mirai play test .` ([testing](testing.md)).
 - Servers, `--server` and `--connect`: [networking](networking.md).
 - An asset missing from the built game: [assets](assets.md).
 
@@ -36,7 +36,6 @@ says how to fix each finding.
 
 - `play` compiles the project at the `build.optimization` of `project.mirai` (`Minimal` in the
   template) and reads assets and shaders from the project: nothing is cooked, so it starts fast.
-  Batch your Odin changes and play once per batch.
 - `build game` generates the shaders, cooks the assets that every scene, prefab and `cook.mirai`
   reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
   `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
@@ -44,24 +43,19 @@ says how to fix each finding.
   from a cached library, `mirai-shipped.dll` next to the executable (`libmirai-shipped.so` or
   `.dylib` elsewhere), and only the game compiles. What crosses into that library does not inline,
   so it is about a tenth slower in CPU.
-- `mirai build game --release` compiles everything together: the slowest step, and what you ship.
 - `build server` is the same executable without what is only seen or heard; run it with
   `--dedicated` (no window, renderer or local players).
 - `package` belongs to the engine's own checkout and release; a game never runs it. A game is
   shipped by `build game --release`, whose folder runs on its own (SDL3 included where the system
   lacks it).
-- An open editor session (`mirai session start .`, then `mirai rpc --project . ...`) loads code
-  changes with `build.start` and plays with `play.start`: the fastest loop while you author.
-  Never call `mirai rpc` without `--project`: it would reach another editor.
+- An open editor session loads code changes with `build.start` and plays with `play.start`: the
+  fastest loop while you author.
 
 ## Pitfalls that fail silently
 
 - An asset only code names (a material chosen by name) works in `mirai play` and is missing from
-  `build game` unless it is a root in `cook.mirai`. Prefabs are roots by themselves.
+  `build game` unless it is a root in `cook.mirai`. Prefabs are roots by themselves. Build
+  before delivering.
 - `source/` (art sources) never ships, and a game package that imports an editor package fails the
   build with `Engine_Time_Code`.
 - The shipped game on Windows is a console program.
-- A machine setting in your `settings.mirai` overrides the machine's own file; a player's saved
-  options still win. Leave quality to the player.
-- A change that works in Play can still fail in the build (a missing cook root): build before
-  delivering.

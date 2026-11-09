@@ -5,9 +5,7 @@ the plugins stream, draw with levels of detail and collide. Add `"terrain"` and 
 `plugins` in `project.mirai`. Never make ground or vegetation from cubes, planes or imported
 meshes placed one by one: they do not stream, paint, scatter or collide as these do.
 
-Needs an open session (`mirai session start .`); each call is an undo step and stays in memory
-until saved. `mirai rpc --project . describe terrain.create` lists every parameter. `ID` is the
-`id` the `create` call returned.
+`ID` is the `id` the `create` call returned.
 
 ## Ground
 
@@ -62,5 +60,4 @@ $P foliage.paint '{"entity":ID,"mode":"generate","at":[256,0,256],"radius":200}'
 - Nothing shows after `foliage.create`: it has no types until `type_add`, and no instances until
   `generate` or `paint` has run over the area.
 - Foliage placed away from the terrain or over a hole has no ground and generates nothing.
-- Unsaved terrain and foliage are lost with the session: `asset.save` and `scene.save`.
 - A `rule` with `slope` but no `rule: true` is ignored; `layers` 0 means any layer.

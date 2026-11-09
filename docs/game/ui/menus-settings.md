@@ -2,8 +2,7 @@
 
 The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.ui` the look, a
 `Switcher` whose pages are named after the members of `Shell_Page`, written by `write_shell` of
-`tools/content`. Change both and run the content tool; an open editor picks it up
-([UI](../ui.md)).
+`tools/content`. Change both and run the content tool.
 
 ## Map
 
@@ -68,26 +67,21 @@ graphics.frame_limit,graphics.vsync=60,true // 0: no limit
 display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
 ```
 
-`quality` reads as `Custom` when a field of the preset is changed by hand; a preset also sets
-`render_scale` back to 0. `frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a
-preset. A preset's target is a height of lines, the same on any window: `render_scale` above 0
-replaces it and is used as it is. Fields: `engine.describe`.
+`frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a preset; what a preset
+and `render_scale` do: [settings](../ship/settings.md#an-options-menu-in-the-game).
 
 ## Persist
 
 The machine settings a settings page binds are kept by themselves, and a first run starts at the
 preset the engine gives the machine. Choices that are the game's own go in a `@(storage,persist)`
-struct of plain data ([core](../core/saves.md)), read back when the world first runs and written
-to the player's profile by itself when it changes, which a dragged slider does not do at every
-step.
+struct of plain data ([core](../core/saves.md)).
 
 ## Pause
 
 A `Modal` screen with `pause=true` stops the clock while it shows and gives it back when it hides.
 A network session does not stop it. `shell_frame` turns `UI_Screen.pause` on for the pause and
 settings pages, and off for the main menu, behind which the world runs. It runs every frame, also
-with the clock stopped, because the `Menu` action and the buttons must reach it: `gui.menu_pressed`
-is Escape or Start when no interface used that Escape, and the game changes the page with it.
+with the clock stopped, because the `Menu` action and the buttons must reach it.
 `scene.request_restart(scenes)` loads the scene again, which is how Quit to Menu starts over;
 `scene.request_path(scenes,path)` loads another.
 
@@ -110,5 +104,4 @@ to try:
 - Stepping a Quality selector onto `Custom` does nothing: it reads what the fields are, and only
   a change of a field or a preset moves it.
 - `UI_Screen.pause` on a screen that is not `Modal` does nothing: problem `gui.pause_modal`.
-- In a network game the clock is not stopped and Quit leaves the game instead of loading a scene.
-- Verify with a scenario, not by hand: [testing](../testing.md#ui-and-menus).
+- In a network game Quit leaves the game instead of loading a scene.

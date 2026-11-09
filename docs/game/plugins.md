@@ -16,7 +16,7 @@ use one for a reusable feature with its own data and editor tools, otherwise `ga
   [editor-part.md](plugins/editor-part.md).
 - Bridge between two plugins, tool for making the game, engine range: [recipe 2](#2-manifest-flags).
 - From git or the catalog: `mirai plugin add <url|name>`, `list`, `catalog`, `update`, `remove`.
-  What a plugin offers: its public package and `engine.describe`.
+  What a plugin offers: its public package and `mirai rpc --project . describe <plugin>`.
 - Replicated data: [networking](networking.md). Assets:
   [assets](assets.md).
 
@@ -77,4 +77,3 @@ and scenes by reflection. Check: `mirai generate`, `mirai check plugins/heal/run
 - A plugin imports only itself, its `dependencies` and theirs; others are rejected.
 - A component declared in `editor/` lives in the editor world and is gone in Play.
 - A library step runs in the `game` loop; `loops="game editor"` adds the editor.
-- Never write a table another library owns; push its request.

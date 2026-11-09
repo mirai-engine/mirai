@@ -7,7 +7,7 @@ description: Sound in a game - `.sound` and `.sound_set`, `Audio_Source`, `audio
 # Game audio
 
 Package `audio "mirai:engine/audio"`. Sounds are assets named by `base.Asset_Id` (import:
-[assets](assets.md)). Fields and defaults: `engine.describe`.
+[assets](assets.md)).
 
 ## Map
 - Entity sound (speaker, engine, music): [source](#a-source-on-an-entity); from code (hit,

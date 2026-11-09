@@ -5,32 +5,26 @@ This is a Mirai game project.
 ## Documentation
 
 - The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell.
-- Without arguments it lists the topics; `topic` reads one and `section` only a part of it.
 - Call it before writing game code, and read only the section the task needs.
 - Start from the code already here: `game/game.odin` and `plugins/sample/` are small and run as
   they are. Extend them instead of studying the engine.
 - Engine sources are not the documentation. Do not read them to learn the API.
-
-## Work in few turns
-
-- Write whole modules in one go. Do not reread what you just wrote.
-- Send independent reads and searches together, in one message.
-- Batch Odin changes and build once per batch: a shipped build is slower than a play build.
 
 ## Verify
 
 - Write a scenario in `tests/scenarios/<name>.mirai` and run it in one call with
   `mirai play test . <name>`, instead of stepping and inspecting by hand.
 - While looking at state, read only what you need with `play.get` and `--select`.
-- Give `capture` a `path`: it answers only where the image is. Open only what you need.
+- Give `capture` a `path`: it answers only where the image is.
 
 ## Commands
 
 Run them from the project folder. Never talk to an editor without `--project`.
 
-- `mirai session start .` opens the headless editor; `mirai session stop .` closes it.
-- `mirai rpc --project . <method> '<json>' --select <fields>` calls a method of that editor.
-- `mirai rpc --project . describe <method>` gives the params of a method.
+- `mirai rpc --project . <method> key=value... --select <fields>` calls a method; the first call
+  opens a headless editor and `mirai session stop .` closes it.
+- `mirai rpc --project . describe <method>` gives the params of a method; `component.list` with
+  `name=<component>` the fields and defaults of a component.
 - `mirai play .` plays the game; `mirai play test .` plays every scenario.
 - `mirai check` checks the types of the code of the project, from any folder inside it;
   `mirai check game` and `mirai test game` take a package relative to the folder you are in.
