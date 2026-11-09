@@ -270,8 +270,14 @@ impostor_capture :: proc(r: ^Renderer, parts: []Impostor_Part, grid, frame: u32,
 	rhi.cmd_end_render_pass(cmd)
 	if !rhi.immediate_end(device, cmd) {return}
 	images = {grid = grid, frame = frame, center = center, radius = radius}
-	images.color = make([]u8, int(side) * int(side) * 4, allocator)
-	images.normal = make([]u8, int(side) * int(side) * 4, allocator)
+	color_error, normal_error: mem.Allocator_Error
+	images.color, color_error = make([]u8, int(side) * int(side) * 4, allocator)
+	images.normal, normal_error = make([]u8, int(side) * int(side) * 4, allocator)
+	if color_error != nil || normal_error != nil {
+		set_error(r, "impostor capture: out of memory for %dx%d images", side, side)
+		impostor_images_destroy(&images, allocator)
+		return {}, false
+	}
 	if !rhi.texture_read(device, state.color, images.color) || !rhi.texture_read(device, state.normal, images.normal) {
 		impostor_images_destroy(&images, allocator)
 		return {}, false

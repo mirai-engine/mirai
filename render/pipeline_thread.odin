@@ -38,8 +38,8 @@ Pipeline_Thread :: struct {
 
 @(private)
 pipeline_thread_start :: proc(r: ^Renderer) {
-	t := new(Pipeline_Thread, r.allocator)
-	if t == nil {return}
+	t, t_error := new(Pipeline_Thread, r.allocator)
+	if t_error != nil {return}
 	t.device = r.device
 	t.thread = thread.create_and_start_with_poly_data(t, pipeline_thread_run)
 	if t.thread == nil {free(t, r.allocator); return}

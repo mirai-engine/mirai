@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math/linalg"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Immutable meshes own reusable ranges in the common geometry pools.
 
@@ -31,7 +32,7 @@ pool_store :: proc(pool:^[dynamic]$T,free,dirty:^[dynamic]Pool_Range,first:u32) 
         range.first+=count;range.count-=count
         if range.count==0 {unordered_remove(free,index)}
         copy(pool^[destination:][:count],pool^[first:][:count])
-        resize(pool,int(first))
+        base.truncate(pool,first)
         break
     }
     range_add(dirty,{destination,count})
@@ -72,7 +73,7 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
     for i:=0;i<len(free); {
         range:=free^[i]
         if range.first+range.count!=u32(len(pool)) {i+=1;continue}
-        resize(pool,int(range.first))
+        base.truncate(pool,range.first)
         unordered_remove(free,i)
         i=0
     }

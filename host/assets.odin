@@ -370,12 +370,13 @@ assets_name :: proc(a:^Assets,id:base.Asset_Id,buffer:^[base.ASSET_ID_TEXT]u8) -
 // Gives the renderer the material rows that changed. Whoever asks for assets
 // calls it before the next frame; a call with nothing new does nothing.
 assets_commit :: proc(a:^Assets) {
+    // Rows the renderer had no memory for stay dirty: the next commit gives them again.
     if a.materials_dirty {
+        if a.renderer!=nil && !render.materials_set(a.renderer,a.material_descs[:]) {return}
         a.materials_dirty=false
         clear(&a.rows_dirty)
-        if a.renderer!=nil {render.materials_set(a.renderer,a.material_descs[:])}
     } else if len(a.rows_dirty)>0 {
-        if a.renderer!=nil {render.materials_update(a.renderer,a.material_descs[:],a.rows_dirty[:])}
+        if a.renderer!=nil && !render.materials_update(a.renderer,a.material_descs[:],a.rows_dirty[:]) {return}
         clear(&a.rows_dirty)
     }
 }

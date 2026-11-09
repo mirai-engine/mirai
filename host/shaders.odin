@@ -202,6 +202,13 @@ shaders_load_build :: proc(app:^App,load:^Shaders_Load) {
         return
     }
     load.candidate=render.renderer_shader_reload_begin(app.renderer,&load.assets,&load.dropped)
+    if load.candidate==nil {
+        // The renderer had no memory for it: the generation is not taken.
+        log.errorf("shaders: the generation of %s was not taken: %s",load.folder,app.renderer.error)
+        load.built=false
+        sync.atomic_store(&load.ready,true)
+        return
+    }
     make :: proc(load:^Shaders_Load) {
         started:=time.tick_now()
         load.built=render.renderer_shader_reload_build(load.candidate)
@@ -244,7 +251,7 @@ app_shaders_poll :: proc(app:^App) {
         }
         dropped:=sync.atomic_load(&load.dropped)
         // Its codes were the resident ones when it was asked for; another load replaced them since.
-        if !dropped && load.ticket>sh.published && load.candidate==nil && !render.shader_assets_match_codes(&load.assets,&r.shader_codes) {
+        if !dropped && load.ticket>sh.published && load.built && load.candidate==nil && !render.shader_assets_match_codes(&load.assets,&r.shader_codes) {
             sync.atomic_store(&load.ready,false)
             shaders_load_build(app,load)
             i+=1
@@ -255,7 +262,7 @@ app_shaders_poll :: proc(app:^App) {
         case dropped,load.ticket<sh.published:
         case !load.built:
             sh.state=.Failed
-            log.errorf("shaders: the generation of %s was not taken: %s",load.folder,load.candidate.error)
+            if load.candidate!=nil {log.errorf("shaders: the generation of %s was not taken: %s",load.folder,load.candidate.error)}
         case:
             if load.candidate!=nil {render.renderer_publish_shader_reload(r,&load.assets,load.candidate)}
             else {render.renderer_publish_shader_metadata(r,&load.assets)}

@@ -26,6 +26,10 @@
   change only around those that appear, disappear or show something else (transform, mesh,
   material, tint, emission, flags; not the highlight); lights, sun and environment mark their own.
   A `mesh_add` marks nothing: no instance shows the mesh yet.
+- **Without memory** `scene_set`, `scene_update`, `scene_set_lights`, `materials_set` and
+  `materials_update` take the room of all they write before they change anything: they return
+  false with the scene as it was and the reason in `Renderer.error`, and the caller gives the
+  same again in a later frame.
 - What changes afterwards enters without replacing the scene
   ([partial changes](#partial-scene-changes)).
 - **Transform without an inverse.** An instance whose transform has no inverse (zero scale on some
