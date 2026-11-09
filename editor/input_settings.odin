@@ -866,12 +866,6 @@ input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
     value,parse_error:=json.parse_string(raw,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return USAGE}
-    for key in root {
-        switch key {
-        case "action","kind","bindings","reset","tap_ticks","hold_ticks":
-        case: return fmt.tprintf("%q is not a param: %s",key,USAGE)
-        }
-    }
     ticks:=[2]struct{name:string,value:^u32,default:u32}{{"tap_ticks",&m.tap_ticks,input.TAP_TICKS},{"hold_ticks",&m.hold_ticks,input.HOLD_TICKS}}
     for t in ticks {
         if t.name not_in root {continue}

@@ -199,7 +199,7 @@ input_set_errors_name_what_is_valid :: proc(t:^testing.T) {
         {`{"action":"jump","kind":"Axis"}`,{"give the bindings"}},
         {`{"action":"jump","reset":true,"bindings":[]}`,{"leave out kind and bindings"}},
         {`{"tap_ticks":0}`,{"tap_ticks is a whole number of ticks from 1"}},
-        {`{"bind":"jump"}`,{`"bind" is not a param`}},
+        {`{"bind":"jump"}`,{`"bind" is not a field`}},
         {`{}`,{"action is missing"}},
     }
     for c in cases {
