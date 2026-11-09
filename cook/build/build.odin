@@ -293,7 +293,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     engine:=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,context.temp_allocator)
     job.engine_decl=strings.clone(engine.decl,a)
     for &lib,i in job.plugins {
-        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine.stamp)
+        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine)
         plugin_library_name(p.root,&lib,job.plugin_hashes[i],a)
         saved,_,stamped:=stamp_read(lib.stamp)
         if !desc.force && stamped && saved==job.plugin_hashes[i] && os.is_file(lib.library) {
@@ -313,7 +313,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // are the ones just written, and the library is copied.
         if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
         // The declarations of what it links against are written by now.
-        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine.stamp)
+        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine)
         if !desc.force {
             record,recorded:=link_record_read(plugin_link_file(&lib),context.temp_allocator)
             job.plugin_relink[i]=recorded && link_record_stands(record,job.plugin_compile_hashes[i])

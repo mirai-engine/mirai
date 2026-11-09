@@ -47,6 +47,28 @@ ENGINE_EDITOR_PACKAGES :: [?]string{
     "cook/import/sources","cook/install","cook/build","third_party/sqlite","editor/api","editor/acp","editor/diff","editor",
 }
 
+// How many packages have declarations: the stamp counts them, those of the runtime first.
+@(private)
+ENGINE_PACKAGE_COUNT :: len(ENGINE_RUNTIME_PACKAGES)+len(ENGINE_EDITOR_PACKAGES)
+
+@(private)
+engine_package :: proc(index:int) -> string {
+    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
+    return runtime_packages[index] if index<len(runtime_packages) else editor_packages[index-len(runtime_packages)]
+}
+
+@(private)
+engine_package_index :: proc(path:string) -> (index:int,found:bool) {
+    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
+    for name,at in runtime_packages {
+        if name==path {return at,true}
+    }
+    for name,at in editor_packages {
+        if name==path {return len(runtime_packages)+at,true}
+    }
+    return
+}
+
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
@@ -165,9 +187,10 @@ Engine_Stamp :: struct {
     runtime,editor,programs:u64,
     tools:u64,  // the compiler and the flags the runtime library was compiled with
     loads:u64,  // what the runtime embeds besides its sources (the shaders manifest) when it was compiled
-    // Of the declarations of each library: a runtime part of a plugin compiles
-    // against those of the runtime, an editor part against both.
-    decl_runtime,decl_editor:u64,
+    // Of each package (engine_package), what whoever imports it compiles
+    // against: its declarations and those of every package of the engine they
+    // import, directly or not (decl_hashes). Zero: unknown.
+    declared:[ENGINE_PACKAGE_COUNT]u64,
     declares:int,
     runtime_pending:bool, // the runtime library was being compiled and did not finish
 }
@@ -317,10 +340,15 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
         _=engine_stamp_write(paths.stamp,stamp)
         errors,changed:=declare({root=root,packages=runtime_packages[:],binary="mirai",library=paths.runtime_import,stage=paths.stage_runtime,decl=paths.decl})
         if len(errors)>0 {return engine_fail(.Generate,"declarations of the runtime",strings.join(errors,"\n"))}
-        if changed.decl || stamp.decl_runtime==0 {stamp.decl_runtime=decl_hash(paths.decl,runtime_packages[:],compiler)}
-        // The editor and the programs compile against what the runtime declares.
+        if of_runtime:=stamp.declared[:len(runtime_packages)];changed.decl || slice.contains(of_runtime,0) {
+            hashes:=decl_hashes(paths.decl)
+            copy(of_runtime,hashes[:])
+        }
+        // The editor and the programs compile against what the runtime declares,
+        // and so do the declarations of the editor, hashed again once it declares.
         if changed.decl {
             stamp.editor,stamp.programs=0,0
+            slice.zero(stamp.declared[len(runtime_packages):])
             plan.editor_current=false
             _=engine_stamp_write(paths.stamp,stamp)
         }
@@ -346,7 +374,10 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
         }
         errors,changed:=declare({root=root,packages=editor_packages[:],binary="mirai",library=paths.editor_import,stage=paths.stage_editor,decl=paths.decl})
         if len(errors)>0 {return engine_fail(.Generate,"declarations of the editor",strings.join(errors,"\n"))}
-        if changed.decl || stamp.decl_editor==0 {stamp.decl_editor=decl_hash(paths.decl,editor_packages[:],compiler)}
+        if of_editor:=stamp.declared[len(runtime_packages):];changed.decl || slice.contains(of_editor,0) {
+            hashes:=decl_hashes(paths.decl)
+            copy(of_editor,hashes[len(runtime_packages):])
+        }
         if changed.decl {
             stamp.programs=0
             _=engine_stamp_write(paths.stamp,stamp)
@@ -569,12 +600,15 @@ cache_trim :: proc(folder:string,keep:int) {
     remove_later(removed[:])
 }
 
-// What the stamp of the binaries in folder says, to tell later whether a
-// program that started from them runs the last ones built. "" without one.
+// What the stamp of the binaries in folder says they were built from, its
+// first line, to tell later whether a program that started from them runs the
+// last ones built. "" without one.
 engine_stamp_of :: proc(folder:string,allocator:=context.allocator) -> string {
     data,error:=os.read_entire_file(project.path(folder,ENGINE_STAMP,allocator=context.temp_allocator),context.temp_allocator)
     if error!=nil {return ""}
-    return strings.clone(strings.trim_space(string(data)),allocator)
+    text:=string(data)
+    line,_:=strings.split_lines_iterator(&text)
+    return strings.clone(strings.trim_space(line),allocator)
 }
 
 // The stamp of the last build of a mode; false when there is none or it does not read.
@@ -582,30 +616,117 @@ engine_stamp_of :: proc(folder:string,allocator:=context.allocator) -> string {
 engine_stamp_read :: proc(file:string) -> (stamp:Engine_Stamp,ok:bool) {
     data,error:=os.read_entire_file(file,context.temp_allocator)
     if error!=nil {return}
-    fields:=strings.fields(string(data),context.temp_allocator)
-    if len(fields)!=9 {return}
-    values:[7]u64
+    lines:=strings.split_lines(strings.trim_space(string(data)),context.temp_allocator)
+    if len(lines)!=1+ENGINE_PACKAGE_COUNT {return}
+    fields:=strings.fields(lines[0],context.temp_allocator)
+    if len(fields)!=7 {return}
+    values:[5]u64
     for &value,i in values {
         value=strconv.parse_u64_of_base(fields[i],16) or_return
     }
     stamp.runtime,stamp.editor,stamp.programs,stamp.tools,stamp.loads=values[0],values[1],values[2],values[3],values[4]
-    stamp.decl_runtime,stamp.decl_editor=values[5],values[6]
-    stamp.declares=strconv.parse_int(fields[7],10) or_return
-    pending:=strconv.parse_int(fields[8],10) or_return
+    stamp.declares=strconv.parse_int(fields[5],10) or_return
+    pending:=strconv.parse_int(fields[6],10) or_return
     stamp.runtime_pending=pending!=0
+    // One line per package, in their order, each with its name.
+    for line,index in lines[1:] {
+        declared:=strings.fields(line,context.temp_allocator)
+        if len(declared)!=2 || declared[1]!=engine_package(index) {return}
+        stamp.declared[index]=strconv.parse_u64_of_base(declared[0],16) or_return
+    }
     return stamp,true
 }
 
 @(private)
 engine_stamp_write :: proc(file:string,stamp:Engine_Stamp) -> os.Error {
-    return os.write_entire_file(file,fmt.tprintf("%x %x %x %x %x %x %x %d %d",stamp.runtime,stamp.editor,stamp.programs,stamp.tools,stamp.loads,stamp.decl_runtime,stamp.decl_editor,stamp.declares,int(stamp.runtime_pending)))
+    b:=strings.builder_make(context.temp_allocator)
+    fmt.sbprintf(&b,"%x %x %x %x %x %d %d",stamp.runtime,stamp.editor,stamp.programs,stamp.tools,stamp.loads,stamp.declares,int(stamp.runtime_pending))
+    for hash,index in stamp.declared {fmt.sbprintf(&b,"\n%x %s",hash,engine_package(index))}
+    return os.write_entire_file(file,strings.to_string(b))
 }
 
-// The hash of the declarations of some packages under a folder of declarations.
+// Of each package of the engine, the hash of what whoever imports it compiles
+// against: its declarations under decl and those of every package of the
+// engine they import, directly or not. A declaration that changes moves the
+// hashes of the packages that reach it and no other. Zero for a package that
+// reaches declarations no hash follows (engine_imports).
 @(private)
-decl_hash :: proc(decl:string,packages:[]string,compiler:string) -> u64 {
-    hash,_:=fingerprint(decl,compiler,nil,engine_sources(decl,packages))
-    return hash
+decl_hashes :: proc(decl:string) -> (hashes:[ENGINE_PACKAGE_COUNT]u64) {
+    own:[ENGINE_PACKAGE_COUNT]u64
+    followed:[ENGINE_PACKAGE_COUNT]bool
+    reaches:=make([][ENGINE_PACKAGE_COUNT]bool,ENGINE_PACKAGE_COUNT,context.temp_allocator)
+    for &reached,index in reaches {
+        files:=engine_sources(decl,{engine_package(index)})
+        own[index],_=fingerprint(decl,"",nil,files)
+        followed[index]=engine_imports(decl,files,&reached)
+        reached[index]=true
+    }
+    for via in 0..<ENGINE_PACKAGE_COUNT {
+        for &reached in reaches {
+            if !reached[via] {continue}
+            for &to,index in reached {to||=reaches[via][index]}
+        }
+    }
+    for &hash,index in hashes {
+        whole:=true
+        for reached,at in reaches[index] {
+            if !reached {continue}
+            whole&&=followed[at]
+            hash=base.hash_combine(base.hash_combine(hash,base.name_hash(engine_package(at))),own[at])
+        }
+        if !whole {hash=0}
+    }
+    return
+}
+
+@(private)
+ENGINE_COLLECTION :: "mirai:"
+
+// Marks the packages of the engine that files import. Every string literal
+// that names one with its collection counts, "mirai:core": an import is one
+// however it is written, so none is missed, and a literal that is no import
+// only builds more. followed is false when a file cannot be read or names
+// declarations decl has that are of no package of the engine: what imports
+// them compiles against something no hash follows.
+@(private)
+engine_imports :: proc(decl:string,files:[]string,reached:^[ENGINE_PACKAGE_COUNT]bool) -> (followed:bool) {
+    followed=true
+    for file in files {
+        data,error:=os.read_entire_file(file,context.temp_allocator)
+        if error!=nil {
+            followed=false
+            continue
+        }
+        text:=string(data)
+        for {
+            at:=strings.index(text,ENGINE_COLLECTION)
+            if at<0 {break}
+            quote:=text[at-1] if at>0 else 0
+            text=text[at+len(ENGINE_COLLECTION):]
+            if quote!='"' && quote!='`' {continue}
+            end:=strings.index_byte(text,quote)
+            if end<=0 {continue}
+            path:=text[:end]
+            if index,found:=engine_package_index(path);found {
+                reached[index]=true
+            } else if folder_path(path) && len(engine_sources(decl,{path}))>0 {
+                followed=false
+            }
+        }
+    }
+    return
+
+    // Whether a literal can be the path of an import: a field tag, a format
+    // or a message is not, and is not looked for in the declarations.
+    folder_path :: proc(path:string) -> bool {
+        for c in transmute([]u8)path {
+            switch c {
+            case 'a'..='z','A'..='Z','0'..='9','_','-','.','/':
+            case: return false
+            }
+        }
+        return true
+    }
 }
 
 // -o and the attributes, the same for every binary of the engine and every
