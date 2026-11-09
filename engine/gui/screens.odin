@@ -289,15 +289,6 @@ screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,e:core.Entity,inde
     return {r.x*s,r.y*s,r.w*s,r.h*s},true
 }
 
-// The storage of the world called name; nil without one.
-@(private)
-storage_named :: proc(world:core.World_Ref,name:string) -> ^core.Storage_Info {
-    for &s in world.info.storages {
-        if s.place==world.place && !s.by_world && s.name==name {return &s}
-    }
-    return nil
-}
-
 // Says once what a name a step asked of a screen that does not have it is:
 // the screen, and what it does have.
 @(private)

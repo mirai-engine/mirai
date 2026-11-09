@@ -598,14 +598,6 @@ inspector_variant_name :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> str
 }
 
 @(private)
-inspector_prefab_root :: proc(s:^Session,w:core.World_Ref,link:Prefab_Link) -> core.Entity {
-    previous:=s.document.previous
-    at:=asset.scene_instance_find(previous,link.instance)
-    if at<0 {return core.NONE}
-    return core.entity_of(core.world_entities(w),previous.instances[at].root)
-}
-
-@(private)
 hierarchy_square :: proc(s:^Session,w:core.World_Ref,e:core.Entity,index:int,editable:bool) -> (clicked,unlink:bool) {
     ctx:=s.gui.ctx
     th:=&ctx.theme

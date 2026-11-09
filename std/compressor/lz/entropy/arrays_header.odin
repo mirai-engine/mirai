@@ -19,8 +19,6 @@ ARRAY_FLAG_ALLOW_SPLIT_INDEXED :: u32(1<<5)
 ARRAY_FLAG_ALLOW_HUFFLENS2 :: u32(1<<6)
 ARRAY_FLAG_ALLOW_RLE_MEMSET :: u32(1<<7)
 
-HUFF_DECODE_TABLE_SIZE :: 1<<compressor.HUFF_CODELEN_LIMIT
-
 // Uncompressed array header: 3 bytes, big-endian length. Returns the position after it.
 put_array_uncomp_header :: #force_inline proc "contextless" (to:[^]u8, from_len:int) -> [^]u8 {
     h:=u32(from_len)

@@ -9,11 +9,6 @@ LZ_Chunk_Deadlines :: struct {
     whole_chunk, literals_only, literal, packet, offsets, excesses_u8, parse:f32,
 }
 
-// The default speed fit has no LZ J recomputation (its hook is null).
-SPEEDFIT_RECOMPUTES_LZ_J :: false
-// The default speed fit ignores the number of alphabet runs of a Huffman array.
-SPEEDFIT_USES_HUFF_ALPHABET_RUNS :: false
-
 @(private="file")
 blend :: #force_inline proc "contextless" (ivb,a57,jag,
     skl:f32) -> f32 {return (ivb+a57+jag+skl)*0.25}
@@ -25,10 +20,6 @@ speedfit_memcpy :: proc "contextless" (n:int) -> f32 {
 speedfit_simd_mul_s32_sub_u8 :: proc "contextless" (n:int) -> f32 {
     l:=f32(n)
     return blend(28.000+0.595*l,53.000+1.050*l,62.000+1.179*l,33.000+0.567*l)
-}
-speedfit_simd_interleave_8x2 :: proc "contextless" (n:int) -> f32 {
-    l:=f32(n)
-    return blend(24.000+0.270*l,53.000+0.428*l,62.000+0.550*l,33.000+0.213*l)
 }
 speedfit_get_offsets44 :: proc "contextless" (count:int) -> f32 {
     c:=f32(count)
@@ -47,10 +38,6 @@ speedfit_get_multiarrays :: proc "contextless" (num_intervals,tot_raw_len:int) -
     n,t:=f32(num_intervals),f32(tot_raw_len)
     return blend(0.000+46.245*n+0.125*t,0.000+76.846*n+0.322*t,0.000+45.477*n+0.215*t,
         0.000+41.626*n+0.077*t)
-}
-speedfit_newlzf_unpack_escape_offsets :: proc "contextless" (count:int) -> f32 {
-    c:=f32(count)
-    return blend(56.010+1.285*c,33.347+3.369*c,133.394+2.446*c,67.640+1.032*c)
 }
 speedfit_huff3 :: proc "contextless" (n,num_non_zero,num_alphabet_runs:int, bpb:f32) -> f32 {
     l,z:=f32(n),f32(num_non_zero)

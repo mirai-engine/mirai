@@ -389,15 +389,6 @@ ai_input :: proc(s:^Session,m:^Ai) {
     ai_queue_advance(s,m)
 }
 
-AI_QUESTION_NAMES :: [Ai_Question]string{.None="",.Text="text",.Single="single",.Multi="multi",.Confirm="confirm"}
-
-ai_question_parse :: proc(text:string) -> (kind:Ai_Question,ok:bool) {
-    names:=AI_QUESTION_NAMES
-    if text=="" {return .None,true}
-    for value,name in names {if value!="" && value==text {return name,true}}
-    return .None,false
-}
-
 // The choices of a question, one per line, without empty ones.
 ai_question_options :: proc(task:^Ai_Task,out:[][]u8) -> int {
     count,start:=0,0

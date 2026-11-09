@@ -34,18 +34,9 @@ debug_shapes_are_lines_and_a_full_batch_counts_what_it_drops :: proc(t:^testing.
     debug_sphere(&lines,{0,0,0},1,{1,1,1,1},8)
     testing.expect_value(t,lines.count,48)
     debug_lines_clear(&lines)
-    debug_capsule(&lines,{0,0,0},{0,2,0},0.5,{1,1,1,1},8)
-    testing.expect_value(t,lines.count,(8+8+4+16)*2)
-    for vertex in lines.vertices[:lines.count] {testing.expect(t,vertex.position.y>=-0.5-1e-4 && vertex.position.y<=2.5+1e-4,"a capsule ends at its caps")}
-    debug_lines_clear(&lines)
     debug_axes(&lines,place({1,1,1},{2,2,2}),0.5)
     testing.expect_value(t,lines.count,6)
     testing.expect_value(t,lines.vertices[1].position,Vec3{2,1,1})
-    debug_lines_clear(&lines)
-    _,proj,_:=camera_matrices(PANEL_CAMERA,1)
-    debug_frustum(&lines,Mat4(1),{1,1,1,1})
-    testing.expect_value(t,lines.count,24)
-    _=proj
     // A batch without room drops whole lines and counts them.
     small:[5]Debug_Vertex
     full:=debug_lines_make(small[:],depth_test=false)

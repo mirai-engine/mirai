@@ -401,9 +401,6 @@ Draw_Indirect :: struct {
 	first_instance: u32,
 }
 
-// Matches VkDispatchIndirectCommand and MTLDispatchThreadgroupsIndirectArguments.
-Dispatch_Indirect :: struct {x, y, z: u32}
-
 // Triangle geometry for a bottom level acceleration structure. Positions are
 // three f32 at the start of each vertex; indices are u32.
 Blas_Desc :: struct {

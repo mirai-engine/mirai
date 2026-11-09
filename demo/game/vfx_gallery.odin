@@ -35,10 +35,6 @@ Vfx_Gallery_View :: struct {
 }
 VFX_GALLERY_VIEW_DEFAULT :: Vfx_Gallery_View{station=-1}
 
-// The channel of the hits of the walls of the gallery, which the effect of
-// the sparks listens to.
-CHANNEL_IMPACTS :: vfx.Particle_Channel_Name(16)
-
 // Hits on a wall, given to its channel: one every interval
 // while the world plays, somewhere on the rectangle of size along x and y of
 // the entity, bouncing off along its +z; a volley of volley more with E at

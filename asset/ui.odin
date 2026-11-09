@@ -80,8 +80,6 @@ UI_FONT_CAPACITY :: 16
 @(private="file") ui_holds :: proc "contextless" (kind:u8) -> bool {return kind==0 || kind==8 || kind==9 || kind==10 || kind==17 || kind>=22 && kind<=26}
 @(private="file") UI_KIND_COMPONENT :: 7
 @(private="file") UI_KIND_LIST :: 10
-// As ui.Node_Flag.Slot.
-@(private="file") UI_FLAG_SLOT :: u16(1<<11)
 // As ui.NODE_FIELDS_UNKNOWN.
 @(private="file") UI_FIELDS_UNKNOWN :: ~u32(0xffff)
 @(private="file") Ui_Anim_Links :: struct {kind:u8,first,count:u32}

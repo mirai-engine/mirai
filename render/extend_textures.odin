@@ -76,8 +76,7 @@ extension_table_textures_destroy :: proc(r: ^Renderer) {
 	}
 }
 
-// Whether the table still holds the texture of an entry: a transaction that
-// drops what it brought (textures_truncate) may have taken its place.
+// Whether the table still holds the texture of an entry.
 @(private)
 extension_table_texture_held :: proc(r: ^Renderer, entry: ^Extension_Table_Texture) -> bool {
 	index := int(entry.handle) - 1

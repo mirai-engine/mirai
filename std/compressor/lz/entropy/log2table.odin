@@ -739,14 +739,3 @@ rrlog2neg_bk_32 :: #force_inline proc "contextless" (x:u32) -> f32 {
 }
 
 rrlog2_bk :: #force_inline proc "contextless" (x:u32) -> f32 {return 32.0-rrlog2neg_bk_32(x)}
-
-rrlog2_bk_u64 :: proc "contextless" (x:u64) -> f32 {
-    x:=x
-    ret:f32=0
-    if x>u64(max(u32)) {
-        s:=32-u32(intrinsics.count_leading_zeros(x))
-        x>>=s
-        ret=f32(s)
-    }
-    return ret+rrlog2_bk(u32(x))
-}

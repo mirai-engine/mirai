@@ -44,8 +44,6 @@ sum_of_histogram :: proc "contextless" (counts:[]u32) -> u32 {
 
 histo_sum :: proc "contextless" (h:^Histo256) -> u32 {return sum_of_histogram(h.counts[:])}
 
-histo_add_bytes :: proc "contextless" (h:^Histo256, raw:[]u8) {for b in raw {h.counts[b]+=1}}
-histo_remove_bytes :: proc "contextless" (h:^Histo256, raw:[]u8) {for b in raw {h.counts[b]-=1}}
 histo_slide :: proc "contextless" (raw:[]u8, from,to:^Histo256) {
     for b in raw {from.counts[b]-=1;to.counts[b]+=1}
 }
@@ -60,39 +58,6 @@ find_max_u32_256 :: proc "contextless" (h:^[256]u32) -> u32 {
     m:u32=0
     for c in h {m=max(m,c)}
     return m
-}
-
-// Code length in bits of the histogram coded with its own order-0 entropy.
-code_len_of_histogram_t :: proc "contextless" (counts:[]u32,
-    sum_counts:u32) -> u64 #no_bounds_check {
-    if sum_counts==0 {return 0}
-    inv_sum:=u32(i32((1<<30)/i64(sum_counts)))
-    h:u64=0
-    for c in counts {
-        if c>0 {
-            cl:=u32(log2tabled(c*inv_sum,30))
-            h+=u64(c)*u64(cl)
-        }
-    }
-    return h>>LOG2TABLE_ONE_SHIFT
-}
-
-entropy_of_histogram_t :: proc "contextless" (counts:[]u32, sum_counts:u32) -> f32 {
-    if sum_counts==0 {return 0}
-    return f32(code_len_of_histogram_t(counts,sum_counts))/f32(sum_counts)
-}
-
-code_len_of_histogram_pow2_external :: proc "contextless" (counts:[]u32,
-    counts_for_codelen:[]u32, shift:u32) -> u64 #no_bounds_check {
-    s:=30-shift
-    h:u64=0
-    for c,i in counts {
-        if c>0 {
-            cl:=u32(log2tabled(counts_for_codelen[i]<<s,30))
-            h+=u64(c)*u64(cl)
-        }
-    }
-    return h>>LOG2TABLE_ONE_SHIFT
 }
 
 // Sum of histogram[i]*code_len[i].
@@ -180,10 +145,4 @@ array_estimate_complen_bits :: proc "contextless" (histo:[]u32, alphabet:int,
 array_estimate_complen_bytes :: proc "contextless" (histo:[]u32, alphabet:int,
     sum_counts:u32) -> u32 {
     return (array_estimate_complen_bits(histo,alphabet,sum_counts)+7)/8
-}
-
-array_estimate_huff_j :: proc "contextless" (histo:[]u32, alphabet:int, sum_counts:int,
-    lambda:f32) -> f32 {
-    bits:=array_estimate_complen_bits(histo,alphabet,u32(sum_counts))
-    return f32(bits)/8.0+lambda*speedfit_estimate_entropy_array_time(sum_counts)
 }

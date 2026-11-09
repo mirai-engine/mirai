@@ -427,13 +427,6 @@ scene_init :: proc(r: ^Renderer) {
 MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the whole table goes
 
 @(private)
-dielectric_reflectance :: proc "contextless" (ior: f32) -> f32 {
-	value := max(ior, 0)
-	ratio := (value - 1) / (value + 1)
-	return ratio * ratio
-}
-
-@(private)
 gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
 	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
@@ -821,8 +814,6 @@ ray_class :: proc "contextless" (flags: u32) -> u8 {
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
 }
-
-material_count :: proc(r: ^Renderer) -> int {return len(r.scene.materials)}
 
 // ---------------------------------------------------------------- meshes
 

@@ -5,7 +5,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
-import "core:strings"
 import "mirai:core"
 import "mirai:std/base"
 import phys "plugins:physics/runtime"
@@ -32,20 +31,6 @@ collision_categories :: proc(info:^core.World_Info,allocator:=context.temp_alloc
         append(&list,entry)
     }
     return list[:]
-}
-
-// A mask of categories by their names: Everything, Nothing, or the names.
-@(private)
-collision_layers_text :: proc(info:^core.World_Info,layers:phys.Collision_Layers) -> string {
-    if layers==phys.COLLISION_LAYERS_ALL {return "Everything"}
-    if layers==phys.COLLISION_LAYERS_NONE {return "Nothing"}
-    b:=strings.builder_make(context.temp_allocator)
-    for index in 0..<phys.COLLISION_CATEGORY_CAPACITY {
-        if layers&(phys.Collision_Layers(1)<<uint(index))==0 {continue}
-        if strings.builder_len(b)>0 {strings.write_string(&b,", ")}
-        if name,found:=core.name_of(info,phys.Collision_Category,i64(index));found {strings.write_string(&b,editor.readable(name))} else {fmt.sbprintf(&b,"%d",index)}
-    }
-    return strings.to_string(b)
 }
 
 // ---------------------------------------------------------------- the collider

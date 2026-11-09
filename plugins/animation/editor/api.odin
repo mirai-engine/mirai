@@ -98,11 +98,6 @@ register :: proc(s:^editor.Session) {
 }
 
 @(private)
-find_entity :: proc(w:core.World_Ref,id:base.Entity_Id) -> core.Entity {
-    return core.entity_of(core.world_entities(w),id)
-}
-
-@(private)
 within :: proc(w:core.World_Ref,entity,root:core.Entity) -> bool {
     entity:=entity
     parents:=core.world_table_of(w,core.Parent)

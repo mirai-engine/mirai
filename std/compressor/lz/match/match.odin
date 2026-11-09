@@ -5,7 +5,7 @@ import "mirai:std/compressor"
 import "mirai:std/compressor/lz/entropy"
 
 // Match finders of the LZ encoder: the hash-cache tables the greedy and lazy parses drive
-// directly (Ctmf, Ctmf2, Fast_Ctmf), the find-all finders the optimal parses read through
+// directly (Ctmf, Fast_Ctmf), the find-all finders the optimal parses read through
 // Incremental_Finder (cache table and suffix trie) and the long range matcher (Lrm_*).
 // Offsets are positive distances back from the current position.
 
@@ -21,9 +21,6 @@ NEWLZ_MATCH_NUM_PAIRS :: 4
 match_pair_less :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
     if a.length!=b.length {return a.length>b.length}
     return a.offset<b.offset
-}
-match_pair_equals :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
-    return a.offset==b.offset && a.length==b.length
 }
 match_pair_equal_length :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
     return a.length==b.length
@@ -85,11 +82,6 @@ getmatchlen_mml1 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int
     return l
 }
 
-getmatchlen_mml2 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
-    r:=getmatchlen_mml1(p1,p2,ptrend)
-    return r==1?0:r
-}
-
 getmatchlen_after4 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
     return 4+getmatchlen_mml1(padd(p1,4),padd(p2,4),ptrend)
 }
@@ -120,22 +112,6 @@ getmatchlen_mml4_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptre
     return getmatchlen_mml4_two32(p1_32,load32(p2),p1,p2,ptrend)
 }
 
-getmatchlen_mml3_no32 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
-    return getmatchlen_mml3_one32(load32(p1),p1,p2,ptrend)
-}
-
-getmatchlen_mml2_two32 :: #force_inline proc "contextless" (p1_32,p2_32:u32,p1,p2,
-    ptrend:[^]u8) -> int {
-    if u16(p1_32)!=u16(p2_32) {return 0}
-    diff:=p1_32~p2_32
-    if diff!=0 {return diff&0x00FFFFFF!=0?2:3}
-    return getmatchlen_after4(p1,p2,ptrend)
-}
-
-getmatchlen_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8) -> int {
-    return getmatchlen_mml2_two32(p1_32,load32(p2),p1,p2,ptrend)
-}
-
 havematch_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
     outml:^int) -> bool {
     p2_32:=load32(p2)
@@ -147,32 +123,6 @@ havematch_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend
     }
     outml^=getmatchlen_after4(p1,p2,ptrend)
     return true
-}
-
-// Match length only if it beats prevml, else 0.
-getmatchlen_mml3_one32_better :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
-    prevml:int) -> int {
-    if prevml>=3 {
-        if load32(p2)!=p1_32 {return 0}
-        if prevml>=pdiff(ptrend,p1) {return 0}
-        if p1[prevml]!=p2[prevml] {return 0}
-        l:=getmatchlen_after4(p1,p2,ptrend)
-        if l<=prevml {return 0}
-        return l
-    }
-    return getmatchlen_mml3_one32(p1_32,p1,p2,ptrend)
-}
-
-getmatchlen_mml4_one32_better :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
-    prevml:int) -> int {
-    if load32(p2)!=p1_32 {return 0}
-    if prevml>=4 {
-        if prevml>=pdiff(ptrend,p1) {return 0}
-        if p1[prevml]!=p2[prevml] {return 0}
-    }
-    l:=getmatchlen_after4(p1,p2,ptrend)
-    if l<=prevml {return 0}
-    return l
 }
 
 // A match longer than prevml, if there is one.

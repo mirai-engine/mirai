@@ -318,9 +318,6 @@ orbit_frame :: proc "contextless" (o:^Orbit,low,high:[3]f32,size:[2]f32,region:u
 }
 
 // "x,y,z,yaw,pitch,distance": what a restart passes on.
-view_text :: proc(o:Orbit,allocator:=context.temp_allocator) -> string {
-    return fmt.aprintf("%f,%f,%f,%f,%f,%f",o.target.x,o.target.y,o.target.z,o.yaw,o.pitch,o.distance,allocator=allocator)
-}
 view_parse :: proc(o:^Orbit,text:string) -> bool {
     parts:=strings.split(text,",",context.temp_allocator)
     if len(parts)!=6 {return false}

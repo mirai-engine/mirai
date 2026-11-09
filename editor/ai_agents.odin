@@ -20,8 +20,6 @@ import "mirai:std/serial"
 AI_AGENTS_FILE :: "agents.json"
 // The program of the official adapter of each agent, as its package installs it.
 AI_AGENT_PROGRAMS :: [Ai_Agent]string{.Codex="codex-acp",.Claude="claude-agent-acp",.Command=""}
-// The program of the agent the adapter runs, as its installer leaves it.
-AI_AGENT_CLIS :: [Ai_Agent]string{.Codex="codex",.Claude="claude",.Command=""}
 
 // What an initialize of an adapter announced: what the editor can ask of it.
 Ai_Capability :: enum u8 {Load,Resume,Close,Http_Mcp,Image,Embedded_Context,Rename}

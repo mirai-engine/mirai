@@ -21,7 +21,6 @@ import "mirai:std/compressor/lz/entropy"
 @(private="file") POOL_BYTES :: 262000
 
 SUFFIX_TRIE1_MAX_SIZE :: 1<<23
-SUFFIX_TRIE2_MAX_SIZE :: 1<<30
 
 // children holds a pointer to the Children_* block once there are more than 3.
 @(private="file")

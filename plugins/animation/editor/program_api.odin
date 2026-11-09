@@ -251,15 +251,6 @@ program_parameter_check :: proc(s:^editor.Session,call:^api.Call,animation:anim.
     return true
 }
 
-
-@(private)
-program_runtime_mode :: proc(s:^editor.Session,call:^api.Call) -> bool {
-    if s.mode==.Edit {authoring_failure(call,"mode","Runtime_Required","Play or Simulation","Edit","Transient animation controls require Play or Simulation");return false}
-    return true
-}
-
-
-
 @(private)
 program_modifier_count :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind) -> int {
     switch kind {
