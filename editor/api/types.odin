@@ -67,7 +67,7 @@ INVALID_PARAMS    :: -32602
 INTERNAL_ERROR    :: -32603
 SERVER_ERROR      :: -32000 // a handler failed without a code of its own
 HUNG              :: -32095 // client side: the process of the editor is alive and has used no CPU for a while: it will not answer
-CLOSED            :: -32096 // client side: the editor closed the connection without a byte of answer: it ended or restarted, perhaps after running the call
+CLOSED            :: -32096 // the editor closed the connection without a byte of answer, or is ending during a _wait_until: it ended or restarted, perhaps after running the call
 TIMEOUT           :: -32097 // client side: no answer in time
 BAD_RESPONSE      :: -32098 // client side: the answer is not a JSON-RPC response
 UNREACHABLE       :: -32099 // client side: nobody listens

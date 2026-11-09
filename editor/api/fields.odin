@@ -9,12 +9,13 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // Fields of a JSON value and conditions on them: what _select and _wait_until
-// of every method and mirai rpc --select and --wait-until read.
+// of every method read.
 
 @(private) ECHO_BYTES :: 240 // of a list of names an error repeats
 @(private) BRIEF_BYTES :: 80 // of a value inside a message
+@(private) NOTE_BYTES :: 480 // of what _select says it did not find
 
-// <field><op><value> of _wait_until and --wait-until.
+// <field><op><value> of _wait_until.
 Condition :: struct {
     text:string,
     path:Json_Path,
@@ -285,15 +286,16 @@ text_brief :: proc(text:string,limit:int) -> string {
 // its answer, so a client of MCP has them as a client of mirai rpc does.
 // _select names the fields of the result the answer keeps, separated by
 // commas; _wait_until calls the method again until a field of its result
-// meets a condition, the editor going on meanwhile.
+// meets a condition, the editor going on meanwhile, for _wait_seconds at most.
 PARAM_SELECT :: "_select"
 PARAM_WAIT_UNTIL :: "_wait_until"
-WAIT_UNTIL_SECONDS :: 300 // the longest _wait_until waits, under the timeouts of the clients of MCP
+PARAM_WAIT_SECONDS :: "_wait_seconds"
+WAIT_UNTIL_SECONDS :: 300 // how long _wait_until waits without _wait_seconds, under the timeouts of the clients of MCP
 WAIT_UNTIL_PAUSE :: 0.1   // seconds between its calls
 
 @(private) RESERVED_SCHEMA :: `"_select":{"type":"string"},"_wait_until":{"type":"string"}`
 
-param_reserved :: proc(name:string) -> bool {return name==PARAM_SELECT || name==PARAM_WAIT_UNTIL}
+param_reserved :: proc(name:string) -> bool {return name==PARAM_SELECT || name==PARAM_WAIT_UNTIL || name==PARAM_WAIT_SECONDS}
 
 // The longest a client gives a call when --timeout does not say: what ends
 // it before is an editor that ended or hung (Client_Watch).
@@ -304,6 +306,7 @@ Call_Options :: struct {
     select:[]Json_Path,
     until:Condition,
     waits:bool,
+    wait_seconds:f64, // 0: WAIT_UNTIL_SECONDS
 }
 
 // The params without the reserved ones and what those ask for. Params that are
@@ -336,6 +339,10 @@ call_options_take :: proc(s:^Server,params:string) -> (rest:string,options:Call_
             if is_text {condition,valid=condition_parse(text)}
             if !valid {return rest,{},{INVALID_PARAMS,format_text(allocator,"_wait_until: %s is not <field><op><value>: op is =, !=, <, <=, > or >=, and the last four compare numbers (phase=Built, errors>0)",member.value),""},false}
             options.until,options.waits=condition,true
+        case PARAM_WAIT_SECONDS:
+            seconds,valid:=strconv.parse_f64(member.value)
+            if !valid || !(seconds>0) || seconds>WAIT_TIMEOUT_MS/1000 {return rest,{},{INVALID_PARAMS,format_text(allocator,"_wait_seconds must be seconds above 0 and up to %d, not %s",WAIT_TIMEOUT_MS/1000,member.value),""},false}
+            options.wait_seconds=seconds
         case:
             append(&kept,member)
         }
@@ -355,8 +362,8 @@ call_options_take :: proc(s:^Server,params:string) -> (rest:string,options:Call_
 
 // The fields of a result as an object by their paths. Selecting is a read of
 // the result of a call that already ran, so a field that is not there is not
-// an error: selected is empty, the answer keeps the whole result and note says
-// which fields are missing and what there is.
+// an error: selected keeps those it found and note says which are missing and
+// what there is.
 @(private)
 fields_select :: proc(allocator:runtime.Allocator,result:string,select:[]Json_Path) -> (selected,note:string) {
     b:=strings.builder_make(allocator)
@@ -376,24 +383,21 @@ fields_select :: proc(allocator:runtime.Allocator,result:string,select:[]Json_Pa
         strings.write_byte(&b,':')
         strings.write_string(&b,value)
     }
-    if strings.builder_len(notes)>0 {
-        strings.write_string(&notes,"; this is the whole result")
-        return "",strings.to_string(notes)
-    }
     strings.write_byte(&b,'}')
-    return strings.to_string(b),""
+    return strings.to_string(b),text_brief(strings.to_string(notes),NOTE_BYTES)
 }
 
 // A call of a client: the method with its params, the server doing what the
 // reserved ones ask. The whole result stays in out; selected is what the
-// answer keeps of it with _select, "" otherwise. note says which fields
-// _select named that the result does not have: the answer keeps the whole result.
+// answer keeps of it with _select, "" otherwise, and note what _select named
+// that the result does not have.
 method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool,selected,note:string) {
     allocator:=base.arena_allocator(&s.scratch)
     rest,options,problem,read:=call_options_take(s,params)
     if !read {return problem,false,"",""}
     start:=out.count
     started:=time.tick_now()
+    limit:=options.wait_seconds>0?options.wait_seconds:WAIT_UNTIL_SECONDS
     for {
         mark:=base.arena_mark(&s.scratch)
         out.count,out.overflow=start,0
@@ -405,12 +409,12 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         met,mismatch:=condition_met(options.until,value)
         if mismatch!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,mismatch),""},false,"",""}
         if met {break}
-        if time.duration_seconds(time.tick_since(started))>WAIT_UNTIL_SECONDS {
-            message:=format_text(allocator,"%s did not meet %s in %d s: %s is %s",method.name,options.until.text,WAIT_UNTIL_SECONDS,options.until.path.text,json_brief(value))
+        if time.duration_seconds(time.tick_since(started))>limit {
+            message:=format_text(allocator,"%s did not meet %s in %.0f s: %s is %s",method.name,options.until.text,limit,options.until.path.text,json_brief(value))
             return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),value)},false,"",""
         }
         base.arena_rewind(&s.scratch,mark)
-        if !server_pause(s) {return {SERVER_ERROR,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
+        if !server_pause(s) {return {CLOSED,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
     }
     if ok && len(options.select)>0 && out.overflow==0 {
         selected,note=fields_select(allocator,string(out.data[start:out.count]),options.select)

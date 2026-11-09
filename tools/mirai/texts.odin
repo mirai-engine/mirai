@@ -12,6 +12,7 @@ TEXTS_USAGE :: "texts export|import <file.csv> [--project P|--port N]"
 // and ui.text.import). An import waits for Save in the editor.
 cmd_texts :: proc(root:string,args:[]string) -> int {
     connection,ok:=connection_args(args,agent_environment())
+    connection.root=root
     if !ok || len(connection.rest)!=2 || connection.rest[0]!="export" && connection.rest[0]!="import" {
         fmt.eprintfln("Usage: mirai %s",TEXTS_USAGE)
         return 2
