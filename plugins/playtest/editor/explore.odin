@@ -521,7 +521,6 @@ api_play_explore :: proc(s:^editor.Session,call:^api.Call) {
     r,own:=editor.api_play_own_run(s,call,0)
     if !own {return}
     if r.owner==0 && editor.simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-    if problem:=editor.run_script_blocks(s,r);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     values:[2]string
     api.object_values(call.allocator,call.raw,{"seconds","ticks"},values[:])
     if values[0]!="" && values[1]!="" {api.call_fail(call,api.INVALID_PARAMS,"seconds and ticks both say how long it plays: give one");return}

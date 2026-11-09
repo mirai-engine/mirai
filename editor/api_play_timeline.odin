@@ -277,71 +277,6 @@ api_timeline_input :: proc(timeline:[]Api_Step_Input) -> bool {
     return false
 }
 
-// The input of devices play.input schedules for the next ticks of a run: each
-// tick the API runs without input of its own plays the next one, and nothing
-// is held once it ends. Its texts live here, not in the memory of a call.
-Run_Script :: struct {
-    run:u64, // Run.id of the run it is for; another run in the same place has none
-    steps:[API_STEP_SEGMENTS]Api_Step_Input, // their text is in texts
-    texts:[API_STEP_SEGMENTS][ui.INPUT_TEXT_CAPACITY]u8,
-    count,segment,at:int, // at: the ticks of segment already played
-}
-
-// The script of a run of s.runs; nil without the API, which keeps them.
-@(private)
-run_script :: proc(s:^Session,r:^Run) -> ^Run_Script {
-    st:=api_state(s)
-    if st==nil || r==nil {return nil}
-    if uintptr(r)<uintptr(&s.runs[0]) {return nil}
-    place:=int(uintptr(r)-uintptr(&s.runs[0]))/size_of(Run)
-    if place>=len(s.runs) {return nil}
-    script:=&st.scripts[place]
-    if script.run!=r.id {script^={run=r.id}}
-    return script
-}
-
-@(private)
-run_script_set :: proc(script:^Run_Script,timeline:[]Api_Step_Input) {
-    script^={run=script.run,count=len(timeline)}
-    for step,i in timeline {
-        script.steps[i]=step
-        script.steps[i].text=""
-        copy(script.texts[i][:],step.text)
-    }
-}
-
-// The ticks of a script still to play.
-@(private)
-run_script_ticks :: proc "contextless" (script:^Run_Script) -> (ticks:int) {
-    if script==nil || script.segment>=script.count {return 0}
-    for step in script.steps[script.segment:script.count] {ticks+=step.ticks}
-    return ticks-script.at
-}
-
-// The input of the next tick of a script and which tick of its segment it is;
-// nothing held once it ended.
-@(private)
-run_script_take :: proc(script:^Run_Script) -> (step:Api_Step_Input,at:int) {
-    if script==nil {return {ticks=1},0}
-    for script.segment<script.count && script.at>=script.steps[script.segment].ticks {script.segment+=1;script.at=0}
-    if script.segment>=script.count {
-        script^={run=script.run}
-        return {ticks=1},0
-    }
-    step,at=script.steps[script.segment],script.at
-    step.text=base.text_get(script.texts[script.segment][:])
-    script.at+=1
-    return
-}
-
-// Why a call that gives input of its own cannot run while r has a script; "" when it can.
-run_script_blocks :: proc(s:^Session,r:^Run) -> string {
-    if ticks:=run_script_ticks(run_script(s,r));ticks>0 {
-        return fmt.tprintf("play.input scheduled %d more ticks of input, which the next steps play: step without input to play them, or play.input with release_all to drop them",ticks)
-    }
-    return ""
-}
-
 // Takes a sample of the game w after ran ticks of the step; "" or why the step fails.
 @(private)
 Api_Step_Sample :: #type proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> string
@@ -374,9 +309,8 @@ Api_Step_Run :: struct {
 }
 
 // Runs the ticks of a timeline, its segments one after the other, until its
-// conditions hold, sampling every some ticks and after the last one. A
-// timeline without input plays the script of the run instead. The user's Play
-// pauses first. problem: why it stopped failing.
+// conditions hold, sampling every some ticks and after the last one. The
+// user's Play pauses first. problem: why it stopped failing.
 @(private)
 api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:int,met:bool,problem:string) {
     target:=run_player(s,run.owner,run.player)
@@ -389,7 +323,6 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
     total:=api_timeline_ticks(run.timeline)
     sampled:=0
     segment,at:=0,0
-    scripted:=!api_timeline_input(run.timeline)
     for ran<total {
         if len(run.until)>0 && met {break}
         if run.look!=nil {
@@ -400,7 +333,7 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
         if at==0 && run.timeline[segment].press!="" {
             if problem=api_press_aim(s,target,&run.timeline[segment]);problem!="" {return}
         }
-        api_step_tick(s,run.owner,run.player,scripted?nil:&run.timeline[segment],at)
+        api_step_tick(s,run.owner,run.player,&run.timeline[segment],at)
         if !frame(s) {return}
         ran+=1;at+=1
         // The run ends with its turn or with the document.

@@ -71,7 +71,6 @@ Api_State :: struct {
     port:int,
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
-    scripts:[EDITOR_RUNS]Run_Script, // the input play.input scheduled for each place of Session.runs
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
 }
 

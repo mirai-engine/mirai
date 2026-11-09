@@ -708,39 +708,21 @@ a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first :: 
     }
 }
 
-// The devices play.input schedules play out over the ticks the next steps
-// run, one tick at a time and through the path of real input: a tap shorter
-// than a tick, a press of 0.05 s and a hold of 0.8 s reach the action as a
-// person's, and nothing is held after them.
+// The devices of the segments of a step go through the path of real input: a
+// tap shorter than a tick, a press of 0.05 s and a hold of 0.8 s reach the
+// action as a person's, and nothing is held after them.
 @(test)
-play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick :: proc(t:^testing.T) {
+a_step_plays_the_devices_of_a_person_tick_by_tick :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
     if !probe_open(t,f) {return}
     defer probe_close(f)
-    error,text:=probe_call(f,"play.input",`{"segments":[{"ticks":1,"tap_keys":["Space"]},{"ticks":2},{"seconds":0.05,"keys":["Space"]},{"ticks":2},{"seconds":0.8,"keys":["Space"]},{"ticks":1}]}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"scripted": 57`),text)
-    testing.expect(t,play_paused(&f.s),"the Play of the user waits for the steps")
-    refused:=[?]struct{method,params,says:string}{
-        {"play.step",`{"keys":["Space"]}`,"play.input scheduled 57 more ticks"},
-        {"play.step",`{"segments":[{"ticks":1,"tap_keys":["Enter"]}]}`,"play.input scheduled"},
-        {"play.input",`{"segments":[{"ticks":1}],"slot":0}`,"slot names the seat of actions"},
-    }
-    for c in refused {
-        error,_=probe_call(f,c.method,c.params)
-        testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s %s: %v",c.method,c.params,error)
-    }
-    // One tick per step, looking at the game between them.
     seen:=new(Probe_Seen,context.temp_allocator)
     seen.seat=f.seat
-    for tick in 0..<58 {
-        run:=Api_Step_Run{timeline=[]Api_Step_Input{{ticks=1}},sampler={every=1,take=probe_seen,data=seen}}
-        ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
-        if !testing.expectf(t,ran==1 && problem=="","tick %d: %s",tick,problem) {return}
-        if tick==9 {
-            error,text=probe_call(f,"play.status",`{}`)
-            testing.expect(t,strings.contains(text,`"scripted": 47`),text)
-        }
-    }
+    timeline:=[]Api_Step_Input{{ticks=1,tap_keys={.Space}},{ticks=2},{ticks=3,keys={.Space}},{ticks=2},{ticks=48,keys={.Space}},{ticks=2}}
+    run:=Api_Step_Run{timeline=timeline,sampler={every=1,take=probe_seen,data=seen}}
+    ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
+    testing.expect_value(t,problem,"")
+    if !testing.expect_value(t,ran,58) {return}
     j:=seen.jumps
     testing.expect(t,j[0].pressed && j[0].released && j[0].tapped && !j[0].down,"a tap inside the first tick")
     testing.expect(t,!j[1].down && !j[2].down)
@@ -748,13 +730,6 @@ play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_ti
     testing.expect(t,j[8].pressed && !j[36].holding && j[37].hold_started && j[55].holding,"0.8 s holds past the hold threshold")
     testing.expect(t,j[56].released && !j[56].tapped && j[56].released_held==48,"let go after 48 ticks")
     testing.expect(t,!j[57].down && !j[57].pressed && seen.keys[57]=={},"nothing is held after the segments")
-    error,text=probe_call(f,"play.status",`{}`)
-    testing.expect(t,strings.contains(text,`"scripted": 0`),text)
-    // Segments replace what is left, and release_all drops them.
-    error,text=probe_call(f,"play.input",`{"segments":[{"ticks":5,"keys":["Space"]}]}`)
-    testing.expect(t,strings.contains(text,`"scripted": 5`),text)
-    error,text=probe_call(f,"play.input",`{"release_all":true}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"scripted": 0`),text)
 }
 
 @(test)

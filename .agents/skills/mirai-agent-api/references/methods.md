@@ -548,8 +548,6 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - Edges are against what the previous tick held, so a press is a segment with the key and a
     release the next one without it. A tap (`tap_keys`, `tap_buttons`, a gamepad's `tapped`) is
     pressed and released inside one tick and never down, like a press shorter than a tick.
-  - A step without input of its own plays the segments `play.input` scheduled; one with input
-    fails while some are left.
   - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and paths of
     `--select` inside the document `play.inspect` (or `play.view`) writes. Its rows are read
     between ticks, before the first, every `every` and after the last, so the rows of a long step
@@ -593,13 +591,6 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   An action is held for `ticks` or `seconds`, the nearest whole ticks.
   Typical test: hold `jump` for 1 tick, `play.step` 30 ticks with a `trace` of the height (or
   `capture` with a filmstrip that follows the body), `play.check` the height.
-  - `segments` instead schedule devices, as in `play.step`, through the path of real input (taps,
-    holds, double presses and thresholds of the actions see them as a person's): the following
-    ticks the API runs without input of their own (`play.step`, a filmstrip, `play.walk`) play them
-    one by one, and nothing is held after them. They replace what was left of earlier ones;
-    `release_all` drops them, and `scripted` in the play results counts the ticks left. Keys and
-    mouse go to the focused seat and gamepad i to seat i, so `slot` fails beside them
-    alone. The user's Play pauses; `play.record` fails while some are left.
 - `play.walk` (registered by the `navigation` plugin): walks the body of a seat to a point or
   an entity tick by tick through the meshes and says how it ended
   ([walk](../../mirai-plugins/references/navigation.md#editor-and-api)).

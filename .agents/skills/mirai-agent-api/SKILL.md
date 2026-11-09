@@ -111,10 +111,9 @@ difference with the catalog, it rules.
 A person's input has timing and a person looks at the screen; a check that sets actions and reads
 positions misses both.
 
-1. Give devices, not actions, when the test is about how input plays: `segments` of `play.input`
-   or `play.step` go through the path of real input, so taps, holds, double-press windows and
-   thresholds of the actions see them. Each press has its own length: one tick and three ticks are
-   different inputs.
+1. Give devices, not actions, when the test is about how input plays: `segments` of `play.step`
+   go through the path of real input, so taps, holds, double-press windows and thresholds of the
+   actions see them. Each press has its own length: one tick and three ticks are different inputs.
    - A click: `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 1}]`; on a button of the
      UI, by its name: `{"press": "start"}` in `play.step`.
    - A double click: two presses with a gap inside the game's window,
@@ -124,9 +123,8 @@ positions misses both.
      `tap_keys`; a chord: the keys in one segment, or the modifier one segment earlier.
    - A look or a turn of the stick: `mouse_delta` (spread over its segment) or `gamepads` with a
      stick, in a segment as long as the motion.
-2. Schedule them with `play.input` and step a few ticks at a time with `play.step` without input,
-   reading `play.view` (or `capture`) between steps; or in one call, `play.step` with the
-   `segments` and a `trace` with `view` that reads every tick.
+2. Step a few ticks at a time, reading `play.view` (or `capture`) between steps; or in one call,
+   `play.step` with the `segments` and a `trace` with `view` that reads every tick.
 3. Assert what a person checks: that the game did it (`play.check` on its components) and what is
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
    `points.0.on_screen`; `until` with them waits for the moment. Look at one image at the moments
@@ -245,7 +243,7 @@ positions misses both.
   a game plays:
   `the_api_edits_the_document_while_a_game_plays`;
   the input of a person and what the player sees: `mirai test editor
-  play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
+  a_step_plays_the_devices_of_a_person_tick_by_tick
   a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go
   a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped
   a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform

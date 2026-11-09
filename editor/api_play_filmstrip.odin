@@ -177,7 +177,6 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     steps:[]Api_Step_Input
     if values[3]!="" {
         steps=api_segments_read(call,p.segments[:],values[3],s.app.tick_dt) or_return
-        if problem:=run_script_blocks(s,run_player(s,r.owner,p.player));problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     }
     timeline:=steps
     if values[3]=="" {

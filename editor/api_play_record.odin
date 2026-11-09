@@ -132,7 +132,6 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     if !own {api_play_refused(call);return}
     if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.record requires a GPU; start without --no-gpu");return}
-    if problem:=run_script_blocks(s,r);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     owner,player:=r.owner,r.player
     folder:string
     if path:=strings.trim_space(base.text_get(p.path[:]));path!="" {

@@ -195,7 +195,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
 }
 
 
@@ -1177,7 +1176,6 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
     }
     result.entities=core.world_entities(ref).alive
     if view:=core.world_storage_of(ref,core.View);view!=nil {result.game_camera=view.camera!=core.NONE}
-    result.scripted=run_script_ticks(run_script(s,r))
 }
 
 @(private)
@@ -1363,9 +1361,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"That player has no run: play.start with online opens them")
         return
     }
-    if api_timeline_input(timeline) {
-        if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    }
     values:[4]string
     api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
     until:=params.until[:api.json_count(values[0])]
@@ -1374,7 +1369,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     drive:^Api_Drive
     if values[2]!="" {
         if owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-        if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
         read,ok:=api_drive_read(s,call,run_ref(s,target),&params.drive,values[2])
         if !ok {return}
         drive=new_clone(read,call.allocator)
@@ -1438,8 +1432,7 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
 }
 
 // One tick of play.step: every run of the game advances; the one of the
-// player gets the input of step, or without one the next tick of its script.
-// at: the tick of its segment; the first takes its pointer, wheel, taps and
+// player gets the input of step. at: the tick of its segment; the first takes its pointer, wheel, taps and
 // text, and the motion of the mouse is spread over all of them.
 @(private)
 api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
@@ -1447,12 +1440,6 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
         if other.world==nil || other.owner!=owner {continue}
         other.step=true
         if other.player!=player {continue}
-        step,at:=step,at
-        scripted:Api_Step_Input
-        if step==nil {
-            scripted,at=run_script_take(run_script(s,&other))
-            step=&scripted
-        }
         run_tell_input(s,&other,step,at)
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}

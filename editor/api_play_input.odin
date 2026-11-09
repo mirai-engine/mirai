@@ -12,11 +12,6 @@ import "mirai:std/base"
 // with play.step give the same game whatever the bindings are. Like the
 // devices, they are of a seat of the run's own machine: in the run of a
 // client they go to the server with the other actions of its seat.
-//
-// Or the devices of a person along the next ticks (segments): keys, buttons,
-// the mouse and gamepads take the path of real input to the actions, with
-// their taps, holds and thresholds, and play out over the ticks the next
-// steps run (Run_Script).
 
 API_HOLD_TICKS :: 3600 // the most ticks an action is held
 
@@ -31,23 +26,21 @@ Api_Play_Input_Action :: struct {
 
 Api_Play_Input_Params :: struct {
     actions:[input.HOLD_CAPACITY]Api_Play_Input_Action `mirai:"optional,label=Held or released: a Button down and an Axis at value and an Axis2 at vector"`,
-    segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Devices along the next ticks as a person plays them: each segment holds its input for its ticks or seconds and the next one follows; the ticks the next steps run without input of their own play them and nothing is held after them. Replaces what was left of the previous ones"`,
-    release_all:bool `mirai:"optional,label=Lets go of everything the seat holds and drops the segments left before the actions"`,
+    release_all:bool `mirai:"optional,label=Lets go of everything the seat holds before the actions"`,
     slot:int `mirai:"optional,min=-1,max=3,label=The local seat by its slot; -1: the one with the focus"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
 Api_Play_Input_Result :: struct {
-    seat:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the seat of the actions; empty with segments alone"`,
+    seat:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the seat of the actions"`,
     tick:u64 `mirai:"label=The tick they act from: the next one the game runs"`,
     queued:int `mirai:"label=Holds and releases asked"`,
-    scripted:int `mirai:"label=Ticks of segments the next steps play"`,
 }
 
 @(private)
 api_play_input_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Play_Input_Params{slot=-1}
-    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released, or schedules the keys, buttons, mouse and gamepads a person presses along the next ticks (a click, a double click, a hold of some seconds, a look) through the path of real input. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
+    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
 }
 
 // The local seat of slot (-1: the focused one) of a run; false after failing
@@ -80,11 +73,10 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:
     return seat,true
 }
 
-// One fixed tick of the game of the owner of r, as play.step runs it: the Play
-// of the user pauses first and every run of a game on the network advances.
-// With step, that input; without, the script of play.input plays on. False
-// when the run ended.
-play_tick :: proc(s:^Session,r:^Run,step:^Api_Step_Input=nil) -> bool {
+// One fixed tick of the game of the owner of r with the input of step, as
+// play.step runs it: the Play of the user pauses first and every run of a game
+// on the network advances. False when the run ended.
+play_tick :: proc(s:^Session,r:^Run,step:^Api_Step_Input) -> bool {
     owner:=r.owner
     if owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
     api_step_tick(s,owner,0,step,0)
@@ -131,19 +123,11 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     if !own {return}
     if r.owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
     w:=run_ref(s,r)
-    values:[2]string
-    api.object_values(call.allocator,call.raw,{"actions","segments"},values[:])
+    values:[1]string
+    api.object_values(call.allocator,call.raw,{"actions"},values[:])
     count:=api.json_count(values[0])
-    timeline:[]Api_Step_Input
-    if values[1]!="" {
-        ok:bool
-        if timeline,ok=api_segments_read(call,p.segments[:],values[1],s.app.tick_dt);!ok {return}
-        for step in timeline {
-            if step.press!="" {api.call_fail(call,api.INVALID_PARAMS,"press finds its button as the tick comes, which only play.step can answer: give it there");return}
-        }
-    }
-    if count==0 && !p.release_all && timeline==nil {
-        api.call_fail(call,api.INVALID_PARAMS,`give actions, as [{"name": "jump", "ticks": 1}], segments, as [{"ticks": 3, "mouse_buttons": ["Left"]}], or release_all`)
+    if count==0 && !p.release_all {
+        api.call_fail(call,api.INVALID_PARAMS,`give actions, as [{"name": "jump", "ticks": 1}], or release_all; the devices of a person go in the segments of play.step`)
         return
     }
     seats:=core.world_table_of(w,input.Seat)
@@ -171,15 +155,9 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
             }
             holds[i]={seat=seat,action=action,value=value,ticks=u32(ticks)}
         }
-    } else if p.slot>=0 {
-        api.call_fail(call,api.INVALID_PARAMS,"slot names the seat of actions; segments go to the devices: keys and mouse to the focused local seat (focus of play.step) and gamepad i to the seat of slot i. Leave them out")
-        return
     }
-    script:=run_script(s,r)
-    if script==nil && timeline!=nil {api.call_fail(call,api.INTERNAL_ERROR,"the run has no place for segments");return}
     queued:=0
     if p.release_all {
-        if script!=nil {script^={run=script.run}}
         if requests!=nil {
             source,_:=core.get(core.read(seats),seat)
             for hold in source.holds[:source.hold_count] {input.let_go(requests,seat,hold.action);queued+=1}
@@ -191,12 +169,8 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     }
     for h in holds[:count] {core.push(&requests.queue,h)}
     queued+=count
-    if timeline!=nil {
-        if r.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
-        run_script_set(script,timeline)
-    }
     result:=api.call_result(call,Api_Play_Input_Result)
     if seat!=core.NONE {api_handle_put(result.seat[:],seat)}
     if t:=core.world_storage_of(w,core.Time);t!=nil {result.tick=t.tick}
-    result.queued,result.scripted=queued,run_script_ticks(script)
+    result.queued=queued
 }
