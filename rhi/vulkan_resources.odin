@@ -4,6 +4,7 @@ package rhi
 import "core:mem"
 import "core:strings"
 import "core:sync"
+import "core:time"
 import "mirai:std/base"
 import vk "vendor:vulkan"
 
@@ -524,7 +525,9 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main"},
 		layout = p.layout,
 	}
+	started := time.tick_now()
 	if !vk_check(d, d.dvk.CreateComputePipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	vk_pipeline_made(d, time.tick_since(started))
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }
@@ -615,7 +618,9 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 		pRasterizationState = &raster, pMultisampleState = &multisample, pDepthStencilState = &depth,
 		pColorBlendState = &blend, pDynamicState = &dynamic_info, layout = p.layout,
 	}
+	started := time.tick_now()
 	if !vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	vk_pipeline_made(d, time.tick_since(started))
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }
