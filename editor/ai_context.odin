@@ -416,7 +416,7 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
         }
     }
     if len(entities)>0 {
-        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the whole scene and the values of the components.\n")
+        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the scene (a few entities at a time: `name`, `component`, `offset` and `limit` give the rest) and the values of the components.\n")
         for &entity in entities {
             selected:=false
             if s.selection!=nil {for e in s.selection.entities {if ai_entity_id_text(shown_world(s),e)==entity.id {selected=true;break}}}
