@@ -17,7 +17,7 @@ Shape_Params :: struct {
 }
 
 @(private="file")
-SHAPE_HAND :: `{"type":"object","properties":{"entity":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"kind":{"enum":["Alpha","Beta"]},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"parent":{"type":["string","null"]}}}`
+SHAPE_HAND :: `{"type":"object","properties":{"entity":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"kind":{"enum":["Alpha","Beta"]},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"parent":{"type":["string","null"]},"window":{"type":"object","properties":{"width":{"type":"integer"}}},"free":{"type":"object","properties":{"known":{"type":"integer"}},"additionalProperties":true},"byname":{"type":"object","properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"object"}},"rows":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"}}}},"any":{"type":"object"}}}`
 
 @(private="file")
 shape_echo :: proc(call:^Call) {raw(call.out,call.raw)}
@@ -55,6 +55,14 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"hand",`{"entity":-1.5}`,`{"entity":"-1.5"}`,""},
         {"hand",`{"parent":5}`,`{"parent":5}`,""},
         {"hand",`{"kind":1}`,`{"kind":1}`,""},
+        {"hand",`{"bogus":1}`,"",`invalid params: "bogus" is not a field: the fields are entity, paths, kind, position, parent, window, free, byname, rows, any at line 1 column 2`},
+        {"typed",`{"bogus":1}`,"",`invalid params: "bogus" is not a field: the fields are methods, entity, count, mode, position, rows at line 1 column 2`},
+        {"hand",`{"window":{"width":1,"depth":2}}`,"",`invalid params: window: "depth" is not a field: the fields are width at line 1`},
+        {"hand",`{"rows":[{"x":1},{"y":2}]}`,"",`invalid params: rows[1]: "y" is not a field: the fields are x at line 1`},
+        {"hand",`{"window":{"widths":1}}`,`{"window":{"width":1}}`,""},
+        {"hand",`{"free":{"known":1,"other":2}}`,`{"free":{"known":1,"other":2}}`,""},
+        {"hand",`{"byname":{"Camera":{}}}`,`{"byname":{"Camera":{}}}`,""},
+        {"hand",`{"any":{"other":2}}`,`{"any":{"other":2}}`,""},
     }
     buffer:=make([]u8,4096,context.temp_allocator)
     for c in cases {
@@ -198,7 +206,7 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     testing.expect(t,is_text && len(usage)<=USAGE_BYTES && strings.contains(usage,"example: mirai rpc long"),"a long description keeps its example and fits")
     testing.expect_value(t,method_register(&s,{name="closed",params_schema=`{"type":"object","properties":{"path":{"type":"string"},"values":{"type":"object"}},"additionalProperties":false}`,handler=noop}),Register_Error.None)
     err,ran=run(&s,"closed",`{"pathx":"a"}`,buffer)
-    testing.expectf(t,!ran && strings.contains(err.message,`"pathx" is not a parameter; the nearest are path`) && strings.contains(err.data,"usage"),"a key a closed schema does not name: %s",err.message)
+    testing.expectf(t,!ran && strings.contains(err.message,`"pathx" is not a field: the fields are path, values`) && strings.contains(err.data,"usage"),"a key a closed schema does not name: %s",err.message)
     _,ran=run(&s,"closed",`{"path":"a","values":{"x":1}}`,buffer)
     testing.expect(t,ran,"a key the schema names goes through")
     full:=s.out.count

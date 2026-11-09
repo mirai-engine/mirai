@@ -230,7 +230,7 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     for refusal in ([?][2]string{
         {`{"preferences":{"Viewports":{"snap":false}}}`,"Viewports is not an area of the preferences: they are Layout, Content_View"},
         {`{"preferences":{"Viewport_Preferences":{"zoom":1}}}`,`"zoom" is not a field`},
-        {`{"Viewport_Preferences":{"snap":false}}`,`"Viewport_Preferences" is not a parameter`},
+        {`{"Viewport_Preferences":{"snap":false}}`,`"Viewport_Preferences" is not a field: the fields are preferences`},
     }) {
         error=execute(state,&out,"preferences.set",refusal[0])
         testing.expect_value(t,error.code,api.INVALID_PARAMS)

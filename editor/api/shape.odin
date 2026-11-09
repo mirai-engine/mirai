@@ -11,7 +11,10 @@ import "mirai:std/serial"
 // of one where a single value goes, a number or a boolean as its text where
 // only a string goes, and an enum name as base.name_find takes it. One rule
 // over the JSON Schema of the params, so a method whose handler reads them by
-// hand gets it too.
+// hand gets it too. For such a method it also refuses a key its schema does
+// not name, in the words of the reader of a typed one: an object with
+// properties takes only those unless its additionalProperties is true or the
+// schema of the others.
 
 @(private="file")
 SHAPE_DEPTH :: 16
@@ -23,7 +26,8 @@ Shape_Field :: struct {name:string,node:^Shape_Node}
 @(private="file")
 Shape_Node :: struct {
     known,list,other,vector,text:bool, // list: takes an array; other: takes something else; vector: an array of a fixed length over one; text: takes a string and nothing else
-    closed:bool, // additionalProperties is false: only its fields
+    object:bool, // has properties
+    open:bool,   // additionalProperties is true or a schema: it takes keys besides its fields
     items:^Shape_Node,
     fields:[]Shape_Field,
     names:[]string,
@@ -37,7 +41,7 @@ Shaper :: struct {
     checker:Checker,
     r:serial.Text_Reader,
     edits:[dynamic]Shape_Edit,
-    by_hand:bool, // the handler reads them itself: enum names as an agent writes them, and no key the schema does not close over
+    by_hand:bool, // the handler reads them itself: enum names as an agent writes them, and no key an object does not declare
 }
 
 @(private="file")
@@ -70,13 +74,14 @@ shape_node :: proc(schema:string,c:^Shaper,depth:int) -> ^Shape_Node {
                 node.names[i]=strings.clone(text,c.checker.allocator)
             }
         case "additionalProperties":
-            node.closed=member.value=="false"
+            node.open=member.value!="false"
         case "minItems":
             least,_:=strconv.parse_int(member.value,10)
             node.vector=least>1
         case "items":
             node.items=shape_node(member.value,c,depth+1)
         case "properties":
+            node.object=true
             properties,_:=json_members(member.value,c.checker.allocator)
             node.fields=make([]Shape_Field,len(properties),c.checker.allocator)
             for each,i in properties {node.fields[i]={each.name,shape_node(each.value,c,depth+1)}}
@@ -138,10 +143,12 @@ shape_object :: proc(c:^Shaper,node:^Shape_Node) -> bool {
             field=shape_field_meant(c,node,key,object)
             if field!=nil {append(&c.edits,Shape_Edit{at,end,serial.text_quote(field.name,c.checker.allocator)})}
         }
-        if field==nil && node.closed && c.by_hand {
-            names:=make([]string,len(node.fields),c.checker.allocator)
-            for each,i in node.fields {names[i]=each.name}
-            return check_fail(&c.checker,"%s",base.name_problem(key,"a parameter",names,c.checker.allocator))
+        if field==nil && !node.open && c.by_hand {
+            fields:=make([]serial.Field,len(node.fields),c.checker.allocator)
+            for each,i in node.fields {fields[i].name=each.name}
+            serial.text_fail_names(r,.Unknown_Field,at,nil,fields)
+            serial.text_error_within(r,string(c.checker.path[:c.checker.path_len]))
+            return false
         }
         serial.text_expect(r,':') or_return
         if field!=nil {
@@ -218,7 +225,7 @@ shape_value :: proc(c:^Shaper,node:^Shape_Node) -> bool {
         return true
     case kind=='[':
         return shape_list(c,node)
-    case kind=='{' && len(node.fields)>0:
+    case kind=='{' && node.object:
         return shape_object(c,node)
     case kind=='"' && len(node.names)>0 && c.by_hand:
         return shape_name(c,node)
@@ -250,9 +257,12 @@ params_shape :: proc(s:^Server,schema,params:string,by_hand:=true) -> (shaped,pr
     allocator:=base.arena_allocator(&s.scratch)
     c:=Shaper{checker={allocator=allocator},edits=make([dynamic]Shape_Edit,allocator),by_hand=by_hand}
     root:=shape_node(schema,&c,0)
-    if root==nil || len(root.fields)==0 {return}
+    if root==nil || !root.object {return}
     serial.text_reader_init(&c.r,params,allocator)
-    if serial.text_peek(&c.r)!='{' || !shape_object(&c,root) {return params,c.checker.message}
+    if serial.text_peek(&c.r)!='{' || !shape_object(&c,root) {
+        if c.r.error.code==.Unknown_Field {return params,text_error(s,"invalid params",params,&c.r).message}
+        return params,c.checker.message
+    }
     if len(c.edits)==0 {return}
     b:=strings.builder_make(allocator)
     at:=0
