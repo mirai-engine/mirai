@@ -7,7 +7,7 @@ description: Particles and visual effects from game code with the `vfx` plugin -
 # Game VFX
 
 An effect is a `.particle` asset shown by a `vfx.Particle_Emitter`. Game code spawns emitters and
-sends requests; fields are in `engine.describe`. Imports: `plugins:vfx/runtime` as `vfx`,
+sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 `plugins:vfx/runtime/effect`, `mirai:engine/scene`, `mirai:core`.
 
 ## Map
@@ -60,7 +60,7 @@ Paths are field paths of the effect (`rate`, `bursts.0.count`), checked when ask
 `request_override_remove` and `request_override_clear`. Assets belong to the effect.
 ## Author an effect
 
-Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect` (`engine.describe`).
+Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`.
 Content tool, over the defaults ([assets](assets.md)):
 
 ```odin

@@ -87,4 +87,3 @@ screen of that player takes input. `Passive` receives only the pointer.
 - An entity with `Hidden` hides its screen and its panels.
 - A `UI_Screen` set to `Menu` or `Modal` takes the actions of the seats it covers: a HUD is
   `Passive`.
-- Check a HUD with `capture` and `play.ui`: [testing](../testing.md#ui-and-menus).

@@ -26,7 +26,7 @@ asset.scene_set(&s,eyes,"Camera_Follow",&follow)
 - Free orbit, the body turns toward its movement: `turn=true` (the player's `look` action turns
   the camera), `recenter` seconds to swing back behind a moving body, and `.Camera` on the body.
 - Over the shoulder, smoothing, dead zones and fading the body up close are more fields of
-  `Camera_Follow` (`engine.describe`). `.Follow` keeps `offset` from the body; `look_at` faces it.
+  `Camera_Follow`. `.Follow` keeps `offset` from the body; `look_at` faces it.
 
 ## The sign of pitch
 
@@ -67,8 +67,5 @@ game_view :: proc(actions:inp.Input_Of(Action),players:core.Read(inp.Drivable),
 ## Pitfalls that fail silently
 
 - `Camera.fov` is vertical, in radians (`70*mm.RAD_PER_DEG`).
-- Only one view is the player's: the camera of `Drivable.camera`; others with `active` are the
-  fallback when no library chooses.
 - A `Camera_Follow` that asks for a mode it cannot take is a problem of the camera
   (`camera.mode_*`): `engine.diagnostics`.
-- Writing the `Transform` of a camera that has a `Camera_Follow` is refused.

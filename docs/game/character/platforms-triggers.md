@@ -86,4 +86,4 @@ returns `(hit,ok)` with `hit.entity`, `hit.point`, `hit.normal`.
   only once it wakes (a `Character` never sleeps).
 - A new `Collider` blocks (preset `Default`): a zone must be given the trigger preset.
 - `PRESET_TRIGGER` sees every category. To see only players, declare a category and a preset in
-  code and in `Collision_Settings` (`engine.describe`), and name it in the zone's `Collider`.
+  code and in `Collision_Settings`, and name it in the zone's `Collider`.

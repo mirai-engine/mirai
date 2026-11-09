@@ -61,7 +61,7 @@ vault :: proc(a:^ai.Act(Act)) -> ai.Status { // one agent at a time
 ## Choosing a place (cover, flank)
 
 A query is asked on `Enter`; the answer arrives in the agent's `Place_Result` a tick or more
-later. Candidate layouts, tests and responses: `engine.describe` and `behavior.query`.
+later. Candidate layouts, tests and responses: the params of `behavior.query`.
 
 ```odin
 case .Enter:
@@ -82,8 +82,3 @@ case .Update:
 
 To use an offer that a query found, build a `behavior.Smart_Found` (`object`, `offer`, `at`,
 `users`) and claim it with `behavior.smart_claim(a, found)` before walking to `at`.
-
-## Noise
-
-`behavior.noise(w.noises, position, loudness, maker)` is heard by every `Perceiver` within
-`loudness` times its `hearing` meters, walls included; `maker` is whom it reveals.

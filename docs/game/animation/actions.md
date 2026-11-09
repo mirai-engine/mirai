@@ -19,6 +19,5 @@ arrive as `base.name_hash`. An action with a root and `body_move` moves its `Cha
 - `action_fire` on a layer that `animation_play` left with a clip fails (`ReservedLayer`):
   `animation_stop` frees it; weight 0 does not.
 - Actions that share a layer must agree on `over`, `mode`, `curves` and root policy.
-- A rejected fire is a problem of the entity (`animation.action_*`); see `engine.diagnostics`.
 - Many actions with many windows in one tick overflow the event queue
   (`animation.action_events`): fire fewer or use fewer windows.

@@ -40,7 +40,7 @@ game_saves :: proc(actions:inp.Frame_Input_Of(Action),saves:^save.Save_Requests,
   `.Invalid_Slot` (a name of letters, digits, spaces, `-`, `_`) and `.Invalid_Label` are also the
   problem `save.request`; `.Busy` is too many slots waiting to be written, and
   `.Unavailable` a client of a network session.
-- Autosave is a project setting (`Save_Settings`, `engine.describe`): it rotates slots by time and
+- Autosave is a project setting (`Save_Settings`): it rotates slots by time and
   when a scene replaces another.
 
 ## Progress that is not a save
@@ -59,7 +59,5 @@ machine settings and rebinds of the player.
 
 ## Pitfalls that fail silently
 
-- A component you want back that lives only in a storage is gone after a load.
-- A `core.Entity` kept in a storage is stale after a load: keep its id and find it again.
 - A function that ignores the `save.Error` of a request loses it silently (`.Busy`, bad name).
 - Thumbnails need a renderer: a headless run saves without one.

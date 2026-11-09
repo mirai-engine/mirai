@@ -15,10 +15,10 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 ## Map
 
 - A whole working mind and the entity that carries it: [mind.md](ai/mind.md).
-- Smart objects (ammo, cover, turrets), fences the game crosses, place queries, noise:
+- Smart objects (ammo, cover, turrets), fences the game crosses, place queries:
   [smart-objects.md](ai/smart-objects.md).
 - Animation an agent asks for: [animation](animation.md); over the network:
-  [networking](networking.md). Fields and parameters: `engine.describe`.
+  [networking](networking.md).
 
 ## What an enemy is
 
@@ -52,7 +52,8 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
   `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
 - **Hearing:** `behavior.noise(noises, position, loudness, maker)`; a `Perceiver` hears
-  within `loudness` times its `hearing`. Both senses feed `Perception.memory`.
+  within `loudness` times its `hearing` meters, walls included; `maker` is whom it reveals.
+  Both senses feed `Perception.memory`.
 - **Use the world:** a smart object offers a use; `think` proposes going if one is open and
   the action does the trip ([smart-objects.md](ai/smart-objects.md)). A need the agent
   satisfies with an object (ammo, health) is this.
@@ -72,7 +73,6 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - `Exit` must release what `Enter` requested. `move_act` and `follow_act` stop the agent on abort;
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
-- Forgetting `behavior.smart_used` leaves an object's `uses` and `cooldown` uncounted.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.
 - A runtime-spawned agent needs a `core.Id` for the API (`behavior.inspect`, `nav.agent`).
 - The navmesh builds in the background: an early `Nav_Path` is `Waiting`. `Failed`: see

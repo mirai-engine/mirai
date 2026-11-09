@@ -49,7 +49,8 @@ game_fire :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) {
   it, so a press is not missed between ticks.
 - To hit, dig or throw from where the player looks, `inp.aim(drivables,worlds,body)` gives the ray
   of the camera of its `Drivable`, in any camera mode; no eye height or look angles in game code.
-- Contexts (a menu with its own bindings) and chords: `engine.describe` on `Input_Context`; block
+- Contexts (a menu with its own bindings): `inp.action_default_in` and, in `^inp.Context_Requests`,
+  `inp.input_context_enter` and `inp.input_context_leave`; chords: `inp.binding_chord`. Block
   actions while a menu is open with `inp.input_block(seats,owner,seat)` and `inp.input_unblock`.
 
 ## Seats and bodies

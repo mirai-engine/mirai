@@ -1,7 +1,7 @@
 # A complete mind
 
 A zombie that patrols two points, chases what it remembers and bites it, two at a time per
-target. `project.mirai` lists the plugin `behavior`, which brings `navigation` and `physics`.
+target.
 
 ```odin
 package game
@@ -104,5 +104,4 @@ zombie_add :: proc(c:core.Commands, at:[3]f32, route:[2][3]f32) -> core.Entity {
 }
 ```
 
-The player's body carries `behavior.Perceivable{team=TEAM_PLAYER, point=1}` and a collider, so the
-sight ray reaches it. The agent sees along the -Z of its body.
+The player's body carries `behavior.Perceivable{team=TEAM_PLAYER, point=1}` and a collider.

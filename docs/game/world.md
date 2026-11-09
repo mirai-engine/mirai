@@ -7,9 +7,7 @@ description: Author an outdoor or indoor scene in a Mirai game - terrain, foliag
 # Game world
 
 A scene is entities with components, written by a content tool
-([assets](assets.md)) or in an open editor session (`mirai session start .`,
-then `mirai rpc --project . <method> '<json>'`; params: `mirai rpc --project . describe
-<method>`). Fields and defaults of a component: `engine.describe`.
+([assets](assets.md)) or through `mirai rpc`.
 
 ## Map
 
@@ -61,7 +59,8 @@ asset.scene_set(&s,look_entity,"View_Volume",&look)                          // 
 ## Exposure
 
 The image is exposed per view: a camera's own `Exposure` replaces everything; otherwise the
-`View_Volume` where it stands; otherwise the default. `Auto` meters the light (a white room does
+`View_Volume` where it stands (a `Volume` with `priority`; one that `Add`s adds its
+`compensation`); otherwise the default. `Auto` meters the light (a white room does
 not turn gray, a dark one is not lifted by what it reflects) between `min_ev100` and `max_ev100`
 and adapts over `adaptation` seconds; `Manual` uses `aperture`, `shutter` and `iso` (f/16, 1/125,
 ISO 100 is a sunny day). `compensation` adds EV to both: +1 doubles the light of the image.

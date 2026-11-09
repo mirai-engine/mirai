@@ -79,6 +79,3 @@ game_glow :: proc(hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),
 
 - `scene.Spawns` gives no handle: the root exists next tick. Use `scene.spawn` to keep it.
 - The `Hierarchy` shows a `Parent` only after the function that wrote it ends.
-- A path is the file's, spelled the same, with its capitals and spaces.
-- A spawned entity does not exist in this function's tables: do not `core.get` it in the same
-  function that spawned it.

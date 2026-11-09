@@ -67,14 +67,13 @@ Api_Capture_Result :: struct {
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
     ticks:int `mirai:"optional,label=A filmstrip: the ticks it ran"`,
     cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
-    textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out"`,
+    textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out. This and the instance counts are given only when it is above 0 or no instance was drawn"`,
     instances_drawn:int `mirai:"optional,label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
     instances_culled:int `mirai:"optional,label=Instances outside the view of its camera or hidden from it"`,
     instances_occluded:int `mirai:"optional,label=Instances in its view behind something drawn"`,
 }
 Api_Capture_Cell :: struct {
     tick:u64 `mirai:"label=The tick of the game it shows"`,
-    instances_drawn:int `mirai:"label=Instances drawn in it"`,
     at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
 }
 
@@ -192,8 +191,10 @@ api_capture_seen :: proc(app:^host.App) -> Api_Capture_Seen {
     return {int(stats.textures_pending),int(stats.visible_instances),int(stats.culled_instances),int(stats.occluded_instances)}
 }
 
+// The counts only when they explain a wrong image: nothing drawn or textures not in yet.
 @(private)
 api_capture_seen_write :: proc(out:^serial.Writer,seen:Api_Capture_Seen) {
+    if seen.instances_drawn>0 && seen.textures_pending==0 {return}
     api.write_int(out,"textures_pending",i64(seen.textures_pending))
     api.write_int(out,"instances_drawn",i64(seen.instances_drawn))
     api.write_int(out,"instances_culled",i64(seen.instances_culled))

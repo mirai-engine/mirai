@@ -37,8 +37,6 @@ err:=host.ui_tree_save("assets/ui/hud.ui",&types,id_of("ui","hud"),
   `padding` are layout units, `align_x` and `align_y` center content.
 - `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items` take paths:
   [hud-panels.md](hud-panels.md#hud). The kinds are the members of `ui.Node_Kind`.
-- Group repeated pieces in small procedures (`button`, `row`, `selector` in `write_shell`), so
-  restyling is one edit.
 
 ## Variants
 
@@ -65,7 +63,7 @@ keys cannot see where they are.
 `Field` report `Changed`; `Field` also `Submitted`. A `Selector` takes its options in `text`
 separated by `|` and binds the index, or the value of options written `Label=Value`; bound to a
 setting (`Graphics_Settings.vsync`) it writes it itself. The game answers on each event:
-[events](../ui.md#events). First control of each page: `flags={.Focus_First}`.
+[events](../ui.md#events).
 
 ## API
 
@@ -73,8 +71,7 @@ With `ui_inspector` in the `plugins` of `project.mirai`, an open editor edits a 
 `ui.inspect` reads it as a document, `ui.write` replaces it from one, and `ui.node.add`,
 `ui.node.set`, `ui.style.set` and `ui.variant.set` change a piece. `ui.bind` binds a node to a path
 checked against the game's types, `ui.check` loads every `.ui` against this build and says which
-paths are wrong, and `ui.capture` draws one alone to a PNG. Params of each:
-`mirai rpc --project . describe ui.write`. Changes wait for `asset.save`.
+paths are wrong, and `ui.capture` draws one alone to a PNG. Changes wait for `asset.save`.
 
 ## Texts
 
@@ -88,4 +85,3 @@ A `Localized` node keeps its translations in the `.ui`. `mirai texts export|impo
 - Controls need distinct `name`s: events carry only the hash of the name.
 - Random ids break every scene that names the `.ui`: use `base.asset_id_named`.
 - Running the content tool again overwrites the file; API edits to a `.ui` it writes are lost.
-- After a run, an open editor shows the new file at its next call.

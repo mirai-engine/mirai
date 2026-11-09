@@ -61,7 +61,7 @@ that is ignored. Frames count from 0 at the first frame the script plays.
 - A script is exact frames, not events: a click at frame 20 misses a button that is not on screen
   yet. Run with `--capture` and a smaller `--frames` to see where the game stands first.
 - A key name that `core.Key` does not have, or a line with fewer than three fields, exits 2 and
-  names the line; fix the script, not the game.
+  names the line.
 - `--capture` without `--frames` waits for the game to quit: add `--frames`.
 - A window run is real time and `--headless` steps 1/60 s a frame: a script timed in one can
   drift in the other.

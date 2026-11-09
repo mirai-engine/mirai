@@ -42,7 +42,7 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
   moving or renaming the source pass `--into <id>` of its prefab, texture or sound.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what
-  exists; `engine.describe` the method fields.
+  exists.
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font`
@@ -75,6 +75,5 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.
-- A material only code uses, missing from `cook.mirai`: works in Play, absent from the build.
 - Roughness or ORM imported as color: `--data`. DirectX normals: `--normal-green-down`.
 - `.ttc` and `.woff` fonts, three or more audio channels, Draco or meshopt indices: refused.
