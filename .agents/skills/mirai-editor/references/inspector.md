@@ -233,5 +233,5 @@ reflection remain.
 
 The `Particle_Emitter` section belongs to the `vfx` plugin, with its `Inspector_Provider`: a box
 with the effect, like a material's, and the instance's values
-([section](../../mirai-plugins/references/vfx-editor.md#particle_emitter-section)). Without the
+([section](../../mirai-world/references/vfx-editor.md#particle_emitter-section)). Without the
 plugin, the editor shows nothing of particles.

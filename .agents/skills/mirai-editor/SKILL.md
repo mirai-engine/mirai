@@ -1,10 +1,10 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/api` and `editor/acp`) - session,
-  Play, Simulate and networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`),
-  inspector, content browser, prefabs, collaboration (`--share`, `--join`), AI chats and
-  extensions. Use when changing the editor, adding a tool or panel of a plugin, editing the scene
-  from editor code or driving an open editor.
+description: The Mirai editor (package `editor`, with `editor/acp`) - session, Play, Simulate and
+  networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`), inspector, content
+  browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when changing
+  the editor, adding a tool or panel of a plugin, editing the scene from editor code or driving an
+  open editor.
 ---
 
 # Mirai editor
@@ -16,13 +16,28 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 ## Map
 
 - **Session, loop, arguments, Play, Watch, networked Play, Simulate, Build and reload, shortcuts**:
-  [editor](references/editor.md); the past of a Play, going back to a tick and recording it at
-  fixed fps: [history and recording](references/editor.md#play).
+  [session](references/editor.md#the-session), [arguments](references/editor.md#arguments),
+  [loop](references/editor.md#the-editor-loop), [Play](references/editor.md#play),
+  [Watch](references/editor.md#watching-another-run),
+  [networked Play](references/editor.md#networked-play), [Simulate](references/editor.md#simulate),
+  [Build and reload](references/editor.md#build-and-reload) and
+  [shortcuts](references/editor.md#shortcuts-and-actions); the past of a Play, going back to a
+  tick and recording it at fixed fps: [history and recording](references/editor.md#play).
 - **Documents, tabs, recovery, undo, edit procedures, selection**:
-  [document](references/document.md); the selection as an undo step:
+  [documents](references/document.md#document-and-scenes),
+  [recovery](references/document.md#recovery-and-failures),
+  [edits and undo](references/document.md#edits-and-undo),
+  [edit procedures](references/document.md#world-edit-procedures) and
+  [selection](references/document.md#selection); the selection as an undo step:
   [selection in undo](references/document.md#selection-in-undo).
 - **Bar and panels, AI panel, viewport, picking, gizmo, outliner, Create, content browser,
-  previews, import, Graphics, Project settings, Find**: [panels](references/panels.md).
+  previews, import, Graphics, Project settings, Find**: [layout](references/panels.md#layout),
+  [AI panel](references/panels.md#ai-panel), [viewport](references/panels.md#viewport),
+  [outliner](references/panels.md#outliner), [Create](references/panels.md#create),
+  [content browser](references/panels.md#content-browser),
+  [previews](references/panels.md#previews), [import](references/panels.md#import),
+  [Graphics](references/panels.md#graphics) and
+  [Project settings](references/panels.md#project-settings).
 - **World panel** (map of the sections from above and from the side, turning them on and off in
   the view, traveling, cost per section): [world](references/panels.md#world); what belongs to the
   view and does not edit: [section view](references/document.md#section-view).
@@ -43,11 +58,19 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [tabs and history](references/document.md#asset-documents); those of a plugin:
   [extensions](references/extensions.md#an-asset-document).
 - **Details, rows by reflection, tags, copy and paste, collision, material**:
-  [inspector](references/inspector.md); the particles section belongs to the `vfx` plugin
-  ([vfx in the editor](../mirai-plugins/references/vfx-editor.md)).
+  [details](references/inspector.md#details),
+  [reversion and review](references/inspector.md#reversion-and-review),
+  [rows by reflection](references/inspector.md#rows-by-reflection),
+  [copying and pasting](references/inspector.md#copying-and-pasting-values),
+  [collision](references/inspector.md#collision) and [material](references/inspector.md#material);
+  the particles section belongs to the `vfx` plugin
+  ([vfx in the editor](../mirai-world/references/vfx-editor.md#particle_emitter-section)).
 - **Connections, the main chat, workers, steering, what a turn sends, `chat.db` and its search,
-  context and AI figures**: [chats and agents](references/ai-tasks.md); the steps of the agent's
-  own tools, in [end of the turn](references/ai-tasks.md#chat-flow).
+  context and AI figures**: [connections](references/ai-tasks.md#connections-and-installation),
+  [chat flow](references/ai-tasks.md#chat-flow),
+  [what a turn sends](references/ai-tasks.md#what-a-turn-sends) and
+  [project data](references/ai-tasks.md#project-data); the steps of the agent's own tools, in
+  [end of the turn](references/ai-tasks.md#chat-flow).
 - **Subagents, their defaults, reports and deliveries**:
   [subagents](references/ai-tasks.md#subagents),
   [deliveries](references/ai-tasks.md#deliveries-and-reports).
@@ -59,11 +82,20 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   (status line, report cards, subagent view, expanded chat, popups, marks):
   [AI panel](references/panels.md#ai-panel).
 - **Attribution, Finish, Revert, Restore, Retry, persistence of the review**:
-  [change review](references/ai-review.md).
+  [change sets](references/ai-review.md#change-sets),
+  [finish, revert and retry](references/ai-review.md#finish-revert-and-retry) and
+  [persistence](references/ai-review.md#persistence-and-capacity).
 - **Git** (Git tab, init, commit, push, pull, merge mode, `git.*` methods):
-  [git](references/git.md).
+  [operations](references/git.md#operations) and [merge mode](references/git.md#merge-mode).
 - **Tools, panels, cards, inspection modes, API methods, inspector, asset types and thumbnails of
-  a plugin**: [extensions](references/extensions.md).
+  a plugin**: [package rules](references/extensions.md#package-rules),
+  [viewport tool](references/extensions.md#a-viewport-tool),
+  [panel](references/extensions.md#a-panel),
+  [asset types](references/extensions.md#asset-types-of-a-plugin),
+  [create cards](references/extensions.md#create-cards),
+  [inspection mode](references/extensions.md#an-inspection-mode),
+  [API methods](references/extensions.md#api-methods) and
+  [component with an inspector](references/extensions.md#a-component-with-an-inspector).
 - **What physics and networking give the editor** (simulation providers, inspector and components;
   `core.Network` contract):
   [extensions](references/extensions.md#simulation-and-pose-confirmation).
@@ -72,9 +104,14 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - **Importing a file and the whole formats or sources a plugin adds**:
   [import](references/panels.md#import) and
   [importers](references/extensions.md#importers-of-a-plugin).
-- **Linked prefabs**: [prefabs](references/prefabs.md); variants and Apply to base, in
+- **Linked prefabs**: [operations](references/prefabs.md#operations),
+  [overrides](references/prefabs.md#overrides) and [nested](references/prefabs.md#nested-prefabs);
+  variants and Apply to base, in
   [variants](references/prefabs.md#variants).
-- **Shared session and the host's Play**: [collaboration](references/collaboration.md).
+- **Shared session and the host's Play**:
+  [entering and leaving](references/collaboration.md#entering-and-leaving),
+  [watching the host's play](references/collaboration.md#watching-the-hosts-play) and
+  [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets
   (`.editor`)**: [figures](references/editor.md#figures-of-whoever-works).
 - **Lock on what another editor selected, agents of other editors**:

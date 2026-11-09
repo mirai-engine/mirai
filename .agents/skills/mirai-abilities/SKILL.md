@@ -1,11 +1,11 @@
 ---
 name: mirai-abilities
 description: Mirai gameplay abilities - the `abilities` plugin (`plugins/abilities/runtime` and
-  `editor`) with `Ability` and `Ability_Kit` rows of game data, `Ability_User`, statuses, tags,
-  attributes, effects, hitboxes, cancel windows, input buffer, cooldowns, charges and durability,
-  and the `abilities.*` methods. Use when building attacks, combos, dashes, blocks, skills, spells,
-  hit reactions, weapons or a gameplay ability system (GAS, Mantis, fighting-game moves), when
-  touching that plugin, or when diagnosing why an ability does not start.
+  `plugins/abilities/editor`) with `Ability` and `Ability_Kit` rows of game data, `Ability_User`,
+  statuses, tags, attributes, effects, hitboxes, cancel windows, input buffer, cooldowns, charges
+  and durability, and the `abilities.*` methods. Use when building attacks, combos, dashes, blocks,
+  skills, spells, hit reactions, weapons or a gameplay ability system (GAS, Mantis, fighting-game
+  moves), when touching that plugin, or when diagnosing why an ability does not start.
 ---
 
 # Mirai abilities

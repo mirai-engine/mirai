@@ -154,7 +154,7 @@ exposes the criterion to classify with neighboring geometry.
   prefab names its preset: in the inspector, with `asset set` on the prefab, or in the tool that
   writes it. A spawned prefab (the player of a spawn point, an enemy) then collides as its kind
   with no game code, and the navmesh class of those agents names the same preset
-  ([navigation](../../mirai-plugins/references/navigation.md#meshes)). A step that rewrites
+  ([navigation](../../mirai-world/references/navigation.md#meshes)). A step that rewrites
   `belongs`/`collides` of a `Collider` at run time to give it its kind is a workaround: change the
   prefab instead.
 
@@ -308,7 +308,7 @@ zone; `gravity.odin` applies it to the simulation.
 - `gravity` gives the world's; `gravity_of_entity`, the one the body of an entity feels. The
   character takes its length from it for its jumps, and its vertical turns toward the opposite
   ([vertical](character.md#the-vertical)). Particles fall with the same fields
-  ([vfx](../../mirai-plugins/references/vfx.md#game)).
+  ([vfx](../../mirai-world/references/vfx.md#game)).
 - Pushing is not gravity: a force in newtons that weighs the mass (a fan, an explosion) is a field
   of [physics_fields](../../mirai-plugins/references/physics-fields.md).
 

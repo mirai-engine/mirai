@@ -68,7 +68,7 @@ Each technique states its status; what is listed as prepared is not implemented.
   lights with their shadow ray, chosen by a deterministic light tree
   ([local lights](lights.md#local-lights)). There is no ReSTIR or stochastic direct light.
 - **Culling and LOD** (implemented). Frustum, normal cone and two-phase occlusion on the GPU, per
-  instance and per cluster ([frame graph](frame-graph.md#frame-graph)). The cut of the DAG or of
+  instance and per cluster ([frame graph](frame-graph.md#passes)). The cut of the DAG or of
   the whole levels takes each cluster whose projected error falls within `lod_error_pixels` and
   that of what replaces it does not; rays trace the instance's cut (above), with an origin bias
   that grows with distance.

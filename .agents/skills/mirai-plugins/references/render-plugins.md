@@ -274,7 +274,8 @@ marks:
   of its froxels (from the sun, and the ambient one along the path upward) and the surfaces it has
   inside, which `fog_apply` darkens before adding the fog to them.
 
-It is used by [water](water.md): the medium under a surface and its dry boxes.
+It is used by [water](../../mirai-world/references/water.md): the medium under a surface and its dry
+boxes.
 
 **Render** (`fog_render`, `render`, after `render_sync`; `Lit` stage of each view):
 
@@ -293,9 +294,9 @@ It is used by [water](water.md): the medium under a surface and its dry boxes.
   that point receives for each meter of what it scatters (except a hidden cell out of its turn,
   which copies its reprojected light and leaves the medium empty, or with `Never` is marked as not
   lit; one without history is lit at once). The light is weighted with the mean medium of each
-  volume, not that of this frame: it does not depend on where the wisps are. Where there is a
-  medium that scatters, it lights it with the light of the engine's media
-  (`shaders/include/media.slang`, the same as the volumes of [`vfx`](vfx.md#volumes)):
+  volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
+  that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
+  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
   - the sun, `sun_light` of the place, with a shadow ray (`trace_transmission`);
   - a local light chosen from the light tree according to what it gives the point, divided by the
     probability of choosing it, with another ray: two rays per froxel with any number of lights;

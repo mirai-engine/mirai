@@ -10,7 +10,9 @@
 No Markdown file links to a path that the repository does not track or to a heading that the
 linked file does not have. Every skill opens with YAML frontmatter whose name
 is its folder and whose description an agent can trigger on, and .claude/skills is the symlink that
-lets Claude Code find them. A file of docs/game, tracked or still being written, links only inside
+lets Claude Code find them. A row of the Map of a skill links the section of a reference to open,
+never a whole file, and no section of a reference passes SECTION_MAX lines, so that opening one
+costs a bounded read. A file of docs/game, tracked or still being written, links only inside
 docs/game, opens with frontmatter when it is a topic and stays within the line cap of its kind: the
 engine serves that folder to projects, where the rest of the repository does not exist.
 
@@ -34,12 +36,15 @@ GAME_TOPIC_LINES = 80
 GAME_TASK_LINES = 120
 LINE_WIDTH = 100
 DESCRIPTION_MAX = 1024
+SECTION_MAX = 200
 FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 LINK = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+\"[^\"]*\")?\s*$", re.M)
 EXTERNAL = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.M)
+HEADING_LEVEL = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t#]*$")
+MAP = re.compile(r"^## Map[ \t]*$(.*?)(?=^## |\Z)", re.S | re.M)
 HEADING_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 TAG = re.compile(r"<[^>]+>")
 ANCHOR = re.compile(r"<a\s+(?:id|name)=\"([^\"]+)\"")
@@ -81,6 +86,58 @@ def anchors(text: str) -> set[str]:
         seen[base] = count + 1
         found.add(base if count == 0 else f"{base}-{count}")
     return found
+
+
+def sections(text: str) -> list[tuple[int, str, int, int]]:
+    """Every heading outside fences as (level, heading, line, lines up to the next heading that
+    is not below it)."""
+    heads: list[tuple[int, str, int]] = []
+    fence = ""
+    lines = text.split("\n")
+    for number, line in enumerate(lines, 1):
+        marker = re.match(r"^(```|~~~)", line)
+        if marker:
+            fence = "" if fence == marker.group(1) else fence or marker.group(1)
+        elif not fence and (h := HEADING_LEVEL.match(line)):
+            heads.append((len(h.group(1)), h.group(2), number))
+    found = []
+    for i, (level, heading, number) in enumerate(heads):
+        end = next((n for lv, _, n in heads[i + 1 :] if lv <= level), len(lines) + 1)
+        found.append((level, heading, number, end - number))
+    return found
+
+
+def section_errors(p: str, text: str) -> list[str]:
+    """Sections of a reference above SECTION_MAX lines; the title (level 1) is the file itself."""
+    return [
+        f"{p}:{number}: section {heading!r} has {size} lines; split it at its sub-headings, "
+        f"promoting them if needed, to keep {SECTION_MAX}"
+        for level, heading, number, size in sections(text)
+        if level > 1 and size > SECTION_MAX
+    ]
+
+
+def map_errors(p: str, text: str, texts: dict[str, str]) -> list[str]:
+    """Rows of the Map of a skill that link a reference without the section to open."""
+    errors: list[str] = []
+    found = MAP.search(FENCE.sub("", text))
+    for target in links(found.group(1)) if found else []:
+        if EXTERNAL.match(target):
+            continue
+        resolved, fragment = resolve_link(p, target)
+        if not (resolved.startswith(SKILLS) and "/references/" in resolved):
+            continue
+        if not fragment:
+            errors.append(f"{p}: the Map links {target}, a whole file; link the section to open")
+            continue
+        title = next(iter(sections(texts.get(resolved, ""))), None)
+        if title and title[0] == 1 and slug(title[1]) == fragment.lower():
+            if len(texts[resolved].splitlines()) > SECTION_MAX:
+                errors.append(
+                    f"{p}: the Map links {target}, the title of a file of more than {SECTION_MAX} "
+                    "lines; link the section to open"
+                )
+    return errors
 
 
 def frontmatter_errors(p: str, text: str, name: str, source: str) -> list[str]:
@@ -179,6 +236,10 @@ def main() -> int:
     for p in skills:
         if posixpath.basename(p) == "SKILL.md":
             errors += frontmatter_errors(p, texts[p], posixpath.basename(posixpath.dirname(p)), "folder")
+            errors += map_errors(p, texts[p], texts)
+    for p in markdown:
+        if p.startswith(SKILLS) and "/references/" in p:
+            errors += section_errors(p, texts[p])
     if SKILLS_LINK not in tracked_symlinks(root):
         errors.append(f"{SKILLS_LINK}: must be a symlink to ../{SKILLS.rstrip('/')} in git")
     elif not (root / SKILLS_LINK).is_symlink():

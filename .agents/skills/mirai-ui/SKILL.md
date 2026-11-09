@@ -10,7 +10,12 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 ## Map
 
 - Package contract (units, context, layout, drawing, font, widgets, data tree, world panels):
-  [references/ui.md](references/ui.md).
+  [units](references/ui.md#units), [context and frame](references/ui.md#context-and-frame),
+  [ids and layout](references/ui.md#ids-and-layout), [draw list](references/ui.md#draw-list),
+  [font](references/ui.md#font), [interaction](references/ui.md#interaction),
+  [widgets](references/ui.md#widgets), [game interfaces](references/ui.md#game-interfaces),
+  [data tree](references/ui.md#data-tree), [world panels](references/ui.md#world-panels) and
+  [known limits](references/ui.md#known-limits).
 - Files of `ui/` by topic:
   - Frame and layout: `context.odin`, `layout.odin` (`Box`), `element.odin` (elements and their
     drawing in order), `layout_tree.odin` (sizes, text, placement and commands), `retain.odin`
@@ -31,8 +36,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
 - Inspecting and editing a `.ui` in the editor: the
-  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md) plugin. Format of the `.ui` asset:
-  [kinds.md](../mirai-assets/references/kinds.md#interface).
+  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md#document) plugin.
+  Format of the `.ui` asset: [kinds.md](../mirai-assets/references/kinds.md#interface).
 
 ## Workflow
 

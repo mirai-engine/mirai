@@ -1,9 +1,9 @@
 ---
 name: mirai-platform
-description: Mirai operating system layer (the platform package, over SDL3) and its audio library
-  (the audio package). Use for window and custom chrome, per-frame and per-tick input, clock and
-  frame pacing, child processes, file watching, paths, mixer, voices, buses, positional audio and
-  WAV/OGG decoding.
+description: Mirai operating system layer (the `platform` package, over SDL3) and its audio library
+  (the `audio` package). Use when working on window and custom chrome, per-frame and per-tick input,
+  clock and frame pacing, child processes, file watching, paths, mixer, voices, buses, positional
+  audio and WAV/OGG decoding.
 ---
 
 # Mirai platform and audio
@@ -16,9 +16,15 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 
 - Context, frame and pacing, input and injection, window, display scale, custom chrome, dialogs,
   processes, crashes, file watching, paths, trash, audio device:
-  [platform.md](references/platform.md).
+  [context](references/platform.md#context), [frame](references/platform.md#frame),
+  [input](references/platform.md#input), [window](references/platform.md#window),
+  [processes](references/platform.md#processes), [crashes](references/platform.md#crashes),
+  [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
+  [audio device](references/platform.md#audio-device).
 - Mixer, threads, sounds, decoders, feeds and streams, voices, buses, reverb, positional audio:
-  [audio.md](references/audio.md).
+  [mixer](references/audio.md#mixer), [sounds](references/audio.md#sounds),
+  [voices](references/audio.md#voices), [buses](references/audio.md#buses),
+  [reverb](references/audio.md#reverb) and [positional audio](references/audio.md#positional-audio).
 - Code: one file per topic in `platform/` and `audio/`. What depends on the system goes in
   variants with build tags and the same signatures (`*_windows`, `*_posix`, `*_darwin`,
   `*_linux`, `*_other`). `events.odin` translates SDL; `mix.odin` is the voice on the audio

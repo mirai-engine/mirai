@@ -77,7 +77,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
    oldest goes. What a step keeps, how it changes with the head and how the source is read and
    written is given by the tool in a `Revision_Source`.
 
-**Authoring geometry preview** (used by [terrain](../../mirai-plugins/references/terrain.md)):
+**Authoring geometry preview** (used by [terrain](../../mirai-world/references/terrain.md)):
 
 - During a stroke it is shown with an immutable generated mesh (`host.assets_mesh_generate`) and a
   visual instance of the frame (`host.app_instance_add`, `replace_source` to substitute the shown
@@ -182,7 +182,7 @@ A plugin opens asset types in tabs next to the scenes
 - **Between frames.** `Asset_Document_Provider.between(s, d)` runs between frames while one of its
   documents is in front: what needs frames of its own from the renderer, like a world drawn into a
   texture (`host.app_world_draw`, the
-  [particle preview](../../mirai-plugins/references/vfx-editor.md#effect-preview)). The UI
+  [particle preview](../../mirai-world/references/vfx-editor.md#effect-preview)). The UI
   computes what to show and `between` draws it only when it changes.
 - **Columns and playback.** `editor.asset_column_begin`/`asset_column_end` build a column with its
   header and `asset_column_divider` the line between two. What a document plays is an
@@ -215,7 +215,7 @@ A plugin opens asset types in tabs next to the scenes
   frame or the next (with `part`, the dragged clip) and applies it as an edit.
 - `previews` opens animations, sounds and sound sets this way
   ([previews](../../mirai-plugins/references/previews.md)), and `vfx`, particle effects
-  ([vfx](../../mirai-plugins/references/vfx-editor.md#particle-document)).
+  ([vfx](../../mirai-world/references/vfx-editor.md#particle-document)).
 
 ## Asset types of a plugin
 
@@ -248,7 +248,7 @@ material:
   open for that field.
 - `editor.asset_quad(s, kind, id, points)`: the preview of an asset of any type for a box or a row;
   with id zero, what a field without an asset shows (`preview_default`).
-- `vfx` provides `.particle` this way ([vfx](../../mirai-plugins/references/vfx-editor.md)).
+- `vfx` provides `.particle` this way ([vfx](../../mirai-world/references/vfx-editor.md)).
 
 A panel that shows assets uses the browser's cards, at its size and in its mode (list or grid, with
 or without names): `editor.asset_cards(s, width)` gives the columns and the side,
