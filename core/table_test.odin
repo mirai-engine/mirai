@@ -347,3 +347,34 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
     testing.expect(t,!found,"sole is the only one")
     testing.expect_value(t,entity_named(read(&names),"door"),b)
 }
+
+@(test)
+a_component_added_without_a_value_is_zeroed_whatever_its_size :: proc(t:^testing.T) {
+    Empty :: struct {}
+    Small :: struct {value:u64}
+    Large :: struct {bytes:[8192]u8,tail:u64}
+    check :: proc(t:^testing.T,$T:typeid,name:string) {
+        es:Entities
+        entities_init(&es)
+        defer entities_destroy(&es)
+        table:Table(T)
+        table_init(&table,name)
+        defer table_destroy(&table)
+        info:=type_info_of(T)
+        // The memory the adds wait in holds what the last ones left.
+        filled:T
+        mem.set(&filled,0xff,size_of(T))
+        first,second:=create(&es),create(&es)
+        raw_add(raw(&table),info,first,&filled)
+        testing.expect(t,table_settle(&table,&es))
+        raw_add(raw(&table),info,second,nil)
+        testing.expectf(t,table_settle(&table,&es) && has(&table,second),"%s: added",name)
+        if size_of(T)==0 {return}
+        zero:T
+        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,second),&zero,size_of(T))==0,"%s: zeroed",name)
+        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,first),&filled,size_of(T))==0,"%s: the value given stays",name)
+    }
+    check(t,Empty,"Empty")
+    check(t,Small,"Small")
+    check(t,Large,"Large")
+}

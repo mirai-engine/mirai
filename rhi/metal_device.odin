@@ -814,7 +814,7 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 // Begins recording a frame. Without present it takes no image of the
 // swapchain: the frame draws only into textures, for a capture.
 frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: bool) {
-	assert(!d.in_frame, "rhi: frame_begin called twice")
+	if d.in_frame {set_error(d, "frame_begin while a frame is being recorded: end it with frame_end first"); return nil, false}
 	f := &d.frames[d.slot]
 	d.timing_count = 0
 	if f.cmd != nil {
@@ -881,7 +881,7 @@ mtl_release_drawable :: proc(d: ^Device) {
 
 // generated: the frame drew swapchain_generated_texture, which is shown before its own image.
 frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
-	assert(d.in_frame && cmd == &d.frames[d.slot].list, "rhi: frame_end without matching frame_begin")
+	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
@@ -919,7 +919,7 @@ frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
 frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 	// Between frames the slot may still be in flight and frame_begin resets
 	// the ring, so transient memory only exists while a frame is recorded.
-	assert(d.in_frame, "rhi: frame_alloc outside frame_begin/frame_end")
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
 	f := &d.frames[d.slot]
 	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
 	offset := align_up(f.upload_used, align)
@@ -935,10 +935,11 @@ frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 // ---------------------------------------------------------------- immediate transactions
 
 // Begins a blocking command list for load-time work (uploads, BLAS builds,
-// readback). Not allowed while a frame is being recorded.
+// readback). nil, with the error of the device, while a frame is being
+// recorded: immediate_end of it fails.
 immediate_begin :: proc(d: ^Device) -> ^Command_List {
-	assert(!d.in_frame, "rhi: immediate commands cannot interleave with frame recording")
-	assert(d.immediate.cmd == nil, "rhi: immediate_begin called twice")
+	if d.in_frame {set_error(d, "immediate_begin while a frame is being recorded: a load transaction runs between frame_end and frame_begin"); return nil}
+	if d.immediate.cmd != nil {set_error(d, "immediate_begin inside an immediate transaction: end it with immediate_end first"); return nil}
 	mtl_table_take(d, table_copy(true, 0))
 	d.immediate_pool = NS.AutoreleasePool.alloc()->init()
 	cmd := MTL.CommandQueue_commandBuffer(d.queue)
@@ -948,7 +949,10 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 }
 
 immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
-	assert(cmd == &d.immediate)
+	if cmd != &d.immediate {
+		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
+		return false
+	}
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
 	mtl_release_labels(cmd)

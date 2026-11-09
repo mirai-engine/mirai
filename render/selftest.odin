@@ -54,6 +54,7 @@ hardware_rt_self_test :: proc(r: ^Renderer) -> (ok: bool, reason: string) {
 	expected := [8]Expect{{5, 7, 0}, {5, 7, 1}, {-1, -1, -1}, {5, 9, 0}, {5, 9, 1}, {-1, -1, -1}, {5, 7, 0}, {-1, -1, -1}}
 	if !rhi.buffer_upload_slice(d, rays_buffer, 0, rays[:]) {return false, "self-test upload failed"}
 	cmd := rhi.immediate_begin(d)
+	if cmd == nil {return false, fmt.tprintf("self-test submission: %s", rhi.device_error(d))}
 	rhi.cmd_build_blas(cmd, blas)
 	if !rhi.cmd_build_tlas(cmd, tlas, instances_buffer, 0, len(instances)) {rhi.immediate_end(d, cmd); return false, fmt.tprintf("self-test TLAS: %s", rhi.device_error(d))}
 	rhi.cmd_bind_pipeline(cmd, pipeline)

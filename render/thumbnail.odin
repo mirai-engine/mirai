@@ -185,6 +185,7 @@ renderer_thumbnail :: proc(r:^Renderer,state:^Thumbnail_GPU,vertices:[]Thumbnail
     frame_data:=[1]Gpu_Frame{constants}
     if !rhi.buffer_upload(device,state.vertices,0,slice_bytes(gpu_vertices)) || !rhi.buffer_upload(device,state.materials,0,slice_bytes(gpu_materials)) || !rhi.buffer_upload(device,state.frame,0,slice_bytes(frame_data[:])) {return false}
     cmd:=rhi.immediate_begin(device)
+    if cmd==nil {return false}
     for buffer in ([]rhi.Buffer{state.vertices,state.materials,state.frame}) {rhi.cmd_barrier_buffer(cmd,buffer,.Shader_Read)}
     rhi.cmd_bind_buffer(cmd,SLOT_FRAME,state.frame)
     rhi.cmd_bind_buffer(cmd,SLOT_PASS0,state.vertices)
@@ -247,6 +248,7 @@ renderer_thumbnail_values :: proc(r:^Renderer,state:^Thumbnail_Values_GPU,vertic
     frame_data:=[1]Gpu_Frame{constants}
     if !rhi.buffer_upload(device,state.vertices,0,slice_bytes(gpu_vertices)) || !rhi.buffer_upload(device,state.materials,0,slice_bytes(gpu_materials)) || !rhi.buffer_upload(device,state.frame,0,slice_bytes(frame_data[:])) {return false}
     cmd:=rhi.immediate_begin(device)
+    if cmd==nil {return false}
     for buffer in ([]rhi.Buffer{state.vertices,state.materials,state.frame}) {rhi.cmd_barrier_buffer(cmd,buffer,.Shader_Read)}
     rhi.cmd_bind_buffer(cmd,SLOT_FRAME,state.frame)
     rhi.cmd_bind_buffer(cmd,SLOT_PASS0,state.vertices)

@@ -171,15 +171,14 @@ popup_enter :: proc(ctx:^Context,entry:^Popup_Entry) {
     p.rows[p.depth]=0
     for &other,index in p.stack[:p.count] {if &other==entry {p.building[p.depth]=index}}
     entry.icons,entry.icons_next=entry.icons_next,false
-    ctx.clip_stack[ctx.clip_depth]=0
-    ctx.clip_depth+=1
+    clips_suspend(ctx)
     p.depth+=1
 }
 @(private)
 popup_leave :: proc(ctx:^Context,entry:^Popup_Entry) {
     ctx.popup.depth-=1
     if entry!=nil {entry.rows_last=ctx.popup.rows[ctx.popup.depth]}
-    ctx.clip_depth-=1
+    clips_resume(ctx)
 }
 
 // Opens the popup id when it is open: what is built until popup_end is inside.

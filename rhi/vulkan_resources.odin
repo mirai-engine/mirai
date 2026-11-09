@@ -175,7 +175,7 @@ buffer_size :: proc(d: ^Device, buffer: Buffer) -> u64 {
 
 texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if desc.depth > 1 && (.Storage not_in desc.usage || .Color_Target in desc.usage || .Depth_Target in desc.usage) {set_error(d, "texture %s: a 3D texture needs the Storage usage and no target usage, since shaders write it", desc.name); return 0}
-	if problem := texture_layers_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
+	if problem := texture_desc_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
 	layers := max(desc.layers, 1)
 	if desc.cube && layers > 6 && !d.cube_arrays {set_error(d, "texture %s: this device samples no arrays of cubes (imageCubeArray)", desc.name); return 0}
 	if !device_room(d, &d.textures, "textures") {return 0}
@@ -183,7 +183,6 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	t.desc.name = ""
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
-	assert(t.desc.mip_levels <= MAX_TEXTURE_MIPS)
 	t.vk_format = vk_format(desc.format)
 	depth := format_is_depth(desc.format)
 	t.aspect = {.DEPTH} if depth else {.COLOR}
@@ -369,7 +368,7 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 // each copy of the table takes it when its next list begins. The texture
 // must have the Sampled usage alone and be uploaded already.
 texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
-	assert(!d.in_frame, "rhi: the texture table changes between frames")
+	if d.in_frame {set_error(d, "texture_table_set while a frame is being recorded: the table changes between frame_end and frame_begin"); return false}
 	if int(index) >= len(d.table_textures) {
 		grown := table_grown(len(d.table_textures), int(index), d.table_limit)
 		if grown == 0 {set_error(d, "texture table index %d out of range: the device holds %d entries", index, d.table_limit); return false}
@@ -641,6 +640,7 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 	if staging == 0 {return false}
 	mem.copy(buffer_mapped(d, staging), raw_data(data), len(data))
 	cmd := immediate_begin(d)
+	if cmd == nil {vk_release_buffer_now(d, staging); return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, offset, u64(len(data)))
 	ok := immediate_end(d, cmd)
 	vk_release_buffer_now(d, staging)
@@ -669,6 +669,7 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 		mem.copy(&dst[y * row], &data[y * u64(bytes_per_row)], int(row))
 	}
 	cmd := immediate_begin(d)
+	if cmd == nil {vk_release_buffer_now(d, staging); return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
 	ok := immediate_end(d, cmd)
@@ -694,6 +695,7 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 	if staging == 0 {return false}
 	dst := cast([^]u8)buffer_mapped(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {vk_release_buffer_now(d, staging); return false}
 	at: u64
 	for level, mip in levels {
 		at = align_up(at, 16)
@@ -716,6 +718,7 @@ buffer_read :: proc(d: ^Device, buffer: Buffer, offset: u64, out: []u8) -> bool 
 	if staging == 0 {return false}
 	defer vk_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer(cmd, buffer, offset, staging, 0, u64(len(out)))
 	cmd_barrier_buffer(cmd, staging, .Host_Read)
 	if !immediate_end(d, cmd) {return false}
@@ -734,6 +737,7 @@ texture_read :: proc(d: ^Device, texture: Texture, out: []u8) -> bool {
 	if staging == 0 {return false}
 	defer vk_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_texture_to_buffer(cmd, texture, staging, 0)
 	cmd_barrier_buffer(cmd, staging, .Host_Read)
 	// A texture with the Sampled usage alone may be in the table, which every frame reads.

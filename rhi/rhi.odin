@@ -205,10 +205,11 @@ Texture_Desc :: struct {
 	name:          string,
 }
 
-// Why a texture of layers cannot be made, "" when it can: a 3D texture has
-// none, a cube is square and has whole cubes, and a device takes up to
-// limit layers.
-texture_layers_problem :: proc "contextless" (desc: Texture_Desc, limit: u32) -> string {
+// Why a texture cannot be made, "" when it can: it has up to MAX_TEXTURE_MIPS
+// levels, a 3D texture has no layers, a cube is square and has whole cubes,
+// and a device takes up to limit layers.
+texture_desc_problem :: proc "contextless" (desc: Texture_Desc, limit: u32) -> string {
+	if desc.mip_levels > MAX_TEXTURE_MIPS {return "more mip levels than MAX_TEXTURE_MIPS; give it fewer levels or a smaller size"}
 	layers := max(desc.layers, 1)
 	if layers > 1 && desc.depth > 1 {return "a 3D texture has no layers"}
 	if layers > limit {return "more layers than the device takes"}

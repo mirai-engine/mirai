@@ -141,14 +141,14 @@ Context :: struct {
     widget_count,previous_count:int,
     clips:[]Clip,clip_count:int, // the first is no clip
     // Containers that clip around what is being built; 0 is none, which a popup pushes.
-    clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth:int,
+    clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth,clip_skipped:int,
     paints:[]Paint,paint_count:int,
     text:[]u8,text_length:int,
     draw:Draw,
     effects,previous_effects:[]Effect_Clip,
     effect_count,previous_effect_count:int,
     effect_clip:u16,
-    effect_stack:[ID_STACK_DEPTH]Effect_Entry,effect_depth,effect_refused:int,
+    effect_stack:[ID_STACK_DEPTH]Effect_Entry,effect_depth,effect_skipped,effect_refused:int,
 
     scopes:[]Scope,scope_count:int,
     previous_scopes:[]Affine,previous_scope_count:int, // surface to scope, for the pointer
@@ -161,9 +161,11 @@ Context :: struct {
     area:Id,            // while not 0, what Surface and Safe floats hang from in place of the surface (Tree_Build_Desc.area)
     area_rect:Rect,     // its rectangle, in layout units
 
-    id_stack:[ID_STACK_DEPTH]u32,id_depth:int,
+    // A push onto a full stack is not applied and is counted in its *_skipped,
+    // so its pop takes nothing off: Stats.dropped_nesting.
+    id_stack:[ID_STACK_DEPTH]u32,id_depth,id_skipped:int,
     layer:i16,
-    layer_stack:[LAYER_STACK_DEPTH]i16,layer_depth:int,
+    layer_stack:[LAYER_STACK_DEPTH]i16,layer_depth,layer_skipped:int,
 
     hot:Id,             // widget under the pointer
     hot_layer:i16,
@@ -332,14 +334,15 @@ id :: proc(ctx:^Context,name:string,index:int=0) -> Id {
     return Id(value) if value!=0 else Id(1)
 }
 // Ids made until id_pop belong to this scope: the rows of a list, the fields
-// of an object.
+// of an object. A scope nested deeper than ID_STACK_DEPTH is not opened: its
+// ids are those of the scope around it.
 id_push :: proc(ctx:^Context,scope:Id) {
-    assert(ctx.id_depth<ID_STACK_DEPTH,"UI id stack capacity exceeded")
+    if ctx.id_depth>=ID_STACK_DEPTH {ctx.id_skipped+=1;ctx.stats.dropped_nesting+=1;return}
     ctx.id_stack[ctx.id_depth]=u32(scope);ctx.id_depth+=1
 }
 id_pop :: proc(ctx:^Context) {
-    assert(ctx.id_depth>0,"Unbalanced UI id stack")
-    ctx.id_depth-=1
+    if ctx.id_skipped>0 {ctx.id_skipped-=1;return}
+    if ctx.id_depth>0 {ctx.id_depth-=1}
 }
 
 // Adds the widths of the columns of a Grid to the frame and returns what its
@@ -412,26 +415,60 @@ widget_rect :: proc(ctx:^Context,id:Id) -> (rect:Rect,found:bool) {
     return {},false
 }
 
+// A float nested deeper than LAYER_STACK_DEPTH stays in the layer around it.
 @(private)
 layer_push :: proc(ctx:^Context,layer:i16) {
-    assert(ctx.layer_depth<LAYER_STACK_DEPTH,"UI layer stack capacity exceeded")
+    if ctx.layer_depth>=LAYER_STACK_DEPTH {ctx.layer_skipped+=1;ctx.stats.dropped_nesting+=1;return}
     ctx.layer_stack[ctx.layer_depth]=ctx.layer;ctx.layer_depth+=1
     ctx.layer=layer
 }
 @(private)
 layer_pop :: proc(ctx:^Context) {
+    if ctx.layer_skipped>0 {ctx.layer_skipped-=1;return}
+    if ctx.layer_depth<=0 {return}
     ctx.layer_depth-=1;ctx.layer=ctx.layer_stack[ctx.layer_depth]
+}
+
+// Keeps the composition layer around what is built for effect_pop. False when
+// the stack is full: the box changes nothing of it.
+@(private)
+effect_push :: proc(ctx:^Context) -> bool {
+    if ctx.effect_depth>=len(ctx.effect_stack) {ctx.effect_skipped+=1;ctx.stats.dropped_nesting+=1;return false}
+    ctx.effect_stack[ctx.effect_depth]={ctx.effect_clip,ctx.effect_refused};ctx.effect_depth+=1
+    return true
+}
+@(private)
+effect_pop :: proc(ctx:^Context) {
+    if ctx.effect_skipped>0 {ctx.effect_skipped-=1;return}
+    if ctx.effect_depth<=0 {return}
+    ctx.effect_depth-=1
+    e:=ctx.effect_stack[ctx.effect_depth]
+    ctx.effect_clip,ctx.effect_refused=e.clip,e.refused
+}
+
+// The containers around what is built stop clipping it until clips_resume: a
+// popup, a modal.
+@(private)
+clips_suspend :: proc(ctx:^Context) {
+    if ctx.clip_depth>=len(ctx.clip_stack) {ctx.clip_skipped+=1;ctx.stats.dropped_clips+=1;return}
+    ctx.clip_stack[ctx.clip_depth]=0;ctx.clip_depth+=1
+}
+@(private)
+clips_resume :: proc(ctx:^Context) {
+    if ctx.clip_skipped>0 {ctx.clip_skipped-=1;return}
+    if ctx.clip_depth>0 {ctx.clip_depth-=1}
 }
 
 // ---------------------------------------------------------------- frame
 
 @(private)
 dropped_total :: proc "contextless" (s:^Stats) -> u32 {
-    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks
+    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting
 }
 
+// Begun inside a frame that was not ended, it starts over and that frame is lost.
 frame_begin :: proc(ctx:^Context,input:Input) {
-    assert(!ctx.in_frame,"frame_begin without frame_end")
+    if ctx.in_frame {ctx.stats.layout_errors+=1}
     ctx.in_frame=true
     if ctx.font_owner!=nil {ctx.font=ctx.font_owner^}
     ctx.input=input
@@ -450,11 +487,11 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.dropped_before=dropped_total(&ctx.stats)
 
     ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0
-    ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_refused=0
-    ctx.clip_count=1;ctx.clip_depth=0;ctx.scope_count=1;ctx.scope=0
+    ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_skipped=0;ctx.effect_refused=0
+    ctx.clip_count=1;ctx.clip_depth=0;ctx.clip_skipped=0;ctx.scope_count=1;ctx.scope=0
     ctx.scopes[0]={m=AFFINE_IDENTITY,tint={1,1,1,1}}
     ctx.panel_count=0;ctx.surface=0;ctx.area=0
-    ctx.id_depth=0;ctx.layer=0;ctx.layer_depth=0;ctx.disabled_depth=0;ctx.invisible=0;ctx.unfocusable=0;ctx.order=0;ctx.nav_group=0
+    ctx.id_depth=0;ctx.id_skipped=0;ctx.layer=0;ctx.layer_depth=0;ctx.layer_skipped=0;ctx.disabled_depth=0;ctx.invisible=0;ctx.unfocusable=0;ctx.order=0;ctx.nav_group=0
     ctx.link_count=0;ctx.group_count=0;ctx.retaining=0
     ctx.elements=0;ctx.skipped=0
     ctx.tooltip="";ctx.modal_open=false;ctx.activate=0
@@ -481,13 +518,26 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.layout_started=false
 }
 
+// Closes the panel, the containers and the layers the builder left open, so a
+// frame that misses an end is still laid out and drawn.
+@(private)
+frame_close :: proc(ctx:^Context) {
+    d:=&ctx.draw
+    open:=ctx.layout_started && ctx.layout.open_len>1
+    if !open && ctx.surface==0 && ctx.skipped==0 && ctx.clip_depth==0 && d.composition_depth==0 && d.skipped_layers==0 {return}
+    ctx.stats.layout_errors+=1
+    compositions_close(ctx)
+    if ctx.surface!=0 {world_panel_end(ctx)}
+    if open {for ctx.layout.open_len>1 {layout_close(&ctx.layout)}}
+    ctx.skipped,ctx.clip_depth,ctx.clip_skipped=0,0,0
+}
+
+// An empty Frame when no frame was begun.
 frame_end :: proc(ctx:^Context) -> Frame {
-    assert(ctx.in_frame,"frame_end without frame_begin")
-    assert(ctx.surface==0,"frame_end inside a world panel")
-    assert(ctx.draw.composition_depth==0 && ctx.draw.skipped_layers==0,"Unbalanced UI composition layers")
+    if !ctx.in_frame {ctx.stats.layout_errors+=1;return {}}
+    frame_close(ctx)
     popup_frame_end(ctx)
     if ctx.tooltip!="" && ctx.popup.count==0 && !ctx.modal_open {tooltip_build(ctx)}
-    assert(ctx.skipped==0 && ctx.clip_depth==0,"Unbalanced UI containers")
 
     // Without an element in the frame there is no layout to end.
     laid:=ctx.layout_started
@@ -526,7 +576,6 @@ frame_end :: proc(ctx:^Context) -> Frame {
     panels_resolve(ctx)
     if laid {layout_paint(ctx)}
     retained_frame_end(ctx)
-    assert(ctx.draw.composition_depth==0 && ctx.draw.skipped_layers==0,"Unbalanced laid out UI composition layers")
     focus_ring_draw(ctx)
 
     input_frame_end(ctx)

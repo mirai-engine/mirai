@@ -780,17 +780,12 @@ raw_state :: proc "contextless" (t:^Raw_Table,e:Entity) -> (on,turned_off,found:
     return row<t.on,t.off[row],true
 }
 
+// As add, with the value at a pointer; nil: the component zeroed.
 raw_add :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity,value:rawptr) {
-    zero:[1024]u8
-    source:=value
-    if source==nil {
-        assert(info.size<=len(zero),"core: a component of more than 1024 bytes needs a value to be added")
-        source=&zero
-    }
-    if info.size==0 {
-        t.added.len+=1 // as append does for an empty type: there is no memory to copy into
-    } else {
-        runtime.__dynamic_array_append(&t.added,info.size,info.align,source,1)
+    switch {
+    case info.size==0: t.added.len+=1 // as append does for an empty type: there is no memory to copy into
+    case value==nil:   runtime.__dynamic_array_append_nothing(&t.added,info.size,info.align)
+    case:              runtime.__dynamic_array_append(&t.added,info.size,info.align,value,1)
     }
     append(&t.pending,Pending{e,i32(t.added.len-1)})
 }

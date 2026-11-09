@@ -33,6 +33,17 @@ Surface :: struct {
     source:Source,
     viewed:bool,      // its last frame showed a camera or particles, which are drawn every frame
     animating:bool,   // a tree of its last frame said the next one differs
+    nesting:u32,      // ui.Stats.dropped_nesting of its context when its last frame ended
+}
+
+// Reports what the frame a surface just ended nested deeper than a context holds.
+@(private)
+nesting_report :: proc(s:^Surface,problems:^core.Problems) {
+    dropped:=s.ctx.stats.dropped_nesting
+    if dropped>s.nesting {
+        core.report(problems,core.NONE,"gui.nesting","%d id scopes, floating boxes or layers of the interfaces of a frame were nested deeper than a frame holds and were not applied: they share the ids, the layer or the clip of what holds them; nest fewer floating or layered boxes and Lists inside each other",dropped-s.nesting)
+    }
+    s.nesting=dropped
 }
 
 Surface_Key :: struct {

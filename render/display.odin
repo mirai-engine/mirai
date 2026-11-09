@@ -78,6 +78,10 @@ display_build :: proc(r: ^Renderer, display: Display_Desc) -> bool {
 	params := Params{red_green = {display.red.x, display.red.y, display.green.x, display.green.y}, blue_white = {display.blue.x, display.blue.y, display.white.x, display.white.y}, peak = display.peak}
 	rhi.buffer_upload(d, params_buffer, 0, ([^]u8)(&params)[:size_of(params)])
 	cmd := rhi.immediate_begin(d)
+	if cmd == nil {
+		set_error(r, "display lut: %s", rhi.device_error(d))
+		return false
+	}
 	rhi.cmd_bind_pipeline(cmd, tables_pipeline)
 	rhi.cmd_bind_buffer(cmd, SLOT_PARAMS, params_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, tables)

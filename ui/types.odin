@@ -88,9 +88,10 @@ Stats :: struct {
     dropped_text,dropped_scopes,dropped_panels,dropped_clips:u32,
     shapes,layers:u32,
     dropped_shapes,dropped_layers:u32,
-    layout_errors:u32, // ids declared twice in a frame
+    layout_errors:u32, // ids declared twice in a frame, and frames begun or ended with something left open
     dropped_tree:u32,  // what the nodes of a tree could not hold: spans of a rich text, buttons and letters of an Action_Bar
     dropped_tracks:u32, // rows of grid tracks the frame had no room for
+    dropped_nesting:u32, // id scopes, floats and layers nested deeper than their stacks hold, which were not applied
 }
 
 rect_intersect :: proc "contextless" (a,b:Rect) -> Rect {
