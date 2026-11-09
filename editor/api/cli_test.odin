@@ -314,7 +314,7 @@ mcp_session_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     session_send(&s,`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,integer(at(reply,"id")),2)
-    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),10)
+    testing.expect_value(t,len(at(reply,"result","tools").(json.Array)),9)
     session_send(&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"test_add","arguments":{"a":40,"b":2}}}`)
     reply=parse_json(t,session_read(&s))
     testing.expect_value(t,integer(at(reply,"id")),3)

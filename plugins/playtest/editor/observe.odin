@@ -30,7 +30,7 @@ Api_Play_Observe_Params :: struct {
     nearest:int `mirai:"optional,min=1,max=16,label=How many of the matches of targets to return"`,
     path:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write a small image of the game to"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
-    step:editor.Api_Play_Step_Params `mirai:"optional,label=Ticks to run first with the params of play.step: the answer adds its ran and met and trace"`,
+    step:editor.Api_Play_Step_Params `mirai:"optional,label=Ticks to run first with the params of play.step: the answer adds its ran and met and drive and trace"`,
 }
 
 Api_Play_Observe :: struct {
@@ -47,6 +47,7 @@ Api_Play_Observe :: struct {
     capture_error:[256]u8 `mirai:"optional,text,label=Why the image of path could not be written"`,
     ran:int `mirai:"optional,label=With step: the ticks it ran"`,
     met:bool `mirai:"optional,label=With step and until: whether they held when it stopped"`,
+    drive:editor.Api_Play_Drive_Result `mirai:"optional,label=With step and drive: where the player ended and why it stopped"`,
     trace:editor.Api_Play_Trace_Table `mirai:"optional,label=With step and trace: the values it read"`,
 }
 Api_Play_Observe_Player :: struct {
@@ -75,7 +76,7 @@ Api_Play_Observe_Problem :: struct {
 }
 Api_Play_Observe_Target :: struct {
     name:[64]u8 `mirai:"text"`,
-    entity:[16]u8 `mirai:"text,label=Its handle"`,
+    entity:[editor.API_HANDLE_TEXT]u8 `mirai:"text,label=Its handle"`,
     distance:f32 `mirai:"label=Meters from the eye of the player's camera"`,
     bearing:f32 `mirai:"label=Degrees to the right of where the camera looks; negative to its left"`,
     elevation:f32 `mirai:"label=Degrees above where the camera looks"`,
@@ -92,7 +93,7 @@ Run_Observed :: struct {
 
 @(private)
 observe_api_register :: proc(s:^editor.Session) {
-    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={ticks=1,focus=-1,trace={every=1}}}
+    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={input={ticks=1},focus=-1,trace={every=1}}}
     editor.api_method_register(s,{name="play.observe",summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. With step it first runs those ticks as play.step does, so one call acts and observes.",params=Api_Play_Observe_Params,params_info=type_info_of(Api_Play_Observe_Params),result=Api_Play_Observe,result_info=type_info_of(Api_Play_Observe),writes_result=true,defaults=&defaults,run=api_play_observe})
 }
 
@@ -221,7 +222,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
             serial.write_u8(out,'{')
             api.write_text(out,"name",editor.entity_name(w,f.entity),true)
             api.write_key(out,"entity")
-            serial.write_u8(out,'"');serial.text_write_hex(out,u64(f.entity),16,false);serial.write_u8(out,'"')
+            serial.write_u8(out,'"');serial.text_write_hex(out,u64(f.entity));serial.write_u8(out,'"')
             api.write_key(out,"distance");api.write_number(out,observe_round(f.distance,10))
             api.write_key(out,"bearing");api.write_number(out,observe_round(f.bearing,1))
             api.write_key(out,"elevation");api.write_number(out,observe_round(f.elevation,1))
@@ -307,7 +308,7 @@ observe_capture_write :: proc(s:^editor.Session,call:^api.Call,out:^serial.Write
 @(private)
 api_play_observe :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Observe_Params)
-    stepped:[3]string
+    stepped:[len(OBSERVE_STEP_KEYS)]string
     if !observe_step(call,&stepped) {return}
     r,_:=editor.api_play_run(s,call,p.player)
     if r==nil {
@@ -328,13 +329,13 @@ api_play_observe :: proc(s:^editor.Session,call:^api.Call) {
     serial.write_u8(out,'}')
 }
 
-@(private) OBSERVE_STEP_KEYS :: [3]string{"ran","met","trace"}
+@(private) OBSERVE_STEP_KEYS :: [4]string{"ran","met","drive","trace"}
 @(private) OBSERVE_STEP_ANSWER :: 1<<20
 
 // Runs the step the params give, if any, by the method of play.step; what it
 // answered of OBSERVE_STEP_KEYS as JSON, or false after failing the call.
 @(private)
-observe_step :: proc(call:^api.Call,answer:^[3]string) -> bool {
+observe_step :: proc(call:^api.Call,answer:^[len(OBSERVE_STEP_KEYS)]string) -> bool {
     given:[1]string
     api.object_values(call.allocator,call.raw,{"step"},given[:])
     if given[0]=="" {return true}

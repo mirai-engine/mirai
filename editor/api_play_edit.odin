@@ -38,12 +38,12 @@ Api_Play_Spawn_Params :: struct {
 }
 
 Api_Play_Spawn_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the root of what it placed"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the root of what it placed"`,
     entities:int `mirai:"label=Entities it placed"`,
 }
 
 Api_Play_Set_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
     teleported:bool `mirai:"label=A teleport was asked: a free Transform holds it now; one a library owns (a body of physics) jumps there in the next tick"`,
 }
 
@@ -74,9 +74,6 @@ api_play_own_run :: proc(s:^Session,call:^api.Call,player:int) -> (r:^Run,ok:boo
     return nil,false
 }
 
-@(private)
-api_handle_put :: proc(buffer:[]u8,e:core.Entity) {copy(buffer,fmt.tprintf("%016x",u64(e)))}
-
 // The value of a component of a running world with the JSON object at r
 // over it: Entity fields hold handles of live entities.
 @(private)
@@ -102,7 +99,7 @@ api_play_component_read :: proc(s:^Session,w:core.World_Ref,t:^core.Table_Info,e
     for offset in entity_offsets(t.info) {
         named:=core.Entity((cast(^u64)&bytes[offset])^)
         if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-            return fmt.aprintf("%s names %016x, which is not alive in the game: Entity fields of play.set hold handles as play.inspect gives them",path,u64(named),allocator=allocator),false
+            return fmt.aprintf("%s names 0x%016x, which is not alive in the game: Entity fields of play.set hold handles as play.inspect gives them",path,u64(named),allocator=allocator),false
         }
     }
     return "",true
@@ -312,7 +309,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
             for at in entity_offsets(item) {
                 named:=core.Entity((cast(^u64)&bytes[at])^)
                 if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-                    api.call_failf(call,api.INVALID_PARAMS,"%s names %016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
+                    api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
                     return
                 }
             }

@@ -4,62 +4,72 @@ import "base:runtime"
 import "mirai:std/serial"
 
 // What `mirai mcp` does with each message that arrives on stdio: forward it
-// to POST /mcp of the editor. The editor answers everything but what a client
-// needs while the editor is not running: initialize, ping and tools/list
-// (empty) are answered here, a tool call fails as a tool error, and anything
-// else with an id fails with UNREACHABLE.
+// to POST /mcp of the editor. While no editor answers, bridge_absent says what
+// a client needs: initialize, ping and tools/list are answered from what the
+// caller gives, a tool call fails as a tool error, and anything else with an id
+// fails with the same error.
 
 BRIDGE_RETRY :: 10 // seconds between attempts to reach the editor after an empty list
 BRIDGE_LIST_CHANGED :: `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`
 
-// The line to write to stdout; ok is false when no answer is due. unlisted:
-// the client was given an empty list, so it is told when the editor runs.
+// The line to write to stdout; ok is false when no answer is due.
 // plugins: the plugins whose tools are listed besides those of the editor.
 // client: the name of the MCP client, sent as X-Mirai-Client. failed: why the
 // message did not reach the editor.
-bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{}) -> (reply:string,ok,unlisted:bool,failed:Error) {
+bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{}) -> (reply:string,ok:bool,failed:Error) {
     values:[3]string
     object:=object_values(allocator,message,{"id","method","params"},values[:])
     if !object && !json_valid(allocator,message) {
-        return bridge_error(allocator,"",{PARSE_ERROR,"parse error",""}),true,false,{}
+        return bridge_error(allocator,"",{PARSE_ERROR,"parse error",""}),true,{}
     }
     status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch)
-    if post_error.code==0 {
-        if status==202 {return "",false,false,{}}
-        if status==200 {return json_single_line(string(body),allocator),true,false,{}}
-        envelope,valid:=envelope_read(allocator,string(body))
-        if valid && envelope.error!="" {return bridge_error(allocator,values[0],error_read(allocator,envelope.error)),true,false,{}}
-        return bridge_error(allocator,values[0],client_error(allocator,BAD_RESPONSE,"the editor answered HTTP %d",status)),true,false,{}
-    }
-    if !object || values[0]=="" {return "",false,false,post_error}
+    if post_error.code!=0 {return "",false,post_error}
+    if status==202 {return "",false,{}}
+    if status==200 {return json_single_line(string(body),allocator),true,{}}
+    envelope,valid:=envelope_read(allocator,string(body))
+    if valid && envelope.error!="" {return bridge_error(allocator,values[0],error_read(allocator,envelope.error)),true,{}}
+    return bridge_error(allocator,values[0],client_error(allocator,BAD_RESPONSE,"the editor answered HTTP %d",status)),true,{}
+}
+
+// What a client is told while no editor answers it.
+Bridge_Absent :: struct {
+    instructions:string, // of initialize: why, and how the tools come
+    tools:string,        // the entries of tools/list: JSON objects separated by commas
+    error:Error,         // what a tool call fails with
+}
+
+// The line to write to stdout for a message no editor could answer; ok is
+// false when no answer is due.
+bridge_absent :: proc(message:string,absent:Bridge_Absent,allocator:runtime.Allocator) -> (reply:string,ok:bool) {
+    values:[3]string
+    object:=object_values(allocator,message,{"id","method","params"},values[:])
+    if !object && !json_valid(allocator,message) {return bridge_error(allocator,"",{PARSE_ERROR,"parse error",""}),true}
+    if !object || values[0]=="" {return "",false}
     method,_:=string_value(allocator,values[1])
     w:serial.Writer
     serial.writer_init(&w,512,allocator)
+    raw(&w,`{"jsonrpc":"2.0","id":`);raw(&w,values[0]);raw(&w,`,"result":`)
     switch method {
     case "initialize":
-        raw(&w,`{"jsonrpc":"2.0","id":`);raw(&w,values[0]);raw(&w,`,"result":`)
         requested:string
         if params:[1]string;object_values(allocator,values[2],{"protocolVersion"},params[:]) && params[0]!="" {requested,_=string_value(allocator,params[0])}
-        mcp_initialize_write(&w,requested,"mirai","1",format_text(allocator,"%s. Open the editor; the tools are listed when it runs.",post_error.message),true)
-        raw(&w,"}")
-        return string(serial.writer_bytes(&w)),true,false,post_error
+        mcp_initialize_write(&w,requested,"mirai","1",absent.instructions,true)
     case "ping":
-        raw(&w,`{"jsonrpc":"2.0","id":`);raw(&w,values[0]);raw(&w,`,"result":{}}`)
-        return string(serial.writer_bytes(&w)),true,false,post_error
+        raw(&w,"{}")
     case "tools/list":
-        raw(&w,`{"jsonrpc":"2.0","id":`);raw(&w,values[0]);raw(&w,`,"result":{"tools":[]}}`)
-        return string(serial.writer_bytes(&w)),true,true,post_error
+        raw(&w,`{"tools":[`);raw(&w,absent.tools);raw(&w,"]}")
     case "tools/call":
-        raw(&w,`{"jsonrpc":"2.0","id":`);raw(&w,values[0])
-        raw(&w,`,"result":{"content":[{"type":"text","text":`)
+        raw(&w,`{"content":[{"type":"text","text":`)
         inner:serial.Writer
         serial.writer_init(&inner,256,allocator)
-        raw(&inner,`{"error":`);write_error_object(allocator,&inner,post_error);raw(&inner,"}")
+        raw(&inner,`{"error":`);write_error_object(allocator,&inner,absent.error);raw(&inner,"}")
         serial.text_write_string(&w,string(serial.writer_bytes(&inner)))
-        raw(&w,`}],"isError":true}}`)
-        return string(serial.writer_bytes(&w)),true,false,post_error
+        raw(&w,`}],"isError":true}`)
+    case:
+        return bridge_error(allocator,values[0],absent.error),true
     }
-    return bridge_error(allocator,values[0],post_error),true,false,post_error
+    raw(&w,"}")
+    return string(serial.writer_bytes(&w)),true
 }
 
 // The name an MCP initialize gives its client (params.clientInfo.name) as

@@ -424,7 +424,7 @@ program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.
     targeted:=kind in anim.MODIFIER_TARGETED
     supported:=kind==.Contact || kind==.Grounding
     for field in ([6]string{"target","position","normal","contact","grounded","effector"}) {
-        _,present:=authoring_json_field(raw,field,call.allocator)
+        present:=api.json_member(raw,field)!=""
         allowed:bool
         switch field {
         case "target":allowed=targeted

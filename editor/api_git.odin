@@ -8,7 +8,6 @@ import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// Git through the agent API (git.odin). An operation starts and the call
 // returns: git.status says while it runs ("busy") and what it left.
 
 Api_Git_Init_Params :: struct {
@@ -123,7 +122,7 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
     result:=api.call_result(call,Api_Git_Done)
     text:=base.text_get(s.git.error[:])
     result.ok=text==""
-    api_text_put(result.error[:],text)
+    base.text_set(result.error[:],text)
 }
 
 @(private)

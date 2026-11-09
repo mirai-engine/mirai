@@ -48,8 +48,8 @@ clip_test_assets :: proc(f:^Authoring_Test,t:^testing.T) -> (animation,skeleton:
 }
 
 clip_test_number :: proc(text,object,field:string) -> f32 {
-    value,_:=authoring_json_field(text,object,context.temp_allocator)
-    if field!="" {value,_=authoring_json_field(value,field,context.temp_allocator)}
+    value:=api.json_member(text,object)
+    if field!="" {value=api.json_member(value,field)}
     number,_:=strconv_f32(value)
     return number
 }
@@ -87,7 +87,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     if !testing.expect(t,result.code==0,result.message) {return}
     text=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Clip_Edit_Result,text),"")
-    after,_:=authoring_json_field(text,"after",context.temp_allocator)
+    after:=api.json_member(text,"after")
     testing.expectf(t,abs(clip_test_number(after,"duration","")-2)<1e-3,"after %s",after)
     testing.expectf(t,abs(clip_test_number(after,"speed","")-.5)<.02,"after %s",after)
     testing.expectf(t,clip_test_number(after,"jerk","mean")<jerk/4,"jerk %v to %s",jerk,after)

@@ -238,14 +238,13 @@ methods). Which plugins exist is told by `engine.describe`.
 - With `--project` the port is the one `.mirai/api.json` of that project names, read again on
   every message and never the fixed port, so it only reaches that project's editor, also after
   it restarts on another port. While the project has no editor it answers `initialize` itself
-  (with `listChanged: true`) and lists one placeholder tool, and a tool call starts the session
+  (with `listChanged: true`), lists the `docs` tool and one placeholder tool, and a tool call starts the session
   like [`mirai rpc`](#mirai-rpc), by the same rule; what cannot start it says to run
   `mirai session start`. When an editor appears, or another replaces it, it sends
   `notifications/tools/list_changed` once that editor answers.
 - Without `--project` and without an editor it answers `initialize` itself (with
-  `listChanged: true` and the instruction to open the editor), `ping` and an empty `tools/list`; a
-  call or another request with `id` gives
-  `-32099`. After an empty list it tries the editor every `BRIDGE_RETRY` seconds and, when it
+  `listChanged: true` and the instruction to open the editor), `ping` and a `tools/list` with only the
+  `docs` tool; a call or another request with `id` gives `-32099`. After that list it tries the editor every `BRIDGE_RETRY` seconds and, when it
   answers, sends `notifications/tools/list_changed` once.
 - `.mcp.json` declares it: the engine's launches `bin/mirai mcp` relative to the root; a project's
   launches `mirai mcp` and requires the engine's `bin/` on the `PATH` (`mirai setup path`).
@@ -270,10 +269,9 @@ batch, without sessions or server events.
   guides. It paginates with `nextCursor`. Tools declare no `outputSchema`: `engine.describe` gives
   the shape of a result.
 - `tools/call`: the result as JSON text in `content`, the only copy, since clients give models
-  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. With
-  `mcp_content:true` it is an MCP content envelope (`view.viewport`). A handler
-  with a typed result attaches a PNG with `api.call_image` (`capture`): MCP gives it as an
-  image after the text and JSON-RPC returns only the result; if it does not fit in the response or
+  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. A handler
+  attaches a PNG with `api.call_image` (`capture`, `view.viewport`): MCP gives it as an image
+  after the text and JSON-RPC returns only the result; if it does not fit in the response or
   cannot be read, a text with its path goes instead. A malformed JSON, or a non-object despite
   announcing an object, is `-32603`; an envelope that does not fit, `-32000`.
 
@@ -327,9 +325,10 @@ when the server opens; code reload rebuilds methods and schemas without closing 
     refuses do not.
 - **Enums by name** (`"Edit"`), **bit sets as arrays of names** (`["W","Left_Shift"]`). A NaN or
   infinite float is written `"nan"`, `"inf"` or `"bits:0x…"`.
-- **Hexadecimal ids.** An entity (`core.Id`) is a string of up to 16 digits
-  (`"00a1b2c3d4e5f607"`, also with `0x`); an asset, of 32. They are returned with all their
-  digits. A live `core.Entity` handle appears as `entity` (`play.inspect`, `play.player`).
+- **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits
+  (`"00a1b2c3d4e5f607"`, also with `0x`) and answered with `0x` and all its digits; an asset, 32
+  digits without it. A live `core.Entity` handle has the form of an id and appears as `entity`
+  (`play.inspect`, `play.player`).
 - **Transforms local to the parent**: `rotation_deg` in Euler degrees, position in meters and
   scale in factors. `world_position` is read-only.
 - **Free-form methods** (`scene.*`, `editor.input`, `camera.set`, `*.inspect`, `*.list`…) read or

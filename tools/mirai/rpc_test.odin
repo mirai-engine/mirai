@@ -63,21 +63,13 @@ errors_cut_what_they_echo_and_say_how_much :: proc(t:^testing.T) {
     _,problem=api.json_at(result,path)
     testing.expect(t,len(problem)<256 && strings.contains(problem,"more bytes)"),"a value in a message is cut")
 
-    short:=rpc_error_short({api.INVALID_PARAMS,"--select path",strings.concatenate({`{"result":`,result,"}"})})
-    testing.expect(t,len(short.data)<2*RPC_ECHO_BYTES && api.json_valid(context.allocator,short.data),short.data)
-    testing.expect(t,strings.contains(api.json_member(short.data,"prefix"),`{\"result\":{\"content\"`),short.data)
-    testing.expect(t,api.json_member(short.data,"omitted_bytes")!="",short.data)
-
-    small:=`{"result":{"a":1}}`
-    testing.expect_value(t,rpc_error_short({api.INVALID_PARAMS,"x",small}).data,small)
-
     // Neither the cut of a character nor a list of names runs on.
     prefix,omitted:=api.text_cut("aé",2)
     testing.expect(t,prefix=="a" && omitted==2)
     many:=strings.concatenate({`{"`,strings.repeat("x",4096),`":1}`})
     path,_=api.json_path_parse("y")
     _,problem=api.json_at(many,path)
-    testing.expect(t,len(problem)<2*RPC_ECHO_BYTES,"the names it lists are cut")
+    testing.expect(t,len(problem)<512,"the names it lists are cut")
 }
 
 @(test)
@@ -239,9 +231,9 @@ describe_shows_types_defaults_an_example_and_the_result :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(both,"test.echo_twice\n  Twice.\n  params: no schema"),both)
     testing.expect(t,strings.contains(both,"example: mirai rpc test.echo_twice\n"),both)
     testing.expect(t,strings.contains(both,"result: no schema"),both)
-    testing.expect_value(t,rpc_similar_names(describe,"test.repeat"),"test.echo, test.echo_twice")
-    testing.expect_value(t,rpc_similar_names(describe,"echo"),"test.echo, test.echo_twice")
-    testing.expect_value(t,rpc_similar_names(describe,"scene.add"),"")
+    testing.expect_value(t,api.names_similar(rpc_listed_names(describe),"test.repeat",context.temp_allocator),"test.echo, test.echo_twice")
+    testing.expect_value(t,api.names_similar(rpc_listed_names(describe),"echo",context.temp_allocator),"test.echo, test.echo_twice")
+    testing.expect_value(t,api.names_similar(rpc_listed_names(describe),"scene.add",context.temp_allocator),"")
 }
 
 @(test)
@@ -257,7 +249,7 @@ describe_without_arguments_shows_the_index_of_the_methods :: proc(t:^testing.T) 
     }
     testing.expect(t,rpc_describe_is_plugin(listing,"animation") && rpc_describe_is_plugin(listing,"terrain") && rpc_describe_is_plugin(listing,"editor"))
     testing.expect(t,!rpc_describe_is_plugin(listing,"scene.") && !rpc_describe_is_plugin(listing,"scene.add"),"a prefix or a method is not a plugin")
-    testing.expect_value(t,rpc_similar_names(listing,"scene.ad"),"scene.add, scene.save, scene.open")
+    testing.expect_value(t,api.names_similar(rpc_listed_names(listing),"scene.ad",context.temp_allocator),"scene.add, scene.save, scene.open")
 }
 
 // Quoting a JSON object differs per shell: key=value arguments need none.

@@ -26,18 +26,18 @@ API_TRACE_ROWS :: 256
 API_PRESS_HELD :: 2 // ticks a press holds its button
 
 Api_Play_Segment :: struct {
-    ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it holds this input; 1 or more; in place of seconds"`,
-    seconds:f32 `mirai:"optional,label=Game time it holds this input in place of ticks: the nearest whole ticks and at least 1"`,
-    keys:core.Keys `mirai:"optional,label=Keys held in every tick of the segment; they go to the local seat with the focus"`,
-    mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick of the segment"`,
-    tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside its first tick: a press shorter than a tick that is never down"`,
-    tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside its first tick"`,
-    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer goes at its first tick in points of the window from its top left; it stays there after it"`,
-    mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over its ticks: a look that turns along the segment"`,
-    wheel:[2]f32 `mirai:"optional,label=Added to its first tick"`,
-    text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in its first tick"`,
+    ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it runs with this input; 1 or more; in place of seconds"`,
+    seconds:f32 `mirai:"optional,label=Game time it runs with this input in place of ticks: the nearest whole ticks and at least 1"`,
+    keys:core.Keys `mirai:"optional,label=Keys held in every tick; they go to the local seat with the focus; a key named by consecutive calls or segments stays held with no release between them and one left out is released"`,
+    mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick; held across calls and segments as keys are"`,
+    tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
+    tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside the first tick"`,
+    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of capture over the density): the UI of the game takes it and its clicks; it stays there after it"`,
+    mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks: a look that turns along them"`,
+    wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
+    text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
     press:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The button of the screen on top to press by its name: the pointer goes over it and Left is held as a click takes; ticks or seconds run after the click; no other input with it"`,
-    gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick of the segment"`,
+    gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick; gamepad i is that of the local seat of slot i when the game has several"`,
 }
 
 Api_Play_Trace :: struct {
@@ -50,20 +50,11 @@ Api_Play_Trace :: struct {
     include_runtime:bool `mirai:"optional,label=Hidden fields and transient component state as play.inspect with include_runtime reads them"`,
 }
 
-// What play.step writes: Api_Play_Result and its trace.
+// What play.step writes: Api_Play_Result, the ticks it ran and its trace.
 Api_Play_Step_Result :: struct {
-    playing,paused:bool `mirai:"optional"`,
-    detached:bool `mirai:"optional,label=The run is of a turn: the editor does not show it"`,
-    simulating:bool `mirai:"optional"`,
-    tick:u64 `mirai:"optional"`,
-    seconds:f64 `mirai:"optional"`,
-    entities:int `mirai:"optional"`,
-    ticks_dropped:u64 `mirai:"optional"`,
-    game_camera:bool `mirai:"optional"`,
-    input_released:bool `mirai:"optional"`,
+    using play:Api_Play_Result `mirai:"inline"`,
     ran:int `mirai:"label=The ticks it ran"`,
     met:bool `mirai:"label=With until: whether they held when it stopped"`,
-    scripted:int `mirai:"optional,label=Ticks left of the input play.input scheduled: the next steps without input play them"`,
     drive:Api_Play_Drive_Result `mirai:"optional,label=With drive: where the player ended and why it stopped; ran says its ticks"`,
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
 }
@@ -137,7 +128,7 @@ api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:
     for c in step.text {
         if c<' ' || c>'~' {api.call_failf(call,api.INVALID_PARAMS,"%stext takes printable ASCII from space to ~; %q has a character outside it",at,step.text);return}
     }
-    for pad in segment.gamepads[:api_list_count(values[1])] {
+    for pad in segment.gamepads[:api.json_count(values[1])] {
         g:=&step.gamepads[pad.slot]
         if g.connected {api.call_failf(call,api.INVALID_PARAMS,"%sgamepads: slot %d is given twice; give each gamepad once",at,pad.slot);return}
         if both:=pad.buttons&pad.tapped;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%sgamepads: slot %d holds and taps %v; a button is held or tapped",at,pad.slot,both);return}
@@ -209,10 +200,8 @@ api_step_timeline :: proc(call:^api.Call,params:^Api_Play_Step_Params,tick_dt:f3
         }
         return api_segments_read(call,params.segments[:],values[0],tick_dt)
     }
-    flat:=new(Api_Play_Segment,call.allocator)
-    flat^={ticks=params.ticks,seconds=params.seconds,keys=params.keys,mouse_buttons=params.mouse_buttons,tap_keys=params.tap_keys,tap_buttons=params.tap_buttons,mouse_position=params.mouse_position,mouse_delta=params.mouse_delta,wheel=params.wheel,text=params.text,gamepads=params.gamepads,press=params.press}
     timeline=make([]Api_Step_Input,1,call.allocator)
-    timeline[0]=api_segment_read(call,flat,call.raw,"",tick_dt) or_return
+    timeline[0]=api_segment_read(call,&params.input,call.raw,"",tick_dt) or_return
     timeline=api_timeline_presses(timeline,call.allocator)
     if total:=api_timeline_ticks(timeline);total>API_STEP_LIMIT {
         api.call_failf(call,api.INVALID_PARAMS,"it runs %d ticks and a step runs at most %d: split it into several calls",total,API_STEP_LIMIT)
@@ -453,7 +442,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     trace^={storage=-1,view=p.view,include_runtime=p.include_runtime}
     values:[1]string
     api.object_values(call.allocator,raw,{"fields"},values[:])
-    trace.field_count=api_list_count(values[0])
+    trace.field_count=api.json_count(values[0])
     if trace.field_count==0 {return `trace.fields is empty: give the paths to read, as ["world_position", "components.Motion.linear"]`}
     for &field,i in trace.fields[:trace.field_count] {
         field=base.text_get(p.fields[i][:])
@@ -582,14 +571,14 @@ api_trace_component_absent :: proc(s:^Session,whole:json.Value,path:string) -> b
 api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,trace:^Api_Trace,drive:^Api_Drive=nil) {
     result:Api_Play_Result
     api_play_result_fill(s,&result,r)
-    result.ran,result.met=ran,met
     sc:=&api_state(s).server.schema
     index,found:=sc.lookup[Api_Play_Result]
     if !found {api.call_fail(call,api.INTERNAL_ERROR,"the result of the play methods has no schema");return}
     out:=call.out
     serial.text_write(out,sc,index,mem.ptr_to_bytes(&result),.Line)
-    if trace==nil && drive==nil {return}
     out.count-=1 // the brace that closes it
+    api.write_int(out,"ran",i64(ran))
+    api.write_bool(out,"met",met)
     if drive!=nil {api_drive_write(out,api_drive_result(drive))}
     if trace!=nil {api_trace_write(s,out,trace)}
     serial.write_u8(out,'}')

@@ -458,7 +458,7 @@ api_section_write :: proc(s:^Session,out:^serial.Writer,w:core.World_Ref,e:core.
     rules,states,shown_names:=SECTION_RULE_NAMES,SECTION_STATE_NAMES,SECTION_SHOWN_NAMES
     serial.write_u8(out,'{')
     api.write_key(out,"id",true)
-    api_write_id(out,api_entity_id(w,e))
+    api.write_id(out,api_entity_id(w,e))
     api.write_text(out,"name",entity_label(w,e))
     scene_path:=""
     if s.app.assets!=nil {

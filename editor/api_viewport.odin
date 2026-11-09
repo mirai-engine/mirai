@@ -1,7 +1,6 @@
 package editor
 
 import "base:runtime"
-import "core:encoding/base64"
 import "core:fmt"
 import "core:os"
 import "core:time"
@@ -17,8 +16,9 @@ Api_Viewport_Params :: struct {
     request:[64]u8 `mirai:"optional,text,label=An older message of the turn by the folder of its snapshot under .mirai/ai; empty: the message of the turn of the caller"`,
 }
 
-@(private)
-API_VIEWPORT_RESULT :: `{"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"type":{"const":"image"},"data":{"type":"string"},"mimeType":{"const":"image/png"}},"required":["type","data","mimeType"],"additionalProperties":false}},"isError":{"const":false}},"required":["content","isError"],"additionalProperties":false}`
+Api_Viewport_Result :: struct {
+    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the PNG the message saved; MCP also returns the image"`,
+}
 
 Api_Capture_Of :: enum u8 {Auto,Scene,Game}
 
@@ -79,7 +79,7 @@ Api_Capture_Cell :: struct {
 
 @(private)
 api_viewport_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result_schema=API_VIEWPORT_RESULT,flags={.Core,.Read_Only,.Idempotent},mcp_content=true,run=api_view_viewport})
+    api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result=Api_Viewport_Result,writes_result=true,flags={.Core,.Read_Only,.Idempotent},run=api_view_viewport})
     capture_default:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,size={256,256}}
     api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count, or segments with every or count, it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Capture_Params,result=Api_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_capture})
 }
@@ -279,29 +279,6 @@ api_png_write :: proc(s:^Session,path:string,pixels:[]u8,width,height:int) -> (p
     return ""
 }
 
-// A PNG file as the image content of an MCP tool.
-@(private)
-api_png_content :: proc(call:^api.Call,path:string) {
-    file,open_error:=os.open(path)
-    if open_error!=nil {api.call_fail(call,api.SERVER_ERROR,"The image is unavailable");return}
-    defer os.close(file)
-    size,size_error:=os.file_size(file)
-    if size_error!=nil || size<=0 {api.call_fail(call,api.SERVER_ERROR,"The image could not be read");return}
-    if size>i64(max(call.server.max_response-512,0)/4*3) {
-        api.call_failf(call,api.SERVER_ERROR,"The image of %d bytes exceeds the MCP response limit; it is written at %s",size,path)
-        return
-    }
-    image,read_error:=os.read_entire_file(file,context.allocator)
-    if read_error!=nil {api.call_fail(call,api.SERVER_ERROR,"The image could not be read");return}
-    defer delete(image)
-    encoded,encode_error:=base64.encode(image,allocator=context.allocator)
-    if encode_error!=.None {api.call_fail(call,api.INTERNAL_ERROR,"The image could not be encoded");return}
-    defer delete(encoded)
-    serial.text_write_raw(call.out,`{"content":[{"type":"image","data":"`)
-    serial.text_write_raw(call.out,encoded)
-    serial.text_write_raw(call.out,`","mimeType":"image/png"}],"isError":false}`)
-}
-
 @(private)
 ai_snapshot_name_valid :: proc "contextless" (request:string) -> bool {
     split:=-1
@@ -329,5 +306,6 @@ api_view_viewport :: proc(s:^Session,call:^api.Call) {
     }
     path:=project.path(s.project_root,fmt.tprintf(".mirai/ai/%s/%s",request,AI_FILE_IMAGE),allocator=context.temp_allocator)
     if !os.is_file(path) {api.call_fail(call,api.SERVER_ERROR,"The viewport snapshot for this message is unavailable");return}
-    api_png_content(call,path)
+    serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path);serial.write_u8(call.out,'}')
+    api.call_image(call,path)
 }

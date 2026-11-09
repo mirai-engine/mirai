@@ -40,13 +40,8 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
     files,problem:=play_scenario_files(folder,names[:])
     if problem!="" {fmt.eprintfln("mirai play test: %s",problem);return 2}
 
-    file,alive:=session_find(folder)
-    reused:=alive && session_answers(file.port)
-    if reused && !session_reusable(root,folder,mode,file,"play test") {return 1}
-    if !reused {
-        code:int
-        if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
-    }
+    file,reused,code:=session_borrow(root,folder,mode,"play test")
+    if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 
     Step :: struct {method,name:string,passed:bool,tick:u64,result:json.Value,error:string}

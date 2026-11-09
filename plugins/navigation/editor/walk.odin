@@ -1,6 +1,5 @@
 package navigation_editor
 
-import "core:fmt"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
@@ -39,7 +38,7 @@ Walk_Result :: struct {
     state:Walk_State `mirai:"label=How the walk ended"`,
     ran:int `mirai:"label=Fixed ticks the call ran, those it waited for the navigation meshes included"`,
     tick:u64 `mirai:"label=The tick of the game it ended at"`,
-    body:[16]u8 `mirai:"text,label=The handle of the body that walked"`,
+    body:[editor.API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the body that walked"`,
     position:[3]f32 `mirai:"unit=m,label=Where the body ended in the world"`,
     distance:f32 `mirai:"unit=m,label=From there to the end"`,
     partial:bool `mirai:"label=The way ends as near the end as the meshes go"`,
@@ -97,8 +96,8 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     body:=drivables!=nil?input.body_of(core.read(drivables),seat):core.NONE
-    if body==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"Seat %016x drives no body: play.step until it has one, or play.push a Drive to Seat_Requests",u64(seat));return}
-    if !core.has(characters,body) {api.call_failf(call,api.INVALID_PARAMS,"Body %016x has no Character: only a Character walks",u64(body));return}
+    if body==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"Seat 0x%016x drives no body: play.step until it has one, or play.push a Drive to Seat_Requests",u64(seat));return}
+    if !core.has(characters,body) {api.call_failf(call,api.INVALID_PARAMS,"Body 0x%016x has no Character: only a Character walks",u64(body));return}
     values:[1]string
     api.object_values(call.allocator,call.raw,{"to"},values[:])
     goal:=p.to
@@ -127,7 +126,7 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
     if n==nil || !n.ready || n.count==0 {api.call_failf(call,api.INVALID_PARAMS,"The navigation meshes were not ready after %d ticks: the physics of the game must be ready and Navigation_Settings must have a class (nav.status), or give it more ticks",ran);return}
     if ran>0 {
         requests,agents,paths,characters,worlds=core.world_storage_of(w,nav.Nav_Requests),core.world_table_of(w,nav.Nav_Agent),core.world_table_of(w,nav.Nav_Path),core.world_table_of(w,phys.Character),core.world_table_of(w,core.World_Transform)
-        if !core.has(characters,body) {api.call_failf(call,api.INVALID_PARAMS,"Body %016x stopped being a Character while the navigation meshes were made",u64(body));return}
+        if !core.has(characters,body) {api.call_failf(call,api.INVALID_PARAMS,"Body 0x%016x stopped being a Character while the navigation meshes were made",u64(body));return}
         if given {
             if pose,placed:=core.get(core.read(worlds),target);placed {goal=pose.position}
         }
@@ -170,7 +169,7 @@ walk :: proc(s:^editor.Session,call:^api.Call) {
     result:=api.call_result(call,Walk_Result)
     result.state,result.ran,result.partial=state,ran,path.partial
     if t:=core.world_storage_of(w,core.Time);t!=nil {result.tick=t.tick}
-    copy(result.body[:],fmt.tprintf("%016x",u64(body)))
+    editor.api_handle_put(result.body[:],body)
     pose,_:=core.get(core.read(core.world_table_of(w,core.World_Transform)),body)
     result.position=pose.position
     result.distance=linalg.length(goal-pose.position)

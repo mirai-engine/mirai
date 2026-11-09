@@ -38,9 +38,9 @@ Session_Record :: api.Session_Record
 //   status   says whether one answers, and which editors of this checkout no
 //            port file names
 //   sync     brings only the files named from the project into a copy and
-//            restarts its session, or has it read the assets again
-//            (session_sync.odin)
-// The editor names its port in <proyecto>/.mirai/api.json (api.PORT_FILE). An
+//            restarts its session when code or the manifest changed; its
+//            editor reads assets again by itself (session_sync.odin)
+// The editor names its port in <project>/.mirai/api.json (api.PORT_FILE). An
 // editor with a window is never reused, replaced nor closed.
 cmd_session :: proc(root:string,args:[]string) -> int {
     if len(args)==0 {fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2}
@@ -129,6 +129,25 @@ process_end :: proc(pid:int,wait:time.Duration) {
         }
         time.sleep(250*time.Millisecond)
     }
+}
+
+// The session of the project that answers, or one opened for a command, which
+// closes it when reused is false; code is not 0 after saying why there is none.
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+    alive:bool
+    file,alive=session_find(folder)
+    reused=alive && session_answers(file.port)
+    if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
+    if !reused {file,code=session_open(root,folder,mode,false,180,{})}
+    return
+}
+
+// One call of a command to its session; what fails goes to stderr.
+session_call :: proc(command:string,port:int,method:string,params:any,timeout_ms:=600000) -> (result:string,ok:bool) {
+    text,_:=json.marshal(params,allocator=context.temp_allocator)
+    response,err,called:=api.rpc_call(port,method,string(text),1,timeout_ms,context.allocator)
+    if !called {fmt.eprintfln("mirai %s: %s: %s",command,method,api.error_text(err,context.temp_allocator))}
+    return response,called
 }
 
 session_answers :: proc(port:int) -> bool {

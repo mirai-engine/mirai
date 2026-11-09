@@ -116,31 +116,6 @@ locate_text :: proc(location:asset.Location,error:asset.Locate_Error) -> string 
 }
 
 @(private="file")
-code_text :: proc(code:serial.Text_Error_Code) -> string {
-    switch code {
-    case .None: return ""
-    case .Syntax: return "malformed JSON"
-    case .Expected_Object: return "expected an object"
-    case .Expected_Array: return "expected a list"
-    case .Expected_String: return "expected a quoted text"
-    case .Expected_Number: return "expected a number"
-    case .Expected_Integer: return "expected an integer"
-    case .Expected_Bool: return "expected true or false"
-    case .Unknown_Field: return "the type has no such field"
-    case .Unknown_Member: return "the enum or bit set has no such member"
-    case .Out_Of_Range: return "the number does not fit the field"
-    case .Too_Many_Elements: return "more elements than the array holds"
-    case .Text_Too_Long: return "the text does not fit the field"
-    case .Invalid_Id: return "malformed id"
-    case .Unknown_Asset: return "no such asset"
-    case .Unknown_Entity: return "no such entity"
-    case .Too_Deep: return "too many nested levels"
-    case .Invalid_Type: return "the type is not in the schema"
-    }
-    return "invalid text"
-}
-
-@(private="file")
 rule_text :: proc(rule:asset.Text_Rule) -> string {
     switch rule {
     case .None: return ""
@@ -507,7 +482,7 @@ asset_set :: proc(args:[]string) -> int {
         reader:serial.Text_Reader
         serial.text_reader_init(&reader,text)
         if serial.text_read(&reader,&doc.schema,location.type,location.bytes,location.is_text) {serial.text_end(&reader)}
-        if reader.error.code!=.None {return failed("set",args[0],"%s: %s in '%s' (column %d)",path,code_text(reader.error.code),text,reader.error.offset+1)}
+        if reader.error.code!=.None {return failed("set",args[0],"%s: %s in '%s' (column %d)",path,serial.text_error_words(reader.error.code),text,reader.error.offset+1)}
     }
     if error:=asset.document_save(&doc,args[0]);error!=.None {return failed("set",args[0],error_text(error))}
     return 0
@@ -606,7 +581,7 @@ asset_pack :: proc(args:[]string) -> int {
     problem,ok:=asset.document_text_read(&doc,string(text),loader)
     if !ok {
         line,column:=serial.text_position(string(text),problem.offset)
-        reason:=problem.code!=.None?code_text(problem.code):rule_text(problem.rule)
+        reason:=problem.code!=.None?serial.text_error_words(problem.code):rule_text(problem.rule)
         fmt.eprintfln("mirai asset pack: %s:%d:%d: %s",manifest,line,column,reason)
         return 1
     }

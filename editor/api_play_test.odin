@@ -401,7 +401,7 @@ play_get_reads_one_value_of_an_entity_as_play_inspect_and_play_check_name_it :: 
     api_result_shape_expect(t,text,Api_Play_Get_Result)
     parsed,_:=json.parse_string(text,allocator=context.temp_allocator)
     result,_:=parsed.(json.Object)
-    testing.expect_value(t,result["entity"].(json.String),hero)
+    testing.expect_value(t,result["entity"].(json.String),fmt.tprintf("0x%s",hero))
     testing.expect_value(t,u64(result["tick"].(json.Float)),start+2)
     position,_:=result["value"].(json.Array)
     testing.expect(t,len(position)==3 && position[0].(json.Float)==1 && position[1].(json.Float)==0,text)
@@ -503,7 +503,7 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
     testing.expect_value(t,len(running.holds.queue.items),0)
     error,text:=probe_call(f,"play.input",`{"actions":[{"name":"jump","ticks":1},{"name":"move","vector":[0,1]}]}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,fmt.tprintf(`"%016x"`,u64(f.seat))) && strings.contains(text,`"queued": 2`),text)
+    testing.expect(t,strings.contains(text,fmt.tprintf(`"0x%016x"`,u64(f.seat))) && strings.contains(text,`"queued": 2`),text)
     testing.expect(t,!input.seat_action(read,f.seat,PROBE_JUMP).down,"nothing acts before the next tick")
     step(f)
     testing.expect(t,input.seat_action(read,f.seat,PROBE_JUMP).pressed)
@@ -560,20 +560,20 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"ticks":300}`)
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Step_Result)
-    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran": 4`),text)
+    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran":4`),text)
     testing.expect_value(t,place.position.x,5)
     // The limit of the step, and the conditions of the step stop it too.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"ticks":2}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran": 2`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran":2`),text)
     place.position={1,0,0}
     points:=running.score.points+2
     error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"ticks":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met": true`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met":true`),text)
     // Behind the wall at x 6: it jumps, sidesteps and stops getting closer, its ticks left over.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[9,0,0],"move":"move"}}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran": 1800`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran":1800`),text)
     testing.expect(t,place.position.x==6 && place.position.y<0,"it reached the wall and jumped")
     refused:=[?]struct{params,says:string}{
         {`{"drive":{}}`,"name where it goes"},

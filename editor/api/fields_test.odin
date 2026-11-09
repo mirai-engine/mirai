@@ -18,6 +18,16 @@ count_handler :: proc(call:^Call) {
 
 // Every method takes the reserved params, over both routes and in its schema.
 @(test)
+a_wait_that_runs_out_repeats_a_long_value_cut_and_a_short_one_whole :: proc(t:^testing.T) {
+    short:=`{"a":1}`
+    testing.expect_value(t,wait_value_brief(context.temp_allocator,short),short)
+    long:=strings.concatenate({`"`,strings.repeat("x",4*WAIT_VALUE_BYTES,context.temp_allocator),`"`},context.temp_allocator)
+    brief:=wait_value_brief(context.temp_allocator,long)
+    testing.expect(t,len(brief)<2*WAIT_VALUE_BYTES && json_valid(context.temp_allocator,brief),brief)
+    testing.expect(t,json_member(brief,"omitted_bytes")!="",brief)
+}
+
+@(test)
 select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)

@@ -47,25 +47,8 @@ json_valid :: proc(allocator:runtime.Allocator,text:string) -> bool {
 // How many elements the caller gave to an array of the params: the elements
 // it did not give keep their defaults, which may look like given ones.
 params_array_count :: proc(call:^Call,field:string) -> (count:int,found:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,call.allocator)
-    defer serial.text_reader_destroy(&r)
-    if !serial.text_accept(&r,'{') {return}
-    for !serial.text_accept(&r,'}') {
-        name,ok:=serial.text_string(&r);if !ok || !serial.text_expect(&r,':') {return}
-        if name==field {
-            if !serial.text_expect(&r,'[') {return}
-            for !serial.text_accept(&r,']') {
-                if !serial.text_skip(&r) {return}
-                count+=1
-                if !serial.text_accept(&r,',') {if !serial.text_expect(&r,']') {return};break}
-            }
-            return count,true
-        }
-        if !serial.text_skip(&r) {return}
-        if !serial.text_accept(&r,',') {break}
-    }
-    return
+    elements,is_array:=json_elements(json_member(call.raw,field))
+    return len(elements),is_array
 }
 
 @(private)
@@ -230,11 +213,43 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
+// What an error adds about the methods whose names look like name; "" without one.
+@(private)
+methods_similar :: proc(s:^Server,name:string) -> string {
+    allocator:=base.arena_allocator(&s.scratch)
+    names:=make([]string,s.method_count,allocator)
+    for &method,i in s.methods[:s.method_count] {names[i]=method.name}
+    similar:=names_similar(names,name,allocator)
+    return similar!=""?format_text(allocator,"; similar: %s",similar):""
+}
+
+// Up to a dozen of names that look like name: those that contain its last word
+// first, then the others of its namespace (scene. of scene.spawn).
+names_similar :: proc(names:[]string,name:string,allocator:runtime.Allocator) -> string {
+    dot:=strings.last_index_byte(name,'.')
+    namespace:=name[:dot+1]
+    word:=strings.to_lower(name[dot+1:],allocator)
+    first:=make([dynamic]string,allocator)
+    second:=make([dynamic]string,allocator)
+    for each in names {
+        switch {
+        case word!="" && strings.contains(strings.to_lower(each,allocator),word): append(&first,each)
+        case namespace!="" && strings.has_prefix(each,namespace): append(&second,each)
+        }
+    }
+    append(&first,..second[:])
+    if len(first)>SIMILAR_NAMES {return format_text(allocator,"%s and %d more",strings.join(first[:SIMILAR_NAMES],", ",allocator),len(first)-SIMILAR_NAMES)}
+    return strings.join(first[:],", ",allocator)
+}
+
+@(private)
+SIMILAR_NAMES :: 12
+
 @(private)
 rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     method:=method_find(s,req.method)
     if method==nil {
-        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
+        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q%s",shorten(req.method),methods_similar(s,req.method)),""},false
     }
     start:=w.count
     err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)
@@ -292,7 +307,7 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         first:=params_parse_error(s,method,params,&r)
         problem:string
-        shaped,problem=params_shape(s,params_schema_text(s,method),params,names=false)
+        shaped,problem=params_shape(s,params_schema_text(s,method),params,by_hand=false)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
         if shaped==params {return nil,params,first,false}
@@ -370,22 +385,14 @@ clamped_write :: proc(out:^serial.Writer,mark:int,clamped:string) {
 
 // The raw JSON text of the given keys of an object; "" for keys it does not have.
 object_values :: proc(allocator:runtime.Allocator,text:string,keys:[]string,values:[]string) -> bool {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,allocator)
-    if !serial.text_accept(&r,'{') {return false}
-    if serial.text_accept(&r,'}') {return true}
-    for {
-        key,ok:=serial.text_string(&r)
-        if !ok || !serial.text_expect(&r,':') {return false}
-        slot:=-1
-        for name,i in keys {if name==key {slot=i;break}}
-        serial.text_peek(&r)
-        start:=r.offset
-        if !serial.text_skip(&r) {return false}
-        if slot>=0 {values[slot]=r.text[start:r.offset]}
-        if serial.text_accept(&r,',') {continue}
-        return serial.text_expect(&r,'}')
+    walk:Object_Walk
+    if !object_walk_init(&walk,text,allocator) {return false}
+    for name,value in object_walk_next(&walk) {
+        for key,i in keys {
+            if key==name {values[i]=value;break}
+        }
     }
+    return !walk.failed
 }
 
 // The text of a JSON string.

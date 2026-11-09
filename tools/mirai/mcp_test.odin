@@ -13,8 +13,8 @@ import "mirai:project"
 a_project_without_an_editor_says_how_to_start_one :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     start:="mirai session start C:/games/mine"
-    hint:=no_editor_text("C:/games/mine")
-    reply,answered:=mcp_no_editor(hint,`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+    absent:=mcp_absent("",Connection{project="C:/games/mine"},{},{api.UNREACHABLE,no_editor_text("C:/games/mine"),""})
+    reply,answered:=api.bridge_absent(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`,absent,context.allocator)
     testing.expect(t,answered)
     result:=api.json_member(reply,"result")
     testing.expect_value(t,api.json_member(reply,"id"),"1")
@@ -23,18 +23,18 @@ a_project_without_an_editor_says_how_to_start_one :: proc(t:^testing.T) {
     instructions,_:=api.json_string(api.json_member(result,"instructions"))
     testing.expect(t,strings.contains(instructions,start),instructions)
 
-    reply,answered=mcp_no_editor(hint,`{"jsonrpc":"2.0","id":"l","method":"tools/list"}`)
+    reply,answered=api.bridge_absent(`{"jsonrpc":"2.0","id":"l","method":"tools/list"}`,absent,context.allocator)
     testing.expect(t,answered)
     tools,_:=api.json_elements(api.json_member(api.json_member(reply,"result"),"tools"))
-    if testing.expect_value(t,len(tools),1) {
-        name,_:=api.json_string(api.json_member(tools[0],"name"))
+    if testing.expect_value(t,len(tools),2) {
+        name,_:=api.json_string(api.json_member(tools[1],"name"))
         testing.expect_value(t,name,api.MCP_CALL_TOOL)
-        description,_:=api.json_string(api.json_member(tools[0],"description"))
+        description,_:=api.json_string(api.json_member(tools[1],"description"))
         testing.expect(t,strings.contains(description,start),description)
-        testing.expect(t,api.json_valid(context.allocator,api.json_member(tools[0],"inputSchema")))
+        testing.expect(t,api.json_valid(context.allocator,api.json_member(tools[1],"inputSchema")))
     }
 
-    reply,answered=mcp_no_editor(hint,`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scene_inspect"}}`)
+    reply,answered=api.bridge_absent(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scene_inspect"}}`,absent,context.allocator)
     testing.expect(t,answered)
     testing.expect_value(t,api.json_member(api.json_member(reply,"result"),"isError"),"true")
     content,_:=api.json_elements(api.json_member(api.json_member(reply,"result"),"content"))
@@ -42,10 +42,10 @@ a_project_without_an_editor_says_how_to_start_one :: proc(t:^testing.T) {
     message,_:=api.json_string(api.json_member(api.json_member(text,"error"),"message"))
     testing.expect(t,strings.contains(message,start),message)
 
-    for other in ([]string{`{"jsonrpc":"2.0","id":2,"method":"ping"}`,`{"jsonrpc":"2.0","method":"notifications/initialized"}`,`not json`}) {
-        _,answered=mcp_no_editor(hint,other)
-        testing.expect(t,!answered,other)
-    }
+    reply,answered=api.bridge_absent(`{"jsonrpc":"2.0","id":2,"method":"ping"}`,absent,context.allocator)
+    testing.expect(t,answered && api.json_member(reply,"result")=="{}",reply)
+    _,answered=api.bridge_absent(`{"jsonrpc":"2.0","method":"notifications/initialized"}`,absent,context.allocator)
+    testing.expect(t,!answered,"a notification has no answer")
 }
 
 // A tool that opens a session is told by its method: the tool itself or what call names.

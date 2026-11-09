@@ -118,7 +118,7 @@ request_runtime_field :: proc(call:^api.Call) -> string {
         if authoring_field_present(call,field) {return field}
     }
     if authoring_field_present(call,"sequence") {
-        value,_:=authoring_json_field(call.raw,"sequence",call.allocator)
+        value:=api.json_member(call.raw,"sequence")
         if strings.contains(value,"Restart") || strings.contains(value,"Seek") {return "sequence"}
     }
     return ""
@@ -240,7 +240,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
     if goals>0 {
-        text,_:=authoring_json_field(call.raw,"goals",call.allocator)
+        text:=api.json_member(call.raw,"goals")
         for &goal,i in p.goals[:goals] {
             file:Authoring_File;defer asset.asset_close(&file.file)
             profile,ok:=program_modifier_profile(s,call,world,entity,program_modifier_goal_kind(goal.kind),&file);if !ok {return false}
@@ -253,11 +253,11 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         }
     }
     if authoring_field_present(call,"look") {
-        raw,_:=authoring_json_field(call.raw,"look",call.allocator)
+        raw:=api.json_member(call.raw,"look")
         if !request_aim(s,call,world,entity,.Look,.Head,p.look.target,p.look.weight,p.look.fade,p.look.off,raw,"look",applied) {return false}
     }
     if reaches>0 {
-        text,_:=authoring_json_field(call.raw,"reach",call.allocator)
+        text:=api.json_member(call.raw,"reach")
         for &reach,i in p.reach[:min(reaches,len(p.reach))] {
             raw,_:=authoring_json_element(text,i,call.allocator)
             hand:=lib.Body_Part.Hand_L if reach.hand==.Left else .Hand_R

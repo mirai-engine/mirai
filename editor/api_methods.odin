@@ -195,8 +195,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    ran:int `mirai:"label=play.step: the ticks it ran"`,
-    met:bool `mirai:"label=play.step with until: whether they held when it stopped"`,
     scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
 }
 
@@ -219,18 +217,7 @@ Api_Pause_Params :: struct {
 }
 
 Api_Play_Step_Params :: struct {
-    ticks:int `mirai:"optional,min=1,max=3600,label=Fixed ticks it runs"`,
-    seconds:f32 `mirai:"optional,label=Game time it runs in place of ticks: the nearest whole ticks and at least 1"`,
-    keys:core.Keys `mirai:"optional,label=Keys held in every tick; they go to the local seat with the focus; a key named by consecutive calls stays held with no release between them and one a call omits is released"`,
-    mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick; held across calls as keys are"`,
-    tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
-    tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside the first tick"`,
-    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of capture over the density): the UI of the game takes it and its clicks; it stays for the next steps"`,
-    mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks"`,
-    wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
-    text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
-    press:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The button of the screen on top to press by its name: the pointer goes over it and Left is held as a click takes; ticks or seconds run after the click; no other input with it"`,
-    gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick; gamepad i is that of the local seat of slot i when the game has several"`,
+    using input:Api_Play_Segment `mirai:"inline"`,
     focus:int `mirai:"optional,min=-1,max=3,label=The local seat (by slot) that gets the keys and the mouse from this step on; -1 keeps it"`,
     until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; ticks (or those of segments) is the most it runs and none run when they hold already"`,
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
@@ -334,7 +321,7 @@ Api_Editor_Action :: struct {
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
-    play_step_default:=Api_Play_Step_Params{ticks=1,focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
+    play_step_default:=Api_Play_Step_Params{input={ticks=1},focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
     build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
@@ -441,7 +428,7 @@ functions_fill :: proc(s:^Session,st:^Api_State,r:^Api_Status) {
         }
         for slot,i in top {
             if slot.index<0 {break}
-            api_text_put(r.functions[i].name[:],s.info.steps[slot.index].name)
+            base.text_set(r.functions[i].name[:],s.info.steps[slot.index].name)
             r.functions[i].ms=f32(f64(slot.ns)/f64(frames)/1e6)
         }
     }
@@ -458,7 +445,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
     r.frame,r.mode=s.frame,s.mode
     r.entities,r.selected=status_value.entities,status_value.selected
     r.dirty,r.headless,r.manual,r.gpu_enabled,r.has_project=status_value.dirty,s.headless,st.manual,app.renderer!=nil,s.has_project
-    api_text_put(r.document[:],status_value.document)
+    base.text_set(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
     r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.stats.extras_dropped
@@ -494,18 +481,18 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.cpu.render_prepare_ms,r.cpu.render_begin_ms=stats.cpu_prepare_ms,stats.cpu_begin_ms
         r.cpu.render_record_ms,r.cpu.render_end_ms=stats.cpu_record_ms,stats.cpu_end_ms
         for timing,i in stats.timings[:min(len(stats.timings),API_TIMINGS)] {
-            api_text_put(r.gpu_timings[i].name[:],timing.name)
+            base.text_set(r.gpu_timings[i].name[:],timing.name)
             r.gpu_timings[i].ms=timing.ms
         }
         backend,_:=reflect.enum_name_from_value(stats.backend)
-        api_text_put(r.backend[:],backend)
-        api_text_put(r.device[:],stats.device_name)
+        base.text_set(r.backend[:],backend)
+        base.text_set(r.device[:],stats.device_name)
         if app.device!=nil {
             r.validation_errors=rhi.device_validation_errors(app.device)
             used,budget:=rhi.device_memory(app.device)
             r.gpu_memory={f32(f64(used)/(1<<20)),f32(f64(budget)/(1<<20))}
         }
-        api_text_put(r.renderer_problem[:],stats.problem)
+        base.text_set(r.renderer_problem[:],stats.problem)
     }
     if a:=app.assets;a!=nil {
         r.asset_errors=len(host.assets_errors(a))+len(a.registry.reassigned)+len(a.registry.duplicates)
@@ -514,8 +501,8 @@ api_status :: proc(s:^Session,call:^api.Call) {
     }
     r.ui_dropped=s.gui.dropped
     r.build,r.build_errors=s.build.phase,len(s.build.diagnostics)
-    if len(s.build.diagnostics)>0 {api_text_put(r.build_message[:],s.build.diagnostics[0].message)}
-    api_text_put(r.collab[:],collab_summary(s))
+    if len(s.build.diagnostics)>0 {base.text_set(r.build_message[:],s.build.diagnostics[0].message)}
+    base.text_set(r.collab[:],collab_summary(s))
     r.api_calls,r.api_errors=st.server.stats.calls,st.server.stats.errors
 }
 
@@ -662,11 +649,11 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     api.write_key(w,"selection");serial.write_u8(w,'[')
     for e,i in s.selection.entities {
         if i>0 {serial.write_u8(w,',')}
-        api_write_id(w,api_entity_id(world,e))
+        api.write_id(w,api_entity_id(world,e))
     }
     serial.write_u8(w,']')
     api.write_key(w,"active")
-    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api_write_id(w,active)} else {serial.text_write_raw(w,"null")}
+    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
     tool,_:=reflect.enum_name_from_value(v.tool)
     // A plugin tool that holds the scene is the tool; one that lent it to the gizmo is the plugin.
     api.write_key(w,"tool");serial.text_write_string(w,api_lower(tool))
@@ -1381,7 +1368,7 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     }
     values:[4]string
     api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
-    until:=params.until[:api_list_count(values[0])]
+    until:=params.until[:api.json_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
     drive:^Api_Drive
@@ -1429,21 +1416,6 @@ api_step_drive_ticks :: proc(s:^Session,call:^api.Call,params:^Api_Play_Step_Par
     }
     if values[1]=="" && values[2]=="" {params.ticks=clamp(int(f64(API_DRIVE_DEFAULT_SECONDS)/max(f64(s.app.tick_dt),1e-6)+0.5),1,API_STEP_LIMIT)}
     return true
-}
-
-// The elements of a JSON array as text; 0 for anything else.
-@(private)
-api_list_count :: proc(text:string) -> int {
-    if text=="" {return 0}
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    if !serial.text_accept(&r,'[') || serial.text_accept(&r,']') {return 0}
-    count:=0
-    for serial.text_skip(&r) {
-        count+=1
-        if !serial.text_accept(&r,',') {break}
-    }
-    return count
 }
 
 // The keys and the mouse go to the local seat of slot from the next tick on,
@@ -1522,13 +1494,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
 // window takes it (host.ui_input_from_platform), and text typed.
 @(private)
 api_play_ui_input :: proc(given:core.Input,text:string) -> ui.Input {
-    frame:platform.Input_Frame
-    frame.keys_down,frame.keys_pressed,frame.keys_released=given.keys_down,given.keys_pressed,given.keys_released
-    frame.keys_repeated=given.keys_pressed
-    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=given.mouse_down,given.mouse_pressed,given.mouse_released
-    if .Left in given.mouse_pressed {frame.mouse_clicks[.Left]=1}
-    frame.mouse_position,frame.mouse_inside,frame.wheel=given.mouse_position,true,given.wheel
-    frame.gamepads=given.gamepads
+    frame:=host.input_frame_of(given)
     for c,i in text {frame.text[i]=c}
     frame.text_count=len(text)
     return host.ui_input_from_platform(&frame)
@@ -1558,8 +1524,8 @@ api_build_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Build_Result)
     result.building=s.build.phase==.Running || s.build.reload
     result.restarting=.Restart in s.requests
-    api_text_put(result.target[:],s.build.target==.Game?"game":"editor")
-    api_text_put(result.game[:],s.build.game)
+    base.text_set(result.target[:],s.build.target==.Game?"game":"editor")
+    base.text_set(result.game[:],s.build.game)
     result.phase=s.build.phase
     result.errors=len(s.build.diagnostics)
     result.seconds=s.build.seconds
@@ -1570,13 +1536,13 @@ api_build_result :: proc(s:^Session,call:^api.Call) {
             row:=&result.diagnostics[count]
             count+=1
             row.severity,row.line,row.column=d.severity,d.line,d.column
-            api_text_put(row.file[:],d.file)
-            api_text_put(row.message[:],d.message)
+            base.text_set(row.file[:],d.file)
+            base.text_set(row.message[:],d.message)
         }
     }
     has_error:=false
     for d in s.build.diagnostics {has_error||=d.severity==.Error}
-    if has_error || s.build.phase==.Failed {api_text_put(result.message[:],api_build_first_error(s))}
+    if has_error || s.build.phase==.Failed {base.text_set(result.message[:],api_build_first_error(s))}
 }
 
 @(private)
@@ -1641,7 +1607,7 @@ api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
     result:=api.call_result(call,Api_Build_Result)
     result.seconds=time.duration_seconds(time.tick_since(started))
     result.publishing=programs_publishing(s)
-    api_text_put(result.target[:],"shaders")
+    base.text_set(result.target[:],"shaders")
 }
 
 Api_Build_Check_Params :: struct {

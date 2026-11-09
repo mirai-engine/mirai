@@ -238,6 +238,11 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     err,_=run(&s,"long",`{"field0":[1,2]}`,buffer)
     usage,is_text=json_string(json_member(err.data,"usage"))
     testing.expect(t,is_text && len(usage)<=USAGE_BYTES && strings.contains(usage,"example: mirai rpc long"),"a long description keeps its example and fits")
+    testing.expect_value(t,method_register(&s,{name="closed",params_schema=`{"type":"object","properties":{"path":{"type":"string"},"values":{"type":"object"}},"additionalProperties":false}`,handler=noop}),Register_Error.None)
+    err,ran=run(&s,"closed",`{"pathx":"a"}`,buffer)
+    testing.expectf(t,!ran && strings.contains(err.message,`"pathx" is not a parameter; the nearest are path`) && strings.contains(err.data,"usage"),"a key a closed schema does not name: %s",err.message)
+    _,ran=run(&s,"closed",`{"path":"a","values":{"x":1}}`,buffer)
+    testing.expect(t,ran,"a key the schema names goes through")
     full:=s.out.count
     s.out.count=len(s.out.data)-USAGE_BYTES
     err,_=run(&s,"small",`{"bogus":2}`,buffer)

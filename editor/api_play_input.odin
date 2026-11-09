@@ -38,7 +38,7 @@ Api_Play_Input_Params :: struct {
 }
 
 Api_Play_Input_Result :: struct {
-    seat:[16]u8 `mirai:"text,label=The handle of the seat of the actions; empty with segments alone"`,
+    seat:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the seat of the actions; empty with segments alone"`,
     tick:u64 `mirai:"label=The tick they act from: the next one the game runs"`,
     queued:int `mirai:"label=Holds and releases asked"`,
     scripted:int `mirai:"label=Ticks of segments the next steps play"`,
@@ -133,7 +133,7 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     w:=run_ref(s,r)
     values:[2]string
     api.object_values(call.allocator,call.raw,{"actions","segments"},values[:])
-    count:=api_list_count(values[0])
+    count:=api.json_count(values[0])
     timeline:[]Api_Step_Input
     if values[1]!="" {
         ok:bool

@@ -194,7 +194,7 @@ api_panel_delete :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%s cannot be deleted",panel_file(s,id))
         return
     }
-    api_text_put(api.call_result(call,Api_Panel_Deleted).deleted[:],id)
+    base.text_set(api.call_result(call,Api_Panel_Deleted).deleted[:],id)
 }
 
 @(private)

@@ -382,7 +382,7 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
         // A part the entity lacks says why; the rest stays.
         if call.failed {
             reason,code:=call.error.message,""
-            if value,found:=authoring_json_field(call.error.data,"code",call.allocator);found {code=strings.trim(value,`"`)}
+            if value:=api.json_member(call.error.data,"code");value!="" {code=strings.trim(value,`"`)}
             call.failed,call.error=false,{}
             out.count=mark
             serial.text_write_raw(out,"{");api.write_bool(out,"available",false,true);api.write_text(out,"code",code);api.write_text(out,"reason",reason);serial.text_write_raw(out,"}")

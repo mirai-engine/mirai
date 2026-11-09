@@ -1,9 +1,7 @@
 package editor
 
-import "core:encoding/base64"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:host"
@@ -30,13 +28,26 @@ Api_Material_Capture_Params :: struct {
     wait:f32 `mirai:"optional,min=0,max=600,label=Seconds to wait for the previews to have the last change of a program: the stages they draw with; published before the rest"`,
 }
 
-@(private)
-API_MATERIAL_CAPTURE_RESULT :: `{"type":"object","properties":{"content":{"type":"array","description":"The image, with the views three per row and NaN pixels in magenta, and the text of structuredContent"},"structuredContent":{"type":"object","description":"The material and the program it shows, the PNG written and, per view, min, max and mean of its components, nan_count and uniform over the pixels the sphere covers"},"isError":{"const":false}},"required":["content","isError"]}`
+Api_Material_Capture_Result :: struct {
+    material:base.Asset_Id,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Its file under the assets folder"`,
+    program:[256]u8 `mirai:"text,label=The program it shows; empty for a material without one"`,
+    image:[API_PATH_BYTES]u8 `mirai:"text,label=The PNG written with the views three per row and NaN pixels in magenta; MCP also returns the image"`,
+    size:int `mirai:"label=Pixels of a side of each view"`,
+    views:[1]Api_Material_Capture_View `mirai:"list,label=What each view gives over the pixels the sphere covers"`,
+}
+Api_Material_Capture_View :: struct {
+    view:[16]u8 `mirai:"text"`,
+    pixels:int `mirai:"label=Pixels with finite values"`,
+    nan_count:int,
+    min,max,mean:[1]f32 `mirai:"list,label=One number per component"`,
+    uniform:bool `mirai:"label=The same value at every pixel"`,
+}
 
 @(private)
 material_capture_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Material_Capture_Params{size=256,wait=180}
-    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=Api_Material_Capture_Params,result_schema=API_MATERIAL_CAPTURE_RESULT,defaults=&defaults,flags={.Read_Only},mcp_content=true,run=api_material_capture})
+    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=Api_Material_Capture_Params,result=Api_Material_Capture_Result,writes_result=true,defaults=&defaults,flags={.Read_Only},run=api_material_capture})
 }
 
 // The shape previews draw a material on; captures draw it on the sphere.
@@ -89,9 +100,6 @@ view_value :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,pixe
     return
 }
 
-@(private)
-finite :: proc "contextless" (v:f32) -> bool {return v-v==0}
-
 // The color a view shows a pixel with: as the studio displays it, or its values made visible.
 @(private)
 view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,display:[]u8,pixel:int) -> [4]u8 {
@@ -102,7 +110,7 @@ view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,disp
         return u8(clamp(srgb*255+0.5,0,255))
     }
     v:=view_value(view,values,pixel)
-    for c in v {if !finite(c) {return {255,0,255,255}}}
+    for c in v {if !rpc_finite(c) {return {255,0,255,255}}}
     switch view {
     case .Lit:
         rgb:=display[pixel*4:][:3]
@@ -111,7 +119,7 @@ view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,disp
     case .Roughness,.Metallic: g:=encode(v.x);return {g,g,g,255}
     case .Normal:
         n:=values[.Normal][pixel].xyz
-        for c in n {if !finite(c) {return {255,0,255,255}}}
+        for c in n {if !rpc_finite(c) {return {255,0,255,255}}}
         length:=math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
         if length>0 {n/=length}
         return {u8(clamp((n.x*0.5+0.5)*255,0,255)),u8(clamp((n.y*0.5+0.5)*255,0,255)),u8(clamp((n.z*0.5+0.5)*255,0,255)),255}
@@ -167,7 +175,7 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
             if values[.Lit][pixel].w<0.5 {continue}
             v:=view_value(view,values,pixel)
             bad:=false
-            for c in 0..<st.components {bad||=!finite(v[c])}
+            for c in 0..<st.components {bad||=!rpc_finite(v[c])}
             if bad {st.nan_count+=1;continue}
             st.pixels+=1
             for c in 0..<st.components {
@@ -192,49 +200,35 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
         }
     }
     if problem:=api_png_write(s,path,image,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
-    // What it shows, as text for the agent and as structured content.
     info,_:=material_file(s,id)
     program:=base.text_get(info.program[:])
-    report:serial.Writer
-    serial.writer_init(&report,0,context.temp_allocator)
+    report:=call.out
     names:=MATERIAL_VIEW_NAMES
-    asset_named_write(s,&report,"material",id)
-    api.write_text(&report,"program",program)
-    api.write_text(&report,"image",path)
-    api.write_int(&report,"size",i64(side))
-    api.write_key(&report,"views");serial.write_u8(&report,'[')
+    asset_named_write(s,report,"material",id)
+    api.write_text(report,"program",program)
+    api.write_text(report,"image",path)
+    api.write_int(report,"size",i64(side))
+    api.write_key(report,"views");serial.write_u8(report,'[')
     for view,i in shown {
         st:=&stats[view]
-        if i>0 {serial.write_u8(&report,',')}
-        serial.write_u8(&report,'{')
-        api.write_text(&report,"view",names[view],true)
-        api.write_int(&report,"pixels",i64(st.pixels))
-        api.write_int(&report,"nan_count",i64(st.nan_count))
+        if i>0 {serial.write_u8(report,',')}
+        serial.write_u8(report,'{')
+        api.write_text(report,"view",names[view],true)
+        api.write_int(report,"pixels",i64(st.pixels))
+        api.write_int(report,"nan_count",i64(st.nan_count))
         low,high,mean:[3]f32
         uniform:=st.pixels>0
         for c in 0..<st.components {
             if st.pixels>0 {low[c],high[c],mean[c]=f32(st.min[c]),f32(st.max[c]),f32(st.sum[c]/f64(st.pixels))}
             uniform&&=st.max[c]-st.min[c]<=1e-3*max(1,abs(st.max[c]))
         }
-        api.write_numbers(&report,"min",low[:st.components])
-        api.write_numbers(&report,"max",high[:st.components])
-        api.write_numbers(&report,"mean",mean[:st.components])
-        api.write_bool(&report,"uniform",uniform)
-        serial.write_u8(&report,'}')
+        api.write_numbers(report,"min",low[:st.components])
+        api.write_numbers(report,"max",high[:st.components])
+        api.write_numbers(report,"mean",mean[:st.components])
+        api.write_bool(report,"uniform",uniform)
+        serial.write_u8(report,'}')
     }
-    serial.write_u8(&report,']')
-    serial.write_u8(&report,'}')
-    data,error:=os.read_entire_file(path,context.temp_allocator)
-    if error!=nil {api.call_fail(call,api.SERVER_ERROR,"The capture could not be read");return}
-    encoded,encode_error:=base64.encode(data,allocator=context.temp_allocator)
-    if encode_error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The capture could not be encoded");return}
-    stats_text:=string(serial.writer_bytes(&report))
-    if len(encoded)+2*len(stats_text)+256>call.server.max_response {api.call_fail(call,api.SERVER_ERROR,"The capture exceeds the response limit: ask for fewer views or a smaller size");return}
-    serial.text_write_raw(call.out,`{"content":[{"type":"image","data":"`)
-    serial.text_write_raw(call.out,encoded)
-    serial.text_write_raw(call.out,`","mimeType":"image/png"},{"type":"text","text":`)
-    serial.text_write_string(call.out,stats_text)
-    serial.text_write_raw(call.out,`}],"structuredContent":`)
-    serial.text_write_raw(call.out,stats_text)
-    serial.text_write_raw(call.out,`,"isError":false}`)
+    serial.write_u8(report,']')
+    serial.write_u8(report,'}')
+    api.call_image(call,path)
 }

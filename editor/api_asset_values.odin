@@ -56,11 +56,6 @@ asset_params :: proc(call:^api.Call,key:string,extra:[]string={}) -> (p:Asset_Pa
             start:=r.offset
             if !serial.text_skip(&r) {return p,failed(call,&r)}
             if other>=0 {p.extra[other]=call.raw[start:r.offset]} else {p.values=call.raw[start:r.offset]}
-        case:
-            more:=strings.builder_make(context.temp_allocator)
-            for each in extra {fmt.sbprintf(&more,", %s",each)}
-            api.call_failf(call,api.INVALID_PARAMS,"%s is not a parameter: %s, path, values%s",name,key,strings.to_string(more))
-            return
         }
         if serial.text_accept(&r,',') {continue}
         if !serial.text_expect(&r,'}') {return p,failed(call,&r)}
@@ -154,7 +149,7 @@ asset_resolve :: proc(s:^Session,name,kinds:string) -> (id:base.Asset_Id,problem
     if a==nil {return {},"The editor has no assets"}
     host.assets_scan(a)
     r:=&a.registry
-    if file,found:=asset.registry_find_path(r,name);found && asset_kinds_take(file.path,kinds) {return file.id,""}
+    if file,found:=asset.registry_find_path(r,name);found && file.state==.Asset && asset_kinds_take(file.path,kinds) {return file.id,""}
     matches:=make([dynamic]^asset.Registry_File,context.temp_allocator)
     for &file in r.files {
         if file.state==.Asset && asset_path_stem(file.path)==name && asset_kinds_take(file.path,kinds) {append(&matches,&file)}

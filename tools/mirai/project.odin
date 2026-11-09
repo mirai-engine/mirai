@@ -50,10 +50,10 @@ cmd_new :: proc(root:string,args:[]string) -> int {
             for found in build.templates_list(root) {fmt.printfln("  %-12s %s",found.name,found.summary)}
             return 0
         }
-        if value,matched,ok:=project_option(args,&i,"--name");matched {
+        if value,matched,ok:=option_value(args,&i,"--name");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --name needs a name");return 2}
             name=value
-        } else if value,matched,ok=project_option(args,&i,"--template");matched {
+        } else if value,matched,ok=option_value(args,&i,"--template");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --template needs a name; mirai new --list shows them");return 2}
             template=value
         } else if folder=="" {
@@ -241,7 +241,7 @@ play_arguments :: proc(args:[]string) -> []string {
 build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Keep,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
     for i:=0;i<len(args);i+=1 {
-        if value,matched,ok:=project_option(args,&i,"--out");matched {
+        if value,matched,ok:=option_value(args,&i,"--out");matched {
             if !ok || value=="" || target!=.Game {fmt.eprintfln("Usage: mirai %s",BUILD_PROJECT_USAGE);return 2,"",false}
             out=value
         } else {
@@ -394,13 +394,22 @@ library_current :: proc(root:string,p:^project.Project,target:build.Target,engin
     return c_libraries_current(root) && build.shaders_current(p) && build.target_state(p,target,"",dev,engine)==.Current
 }
 
-// The value of `--name value` at args[index^]; advances the index past it.
-@(private="file")
-project_option :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
-    if args[index^]!=name {return "",false,false}
-    if index^+1>=len(args) {return "",true,false}
+// The value after args[index^], advancing the index past it; false at their end.
+option_next :: proc(args:[]string,index:^int) -> (value:string,ok:bool) {
+    if index^+1>=len(args) {return "",false}
     index^+=1
-    return args[index^],true,true
+    return args[index^],true
+}
+
+// The value of `--name value` or `--name=value` at args[index^]; advances the index past it.
+option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
+    argument:=args[index^]
+    if argument==name {
+        value,ok=option_next(args,index)
+        return value,true,ok
+    }
+    if strings.has_prefix(argument,name) && len(argument)>len(name) && argument[len(name)]=='=' {return argument[len(name)+1:],true,true}
+    return "",false,false
 }
 
 project_error_text :: proc(folder:string,error:project.Error) -> string {return project.error_text(folder,error)}

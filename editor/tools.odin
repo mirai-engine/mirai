@@ -45,7 +45,7 @@ Import_Params :: struct {
     into:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
     profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
-    rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing +Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
+    rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing -Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
     rig_crotch:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the crotch in the model, where a skirt or a coat hides it; 0 is where the fit finds it"`,
     rig_neck:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the neck in the model; 0 is where the fit finds it"`,
     skeleton:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
@@ -93,9 +93,9 @@ Graphics_Status :: struct {
 }
 
 Api_Graphics_Option :: struct {
-    name:[16]u8 `mirai:"text,label=What option takes"`,
+    name:[16]u8 `mirai:"text,label=The option as the graphics popup names it"`,
     choice:[32]u8 `mirai:"text,label=Its choice now; empty when its values are none of the choices"`,
-    choices:[8][32]u8 `mirai:"text,trim,label=What choice takes"`,
+    choices:[8][32]u8 `mirai:"text,trim,label=The choices of the option"`,
 }
 
 @(private)
@@ -235,11 +235,11 @@ api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
 @(private)
 api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
-    api_text_put(result.preset[:],graphics_quality_label(g.quality))
+    base.text_set(result.preset[:],graphics_quality_label(g.quality))
     result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
-    api_text_put(result.antialiasing[:],base.text_get(technique[:]))
+    base.text_set(result.antialiasing[:],base.text_get(technique[:]))
     option_labels:=GRAPHICS_OPTION_LABELS
     offered:=erender.antialiasing_offered(s.app)
     choices:=graphics_choices(g^,offered)
@@ -247,10 +247,10 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics
     for option in Graphics_Option {
         row:=&result.options[at]
         at+=1
-        api_text_put(row.name[:],option_labels[option])
+        base.text_set(row.name[:],option_labels[option])
         labels:=graphics_labels(option,offered)
-        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {api_text_put(row.choice[:],labels[choice])}
-        for label,i in labels[:min(len(labels),len(row.choices))] {api_text_put(row.choices[i][:],label)}
+        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {base.text_set(row.choice[:],labels[choice])}
+        for label,i in labels[:min(len(labels),len(row.choices))] {base.text_set(row.choices[i][:],label)}
     }
     result.fps=s.app.stats.fps
     if s.app.renderer!=nil {

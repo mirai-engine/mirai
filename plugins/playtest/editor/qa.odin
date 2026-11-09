@@ -71,7 +71,7 @@ Api_Play_Qa_Violation :: struct {
     limit:f32 `mirai:"label=What it passed"`,
     count:int `mirai:"optional,label=Times it repeated"`,
     last_tick:u64 `mirai:"optional,label=Of its last time when it repeated"`,
-    entity:[16]u8 `mirai:"optional,text,label=The entity it is about"`,
+    entity:[editor.API_HANDLE_TEXT]u8 `mirai:"optional,text,label=The entity it is about"`,
     code:[core.PROBLEM_CODE]u8 `mirai:"optional,text,label=Of a problem"`,
     text:[core.PROBLEM_TEXT]u8 `mirai:"optional,text,label=What the problem says"`,
 }
@@ -450,7 +450,7 @@ qa_violations_write :: proc(s:^editor.Session,out:^serial.Writer,q:^Run_Qa) {
         }
         if v.entity!=core.NONE {
             api.write_key(out,"entity")
-            serial.write_u8(out,'"');serial.text_write_hex(out,u64(v.entity),16,false);serial.write_u8(out,'"')
+            serial.write_u8(out,'"');serial.text_write_hex(out,u64(v.entity));serial.write_u8(out,'"')
         }
         if v.has_problem {
             api.write_text(out,"code",core.problem_code(&v.problem))

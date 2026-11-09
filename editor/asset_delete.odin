@@ -191,16 +191,8 @@ api_asset_named :: proc(s:^Session,call:^api.Call,name:string) -> (r:^asset.Regi
         api.call_fail(call,api.SERVER_ERROR,"The editor has no asset folder it can change")
         return
     }
-    is_id:bool
-    id,is_id=serial.text_parse_asset_id(name)
-    if !is_id {
-        file,found:=asset.registry_find_path(r,name)
-        if !found || file.state!=.Asset {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not an asset: give its path under the asset folder or its id, as asset.list lists them",name)
-            return
-        }
-        id=file.id
-    }
+    problem:string
+    if id,problem=asset_resolve(s,name,"");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     if _,found:=asset.registry_find(r,id);!found {
         api.call_failf(call,api.INVALID_PARAMS,"No asset has the id %s: asset.list lists them",name)
         return

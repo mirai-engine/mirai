@@ -85,14 +85,11 @@ api_filmstrip_past_cells :: proc(s:^Session,r:^Run,strip:^Api_Filmstrip,first,to
     h:=r.history
     if !history_seek(s,r,first).ok {return "No memory to go back to that tick"}
     if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
-    last:=history_frame_of(h,first).tick
-    for serial:=first+1;serial<=h.serial;serial+=1 {
-        f:=history_frame_of(h,serial)
-        if f==nil || f.tick>to {break}
-        if !history_seek(s,r,serial).ok {return "No memory to play the past again"}
-        if f.tick<last+every {continue}
+    walk:=history_walk(h,first,to,every)
+    for _,due in history_walk_next(&walk) {
+        if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
+        if !due {continue}
         if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
-        last=f.tick
     }
     return ""
 }

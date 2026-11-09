@@ -84,7 +84,7 @@ Api_Inspect_Entity :: struct {
     active:bool `mirai:"optional,label=Whether it runs: false when it or a parent is disabled"`,
     off:[1][64]u8 `mirai:"text,list,optional,label=The components turned off by themselves"`,
     prefab:Api_Inspect_Prefab `mirai:"optional,label=scene.inspect: the link of a member of an instance of a prefab"`,
-    components:u8 `mirai:"any,optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); with summary the list of their names; with root only the fields that differ from the value it starts with"`,
+    components:u8 `mirai:"any,optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); without components in the params the list of their names; with root only the fields that differ from the value it starts with"`,
     children:u8 `mirai:"any,optional,label=With root: the entities that hang from it in their order nested the same way"`,
 }
 Api_Inspect_Prefab :: struct {
@@ -104,8 +104,8 @@ Api_Play_Player_Result :: struct {
     camera:Api_Play_Player_Entity `mirai:"label=The camera the view shows; that of the body when the view names none"`,
 }
 Api_Play_Player_Entity :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
-    id:[16]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
+    id:[API_HANDLE_TEXT]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
     name:[64]u8 `mirai:"text"`,
     position:[3]f32 `mirai:"label=Local to the parent"`,
     rotation_deg:[3]f32 `mirai:"label=Local to the parent in degrees"`,
@@ -203,7 +203,7 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
     st:=api_state(s)
     id:=api_entity_id(w,e)
     serial.text_write_raw(out,`{"id":`)
-    if id!=0 {api_write_id(out,id)} else {serial.text_write_raw(out,"null")}
+    if id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
     if play {
         api.write_key(out,"entity")
         serial.write_u8(out,'"');serial.text_write_hex(out,u64(e));serial.write_u8(out,'"')
@@ -212,7 +212,7 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
     api.write_key(out,"parent")
     parent:=entity_parent(w,e)
     if play && parent!=core.NONE {serial.write_u8(out,'"');serial.text_write_hex(out,u64(parent));serial.write_u8(out,'"')}
-    else if parent!=core.NONE && api_entity_id(w,parent)!=0 {api_write_id(out,api_entity_id(w,parent))}
+    else if parent!=core.NONE && api_entity_id(w,parent)!=0 {api.write_id(out,api_entity_id(w,parent))}
     else {serial.text_write_raw(out,"null")}
     local:=entity_local(w,e)
     if !components {
@@ -250,7 +250,7 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
         if link,linked:=prefab_link_of(s,id);linked {
             api.write_key(out,"prefab");serial.text_write_raw(out,`{"instance":`);serial.text_write_uint(out,u64(link.instance))
             api.write_key(out,"asset");api_asset_write(out,link.asset)
-            api.write_key(out,"source");api_write_id(out,link.source)
+            api.write_key(out,"source");api.write_id(out,link.source)
             api.write_key(out,"root");api.write_flag(out,link.root)
             serial.write_u8(out,'}')
         }
@@ -937,7 +937,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(w,`{"results":[`)
     for id,at in ids {
         if at>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"id":`);api_write_id(w,id);serial.write_u8(w,'}')
+        serial.text_write_raw(w,`{"id":`);api.write_id(w,id);serial.write_u8(w,'}')
     }
     serial.text_write_raw(w,"]}")
 }
@@ -948,7 +948,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
 api_file_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_File_Result)
     result.entities,result.dirty=core.world_entities(edited_world(s)).alive,document_dirty(s)
-    api_text_put(result.path[:],document_path(s.document))
+    base.text_set(result.path[:],document_path(s.document))
 }
 
 @(private)

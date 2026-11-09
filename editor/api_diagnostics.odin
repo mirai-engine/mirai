@@ -167,7 +167,7 @@ api_problems_write :: proc(w:core.World_Ref,problems:^core.Problems,out:^serial.
         named:=p.entity!=core.NONE
         serial.write_u8(out,'{')
         api.write_key(out,"id",true)
-        if id:=api_entity_id(w,p.entity);named && id!=0 {api_write_id(out,id)} else {serial.text_write_raw(out,"null")}
+        if id:=api_entity_id(w,p.entity);named && id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
         api.write_key(out,"entity")
         if named {serial.write_u8(out,'"');serial.text_write_hex(out,u64(p.entity));serial.write_u8(out,'"')} else {serial.text_write_raw(out,"null")}
         api.write_text(out,"name",entity_name(w,p.entity) if named else "")

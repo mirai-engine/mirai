@@ -51,7 +51,7 @@ Api_Play_Get_Params :: struct {
 }
 
 Api_Play_Get_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
     value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
 }
@@ -99,7 +99,7 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
         e:=core.NONE
         if entity!="" {
             several:string
-            e,several=api_entity_find(w,entity,true,allocator)
+            e,several=api_entity_find(w,entity,allocator)
             if several!="" {return {},several}
         }
         if c.view {
@@ -186,7 +186,7 @@ api_play_check :: proc(s:^Session,call:^api.Call) {
     if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     values:[1]string
     api.object_values(call.allocator,call.raw,{"conditions"},values[:])
-    count:=api_list_count(values[0])
+    count:=api.json_count(values[0])
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"conditions is empty: give what must hold");return}
     w:=run_ref(s,r)
     reads:=make([]Api_Condition_Read,count,context.temp_allocator)
@@ -217,8 +217,8 @@ api_entity_field :: proc(s:^Session,w:core.World_Ref,e:core.Entity,field:string,
     if t:=component_table(s,head);t!=nil && t.name==head && t.place==.World && st.types[api_table_index(s,t)]!=serial.TYPE_NONE {
         c:Api_Play_Condition
         api_handle_put(c.entity[:],e)
-        api_text_put(c.component[:],head)
-        api_text_put(c.field[:],rest)
+        base.text_set(c.component[:],head)
+        base.text_set(c.field[:],rest)
         read,wrong:=api_condition_read(s,w,&c,allocator)
         if wrong!="" {return "",wrong}
         if read.value=="null" {return "",fmt.tprintf("the entity has no %s: play.inspect lists its components",head)}
@@ -245,9 +245,7 @@ api_play_get :: proc(s:^Session,call:^api.Call) {
     value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
     if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
     out:=call.out
-    handle:[16]u8
-    api_handle_put(handle[:],e)
-    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,string(handle[:]))
+    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,api_handle_text(e))
     api.write_key(out,"tick")
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}

@@ -61,12 +61,12 @@ authoring_graph_patch :: proc(s:^editor.Session,call:^api.Call) {
     if authoring_field_present(call,"animation") {definition.animation=patch.animation};if authoring_field_present(call,"output") {definition.output=patch.output}
     nodes,_:=api.params_array_count(call,"nodes");parameters,_:=api.params_array_count(call,"parameters")
     if !graph_named_unique(call,patch.nodes[:nodes],"nodes") || !graph_named_unique(call,patch.parameters[:parameters],"parameters") {return}
-    text,_:=authoring_json_field(call.raw,"nodes",call.allocator)
+    text:=api.json_member(call.raw,"nodes")
     for &node,i in patch.nodes[:nodes] {
         index,valid:=graph_named_reference(call,definition.nodes[:counts.nodes],base.text_get(node.name[:]),fmt.tprintf("nodes[%d].name",i));if !valid {return};if index<0 {authoring_failure(call,fmt.tprintf("nodes[%d].name",i),"Required","an existing node name","empty","A node patch needs a name");return}
         element,_:=authoring_json_element(text,i,call.allocator);if !authoring_patch_value(call,element,&definition.nodes[index]) || !graph_source_sync(call,definition.nodes[index],element,fmt.tprintf("nodes[%d]",i)) {return}
     }
-    text,_=authoring_json_field(call.raw,"parameters",call.allocator)
+    text=api.json_member(call.raw,"parameters")
     for &parameter,i in patch.parameters[:parameters] {
         index,valid:=graph_named_reference(call,definition.parameters[:counts.parameters],base.text_get(parameter.name[:]),fmt.tprintf("parameters[%d].name",i));if !valid {return};if index<0 {authoring_failure(call,fmt.tprintf("parameters[%d].name",i),"Required","an existing parameter name","empty","A parameter patch needs a name");return}
         element,_:=authoring_json_element(text,i,call.allocator);if !authoring_patch_value(call,element,&definition.parameters[index]) {return}

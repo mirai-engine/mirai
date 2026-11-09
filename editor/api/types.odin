@@ -102,7 +102,6 @@ Method_Desc :: struct {
     handler:Handler,
     user:rawptr,
     flags:Method_Flags,
-    mcp_content:bool,     // result is an MCP content envelope instead of JSON text
     writes_result:bool,   // the handler writes the result as JSON into call.out; result only gives its schema
 }
 
@@ -117,7 +116,6 @@ Method :: struct {
     handler:Handler,
     user:rawptr,
     flags:Method_Flags,
-    mcp_content:bool,
     writes_result:bool,
     clamps:bool, // a field of its params is tagged clamp
 }

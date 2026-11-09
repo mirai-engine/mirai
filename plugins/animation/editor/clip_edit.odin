@@ -248,7 +248,7 @@ clip_analyze :: proc(s:^editor.Session,call:^api.Call) {
 // The lib edit of a step, after checking that it names what its verb needs.
 @(private)
 clip_step :: proc(call:^api.Call,step:Clip_Edit_Step,raw:string,index:int) -> (edit:lib.Clip_Edit,ok:bool) {
-    has :: proc(raw,field:string) -> bool {_,found:=authoring_json_field(raw,field);return found}
+    has :: proc(raw,field:string) -> bool {return api.json_member(raw,field)!=""}
     path:=fmt.tprintf("edits[%d]",index)
     need :: proc(call:^api.Call,raw,path,field,expected:string) -> bool {
         if has(raw,field) {return true}
@@ -331,7 +331,7 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
     steps,_:=api.params_array_count(call,"edits")
     steps=min(steps,CLIP_EDIT_STEPS)
-    edits_raw,_:=authoring_json_field(call.raw,"edits",call.allocator)
+    edits_raw:=api.json_member(call.raw,"edits")
     max_frames:=aa.ANIMATION_MAX_KEYS/max(len(skeleton.bones)*3,1)
     frames:=sampled.frames
     markers:=sampled.markers

@@ -35,7 +35,7 @@ Api_Play_View :: struct {
     tick:u64,
     seconds:f64 `mirai:"label=The time of the game"`,
     game_camera:bool `mirai:"label=The view is of a camera of the game; false: of the editor or the default one"`,
-    camera:[16]u8 `mirai:"text,label=The handle of the camera it is drawn from; empty without one"`,
+    camera:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the camera it is drawn from; empty without one"`,
     name:[64]u8 `mirai:"text,label=Of the camera"`,
     position:[3]f32 `mirai:"label=Of the eye in the world"`,
     rotation_deg:[3]f32 `mirai:"label=In the world in degrees"`,
@@ -56,7 +56,7 @@ Api_Play_View_Blend :: struct {
     seconds:f32 `mirai:"label=How long the blend takes; 0 when it does not blend"`,
 }
 Api_Play_View_Follow :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of what its Camera_Follow follows; empty when it follows nothing"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of what its Camera_Follow follows; empty when it follows nothing"`,
     name:[64]u8 `mirai:"text"`,
     distance:f32 `mirai:"label=Meters from the eye to the origin of that entity"`,
     pivot_distance:f32 `mirai:"label=Meters from the eye to the pivot the camera follows with and turns around"`,
@@ -64,7 +64,7 @@ Api_Play_View_Follow :: struct {
     pitch_deg:f32 `mirai:"label=The pitch it looks with now; 0 until it starts: for an Orbit positive above the pivot looking down and for Eyes positive up"`,
 }
 Api_Play_View_Shown :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity; empty for a world point"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity; empty for a world point"`,
     name:[64]u8 `mirai:"text"`,
     alive:bool `mirai:"label=A world point or an entity that is there; one that is gone is not on the screen"`,
     world:[3]f32 `mirai:"label=The point it projects: of an entity its middle (the center of mass of a body or the middle of what hangs from it)"`,
@@ -117,7 +117,7 @@ play_view_api_register :: proc(s:^Session,st:^Api_State) {
 
 @(private)
 handle_text :: proc(e:core.Entity,allocator:=context.temp_allocator) -> string {
-    return e==core.NONE?"":fmt.aprintf("%016x",u64(e),allocator=allocator)
+    return e==core.NONE?"":api_handle_text(e,allocator)
 }
 
 // The view of w with where targets show, as JSON; problem when the game has no view.

@@ -301,11 +301,11 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         return
     }
     result:=api.call_result(call,Api_Play_Record_Result)
-    api_text_put(result.path[:],folder)
-    api_text_put(result.first[:],project.path(folder,fmt.tprintf("frame_%06d.%s",0,extension),allocator=context.temp_allocator))
-    api_text_put(result.audio[:],audio_path)
-    api_text_put(result.sheet[:],sheet_path)
-    api_text_put(result.manifest[:],manifest_path)
+    base.text_set(result.path[:],folder)
+    base.text_set(result.first[:],project.path(folder,fmt.tprintf("frame_%06d.%s",0,extension),allocator=context.temp_allocator))
+    base.text_set(result.audio[:],audio_path)
+    base.text_set(result.sheet[:],sheet_path)
+    base.text_set(result.manifest[:],manifest_path)
     result.frames,result.fps,result.width,result.height,result.format=done,p.fps,width,height,p.format
     result.tick_from=start.tick
     result.real_seconds=time.duration_seconds(time.tick_since(began))

@@ -30,7 +30,6 @@ TOOLS_RESERVE :: 512
 MCP_CALL_TOOL :: "call"
 @(private)
 MCP_CALL_DESCRIPTION :: "Runs any method of the editor or of a plugin by its name (such as animation.request or panel.save) with its params. engine_describe is a short index of the methods; with methods (a list of names) it gives the JSON Schema of their params and result, and with plugin or prefix the summaries and guides of an area. Every method also takes _select (fields of its result to keep, such as a.b,c[0].d) and _wait_until (a condition such as phase=Built, which it is called again until)."
-@(private)
 MCP_CALL_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string","description":"The name of the method, such as terrain.sculpt"},"params":{"type":"object","description":"Its params, as engine_describe gives their schema"}},"required":["method"],"additionalProperties":false}`
 
 @(private)
@@ -167,7 +166,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         name,arguments=method_name,call[1]!=""?call[1]:"{}"
     }
     method:=tool_find(s,name)
-    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q; engine_describe lists the methods",shorten(name)),""},false}
+    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q%s; engine_describe lists the methods",shorten(name),methods_similar(s,tool_as_method(name))),""},false}
     serial.writer_reset(&s.stage)
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
     if ok && s.stage.overflow>0 {
@@ -194,10 +193,6 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         s.stats.errors+=1
         raw(&s.stage,`{"error":`);write_error_object(base.arena_allocator(&s.scratch),&s.stage,err);raw(&s.stage,"}")
     }
-    if ok && method.mcp_content {
-        raw(w,string(serial.writer_bytes(&s.stage)))
-        return {},true
-    }
     raw(w,`{"content":[{"type":"text","text":`)
     serial.text_write_string(w,ok && selected!=""?selected:string(serial.writer_bytes(&s.stage)))
     raw(w,`}`)
@@ -206,6 +201,14 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     raw(w,`]`)
     raw(w,`,"isError":`);raw(w,ok?"false":"true");raw(w,"}")
     return {},true
+}
+
+// A name of a tool as the method it may mean: its first underscore a dot.
+@(private)
+tool_as_method :: proc(name:string) -> string {
+    if strings.contains_rune(name,'.') {return name}
+    named,_:=strings.replace(name,"_",".",1,context.temp_allocator)
+    return named
 }
 
 @(private)

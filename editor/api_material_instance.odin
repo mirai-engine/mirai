@@ -177,7 +177,6 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         case "parameters": parameters,_=rpc_raw(&request)
         case "textures": textures,_=rpc_raw(&request)
         case "overlays": overlays,_=rpc_raw(&request)
-        case: rpc_fail_type(&request,"%s is not a parameter: entity, slot, values, parameters, textures, overlays",key)
         }
     }
     if request.failed {return}

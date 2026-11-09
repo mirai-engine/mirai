@@ -14,6 +14,7 @@ import "mirai:std/serial"
 @(private) ECHO_BYTES :: 240 // of a list of names an error repeats
 @(private) BRIEF_BYTES :: 80 // of a value inside a message
 @(private) NOTE_BYTES :: 480 // of what _select says it did not find
+@(private) WAIT_VALUE_BYTES :: 240 // of the value a wait that ran out repeats
 
 // <field><op><value> of _wait_until.
 Condition :: struct {
@@ -175,26 +176,46 @@ json_path_text :: proc(steps:[]Json_Step) -> string {
 // A member of a JSON object: its name and its value as raw JSON text.
 Json_Member :: struct {name,value:string}
 
+// The members of a JSON object one by one: the one walk over an object.
+Object_Walk :: struct {
+    r:serial.Text_Reader,
+    empty,done:bool,
+    failed:bool, // what it read is not an object
+}
+
+// False when text does not start an object.
+object_walk_init :: proc(walk:^Object_Walk,text:string,allocator:=context.temp_allocator) -> bool {
+    serial.text_reader_init(&walk.r,text,allocator)
+    if !serial.text_accept(&walk.r,'{') {walk.failed=true;return false}
+    walk.empty=serial.text_accept(&walk.r,'}')
+    return true
+}
+
+// The next member: its name, valid until the next call, and its value as raw JSON text.
+object_walk_next :: proc(walk:^Object_Walk) -> (name,value:string,more:bool) {
+    r:=&walk.r
+    if walk.empty || walk.done || walk.failed {return}
+    fail :: proc(walk:^Object_Walk) -> (string,string,bool) {walk.failed=true;return "","",false}
+    key,read:=serial.text_string(r)
+    if !read || !serial.text_expect(r,':') {return fail(walk)}
+    serial.text_peek(r)
+    start:=r.offset
+    if !serial.text_skip(r) {return fail(walk)}
+    value=r.text[start:r.offset]
+    if !serial.text_accept(r,',') {
+        if !serial.text_expect(r,'}') {return fail(walk)}
+        walk.done=true
+    }
+    return key,value,true
+}
+
 // The members of a JSON object in order; not ok when text is not one.
 json_members :: proc(text:string,allocator:=context.temp_allocator) -> (members:[dynamic]Json_Member,ok:bool) {
     members=make([dynamic]Json_Member,allocator)
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    if !serial.text_accept(&r,'{') {return}
-    if serial.text_accept(&r,'}') {return members,serial.text_end(&r)}
-    for {
-        name:=serial.text_string(&r) or_return
-        member:=Json_Member{name=strings.clone(name,allocator)}
-        serial.text_expect(&r,':') or_return
-        serial.text_peek(&r)
-        start:=r.offset
-        serial.text_skip(&r) or_return
-        member.value=r.text[start:r.offset]
-        append(&members,member)
-        if serial.text_accept(&r,',') {continue}
-        serial.text_expect(&r,'}') or_return
-        return members,serial.text_end(&r)
-    }
+    walk:Object_Walk
+    if !object_walk_init(&walk,text) {return}
+    for name,value in object_walk_next(&walk) {append(&members,Json_Member{strings.clone(name,allocator),value})}
+    return members,!walk.failed && serial.text_end(&walk.r)
 }
 
 // The elements of a JSON array as raw JSON text; not ok when text is not one.
@@ -222,6 +243,12 @@ json_member :: proc(text,name:string) -> string {
         if member.name==name {return member.value}
     }
     return ""
+}
+
+// How many elements a JSON array has; 0 for anything else.
+json_count :: proc(text:string) -> int {
+    elements,_:=json_elements(text)
+    return len(elements)
 }
 
 // The text of a JSON string; not ok when value is not a string.
@@ -293,7 +320,7 @@ PARAM_WAIT_SECONDS :: "_wait_seconds"
 WAIT_UNTIL_SECONDS :: 300 // how long _wait_until waits without _wait_seconds, under the timeouts of the clients of MCP
 WAIT_UNTIL_PAUSE :: 0.1   // seconds between its calls
 
-@(private) RESERVED_SCHEMA :: `"_select":{"type":"string"},"_wait_until":{"type":"string"}`
+@(private) RESERVED_SCHEMA :: `"_select":{"type":"string"},"_wait_until":{"type":"string"},"_wait_seconds":{"type":"number"}`
 
 param_reserved :: proc(name:string) -> bool {return name==PARAM_SELECT || name==PARAM_WAIT_UNTIL || name==PARAM_WAIT_SECONDS}
 
@@ -411,7 +438,7 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         if met {break}
         if time.duration_seconds(time.tick_since(started))>limit {
             message:=format_text(allocator,"%s did not meet %s in %.0f s: %s is %s",method.name,options.until.text,limit,options.until.path.text,json_brief(value))
-            return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),value)},false,"",""
+            return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),wait_value_brief(allocator,value))},false,"",""
         }
         base.arena_rewind(&s.scratch,mark)
         if !server_pause(s) {return {CLOSED,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
@@ -420,6 +447,15 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         selected,note=fields_select(allocator,string(out.data[start:out.count]),options.select)
     }
     return
+}
+
+// The value a wait that ran out repeats: whole when it is short, else its
+// first bytes and how many more it has.
+@(private)
+wait_value_brief :: proc(allocator:runtime.Allocator,value:string) -> string {
+    prefix,omitted:=text_cut(value,WAIT_VALUE_BYTES)
+    if omitted==0 {return value}
+    return format_text(allocator,`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix,allocator),omitted)
 }
 
 @(private)
