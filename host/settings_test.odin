@@ -19,7 +19,7 @@ a_world_reads_the_settings_of_the_engine_under_those_of_the_project :: proc(t:^t
     defer os.remove_all(folder)
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
-    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 2, "Layered": {"engine": 2, "both": 2}, "Rule": {"value": 5}}`)==nil)
+    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layered": {"engine": 2, "both": 2}, "Rule": {"value": 5}}`)==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Layered": {"both": 3}}`)==nil)
     storages:=[2]core.Storage_Info{
         {
@@ -49,10 +49,10 @@ the_options_of_the_player_are_the_layer_on_top :: proc(t:^testing.T) {
     defer os.remove_all(folder)
     root,engine,player:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator),project.path(folder,"player",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil && os.make_directory_all(player)==nil)
-    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 2, "Layered": {"engine": 2}}`)==nil)
+    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layered": {"engine": 2}}`)==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Layered": {"both": 3}, "Rule": {"value": 5}}`)==nil)
     options:=project.settings_file(.Player,root,engine,context.temp_allocator,player)
-    testing.expect(t,os.write_entire_file(options,`{"version": 2, "Layered": {"code": 7}, "Rule": {"value": 9}}`)==nil)
+    testing.expect(t,os.write_entire_file(options,`{"version": 3, "Layered": {"code": 7}, "Rule": {"value": 9}}`)==nil)
     storages:=[2]core.Storage_Info{
         {
             name="Layered",type=Layered,info=type_info_of(Layered),offset=offset_of(Layered_World,layered),place=.World,setting=.Machine,
