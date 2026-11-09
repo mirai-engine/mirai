@@ -64,7 +64,6 @@ Net_Stats :: struct {
 @(private) FRAGMENT_POSE :: wire.Fragment_Id(0)
 @(private) FRAGMENT_MOTION :: wire.Fragment_Id(1)
 @(private) FRAGMENT_DRIVER :: wire.Fragment_Id(2)
-@(private) FRAGMENT_COMPONENTS :: 3
 
 // What a type of the protocol holds where: its fragments, as this end reads them.
 @(private)

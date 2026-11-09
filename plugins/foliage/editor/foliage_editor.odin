@@ -31,8 +31,6 @@ FIELD_WIDTH :: f32(84) // of the number fields of the panel: a value and its uni
 TOOL :: "foliage"
 RING_SEGMENTS :: 64
 SCROLL_GUTTER :: ui.SCROLL_BAR+4 // the bar of the scroll area floats over the right edge of its content
-RING_COLOR :: ui.Color{255,217,51,255} // the ring of the brush, as the terrain's
-RING_BORDER :: ui.Color{18,20,24,230}
 // A held brush touches the foliage at most this many times a second, with
 // the time it waited: what a second of it does stays the same.
 BRUSH_RATE :: 30

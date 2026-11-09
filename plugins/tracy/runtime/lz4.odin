@@ -22,10 +22,6 @@ lz4_bound :: proc "contextless" (size:int) -> int {return size+size/255+16}
 load32 :: #force_inline proc "contextless" (p:[^]u8,at:int) -> u32 {return intrinsics.unaligned_load((^u32)(&p[at]))}
 @(private="file")
 load64 :: #force_inline proc "contextless" (p:[^]u8,at:int) -> u64 {return intrinsics.unaligned_load((^u64)(&p[at]))}
-@(private="file")
-copy16 :: #force_inline proc "contextless" (dst:[^]u8,to:int,src:[^]u8,from:int) {
-    intrinsics.unaligned_store((^[16]u8)(&dst[to]),intrinsics.unaligned_load((^[16]u8)(&src[from])))
-}
 
 @(private="file")
 length_bytes :: #force_inline proc "contextless" (length:int) -> int {return length>=15?(length-15)/255+1:0}
