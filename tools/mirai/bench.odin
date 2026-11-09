@@ -64,6 +64,32 @@ Bench_Summary :: struct {
     },
 }
 
+// profile.capture of a base from before its tracks, with the times of the
+// CPU and the GPU on the frame and the passes in gpu: bench_summary reads it
+// as Bench_Summary. It goes once main answers with tracks.
+@(private="file")
+Bench_Summary_Untracked :: struct {
+    frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
+    parts:[]struct {name:string,mean_ms:f64},
+    gpu:[]struct {name:string,mean_ms:f64},
+    zones:[]struct {name,thread:string,self_ms:f64},
+}
+
+// The summary of a profile.capture of either shape.
+@(private)
+bench_summary :: proc(text:string,summary:^Bench_Summary) -> bool {
+    if json.unmarshal_string(text,summary)==nil {return true}
+    old:Bench_Summary_Untracked
+    if json.unmarshal_string(text,&old)!=nil {return false}
+    summary^={}
+    summary.frame={old.frame.p50_ms,old.frame.p95_ms}
+    summary.cpu.ms,summary.gpu.mean_ms=old.frame.cpu_ms,old.frame.gpu_ms
+    summary.cpu.parts=transmute(type_of(summary.cpu.parts))old.parts
+    summary.cpu.zones=transmute(type_of(summary.cpu.zones))old.zones
+    summary.gpu.passes=transmute(type_of(summary.gpu.passes))old.gpu
+    return true
+}
+
 // One measure across the captures: of head and of base, one per pair; NaN
 // where that capture does not have it.
 Bench_Row :: struct {
@@ -260,7 +286,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         if !ok {return 1}
         summary:Bench_Summary
         value,parse_error:=json.parse_string(text,parse_integers=true)
-        if parse_error!=nil || json.unmarshal_string(text,&summary)!=nil {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
+        if parse_error!=nil || !bench_summary(text,&summary) {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
         append(&report.captures,Bench_Capture{name,pair,value})
         append(&summaries[run],summary)
         if object,is_object:=value.(json.Object);is_object && conditions[run]==nil {conditions[run]=object["conditions"]}
