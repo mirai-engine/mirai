@@ -1220,6 +1220,7 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
         if params!="" && !document_params_apply(args,r,params) {return made,removed,false}
         if !document_widget_shape(call,r) {return made,removed,false}
     }
+    if nodes!="" && !document_paths_check(args,r,root) {return made,removed,false}
     return made,removed,true
 }
 
@@ -1821,7 +1822,9 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
             holder:=&decls[d.parent]
             parent=root if holder.row==root && root>=0 else document_row_of(r,holder.current)
         }
-        if parent>=0 && !doc_takes(call,r,parent) {ok=document_failed(call,d.path);return}
+        // A node that stays in what holds it takes no more room there: the one a List holds.
+        held:=d.row>=0 && int(r.nodes[document_row_of(r,d.current)].parent)==parent
+        if parent>=0 && !held && !doc_takes(call,r,parent) {ok=document_failed(call,d.path);return}
         if d.row>=0 {
             row:=document_row_of(r,d.current)
             if records_place(r,row,parent,-1)<0 {api.call_failf(call,api.INVALID_PARAMS,"%s: a node cannot go inside itself or what it holds",d.path);return}
@@ -2261,4 +2264,121 @@ document_widget_shape :: proc(call:^api.Call,r:^Records) -> bool {
         for &n,i in r.nodes {if i!=slot && .Slot in n.flags {return doc_failed(call,"nodes: two nodes are slots; a widget has one")}}
     }
     return true
+}
+
+// ---------------------------------------------------------------- paths
+
+// Where a node of the records is in the document of the file, or of root.
+@(private)
+doc_place :: proc(r:^Records,row,root:int) -> string {
+    if row==root {return "nodes[0]"}
+    parent:=int(r.nodes[row].parent)
+    at:=0
+    for &n in r.nodes[:row] {at+=int(int(n.parent)==parent)}
+    if parent<0 {return fmt.tprintf("nodes[%d]",at)}
+    return fmt.tprintf("%s.children[%d]",doc_place(r,parent,root),at)
+}
+
+// What a use says, by the key of the document, that makes a node of its
+// widget bind path: a parameter that gives it, or the data its @ paths start
+// at. Empty: the widget binds it by itself.
+@(private)
+doc_use_key :: proc(args:^Tree_Args,r:^Records,use:int,path:string) -> string {
+    n:=&r.nodes[use]
+    lib:=doc_lib_of(doc_libs_slice(args),r.components[n.component-1].widget) if int(n.component)>0 && int(n.component)<=len(r.components) else nil
+    data:=serial.text_field(n.data[:])
+    from_data:=data!="" && (path==data || strings.has_prefix(path,fmt.tprintf("%s.",data)))
+    if lib!=nil {
+        for &p in lib.linked.params {
+            if p.field<.Data || p.field>.Bind_Variant {continue}
+            target:=n
+            if node:=serial.text_field(p.node[:]);node!="" {
+                target=nil
+                for &o in r.overrides {
+                    if int(o.instance)==use && serial.text_field(o.node[:])==node {target=&o.values;break}
+                }
+            }
+            if target==nil {continue}
+            given:=serial.text_field(doc_param_slot(target,p.field))
+            if given==path || from_data && p.field==.Data && given==data {return serial.text_field(p.name[:])}
+        }
+    }
+    return "data" if from_data else ""
+}
+
+// Whether the game has every path the nodes of the records bind (root>=0:
+// that node and what it holds), as the game resolves them when it makes the
+// interface (bind_check). False after failing the call with each it lacks:
+// where, the key, the path, what the game does not have there and what it
+// has. Not checked, because only a use knows them: the paths that start with
+// @, what a List of one holds and a text with one in its braces; and nothing
+// is while the editor has the types of no game.
+@(private)
+document_paths_check :: proc(args:^Tree_Args,r:^Records,root:int) -> bool {
+    info,a:=args.info,args.assets
+    if info==nil || a==nil {return true}
+    data:=records_data(r)
+    imports,imported:=host.ui_tree_imports(a,data)
+    if !imported {return true}
+    types:Bind_Types
+    defer bind_types_free(&types)
+    found:[BIND_PROBLEMS]Bind_Problem
+    count:=bind_check(&types,context.allocator,a,info,data,imports,imported,found[:])
+    last:=root+records_subtree(r.nodes[:],root) if root>=0 else len(r.nodes)-1
+    b:=strings.builder_make(args.call.allocator)
+    failed:=0
+    for &problem in found[:count] {
+        if problem.fault!=.Path && problem.fault!=.Template {continue}
+        row:=problem.row if problem.row>=0 else problem.use
+        if row<0 || row>=len(r.nodes) || root>=0 && (row<root || row>last) {continue}
+        n:=&r.nodes[row]
+        path:=serial.text_field(problem.path[:])
+        key:=fmt.tprintf("bind_%s",doc_enum_text(problem.binding))
+        scope,scoped:=node_scope(info,r.nodes[:],row)
+        why:=path_why(info,scope,path,problem.takes) if scoped else "the game does not have it"
+        if failed>0 {strings.write_string(&b,"; ")}
+        failed+=1
+        fmt.sbprintf(&b,"%s '%s': ",doc_place(r,row,root),serial.text_field(n.name[:]))
+        inner:=strings.trim_prefix(strings.trim_prefix(serial.text_field(problem.name[:]),serial.text_field(n.name[:])),"/")
+        file:=doc_path(a,r.components[n.component-1].widget) if problem.use>=0 && int(n.component)>0 && int(n.component)<=len(r.components) else ""
+        switch {
+        case problem.fault==.Template && problem.use>=0:
+            fmt.sbprintf(&b,"the text of node '%s' of its widget %s names in braces a path the game does not have or cannot show",inner,file)
+            if given:=serial.text_field(n.data[:]);given!="" {
+                fmt.sbprintf(&b," from the data '%s' this use gives its @ paths",given)
+            } else {
+                strings.write_string(&b,"; write that file with fields that name what the game has")
+            }
+        case problem.fault==.Template:
+            text:=records_text(r,n.text)
+            fmt.sbprintf(&b,"text '%s': ",text)
+            said:=false
+            for name in text_field_names(text) {
+                at:=text_field_of(r,n,name)
+                field:=serial.text_field(n.fields[at].path[:]) if at>=0 else ""
+                switch {
+                case field=="":
+                    fmt.sbprintf(&b,"%s{{%s}} has no path: fields gives one, as {{\"name\":\"%s\",\"path\":\"Component.field\"}}","; " if said else "",name,name)
+                    said=true
+                case scoped:
+                    _,leaf,walked:=path_walk(info,scope,field)
+                    if walked && type_fits(leaf,.Shown) {continue}
+                    fmt.sbprintf(&b,"%sfields {{%s}} '%s': %s","; " if said else "",name,field,path_why(info,scope,field,.Shown))
+                    said=true
+                }
+            }
+            if !said {strings.write_string(&b,"a name in braces has a format after its colon that its value does not take")}
+        case problem.use>=0:
+            if given:=doc_use_key(args,r,row,path);given!="" {
+                fmt.sbprintf(&b,"%s gives node '%s' of %s the %s '%s': %s",given,inner,file,key,path,why)
+            } else {
+                fmt.sbprintf(&b,"node '%s' of its widget %s has %s '%s': %s; write that file with a path the game has",inner,file,key,path,why)
+            }
+        case:
+            fmt.sbprintf(&b,"%s '%s': %s",key,path,why)
+        }
+    }
+    if failed==0 {return true}
+    api.call_failf(args.call,api.INVALID_PARAMS,"%s. Nothing changed. A path names a component or a storage of the game, then its fields; inside a List it starts at the element. ui.paths lists what a binding of a node takes, and what the code of the game declares is here after the game is built",strings.to_string(b))
+    return false
 }

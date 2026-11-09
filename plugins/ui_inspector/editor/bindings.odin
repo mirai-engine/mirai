@@ -3,6 +3,7 @@ package ui_inspector_editor
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -159,9 +160,19 @@ path_entries :: proc(info:^core.World_Info,scope:Path_Scope,kind:Bind_Kind) -> [
     return list[:]
 }
 
+// Where a path stops being one of the game: the scope it was walked to and
+// the name that scope lacks, or, with leaf, the one the path goes on past
+// though it leads nowhere.
+Path_Stop :: struct {
+    scope:Path_Scope,
+    name:string,
+    leaf:^runtime.Type_Info,
+}
+
 // The type a path names from scope, and where the paths after it go. The
-// paths of a widget that start with @ start at data.
-path_walk :: proc(info:^core.World_Info,scope:Path_Scope,path:string,data:Path_Scope={}) -> (next:Path_Scope,leaf:^runtime.Type_Info,ok:bool) {
+// paths of a widget that start with @ start at data. A path the game does not
+// have leaves in stop where it ends.
+path_walk :: proc(info:^core.World_Info,scope:Path_Scope,path:string,data:Path_Scope={},stop:^Path_Stop=nil) -> (next:Path_Scope,leaf:^runtime.Type_Info,ok:bool) {
     s:=scope
     rest:=path
     if strings.has_prefix(rest,"@") {
@@ -177,15 +188,32 @@ path_walk :: proc(info:^core.World_Info,scope:Path_Scope,path:string,data:Path_S
             if e.name!=name {continue}
             if s.kind==.Entity && e.storage {break}
             leaf,found=e.info,true
-            if rest!="" {
-                if !e.navigable {return}
-                s=e.next
-            } else {
-                s,_=type_next(e.info)
+            // A number after an array names its element.
+            for rest!="" && leaf.id!=base.Asset_Id {
+                array,is_array:=runtime.type_info_base(leaf).variant.(runtime.Type_Info_Array)
+                if !is_array {break}
+                segment,after:=rest,""
+                if dot:=strings.index_byte(rest,'.');dot>=0 {segment,after=rest[:dot],rest[dot+1:]}
+                element,parsed:=strconv.parse_uint(segment,10)
+                if !parsed {break}
+                if element>=uint(array.count) {
+                    if stop!=nil {stop^={scope=s,name=segment,leaf=leaf}}
+                    return s,nil,false
+                }
+                name,leaf,rest=segment,array.elem,after
             }
+            next_scope,navigable:=type_next(leaf)
+            if rest!="" && !navigable {
+                if stop!=nil {stop^={scope=s,name=name,leaf=leaf}}
+                return s,nil,false
+            }
+            s=next_scope
             break
         }
-        if !found {return}
+        if !found {
+            if stop!=nil {stop^={scope=s,name=name}}
+            return
+        }
     }
     return s,leaf,true
 }
@@ -202,12 +230,57 @@ node_scope :: proc(info:^core.World_Info,nodes:[]ui.Tree_Node,row:int,data:Path_
         items:=serial.text_field(nodes[list].bind_items[:])
         if items=="" {return {},false}
         _,leaf:=path_walk(info,scope,items,data) or_return
+        // A component named alone, outside lists, is its table: each row that struct.
+        if scope.kind==.Sources && info!=nil && strings.index_byte(items,'.')<0 {
+            table:=false
+            for &t in info.tables {table||=t.place==.World && t.name==items}
+            if table {scope={kind=.Struct,info=leaf};continue}
+        }
         array,is_array:=runtime.type_info_base(leaf).variant.(runtime.Type_Info_Array)
         if !is_array {return {},false}
         scope,ok=type_next(array.elem)
         if !ok {return}
     }
     return scope,true
+}
+
+PATH_WHY_NAMES :: 24 // names a reason lists of what the game has
+
+// Why the game does not take path from scope for a binding of kind: the name
+// it lacks with those it has there, or the type it has that the binding
+// does not take.
+path_why :: proc(info:^core.World_Info,scope:Path_Scope,path:string,kind:Bind_Kind) -> string {
+    takes:=BIND_KIND_TAKES
+    stop:Path_Stop
+    _,leaf,walked:=path_walk(info,scope,path,{},&stop)
+    if walked {
+        if leaf==nil || type_fits(leaf,kind) {return fmt.tprintf("the game cannot show it there: this binding takes %s",takes[kind])}
+        return fmt.tprintf("it is a %v, and this binding takes %s",leaf.id,takes[kind])
+    }
+    if stop.name=="" {return "the game does not have it"}
+    if stop.leaf!=nil {
+        if array,is_array:=runtime.type_info_base(stop.leaf).variant.(runtime.Type_Info_Array);is_array {
+            if _,number:=strconv.parse_uint(stop.name,10);number {return fmt.tprintf("the array has %d elements: %s is past the last, %d",array.count,stop.name,array.count-1)}
+        }
+        return fmt.tprintf("'%s' is a %v, which has no fields for the path to go on to",stop.name,stop.leaf.id)
+    }
+    names:=make([dynamic]string,context.temp_allocator)
+    entries:=path_entries(info,stop.scope,.Data)
+    game:=false
+    for &e in entries {game||=e.game}
+    more:=0
+    for &e in entries {
+        if game && !e.game || stop.scope.kind==.Entity && e.storage {continue}
+        if len(names)<PATH_WHY_NAMES {append(&names,e.name)} else {more+=1}
+    }
+    has:=strings.join(names[:],", ",context.temp_allocator) if len(names)>0 else "none"
+    if more>0 {has=fmt.tprintf("%s and %d more",has,more)}
+    switch stop.scope.kind {
+    case .Sources: return fmt.tprintf("the game has no component or storage '%s'; %s %s",stop.name,"it declares" if game else "there are",has)
+    case .Entity:  return fmt.tprintf("the game has no component '%s' for an Entity to lead to; %s %s",stop.name,"it declares" if game else "there are",has)
+    case .Struct:
+    }
+    return fmt.tprintf("%v has no field '%s'; it has %s",stop.scope.info.id,stop.name,has)
 }
 
 // A path as a person reads it: its parts with arrows between them.
@@ -244,7 +317,9 @@ bind_types_host :: proc(b:^Bind_Types,info:^core.World_Info,allocator:runtime.Al
         clear(&b.sources)
         b.ready,b.info=true,info
     }
-    return {user=b,schema=&b.schema,source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
+    // A List that names a component binds the rows of its table, as in the game: none here.
+    rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u64) {return}
+    return {user=b,schema=&b.schema,rows=rows,source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
         b:=(^Bind_Types)(user)
         for known in b.sources {if known.name==name {return known.index,known.storage,true}}
         if b.info==nil {return}
@@ -285,9 +360,11 @@ widget_why :: proc(a:^host.Assets,data:ui.Tree_Data) -> string {
 Bind_Problem :: struct {
     asset:base.Asset_Id,
     row:int,              // of its nodes; -1: a node of a widget it uses, or the tree as a whole
+    use:int,              // of its nodes: the use of the widget the node is inside; -1: none
     node:int,             // of the tree as it loads; -1: it does not load
     name:[ui.TREE_NAME_CAPACITY*2]u8, // of that node; inside a widget, instance/node
     binding:ui.Binding,
+    takes:Bind_Kind,      // Path: what that binding takes at that node
     fault:Bind_Fault,
     path:[ui.TREE_PATH_CAPACITY]u8, // Path: what it binds; Widget and Load: why
 }
@@ -298,7 +375,7 @@ Bind_Problem :: struct {
 bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,info:^core.World_Info,data:ui.Tree_Data,imports:[]ui.Tree_Data,imported:bool,out:[]Bind_Problem) -> (count:int) {
     if len(out)==0 {return}
     fail :: proc(out:[]Bind_Problem,fault:Bind_Fault,why:string) -> int {
-        out[0]={row=-1,node=-1,fault=fault}
+        out[0]={row=-1,use=-1,node=-1,fault=fault}
         ui.tree_text_set(out[0].path[:],why)
         return 1
     }
@@ -320,19 +397,25 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
         failure:=instance.failure
         if failure.capacity || failure.node<0 || failure.node>=tree.node_count {return}
         node:=&tree.nodes[failure.node]
-        // A path that starts with @ reads the data its uses give, and each use is checked where it is.
-        if !failure.template && strings.has_prefix(ui.tree_binding(&tree,node,failure.binding),"@") {
-            node.binds[failure.binding]={}
+        // A path that starts with @ reads the data its uses give, and each use
+        // is checked where it is; so is what a List of such a path holds, and a
+        // text with one in its braces.
+        if bind_late(&tree,node,failure) {
+            switch {
+            case failure.template:                             node.text_length=0
+            case failure.binding==.Items && node.kind==.List:  for &inner in tree.nodes[failure.node:][:int(node.subtree)+1] {inner.binds={};inner.text_length=0}
+            case:                                              node.binds[failure.binding]={}
+            }
             continue
         }
-        problem:=Bind_Problem{row=-1,node=failure.node,binding=failure.binding,fault=.Template if failure.template else .Path}
+        problem:=Bind_Problem{row=-1,use=-1,node=failure.node,binding=failure.binding,takes=bind_kind(failure.binding,node.kind),fault=.Template if failure.template else .Path}
         if !failure.template {ui.tree_text_set(problem.path[:],ui.tree_binding(&tree,node,failure.binding))}
         // The row of the records it comes from, as the preview counts them.
         at:=0
         for n,row in linked.nodes {
             nodes:=preview_count(linked,n,0)
             if failure.node<at+nodes {
-                if n.kind!=.Component {problem.row=row}
+                if n.kind!=.Component {problem.row=row} else {problem.use=row}
                 bind_problem_name(&problem,linked,row,node.name)
                 break
             }
@@ -351,6 +434,16 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:^host.Assets,
     return
 }
 
+// Whether what failed is a path that starts with @: one only a use knows.
+@(private)
+bind_late :: proc(tree:^ui.Widget_Tree,node:^ui.Node,failure:ui.Bind_Failure) -> bool {
+    if !failure.template {return strings.has_prefix(ui.tree_binding(tree,node,failure.binding),"@")}
+    for f in node.fields {
+        if f.path.length>0 && tree.strings[f.path.offset]=='@' {return true}
+    }
+    return false
+}
+
 // Names a problem after the node it failed at: the row of its records, or
 // instance/node for one inside a widget.
 @(private)
@@ -359,7 +452,7 @@ bind_problem_name :: proc(problem:^Bind_Problem,linked:ui.Tree_Data,row:int,node
     name:=serial.text_field(outer.name[:])
     if outer.kind==.Component {
         for &inner in data_template(linked,int(outer.component)) {
-            if inner_name:=serial.text_field(inner.name[:]);inner_name!="" && base.name_hash(inner_name)==node {name=fmt.tprintf("%s/%s",name,inner_name);break}
+            if inner_name:=serial.text_field(inner.name[:]);inner_name!="" && base.name_hash(fmt.tprintf("%s/%s",name,inner_name))==node {name=fmt.tprintf("%s/%s",name,inner_name);break}
         }
     }
     ui.tree_text_set(problem.name[:],name)
@@ -516,7 +609,7 @@ bind_check_file :: proc(problems:^[dynamic]Bind_Problem,types:^Bind_Types,alloca
             count+=bind_check(types,allocator,a,info,data,imports,imported,found[count:])
         }
     } else {
-        found[0]={row=-1,node=-1,fault=.Load}
+        found[0]={row=-1,use=-1,node=-1,fault=.Load}
         ui.tree_text_set(found[0].path[:],"its file cannot be read")
         count=1
     }
@@ -542,7 +635,7 @@ records_names_check :: proc(a:^host.Assets,r:^Records,out:[]Bind_Problem) -> (co
     args:=Tree_Args{}
     report :: proc(out:[]Bind_Problem,count:^int,format:string,args:..any) {
         if count^>=len(out) {return}
-        out[count^]={row=-1,node=-1,fault=.Name}
+        out[count^]={row=-1,use=-1,node=-1,fault=.Name}
         ui.tree_text_set(out[count^].path[:],fmt.tprintf(format,..args))
         count^+=1
     }

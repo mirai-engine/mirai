@@ -5,6 +5,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
@@ -58,7 +59,7 @@ Tree_Document_Node :: struct {
 @(private)
 tree_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.inspect",summary="A .ui, or one of its nodes, as the document ui.write takes back: its nodes nested, each with what differs from a new node of its kind, and the styles and animations they take.",params_schema=TREE_INSPECT_SCHEMA,result=Tree_Inspect,result_info=type_info_of(Tree_Inspect),writes_result=true,flags={.Read_Only},run=api_tree_inspect})
-    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes matched by name keep their translations, the others are made and those it does not declare go. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params_schema=TREE_WRITE_SCHEMA,result=Tree_Write_Answer,result_info=type_info_of(Tree_Write_Answer),run=api_tree_write})
+    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes matched by name keep their translations, the others are made and those it does not declare go. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params_schema=TREE_WRITE_SCHEMA,result=Tree_Write_Answer,result_info=type_info_of(Tree_Write_Answer),run=api_tree_write})
     capture_api_register(s)
 }
 
@@ -76,6 +77,7 @@ Tree_Args :: struct {
     asset:base.Asset_Id, // the .ui edited; tree_open sets it
     session:^editor.Session,
     assets:^host.Assets,
+    info:^core.World_Info,  // the types of the game the paths of a document are checked against; nil: none are
     libs:^[dynamic]Doc_Lib, // the files a document takes names from
 }
 
@@ -110,7 +112,7 @@ tree_object :: proc(call:^api.Call,text:string,what:string) -> (keys,values:[dyn
 
 @(private)
 tree_args :: proc(s:^editor.Session,call:^api.Call) -> (args:Tree_Args,ok:bool) {
-    args.call,args.session=call,s
+    args.call,args.session,args.info=call,s,s.app.info
     if a:=s.app.assets;a!=nil {args.types,args.registry,args.assets=&a.types,&a.registry,a}
     args.keys,args.values,ok=tree_object(call,call.raw,"params")
     return
@@ -467,15 +469,28 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     save,save_ok:=tree_arg_bool(&args,"save")
     if !save_ok {return}
     if save && !editor.api_guard(s,call) {return}
-    // A path that names nothing yet makes the .ui.
-    if !tree_asset_make(s,&args) {return}
+    // A path that names nothing yet makes the .ui, once its document reads:
+    // a refused one leaves no file.
+    path,fresh,named:=tree_asset_new(s,&args)
+    if !named {return}
     r:Records
-    id,opened:=tree_open(s,&args,&r)
-    if !opened {return}
+    id:base.Asset_Id
+    if fresh {
+        id=editor.asset_id_new(s)
+        if !records_load(&r,ui_empty_data(),context.temp_allocator) {api.call_fail(call,api.SERVER_ERROR,"the .ui could not be made: memory ran out");return}
+        args.asset=id
+    } else {
+        opened:bool
+        if id,opened=tree_open(s,&args,&r);!opened {return}
+    }
     root,root_ok:=tree_arg_row(&args,&r,"node")
     if !root_ok {return}
     made,removed,applied:=document_apply(&args,&r,root,text)
-    if !applied || !tree_write(s,call,id,&r,"Write") {return}
+    if !applied {return}
+    if fresh {
+        if problem:=editor.asset_create(s,asset.KIND_UI,path,id);problem!="" {api.call_failf(call,api.INVALID_PARAMS,"asset: %s",problem);return}
+    }
+    if !tree_write(s,call,id,&r,"Write") {return}
     if save {
         record,recorded:=asset.registry_find(&s.app.assets.registry,id)
         if !recorded {api.call_fail(call,api.SERVER_ERROR,"the .ui it wrote is not in the assets");return}
@@ -484,25 +499,19 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     api.call_result(call,Tree_Write_Answer)^={ok=true,made=made,removed=removed}
 }
 
-// Makes the empty .ui the path of the params names when it does not exist
-// yet; false after failing the call.
+// Whether the params name the path of a .ui that does not exist yet: the one
+// the write makes. ok false after failing the call.
 @(private)
-tree_asset_make :: proc(s:^editor.Session,args:^Tree_Args) -> bool {
-    call:=args.call
+tree_asset_new :: proc(s:^editor.Session,args:^Tree_Args) -> (path:string,fresh,ok:bool) {
     text,_,read:=tree_arg_string(args,"asset")
-    if !read {return false}
-    path:=tree_asset_path(text)
-    if !strings.has_suffix(path,".ui") || strings.contains_rune(path,':') {return true}
+    if !read {return}
+    path=tree_asset_path(text)
+    if !strings.has_suffix(path,".ui") || strings.contains_rune(path,':') {return path,false,true}
     a:=s.app.assets
-    if a==nil {return true}
+    if a==nil {return path,false,true}
     host.assets_scan(a)
-    if _,exists:=asset.registry_find_path(&a.registry,path);exists {return true}
-    id:=editor.asset_id_new(s)
-    if problem:=editor.asset_create(s,asset.KIND_UI,path,id);problem!="" {
-        api.call_failf(call,api.INVALID_PARAMS,"asset: %s",problem)
-        return false
-    }
-    return true
+    _,exists:=asset.registry_find_path(&a.registry,path)
+    return path,!exists,true
 }
 
 // The path of a .ui as the registry names it: under the folder of the assets.
