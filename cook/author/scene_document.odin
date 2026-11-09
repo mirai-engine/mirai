@@ -28,8 +28,10 @@ import "mirai:std/serial"
 //
 // The components are read against the types of the game (core.World_Info),
 // whose values are stored as the file keeps them: an Entity field holds an id.
-// What only a world does stays in the editor: a preset or a card runs the
-// recipe that makes its components, and prefab.instantiate places an instance.
+// A preset or the card of a plugin stands for the components its recipe
+// gives (recipes.odin), and a new entity with prefab is placed as a linked
+// instance of that prefab; what a document changes of an entity of an
+// instance is recorded as what the instance holds on its own.
 
 // ---------------------------------------------------------------- components
 
@@ -112,6 +114,7 @@ read_only_written :: proc(schema:^serial.Schema,type:serial.Type_Index,before,af
 // read against.
 @(private="file")
 Scene_File :: struct {
+    p:^Project,
     scene:asset.Scene,
     info:^core.World_Info,
     ws:^core.World_Schema,
@@ -135,7 +138,7 @@ scene_path :: proc(p:^Project,named:string) -> (path:string,exists:bool,problem:
 @(private="file")
 scene_open :: proc(p:^Project,f:^Scene_File,path:string,exists:bool) -> (problem:string) {
     if p.info==nil || p.info.schema==nil {return "the types of the game are needed to read its components"}
-    f.info,f.ws=p.info,p.info.schema
+    f.p,f.info,f.ws=p,p.info,p.info.schema
     if exists {
         file:=asset.registry_file_path(&p.registry,path,context.temp_allocator)
         if error:=asset.scene_load(&f.scene,&p.types,file,context.temp_allocator);error!=.None {
@@ -341,12 +344,15 @@ Scene_Entity :: struct {
     position,rotation_deg,scale:[3]f32,
     has_rotation,has_scale:bool,
     hidden,disabled:bool,
+    preset:string,     // "": none given
+    recipe:int,        // its place among the recipes; -1 without a preset
     components,off,prefab:string, // as given; "": left out
     e:base.Entity_Id,  // the entity it is matched to or made as
     made:bool,
+    placed:bool,       // made as an instance of a prefab: what it leaves out is what its prefab gives
 }
 
-@(private="file") SCENE_ENTITY_KEYS :: "id, name, position, rotation_deg, scale, visible, enabled, components, off, prefab and children"
+@(private="file") SCENE_ENTITY_KEYS :: "id, name, preset, position, rotation_deg, scale, visible, enabled, components, off, prefab and children"
 
 @(private="file")
 scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,out:^[dynamic]Scene_Entity) -> bool {
@@ -354,7 +360,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
     if !listed {return false}
     for item,at in items {
         index:=len(out)
-        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent})
+        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe=-1})
         keys,values:=tree_object(reading,item,out[index].path) or_return
         vector :: proc(reading:^Reading,text,what:string,value:^[3]f32) -> bool {
             items:=doc_items(reading,text,what,"3 numbers") or_return
@@ -383,6 +389,10 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
                 d.name=strings.trim_space(word)
                 if d.name=="" {reading_failf(reading,"%s: name is empty; leave it out to match by place",d.path);return false}
                 if len(d.name)>=asset.ENTITY_NAME_BYTES {reading_failf(reading,"%s must be shorter than %d bytes",what,asset.ENTITY_NAME_BYTES);return false}
+            case "preset":
+                word,is_text:=doc_string(reading,value)
+                if !is_text || word=="" {reading_failf(reading,"%s must be the name of a preset or of the card of a plugin",what);return false}
+                d.preset=word
             case "position":     vector(reading,value,what,&d.position) or_return
             case "rotation_deg": vector(reading,value,what,&d.rotation_deg) or_return;d.has_rotation=true
             case "scale":        vector(reading,value,what,&d.scale) or_return;d.has_scale=true
@@ -393,9 +403,6 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
             case "components": d.components=value
             case "off":        d.off=value
             case "prefab":     d.prefab=value
-            case "preset":
-                reading_failf(reading,"%s: a preset is a recipe the editor runs on a world: scene.write and scene.add make its entity there; a document written to a file declares the components it has",what)
-                return false
             case "children":
                 scene_entities_read(reading,value,index,fmt.tprintf("%s.children",d.path),out) or_return
             case:
@@ -457,6 +464,58 @@ scene_verify :: proc(p:^Project,path:string) -> (problem:string) {
     return ""
 }
 
+// What a write keeps while it applies a document.
+@(private="file")
+Scene_Apply :: struct {
+    f:^Scene_File,
+    reading:^Reading,
+    written:^Written,
+    decls:[dynamic]Scene_Entity,
+    taken:map[base.Entity_Id]bool,
+    parts:map[int][]Part,      // by recipe: the components it gives, as the file keeps them
+    placed:map[u32]bool,       // the instances this write placed
+}
+
+// Whether an entity is of an instance of a prefab, and not its root.
+@(private="file")
+scene_member :: proc(f:^Scene_File,id:base.Entity_Id) -> bool {
+    _,root,linked:=scene_link(f,id)
+    return linked && !root
+}
+
+// An entity of an instance holds something on its own from now on.
+@(private="file")
+scene_overrides :: proc(a:^Scene_Apply,id:base.Entity_Id,component:u64,kind:asset.Override_Kind,path:="") {
+    probe:=id
+    if kind==.Child {probe=asset.scene_parents(&a.f.scene)[a.f.scene.index[id]]}
+    if _,_,linked:=scene_link(a.f,probe);!linked {return}
+    // The whole transform of the root of an instance is its placement.
+    if _,root,_:=scene_link(a.f,id);root && kind==.Field && component==base.name_hash(asset.INSTANCE_PLACEMENT) {return}
+    _=asset.scene_override_add(&a.f.scene,id,component,path,kind)
+}
+
+// Matches the entities of the document from..to, which hang from parent,
+// that no id matched: by name among the entities of the parent, then by
+// place. ids: those that give an id too, which a file being made has not.
+@(private="file")
+scene_match :: proc(a:^Scene_Apply,parent:base.Entity_Id,from,to:int,ids:=false) {
+    f:=a.f
+    for by_name in ([]bool{true,false}) {
+        for c:=from;c<to;c=a.decls[c].end {
+            d:=&a.decls[c]
+            if d.e!=0 || d.id!=0 && !ids || (d.name!="")!=by_name {continue}
+            for x in f.children[parent] {
+                if a.taken[x] {continue}
+                at,_:=asset.scene_entity_find(&f.scene,x)
+                if by_name && asset.scene_entity(&f.scene,at).name!=d.name {continue}
+                d.e=x
+                a.taken[x]=true
+                break
+            }
+        }
+    }
+}
+
 @(private="file")
 scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written) -> bool {
     scene:=&f.scene
@@ -467,69 +526,52 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
         entities=values[i]
     }
     if entities=="" {reading_fail(reading,"entities is required: the entities at the top of the file, as mirai scene read gives them");return false}
-    decls:=make([dynamic]Scene_Entity,reading.allocator)
-    scene_entities_read(reading,entities,-1,"entities",&decls) or_return
+    a:=Scene_Apply{f=f,reading=reading,written=written}
+    a.decls=make([dynamic]Scene_Entity,reading.allocator)
+    a.taken=make(map[base.Entity_Id]bool,reading.allocator)
+    a.parts=make(map[int][]Part,reading.allocator)
+    a.placed=make(map[u32]bool,reading.allocator)
+    scene_entities_read(reading,entities,-1,"entities",&a.decls) or_return
+    decls:=a.decls[:]
 
-    taken:=make(map[base.Entity_Id]bool,reading.allocator)
     for &d in decls {
         if d.id==0 {continue}
-        if taken[d.id] {reading_failf(reading,"%s.id: 0x%016x is declared twice",d.path,u64(d.id));return false}
-        if f.fresh {taken[d.id]=true;continue}
+        if a.taken[d.id] {reading_failf(reading,"%s.id: 0x%016x is declared twice",d.path,u64(d.id));return false}
+        if f.fresh {a.taken[d.id]=true;continue}
         if _,found:=asset.scene_entity_find(scene,d.id);!found {reading_failf(reading,"%s.id: 0x%016x is no entity of the file; leave id out to make one",d.path,u64(d.id));return false}
         d.e=d.id
-        taken[d.id]=true
+        a.taken[d.id]=true
     }
-    // Without an id, by name among the entities of the parent, then by place.
-    match :: proc(f:^Scene_File,decls:[]Scene_Entity,taken:^map[base.Entity_Id]bool,parent:base.Entity_Id,from,to:int) {
-        row:=asset.scene_entity_find
-        for by_name in ([]bool{true,false}) {
-            for c:=from;c<to;c=decls[c].end {
-                d:=&decls[c]
-                if d.e!=0 || d.id!=0 || (d.name!="")!=by_name {continue}
-                for x in f.children[parent] {
-                    if taken[x] {continue}
-                    at,_:=row(&f.scene,x)
-                    if by_name && asset.scene_entity(&f.scene,at).name!=d.name {continue}
-                    d.e=x
-                    taken[x]=true
-                    break
-                }
-            }
-        }
-    }
-    match(f,decls[:],&taken,0,0,len(decls))
+    scene_match(&a,0,0,len(decls))
     for &p,i in decls {
-        if p.e!=0 {match(f,decls[:],&taken,p.e,i+1,p.end)}
-    }
-    member :: proc(f:^Scene_File,id:base.Entity_Id) -> bool {
-        _,root,linked:=scene_link(f,id)
-        return linked && !root
+        if p.e!=0 {scene_match(&a,p.e,i+1,p.end)}
     }
     for &d in decls {
-        if d.e==0 {
-            if d.prefab!="" {
-                reading_failf(reading,"%s.prefab: a document places no prefab; prefab.instantiate places an instance in the editor, and a write that declares it by its id changes it",d.path)
-                return false
-            }
-            continue
-        }
+        if d.preset!="" {scene_recipe(&a,&d) or_return}
+        if d.e==0 {continue}
         if d.prefab!="" && !scene_prefab_check(f,reading,&d) {return false}
         parent:=decls[d.parent].e if d.parent>=0 else 0
-        if member(f,d.e) && asset.scene_parents(scene)[scene.index[d.e]]!=parent {
+        if scene_member(f,d.e) && asset.scene_parents(scene)[scene.index[d.e]]!=parent {
             reading_failf(reading,"%s: it is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under its parent, or leave it out to turn it off",d.path)
             return false
         }
     }
     // What the document adds, and what it moves, in the order it gives.
-    for &d in decls {
+    for &d,i in decls {
         parent:=decls[d.parent].e if d.parent>=0 else 0
-        if d.e==0 {
+        if d.e==0 && d.prefab!="" {
+            scene_place(&a,&d,parent) or_return
+            // What it declares under the instance is of its members, by their names.
+            scene_children(f)
+            scene_match(&a,d.e,i+1,d.end,true)
+        } else if d.e==0 {
             d.e=d.id if d.id!=0 else asset.scene_new_id(scene)
-            if _,error:=asset.scene_entity_add(scene,d.e,parent,d.name if d.name!="" else "Entity");error!=.None {reading_broke(reading,"the file holds no more entities");return false}
+            if _,error:=asset.scene_entity_add(scene,d.e,parent,d.name if d.name!="" else scene_recipe_name(&d));error!=.None {reading_broke(reading,"the file holds no more entities");return false}
             identity:=core.TRANSFORM_IDENTITY
             if asset.scene_set(scene,d.e,"Transform",&identity)!=.None {reading_broke(reading,"the file holds no more components");return false}
             d.made=true
             written.made+=1
+            scene_overrides(&a,d.e,0,.Child)
         } else if row:=scene.index[d.e];asset.scene_parents(scene)[row]!=parent {
             if asset.scene_entity_reparent(scene,d.e,parent,asset.scene_orders(scene)[row])!=.None {
                 reading_failf(reading,"%s: it cannot go under an entity that hangs from it",d.path)
@@ -538,26 +580,29 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
             written.changed=true
         }
     }
-    order :: proc(f:^Scene_File,decls:[]Scene_Entity,from,to:int,member:proc(f:^Scene_File,id:base.Entity_Id) -> bool,written:^Written) {
+    order :: proc(a:^Scene_Apply,from,to:int) {
+        f:=a.f
         orders:=asset.scene_orders(&f.scene)
         last:=-1
-        for c:=from;c<to;c=decls[c].end {
-            row:=f.scene.index[decls[c].e]
+        for c:=from;c<to;c=a.decls[c].end {
+            d:=&a.decls[c]
+            row:=f.scene.index[d.e]
             at:=int(orders[row])
-            if member(f,decls[c].e) {last=max(last,at);continue}
-            if at<=last || decls[c].made && at!=last+1 {
+            if scene_member(f,d.e) {last=max(last,at);continue}
+            if at<=last || (d.made || d.placed) && at!=last+1 {
                 orders[row]=u32(last+1)
                 at=last+1
-                written.changed=true
+                a.written.changed=true
             }
             last=at
         }
     }
-    order(f,decls[:],0,len(decls),member,written)
-    for &p,i in decls {order(f,decls[:],i+1,p.end,member,written)}
-    for &d in decls {scene_values_apply(f,reading,&d,written) or_return}
+    order(&a,0,len(decls))
+    for &p,i in decls {order(&a,i+1,p.end)}
+    for &d in decls {scene_values_apply(&a,&d) or_return}
     // What the file held and the document leaves out goes with what hangs
-    // from it; a member of an instance is turned off.
+    // from it; a member of an instance is turned off, unless this write
+    // placed the instance: what it leaves out of it is what its prefab gives.
     gone:=make([dynamic]base.Entity_Id,reading.allocator)
     declared:=make(map[base.Entity_Id]bool,reading.allocator)
     for &d in decls {declared[d.e]=true}
@@ -565,7 +610,8 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
     for id,row in ids {
         if declared[id] {continue}
         parent:=parents[row]
-        if member(f,id) {
+        if scene_member(f,id) {
+            if a.placed[asset.scene_entity_instance(scene,id)] {continue}
             if (parent==0 || declared[parent]) && !scene_has(f,"Disabled",id) {
                 if !scene_mark(f,"Disabled",id,true) {reading_broke(reading,"the game of this build has no Disabled to turn a member of an instance off with");return false}
                 written.changed=true
@@ -581,63 +627,168 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
     return true
 }
 
-// The prefab a matched entity gives is what the file says of it.
+// The name of an entity a recipe makes when the document gives none: that of
+// its preset, as a person reads it.
 @(private="file")
-scene_prefab_check :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity) -> bool {
-    keys,values:=tree_object(reading,d.prefab,fmt.tprintf("%s.prefab",d.path)) or_return
-    given:base.Asset_Id
-    root,has_root:=false,false
-    for key,i in keys {
-        switch key {
-        case "asset":
-            word,is_text:=doc_string(reading,values[i])
-            problem:="it must be the path or the id of a prefab"
-            if is_text {given,problem=reading.assets.resolve(reading.assets.user,word,".prefab")}
-            if problem!="" {reading_failf(reading,"%s.prefab.asset: %s",d.path,problem);return false}
-        case "root":
-            flag,ok:=doc_bool(values[i])
-            if !ok {reading_failf(reading,"%s.prefab.root must be true or false",d.path);return false}
-            root,has_root=flag,true
-        case "instance","source":
-        case:
-            reading_failf(reading,"%s.prefab has no '%s'; it is what the document of the file gives: asset and root",d.path,key)
+scene_recipe_name :: proc(d:^Scene_Entity) -> string {
+    if d.preset=="" {return "Entity"}
+    name,_:=strings.replace_all(d.preset,"_"," ",context.temp_allocator)
+    return name
+}
+
+// Finds the recipe the preset of an entity names and the components it gives,
+// which it makes once on a world of the game.
+@(private="file")
+scene_recipe :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
+    f,reading:=a.f,a.reading
+    p:=f.p
+    found:bool
+    if d.recipe,found=recipe_named(d.preset,p.plugins.labels);!found {
+        reading_failf(reading,"%s.preset: %s",d.path,recipe_problem(d.preset,p.plugins.labels))
+        return false
+    }
+    if d.recipe in a.parts {return true}
+    if p.scratch.w.data==nil {
+        made:bool
+        if p.scratch,made=scratch_world_make(p.info);!made {
+            reading_brokef(reading,"%s.preset: a preset is made on a world of the game, and the library of the project gives none; %s",d.path,BUILD_FIX)
             return false
         }
     }
+    native:=recipe_parts(&p.scratch,d.recipe,p.plugins,reading.allocator)
+    parts:=make([dynamic]Part,reading.allocator)
+    for part in native {
+        index:=int((uintptr(part.t)-uintptr(raw_data(f.info.tables)))/size_of(core.Table_Info))
+        if index<0 || index>=len(f.ws.tables) || f.ws.tables[index].type==serial.TYPE_NONE {continue}
+        image:=make([]u8,max(len(part.value),1),reading.allocator)[:len(part.value)]
+        if len(image)>0 {serial.value_write(&f.ws.tables[index].layout,image,raw_data(part.value),1)}
+        append(&parts,Part{part.t,image})
+    }
+    a.parts[d.recipe]=parts[:]
+    return true
+}
+
+// Places the prefab a new entity names under parent, as a linked instance.
+@(private="file")
+scene_place :: proc(a:^Scene_Apply,d:^Scene_Entity,parent:base.Entity_Id) -> bool {
+    f,reading:=a.f,a.reading
+    p:=f.p
+    text:=strings.trim_space(d.prefab)
+    named:=text
+    if len(text)>0 && text[0]=='{' {
+        keys,values:=tree_object(reading,text,fmt.tprintf("%s.prefab",d.path)) or_return
+        named=""
+        for key,i in keys {
+            switch key {
+            case "asset": named=values[i]
+            case "root","instance","source":
+            case:
+                reading_failf(reading,"%s.prefab has no '%s'; it is the path or the id of a prefab, or {asset}",d.path,key)
+                return false
+            }
+        }
+    }
+    word,is_text:=doc_string(reading,named)
+    if !is_text || word=="" {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",d.path);return false}
+    id,unknown:=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab")
+    if unknown!="" {reading_failf(reading,"%s.prefab: %s",d.path,unknown);return false}
+    record,found:=asset.registry_find(&p.registry,id)
+    if !found || record.kind!=asset.KIND_PREFAB {reading_failf(reading,"%s.prefab: %q is no prefab of the project",d.path,word);return false}
+    prefab:asset.Scene
+    file:=asset.registry_file_path(&p.registry,record.path,context.temp_allocator)
+    if asset.scene_load(&prefab,&p.types,file,context.temp_allocator)!=.None {reading_failf(reading,"%s.prefab: %s does not load; mirai asset verify says what its file has",d.path,record.path);return false}
+    if id==f.scene.doc.id {reading_failf(reading,"%s.prefab: a prefab places no instance of itself",d.path);return false}
+    before:=asset.scene_entity_count(&f.scene)
+    instance,root,error:=asset.scene_instantiate(&f.scene,&prefab,id,parent)
+    if error!=.None {reading_failf(reading,"%s.prefab: %s could not be placed (%v): a prefab has one entity at its top",d.path,record.path,error);return false}
+    d.e,d.placed=root,true
+    a.placed[instance]=true
+    a.taken[root]=true
+    a.written.made+=asset.scene_entity_count(&f.scene)-before
+    return true
+}
+
+// The prefab a matched entity gives is what the file says of it.
+@(private="file")
+scene_prefab_check :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity) -> bool {
+    text:=strings.trim_space(d.prefab)
+    given:base.Asset_Id
+    root,has_root:=false,false
+    asset_text:=text
+    if len(text)>0 && text[0]=='{' {
+        asset_text=""
+        keys,values:=tree_object(reading,text,fmt.tprintf("%s.prefab",d.path)) or_return
+        for key,i in keys {
+            switch key {
+            case "asset": asset_text=values[i]
+            case "root":
+                flag,ok:=doc_bool(values[i])
+                if !ok {reading_failf(reading,"%s.prefab.root must be true or false",d.path);return false}
+                root,has_root=flag,true
+            case "instance","source":
+            case:
+                reading_failf(reading,"%s.prefab has no '%s'; it is what the document of the file gives: asset and root",d.path,key)
+                return false
+            }
+        }
+    }
+    if asset_text!="" {
+        word,is_text:=doc_string(reading,asset_text)
+        problem:="it must be the path or the id of a prefab"
+        if is_text {given,problem=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab")}
+        if problem!="" {reading_failf(reading,"%s.prefab.asset: %s",d.path,problem);return false}
+    }
     prefab,is_root,linked:=scene_link(f,d.e)
     if !linked || given!={} && given!=prefab || has_root && root!=is_root {
-        reading_failf(reading,"%s.prefab: it is not what links the entity to a prefab; a document changes no link: prefab.instantiate places an instance and prefab.unlink takes one apart",d.path)
+        reading_failf(reading,"%s.prefab: it is not what links the entity to a prefab; a document changes no link of an entity that is there: leave prefab out, or declare a new entity with it to place an instance",d.path)
         return false
     }
     return true
 }
 
 // The entity of the document takes what it declares: name, transform, being
-// hidden or off, its components and those it turns off.
+// hidden or off, its components and those it turns off. The components of
+// its recipe are declared too, and the fields the document does not name
+// take the values the recipe gives.
 @(private="file")
-scene_values_apply :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity,written:^Written) -> bool {
+scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
+    f,reading,written:=a.f,a.reading,a.written
     scene:=&f.scene
     id:=d.e
     row:=int(scene.index[id])
     if d.name!="" && d.name!=asset.scene_entity(scene,row).name {
         asset.scene_entity_rename(scene,id,d.name)
+        scene_overrides(a,id,0,.Field,"name")
         written.changed=true
     }
     local:=scene_local(f,id)
+    rotation,scale:=recipe_place(d.recipe,f.p.plugins)
+    if d.has_rotation {rotation=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG)}
     target:=local
-    target.position=d.position
-    target.scale=d.scale if d.has_scale else {1,1,1}
-    rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else mm.Quat(1)
+    target.position,target.scale=d.position,d.scale if d.has_scale else scale
     // The rotation the document of the file gave keeps its quaternion: degrees do not say it to the last bit.
-    if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=d.rotation_deg {target.rotation=rotation}
+    angles:=d.rotation_deg if d.has_rotation else mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
+    if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}
+    // An instance it places keeps the turn and the size its prefab gives it.
+    if d.placed {
+        if !d.has_rotation {target.rotation=local.rotation}
+        if !d.has_scale {target.scale=local.scale}
+    }
     if target!=local || !scene_has(f,"Transform",id) {
         if asset.scene_set(scene,id,"Transform",&target)!=.None {reading_brokef(reading,"%s: its transform could not be written",d.path);return false}
+        scene_overrides(a,id,base.name_hash(asset.INSTANCE_PLACEMENT),.Field)
         written.changed=true
     }
     for mark in ([2]struct{name:string,on:bool}{{"Hidden",d.hidden},{"Disabled",d.disabled}}) {
         if scene_has(f,mark.name,id)==mark.on {continue}
         if !scene_mark(f,mark.name,id,mark.on) {reading_brokef(reading,"%s: the game of this build has no %s",d.path,mark.name);return false}
+        scene_overrides(a,id,base.name_hash(mark.name),.Added if mark.on else .Removed)
         written.changed=true
+    }
+    parts:=a.parts[d.recipe] if d.recipe>=0 else nil
+    from :: proc(parts:[]Part,t:^core.Table_Info) -> []u8 {
+        for part in parts {if part.t==t {return part.value}}
+        return nil
     }
     declared:=make([dynamic]^core.Table_Info,reading.allocator)
     if d.components!="" {
@@ -651,16 +802,25 @@ scene_values_apply :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity,writte
                 return false
             }
             if strings.trim_space(values[i])=="null" {reading_failf(reading,"%s: the document declares the components the entity has; leave %s out to take it away",path,name);return false}
-            scene_component_apply(f,reading,id,t,v,values[i],path,written) or_return
+            scene_component_apply(a,id,t,v,values[i],path,from(parts,t)) or_return
             append(&declared,t)
         }
     }
-    // What the document leaves out goes.
-    for &t,i in f.info.tables {
-        if t.place!=.World || f.ws.tables[i].type==serial.TYPE_NONE || !component_listed(&t) || slice.contains(declared[:],&t) || !scene_has(f,t.name,id) {continue}
-        table,_:=asset.scene_component(scene,t.name)
-        asset.scene_component_remove(scene,table,id)
-        written.changed=true
+    for part in parts {
+        if slice.contains(declared[:],part.t) {continue}
+        _,v:=scene_table(f,part.t.name)
+        scene_component_apply(a,id,part.t,v,"{}",fmt.aprintf("%s.preset",d.path,allocator=reading.allocator),part.value) or_return
+        append(&declared,part.t)
+    }
+    // What the document leaves out goes; of an instance it places, it stays as its prefab gives it.
+    if !d.placed {
+        for &t,i in f.info.tables {
+            if t.place!=.World || f.ws.tables[i].type==serial.TYPE_NONE || !component_listed(&t) || slice.contains(declared[:],&t) || !scene_has(f,t.name,id) {continue}
+            table,_:=asset.scene_component(scene,t.name)
+            scene_overrides(a,id,base.name_hash(t.name),.Removed)
+            asset.scene_component_remove(scene,table,id)
+            written.changed=true
+        }
     }
     off:=make([dynamic]^core.Table_Info,reading.allocator)
     if d.off!="" {
@@ -677,19 +837,22 @@ scene_values_apply :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity,writte
         turned_off:=asset.scene_component_off(scene,id,hash)
         if turned_off==slice.contains(off[:],t) {continue}
         asset.scene_component_turn(scene,id,hash,!turned_off)
+        scene_overrides(a,id,hash,.Turned)
         written.changed=true
     }
     return true
 }
 
 // A component of the entity takes the value of the document over the one it
-// starts with, keeping of its current value what a document does not show.
+// starts with (from: the one its recipe gives), keeping of its current value
+// what a document does not show.
 @(private="file")
-scene_component_apply :: proc(f:^Scene_File,reading:^Reading,id:base.Entity_Id,t:^core.Table_Info,v:^core.Value_Schema,text,path:string,written:^Written) -> bool {
+scene_component_apply :: proc(a:^Scene_Apply,id:base.Entity_Id,t:^core.Table_Info,v:^core.Value_Schema,text,path:string,from:[]u8) -> bool {
+    f,reading:=a.f,a.reading
     start:=scene_start(t,v)
     size:=t.info.size
     bytes:=make([]u8,max(size,1),reading.allocator)[:size]
-    copy(bytes,start)
+    copy(bytes,from if from!=nil else start)
     current,has:=scene_value(f,t,v,id,start)
     if has {fields_kept(&f.ws.schema,v.type,bytes,current)}
     before:=slice.clone(bytes,reading.allocator)
@@ -719,7 +882,8 @@ scene_component_apply :: proc(f:^Scene_File,reading:^Reading,id:base.Entity_Id,t
     }
     if has && slice.equal(bytes,current) {return true}
     if !scene_value_set(f,t,v,id,bytes) {reading_brokef(reading,"%s could not be written",path);return false}
-    written.changed=true
+    scene_overrides(a,id,base.name_hash(t.name),.Field if has else .Added)
+    a.written.changed=true
     return true
 }
 

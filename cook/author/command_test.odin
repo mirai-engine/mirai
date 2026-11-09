@@ -1,5 +1,6 @@
 package author
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -10,6 +11,7 @@ import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The commands mirai ui and mirai scene on a copy of the game template, as
@@ -43,21 +45,91 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
 
 @(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
 
+// The world of the game of the tests: where a recipe is run.
+@(private="file")
+Game_World :: struct {
+    entities:core.Entities,
+    transforms:core.Table(core.Transform),
+    hidden:core.Table(erender.Hidden),
+    disabled:core.Table(core.Disabled),
+    meshes:core.Table(erender.Mesh_Renderer),
+    tints:core.Table(erender.Tint),
+    point_lights:core.Table(erender.Point_Light),
+    statuses:core.Table(Game_Status),
+    names:core.Table(core.Name),
+    parents:core.Table(core.Parent),
+    hierarchy:core.Hierarchy,
+}
+
+@(private="file")
+game_world_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
+    context.allocator=allocator
+    w:=cast(^Game_World)data
+    core.entities_init(&w.entities)
+    core.table_init(&w.transforms,"Transform")
+    core.table_init(&w.hidden,"Hidden")
+    core.table_init(&w.disabled,"Disabled")
+    core.table_init(&w.meshes,"Mesh_Renderer")
+    core.table_init(&w.tints,"Tint")
+    core.table_init(&w.point_lights,"Point_Light")
+    core.table_init(&w.statuses,"Status")
+    core.table_init(&w.names,"Name")
+    core.table_init(&w.parents,"Parent")
+    return len(w.entities.generation)>0
+}
+
+@(private="file")
+game_world_destroy :: proc(data:rawptr) {
+    w:=cast(^Game_World)data
+    core.entities_destroy(&w.entities)
+    core.table_destroy(&w.transforms)
+    core.table_destroy(&w.hidden)
+    core.table_destroy(&w.disabled)
+    core.table_destroy(&w.meshes)
+    core.table_destroy(&w.tints)
+    core.table_destroy(&w.point_lights)
+    core.table_destroy(&w.statuses)
+    core.table_destroy(&w.names)
+    core.table_destroy(&w.parents)
+    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
+}
+
+@(private="file")
+game_world_settle :: proc(data,shared,editor:rawptr) {
+    w:=cast(^Game_World)data
+    core.table_settle(&w.transforms,&w.entities)
+    core.table_settle(&w.hidden,&w.entities)
+    core.table_settle(&w.disabled,&w.entities)
+    core.table_settle(&w.meshes,&w.entities)
+    core.table_settle(&w.tints,&w.entities)
+    core.table_settle(&w.point_lights,&w.entities)
+    core.table_settle(&w.statuses,&w.entities)
+    core.table_settle(&w.names,&w.entities)
+    core.table_settle(&w.parents,&w.entities)
+    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
+    core.entities_settle(&w.entities)
+}
+
 // The types of a game with the Status the interfaces of the template bind
 // and the components of the engine its scene has.
 @(private="file")
 game_info :: proc(info:^core.World_Info) {
     tables:=make([]core.Table_Info,9,context.temp_allocator)
-    tables[0]={name="Transform",type=core.Transform,info=type_info_of(core.Transform),place=.World}
-    tables[1]={name="Hidden",type=erender.Hidden,info=type_info_of(erender.Hidden),place=.World}
-    tables[2]={name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),place=.World}
-    tables[3]={name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),place=.World}
-    tables[4]={name="Tint",type=erender.Tint,info=type_info_of(erender.Tint),place=.World}
-    tables[5]={name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),place=.World}
-    tables[6]={name="Status",library="game",type=Game_Status,info=type_info_of(Game_Status),place=.World,game=true}
-    tables[7]={name="Name",type=core.Name,info=type_info_of(core.Name),place=.World}
-    tables[8]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),place=.World}
-    info^={tables=tables}
+    tables[0]={name="Transform",type=core.Transform,info=type_info_of(core.Transform),place=.World,offset=offset_of(Game_World,transforms)}
+    tables[1]={name="Hidden",type=erender.Hidden,info=type_info_of(erender.Hidden),place=.World,offset=offset_of(Game_World,hidden)}
+    tables[2]={name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),place=.World,offset=offset_of(Game_World,disabled)}
+    tables[3]={name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),place=.World,offset=offset_of(Game_World,meshes)}
+    tables[4]={name="Tint",type=erender.Tint,info=type_info_of(erender.Tint),place=.World,offset=offset_of(Game_World,tints)}
+    tables[5]={name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),place=.World,offset=offset_of(Game_World,point_lights)}
+    tables[6]={name="Status",library="game",type=Game_Status,info=type_info_of(Game_Status),place=.World,game=true,offset=offset_of(Game_World,statuses)}
+    tables[7]={name="Name",type=core.Name,info=type_info_of(core.Name),place=.World,offset=offset_of(Game_World,names)}
+    tables[8]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),place=.World,offset=offset_of(Game_World,parents)}
+    storages:=make([]core.Storage_Info,1,context.temp_allocator)
+    storages[0]={type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Game_World,hierarchy)}
+    info^={tables=tables,storages=storages,settle=game_world_settle,
+        sizes={.World=size_of(Game_World),.Shared=0,.Editor=0},aligns={.World=align_of(Game_World),.Shared=1,.Editor=1},
+        init={.World=game_world_init,.Shared=nil,.Editor=nil},destroy={.World=game_world_destroy,.Shared=nil,.Editor=nil}}
     core.world_info_index(info,context.temp_allocator)
 }
 
@@ -133,10 +205,6 @@ a_path_the_game_lacks_is_refused_with_no_editor_as_ui_write_refuses_it :: proc(t
     testing.expect(t,strings.contains(problem,"bind_text 'Status.mesage': Game_Status has no field 'mesage'; it has health, hits, message"),problem)
     testing.expect(t,strings.contains(problem,"Nothing changed. A path names a component or a storage of the game"),problem)
     testing.expect(t,slice.equal(file_bytes(&p,"hud/hud.ui"),before),"a refused document leaves the file as it was")
-    // Without the types of a game the path is not checked, and the command says so.
-    p.info=nil
-    _,unchecked:=ui_write(&p,"hud/hud.ui",wrong)
-    testing.expect(t,unchecked=="",unchecked)
 }
 
 @(test)
@@ -158,27 +226,88 @@ the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^tes
     hud:=project.path(root,SOURCE_FOLDER,"hud/hud.ui.json",allocator=context.temp_allocator)
     text,error:=os.read_entire_file(hud,context.temp_allocator)
     if !testing.expect(t,error==nil && strings.has_prefix(string(text),"{\n"),"the document is a file of text under source/") {return}
-    // The folder of documents becomes the assets in one command, each named by its file.
-    written:=run(base_args,"ui","write",project.path(root,SOURCE_FOLDER,allocator=context.temp_allocator))
-    testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: ") && strings.contains(written.err,"are not checked"),"%d %s%s",written.code,written.out,written.err)
+    // A project that was never built has no types to check against: nothing
+    // is written or checked, of an interface or of a scene, and the failure
+    // says what builds them.
+    source:=project.path(root,SOURCE_FOLDER,allocator=context.temp_allocator)
+    before:=file_bytes_at(root,"assets/hud/hud.ui")
+    for args in ([][]string{{"ui","write",source},{"ui","check"},{"scene","read","arena/main.scene"},{"scene","write",source},{"scene","check"}}) {
+        refused:=run(base_args,..args)
+        testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> --dev"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
+    }
+    testing.expect(t,slice.equal(file_bytes_at(root,"assets/hud/hud.ui"),before))
+
+    // With the types of the game: the folder of documents becomes the assets
+    // in one command, each named by its file.
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    info:core.World_Info
+    game_info(&info)
+    p.info=&info
+    on :: proc(p:^Project,kind:Document_Kind,verb:string,args:..string) -> Run_Result {
+        output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
+        code:=project_run(p,kind,verb,args,strings.to_writer(&output),strings.to_writer(&errors))
+        return {code,strings.to_string(output),strings.to_string(errors)}
+    }
+    written:=on(&p,.Ui,"write",project.path(source,"hud",allocator=context.temp_allocator),project.path(source,"menu/theme.ui.json",allocator=context.temp_allocator))
+    testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: ") && strings.contains(written.out,"menu/theme.ui: "),"%d %s%s",written.code,written.out,written.err)
+    // The shell binds what the game of this test does not declare: refused, and the exit code says so.
+    unbound:=on(&p,.Ui,"write",source)
+    testing.expectf(t,unbound.code==1 && strings.contains(unbound.err,"mirai ui write: menu/shell.ui: ") && strings.contains(unbound.err,"the game has no component or storage 'Shell'"),"%d %s",unbound.code,unbound.err)
     // A new document makes its asset, and one that does not read is refused naming where.
     fresh:=project.path(root,SOURCE_FOLDER,"hud/score.ui.json",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(fresh,`{"use":["menu/theme.ui"],"nodes":[{"name":"score","kind":"Text","style":"chip_value","text":"0"}]}`)==nil)
-    made:=run(base_args,"ui","write",fresh)
+    made:=on(&p,.Ui,"write",fresh)
     testing.expectf(t,made.code==0 && strings.contains(made.out,"hud/score.ui: made"),"%d %s%s",made.code,made.out,made.err)
     testing.expect(t,os.is_file(project.path(root,"assets/hud/score.ui",allocator=context.temp_allocator)))
     testing.expect(t,os.write_entire_file(fresh,`{"nodes":[{"name":"score","kind":"Text","colour":"red"}]}`)==nil)
-    refused:=run(base_args,"ui","write",fresh)
+    refused:=on(&p,.Ui,"write",fresh)
     testing.expectf(t,refused.code==1 && strings.contains(refused.err,"mirai ui write: hud/score.ui: nodes[0]") && strings.contains(refused.err,"colour"),"%d %s%s",refused.code,refused.out,refused.err)
     // A check reports what the game would not load and exits non-zero.
-    clean:=run(base_args,"ui","check")
-    testing.expectf(t,clean.code==0 && strings.contains(clean.out,"no problems"),"%d %s%s",clean.code,clean.out,clean.err)
     testing.expect(t,os.remove(project.path(root,"assets/menu/theme.ui",allocator=context.temp_allocator))==nil)
-    broken:=run(base_args,"ui","check")
+    testing.expect_value(t,asset.registry_refresh(&p.registry,{"menu/theme.ui"}),asset.Error.None)
+    broken:=on(&p,.Ui,"check","hud/hud.ui")
     testing.expectf(t,broken.code==1 && strings.contains(broken.out,"does not load") && strings.contains(broken.err,"problems"),"%d %s%s",broken.code,broken.out,broken.err)
-    // A scene needs the types of the game, which a project that was never built does not have.
-    scene:=run(base_args,"scene","read","arena/main.scene")
-    testing.expectf(t,scene.code==1 && strings.contains(scene.err,"mirai build editor --dev"),"%d %s%s",scene.code,scene.out,scene.err)
+}
+
+@(private="file")
+file_bytes_at :: proc(root,path:string) -> []u8 {
+    bytes,_:=os.read_entire_file(project.path(root,path,allocator=context.temp_allocator),context.temp_allocator)
+    return bytes
+}
+
+// A widget written with a parameter that goes elsewhere takes the files that
+// use it along: what they gave by its name is given where it goes now.
+@(test)
+writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^testing.T) {
+    root,engine,copied:=template_copy(t,"follow")
+    if !copied {return}
+    defer os.remove_all(root)
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    stat :: proc(node:string) -> string {
+        return strings.concatenate({`{"params":{"label":"`,node,`.text"},"nodes":[{"name":"stat","kind":"Box","children":[{"name":"name","kind":"Text"},{"name":"amount","kind":"Text"}]}]}`},context.temp_allocator)
+    }
+    _,problem:=ui_write(&p,"kit/stat.ui",stat("name"))
+    if !testing.expect(t,problem=="",problem) {return}
+    _,problem=ui_write(&p,"kit/screen.ui",`{"use":["kit/stat.ui"],"nodes":[{"name":"root","kind":"Box","children":[{"name":"hits","kind":"stat","label":"Hits"}]}]}`)
+    if !testing.expect(t,problem=="",problem) {return}
+    before:=slice.clone(file_bytes(&p,"kit/screen.ui"),context.temp_allocator)
+    moved,why:=ui_write(&p,"kit/stat.ui",stat("amount"))
+    testing.expect(t,why=="" && moved.followed==1,fmt.tprintf("%s %v",why,moved))
+    testing.expect(t,!slice.equal(file_bytes(&p,"kit/screen.ui"),before),"the file that uses the widget was written again")
+    r:Records
+    record,_:=asset.registry_find_path(&p.registry,"kit/screen.ui")
+    if !testing.expect(t,records_read(p.assets,record.id,&r,context.temp_allocator)) {return}
+    if !testing.expect_value(t,len(r.overrides),1) {return}
+    testing.expect_value(t,serial.text_field(r.overrides[0].node[:]),"amount")
+    testing.expect_value(t,records_text(&r,r.overrides[0].values.text),"Hits")
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    testing.expect_value(t,ui_read(&p,"kit/screen.ui",&out),"")
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&out)),`"label":"Hits"`),string(serial.writer_bytes(&out)))
 }
 
 @(test)
@@ -233,7 +362,8 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     // What a document cannot declare says where and what does.
     cases:=[]struct{document,message:string}{
         {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,"entities[0].components.Nope: the game of this build has no component 'Nope'"},
-        {`{"entities":[{"name":"x","preset":"cube"}]}`,"entities[0].preset: a preset is a recipe the editor runs"},
+        {`{"entities":[{"name":"x","preset":"cubes"}]}`,"entities[0].preset: "},
+        {`{"entities":[{"name":"x","prefab":"player/Nobody.prefab"}]}`,"entities[0].prefab: "},
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
@@ -252,3 +382,68 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     _,has_root:=asset.scene_entity_find(&annex,0x42)
     testing.expect(t,has_root && asset.scene_entity_count(&annex)==2)
 }
+
+// A preset and the card of a plugin stand for the components their recipes
+// give, and a new entity with prefab is a linked instance of that prefab.
+@(test)
+a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testing.T) {
+    root,engine,copied:=template_copy(t,"recipes")
+    if !copied {return}
+    defer os.remove_all(root)
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    info:core.World_Info
+    game_info(&info)
+    p.info=&info
+    labels:=[]string{"Scoreboard"}
+    scales:=[][3]f32{{2,2,2}}
+    p.plugins={labels=labels,scales=scales,make=proc(user:rawptr,index:int,w:core.World_Ref,e:core.Entity) {
+        if statuses:=core.world_table_of(w,Game_Status);statuses!=nil {core.add(statuses,e,Game_Status{hits=3})}
+    }}
+    written,problem:=scene_write(&p,"arena/yard.scene",`{"entities":[
+        {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
+        {"name":"Box","preset":"cube","scale":[1,2,1]},
+        {"name":"Board","preset":"scoreboard"},
+        {"name":"Hero","prefab":"player/Player.prefab","position":[1,2,3]}]}`)
+    if !testing.expect(t,problem=="",problem) {return}
+    yard:asset.Scene
+    file:=project.path(p.assets_root,"arena/yard.scene",allocator=context.temp_allocator)
+    if !testing.expect_value(t,asset.scene_load(&yard,&p.types,file,context.temp_allocator),asset.Error.None) {return}
+    named :: proc(scene:^asset.Scene,name:string) -> base.Entity_Id {
+        for id,row in asset.scene_ids(scene) {if asset.scene_entity(scene,row).name==name {return id}}
+        return 0
+    }
+    lamp,box,board,hero:=named(&yard,"Lamp"),named(&yard,"Box"),named(&yard,"Board"),named(&yard,"Hero")
+    if !testing.expect(t,lamp!=0 && box!=0 && board!=0 && hero!=0,"the four entities are in the file") {return}
+    light,has_light:=asset.scene_get(&yard,lamp,"Point_Light",erender.Point_Light)
+    testing.expect(t,has_light && light.intensity==7 && light.range==erender.POINT_LIGHT_DEFAULT.range,"the light is the one of the preset with what the document gives")
+    mesh,has_mesh:=asset.scene_get(&yard,box,"Mesh_Renderer",erender.Mesh_Renderer)
+    testing.expect(t,has_mesh && mesh.shape==.Cube)
+    status,has_status:=asset.scene_get(&yard,board,"Status",Game_Status)
+    placed,_:=asset.scene_get(&yard,board,"Transform",core.Transform)
+    testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"the card of a plugin gives its components and its scale")
+    // The instance: its root where the document says, linked to its prefab, with the members the prefab has.
+    prefab:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.prefab",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
+    testing.expect_value(t,written.made,3+asset.scene_entity_count(&prefab))
+    if !testing.expect_value(t,len(yard.instances),1) {return}
+    testing.expect(t,yard.instances[0].root==hero && yard.instances[0].prefab==prefab.doc.id)
+    testing.expect_value(t,len(yard.members),asset.scene_entity_count(&prefab))
+    where_,_:=asset.scene_get(&yard,hero,"Transform",core.Transform)
+    testing.expect_value(t,where_.position,[3]f32{1,2,3})
+    // Its document reads it back and writes it as it is; moving the instance by its id keeps its link.
+    testing.expect_value(t,scene_verify(&p,"arena/yard.scene"),"")
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    testing.expect_value(t,scene_read(&p,"arena/yard.scene",&out),"")
+    text:=string(serial.writer_bytes(&out))
+    testing.expect(t,strings.contains(text,`"root":true`),text)
+    moved,_:=strings.replace_all(text,`"position":[1,2,3]`,`"position":[4,2,3]`,context.temp_allocator)
+    again,why:=scene_write(&p,"arena/yard.scene",moved)
+    testing.expect(t,why=="" && again.made==0 && again.removed==0 && !again.same,fmt.tprintf("%s %v",why,again))
+    after:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&after,&p.types,file,context.temp_allocator),asset.Error.None) {return}
+    testing.expect(t,len(after.instances)==1 && len(after.members)==len(yard.members))
+}
+

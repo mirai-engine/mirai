@@ -583,7 +583,7 @@ records_file_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^author.Re
     }
     if !opened {written=editor.file_write(s,path,bytes,label)}
     if !written {return "the file could not be written",false}
-    widget_params_follow(s,a,id,params_changes(params,author.data_params(data,imports)),0)
+    widget_params_follow(s,a,id,author.params_changes(params,author.data_params(data,imports)))
     return "",true
 }
 

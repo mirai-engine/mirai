@@ -50,7 +50,7 @@ ui_cards_default :: proc() -> (cards:Ui_Cards) {
 // The .ui chosen in the content browser; none otherwise.
 @(private)
 chosen_interface :: proc(s:^editor.Session) -> base.Asset_Id {
-    if s.content==nil || s.app==nil || s.app.assets==nil {return {}}
+    if s==nil || s.content==nil || s.app==nil || s.app.assets==nil {return {}}
     if record,found:=asset.registry_find(&s.app.assets.registry,s.content.selected);found && record.kind==asset.KIND_UI {return record.id}
     return {}
 }
@@ -69,7 +69,7 @@ panel_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
     }
     // It keeps the rotation it starts with: turned to whoever adds it, its
     // forward toward the view.
-    if t:=core.world_table_of(w,core.Transform);t!=nil && s.viewport!=nil {
+    if t:=core.world_table_of(w,core.Transform);t!=nil && s!=nil && s.viewport!=nil {
         if placed:=core.get(t,e);placed!=nil {
             toward:=editor.orbit_position(s.viewport.orbit)-placed.position
             toward.y=0

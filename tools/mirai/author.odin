@@ -15,7 +15,9 @@ SCENE_USAGE :: "scene read <asset> [--out <file>] | read --sources | write <asse
 // build of the engine makes next to the editor and the player: the documents
 // and the assets they write are engine code, and the tool builds without it.
 // The engine is built first unless it is current, as mirai import does; what
-// that build says goes to stderr. The project is the one of --project, or the
+// that build says goes to stderr. The project is not built: a command that
+// reads the types of its game (all but ui read) refuses, with what builds it,
+// a project that was never built or whose code changed since. The project is the one of --project, or the
 // one the current folder is in; the program runs in the current folder, so
 // the files it is given are named from there, and its exit code is the
 // command's.
@@ -45,6 +47,22 @@ author_project_take :: proc(args:[]string) -> (folder:string,rest:[]string,ok:bo
     return folder,list[:],true
 }
 
+// Whether a command reads the types of the game: all but reading an interface.
+author_needs_library :: proc(kind:string,rest:[]string) -> bool {return !(kind=="ui" && rest[0]=="read")}
+
+// What keeps a command from reading the types of the game from the library of
+// the editor of the project, with the command that builds it; "" when the
+// library is the one its code gives now.
+author_library_problem :: proc(state:build.Target_State,owner:string,dev:bool) -> string {
+    fix:=fmt.tprintf(`mirai build editor "%s" %s`,owner,dev?"--dev":"--release")
+    switch state {
+    case .Missing: return fmt.tprintf("the project was never built, and its documents are checked against the types of its game: %s builds its library",fix)
+    case .Stale:   return fmt.tprintf("the code of the project changed since its library was built, and its documents are checked against the types of its game: %s builds it again",fix)
+    case .Current:
+    }
+    return ""
+}
+
 @(private="file")
 author_run :: proc(root,kind,usage:string,args:[]string) -> int {
     mode,without_mode,ok:=build_mode_take(args)
@@ -65,6 +83,17 @@ author_run :: proc(root,kind,usage:string,args:[]string) -> int {
         defer workspace.lock_release(&lock)
         if !ensure_runtime_dependencies(root) {return 1}
         if code:=engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr);code!=0 {return code}
+    }
+    if author_needs_library(kind,rest) {
+        p,error:=project.open(owner,root,context.temp_allocator)
+        if error.code!=.None {
+            fmt.eprintfln("mirai %s: %s",kind,project.error_text(owner,error,context.temp_allocator))
+            return 1
+        }
+        if problem:=author_library_problem(build.target_state(&p,.Editor,"",mode==.Dev,mode),owner,mode==.Dev);problem!="" {
+            fmt.eprintfln("mirai %s %s: %s",kind,rest[0],problem)
+            return 1
+        }
     }
     here,_:=os.get_working_directory(context.temp_allocator)
     command:=author_command(build.engine_paths(root,mode,context.temp_allocator).author_program,root,owner,kind,rest)

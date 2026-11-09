@@ -406,8 +406,9 @@ main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.t
 
 import "core:os"
 import "mirai:cook/author"
+import "mirai:editor"
 
-main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
+main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_recipes))}
 `,paths.author_program},
     }
     build_programs:=stamp.programs!=plan.programs

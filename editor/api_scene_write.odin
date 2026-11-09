@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
@@ -508,13 +509,8 @@ api_card_parts :: proc(s:^Session,w:core.World_Ref,card:int,allocator:runtime.Al
     if made:=cards(s)[card].make;made!=nil {made(s,w,e)} else {preset_components(w,e,Preset(card))}
     core.world_settle(w)
     parts:=make([dynamic]Api_Card_Part,allocator)
-    for &t in s.info.tables {
-        if !api_component_listed(s,&t) {continue}
-        value:=core.raw_find(core.world_table_at(w,&t),t.info,e)
-        if value==nil {continue}
-        bytes:=make([]u8,max(t.info.size,1),allocator)
-        api_value_out(w,t.info,value,bytes)
-        append(&parts,Api_Card_Part{&t,bytes[:t.info.size]})
+    for part in author.entity_parts(w,e,allocator) {
+        if api_component_listed(s,part.t) {append(&parts,Api_Card_Part{part.t,part.value})}
     }
     core.world_destroy_tree(w,e)
     core.world_settle(w)

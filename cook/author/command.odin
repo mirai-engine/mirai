@@ -31,8 +31,10 @@ import "mirai:std/serial"
 //
 // The types of the game, which the paths an interface binds and the
 // components of a scene are read against, are those of the library of the
-// project as it was built last. Without one an interface is written with its
-// paths unchecked, which the command says, and a scene is not read or written.
+// editor of the project as it was built last, which also has the cards its
+// plugins add to the presets. Without it only an interface is read: nothing
+// is written or checked that the game could not be asked about, and the
+// command says what builds the library.
 // Results go to output and failures to errors as "mirai ui write: <asset>:
 // <reason>". Exit codes: 0 done, 1 failed, 2 misuse.
 
@@ -74,11 +76,17 @@ Project :: struct {
     library:host.Project_Library,
     info:^core.World_Info, // the types of the game as it was built last; nil: none
     untyped:string,        // why it has none, with what gives them
+    plugins:Plugin_Recipes, // the cards of its plugins, when whoever runs the command reads them
+    scratch:Scratch_World,  // where a recipe is run; made the first time
 }
+
+// What builds the library the types of a game come from.
+BUILD_FIX :: "mirai build editor <project> --dev builds it"
+
 
 // Opens the project at root with the assets of its plugins. library false
 // leaves the types of its game out. problem: why it does not open.
-project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:string) {
+project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_Recipes_Proc=nil) -> (problem:string) {
     opened,error:=project.open(root,engine,context.temp_allocator)
     if error.code!=.None {return project.error_text(root,error,context.temp_allocator)}
     p.root=strings.clone(opened.root)
@@ -90,10 +98,12 @@ project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:st
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}
     if library {project_library_open(p)}
+    if p.info!=nil && recipes!=nil {p.plugins=recipes(p.info,context.allocator)}
     return ""
 }
 
 project_close :: proc(p:^Project) {
+    scratch_world_free(&p.scratch)
     if p.library.handle!=nil {host.project_library_unload(&p.library)}
     asset.registry_destroy(&p.registry)
     asset.types_destroy(&p.types)
@@ -103,25 +113,18 @@ project_close :: proc(p:^Project) {
     p^={}
 }
 
-// The types of the game of the project: those of the library built last, of
-// the editor or of the game alone.
+// The types of the game of the project: those of the library of its editor,
+// which its plugins give their cards in.
 @(private="file")
 project_library_open :: proc(p:^Project) {
-    newest:string
-    time:i64
-    for name in ([]string{"editor","play"}) {
-        path:=project.project_library(p.root,name,context.temp_allocator)
-        info,error:=os.stat(path,context.temp_allocator)
-        if error!=nil {continue}
-        if at:=info.modification_time._nsec;newest=="" || at>time {newest,time=path,at}
-    }
-    if newest=="" {
-        p.untyped="the project has no built library, where the types of its game are: mirai build editor --dev builds it"
+    path:=project.project_library(p.root,"editor",context.temp_allocator)
+    if !os.is_file(path) {
+        p.untyped="the project has no built library, where the types of its game are: "+BUILD_FIX
         return
     }
-    library,error:=host.project_library_load(newest,0)
+    library,error:=host.project_library_load(path,0)
     if error!=.None {
-        p.untyped=fmt.aprintf("%s; mirai build editor --dev builds it again",host.library_error_text(error,newest))
+        p.untyped=fmt.aprintf("%s; %s again",host.library_error_text(error,path),BUILD_FIX)
         return
     }
     p.library=library
@@ -177,13 +180,16 @@ Written :: struct {
     fresh:bool,  // the file did not exist
     same:bool,   // the file already said it: nothing was written
     changed:bool, // a scene: something of an entity it kept is another
+    followed:int, // an interface: the files that use it as a widget and were written to follow its parameters
     made,removed:int,
 }
 
 // Makes the .ui a path names say what a document declares, as ui.write does
 // with save: a path that names nothing yet makes the file, whose id is the
 // same for that path every time. A document ui.write refuses is refused, and
-// the file stays as it was. problem: why.
+// the file stays as it was, and the files that use it as a widget follow
+// where its parameters go now. Its paths are checked against p.info: the
+// command refuses to write without it. problem: why.
 ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:string) {
     path:=asset_path(named)
     record,found:=asset.registry_find_path(&p.registry,path)
@@ -206,11 +212,23 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
     args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id}
     applied:bool
     if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
-    bytes,_,loads:=document_bytes(&args,id,&r)
+    params:=widget_params(p.assets,id)
+    bytes,imports,loads:=document_bytes(&args,id,&r)
     if !loads {return {},reading.problem}
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
-    problem=file_put(p,file,path,bytes,&written)
+    if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
+    // What the files that use this widget gave follows where its parameters go now.
+    written.followed=widget_params_follow(p.assets,id,params_changes(params,data_params(records_data(&r),imports)),proc(user:rawptr,id:base.Asset_Id,records:^Records) -> bool {
+        p:=(^Project)(user)
+        record,found:=asset.registry_find(&p.registry,id)
+        if !found {return false}
+        path:=strings.clone(record.path,context.temp_allocator)
+        bytes,_,_,loads:=records_bytes(p.assets,id,records)
+        if !loads {return false}
+        put:Written
+        return file_put(p,asset.registry_file_path(&p.registry,path,context.temp_allocator),path,bytes,&put)==""
+    },p)
     return
 }
 
@@ -228,8 +246,8 @@ file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (pr
     return ""
 }
 
-// Checks the .ui of the project, or those of ids: what does not load, the
-// names that resolve to nothing and, with the types of the game, the paths
+// Checks the .ui of the project, or those of ids, against the types of the
+// game: what does not load, the names that resolve to nothing and the paths
 // they bind that it lacks.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
@@ -238,11 +256,6 @@ ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem)
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
-    }
-    if p.info!=nil {return}
-    // Without the types of a game no path is one it has.
-    for i:=len(problems)-1;i>=0;i-=1 {
-        if problems[i].fault==.Path || problems[i].fault==.Template {ordered_remove(problems,i)}
     }
 }
 
@@ -264,7 +277,10 @@ run_fail :: proc(run:^Run,what,why:string) {
     else {fmt.wprintfln(run.errors,"mirai %s %s: %s: %s",kind_name(run.kind),run.verb,what,why)}
 }
 
-command :: proc(args:[]string,output,errors:io.Writer) -> int {
+// recipes reads the cards of the plugins of the library of the project
+// (editor.plugin_recipes, in the program of the engine); without it a
+// document names the presets alone.
+command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Proc=nil) -> int {
     root,engine:string
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
@@ -285,21 +301,30 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     }
     if root=="" {root="."}
     p:Project
-    if problem:=project_open(&p,root,engine);problem!="" {
+    reads:=kind==.Ui && verb=="read"
+    if problem:=project_open(&p,root,engine,!reads,recipes);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }
     defer project_close(&p)
-    run:=Run{p=&p,kind=kind,verb=verb,output=output,errors=errors}
-    if kind==.Scene && p.info==nil {
-        run_fail(&run,"",fmt.tprintf("a scene is read and written against the components of the game, with the values they start with; %s",p.untyped))
+    return project_run(&p,kind,verb,rest[2:],output,errors)
+}
+
+// Runs read, write or check on an open project. All but reading an interface
+// need the types of its game: without them nothing is written or checked,
+// and the failure says what builds them.
+project_run :: proc(p:^Project,kind:Document_Kind,verb:string,args:[]string,output,errors:io.Writer) -> int {
+    run:=Run{p=p,kind=kind,verb=verb,output=output,errors=errors}
+    if !(kind==.Ui && verb=="read") && p.info==nil {
+        what:="a scene is read and written against the components of the game, with the values they start with" if kind==.Scene else "the paths an interface binds are checked against the types of the game, and nothing checks them now"
+        run_fail(&run,"",fmt.tprintf("%s; %s",what,p.untyped!=""?p.untyped:BUILD_FIX))
         return 1
     }
     code:=0
     switch verb {
-    case "read":  code=command_read(&run,rest[2:])
-    case "write": code=command_write(&run,rest[2:])
-    case "check": code=command_check(&run,rest[2:])
+    case "read":  code=command_read(&run,args)
+    case "write": code=command_write(&run,args)
+    case "check": code=command_check(&run,args)
     }
     if code==0 && run.failed {code=1}
     return code
@@ -435,9 +460,6 @@ command_write :: proc(run:^Run,args:[]string) -> int {
         }
     }
     if run.failed {return 1}
-    if run.kind==.Ui && run.p.info==nil {
-        fmt.wprintfln(run.errors,"mirai ui write: the paths the interfaces bind are not checked: %s",run.p.untyped)
-    }
     // A document may use a file another one of the same run makes: what
     // fails is tried again while a round writes something.
     pending:=targets[:]
@@ -463,7 +485,9 @@ command_write :: proc(run:^Run,args:[]string) -> int {
                 continue
             }
             state:="unchanged" if written.same else "made" if written.fresh else "written"
-            fmt.wprintfln(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
+            fmt.wprintf(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
+            if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
+            fmt.wprintln(run.output)
         }
         if len(left)==len(pending) {
             for target,i in left {run_fail(run,target.asset,problems[i])}
@@ -489,7 +513,6 @@ command_check :: proc(run:^Run,args:[]string) -> int {
             append(&ids,id)
         }
         if run.failed {return 1}
-        if run.p.info==nil {fmt.wprintfln(run.errors,"mirai ui check: the paths the interfaces bind are not checked: %s",run.p.untyped)}
         problems:=make([dynamic]Bind_Problem,context.temp_allocator)
         ui_check(run.p,ids[:],&problems)
         for &problem in problems {fmt.wprintln(run.output,bind_problem_text(run.p.assets,&problem))}

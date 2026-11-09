@@ -263,3 +263,35 @@ a_parameter_of_a_style_can_give_one_of_a_file_it_uses :: proc(t:^testing.T) {
     at:=records_override(&r,row,"label",{})
     testing.expect_value(t,records_style_name(&r,int(r.overrides[at].values.style)),"knob")
 }
+
+@(test)
+a_parameter_moved_in_a_widget_moves_what_its_uses_give :: proc(t:^testing.T) {
+    p:Project
+    screen,ok:=widgets_project(t,&p,"widget-follow")
+    if !ok {return}
+    defer project_destroy(&p)
+    // select_row's label goes to the options now: what uses gave of label moves with it.
+    second:=-1
+    for &n,i in screen.nodes {if serial.text_field(n.name[:])=="second" {second=i}}
+    before:=widget_params(p.assets,ROW_ID)
+    moved:=make([]ui.Tree_Param,len(before),context.temp_allocator)
+    copy(moved,before)
+    ui.tree_text_set(moved[0].node[:],"control")
+    follow:=records_params_follow(p.assets,&screen,ROW_ID,params_changes(before,moved))
+    testing.expect(t,follow.changed)
+    found:=false
+    for &o in screen.overrides {
+        if int(o.instance)==second && serial.text_field(o.node[:])=="control" && .Text in o.fields {found=records_text(&screen,o.values.text)=="Volume"}
+    }
+    testing.expect(t,found,"the value went to the node the parameter goes to now")
+    // A reach through its use follows too, in what it hands up.
+    outer:Records
+    project_records(t,&p,OUTER_ID,&outer)
+    through:=records_params_follow(p.assets,&outer,ROW_ID,params_changes(before,moved))
+    testing.expect(t,through.changed || len(through.through)==1)
+    // Gone: what uses gave goes.
+    fresh:Records
+    project_records(t,&p,SCREEN_FILE_ID,&fresh)
+    gone:=records_params_follow(p.assets,&fresh,ROW_ID,params_changes(before,before[1:]))
+    testing.expect(t,gone.changed)
+}
