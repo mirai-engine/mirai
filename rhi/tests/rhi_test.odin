@@ -562,8 +562,12 @@ rhi_timestamps_report_ordered_nanoseconds :: proc(t: ^testing.T) {
 		if idle != nil {idle^ = time.duration_nanoseconds(time.tick_diff({}, time.tick_now()))}
 		cmd, ok := rhi.frame_begin(d, false)
 		if !testing.expect(t, ok) {return nil}
+		recording := rhi.frame_number(d)
 		testing.expect(t, rhi.frame_end(d, cmd))
-		return rhi.frame_timings(d)
+		timings, measured := rhi.frame_timings(d)
+		// The slot's last frame, MAX_FRAMES_IN_FLIGHT before the one that collected them.
+		testing.expect_value(t, measured, recording - rhi.MAX_FRAMES_IN_FLIGHT)
+		return timings
 	}
 	now := time.duration_nanoseconds(time.tick_diff({}, time.tick_now()))
 	frame := timings_of(t, d, buffer, false)

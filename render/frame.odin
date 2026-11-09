@@ -168,7 +168,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
 	}
-	r.stats.timings = rhi.frame_timings(r.device)
+	r.stats.timings, r.stats.timings_frame = rhi.frame_timings(r.device)
 	total: f32
 	for t in r.stats.timings {total += t.ms}
 	r.stats.gpu_ms = total

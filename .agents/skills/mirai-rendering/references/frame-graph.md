@@ -215,7 +215,9 @@ or interleave its own passes.
   collected: Metal always, Vulkan with `VK_KHR_calibrated_timestamps` (or the EXT) in the domain
   of `tick_now` (QPC on Windows, `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan
   places the last timestamp of the frame at the moment it collects it: it keeps the durations but
-  arrives late;
+  arrives late. They are those of the frame whose slot came back, `MAX_FRAMES_IN_FLIGHT` before the
+  one just recorded: `timings_frame` is its `rhi.frame_number` (`rhi.frame_timings` returns both),
+  and `gpu_ms` their sum;
 - visible, culled and occluded instances, probes and estimated rays per frame;
 - what was discarded by capacity ([UI limits](ui.md#capacities));
 - materials, textures, their memory, reduced textures and compression

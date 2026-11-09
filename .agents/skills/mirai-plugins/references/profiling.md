@@ -14,7 +14,7 @@ agent see the same captures, and the panel shows the last finished one.
 
 - It shows the capture summary, a chart with one bar per frame colored by what it waited on (CPU,
   GPU or pacing), the timeline of the chosen frame (main thread zones, one row per worker and the
-  GPU passes) and the most expensive zones per frame.
+  GPU passes of what the frame submitted, where they ran) and the most expensive zones per frame.
 - It draws with [`editor.drawing`](../../mirai-editor/references/extensions.md#a-panel); what it
   computes from a capture it computes when it starts showing it.
 

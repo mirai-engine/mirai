@@ -248,7 +248,9 @@ and an error leaves nothing. Contract: [paint](../../mirai-plugins/references/pl
 A capture records whole frames ([recorder](../../mirai-core/references/host.md#the-frame)): one zone
 per part of the frame, one per loop function with its name from `info.steps`, a `job` or `range`
 per `std/jobs` task on the thread that ran it and, per frame, the renderer's wait for a GPU slot,
-the GPU passes and the conditions of the measurement. The editor keeps the last `PROFILE_CAPTURES`
+the GPU passes of what that frame submitted, where they ran (`start_ms` since the frame began on
+the CPU), and the conditions of the measurement. GPU numbers count only the frames whose GPU times
+came back (`gpu_frames`, `gpu_measured`); `profile.export` puts the passes on a `GPU` thread. The editor keeps the last `PROFILE_CAPTURES`
 (`editor/profile.odin`).
 
 - `profile.capture` with `advance` runs the frames inside the call, holding the server like

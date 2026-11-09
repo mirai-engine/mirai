@@ -108,10 +108,10 @@ profiler_header :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 @(private="file")
 profiler_show :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) {
 	p.shown,p.frame,p.workers,p.depth,p.thread_count,p.top_count=c.id,0,0,1,0,0
-	frame,gpu:=make([]f64,len(c.frames),context.temp_allocator),make([]f64,len(c.frames),context.temp_allocator)
+	frame,gpu:=make([]f64,len(c.frames),context.temp_allocator),gpu_values(c)
 	for f,i in c.frames {
 		p.workers+=f.zone_count
-		frame[i],gpu[i]=editor.profile_frame_ms(f),f64(f.gpu_ms)
+		frame[i]=editor.profile_frame_ms(f)
 	}
 	spread,gpu_spread:=editor.profile_spread(frame),editor.profile_spread(gpu)
 	p.graph_ms=max(spread.p95,gpu_spread.p95,0.001)*1.5
@@ -150,11 +150,19 @@ profiler_show :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) {
 
 @(private="file")
 profiler_summary :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) -> string {
-	frame,gpu:=make([]f64,len(c.frames),context.temp_allocator),make([]f64,len(c.frames),context.temp_allocator)
-	for f,i in c.frames {frame[i],gpu[i]=editor.profile_frame_ms(f),f64(f.gpu_ms)}
-	spread,gpu_spread:=editor.profile_spread(frame),editor.profile_spread(gpu)
+	frame:=make([]f64,len(c.frames),context.temp_allocator)
+	for f,i in c.frames {frame[i]=editor.profile_frame_ms(f)}
+	spread,gpu_spread:=editor.profile_spread(frame),editor.profile_spread(gpu_values(c))
 	return fmt.tprintf("Capture %d  ·  %d frames  ·  frame %.2f ms mean, %.2f ms p95  ·  GPU %.2f ms  ·  %s %s",
 		c.id,len(c.frames),spread.mean,spread.p95,gpu_spread.mean,c.conditions.backend,c.conditions.device)
+}
+
+// The GPU time of the frames whose GPU times came back.
+@(private="file")
+gpu_values :: proc(c:^editor.Profile_Capture) -> []f64 {
+	values:=make([dynamic]f64,0,len(c.frames),context.temp_allocator)
+	for f in c.frames {if f.gpu {append(&values,f64(f.gpu_ms))}}
+	return values[:]
 }
 
 @(private="file")
@@ -162,8 +170,9 @@ profiler_frame_text :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) -> stri
 	if p.frame>=len(c.frames) {return ""}
 	f:=c.frames[p.frame]
 	bounds:=[editor.Profile_Bound]string{.Cpu="CPU",.Gpu="GPU",.Paced="pacing"}
-	return fmt.tprintf("Frame %d  ·  %.2f ms  ·  CPU %.2f ms  ·  GPU %.2f ms  ·  waits for %s",
-		p.frame+1,editor.profile_frame_ms(f),editor.profile_frame_cpu_ms(f),f.gpu_ms,bounds[editor.profile_frame_bound(f)])
+	gpu:=f.gpu?fmt.tprintf("%.2f ms",f.gpu_ms):"not measured"
+	return fmt.tprintf("Frame %d  ·  %.2f ms  ·  CPU %.2f ms  ·  GPU %s  ·  waits for %s",
+		p.frame+1,editor.profile_frame_ms(f),editor.profile_frame_cpu_ms(f),gpu,bounds[editor.profile_frame_bound(f)])
 }
 
 // A color of its own for each name, among muted hues.
@@ -214,8 +223,10 @@ frames_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 		x:=rect.x+f32(i)*step
 		ui.draw_rect(ctx,{x+step*0.12,rect.y+rect.h-2-h,max(step*0.76,1),h},color)
 		if ms>top {ui.draw_rect(ctx,{x,rect.y+2,step,3},th.danger)}
-		gpu:=f32(min(f64(f.gpu_ms)/top,1))*(rect.h-4)
-		ui.draw_rect(ctx,{x,rect.y+rect.h-2-gpu,step,1.5},th.text)
+		if f.gpu {
+			gpu:=f32(min(f64(f.gpu_ms)/top,1))*(rect.h-4)
+			ui.draw_rect(ctx,{x,rect.y+rect.h-2-gpu,step,1.5},th.text)
+		}
 	}
 	if p.frame<len(c.frames) {
 		ui.draw_rect_lines(ctx,{rect.x+f32(p.frame)*step,rect.y+1,max(step,2),rect.h-2},1,th.text)
@@ -225,7 +236,8 @@ frames_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 }
 
 // The frame chosen: the zones of the main thread by depth, those of the
-// other threads, and the GPU passes one after another, on one time axis.
+// other threads, and its GPU passes where they ran, later than the CPU
+// submitted them, on one time axis from the start of the frame.
 @(private="file")
 timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	p:=(^Profiler_Panel)(user)
@@ -233,8 +245,9 @@ timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	th:=&ctx.theme
 	if c==nil || p.frame>=len(c.frames) {return}
 	f:=c.frames[p.frame]
-	gpu_ns:=i64(f64(f.gpu_ms)*1e6)
-	span:=max(f.ns+f.between_ns,gpu_ns,1)
+	passes:=c.passes[f.pass_first:][:f.pass_count]
+	span:=max(f.ns+f.between_ns,1)
+	for pass in passes {span=max(span,pass.start_ns+pass.ns-f.start_ns)}
 	label:=f32(64)
 	x0:=rect.x+label
 	w:=rect.w-label
@@ -263,11 +276,8 @@ timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 		row_y+=ROW+2
 	}
 	ui.draw_text(ctx,"GPU",rect.x,row_y+2,th.font_small,th.text_muted)
-	at:=f32(0)
-	for pass in c.passes[f.pass_first:][:f.pass_count] {
-		width:=f32(f64(pass.ms)*1e6)*scale
-		bar(ctx,x0+at,row_y,width,c.pass_names[pass.name],f64(pass.ms))
-		at+=width
+	for pass in passes {
+		bar(ctx,x0+f32(max(pass.start_ns-f.start_ns,0))*scale,row_y,f32(pass.ns)*scale,c.pass_names[pass.name],f64(pass.ns)/1e6)
 	}
 	ruler:=row_y+ROW+4
 	for i in 0..=4 {

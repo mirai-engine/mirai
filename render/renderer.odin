@@ -264,9 +264,10 @@ Stats :: struct {
 	probes_per_frame:  u32,
 	probes_traced:     u32, // in the frame two frames ago
 	rays_per_frame:    u64,
-	gpu_ms:            f32,
+	gpu_ms:            f32, // the sum of timings: of the frame timings_frame, not of the one just recorded
 	ev100:             f32, // the main view is exposed at, before its compensation: what its meter took, as read back, or what its camera gives
 	timings:           []rhi.Gpu_Timing,
+	timings_frame:     u64, // the rhi.frame_number of the frame the timings measured, MAX_FRAMES_IN_FLIGHT before the last one recorded
 	// Time of the calling thread in the parts of the last frame, in ms.
 	cpu_prepare_ms:    f32, // geometry commit, capacities and targets
 	cpu_begin_ms:      f32, // rhi.frame_begin: the wait for a frame slot and for the image

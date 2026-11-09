@@ -61,7 +61,9 @@ Profile_Frame_Record :: struct {
     start_ns,ns:i64,    // the frame zone, since the first frame began
     between_ns:i64,     // from its end to the start of the next one: what runs between frames
     pacing_ns:i64,
-    wait_ms,gpu_ms:f32, // the wait for a frame slot, and the last frame the GPU finished
+    wait_ms:f32,        // the wait for a frame slot
+    gpu:bool,           // the GPU times of what it submitted came back
+    gpu_ms:f32,         // of what it submitted, once gpu
     render_prepare_ms,render_record_ms,render_end_ms:f32,
     drawn:bool,
     generated:bool,     // it drew an image shown before its own
@@ -69,7 +71,7 @@ Profile_Frame_Record :: struct {
     interval_total_ms,interval_square:f64, // their sum and the sum of their squares
     latency_ms:f32,
     zone_first,zone_count:int, // its zones of the main thread, by start
-    pass_first,pass_count:int,
+    pass_first,pass_count:int, // its GPU passes, in the order they ran
     worker_ns:i64,      // time of the other threads in jobs
     jobs:int,
 }
@@ -79,7 +81,8 @@ Profile_Zone_Record :: struct {
     start_ns,ns,self_ns:i64,
 }
 
-Profile_Pass_Record :: struct {name:int,ms:f32}
+// A pass of the GPU on the clock of the zones: start_ns since the first frame began.
+Profile_Pass_Record :: struct {name:int,start_ns,ns:i64}
 
 Profile_Capture :: struct {
     arena:vmem.Arena,
@@ -282,14 +285,14 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
             append(&pass_names,strings.clone(host.profile_pass_name(app,pass.name)))
             pass_ids[pass.name]=index
         }
-        c.passes[i]={index,pass.ms}
+        c.passes[i]={index,pass.start_ns-epoch,max(pass.end_ns-pass.start_ns,0)}
     }
     c.pass_names=pass_names[:]
     for frame,i in recording.frames {
         // The size the scene was drawn at is known once a frame drew.
         if c.conditions.render=={} && frame.render_width>0 {c.conditions.render={int(frame.render_width),int(frame.render_height)}}
         record:=&c.frames[i]
-        record.wait_ms,record.gpu_ms=frame.render_wait_ms,frame.gpu_ms
+        record.wait_ms,record.gpu,record.gpu_ms=frame.render_wait_ms,frame.gpu,frame.gpu_ms
         record.render_prepare_ms,record.render_record_ms,record.render_end_ms=frame.render_prepare_ms,frame.render_record_ms,frame.render_end_ms
         record.drawn=frame.drawn
         record.generated,record.presented,record.intervals=frame.generated,int(frame.presented),int(frame.intervals)
@@ -441,13 +444,24 @@ profile_is_part :: proc(name:string) -> bool {
     return false
 }
 
-// The per frame time of each pass of the GPU.
+// The frames that drew.
+profile_drawn :: proc(c:^Profile_Capture) -> (drawn:int) {
+    for f in c.frames {if f.drawn {drawn+=1}}
+    return
+}
+
+// The time of each pass of the GPU in each frame whose GPU times came back.
 profile_passes_by_name :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> [][]f64 {
     context.allocator=allocator
+    measured:=0
+    for f in c.frames {if f.gpu {measured+=1}}
     values:=make([][]f64,len(c.pass_names))
-    for &v in values {v=make([]f64,len(c.frames))}
-    for frame,i in c.frames {
-        for pass in c.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ms)}
+    for &v in values {v=make([]f64,measured)}
+    i:=0
+    for frame in c.frames {
+        if !frame.gpu {continue}
+        for pass in c.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ns)/1e6}
+        i+=1
     }
     return values
 }

@@ -117,6 +117,7 @@ Vk_Frame :: struct {
 	paced:        bool, // the frame draws into a pair of the presenter
 	begun_ns:     i64,
 	submitted_ns: i64,
+	number:       u64, // frame_number of the frame it recorded last: the one its timestamps measure
 }
 
 Vk_Swapchain :: struct {
@@ -220,6 +221,7 @@ Device :: struct {
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:      [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names of timings, kept until the next ones
 	timing_count:      int,
+	timing_frame:      u64, // frame_number of the frame the timings measured
 	timestamps_wanted: bool,
 	timestamp_bits:    u32, // timestampValidBits of the queue: a GPU timestamp wraps past them
 	// VK_KHR or VK_EXT_calibrated_timestamps with the device and host domains; nil without them.
@@ -1010,6 +1012,7 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	count := f.query_count
 	f.query_count = 0
 	d.timing_count = 0
+	d.timing_frame = f.number
 	if f.queries == 0 || count < 2 {return}
 	values: [MAX_TIMESTAMPS]u64
 	// The slot's submission already completed, so WAIT returns immediately.
@@ -1039,7 +1042,9 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	}
 }
 
-frame_timings :: proc(d: ^Device) -> []Gpu_Timing {return d.timings[:d.timing_count]}
+// The timings of the last frame whose slot came back, and its frame_number:
+// MAX_FRAMES_IN_FLIGHT before the frame that began, not the one being recorded.
+frame_timings :: proc(d: ^Device) -> (timings: []Gpu_Timing, frame: u64) {return d.timings[:d.timing_count], d.timing_frame}
 
 // Begins recording a frame. Without present it takes no image of the
 // swapchain: the frame draws only into textures, for a capture.
@@ -1089,6 +1094,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 		// Without passes the frame is one interval, from here to frame_end.
 		if !f.passes {vk_timestamp_write(f, "frame")}
 	}
+	f.number = d.frame_number
 	d.in_frame = true
 	return &f.list, true
 }
