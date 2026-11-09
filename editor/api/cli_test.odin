@@ -220,6 +220,8 @@ rpc_result_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     testing.expectf(t,code==0 && out=="5\n","key=value arguments: %d %q %s",code,out,err)
     code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--wait-until","sum>=5","--select","sum")
     testing.expectf(t,code==0 && out=="5\n","%d %q %s",code,out,err)
+    code,_,err=run_tool(tool,"","rpc","test.echo","text=x","--port",port,"--wait-until","text=x")
+    testing.expectf(t,code==1 && integer(at(parse_json(t,err),"error","code"))==INVALID_PARAMS && strings.contains(err,"test.echo changes things"),"a wait on a method that is not read-only is the refusal of the server: %d %s",code,err)
     code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--wait-until","sum=6","--timeout","1")
     testing.expect_value(t,code,1)
     testing.expect_value(t,out,"")

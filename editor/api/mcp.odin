@@ -18,8 +18,8 @@ import "mirai:std/serial"
 // with them those of the plugins the header X-Mirai-Plugins names (* for
 // every method). An agent asks engine_describe for the schema of the rest:
 // each tool listed costs its schema in every turn of its model. tools/call
-// takes any of them by name too. Every tool also takes _select and
-// _wait_until (fields.odin).
+// takes any of them by name too. Every tool also takes _select, and one
+// that is read-only _wait_until (fields.odin).
 
 MCP_VERSIONS :: [?]string{"2025-11-25","2025-06-18","2025-03-26","2024-11-05"}
 
@@ -30,7 +30,7 @@ TOOLS_RESERVE :: 512
 // editor that tools/list does not give.
 MCP_CALL_TOOL :: "call"
 @(private)
-MCP_CALL_DESCRIPTION :: "Runs any method of the editor or of a plugin by its name (such as animation.request or panel.save) with its params. engine_describe is a short index of the methods; with methods (a list of names) it gives the JSON Schema of their params and result, and with plugin or prefix the summaries and guides of an area. Every method also takes _select (fields of its result to keep, such as a.b,c[0].d) and _wait_until (a condition such as phase=Built, which it is called again until)."
+MCP_CALL_DESCRIPTION :: "Runs any method of the editor or of a plugin by its name (such as animation.request or panel.save) with its params. engine_describe is a short index of the methods; with methods (a list of names) it gives the JSON Schema of their params and result, and with plugin or prefix the summaries and guides of an area. Every method also takes _select (fields of its result to keep, such as a.b,c[0].d), and a read-only one _wait_until (a condition such as phase=Built, which it is called again until); a method that changes things is called once, and the wait goes on its status method."
 MCP_CALL_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string","description":"The name of the method, such as terrain.sculpt"},"params":{"type":"object","description":"Its params, as engine_describe gives their schema"}},"required":["method"],"additionalProperties":false}`
 
 @(private)

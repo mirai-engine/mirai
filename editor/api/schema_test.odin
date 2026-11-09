@@ -232,7 +232,7 @@ a_free_form_method_is_described_by_the_schema_written_for_it :: proc(t:^testing.
         w:serial.Writer
         serial.writer_init_fixed(&w,buffer[:])
         method_schema_write(&w,&s,&s.methods[s.method_count-1],result)
-        testing.expect_value(t,string(serial.writer_bytes(&w)),result?`{"type":"array"}`:`{"type":"object","properties":{`+RESERVED_SCHEMA+`,"open":{"type":"object"}}}`)
+        testing.expect_value(t,string(serial.writer_bytes(&w)),result?`{"type":"array"}`:`{"type":"object","properties":{`+SELECT_SCHEMA+`,"open":{"type":"object"}}}`)
     }
     testing.expect_value(t,method_register(&s,{name="bare",handler=noop}),Register_Error.None)
     w:serial.Writer
