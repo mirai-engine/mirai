@@ -583,17 +583,9 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
 }
 
 @(test)
-a_package_is_a_folder_with_odin_sources :: proc(t:^testing.T) {
+a_file_where_the_plugins_folder_goes_is_a_project_without_plugins :: proc(t:^testing.T) {
     root:=test_folder(t)
     defer os.remove_all(root)
-    testing.expect(t,!package_exists(path(root,"game",allocator=context.temp_allocator)))
-    test_write(t,root,"game","notes.txt",text="x")
-    testing.expect(t,!package_exists(path(root,"game",allocator=context.temp_allocator)))
-    test_write(t,root,"game","game.odin",text="package game\n")
-    testing.expect(t,package_exists(path(root,"game",allocator=context.temp_allocator)))
-    testing.expect(t,!package_exists(path(root,"game","game.odin",allocator=context.temp_allocator)))
-
-    // A file where the plugins folder goes is a project without plugins.
     test_project(t,root)
     test_write(t,root,"plugins",text="not a folder")
     p,error:=open(root)

@@ -13,14 +13,6 @@ import mm "mirai:std/math"
 // times the area it shows along its axis, in m²), nits for a rectangle and
 // lux for a sun.
 
-@(private)
-light_type :: proc(type_name:string) -> bool {
-    switch type_name {
-    case "SphereLight","DiskLight","RectLight","DistantLight": return true
-    }
-    return false
-}
-
 // An input of a light, also by its name before UsdLux put it under inputs:.
 @(private="file")
 light_attribute :: proc(prim:Usd_Prim,name:string) -> (property:Usd_Property,found:bool) {
