@@ -1221,17 +1221,36 @@ api_paths :: proc(s:^editor.Session,call:^api.Call) {
 records_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,label:string) -> (message:string,ok:bool) {
     a:=s.app.assets
     api_flush(s)
+    params:=widget_params(a,id)
+    bytes,imports,why,loads:=records_bytes(a,id,records)
+    if !loads {return why,false}
+    return records_file_write(s,id,records,bytes,imports,params,label)
+}
+
+// The file records are written as, tidied, in the temporary allocator, and
+// the widgets they use. A tree the game would not load gives none: message
+// says why.
+@(private)
+records_bytes :: proc(a:^host.Assets,id:base.Asset_Id,records:^Records) -> (bytes:[]u8,imports:[]ui.Tree_Data,message:string,ok:bool) {
+    records_tidy(records)
+    imported:bool
+    if imports,imported=host.ui_tree_imports(a,records_data(records));!imported {return nil,nil,widget_why(a,records_data(records)),false}
+    error:asset.Error
+    bytes,error=records_commit(&a.types,id,records,imports)
+    if error==.Invalid {return nil,nil,fmt.tprintf("the interface would not load: %s",load_why(a,records_data(records),imports)),false}
+    if error!=.None {return nil,nil,fmt.tprintf("the interface could not be written: %v",error),false}
+    return bytes,imports,"",true
+}
+
+// Writes what records_bytes gave as a step of the history of the document of
+// the .ui; params: those its widget had before, which its uses follow.
+@(private)
+records_file_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,bytes:[]u8,imports:[]ui.Tree_Data,params:[]ui.Tree_Param,label:string) -> (message:string,ok:bool) {
+    a:=s.app.assets
     record,found:=asset.registry_find(&a.registry,id)
     if !found {return "the .ui is not in the assets",false}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
-    records_tidy(records)
-    params:=widget_params(a,id)
-    imports,imported:=host.ui_tree_imports(a,records_data(records))
-    if !imported {return widget_why(a,records_data(records)),false}
-    bytes,error:=records_commit(&a.types,id,records,imports)
     data:=records_data(records)
-    if error==.Invalid {return fmt.tprintf("the interface would not load: %s",load_why(a,data,imports)),false}
-    if error!=.None {return fmt.tprintf("the interface could not be written: %v",error),false}
     written,opened:=false,false
     for &d in s.asset_documents {
         if d.id!=id || d.kind!=asset.KIND_UI {continue}

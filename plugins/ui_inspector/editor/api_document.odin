@@ -1822,12 +1822,20 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
             holder:=&decls[d.parent]
             parent=root if holder.row==root && root>=0 else document_row_of(r,holder.current)
         }
-        // A node that stays in what holds it takes no more room there: the one a List holds.
-        held:=d.row>=0 && int(r.nodes[document_row_of(r,d.current)].parent)==parent
-        if parent>=0 && !held && !doc_takes(call,r,parent) {ok=document_failed(call,d.path);return}
+        // A List takes the one node the document declares for it: what it held
+        // is that node, or goes below.
+        if parent>=0 && r.nodes[parent].kind==.List {
+            declared:=0
+            for &other in decls {declared+=int(other.parent==d.parent)}
+            if declared>1 {
+                api.call_fail(call,api.INVALID_PARAMS,"parent: a List holds one node, the one it builds per element; put a Box there to hold more")
+                ok=document_failed(call,d.path)
+                return
+            }
+        } else if parent>=0 && !doc_takes(call,r,parent) {ok=document_failed(call,d.path);return}
         if d.row>=0 {
             row:=document_row_of(r,d.current)
-            if records_place(r,row,parent,-1)<0 {api.call_failf(call,api.INVALID_PARAMS,"%s: a node cannot go inside itself or what it holds",d.path);return}
+            if records_place(r,row,parent,-1,true)<0 {api.call_failf(call,api.INVALID_PARAMS,"%s: a node cannot go inside itself or what it holds",d.path);return}
             continue
         }
         row:int
@@ -1835,7 +1843,7 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
             file:=doc_use_name(args.assets,d.widget,"widget")
             row=records_widget(r,parent,d.widget,d.name if d.name!="" else file,file)
         } else {
-            row=records_insert(r,parent,d.kind)
+            row=records_insert(r,parent,d.kind,true)
         }
         if row<0 {api.call_failf(call,api.SERVER_ERROR,"%s: the node could not be made",d.path);return}
         if d.name!="" {ui.tree_text_set(r.nodes[row].name[:],d.name)}

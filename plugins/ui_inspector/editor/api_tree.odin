@@ -279,15 +279,6 @@ tree_name_free :: proc(call:^api.Call,r:^Records,row:int,name:string) -> bool {
     return true
 }
 
-// Writes the records as one step of history; false after failing the call.
-@(private)
-tree_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,r:^Records,label:string) -> bool {
-    message,written:=records_write(s,id,r,label)
-    if written {return true}
-    api.call_failf(call,api.INVALID_PARAMS,"%s. Nothing changed. A tree loads when containers (Box, Scroll, Switcher, List, Tooltip, Tabs, Popup, Modal, Context_Menu, Radial) hold the nodes, a List holds one node, numbers are finite, keys go in time order and every row it names exists",message)
-    return false
-}
-
 // The kinds an array of names gives, each taking a style of family; false
 // after failing the call.
 @(private)
@@ -469,8 +460,8 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     save,save_ok:=tree_arg_bool(&args,"save")
     if !save_ok {return}
     if save && !editor.api_guard(s,call) {return}
-    // A path that names nothing yet makes the .ui, once its document reads:
-    // a refused one leaves no file.
+    // A path that names nothing yet makes the .ui, once its document reads
+    // and its tree is known to load: a refused one leaves no file.
     path,fresh,named:=tree_asset_new(s,&args)
     if !named {return}
     r:Records
@@ -487,10 +478,18 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     if !root_ok {return}
     made,removed,applied:=document_apply(&args,&r,root,text)
     if !applied {return}
+    a:=s.app.assets
+    api_flush(s)
+    params:=widget_params(a,id)
+    bytes,imports,why,loads:=records_bytes(a,id,&r)
+    if !loads {
+        api.call_failf(call,api.INVALID_PARAMS,"%s. Nothing changed. A tree loads when containers (Box, Scroll, Switcher, List, Tooltip, Tabs, Popup, Modal, Context_Menu, Radial) hold the nodes, a List holds one node, numbers are finite, keys go in time order and every row it names exists",why)
+        return
+    }
     if fresh {
         if problem:=editor.asset_create(s,asset.KIND_UI,path,id);problem!="" {api.call_failf(call,api.INVALID_PARAMS,"asset: %s",problem);return}
     }
-    if !tree_write(s,call,id,&r,"Write") {return}
+    if problem,written:=records_file_write(s,id,&r,bytes,imports,params,"Write");!written {api.call_failf(call,api.SERVER_ERROR,"%s. Nothing changed",problem);return}
     if save {
         record,recorded:=asset.registry_find(&s.app.assets.registry,id)
         if !recorded {api.call_fail(call,api.SERVER_ERROR,"the .ui it wrote is not in the assets");return}

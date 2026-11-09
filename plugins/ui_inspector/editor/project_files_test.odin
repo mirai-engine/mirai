@@ -741,7 +741,7 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
 
     refused:=[?]struct{asset,node,document:string,says:[]string}{
         {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Statuz.health"}`),
-            {"nodes[0].children[0] 'health'","bind_value 'Statuz.health'","no component or storage 'Statuz'","Status"}},
+            {"nodes[0].children[0] 'health'","bind_value 'Statuz.health'","no component or storage 'Statuz'","Status","Nothing changed","ui.paths"}},
         {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.helth"}`),
             {"nodes[0].children[0] 'health'","bind_value 'Status.helth'","no field 'helth'","health, hits, message"}},
         {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.message"}`),
@@ -762,18 +762,25 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
             {"nodes[0] 'health'","bind_value 'Status.helth'"}},
         {"hud/new.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.helth"}`),
             {"'health'","bind_value 'Status.helth'"}},
+        // A document that reads and a tree that does not load: a use holds a node and its widget has no slot.
+        {"hud/held.ui","",paths_hud(`{"name":"hits","kind":"stat","children":[{"name":"inside","kind":"Text"}]}`),
+            {"would not load","Nothing changed"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"slot","kind":"Text","bind_text":"label"},{"name":"count","kind":"Text","bind_text":"count"}]}`),
+            {"nodes[0].children[0].children[","a List holds one node","put a Box there"}},
     }
     for c in refused {
         message,written:=write(&s,c.asset,c.node,c.document)
         if !testing.expectf(t,!written,"%s was written",c.document) {continue}
         for part in c.says {testing.expectf(t,strings.contains(message,part),"%s\nlacks: %s\nsays:  %s",c.document,part,message)}
-        testing.expectf(t,strings.contains(message,"Nothing changed") && strings.contains(message,"ui.paths"),"it says how to go on: %s",message)
         _,unsaved:=asset.registry_memory_find(&p.assets.registry,c.asset)
         testing.expectf(t,!unsaved,"%s waits for Save after a refused write",c.asset)
     }
     testing.expect(t,saved(&p,"hud/hud.ui")==hud_before,"the file is as it was")
-    _,made:=asset.registry_find_path(&p.assets.registry,"hud/new.ui")
-    testing.expect(t,!made,"a refused write makes no file")
+    host.assets_scan(&p.assets)
+    for path in ([]string{"hud/new.ui","hud/held.ui"}) {
+        _,made:=asset.registry_find_path(&p.assets.registry,path)
+        testing.expectf(t,!made && !os.exists(fmt.tprintf("%s/%s",p.root,path)),"%s was made by a refused write",path)
+    }
 
     // What the game has, what only a use knows, and what the document does not declare.
     taken:=[?]struct{asset,node,document:string}{
@@ -781,11 +788,22 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
         {"hud/stat.ui","",PATHS_STAT},
         {"hud/stale.ui","fresh",`{"nodes":[{"name":"fresh","kind":"Text","bind_text":"Status.message"}]}`},
         {"hud/stale.ui","",`{"styles":{"plain":{"size":14}}}`},
+        // The node a List holds becomes another, which may hold the one it held.
+        {"hud/hud.ui","slots",`{"nodes":[{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"cell","kind":"Box","children":[{"name":"slot","kind":"Text","bind_text":"label"}]}]}]}`},
+        {"hud/hud.ui","enemies",`{"nodes":[{"name":"enemies","kind":"List","bind_items":"Enemy","children":[{"name":"foe","kind":"Text","bind_text":"label"}]}]}`},
     }
     for c in taken {
         message,written:=write(&s,c.asset,c.node,c.document)
         testing.expectf(t,written,"%s %s: %s",c.asset,c.node,message)
     }
+    hud:Records
+    if !project_records(t,&p,HUD_ID,&hud) {return}
+    holds :: proc(r:^Records,holder,held:string) -> bool {
+        at:=document_row_of(r,held)
+        return at>=0 && r.nodes[at].parent>=0 && serial.text_field(r.nodes[r.nodes[at].parent].name[:])==holder
+    }
+    testing.expect(t,holds(&hud,"slots","cell") && holds(&hud,"cell","slot") && holds(&hud,"enemies","foe"),doc_text(&p,&hud))
+    testing.expect(t,document_row_of(&hud,"enemy")<0 && records_subtree(hud.nodes[:],document_row_of(&hud,"enemies"))==1,"what the List held went")
     _,unsaved:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
     testing.expect(t,unsaved,"a write the game takes waits for Save")
     // Written whole, the file answers for every path it holds.
