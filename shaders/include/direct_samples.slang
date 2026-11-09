@@ -45,8 +45,11 @@ bool direct_surface(float3 center, float4 normal, float3 point, float3 point_nor
 }
 
 // The most points a penumbra spreads the part of the light that got there to
-// each side (direct_spread.comp).
+// each side (direct_spread.comp), and that reach over the width of the
+// penumbra: the weights of the spread fall off to nothing at it, and so wide
+// they ramp the border of a hard shadow as the disc of a light does.
 #define DIRECT_SPREAD_MAX 16
+#define DIRECT_SPREAD_REACH 0.62
 
 // The width in metres of the penumbra a sample towards `light` (the sun for
 // INVALID), which reaches `reach` metres, casts with what hid it `near` metres

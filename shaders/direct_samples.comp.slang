@@ -202,7 +202,7 @@ bool shadow_map_of(uint item, float3 position, out Shadow_Map m, out uint index)
 // where they all meet something nearer, -1 without its map, for its rays to
 // tell; where they disagree, at a penumbra, its hard shadow (shadow_hard_seen),
 // which direct_spread.comp averages over the width of the penumbra the
-// blockers the taps met cast there. radius: of the light, metres, or the
+// blockers the taps met cast there, to both sides of its border. radius: of the light, metres, or the
 // angle of the sun; spin: how the taps are turned at the point; spread: the
 // width of the penumbra of what hides a point that is not lit.
 float shadow_map_seen(uint item, float3 position, float3 n, float radius, float spin, out float spread) {
@@ -436,11 +436,10 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                 float known = of_sun ? -1.0 : shadow_map_seen(item, pixel.position, normal, light_extent(lights[item]), spin, map_spread);
                 if (known >= 0.0) {
                     lit += share * known;
-                    if (known < 1.0) {
-                        // A penumbra hides only the part it does not let through.
-                        float hidden_share = luminance(share) * (1.0 - known);
-                        wide += hidden_share * map_spread;
-                        hid += hidden_share;
+                    // Within the penumbra of what its taps met, on its lit side as on the other.
+                    if (map_spread > 0.0) {
+                        wide += luminance(share) * map_spread;
+                        hid += luminance(share);
                     }
                     continue;
                 }
@@ -535,9 +534,9 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float part = luminance(open) > 0.0 ? saturate(luminance(lit) / luminance(open)) : 1.0;
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
     out_sun[p] = float4(sun_glass, isfinite(sun_part) ? sun_part : 1.0);
-    // Half the width of each penumbra, in points, and half a point.
+    // The reach of the spread over each penumbra, in points, and half a point.
     float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
-    float radius = hid > 0.0 ? min(0.5 * wide / (hid * width) + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
-    float sun_radius = sun_part >= 0.0 && sun_part < 1.0 && sun_wide > 0.0 ? min(0.5 * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
+    float radius = hid > 0.0 ? min(DIRECT_SPREAD_REACH * wide / (hid * width) + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
+    float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     out_depth[p] = float4(depth_distance(depth), isfinite(sun_radius) ? sun_radius : 0.0, 0.0, isfinite(radius) ? radius : 0.0);
 }

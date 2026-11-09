@@ -19,8 +19,13 @@
 #define SHADOW_MAP_ROWS 6u
 #define SHADOW_LIGHT_FACES 16u
 #define SHADOW_MAP_ORTHOGRAPHIC 1u
-// The most clusters the maps draw in a frame.
+// The most clusters the maps draw in a frame, and of them those of the
+// instances with masked or blended materials, listed from the end.
 #define SHADOW_ENTRIES (1u << 18u)
+#define SHADOW_TESTED_ENTRIES (1u << 16u)
+// The width of what a ray reads of a material over how far it came
+// (hit_covers): a fragment of a map reads its material as coarsely as a texel.
+#define SHADOW_TESTED_FOOTPRINT 0.004
 
 struct Shadow_Map {
     float3 origin;

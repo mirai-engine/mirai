@@ -98,7 +98,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 1, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15,
+	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15, shadow_maps = true,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
@@ -284,7 +284,7 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_Points, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
-	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
+	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
 	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
 	Reflect_Color, Reflect_Color_Hw, Translucent_Color, Translucent_Color_Hw,
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
@@ -977,6 +977,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Shadow_Map, {
 		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps",
+	})
+	graphics(list, r, .Shadow_Map_Tested, {
+		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps of masked materials",
 	})
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	graphics(list, r, .Tonemap, {

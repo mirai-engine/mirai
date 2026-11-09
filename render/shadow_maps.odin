@@ -18,6 +18,7 @@ SHADOW_ATLAS :: u32(4096)
 SHADOW_MAPS_MAX :: 96
 SHADOW_MAP_ROWS :: 6
 SHADOW_ENTRIES :: u32(1 << 18)
+SHADOW_DRAWS :: 2 // the clusters that hide whole, and those of masked or blended materials
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_MAP_SMALLEST :: u32(128)
 SHADOW_MAP_LARGEST :: u32(2048)
@@ -220,8 +221,12 @@ shadow_sun_cascades :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, t
 				lo = min(lo, linalg.dot(p, axis) - 1)
 			}
 		}
+		// From a point of its own, a whole texel of the grid of the light: what the map
+		// measures stays small however far from the origin the view is.
+		origin := sr * cx + su * cy + axis * linalg.dot(center, axis)
+		along := linalg.dot(origin, axis)
 		wants[count^] = {
-			m = {right = sr, up = su, forward = axis, near = lo, far = hi, skip = lo, kind = SHADOW_MAP_ORTHOGRAPHIC, span = {cx - radius, cy - radius, cx + radius, cy + radius}},
+			m = {origin = origin, right = sr, up = su, forward = axis, near = lo - along, far = hi - along, skip = lo - along, kind = SHADOW_MAP_ORTHOGRAPHIC, span = {-radius, -radius, radius, radius}},
 			light = -1, weight = 1, side = sides[k],
 		}
 		count^ += 1
@@ -370,23 +375,23 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	maps.sun = max(u32)
-	if !r.settings.shadow_maps || !p.draw || len(s.instances) == 0 {return}
+	if !r.settings.shadow_maps || !p.draw {return}
 	planned, ok := shadow_maps_plan(p)
 	if !ok || planned.on == 0 {return}
 	b := &t.shadow_buffers
 	good := target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas")
 	entries_ok, _ := ensure_buffer(r, &b.entries, u64(SHADOW_ENTRIES) * 16, {.Storage}, "shadow map clusters")
-	draw_ok, _ := ensure_buffer(r, &b.draw, 16, {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
+	draw_ok, _ := ensure_buffer(r, &b.draw, SHADOW_DRAWS * size_of(rhi.Draw_Indirect), {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
 	table_ok, _ := ensure_buffer(r, &b.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
 	if !good || !entries_ok || !draw_ok || !table_ok {return}
 	Params :: struct {instances, maps, rows, pad: u32}
-	params := Params{instances = u32(len(s.instances)), maps = planned.maps, rows = planned.rows}
+	params := Params{instances = p.instance_count + p.batch_slots, maps = planned.maps, rows = planned.rows}
 	rhi.cmd_timestamp(cmd, "shadow cull")
 	for x in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer}) {rhi.cmd_barrier_buffer(cmd, x, .Shader_Read)}
-	start, start_at := rhi.frame_alloc_typed(r.device, u32, 4)
+	start, start_at := rhi.frame_alloc_typed(r.device, rhi.Draw_Indirect, SHADOW_DRAWS)
 	if start == nil {return}
-	start[0], start[1], start[2], start[3] = CLUSTER_DRAW_VERTICES, 0, 0, 0
-	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, b.draw, 0, 16)
+	for &draw in start {draw = {vertex_count = CLUSTER_DRAW_VERTICES}}
+	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, b.draw, 0, SHADOW_DRAWS * size_of(rhi.Draw_Indirect))
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, b.table, 0, b.data.size)
 	rhi.cmd_barrier_buffer(cmd, b.table, .Shader_Read)
 	rhi.cmd_barrier_buffer(cmd, b.draw, .Shader_Write)
@@ -403,11 +408,13 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	pass := rhi.Render_Pass_Desc{name = "shadow atlas"}
 	pass.depth = {texture = t.shadow_atlas, load = .Clear, store = .Store, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map])
-	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
-	rhi.cmd_draw_indirect(cmd, b.draw, 0, 1)
+	for pipeline, i in ([SHADOW_DRAWS]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
+		set_params(cmd, &params)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
+		rhi.cmd_draw_indirect(cmd, b.draw, u64(i) * size_of(rhi.Draw_Indirect), 1)
+	}
 	rhi.cmd_end_render_pass(cmd)
 	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
 	// The maps of the sun, for the passes after this one that take its shadow
