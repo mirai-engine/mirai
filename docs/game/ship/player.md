@@ -4,14 +4,15 @@
 same options. A run that plays a script and writes its last frame:
 
 ```sh
-mirai play . --headless --frames 180 --input .mirai/run.txt --capture .mirai/shot.png
+mirai play . --frames 180 --input .mirai/run.txt --capture .mirai/shot.png
 ```
 
 ## Options
 
 - `--scene <path>`: the start scene, relative to `assets/`, instead of `start_scene`.
 - `--headless`: no window; it draws offscreen in steps of 1/60 s, so `--frames 120` is two
-  seconds of game, the same every run. Needs a GPU.
+  seconds of game, the same every run. Needs a GPU. `--frames`, `--input` and `--capture` imply
+  it; `--show-window` keeps a window for them.
 - `--no-gpu`: no window and no renderer, only the simulation: fast logic checks, no picture.
 - `--frames <n>`: exit after n frames. Without it the run goes on until the game quits.
 - `--capture <png>`: write the last frame as a PNG on exit. The folder must exist; it fails
