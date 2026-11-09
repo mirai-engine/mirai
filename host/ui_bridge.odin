@@ -241,7 +241,7 @@ ui_input_from_platform :: proc "contextless" (frame:^platform.Input_Frame) -> (i
     input.dt=frame.dt
     input.pointer=frame.mouse_position
     input.pointer_absent=!frame.mouse_inside
-    buttons:=[ui.Mouse_Button]platform.Mouse_Button{.Left=.Left,.Right=.Right,.Middle=.Middle}
+    buttons:=[ui.Mouse_Button]platform.Mouse_Button{.Left=.Left,.Right=.Right,.Middle=.Middle,.Back=.X1}
     for button,target in buttons {
         if button in frame.mouse_down {input.down+={target}}
         if button in frame.mouse_pressed {input.pressed+={target}}

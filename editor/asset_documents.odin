@@ -633,7 +633,8 @@ asset_workspace_details :: proc(g:^Editor_Ui) -> (document,details:ui.Panel_Floa
     r:=asset_workspace_rect(g)
     width:=width_of(RIGHT_WIDTH,g.ctx.size.x)
     document={width=ui.fixed(max(r.w-width-th.margin,120)),height=ui.fixed(r.h),anchor=.Top_Left,pivot=.Top_Left,offset={r.x,r.y}}
-    details={width=ui.fixed(width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-th.margin,r.y},stroke=SIDE_PANEL_RULE}
+    radius:=th.radius_panel
+    details={width=ui.fixed(width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-th.margin,r.y},docked=true,corners={radius,radius,radius,radius}}
     return document,details,r.h
 }
 

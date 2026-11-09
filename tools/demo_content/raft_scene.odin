@@ -34,7 +34,7 @@ write_raft_player :: proc(o:^Out) {
     put(&s,eyes,"Audio_Listener",&audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,game.EYE_HEIGHT,0}}
     put(&s,eyes,"Camera_Follow",&first_person)
-    prefab_save(o,&s,"assets/prefabs/Swimmer.prefab")
+    prefab_save(o,&s,"assets/raft/Swimmer.prefab")
 }
 
 write_raft_scene :: proc(o:^Out) {
@@ -63,7 +63,7 @@ write_raft_scene :: proc(o:^Out) {
     put(&s,sea,"Fluid_Waves",&swell)
     breeze:=placed(&s,"Breeze",{0,4,0},mm.quat_axis_angle({0,1,0},-0.5),{1,1,1})
     put(&s,breeze,"Wind",&zone.Wind{speed=5,gusts=0.5})
-    os.make_directory_all(path(o,"assets/particles"))
+    os.make_directory_all(path(o,"assets/raft"))
     // The drops a body throws up as it falls into the sea, from the channel the water writes.
     splash_effect:=effect.PARTICLE_DEFAULTS
     splash_effect.duration,splash_effect.max_particles,splash_effect.rate=1,4000,0
@@ -72,7 +72,7 @@ write_raft_scene :: proc(o:^Out) {
     splash_effect.gravity,splash_effect.drag=1,0.4
     splash_effect.colors={{0.9,0.95,1,0.9},{0.8,0.9,0.95,0.7}}
     splash_id:=id_of("particle","raft_splash")
-    check(o,"raft splash",effect.particle_save(path(o,"assets/particles/raft_splash.particle"),&o.types,{id=splash_id,info=splash_effect}))
+    check(o,"raft splash",effect.particle_save(path(o,"assets/raft/raft_splash.particle"),&o.types,{id=splash_id,info=splash_effect}))
     splashes:=entity(&s,"Splashes")
     put(&s,splashes,"Particle_Emitter",&vfx.Particle_Emitter{particle=splash_id,active=true,loop=true})
     splash_channel:=vfx.Particle_Channel{name=water.CHANNEL_SPLASHES}
@@ -87,7 +87,7 @@ write_raft_scene :: proc(o:^Out) {
     bubble_effect.colors={{0.85,0.95,1,0.7},{0.7,0.88,0.95,0.5}}
     bubble_effect.soft=0.05
     bubble_id:=id_of("particle","raft_bubbles")
-    check(o,"raft bubbles",effect.particle_save(path(o,"assets/particles/raft_bubbles.particle"),&o.types,{id=bubble_id,info=bubble_effect}))
+    check(o,"raft bubbles",effect.particle_save(path(o,"assets/raft/raft_bubbles.particle"),&o.types,{id=bubble_id,info=bubble_effect}))
     // The motes in suspension around a camera under the water, which drift and stay where they are.
     mote_effect:=effect.PARTICLE_DEFAULTS
     mote_effect.duration,mote_effect.max_particles,mote_effect.rate=1,1200,0
@@ -97,7 +97,7 @@ write_raft_scene :: proc(o:^Out) {
     mote_effect.colors={{0.8,0.85,0.75,0.5},{0.6,0.7,0.6,0.35}}
     mote_effect.soft=0.05
     mote_id:=id_of("particle","raft_motes")
-    check(o,"raft motes",effect.particle_save(path(o,"assets/particles/raft_motes.particle"),&o.types,{id=mote_id,info=mote_effect}))
+    check(o,"raft motes",effect.particle_save(path(o,"assets/raft/raft_motes.particle"),&o.types,{id=mote_id,info=mote_effect}))
     sand:=mm.Vec4{0.62,0.55,0.4,1}
     seabed:=sand*0.6
     seabed.a=1

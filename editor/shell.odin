@@ -18,7 +18,14 @@ import "mirai:ui"
 @(private) SHELL_SCOPE :: ui.Id(0x4d495241)
 @(private) BAR_BUTTON_HEIGHT :: f32(30)
 @(private) DOCUMENT_TOOLBAR_HEIGHT :: f32(44) // nominal: bars_snap puts its edges on whole pixels
+@(private) BAR_MARK_HEIGHT :: f32(34) // of the menu with the mark
 @(private) TOOLBAR_BUTTON :: f32(28) // side of a button of the toolbar
+@(private) RAIL_WIDTH :: f32(44)
+@(private) RAIL_BUTTON :: f32(32)
+@(private) LEFT_UNDER :: f32(16) // of the left panel, what the scene runs under: its rounded corners show the scene
+@(private) LEFT_RADIUS :: f32(12)
+@(private) DETAILS_MARGIN :: f32(8)
+@(private) PANEL_HEADER :: f32(24) // the row of a tab of the left panel that has controls
 @(private) WINDOW_CONTROL_WIDTH :: f32(28)
 @(private) PANEL_PADDING :: f32(8)
 @(private) SPLITTER_WIDTH :: f32(6)
@@ -54,15 +61,14 @@ Unsaved_Use :: struct {
 
 // The dot of unsaved changes, as the prototype draws it.
 UNSAVED_COLOR :: ui.Color{201,181,239,255}
-Splitter :: enum u8 {None,Bottom,Left,Right}
+Splitter :: enum u8 {None,Bottom,Right}
 
-// How a side panel sits: over the scene, or docked to the edge of the window
+// How the right panel sits: over the scene, or docked to the edge of the window
 // for its whole height, with the scene beside it, smaller.
 Panel_Mode :: enum u8 {Floating,Docked}
-// The mode of a side panel for a type of document: that of every document, or its own.
+// The mode of the right panel for a type of document: that of every document, or its own.
 Panel_Choice :: enum u8 {Global,Floating,Docked}
 Document_Type :: enum u8 {Scene,Prefab,Asset}
-Panel_Side :: enum u8 {Left,Right}
 
 // A bottom height of 0 uses the default, and so does a docked width of 0.
 Layout :: struct {
@@ -73,14 +79,13 @@ Layout :: struct {
     bottom_tab:Bottom_Tab,
     bottom_height:f32,
     git_history:f32, // the height of the history of the Git tab; 0: GIT_HISTORY_DEFAULT
-    left_mode,right_mode:Panel_Mode,
-    left_modes,right_modes:[Document_Type]Panel_Choice,
-    left_width,right_width:f32, // docked, as their edges were dragged
+    right_mode:Panel_Mode,
+    right_modes:[Document_Type]Panel_Choice,
+    right_width:f32, // docked, as its edge was dragged
 }
 
 LAYOUT_DEFAULT :: Layout{left_open=true,right_open=true,library_tab=.Content,previous_library_tab=.Content}
 DOCK_MIN :: f32(220) // the narrowest a docked panel is dragged
-LEFT_PANEL_HEIGHT :: f32(620) // the most a floating left panel takes, whatever tab it shows
 
 Run_Kind :: enum u8 {Play,Simulate,Play_From_Camera}
 
@@ -294,7 +299,8 @@ tool_panel :: proc(g:^Editor_Ui,id:ui.Id) -> ui.Panel_Float {
     ctx:=g.ctx
     if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect}
     if g.tool_dock>0 {return {width=ui.fixed(g.tool_width),height=ui.fixed(g.tool_dock),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Right,pivot=.Top_Right,offset={0,g.tool_top},docked=true}}
-    return {width=ui.fixed(g.tool_width),height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Right,pivot=.Top_Right,offset={-ctx.theme.margin,g.tool_top}}
+    radius:=ctx.theme.radius_panel
+    return {width=ui.fixed(g.tool_width),height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,g.tool_top},docked=true,corners={radius,radius,radius,radius}}
 }
 
 // The width of what the panel of tool_panel holds, inside its padding.
@@ -628,12 +634,12 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         if !material_document_shown(s) && s.ai.material.open {s.ai.material={}}
     }
     bars:=th.bar_height+toolbar_height(g)
-    top:=bars+th.margin
+    top:=bars+DETAILS_MARGIN
     bottom_limit:=ctx.size.y-th.margin
     // A docked panel takes its edge of the window for the whole height under
     // the bars, and the scene what is left between them.
-    left_dock,right_dock:=dock_widths(s)
-    left_width:=left_dock>0?left_dock:min(width_of(LEFT_WIDTH,ctx.size.x),max(ctx.size.x-2*th.margin,120))
+    _,right_dock:=dock_widths(s)
+    left_width:=width_of(LEFT_WIDTH,ctx.size.x)
     right_width:=right_dock>0?right_dock:width_of(RIGHT_WIDTH,ctx.size.x)
     bottom_height:=clamp(l.bottom_height>0?l.bottom_height:BOTTOM_HEIGHT,BOTTOM_MIN,max(ctx.size.y*0.6,BOTTOM_MIN))
     g.rects.left,g.rects.right,g.rects.bottom={},{},{}
@@ -642,46 +648,27 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     // A paused game shows what is selected of it.
     details:=panels || s.mode==.Paused && !s.play_stepped && !player_processes_view(s)
 
+    shown_tab:=library_tab_shown(s)
+    if (panels || s.mode==.Paused) && !s.viewport.pick.active {
+        rail_build(s,shown_tab,bars)
+        g.rects.left={0,bars,RAIL_WIDTH,ctx.size.y-bars}
+    }
     if (panels && l.left_open || play && s.play_chat_open) && !s.viewport.pick.active {
-        tabs,shown_tab:=library_tabs(s),library_tab_shown(s)
-        height:=min(max(bottom_limit-top,80),LEFT_PANEL_HEIGHT)
-        // Beside a document in front the panel takes the height of the window.
-        if document!=nil {height=max(bottom_limit-top,80)}
-        if left_dock>0 {height=max(ctx.size.y-bars,80)}
+        height:=max(ctx.size.y-bars,80)
         id:=shell_id(g,"left")
-        style:=ui.Panel_Float{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={th.margin,top},stroke=SIDE_PANEL_RULE}
-        if left_dock>0 {style.offset,style.docked={0,bars},true}
-        if ui.panel(ctx,id,style) {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=3,align_y=.Center}) {
-                if play {ui.label(ctx,"AI",th.font_small,th.text)} else {
-                    // Each tab a chip, as the tabs of the documents: the one shown lit, the others muted.
-                    // Editor and AI by name; the browser, the hierarchy, the world and source control by their icons.
-                    labels:=[Library_Tab]string{.Editor="Editor",.Content="",.Ai="AI",.Hierarchy="",.Git="",.World=""}
-                    icons:=[Library_Tab]ui.Icon{.Editor=.None,.Content=ui.icon_user(u8(User_Icon.Folder)),.Ai=.None,.Hierarchy=ui.icon_user(u8(User_Icon.List)),.Git=ui.icon_user(u8(User_Icon.Branch)),.World=.Layers}
-                    tips:=[Library_Tab]string{.Editor="",.Content="Content Browser",.Ai="",.Hierarchy="Hierarchy",.Git="Source control",.World="World"}
-                    for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
-                        if tab not_in tabs {continue}
-                        shown:=shown_tab==tab
-                        color:=shown?ui.Color{}:th.text_muted
-                        // A merge that waits for its conflicts marks the tab while it lasts.
-                        if tab==.Git && s.git!=nil && s.git.merging {color=th.danger}
-                        if ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{label=labels[tab],icon=icons[tab],tip=tips[tab],style=shown?.Toggle:.Field,active=shown,icon_color=color,height=ctx.theme.control,size=th.font_small,icon_size=15,width=labels[tab]==""?28:0,padding=8,center=true}).clicked {library_select(s,tab)}
-                    }
-                }
-                ui.spacer(ctx)
-                if shown_tab==.Ai {
-                    ai_chat_bar_buttons(s)
-                    ai_chat_settings_button(s)
-                } else if !play {
-                    if shown_tab==.Content {content_create_button(s,shell_id(g,"library_create"),22)}
-                    content_settings_button(s,shell_id(g,"library_settings"),22)
-                }
-                // Folds the panel, as Tab does; the chat has its own buttons.
-                if shown_tab!=.Ai && ui.button(ctx,shell_id(g,"library_close"),{icon=ui.icon_user(u8(User_Icon.Panel_Close)),icon_color=th.text_muted,icon_size=15,tip="Hide panel",style=.Ghost,width=22,height=22}).clicked {
-                    if play {play_chat_set(s,false)} else {action_run(s,.Library_Panel)}
+        if ui.panel(ctx,id,{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={RAIL_WIDTH,bars},docked=true,corners={0,LEFT_RADIUS,LEFT_RADIUS,0}}) {
+            // Only the tabs with controls of their own take a row for them.
+            header:=shown_tab==.Ai || shown_tab==.Editor
+            if header {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=3,align_x=.End,align_y=.Center}) {
+                    if shown_tab==.Ai {
+                        ai_chat_bar_buttons(s)
+                        ai_chat_settings_button(s)
+                    } else {content_settings_button(s,shell_id(g,"library_settings"),22)}
                 }
             }
-            room:=height-2*PANEL_PADDING-th.control-8
+            room:=height-2*PANEL_PADDING
+            if header {room-=PANEL_HEADER+8}
             ui.id_push(ctx,id)
             switch shown_tab {
             case .Editor: create_build(s,w,room,left_width-2*PANEL_PADDING)
@@ -702,16 +689,9 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
             if !play {content_settings_build(s,shown_tab==.Content)}
         }
         if rect,found:=ui.widget_rect(ctx,id);found {g.rects.left=rect}
-        if left_dock>0 {dock_edge(s,.Left,left_width,bars)}
-    } else if (panels && !l.left_open || s.mode==.Paused && !s.play_chat_open) && !s.viewport.pick.active {
-        if ui.panel(ctx,shell_id(g,"library_reopen"),{width=ui.fixed(30),height=ui.fixed(30),offset={th.margin,top}}) {
-            if ui.button(ctx,shell_id(g,"library_reopen_button"),{icon=play?.Sparkle:ui.icon_user(u8(User_Icon.Panel_Open)),icon_size=15,style=.Ghost,width=30,height=30,tip=play?"":"Show panel"}).clicked {
-                if play {play_chat_set(s,true)} else {l.left_open=true}
-            }
-        }
     }
     if panels && l.bottom_open {
-        x0:=left_dock>0?left_dock+th.margin:l.left_open?th.margin+left_width+th.margin:th.margin
+        x0:=RAIL_WIDTH+(l.left_open?left_width:0)+th.margin
         x1:=ctx.size.x-(right_dock>0?right_dock:0)-th.margin
         y:=bottom_limit-bottom_height
         id:=shell_id(g,"bottom")
@@ -753,8 +733,9 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         if right_dock>0 {max_height=ctx.size.y-bars}
         max_height=max(max_height,120)
         id:=shell_id(g,"right")
-        style:=ui.Panel_Float{width=ui.fixed(right_width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-th.margin,top},stroke=SIDE_PANEL_RULE}
-        if right_dock>0 {style.height,style.offset,style.docked=ui.fixed(max_height),{0,bars},true}
+        radius:=th.radius_panel
+        style:=ui.Panel_Float{width=ui.fixed(right_width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,top},docked=true,corners={radius,radius,radius,radius}}
+        if right_dock>0 {style.height,style.offset,style.corners=ui.fixed(max_height),{0,bars},{}}
         if ui.panel(ctx,id,style) {
             ui.id_push(ctx,id)
             // What is watched, or what another editor holds, is read, not edited.
@@ -764,9 +745,9 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
             if read_only {ui.disabled_end(ctx)}
             ui.id_pop(ctx)
         }
-        if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect} else {g.rects.right={ctx.size.x-th.margin-right_width,top,right_width,120}}
+        if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect} else {g.rects.right={ctx.size.x-DETAILS_MARGIN-right_width,top,right_width,120}}
     }
-    if right_dock>0 {dock_edge(s,.Right,right_width,bars)}
+    if right_dock>0 {dock_edge(s,right_width,bars)}
     if panels && material_document_shown(s) {material_document_build(s)}
     camera_preview_bar(s)
     play_history_bar(s)
@@ -776,6 +757,36 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     modal_build(s)
     toast_build(s)
     window_outline(s)
+}
+
+// The tabs of the left panel, at its side, whether it is open or not: a click
+// on the one shown folds it and on another shows that one. In the pause of a
+// game, the chat alone.
+@(private)
+rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
+    g:=s.gui
+    ctx:=g.ctx
+    th:=&ctx.theme
+    l:=&g.layout
+    play:=play_shown(s)
+    tabs:=play?Library_Tabs{.Ai}:library_tabs(s)
+    icons:=[Library_Tab]ui.Icon{.Editor=.Plus,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
+    tips:=[Library_Tab]string{.Editor="Editor",.Content="Content Browser",.Hierarchy="Hierarchy",.World="World",.Ai="AI",.Git="Source control"}
+    if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=th.bar_top,block=true}) {
+        for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
+            if tab not_in tabs {continue}
+            shown:=play?s.play_chat_open:l.left_open && shown_tab==tab
+            color:=shown?th.text:th.text_muted
+            // A merge that waits for its conflicts marks the tab while it lasts.
+            if tab==.Git && s.git!=nil && s.git.merging {color=th.danger}
+            if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],style=.Ghost,active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17}).clicked {continue}
+            switch {
+            case play:  play_chat_set(s,!s.play_chat_open)
+            case shown: l.left_open=false
+            case:       library_select(s,tab)
+            }
+        }
+    }
 }
 
 library_select :: proc(s:^Session,tab:Library_Tab) {
@@ -866,7 +877,7 @@ library_tab_shown :: proc(s:^Session) -> Library_Tab {
     return .Content
 }
 
-// The type of the document in front, for the modes of the side panels.
+// The type of the document in front, for the mode of the right panel.
 document_type :: proc(s:^Session) -> Document_Type {
     switch {
     case asset_document_active(s)!=nil: return .Asset
@@ -875,48 +886,57 @@ document_type :: proc(s:^Session) -> Document_Type {
     return .Scene
 }
 
-// Whether a side panel docks for a type of document: its own choice, or the global mode.
-panel_mode :: proc "contextless" (l:^Layout,side:Panel_Side,type:Document_Type) -> Panel_Mode {
-    switch side==.Left?l.left_modes[type]:l.right_modes[type] {
+// Whether the right panel docks for a type of document: its own choice, or the global mode.
+panel_mode :: proc "contextless" (l:^Layout,type:Document_Type) -> Panel_Mode {
+    switch l.right_modes[type] {
     case .Floating: return .Floating
     case .Docked:   return .Docked
     case .Global:
     }
-    return side==.Left?l.left_mode:l.right_mode
+    return l.right_mode
 }
 
-// What the docked side panels take of the window, in points on whole
-// pixels: the scene gets the rest. An asset document draws its own right
-// side, and in a Play or while picking the panels are not there.
+// Where the part of the view the left panel does not cover starts, in points on
+// whole pixels: a little under the panel, so its rounded corners show the scene.
+dock_scene_left :: proc(s:^Session) -> f32 {
+    left,_:=dock_widths(s)
+    g:=s.gui
+    if left<=0 || !g.layout.left_open {return left}
+    density:=s.app!=nil && s.app.density>0?s.app.density:1
+    return math.round((RAIL_WIDTH+width_of(LEFT_WIDTH,g.ctx.size.x)-LEFT_UNDER)*density)/density
+}
+
+// What the rail and a docked right panel take of the window, in points on
+// whole pixels: the view is the rest, whether the left panel covers part of it
+// or not, so folding the panel moves nothing of its image. An asset document
+// draws its own right side, and in a Play or while picking the panels are not
+// there.
 dock_widths :: proc(s:^Session) -> (left,right:f32) {
     g:=s.gui
     if g==nil || g.ctx==nil || play_shown(s) || player_processes_view(s) || s.viewport!=nil && s.viewport.pick.active {return}
     l:=&g.layout
     window:=g.ctx.size.x
     density:=s.app!=nil && s.app.density>0?s.app.density:1
-    width :: proc(dragged,default,window,density:f32) -> f32 {
-        value:=clamp(dragged>0?dragged:default,DOCK_MIN,max(window*0.4,DOCK_MIN))
-        return math.round(value*density)/density
-    }
-    type:=document_type(s)
-    if l.left_open && panel_mode(l,.Left,type)==.Docked {left=width(l.left_width,width_of(LEFT_WIDTH,window),window,density)}
-    switch type {
+    left=math.round(RAIL_WIDTH*density)/density
+    switch type:=document_type(s);type {
     case .Asset:
     case .Scene,.Prefab:
-        if l.right_open && window>=760 && panel_mode(l,.Right,type)==.Docked {right=width(l.right_width,width_of(RIGHT_WIDTH,window),window,density)}
+        if l.right_open && window>=760 && panel_mode(l,type)==.Docked {
+            value:=clamp(l.right_width>0?l.right_width:width_of(RIGHT_WIDTH,window),DOCK_MIN,max(window*0.4,DOCK_MIN))
+            right=math.round(value*density)/density
+        }
     }
     return
 }
 
-// The inner edge of a docked panel: a rule, which a drag moves to widen or narrow it.
-dock_edge :: proc(s:^Session,side:Panel_Side,width,top:f32) {
-    g:=s.gui;ctx:=g.ctx;l:=&g.layout
-    x:=side==.Left?width:ctx.size.x-width
+// The inner edge of a docked right panel: a rule, which a drag moves to widen or narrow it.
+dock_edge :: proc(s:^Session,width,top:f32) {
+    g:=s.gui;ctx:=g.ctx
+    x:=ctx.size.x-width
     height:=max(ctx.size.y-top,1)
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=ctx.theme.divider,float={to=.Surface,offset={side==.Left?x-1:x,top},layer=ui.LAYER_PANEL}}) {}
-    if value,changed:=splitter(s,side==.Left?.Left:.Right,{x-SPLITTER_WIDTH/2,top,SPLITTER_WIDTH,height},width,side==.Left?1:-1);changed {
-        value:=clamp(value,DOCK_MIN,max(ctx.size.x*0.4,DOCK_MIN))
-        if side==.Left {l.left_width=value} else {l.right_width=value}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=ctx.theme.divider,float={to=.Surface,offset={x,top},layer=ui.LAYER_PANEL}}) {}
+    if value,changed:=splitter(s,.Right,{x-SPLITTER_WIDTH/2,top,SPLITTER_WIDTH,height},width,-1);changed {
+        g.layout.right_width=clamp(value,DOCK_MIN,max(ctx.size.x*0.4,DOCK_MIN))
     }
 }
 
@@ -987,10 +1007,10 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     if ui.menu_bar(ctx,shell_id(g,"bar")) {
         if !s.headless && platform.WINDOW_CONTROLS==.Left_Traffic_Lights {ui.spacer(ctx,78,0)}
-        ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai)),MARK_ARM,30)
-        ui.spacer(ctx,6,0)
         if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=2,align_y=.Center}) {
             if s.mode==.Play && !s.play_input_released {
+                ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai)),MARK_ARM,30)
+                ui.spacer(ctx,6,0)
                 // Inset as the text of a menu is, so the tabs keep their distance.
                 if ui.box(ctx,{width=ui.FIT,height=ui.GROW,padding={10,0,10,0},align_y=.Center}) {ui.label(ctx,"Playing",th.font,th.accent)}
             } else {menus_build(s,w)}
@@ -1052,7 +1072,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
             if (ctx.size.x>=900 || s.mode==.Watch) && !scene_covered(s) {watch_bar_build(s)}
             // The finder looks for entities of the scene, which an asset document hides.
             if s.mode!=.Play && !scene_covered(s) {
-                action_button(s,.Find,{icon=ui.icon_user(u8(User_Icon.Search)),style=.Field,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14},0)
+                action_button(s,.Find,{icon=ui.icon_user(u8(User_Icon.Search)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14},0)
             }
             if !document_is_prefab(s) && (document==nil || !asset_document_flat(s,document.kind)) {
                 if document==nil && s.mode!=.Play {view_mode_build(s)}
@@ -1061,7 +1081,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
                     if ui.box(ctx,{id=shell_id(g,"fps"),width=ui.fixed(54),height=ui.fixed(th.control),align_x=.End,align_y=.Center,track=true}) {ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),th.font_small,th.text_muted)}
                 }
                 graphics:=shell_id(g,"graphics")
-                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Field,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {action_run(s,.Graphics)}
+                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {action_run(s,.Graphics)}
             }
             if s.mode!=.Play && ctx.size.x>=900 {share_button(s,BAR_BUTTON_HEIGHT)}
             if !document_is_prefab(s) && document==nil {play_controls(s)}
@@ -1103,9 +1123,8 @@ tools_menu_build :: proc(s:^Session) {
     active:=shown!=nil || s.viewport.plugin_tool!=0
     it:=ui.interact(ctx,id,{.Focusable})
     color:=th.on_accent if active else th.text
-    // Drawn as a field, so it reads as a menu and not as a button.
-    fill:=th.accent if active else (th.field_hover if it.hot else th.field)
-    stroke:=th.accent if active else (th.well_stroke_hover if it.hot else th.border)
+    fill:=th.accent if active else (th.field_hover if it.hot else ui.Color{})
+    stroke:=th.accent if active else ui.Color{}
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(TOOLBAR_BUTTON),padding={10,0,8,0},gap=6,align_y=.Center,fill=fill,stroke=stroke,radius=th.radius_control}) {
         ui.icon(ctx,icon,color,16)
         if wide {
@@ -1378,17 +1397,17 @@ menus_build :: proc(s:^Session,w:core.World_Ref) {
     ctx:=g.ctx
     file:=[?]Menu_Entry{{.New,0},{.Open,0},{.Projects,0},{.Save,1},{.Save_All,1},{.Save_As,1},{.Import,2},{.Build,3},{.Settings,3},{.Quit,4}}
     view:=[?]Menu_Entry{{.Focus,0},{.Reset_Camera,0},{.Scene_Thumbnail,0},{.Grid,1},{.Indicators,1},{.Output_Frame,1},{.Game_Detail,1},{.Studio_Light,1},{.Graphics,1},{.Inspector_Panel,2},{.Console_Panel,2},{.Build_Panel,2}}
-    menu_entries(s,"File",1,file[:])
+    menu_entries(s,"Mirai",1,file[:],{icon=ui.icon_user(u8(User_Icon.Mirai)),icon_color=MARK_ARM,icon_size=30,padding=4})
     menu_entries(s,"View",4,view[:])
 }
 
 @(private)
-menu_entries :: proc(s:^Session,title:string,index:int,entries:[]Menu_Entry) {
+menu_entries :: proc(s:^Session,title:string,index:int,entries:[]Menu_Entry,look:ui.Button={}) {
     g:=s.gui
     ctx:=g.ctx
     id:=shell_id(g,"menu",index)
     named_add(g,id)
-    if ui.menu(ctx,id,title) {
+    if ui.menu(ctx,id,title,look.icon!=.None?BAR_MARK_HEIGHT:26,look) {
         labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
         group:=entries[0].group
         for entry,at in entries {
@@ -1601,9 +1620,6 @@ modal_asset_row :: proc(s:^Session,ctx:^ui.Context,file:^asset.Registry_File) {
 // A line around the window that sets it apart from what is behind it, as
 // the panels have theirs; not while it fills the screen.
 WINDOW_RULE :: ui.Color{86,89,99,255}
-// The border of the panels at the sides of the viewport: lighter than that of
-// the theme, so they stand apart from the scene.
-SIDE_PANEL_RULE :: ui.Color{72,72,84,255}
 
 @(private)
 window_outline :: proc(s:^Session) {

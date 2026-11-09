@@ -23,7 +23,7 @@ import game "project:game"
 
 // Writes every asset of the game: a badge (.tex), the HUD and the sign
 // (.ui), a hum (.sound, imported from the WAV this writes into source/) and
-// the scene assets/scenes/main.scene that uses them. Running it again gives
+// the scene assets/arena/main.scene that uses them. Running it again gives
 // the same bytes. From the folder of the project:
 //
 //   odin run tools/content -collection:mirai=<engine> -collection:project=. -custom-attribute:component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record
@@ -65,7 +65,7 @@ write_badge :: proc(o:^Out) -> base.Asset_Id {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    check(o,"assets/textures/badge.tex",asset.texture_save("assets/textures/badge.tex",&o.types,
+    check(o,"assets/hud/badge.tex",asset.texture_save("assets/hud/badge.tex",&o.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -100,7 +100,7 @@ write_hud :: proc(o:^Out,badge:base.Asset_Id) -> base.Asset_Id {
         ui.tree_node_record(&texts,4,{kind=.Text,name="hits",style=3,bind_text="Status.hits"}),
     }
     data:=ui.Tree_Data{text=texts[:],nodes=nodes,styles=styles,images=images,anims=anims,tracks=tracks,keys=keys,anim_sets=anim_sets}
-    check(o,"assets/ui/hud.ui",host.ui_tree_save("assets/ui/hud.ui",&o.types,id,data))
+    check(o,"assets/hud/hud.ui",host.ui_tree_save("assets/hud/hud.ui",&o.types,id,data))
     return id
 }
 
@@ -119,7 +119,7 @@ write_sign :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Text,name="message",style=2,bind_text="Status.message"}),
         ui.tree_node_record(&texts,0,{kind=.Text,name="hits",style=3,bind_text="Status.hits"}),
     }
-    check(o,"assets/ui/sign.ui",host.ui_tree_save("assets/ui/sign.ui",&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
+    check(o,"assets/arena/sign.ui",host.ui_tree_save("assets/arena/sign.ui",&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
     return id
 }
 
@@ -146,7 +146,7 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
         o.failed=true
         return {}
     }
-    report,error:=importer.import_sound("source/sounds/hum.wav","assets/sounds",{},{root="."})
+    report,error:=importer.import_sound("source/sounds/hum.wav","assets/arena",{},{root="."})
     if error.code!=.None {
         fmt.eprintfln("content: %s",error.message)
         o.failed=true
@@ -216,7 +216,7 @@ write_player :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/prefabs/Player.prefab",asset.scene_save(&s.scene,"assets/prefabs/Player.prefab"))
+    check(o,"assets/player/Player.prefab",asset.scene_save(&s.scene,"assets/player/Player.prefab"))
 }
 
 write_scene :: proc(o:^Out,hud,sign,hum:base.Asset_Id) {
@@ -280,14 +280,14 @@ write_scene :: proc(o:^Out,hud,sign,hum:base.Asset_Id) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/main.scene",asset.scene_save(&s.scene,"assets/scenes/main.scene"))
+    check(o,"assets/arena/main.scene",asset.scene_save(&s.scene,"assets/arena/main.scene"))
 }
 
 main :: proc() {
     o:Out
     asset.types_init(&o.types)
     defer asset.types_destroy(&o.types)
-    for folder in ([]string{"assets/ui","assets/sounds","assets/textures","assets/scenes","assets/prefabs"}) {os.make_directory_all(folder)}
+    for folder in ([]string{"assets/arena","assets/hud","assets/player"}) {os.make_directory_all(folder)}
     badge:=write_badge(&o)
     hud,sign,hum:=write_hud(&o,badge),write_sign(&o),write_hum(&o)
     write_player(&o)

@@ -37,7 +37,7 @@ tools_popups :: proc(s:^Session,w:core.World_Ref) {
 
 Import_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a table of texts (CSV) that becomes .strings; a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
-    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in instead of models (a model keeps a folder of its name inside); textures; sounds; fonts; texts or prompts. A source a plugin imports whole takes none"`,
+    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
     into:[base.ASSET_ID_TEXT+1]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
     profile:bool `mirai:"optional,label=Records where its time goes: asset.import_status gives the seconds of each zone once it ends"`,
     rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing +Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,

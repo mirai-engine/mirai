@@ -91,5 +91,5 @@ write_horror_scene :: proc(o: ^Out) {
         o.failed = true
         return
     }
-    check(o, "assets/scenes/horror.scene", asset.scene_save(&s.scene, path(o, "assets/scenes/horror.scene")))
+    check(o, "assets/horror/horror.scene", asset.scene_save(&s.scene, path(o, "assets/horror/horror.scene")))
 }

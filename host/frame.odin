@@ -500,6 +500,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
     // The camera alone draws only where it is seen.
     if app.view_count==0 && app.scene.z>0 && app.scene.w>0 {
         app.views[0]={camera=app.camera,camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,rect=app.scene}
+        app.views[0].camera.shift+=app.scene_shift
         app.view_count=1
     }
     started:=time.tick_now()

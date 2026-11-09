@@ -14,7 +14,7 @@ import mm "mirai:std/math"
 import "mirai:ui"
 import portals "plugins:portals/runtime"
 
-// The portal chamber of scenes/portal_chamber.scene. The player carries a gun
+// The portal chamber of portals/portal_chamber.scene. The player carries a gun
 // that opens two portals, a blue and an orange one, on the white surfaces
 // (Portal_Surface); what goes into one comes out of the other, the player
 // included, and a cube halfway through shows on both sides. The actions of

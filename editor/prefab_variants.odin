@@ -65,7 +65,7 @@ variant_prompt_build :: proc(s:^Session) {
         notify(s,"Give the variant a name without / \\ : * ? \" < > or |")
         return
     }
-    folder:="prefabs"
+    folder:=""
     if file,_,found:=prefab_file(s,p.base);found {folder=file.path[:max(strings.last_index_byte(file.path,'/'),0)]}
     path:=folder==""?name:fmt.tprintf("%s/%s",folder,name)
     p.path_length=copy(p.path[:],path)

@@ -105,5 +105,5 @@ write_control_scene :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/control.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/control.scene")))
+    check(o,"assets/control/control.scene",asset.scene_save(&s.scene,path(o,"assets/control/control.scene")))
 }

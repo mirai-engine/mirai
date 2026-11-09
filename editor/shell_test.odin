@@ -98,16 +98,18 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
         }
         left,found:=ui.widget_rect(&ctx,shell_id(&g,"left"))
         testing.expect(t,found)
-        testing.expect_value(t,left.x,f32(16))
-        testing.expect_value(t,left.y,ctx.theme.bar_height+DOCUMENT_TOOLBAR_HEIGHT+ctx.theme.margin)
+        testing.expect_value(t,left.x,RAIL_WIDTH)
+        testing.expect_value(t,left.y,ctx.theme.bar_height+DOCUMENT_TOOLBAR_HEIGHT)
         testing.expect_value(t,left.w,LEFT_WIDTH.max)
-        testing.expectf(t,left.h==min(size.y-16-left.y,LEFT_PANEL_HEIGHT),"every tab of the left panel takes the same height: %v",left.h)
+        testing.expect_value(t,left.h,size.y-(ctx.theme.bar_height+DOCUMENT_TOOLBAR_HEIGHT))
+        rail,rail_shown:=ui.widget_rect(&ctx,shell_id(&g,"rail"))
+        testing.expect(t,rail_shown && rail.x==0 && rail.y==left.y && rail.w==RAIL_WIDTH && rail.h==left.h)
         toolbar,toolbar_shown:=ui.widget_rect(&ctx,shell_id(&g,"document_toolbar"))
         testing.expect(t,toolbar_shown && toolbar.y==ctx.theme.bar_height && toolbar.h==DOCUMENT_TOOLBAR_HEIGHT && toolbar.w==size.x)
         _,document_shown:=ui.widget_rect(&ctx,shell_id(&g,"document_tab",1))
         testing.expect(t,document_shown)
         right,shown:=ui.widget_rect(&ctx,shell_id(&g,"right"))
-        testing.expect(t,shown && abs(right.x+right.w-(size.x-16))<0.01)
+        testing.expect(t,shown && abs(right.x+right.w-(size.x-8))<0.01 && right.y==ctx.theme.bar_height+DOCUMENT_TOOLBAR_HEIGHT+8)
         testing.expect_value(t,right.w,RIGHT_WIDTH.max)
         testing.expect(t,right.y+right.h<=size.y-16+0.01)
         pick,_:=ui.widget_rect(&ctx,ui.id_derive(&ctx,shell_id(&g,"right"),"parent_pick"))
@@ -131,15 +133,21 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,!left_shown && g.layout.library_tab==.Editor)
     testing.expect(t,action_run(&session,.Library_Panel))
     for _ in 0..<2 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
+    // The tab shown folds the panel, another shows that one.
+    shell_test_click(t,&session,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
+    testing.expect(t,!g.layout.left_open && g.layout.library_tab==.Editor)
+    shell_test_click(t,&session,shell_id(&g,"library_tab",int(Library_Tab.Content)+1))
+    testing.expect(t,g.layout.left_open && g.layout.library_tab==.Content)
+    shell_test_click(t,&session,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
+    testing.expect(t,g.layout.left_open && g.layout.library_tab==.Editor)
+    for _ in 0..<2 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
     // Move, Rotate and Scale, then the snaps and the axes.
     scale_tool,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Tool_Scale)+1))
     snap_button,_:=ui.widget_rect(&ctx,shell_id(&g,"snap"))
     space,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Space)+1))
     camera_speed,_:=ui.widget_rect(&ctx,shell_id(&g,"camera_speed"))
     testing.expect(t,scale_tool.x<snap_button.x && snap_button.x<space.x && space.x<camera_speed.x)
-    // At the left, after the document, with the tools of the plugins last.
     redo,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Redo)+1))
-    testing.expect(t,redo.x<scale_tool.x && camera_speed.x<1440/3)
     if tools,found:=ui.widget_rect(&ctx,shell_id(&g,"tools"));found {testing.expect(t,camera_speed.x<tools.x)}
     move_snap,scale_snap:=viewport.snap,viewport.snap_scale
     shell_test_click(t,&session,shell_id(&g,"snap_open"))
@@ -252,7 +260,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
         left,left_shown:=ui.widget_rect(&ctx,shell_id(&g,"left"))
         _,right_shown:=ui.widget_rect(&ctx,shell_id(&g,"right"))
         _,editor_tab:=ui.widget_rect(&ctx,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
-        testing.expect(t,left_shown && left.y+left.h<=size.y-16)
+        testing.expect(t,left_shown && left.x==RAIL_WIDTH && left.y+left.h==size.y)
         // In the pause Details stays beside the chat, for the entities it refers to.
         testing.expect(t,right_shown && !editor_tab && g.rects.bottom.h==0)
         ui.id_push(&ctx,shell_id(&g,"left"))
@@ -265,11 +273,16 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     play_chat_set(&session,false)
     shell_test_frame(&session,{size={1440,900},pointer_absent=true})
     _,chat_hidden:=ui.widget_rect(&ctx,shell_id(&g,"left"))
-    _,launcher:=ui.widget_rect(&ctx,shell_id(&g,"library_reopen_button"))
+    chat_button:=shell_id(&g,"library_tab",int(Library_Tab.Ai)+1)
+    _,launcher:=ui.widget_rect(&ctx,chat_button)
     testing.expect(t,!chat_hidden && launcher)
+    shell_test_click(t,&session,chat_button)
+    testing.expect(t,session.play_chat_open)
+    shell_test_click(t,&session,chat_button)
+    testing.expect(t,!session.play_chat_open)
     session.mode=.Play
     shell_test_frame(&session,{size={1440,900},pointer_absent=true})
-    _,launcher=ui.widget_rect(&ctx,shell_id(&g,"library_reopen_button"))
+    _,launcher=ui.widget_rect(&ctx,chat_button)
     testing.expect(t,!launcher,"while the game plays the chat has no launcher")
     g.layout=layout_before_play
     world.graphics.show_fps=true
@@ -301,6 +314,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
             when platform.WINDOW_CONTROLS==.Right {
                 close,found:=ui.widget_rect(&ctx,shell_id(&g,"window_control",int(User_Icon.Close)+1))
                 testing.expectf(t,found && abs(close.x+close.w-width)<0.01 && close.y==0,"Close takes the top right corner at %.0fpx: %v",width,close)
+                if shown {testing.expectf(t,tools.x+tools.w<=close.x-WINDOW_CONTROL_WIDTH*2+0.5,"the tools fit at %.0fpx: %v",width,tools)}
             }
         }
     }

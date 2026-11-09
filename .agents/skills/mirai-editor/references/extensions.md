@@ -166,7 +166,8 @@ A plugin opens asset types in tabs next to the scenes
   leaves out Graphics). A `ui` step `after="editor_panels"` takes `editor.asset_document_active(s)`
   and, if it is of its type, builds `ui.panel(ctx, id, editor.asset_workspace(g))`; with Details on
   the right, `editor.asset_workspace_details` gives the two panels. `editor.asset_toolbar(g)` is
-  the toolbar's place after Save, Undo and Redo, and `asset_toolbar_whole` the center of all of it.
+  the toolbar's place after Save, Undo and Redo, and `asset_toolbar_whole` the center of all of the
+  bar after the tabs.
   The plugin's state follows the front document: on changing asset it rereads it.
 - **Playing.** `editor.timeline_strip` is the time strip of a document that plays. It does not own
   time: it reads a `Timeline_Clock` and returns a `Timeline_Result` that the document applies to its
@@ -368,7 +369,7 @@ and joins them with the engine's.
 - `editor.Import_Format_Provider{format}` gives one more `importer.Format`. It is imported like
   those of `sources.FORMATS`, with the same reading, writing, cache and identity
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)); its
-  `Format.folder` chooses the folder under `models/`. Its extensions enter the dialog's Models
+  `Format.folder` chooses the folder of the import. Its extensions enter the dialog's Models
   filter and what the editor recognizes on dropping a file. With `prepare(s, allocator)`, the
   editor asks it in its thread, before importing a model, for the format's options for that import
   (`Format.data`, for example what other providers give), and `release(data, allocator)` releases

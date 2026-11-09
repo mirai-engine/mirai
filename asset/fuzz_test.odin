@@ -178,7 +178,7 @@ fuzz_file :: proc(t:^testing.T,types:^Types,path:string,attempts:=2000) {
 @(test)
 damaged_interfaces_animations_and_sounds_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"ui/hud.ui","ui/sign.ui","animations/lift.anim","sounds/hum.sound"}) {
+    for file in ([]string{"showcase/hud.ui","showcase/sign.ui","showcase/lift.anim","showcase/hum.sound"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator))
     }
 }
@@ -203,13 +203,13 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
 @(test)
 damaged_authored_fractures_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    fuzz_file(t,&types,DEMO+"physics/hierarchy.fracture",1200)
+    fuzz_file(t,&types,DEMO+"physics_gallery/hierarchy.fracture",1200)
 }
 
 @(test)
 damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"models/plant.gltf/Plant.mesh","models/plant.gltf/Leaves.mat","textures/hud_badge.tex","scenes/showcase.scene","models/vase.obj/vase.prefab"}) {
+    for file in ([]string{"gallery/plant.gltf/Plant.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.prefab"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator),1200)
     }
 }
@@ -219,7 +219,7 @@ damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command ::
 @(test)
 damaged_text_of_an_asset_is_packed_or_refused :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"ui/hud.ui","animations/lift.anim","models/plant.gltf/Leaves.mat","models/vase.obj/vase.prefab"}) {
+    for file in ([]string{"showcase/hud.ui","showcase/lift.anim","gallery/plant.gltf/Leaves.mat","gallery/vase.obj/vase.prefab"}) {
         path:=strings.concatenate({DEMO,file},context.temp_allocator)
         seed:Document
         if !testing.expect_value(t,document_load(&seed,path),Error.None) {continue}

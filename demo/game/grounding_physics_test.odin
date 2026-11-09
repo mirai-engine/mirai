@@ -29,8 +29,8 @@ when #config(MIRAI_AVATAR_TEST,false) {
         types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
         skeleton_file,animation_file:asset.Asset
         defer asset.asset_close(&skeleton_file);defer asset.asset_close(&animation_file)
-        if !testing.expect_value(t,asset.asset_load(&skeleton_file,"demo/assets/models/mirai/Armature.skeleton"),asset.Error.None) {return}
-        if !testing.expect_value(t,asset.asset_load(&animation_file,"demo/assets/animations/mirai_locomotion.anim"),asset.Error.None) {return}
+        if !testing.expect_value(t,asset.asset_load(&skeleton_file,"demo/assets/characters/mirai/Armature.skeleton"),asset.Error.None) {return}
+        if !testing.expect_value(t,asset.asset_load(&animation_file,"demo/assets/characters/mirai/mirai_locomotion.anim"),asset.Error.None) {return}
         skeleton_view,skeleton_error:=asset.skeleton_view(&skeleton_file,&types)
         animation_view,animation_error:=asset.animation_view(&animation_file,&types)
         if !testing.expect(t,skeleton_error==.None && animation_error==.None) {return}

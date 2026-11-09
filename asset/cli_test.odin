@@ -336,7 +336,7 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
     }
     runs,refused:=0,0
     state:=u64(0x13198a2e03707344)
-    for name in ([]string{"ui/hud.ui","animations/lift.anim","sounds/hum.sound","models/plant.gltf/Leaves.mat"}) {
+    for name in ([]string{"showcase/hud.ui","showcase/lift.anim","showcase/hum.sound","gallery/plant.gltf/Leaves.mat"}) {
         seed:=fmt.tprintf("%s/demo/assets/%s",root,name)
         good,read_error:=serial.file_read(seed,context.temp_allocator)
         if !testing.expectf(t,read_error==.None,"%s cannot be read",seed) {continue}

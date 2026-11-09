@@ -220,5 +220,5 @@ write_portal_player :: proc(o:^Out) {
     put(&s,eyes,"Audio_Listener",&audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,game.EYE_HEIGHT,0}}
     put(&s,eyes,"Camera_Follow",&first_person)
-    prefab_save(o,&s,"assets/prefabs/Portal player.prefab")
+    prefab_save(o,&s,"assets/portals/Portal player.prefab")
 }

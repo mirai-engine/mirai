@@ -17,7 +17,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
 
-// The game of the demo project, for the scenes in ../assets/scenes. The
+// The game of the demo project, for the scenes in ../assets. The
 // player is a character of the physics world that walks on the colliders of
 // the level, driven by the input actions of ../input.mirai:
 //   move   W A S D, left stick      look   mouse, right stick
@@ -45,7 +45,7 @@ DOOR_OPEN_GLOW   :: [3]f32{3,48,10}
 DOOR_CLOSED_GLOW :: [3]f32{48,4,2.4}
 // The nose of the dog when it barks, nits, in the light of the control scene.
 BARK_GLOW :: [3]f32{64,25,4.8}
-// The materials of assets/materials a Swatch walks through.
+// The materials a Swatch walks through.
 SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
 
 PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x706c617965720001}
@@ -146,7 +146,7 @@ SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 
-// The id of assets/materials/<name>.mat, which follows from its name.
+// The id of the material <name>.mat, which follows from its name.
 material_asset :: proc(name:string) -> base.Asset_Id {
     buffer:[192]u8
     return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))

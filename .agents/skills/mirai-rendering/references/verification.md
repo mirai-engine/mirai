@@ -107,7 +107,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 `-define:GI_BENCHMARK=true` and `-define:ODIN_TEST_THREADS=1`, without validation:
 
 - Synthetic scenes, each a sequence with its changes, and pans through the entrance room of
-  `scenes/main.scene` at `MIRAI_GI_HZ`; each starts as a freshly loaded world. The cases are in
+  `gallery/main.scene` at `MIRAI_GI_HZ`; each starts as a freshly loaded world. The cases are in
   the test.
 - The indirect (`Debug_View.Indirect`, without TAA) is compared in nits with the
   [reference](gi.md#indirect-reference) at its key moments (error, SSIM, bias and leak); the

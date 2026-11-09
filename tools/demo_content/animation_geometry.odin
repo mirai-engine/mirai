@@ -19,7 +19,7 @@ import animation_editor "plugins:animation/editor"
 @(private)
 gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
     o,s:=g.o,g.s
-    folder:="assets/models/procedural-spider";os.make_directory_all(path(o,folder))
+    folder:="assets/characters/spider";os.make_directory_all(path(o,folder))
     skeleton_id,mesh_id:=id_of("skeleton","spider"),id_of("mesh","spider")
     bones:[25]asset.Skeleton_Bone
     rest:[25]mm.Transform
@@ -68,7 +68,7 @@ gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
         leg.phase=f32((i+i/4)%2)*.5;leg.step_distance=.3;leg.step_height=.15;leg.sole_height=.03;leg.pole_offset={-1 if i<4 else 1,.2,0}
         grounding.legs[i]=leg
     }
-    gallery_profile(o,s,root,"spider_grounding",{grounding={grounding}})
+    gallery_profile(o,s,root,"characters/spider","spider_grounding",{grounding={grounding}})
     capsule:=phys.collider_character(.22,.8);put(s,root,"Collider",&capsule)
     character:=phys.character_default();character.step_height=.22;character.move_relative_to=.Game
     walk:=phys.WALK_DEFAULT;walk.max_speed=1;walk.acceleration=6;walk.braking=8;walk.jump_height=.5
@@ -100,7 +100,7 @@ gallery_skin_box :: proc(cube:^geom.Mesh_Buffer,vertices:^[dynamic]asset.Vertex,
 // baked for it: the same paths, with the translations scaled to its proportions.
 @(private)
 gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,source:string,root:base.Entity_Id) {
-    folder:="assets/models/retarget-mirai";os.make_directory_all(path(o,folder))
+    folder:="assets/characters/tall_mirai";os.make_directory_all(path(o,folder))
     skeleton_id,mesh_id:=id_of("skeleton","tall_mirai"),id_of("mesh","tall_mirai")
     rig,valid:=mirai_rig(model)
     body:=-1
@@ -143,7 +143,7 @@ gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,sour
     constraint:=anim.RETARGET_MAPPING_DEFAULT;constraint.mode=.Paths;constraint.translation=.Scaled
     profile:=anim.Pose_Profile{retarget={constraint}}
     input:asset.Asset
-    if error:=asset.asset_load(&input,path(o,"assets/animations/mirai_gallery.anim"));error!=.None {check(o,"mirai retarget input",error);return}
+    if error:=asset.asset_load(&input,path(o,"assets/characters/mirai/mirai_gallery.anim"));error!=.None {check(o,"mirai retarget input",error);return}
     defer asset.asset_close(&input)
     clips,read:=asset.animation_view(&input,&o.types)
     if read!=.None {check(o,"mirai retarget clips",read);return}
@@ -153,7 +153,7 @@ gallery_retarget :: proc(o:^Out,s:^Scene_Out,model:^importer.Imported_Model,sour
     error:=animation_editor.retarget_bake(&baked,&o.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},profile,skeleton=skeleton_id)
     if error!=.None {check(o,"mirai retarget bake",error);return}
     defer asset.document_destroy(&baked)
-    check(o,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/animations/tall_mirai.anim")))
+    check(o,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/characters/tall_mirai/tall_mirai.anim")))
     player:=anim.ANIMATION_DEFAULT;player.asset=baked_id;base.text_set(player.clip[:],"walk")
     put(s,root,"Animation",&player)
 }

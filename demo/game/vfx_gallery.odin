@@ -13,9 +13,9 @@ import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 
 VFX_GALLERY_STATIONS :: 5
-VFX_GALLERY_SCENE :: "scenes/vfx.scene"
+VFX_GALLERY_SCENE :: "vfx_gallery/vfx.scene"
 
-// A station of the VFX gallery (scenes/vfx.scene): what it shows, and where
+// A station of the VFX gallery (vfx_gallery/vfx.scene): what it shows, and where
 // the camera looks at it from.
 @(component)
 Vfx_Gallery :: struct {

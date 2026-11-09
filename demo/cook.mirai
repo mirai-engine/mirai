@@ -1,13 +1,13 @@
 {
   "roots": [
-    "prefabs/Thrown cube.prefab",
-    "prefabs/physics_burst.prefab",
-    "materials/Chrome.mat",
-    "materials/Satin metal.mat",
-    "materials/Brushed steel.mat",
-    "materials/Lacquer.mat",
-    "materials/Planks.mat",
-    "materials/Stained glass.mat",
-    "materials/Neon sign.mat"
+    "characters/player/Thrown cube.prefab",
+    "physics_gallery/physics_burst.prefab",
+    "surfaces/metal/Chrome.mat",
+    "surfaces/metal/Satin metal.mat",
+    "surfaces/metal/Brushed steel.mat",
+    "surfaces/paint/Lacquer.mat",
+    "surfaces/wood/Planks.mat",
+    "surfaces/glass/Stained glass.mat",
+    "surfaces/neon/Neon sign.mat"
   ]
 }

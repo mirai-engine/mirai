@@ -25,7 +25,7 @@ dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=
     info:=asset.MATERIAL_DEFAULTS
     info.base_color,info.roughness,info.metallic=color,roughness,metallic
     id:=id_of("material",name)
-    check(o,name,asset.material_save(path(o,fmt.tprintf("assets/materials/%s.mat",name)),&o.types,{id=id,info=info}))
+    check(o,name,asset.material_save(path(o,fmt.tprintf("assets/dig/%s.mat",name)),&o.types,{id=id,info=info}))
     return id
 }
 
@@ -51,7 +51,7 @@ dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asse
         tinted(&s,look,{1,1,1},{2.5,1.4,0.4})
     }
     if s.failed {o.failed=true;return id}
-    check(o,file,asset.scene_save(&s.scene,path(o,fmt.tprintf("assets/prefabs/%s.prefab",file))))
+    check(o,file,asset.scene_save(&s.scene,path(o,fmt.tprintf("assets/dig/%s.prefab",file))))
     return id
 }
 
@@ -60,8 +60,7 @@ dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asse
 // (plugins terrain, terrain_vfx and terrain_debris), and a site that digs a
 // pit by itself at the start of a Play (game/dig_site.odin).
 write_dig_scene :: proc(o:^Out) {
-    os.make_directory_all(path(o,"assets/terrains"))
-    os.make_directory_all(path(o,"assets/particles"))
+    os.make_directory_all(path(o,"assets/dig"))
     grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
     soil:=dig_material(o,"Dig soil",{0.34,0.23,0.14},0.95)
     rock:=game.material_asset("Cobblestone")
@@ -84,7 +83,7 @@ write_dig_scene :: proc(o:^Out) {
     }
     if !terrain.source_interior_apply(&source) {fmt.eprintln("demo_content: the interior of the dig could not be written");o.failed=true;return}
     terrain_id:=id_of("terrain","dig")
-    check(o,"dig terrain",terrain.source_save(&source,path(o,"assets/terrains/dig.terrain"),terrain_id,&o.types))
+    check(o,"dig terrain",terrain.source_save(&source,path(o,"assets/dig/dig.terrain"),terrain_id,&o.types))
 
     dust:=effect.PARTICLE_DEFAULTS
     dust.duration,dust.max_particles,dust.rate=1,4000,0
@@ -93,7 +92,7 @@ write_dig_scene :: proc(o:^Out) {
     dust.gravity,dust.drag=0.05,1.4
     dust.colors={{0.85,0.8,0.7,0.6},{0.8,0.76,0.68,0}}
     dust_id:=id_of("particle","dig_dust")
-    check(o,"dig dust",effect.particle_save(path(o,"assets/particles/dig_dust.particle"),&o.types,{id=dust_id,info=dust}))
+    check(o,"dig dust",effect.particle_save(path(o,"assets/dig/dig_dust.particle"),&o.types,{id=dust_id,info=dust}))
 
     soil_piece:=dig_prefab(o,"Soil piece","dig_soil_piece",.Cube,soil,{0.22,0.16,0.2},false)
     rock_piece:=dig_prefab(o,"Rock piece","dig_rock_piece",.Cube,rock,{0.26,0.2,0.24},false)
@@ -137,5 +136,5 @@ write_dig_scene :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/dig.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/dig.scene")))
+    check(o,"assets/dig/dig.scene",asset.scene_save(&s.scene,path(o,"assets/dig/dig.scene")))
 }

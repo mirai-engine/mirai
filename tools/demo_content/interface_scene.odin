@@ -18,7 +18,7 @@ import "mirai:ui"
 // three styles, a menu of options, an inventory to drag items in, a
 // conversation and a name tag over a pillar, and the button the menu uses
 // twice, from a file of its own. The items and the conversation are tables of
-// game data in assets/data.
+// game data in assets/interface.
 
 ICON_SIZE :: 64
 
@@ -64,7 +64,7 @@ write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
             pixels[at+3]=u8(coverage*255)
         }
     }
-    file:=fmt.tprintf("assets/textures/item_%s.tex",names[shape])
+    file:=fmt.tprintf("assets/interface/item_%s.tex",names[shape])
     check(o,file,asset.texture_save(path(o,file),&o.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -94,7 +94,7 @@ write_button :: proc(o:^Out) -> (base.Asset_Id,ui.Tree_Data) {
     id:=id_of("ui","interface_button")
     texts:=make([dynamic]u8,context.temp_allocator)
     data:=interface_localized(button_widget(&texts),&texts)
-    check(o,"assets/ui/interface/button.ui",host.ui_tree_save(path(o,"assets/ui/interface/button.ui"),&o.types,id,data))
+    check(o,"assets/interface/button.ui",host.ui_tree_save(path(o,"assets/interface/button.ui"),&o.types,id,data))
     return id,data
 }
 
@@ -214,7 +214,7 @@ write_interface_hud :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,9,{kind=.Text,name="talk_label",style=6,text="hud.talk",flags={.Localized}}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/hud.ui",host.ui_tree_save(path(o,"assets/ui/interface/hud.ui"),&o.types,id,data))
+    check(o,"assets/interface/hud.ui",host.ui_tree_save(path(o,"assets/interface/hud.ui"),&o.types,id,data))
     return id
 }
 
@@ -277,7 +277,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
     }
     data:=interface_localized({nodes=nodes[:],styles=styles,variants=variants,components=components,overrides=overrides},&texts)
     imports:=[]ui.Tree_Data{button_data}
-    check(o,"assets/ui/interface/menu.ui",host.ui_tree_save(path(o,"assets/ui/interface/menu.ui"),&o.types,id,data,imports))
+    check(o,"assets/interface/menu.ui",host.ui_tree_save(path(o,"assets/interface/menu.ui"),&o.types,id,data,imports))
     return id
 }
 
@@ -327,7 +327,7 @@ write_interface_inventory :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,12,{kind=.Action_Bar,name="actions",style=6}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/inventory.ui",host.ui_tree_save(path(o,"assets/ui/interface/inventory.ui"),&o.types,id,data))
+    check(o,"assets/interface/inventory.ui",host.ui_tree_save(path(o,"assets/interface/inventory.ui"),&o.types,id,data))
     return id
 }
 
@@ -342,7 +342,7 @@ write_interface_tag :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Text,name="name",style=2,bind_text="Interface_Demo.player"}),
         ui.tree_node_record(&texts,0,{kind=.Progress,name="health",style=3,bind_value="Interface_Demo.life",layout={width=ui.fixed(200),height=ui.fixed(10)}}),
     }
-    check(o,"assets/ui/interface/tag.ui",host.ui_tree_save(path(o,"assets/ui/interface/tag.ui"),&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
+    check(o,"assets/interface/tag.ui",host.ui_tree_save(path(o,"assets/interface/tag.ui"),&o.types,id,{nodes=nodes,styles=styles,text=texts[:]}))
     return id
 }
 
@@ -377,13 +377,13 @@ write_interface_dialogue :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,5,{kind=.Action_Bar,name="actions",style=5}),
     }
     data:=interface_localized({nodes=nodes,styles=styles,variants=variants},&texts)
-    check(o,"assets/ui/interface/dialogue.ui",host.ui_tree_save(path(o,"assets/ui/interface/dialogue.ui"),&o.types,id,data))
+    check(o,"assets/interface/dialogue.ui",host.ui_tree_save(path(o,"assets/interface/dialogue.ui"),&o.types,id,data))
     return id
 }
 
-ITEMS_FILE :: "assets/data/items.records"
-LINES_FILE :: "assets/data/merchant_lines.records"
-ANSWERS_FILE :: "assets/data/merchant_answers.records"
+ITEMS_FILE :: "assets/interface/items.records"
+LINES_FILE :: "assets/interface/merchant_lines.records"
+ANSWERS_FILE :: "assets/interface/merchant_answers.records"
 
 // The items of the inventory and what the merchant of the conversation says.
 @(private)
@@ -498,5 +498,5 @@ write_interface_scene :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/interface.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/interface.scene")))
+    check(o,"assets/interface/interface.scene",asset.scene_save(&s.scene,path(o,"assets/interface/interface.scene")))
 }

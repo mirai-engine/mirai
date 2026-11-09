@@ -26,16 +26,16 @@ Physics_Sources :: struct {bricks,wall,hierarchy,mixed,cache,bricks_mesh,wall_me
 @(private)
 physics_source_save :: proc(o:^Out,b:^asset.Fracture_Builder,name:string) -> (fracture,mesh:base.Asset_Id) {
     fracture,mesh=id_of("fracture",name),id_of("mesh",name)
-    check(o,fmt.tprintf("%s.fracture",name),asset.fracture_save(path(o,fmt.tprintf("assets/physics/%s.fracture",name)),&o.types,asset.fracture_builder_desc(b,fracture,mesh)))
+    check(o,fmt.tprintf("%s.fracture",name),asset.fracture_save(path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),&o.types,asset.fracture_builder_desc(b,fracture,mesh)))
     indices:=make([dynamic]u32,context.temp_allocator)
     for piece in b.pieces {for index in b.indices[piece.first_index:][:piece.index_count] {append(&indices,piece.first_vertex+index)}}
-    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics/%s.mesh",name),{id=mesh,slots={{id=0,material=game.material_asset("Bricks")},{id=1,material=game.material_asset("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
+    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics_gallery/%s.mesh",name),{id=mesh,slots={{id=0,material=game.material_asset("Bricks")},{id=1,material=game.material_asset("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
     return
 }
 
 @(private)
 physics_sources :: proc(o:^Out) -> Physics_Sources {
-    os.make_directory_all(path(o,"assets/physics"))
+    os.make_directory_all(path(o,"assets/physics_gallery"))
     result:Physics_Sources
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube)
     geom.cube_build(&cube)
@@ -77,17 +77,17 @@ physics_mixed_build :: proc(b:^asset.Fracture_Builder,cube:geom.Mesh) -> bool {
 
 @(private)
 physics_burst :: proc(o:^Out) {
-    os.make_directory_all(path(o,"assets/particles"))
+    os.make_directory_all(path(o,"assets/physics_gallery"))
     dust:=effect.PARTICLE_DEFAULTS;dust.duration=.05;dust.rate=0;dust.bursts[0]={count=50,cycles=1}
     dust.shape=.Sphere;dust.shape_size={.5,.5,.5};dust.lifetime={1.5,2};dust.speed={.7,1.4};dust.size={.15,.25};dust.gravity=.1
     dust.colors={{.9,.72,.42,.85},{1,.9,.65,.65}};dust.drag=1
     id:=id_of("particle","physics_dust")
-    check(o,"physics dust",effect.particle_save(path(o,"assets/particles/physics_dust.particle"),&o.types,{id=id,info=dust}))
+    check(o,"physics dust",effect.particle_save(path(o,"assets/physics_gallery/physics_dust.particle"),&o.types,{id=id,info=dust}))
     s:Scene_Out;asset.scene_init(&s.scene,&o.types,asset.KIND_PREFAB,game.PHYSICS_GALLERY_BURST);defer asset.scene_destroy(&s.scene)
     e:=entity(&s,"Fracture dust")
     put(&s,e,"Particle_Emitter",&vfx.Particle_Emitter{particle=id,active=true,destroy_when_done=true})
     if s.failed {o.failed=true;return}
-    check(o,"physics burst prefab",asset.scene_save(&s.scene,path(o,"assets/prefabs/physics_burst.prefab")))
+    check(o,"physics burst prefab",asset.scene_save(&s.scene,path(o,"assets/physics_gallery/physics_burst.prefab")))
 }
 
 @(private)
@@ -115,7 +115,7 @@ physics_gallery_label :: proc(o:^Out) -> base.Asset_Id {
             ui.tree_node_record(&texts,0,{kind=.Text,name="detail",style=3,bind_text="Gallery_Label.detail",layout={width=ui.fixed(366)}}),
         },
     }
-    check(o,"physics gallery labels",host.ui_tree_save(path(o,"assets/ui/physics_gallery_label.ui"),&o.types,id,data))
+    check(o,"physics gallery labels",host.ui_tree_save(path(o,"assets/physics_gallery/physics_gallery_label.ui"),&o.types,id,data))
     return id
 }
 

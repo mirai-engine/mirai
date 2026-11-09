@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 import decals "plugins:decals/runtime"
 
 // A scene for each feature of rendering that is a plugin, each one a small
-// set that shows what the feature does: scenes/decals.scene and the others
+// set that shows what the feature does: decals/decals.scene and the others
 // below, with the images they use.
 
 DECAL_SIZE :: 512
@@ -42,7 +42,7 @@ write_decal_image :: proc(o:^Out,name:string,shade:proc(x,y:f32) -> [4]f32) -> b
             pixels[at+3]=u8(clamp(alpha,0,1)*255+0.5)
         }
     }
-    file:=fmt.tprintf("assets/textures/%s.tex",name)
+    file:=fmt.tprintf("assets/decals/%s.tex",name)
     check(o,file,asset.texture_save(path(o,file),&o.types,{id=id,width=DECAL_SIZE,height=DECAL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -117,6 +117,18 @@ feature_scene_begin :: proc(s:^Scene_Out,o:^Out,name:string,sky:Sky,sun_color:[3
     put(s,sun_entity,"Sun",&sun)
 }
 
+// The folder under assets/ of a scene of feature_scene_end: its name, but for
+// the scenes that share an area.
+@(private)
+scene_area :: proc(name:string) -> string {
+    switch name {
+    case "church_fog":                  return "church"
+    case "night":                       return "lights"
+    case "portal_chamber","portal_lab": return "portals"
+    }
+    return name
+}
+
 @(private)
 feature_scene_end :: proc(s:^Scene_Out,o:^Out,name:string) {
     defer asset.scene_destroy(&s.scene)
@@ -125,7 +137,7 @@ feature_scene_end :: proc(s:^Scene_Out,o:^Out,name:string) {
         o.failed=true
         return
     }
-    file:=fmt.tprintf("assets/scenes/%s.scene",name)
+    file:=fmt.tprintf("assets/%s/%s.scene",scene_area(name),name)
     check(o,file,asset.scene_save(&s.scene,path(o,file)))
 }
 

@@ -286,8 +286,8 @@ All take the context, an id and their state by parameter.
 
 - **Panels** (`panel`, `Panel_Float`): a panel floats over the surface and takes the pointer, with
   the theme's fill, border, corners and shadow; `docked` is one against an edge of the surface, only
-  with its fill, square and without border or shadow (whoever docks it draws the line of its inner
-  edge).
+  with its fill, without border or shadow and square, or with the radii of `corners` (whoever docks
+  it draws the line of its inner edge).
 
 - **Popups** (`popup.odin`, up to `POPUP_DEPTH` nested):
   - A popup without a known height spends its first frame invisible, to measure itself: this way it
@@ -486,7 +486,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   overrides change fields of a node by its local name. The load validates ranges, preorder, depth,
   cycles (also in unused templates), override targets and the `TREE_EXPANDED_NODES` budget; errors
   leave the tree empty.
-- Examples: the interfaces in `demo/assets/ui/interface/` (HUD variants, a button from another file
+- Examples: the interfaces in `demo/assets/interface/` (HUD variants, a button from another file
   with overrides, controls, grid list with drag, localized texts).
 
 ### World panels

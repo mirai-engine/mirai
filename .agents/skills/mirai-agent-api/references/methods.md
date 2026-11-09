@@ -654,7 +654,7 @@ convention `tests/scenarios/<name>.mirai`, run by `play.scenario.run` and by
 
 ```json
 {
-  "scene": "scenes/control.scene",
+  "scene": "control/control.scene",
   "start": {"players": 1},
   "steps": [
     {"name": "settle", "method": "play.step", "params": {"ticks": 30}},

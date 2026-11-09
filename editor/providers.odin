@@ -71,6 +71,7 @@ Asset_Kind :: struct {
     extension:string, // of its files, with the dot: asset.list names the kind by it
     field:string,     // a word: an Asset_Id field whose name has it takes the kind; empty: none
     merged:bool,      // git merges its files entity by entity and field by field
+    scene_data:bool,  // what a scene makes of itself: the browser lists it with the Plugins filter or a search
 }
 ASSET_KINDS_OF_PROVIDER :: 8
 Asset_Kind_Provider :: struct {

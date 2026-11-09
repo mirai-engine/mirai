@@ -15,12 +15,12 @@ gallery_geometry_bake_records_two_cuts_new_interior_meshes_and_fragment_retireme
     directory,_:=os.temp_directory(context.temp_allocator)
     root:=fmt.tprintf("%s/mirai-gallery-geometry-%d",directory,os.get_pid())
     o:=Out{root=root};asset.types_init(&o.types);defer asset.types_destroy(&o.types)
-    if !testing.expect_value(t,os.make_directory_all(path(&o,"assets/physics")),nil) {return}
+    if !testing.expect_value(t,os.make_directory_all(path(&o,"assets/physics_gallery")),nil) {return}
     defer os.remove_all(root)
     sources:=physics_sources(&o)
     if !testing.expect(t,!o.failed) {return}
     file:asset.Asset
-    if !testing.expect_value(t,asset.asset_load(&file,path(&o,"assets/physics/recorded.physics_cache")),asset.Error.None) {return}
+    if !testing.expect_value(t,asset.asset_load(&file,path(&o,"assets/physics_gallery/recorded.physics_cache")),asset.Error.None) {return}
     defer asset.asset_close(&file)
     view,error:=cache.cache_view(&file,&o.types)
     if !testing.expect_value(t,error,asset.Error.None) {return}
