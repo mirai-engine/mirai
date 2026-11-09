@@ -303,7 +303,7 @@ place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querie
     case .Distance:
         return linalg.length(candidate-from.position)
     case .Facing:
-        forward:=mm.quat_rotate(from.rotation,mm.Vec3{0,0,1})
+        forward:=mm.quat_rotate(from.rotation,mm.Vec3{0,0,-1})
         to:=candidate-from.position
         to.y,forward.y=0,0
         if linalg.length(to)<1e-4 || linalg.length(forward)<1e-4 {return 1}

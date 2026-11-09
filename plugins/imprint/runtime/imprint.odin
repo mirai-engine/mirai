@@ -131,7 +131,7 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
         if stamp.stride>0 {
             stride:=stride_of(steps,e)
             if stride==nil {continue}
-            forward:=moved>1e-6?motion/moved:[3]f32{0,0,1}
+            forward:=moved>1e-6?motion/moved:[3]f32{0,0,-1}
             if press<=0 {stride.travelled=0;continue}
             print,ok:=stride_print(stride,stamp,hit.point,forward,moved)
             if !ok {continue}

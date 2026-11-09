@@ -47,7 +47,7 @@ a_usda_hierarchy_keeps_its_transforms_and_display_color :: proc(t:^testing.T) {
     child:=find_node(&model,"Child")
     testing.expect(t,child>=0 && model.nodes[child].mesh==0)
     if child<0 {return}
-    testing.expect(t,close_to(world_transform(&model,child).position,{2,3,0}),"the hierarchy and its transforms survive")
+    testing.expect(t,close_to(world_transform(&model,child).position,{-2,3,0}),"the hierarchy and its transforms survive")
     testing.expect_value(t,triangle_count(&model.meshes[0]),1)
     for vertex in model.meshes[0].vertices {testing.expect(t,close_to(color_of(vertex.color),{0.2,0.8,0.4},1.0/255),"a uniform displayColor survives")}
     testing.expect(t,.Has_Colors in model.meshes[0].flags)
@@ -71,8 +71,8 @@ composed_and_binary_usd_need_usdcat :: proc(t:^testing.T) {
         if !ok {continue}
         defer importer.model_destroy(&model)
         child:=find_node(&model,"Child")
-        expected:=[3]f32{2,3,0}
-        if filename=="referenced.usda" {expected={8,3,0}}
+        expected:=[3]f32{-2,3,0}
+        if filename=="referenced.usda" {expected={-8,3,0}}
         testing.expect(t,child>=0 && close_to(world_transform(&model,child).position,expected),"the reference and its override survive flattening")
     }
 }
@@ -109,7 +109,7 @@ def Xform "Root"
     a,b:=mm.transform_point(world,corners[0]),mm.transform_point(world,corners[1])
     testing.expect(t,close_to(a,{0,1,0}),"centimeters and Z-up become meters and Y-up")
     testing.expect(t,abs(linalg.length(b-a)-1)<1e-5,"the geometry is in meters")
-    testing.expect(t,close_to(model.nodes[find_node(&model,"Root")].transform.position,{0,1,0}) && close_to(corners[1],{1,0,0}) && close_to(corners[2],{0,0,-1}),"no node holds the units: nodes and points are in meters, +Y up")
+    testing.expect(t,close_to(model.nodes[find_node(&model,"Root")].transform.position,{0,1,0}) && close_to(corners[1],{-1,0,0}) && close_to(corners[2],{0,0,1}),"no node holds the units: nodes and points are in meters, +Y up")
 }
 
 @(test)
@@ -182,7 +182,7 @@ def Xform "Quaternion"
     world:=world_transform(&model,tri)
     // Scale, then rotate 90 degrees about Y, then translate: (1,0,0) goes to (2,0,0), (0,0,-2), (1,2,3)+(0,0,-2).
     corners:=triangle_positions(&model.meshes[0],0)
-    testing.expect(t,close_to(mm.transform_point(world,corners[0]),{1,2,1}) && close_to(mm.transform_point(world,corners[2]),{3,2,3}),"ops act in the order of xformOpOrder")
+    testing.expect(t,close_to(mm.transform_point(world,corners[0]),{-1,2,-1}) && close_to(mm.transform_point(world,corners[2]),{-3,2,-3}),"ops act in the order of xformOpOrder")
     quaternion_node:=find_node(&model,"Quaternion")
     rotated:=mm.transform_direction(model.nodes[quaternion_node].transform,{1,0,0})
     testing.expect(t,close_to(rotated,{0,0,-1},1e-4),"an orient op is a rotation")
@@ -206,9 +206,9 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
         corners:=importer.mesh_triangle(wall,i)
         for vertex in corners {
             p:=vertex.position
-            expected:=[3]f32{0.70710678,0,0.70710678} if p=={1,0,0} else {0,0,1}
+            expected:=[3]f32{-0.70710678,0,-0.70710678} if p=={-1,0,0} else {0,0,-1}
             testing.expect(t,close_to(corner_normal(vertex.normal),expected,1e-3),"primvars:normals wins over normals and is read per corner, through its indices")
-            testing.expect(t,vertex.uv=={p.x,1-p.y},"USD counts v from the bottom of the image")
+            testing.expect(t,vertex.uv=={-p.x,1-p.y},"USD counts v from the bottom of the image")
             testing.expect(t,vertex.color==importer.WHITE,"displayColor is left out of a mesh with a material")
         }
     }
@@ -227,7 +227,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
 
     testing.expect_value(t,triangle_count(leaf),1)
     corners:=importer.mesh_triangle(leaf,0)
-    testing.expect(t,close_to(corner_normal(corners[0].normal),{0,1,0},1e-3) && close_to(corner_normal(corners[2].normal),{0,0.6,0.8},1e-3),"normals per point are normalized")
+    testing.expect(t,close_to(corner_normal(corners[0].normal),{0,1,0},1e-3) && close_to(corner_normal(corners[2].normal),{0,0.6,-0.8},1e-3),"normals per point are normalized")
     testing.expect(t,close_to(corner_normal(corners[1].normal),{0,1,0},1e-3),"a normal without length becomes the flat one")
     testing.expect(t,corners[0].uv=={0,1} && corners[1].uv=={1,1} && corners[2].uv=={0.25,0.25},"texture coordinates per point")
     cutout:=&model.materials[leaf.slots[0].material]
@@ -243,7 +243,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     testing.expect_value(t,triangle_count(pane),2)
     for i in 0..<2 {
         for vertex in importer.mesh_triangle(pane,i) {
-            testing.expect(t,close_to(corner_normal(vertex.normal),{0,0,1} if i==0 else {0,1,0},1e-3),"normals per face")
+            testing.expect(t,close_to(corner_normal(vertex.normal),{0,0,-1} if i==0 else {0,1,0},1e-3),"normals per face")
             testing.expect(t,vertex.uv=={0,0},"a mesh without st has no texture coordinates")
         }
     }
@@ -258,7 +258,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     testing.expect_value(t,triangle_count(plain),1)
     testing.expect(t,plain.slots[0].material==-1 && plain.slots[0].label=="Slot 1","a mesh without a material has a slot without material")
     for vertex in plain.vertices {
-        testing.expect(t,close_to(color_of(vertex.color),{0.2,0.8,0.4},1.0/255) && close_to(corner_normal(vertex.normal),{0,0,1},1e-3),"a mesh without a material keeps its displayColor; without normals it is flat")
+        testing.expect(t,close_to(color_of(vertex.color),{0.2,0.8,0.4},1.0/255) && close_to(corner_normal(vertex.normal),{0,0,-1},1e-3),"a mesh without a material keeps its displayColor; without normals it is flat")
     }
 }
 
@@ -502,7 +502,7 @@ def Mesh "Left"
     defer importer.model_destroy(&model)
     mesh:=&model.meshes[0]
     testing.expect_value(t,triangle_count(mesh),1)
-    testing.expect(t,close_to(corner_normal(mesh.vertices[0].normal),{0,0,-1},1e-3),"a left-handed face looks the other way")
+    testing.expect(t,close_to(corner_normal(mesh.vertices[0].normal),{0,0,1},1e-3),"a left-handed face looks the other way")
 }
 
 @(private="file")

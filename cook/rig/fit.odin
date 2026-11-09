@@ -6,7 +6,7 @@ import "core:slice"
 import mm "mirai:std/math"
 
 // Where the joints of the template are in a mesh that stands up along +Y and
-// faces +Z, the space of the engine. The mesh is read by its horizontal
+// faces -Z, the space of the engine. The mesh is read by its horizontal
 // sections: the floor and the top bound it, the crotch is the lowest height
 // above the shins where a section crosses the centre line, and the neck is
 // the narrowest section between the chest and the top. Each joint then has
@@ -89,7 +89,7 @@ reader_init :: proc(r:^Reader,meshes:[]Mesh) -> bool {
 }
 
 // The section of the mesh at height y: the intervals in x where it is solid,
-// each with its extent in z, from left to right of the image (-x first).
+// each with its extent in z, from the model's left to its right (-x first).
 @(private)
 section :: proc(r:^Reader,y:f32) -> []Interval {
     segments:=make([dynamic]Interval,context.temp_allocator)
@@ -134,9 +134,9 @@ section_interval :: proc(r:^Reader,y:f32,along:Along) -> (found:Interval,ok:bool
         case .Center:
             if v.x0<=r.center && r.center<=v.x1 {return v,true}
         case .Left:
-            if middle<=r.center {continue}
-        case .Right:
             if middle>=r.center {continue}
+        case .Right:
+            if middle<=r.center {continue}
         }
         if distance<best {best,found,ok=distance,v,true}
     }
@@ -247,7 +247,7 @@ fit :: proc(meshes:[]Mesh,hints:Hints={},allocator:=context.allocator) -> (f:Fit
     anchors_find(&r,&f,hints)
     reference:=REFERENCE_ANCHORS
     scale:=r.height/(reference[3]-reference[0])
-    arms:=[2]Arm{arm_find(&r,&f,1),arm_find(&r,&f,-1)}
+    arms:=[2]Arm{arm_find(&r,&f,-1),arm_find(&r,&f,1)}
     for side,i in ([2]Landmark{.Arm_L,.Arm_R}) {f.confidence[side]=1 if arms[i].found else 0}
     if arms[0].found && arms[1].found {
         left,right:=arms[0].end-arms[0].start,arms[1].end-arms[1].start

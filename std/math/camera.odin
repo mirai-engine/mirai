@@ -3,7 +3,7 @@ package mirai_math
 import "core:math"
 import "core:math/linalg"
 
-// Cameras look down their -Z with +Y up. Clip space has Y up and depth from 0
+// Everything looks down its -Z with +Y up: cameras, lights, bodies. Clip space has Y up and depth from 0
 // to 1, reversed: the near plane is at depth 1 and the far one at 0, which
 // spends the precision of floats where a perspective needs it. Screen points
 // are pixels from the top left corner of the viewport, Y down.

@@ -8,7 +8,8 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// An imported armature above the root bone scales centimeters to meters and turns Z up into Y up:
+// An imported armature above the root bone scales centimeters to meters and, as the importer
+// leaves it for a model that faces -Z, turns Z up into Y up with a quarter turn about +X:
 // the root motion of the rig is that of the clip carried through it, and a root without such a
 // parent keeps it as the clip gives it.
 @(test)
@@ -16,12 +17,12 @@ root_motion_is_carried_into_the_rig_by_the_bones_above_the_root :: proc(t:^testi
     state:Playing;defer playing_free(&state)
     append(&state.targets,base.name_hash("Armature"),base.name_hash("Armature/Hips"))
     append(&state.parents,-1,0)
-    armature:=mm.Transform{{0,0,0},mm.quat_axis_angle({1,0,0},-mm.PI*.5),{.01,.01,.01}}
+    armature:=mm.Transform{{0,0,0},mm.quat_axis_angle({1,0,0},mm.PI*.5),{.01,.01,.01}}
     append(&state.rest,armature,mm.TRANSFORM_IDENTITY)
     turn:=mm.quat_axis_angle({0,0,1},.4)
     moved,turned:=root_motion_to_rig(&state,base.name_hash("Armature/Hips"),{0,-150,0},turn)
-    testing.expectf(t,linalg.length(moved-mm.Vec3{0,0,1.5})<1e-4,"150 cm along the armature's -Y are 1.5 m along +Z: %v",moved)
-    testing.expectf(t,mm.quat_angle(turned,mm.quat_axis_angle({0,1,0},.4))<1e-4,"a turn about the armature's Z is one about +Y: %v",turned)
+    testing.expectf(t,linalg.length(moved-mm.Vec3{0,0,-1.5})<1e-4,"150 cm along the armature's -Y are 1.5 m along -Z, the front: %v",moved)
+    testing.expectf(t,mm.quat_angle(turned,mm.quat_axis_angle({0,1,0},-.4))<1e-4,"a turn about the armature's Z is one about -Y: %v",turned)
     kept,same:=root_motion_to_rig(&state,base.name_hash("Armature"),{1,2,3},turn)
     testing.expect(t,kept==mm.Vec3{1,2,3} && same==turn)
 }
@@ -37,8 +38,8 @@ root_motion_leaves_out_the_transform_the_entity_was_bound_with :: proc(t:^testin
     spawned:=mm.Transform{{3,0,5},mm.quat_axis_angle({0,1,0},mm.PI),{1,1,1}}
     append(&state.rest,spawned,mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY)
     turn:=mm.quat_axis_angle({0,1,0},.3)
-    moved,turned:=root_motion_to_rig(&state,base.name_hash("Armature/root"),{0,0,0.1},turn)
-    testing.expectf(t,linalg.length(moved-mm.Vec3{0,0,0.1})<1e-6,"forward in the clip is forward of the entity: %v",moved)
+    moved,turned:=root_motion_to_rig(&state,base.name_hash("Armature/root"),{0,0,-0.1},turn)
+    testing.expectf(t,linalg.length(moved-mm.Vec3{0,0,-0.1})<1e-6,"forward in the clip is forward of the entity: %v",moved)
     testing.expectf(t,mm.quat_angle(turned,turn)<1e-5,"its turn is its own: %v",turned)
 }
 

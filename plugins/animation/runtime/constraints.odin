@@ -22,7 +22,7 @@ IK_Constraint :: struct {
     weight:f32 `mirai:"min=0,max=1"`,
     enabled:bool,
 }
-IK_CONSTRAINT_DEFAULT :: IK_Constraint{target=SPATIAL_TARGET_DEFAULT,pole={0,0,1},weight=1,enabled=true}
+IK_CONSTRAINT_DEFAULT :: IK_Constraint{target=SPATIAL_TARGET_DEFAULT,pole={0,0,-1},weight=1,enabled=true}
 
 // A bone turns its forward axis toward a target, up to max_angle; with
 // use_up, its up axis turns toward world_up around it.
@@ -59,7 +59,7 @@ Foot_Contact_Constraint :: struct {
     blend_time:f32 `mirai:"min=0,unit=s"`,
     max_distance,max_drop,max_rise:f32 `mirai:"min=0,unit=m"`,
 }
-FOOT_CONTACT_CONSTRAINT_DEFAULT :: Foot_Contact_Constraint{hit_normal={0,1,0},pole={0,0,1},up={0,1,0},enabled=true,contact=1,weight=1,blend_time=0.1,max_distance=0.6,max_drop=0.5,max_rise=0.2}
+FOOT_CONTACT_CONSTRAINT_DEFAULT :: Foot_Contact_Constraint{hit_normal={0,1,0},pole={0,0,-1},up={0,1,0},enabled=true,contact=1,weight=1,blend_time=0.1,max_distance=0.6,max_drop=0.5,max_rise=0.2}
 
 Bone_Binding :: struct {
     rig:core.Entity `mirai:"transient"`,

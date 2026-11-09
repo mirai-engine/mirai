@@ -159,9 +159,9 @@ material_asset :: proc(name:string) -> base.Asset_Id {
     return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
 }
 
-// The look yaw of an upright character body: where its front, +Z, heads.
+// The look yaw of an upright character body: where its front, -Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    ahead:=mm.quat_rotate(rotation,[3]f32{0,0,1})
+    ahead:=mm.quat_rotate(rotation,[3]f32{0,0,-1})
     return math.atan2(-ahead.x,-ahead.z)
 }
 

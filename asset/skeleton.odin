@@ -4,7 +4,7 @@ import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-SKELETON_VERSION :: 1
+SKELETON_VERSION :: 2
 SKELETON_OLDEST :: SKELETON_VERSION
 SKELETON_MAX_BONES :: 65536
 
@@ -26,7 +26,7 @@ Skeleton_Bone :: struct {
     scale:[3]f32,
 }
 
-// The body of a skeleton (anim.Body_Map): where it faces and its up at rest,
+// The body of a skeleton (anim.Body_Map): where it faces (-Z) and its up at rest,
 // and in body_parts the bone of each part found, by path. confidence goes
 // from 0 to 1; manual marks what a person set, which detection keeps.
 Skeleton_Body :: struct {

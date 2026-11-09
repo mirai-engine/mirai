@@ -241,6 +241,8 @@ skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Conten
     state.rest,state.local,state.world,state.sampled,state.previous=next.rest,next.local,next.world,next.sampled,next.previous
     state.mirror_pairs,state.mirror_corrections,state.mirror_scratch,state.mirror_plane=next.mirror_pairs,next.mirror_corrections,next.mirror_scratch,plane
     state.body,state.regions=next.body,next.regions
+    state.forward,state.up=content.body.forward,content.body.up
+    if !lib.body_axes_valid(state.forward,state.up) {state.forward,state.up={0,0,-1},{0,1,0}}
     next.bindings,next.parents,next.targets,next.aliases=nil,nil,nil,nil
     next.rest,next.local,next.world,next.sampled,next.previous=nil,nil,nil,nil,nil
     next.mirror_pairs,next.mirror_corrections,next.mirror_scratch,next.regions=nil,nil,nil,nil

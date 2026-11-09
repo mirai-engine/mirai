@@ -296,7 +296,7 @@ MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Diffuse_Transmission="maps.diffuse_transmission",.Diffuse_Transmission_Color="maps.diffuse_transmission_color",
 }
 
-// Toward the sun of the editor's presets and its previews, a morning one.
+// Toward the sun of the editor's presets, a morning one behind who looks along -Z.
 SUN_DIRECTION :: [3]f32{0.45,0.85,0.30}
 SPOT_MIN :: 1*mm.RAD_PER_DEG
 SPOT_MAX :: 89*mm.RAD_PER_DEG

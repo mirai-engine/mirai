@@ -457,7 +457,7 @@ write_interface_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
     asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","interface"))
     defer asset.builder_destroy(&s)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.5)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,SCENE_SUN,LAMPLIT,1.5)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.5),disc=disc}
     sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})

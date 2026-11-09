@@ -44,10 +44,10 @@ retime_hold_and_extend_move_time_and_carry_the_root :: proc(t:^testing.T) {
     testing.expect(t,body_test_close(frames_pose(fast,6)[root],frames_pose(walk,6)[root]))
     testing.expect(t,body_test_close(frames_pose(fast,30)[root],frames_pose(walk,45)[root],1e-3))
     testing.expect(t,clip_edit_times(Retime{range={.25,.75},factor=2},walk,.9,times[:])==1 && abs(times[0]-.65)<1e-3)
-    previous:=f32(-1)
+    previous:=f32(1)
     for frame in 0..<frames_count(fast) {
         z:=frames_pose(fast,frame)[root].position.z
-        testing.expect(t,z>=previous-1e-5)
+        testing.expect(t,z<=previous+1e-5)
         previous=z
     }
 
@@ -59,9 +59,9 @@ retime_hold_and_extend_move_time_and_carry_the_root :: proc(t:^testing.T) {
     // Two more passes of the cycle: the root carries on over the ground.
     long,_:=body_test_edit(rig,Extend{seconds=2},walk)
     testing.expect(t,abs(frames_duration(long)-3)<1e-5)
-    testing.expectf(t,abs(frames_pose(long,150)[root].position.z-2)<1e-3,"root at %v",frames_pose(long,150)[root].position)
+    testing.expectf(t,abs(frames_pose(long,150)[root].position.z+2)<1e-3,"root at %v",frames_pose(long,150)[root].position)
     metrics:=body_test_metrics(rig,long)
-    testing.expect(t,abs(metrics.travel.z-.8)<.01 && metrics.foot_slide[.Left].mean<.03)
+    testing.expect(t,abs(metrics.travel.z+.8)<.01 && metrics.foot_slide[.Left].mean<.03)
     testing.expect_value(t,clip_edit_times(Extend{seconds=2},walk,.25,times[:]),3)
     testing.expect(t,abs(times[1]-1.25)<1e-4 && abs(times[2]-2.25)<1e-4)
     // With frames after the range, the time rounds to whole passes.
@@ -84,7 +84,7 @@ smooth_exaggerate_and_make_loop_change_jerk_amplitude_and_seam :: proc(t:^testin
     if !testing.expect_value(t,result.error,Edit_Error.None) {return}
     before,after:=body_test_metrics(rig,shaky),body_test_metrics(rig,smooth)
     testing.expectf(t,after.jerk.mean<before.jerk.mean/4,"jerk %v to %v",before.jerk,after.jerk)
-    testing.expectf(t,abs(after.travel.z-.8)<.01 && after.seam_position<.02,"travel %v seam %v",after.travel,after.seam_position)
+    testing.expectf(t,abs(after.travel.z+.8)<.01 && after.seam_position<.02,"travel %v seam %v",after.travel,after.seam_position)
 
     // Only the arms: the legs keep their noise.
     arms,_:=body_test_edit(rig,Smooth{amount=1,regions={.Arm_L,.Arm_R}},shaky)
@@ -127,8 +127,8 @@ offset_moves_and_turns_parts_toward_body_directions :: proc(t:^testing.T) {
     if !testing.expect_value(t,result.error,Edit_Error.None) {return}
     for frame in ([3]int{0,20,60}) {
         before,after:=body_test_world(rig,walk,frame),body_test_world(rig,turned,frame)
-        a,b:=math.quat_rotate(before[head].rotation,{0,0,1}),math.quat_rotate(after[head].rotation,{0,0,1})
-        testing.expectf(t,abs(anim_angle(a,b)-15*math.RAD_PER_DEG)<1e-3 && b.x>a.x,"head %v to %v",a,b)
+        a,b:=math.quat_rotate(before[head].rotation,{0,0,-1}),math.quat_rotate(after[head].rotation,{0,0,-1})
+        testing.expectf(t,abs(anim_angle(a,b)-15*math.RAD_PER_DEG)<1e-3 && b.x<a.x,"head %v to %v",a,b)
     }
 
     lowered,_:=body_test_edit(rig,Offset{target=Body_Part.Pelvis,direction=.Down,amount=.Medium},walk)
@@ -141,16 +141,16 @@ offset_moves_and_turns_parts_toward_body_directions :: proc(t:^testing.T) {
     raised,_:=body_test_edit(rig,Offset{target=Body_Part.Hand_R,direction=.Left,amount=.Strong,range={.2,.8}},walk)
     middle,outside:=30,3
     before,after:=body_test_world(rig,walk,middle),body_test_world(rig,raised,middle)
-    testing.expectf(t,abs(after[hand].position.x-before[hand].position.x-.1*height)<1e-3 && abs(after[hand].position.y-before[hand].position.y)<1e-3,"hand %v to %v",before[hand].position,after[hand].position)
+    testing.expectf(t,abs(after[hand].position.x-before[hand].position.x+.1*height)<1e-3 && abs(after[hand].position.y-before[hand].position.y)<1e-3,"hand %v to %v",before[hand].position,after[hand].position)
     testing.expect(t,math.quat_angle(before[hand].rotation,after[hand].rotation)<1e-3)
     testing.expect(t,frames_pose(raised,outside)[hand]==frames_pose(walk,outside)[hand])
 
     leaning,_:=body_test_edit(rig,Offset{target=Body_Region.Spine,direction=.Forward,amount=.Strong},walk)
-    testing.expect(t,body_test_world(rig,leaning,0)[head].position.z>body_test_world(rig,walk,0)[head].position.z+.1)
+    testing.expect(t,body_test_world(rig,leaning,0)[head].position.z<body_test_world(rig,walk,0)[head].position.z-.1)
 
     knee_out,_:=body_test_edit(rig,Offset{target=Body_Part.Knee_L,direction=.Left,amount=.Medium},walk)
     before,after=body_test_world(rig,walk,10),body_test_world(rig,knee_out,10)
-    testing.expect(t,after[knee].position.x>before[knee].position.x+.01 && linalg.length(after[foot_l].position-before[foot_l].position)<1e-3)
+    testing.expect(t,after[knee].position.x<before[knee].position.x-.01 && linalg.length(after[foot_l].position-before[foot_l].position)<1e-3)
 
     _,result=body_test_edit(rig,Offset{target=Body_Part.Shoulder_L,direction=.Left,amount=.Strong},walk)
     testing.expect_value(t,result.error,Edit_Error.Along_Part)
@@ -295,7 +295,7 @@ face_rest_turns_the_root_back_to_its_rest_facing :: proc(t:^testing.T) {
     faced,result:=body_test_edit(rig,Face_Rest{},walk)
     if !testing.expect_value(t,result.error,Edit_Error.None) {return}
     metrics:=body_test_metrics(rig,faced)
-    testing.expectf(t,abs(metrics.travel.z-.8)<.05 && abs(metrics.travel.x)<.05,"faced walk travels %v",metrics.travel)
+    testing.expectf(t,abs(metrics.travel.z+.8)<.05 && abs(metrics.travel.x)<.05,"faced walk travels %v",metrics.travel)
     for frame in 0..<frames_count(walk) {
         testing.expect(t,math.quat_angle(frames_pose(faced,frame)[root].rotation,rig.rest[root].rotation)<1e-4)
         for value,bone in frames_pose(walk,frame) {if i32(bone)!=root {testing.expect(t,body_test_close(value,frames_pose(faced,frame)[bone]))}}

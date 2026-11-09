@@ -34,7 +34,7 @@ import "mirai:std/serial"
 // last brought up to date with; updating it from its prefab replaces
 // everything else.
 
-SCENE_VERSION :: 1
+SCENE_VERSION :: 2
 SCENE_OLDEST :: SCENE_VERSION
 ENTITY_NAME_BYTES :: 64
 OVERRIDE_PATH_BYTES :: 96

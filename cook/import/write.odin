@@ -500,7 +500,9 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         loaded:bool
         if existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None {
             loaded=true
-            if view,error:=asset.skeleton_view(&previous_file,&w.types);error==.None {previous_view=view;previous=&previous_view}
+            view,error:=asset.skeleton_view(&previous_file,&w.types)
+            if error==.None {previous_view=view;previous=&previous_view}
+            if error==.Version {writer_warn(w,"%s is of a version this build does not read: the body parts, axes and sockets set by hand on it were not kept; set them again",part.path)}
         }
         defer if loaded {asset.asset_close(&previous_file)}
         body:asset.Skeleton_Body
@@ -583,7 +585,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         previous:asset.Animation_View
         loaded:=existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None
         defer if loaded {asset.asset_close(&previous_file)}
-        if loaded {previous,_=asset.animation_view(&previous_file,&w.types)}
+        if loaded {
+            view_error:asset.Error
+            previous,view_error=asset.animation_view(&previous_file,&w.types)
+            if view_error==.Version {writer_warn(w,"%s is of a version this build does not read: the root bones set by hand on its clips were not kept; set them again",part.path)}
+        }
         for &clip in clips {
             index:int
             clip.skeleton,index=clip_skeleton(model,clip,w.report.skeleton_ids)

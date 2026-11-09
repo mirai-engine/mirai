@@ -28,6 +28,8 @@ uses.
 - **Brightness drifts as the camera turns:** `Auto` meters the lamps in view (night, interiors).
   Use `Manual`, or a narrow `min_ev100` to `max_ev100`.
 - **Editor and game differ:** a camera has its own `Exposure`, or a `View_Volume` zone applies.
+- **Right brightness, but colors muted or gray:** not the exposure. The project's
+  [display transform](#display-transform) is `ACES_2`, or the albedos are.
 - **Wrong only for a moment after a cut:** adaptation; `adaptation` is the seconds it takes, and
   the first frame is metered at once.
 
@@ -48,6 +50,24 @@ stands (a `Volume` with `priority`; one that `Add`s adds its `compensation`); th
    night.
 4. A view that must expose differently from its scene (a monitor, a cinematic camera) carries
    its own `Exposure`; do not use it to fix a scene.
+
+## Display transform
+
+How the exposed image reaches the display is a choice of the project, in its settings, not of a
+scene or of the machine:
+
+```sh
+mirai rpc --project . settings.set \
+  '{"settings":{"Display_Transform_Settings":{"transform":"ACES_2"}}}'
+```
+
+- `Neutral`, the default: colors arrive as authored up to their highlights. What most games want,
+  and stylized art above all.
+- `ACES_2`: a filmic image whose colors soften as they brighten, with smooth highlights. For
+  realistic or cinematic looks and strong emissive light.
+
+Both show a gray card with the same light: changing one changes the color and contrast of a
+scene, not how bright it is.
 
 ## Pitfalls that fail silently
 

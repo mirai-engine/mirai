@@ -110,10 +110,10 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
     testing.expectf(t,bulb.kind==.Point && has_radius && near(radius,0.05),"a sphere of 5 cm is a point of that radius: %v",bulb)
     testing.expectf(t,near(bulb.intensity,200*math.PI*0.05*0.05),"candelas of 200 nits over a disc of 5 cm: %v",bulb.intensity)
     testing.expect(t,bulb.color=={1,0.5,0.25})
-    if bulb_row>=0 {testing.expect(t,close_to(world_transform(&model,bulb_row).position,{1,2,0}),"Z up and centimeters are the engine's")}
+    if bulb_row>=0 {testing.expect(t,close_to(world_transform(&model,bulb_row).position,{-1,2,0}),"Z up and centimeters are the engine's")}
     if shade:=find_node(&model,"Shade");testing.expect(t,shade>=0) {
         world:=world_transform(&model,shade)
-        testing.expectf(t,close_to(world.position,{1,2.1,0}) && close_to(mm.quat_rotate(world.rotation,{0,0,-1}),{0,0,-1}),"the child of a light keeps its place and turn: %v",world)
+        testing.expectf(t,close_to(world.position,{-1,2.1,0}) && close_to(mm.quat_rotate(world.rotation,{0,0,-1}),{0,0,-1}),"the child of a light keeps its place and turn: %v",world)
     }
 
     spot,spot_row:=light_of(t,&model,"Spot")

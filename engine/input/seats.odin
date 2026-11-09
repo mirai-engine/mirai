@@ -29,7 +29,7 @@ BLOCK_CAPACITY :: 64
 @(component,shared,description="What the body is asked this tick: from the seat that drives it, an AI, the network or a replay.")
 Move_Input :: struct {
     move:[3]f32 `mirai:"readonly"`,                // in the axes of the look yaw: +X right, +Y up (modes that fly), -Z forward; up to 1 long
-    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // yaw turns left about the up of the body (core.Vertical), pitch looks up; at 0 it looks along -Z, as a camera. A physics Character's body faces it with +Z: ground that turns adds to it through whoever writes it
+    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // yaw turns left about the up of the body (core.Vertical), pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it through whoever writes it
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)

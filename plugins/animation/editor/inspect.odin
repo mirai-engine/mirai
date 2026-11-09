@@ -162,7 +162,7 @@ Instance_Match :: struct {
     search:Instance_Match_Search `mirai:"optional,label=The last search it had to make: entering a mode, starting, stopping, or leaving a clip that ends"`,
 }
 // clips: of a blended sample, each clip with its share; travel: where it goes in the space of the
-// rig (+Z forward).
+// rig (-Z forward).
 Instance_Match_Range :: struct {
     clip:[64]u8 `mirai:"text"`,
     clips:[1]Instance_Match_Member `mirai:"list,optional"`,

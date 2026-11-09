@@ -84,7 +84,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     result=authoring_test_execute(a,"instance",`{"id":"11","parts":["Pose"],"names":["@hand_r","baton","root/pelvis"]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
-    for needle in ([]string{`"name": "@hand_r", "kind": "Bone"`,`"world": {"position": [9.3, 1.45, 0]`,`"entity": {"position": [-0.7, 1.45, 0]`,`"name": "baton", "kind": "Socket"`,`"entity": {"position": [0, 1, 0]`}) {testing.expectf(t,strings.contains(text,needle),"pose lacks %s in %s",needle,text)}
+    for needle in ([]string{`"name": "@hand_r", "kind": "Bone"`,`"world": {"position": [10.7, 1.45, 0]`,`"entity": {"position": [0.7, 1.45, 0]`,`"name": "baton", "kind": "Socket"`,`"entity": {"position": [0, 1, 0]`}) {testing.expectf(t,strings.contains(text,needle),"pose lacks %s in %s",needle,text)}
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
 }
 
@@ -114,7 +114,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     a.session.mode=.Play
     world:=core.world_ref(&f.world,&f.info)
     for _ in 0..<6 {
-        anim.match_goal(&f.world.requests,{rig=f.rig,mode=1,velocity={0,0,1},desired={0,0,1},facing={0,0,1},acceleration=10,braking=10})
+        anim.match_goal(&f.world.requests,{rig=f.rig,mode=1,velocity={0,0,-1},desired={0,0,-1},facing={0,0,-1},acceleration=10,braking=10})
         testing.expect(t,anim.animation_evaluate(world,&a.app,1.0/60))
     }
     refused(t,a,{{`{"id":"11"}`,"Missing_Entity","handle in entity"},{`{"entity":"0000000000000001"}`,"Missing_Entity","play.inspect"},{`{"entity":"rig"}`,"Invalid_Handle","play.inspect"},{fmt.tprintf(`{{"id":"11","entity":"%s"}}`,handle),"Ambiguous_Entity","play.inspect"}})

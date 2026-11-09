@@ -234,9 +234,6 @@ write_hum :: proc(c:^asset.Content) -> base.Asset_Id {
     return report.assets[0].id
 }
 
-// Half a turn about +Y. A body's front is its +Z (the glTF model front): a spawn turned so looks
-// along -Z, and a camera child of a body turned so looks where the body faces.
-HALF_TURN :: quaternion(w=0,x=0,y=1,z=0)
 EYE_HEIGHT :: f32(1.6)
 
 // A tinted cube.
@@ -258,7 +255,7 @@ write_player :: proc(c:^asset.Content) {
     asset.builder_set(&b,root,phys.collider_character())
     asset.builder_set(&b,root,game.Player{})
     asset.builder_set(&b,root,multiplayer.Replicate{priority=1,radius=1})
-    eyes:=asset.builder_entity(&b,"Player view",{position={0,EYE_HEIGHT,0},rotation=HALF_TURN},root)
+    eyes:=asset.builder_entity(&b,"Player view",{position={0,EYE_HEIGHT,0}},root)
     asset.builder_set(&b,eyes,render.Camera{fov=game.VIEW_FOV,near=0.05,active=true})
     asset.builder_set(&b,eyes,audio.Audio_Listener{})
     asset.builder_set(&b,eyes,cam.Camera_Follow{mode=.Eyes,offset={0,EYE_HEIGHT,0}})
@@ -280,7 +277,7 @@ write_scene :: proc(c:^asset.Content,hud,sign,hum,shell:base.Asset_Id) {
     floor:=asset.builder_entity(&b,"Floor",{position={0,-0.05,0},scale={20,0.1,20}})
     block(&b,floor,{0.35,0.38,0.42})
     asset.builder_set(&b,floor,phys.collider_box({0.5,0.5,0.5}))
-    player_start:=asset.builder_entity(&b,"Player start",{position={0,0,5},rotation=HALF_TURN})
+    player_start:=asset.builder_entity(&b,"Player start",{position={0,0,5}})
     asset.builder_set(&b,player_start,spawn.Spawn_Point{prefab=PLAYER_PREFAB_ID})
 
     // The wall breaks into 24 pieces where it is hit; the ones that reach the floor stay.

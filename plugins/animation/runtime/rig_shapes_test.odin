@@ -55,12 +55,12 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     testing.expect_value(t,read,asset.Error.None)
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
-    // A profile of the version before curve poses, drives and materials reads them empty; one of
-    // the current version without them is incomplete, and one older than the oldest is refused.
+    // A profile of the current version without curve poses, drives and materials is incomplete,
+    // and one older than the oldest is refused.
     for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([3]u16{POSE_OLDEST,POSE_VERSION,POSE_OLDEST-1}) {
+    for version,i in ([2]u16{POSE_VERSION,POSE_OLDEST-1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
@@ -69,9 +69,8 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
         defer asset.asset_close(&old)
         migrated,error:=pose_profile_view(&old,&types)
         switch i {
-        case 0: testing.expect(t,error==.None && len(migrated.curve_poses)==0 && len(migrated.curve_drives)==0 && len(migrated.follow)==1 && migrated.follow[0].target.kind==.Socket,"a profile of the version before reads with no curves")
-        case 1: testing.expect_value(t,error,asset.Error.Not_Found)
-        case 2: testing.expect_value(t,error,asset.Error.Version)
+        case 0: testing.expect_value(t,error,asset.Error.Not_Found)
+        case 1: testing.expect_value(t,error,asset.Error.Version)
         }
     }
     nan:=f32(0);nan/=nan

@@ -37,10 +37,10 @@ thumbnail_destroy :: proc(device:^rhi.Device,state:^Thumbnail_GPU) {
 // request, or that span nothing.
 @(private)
 thumbnail_view :: proc(r:^Renderer,vertices:[]Thumbnail_Vertex,materials:int,width,height:u32,fit:[2]Vec3,view:=Preview_View{},light:=Preview_Light{},perspective:=false) -> (constants:Gpu_Frame,ok:bool) {
-    toward:=linalg.normalize(Vec3{0.55,0.5,0.75})
+    toward:=linalg.normalize(Vec3{-0.55,0.5,-0.75})
     if view.zoom>0 {
         yaw,elevation:=view.orbit.x,clamp(view.orbit.y,-PREVIEW_ELEVATION,PREVIEW_ELEVATION)
-        toward=Vec3{math.cos(elevation)*math.sin(yaw),math.sin(elevation),math.cos(elevation)*math.cos(yaw)}
+        toward=Vec3{-math.cos(elevation)*math.sin(yaw),math.sin(elevation),-math.cos(elevation)*math.cos(yaw)}
     }
     right:=linalg.normalize(linalg.cross(Vec3{0,1,0},toward))
     up:=linalg.cross(toward,right)
@@ -314,7 +314,7 @@ PREVIEW_FOV :: f32(30) // degrees, vertical: the lens of the previews
 Preview_View :: struct {
     zoom:f32,
     pan:[2]f32,
-    orbit:[2]f32, // radians: yaw about +Y from +Z, and elevation within ±PREVIEW_ELEVATION
+    orbit:[2]f32, // radians: yaw about +Y from -Z, and elevation within ±PREVIEW_ELEVATION
 }
 PREVIEW_ORBIT :: [2]f32{0.6327488,0.4932758} // the direction of the studio
 PREVIEW_ELEVATION :: f32(1.45)

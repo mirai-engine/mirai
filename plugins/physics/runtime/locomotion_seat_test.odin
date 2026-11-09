@@ -73,7 +73,7 @@ seat_test_run :: proc(f:^Seat_Test) {
     locomotion_seat(core.read(&f.characters),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
 }
 
-// A character facing +X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
+// A character facing -X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
 @(private="file")
 seat_test_body :: proc(f:^Seat_Test,relative:=Move_Relative.Look) -> core.Entity {
     e:=core.create(&f.es)

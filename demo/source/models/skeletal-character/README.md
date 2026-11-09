@@ -7,7 +7,7 @@ assets license.
 about 5500 triangles and one primitive for each of its four non-metallic materials (one with an
 emissive visor), with four influences available per vertex. The arm and leg segments blend weights
 near elbows and knees, and the spherical joints cover the ends that meet. It has no animation
-clips. The model uses meters, Y up and its front toward +Z.
+clips. The file uses meters, Y up and its front toward +Z, which the import turns to -Z.
 
 There is no generator available in the repository to regenerate these sources.
 

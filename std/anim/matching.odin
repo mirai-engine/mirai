@@ -13,7 +13,7 @@ import math "mirai:std/math"
 // so that each kind weighs what its weight says. A query with the same features
 // finds the row closest to what the body does and is asked to do. The features
 // are in the frame of the character: its position on the ground and its facing,
-// +Z forward and Y up, so a row does not depend on where or toward where the clip
+// -Z forward and Y up, so a row does not depend on where or toward where the clip
 // was made.
 
 MATCH_LANES :: 8 // f32x4 per row: 31 features and one of padding
@@ -668,7 +668,7 @@ match_trajectory :: proc "contextless" (velocity,desired:math.Vec3,acceleration,
         if into:=linalg.dot(v,normal);into<0 {v-=normal*into}
         if into:=linalg.dot(goal,normal);into<0 {goal-=normal*into}
     }
-    heading,known:=anim_unit(flat(facing));if !known {heading={0,0,1}}
+    heading,known:=anim_unit(flat(facing));if !known {heading={0,0,-1}}
     rate:=braking if goal=={} else acceleration
     change:=goal-v;distance:=linalg.length(change)
     reach:=distance/rate if rate>0 && anim_finite(rate) else max(f32)
@@ -742,9 +742,9 @@ match_sample_blend :: proc(lib:^Library,c:Match_Clip,skeleton:Skeleton,pose:^Pos
 @(private)
 match_lane :: #force_inline proc "contextless" (values:[]f32) -> simd.f32x4 {return {values[0],values[1],values[2],values[3]}}
 
-// The rotation about Y that takes +Z to a horizontal direction.
+// The rotation about Y that takes -Z to a horizontal direction.
 match_yaw :: proc "contextless" (direction:math.Vec3) -> math.Quat {
-    return math.quat_axis_angle({0,1,0},cmath.atan2(direction.x,direction.z))
+    return math.quat_axis_angle({0,1,0},cmath.atan2(-direction.x,-direction.z))
 }
 
 @(private)

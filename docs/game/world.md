@@ -17,7 +17,8 @@ then `mirai rpc --project . <method> '<json>'`; params: `mirai rpc --project . d
   **Use the terrain and foliage plugins for natural ground and vegetation; never build them
   from cubes, planes or hand-made meshes.**
 - Sea, lakes, fog and haze: [water-fog.md](world/water-fog.md).
-- Sun, sky, indoor lights: [Light](#light). Brightness of the image: [Exposure](#exposure).
+- Sun, sky, indoor lights: [Light](#light). Brightness of the image: [Exposure](#exposure). Its
+  color on the display: [display transform](world/exposure.md#display-transform).
 - An image that is too dark or too bright, step by step: [exposure.md](world/exposure.md).
 - Walking on it, swimming in it: [character](character.md).
 

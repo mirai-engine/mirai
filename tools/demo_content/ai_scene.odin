@@ -55,7 +55,7 @@ write_ai_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
     asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","ai"))
     defer asset.builder_destroy(&s)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.6,0.8,0}),render.SUN_DIRECTION),LAMPLIT,1.6)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.6,0.8,0}),SCENE_SUN),LAMPLIT,1.6)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.6),disc=disc}
     sun_entity:=asset.builder_entity(&s,"Sun",{position={0,20,0}})

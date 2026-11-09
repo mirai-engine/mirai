@@ -77,7 +77,7 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
   [reference](references/gi.md#indirect-reference),
   [measuring](references/verification.md#measuring-gi)
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
-  [display](references/display.md#units); display transform (ACES 2.0, 3D LUT, HDR) →
+  [display](references/display.md#units); display transform (Neutral or ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
 - Scene resolution, `render_scale` and a preset's target of lines →
   [resolution](references/settings.md#scene-resolution)
@@ -111,8 +111,9 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.
 - A shadow technique costs no more than tracing one ray per 2×2 block.
-- Every view is exposed one EV above its meter (`EXPOSURE_BIAS`), as Unreal's default bias; the
-  ACES 2.0 calibration is not touched.
+- The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
+  into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives
+  the meter's gray the same light under each; the ACES 2.0 calibration is not touched.
 - `render` does not see native handles: backend differences stay in `rhi`, with a single
   implementation of each pass for Vulkan and Metal. A plugin's runtime imports neither `render`
   nor `rhi`.

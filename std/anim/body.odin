@@ -113,7 +113,7 @@ body_axes_valid :: proc "contextless" (forward,up:math.Vec3) -> bool {
     if !anim_vec3_valid(forward) || !anim_vec3_valid(up) {return false}
     return abs(linalg.dot(forward,forward)-1)<1e-3 && abs(linalg.dot(up,up)-1)<1e-3 && abs(linalg.dot(forward,up))<1e-3
 }
-// The left of the body: with Y up and +Z forward it is +X.
+// The left of the body: with Y up and -Z forward it is -X.
 body_left :: #force_inline proc "contextless" (map_:Body_Map) -> math.Vec3 {return linalg.cross(map_.up,map_.forward)}
 body_direction_vector :: proc "contextless" (map_:Body_Map,direction:Body_Direction) -> math.Vec3 {
     switch direction {
@@ -533,7 +533,7 @@ body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Tran
     } else if direction,ok=anim_unit(toes);ok {
         forward=direction
     } else {
-        forward=math.Vec3{0,0,1} if abs(up.z)<.9 else math.Vec3{1,0,0}
+        forward=math.Vec3{0,0,-1} if abs(up.z)<.9 else math.Vec3{1,0,0}
         axes_confidence=.1
     }
     forward=body_snap(forward)

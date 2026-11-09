@@ -10,7 +10,7 @@ import "core:math/linalg"
 // reaches it as a ray.
 
 World_Facing :: enum u8 {
-    Fixed,             // rotation orients it: +X right, +Y up, +Z out of its front
+    Fixed,             // rotation orients it: +X right, +Y up, its face toward +Z, so a camera with no rotation sees it head on
     Billboard,         // parallel to the screen
     Billboard_Upright, // turns around the world's up axis to face the camera
 }
@@ -40,7 +40,7 @@ World_Panel :: struct {
 // How the renderer places the commands of one surface.
 World_Placement :: struct {
     id:Id,
-    transform:matrix[4,4]f32, // layout units of the panel (x right, y down, z out of its front) to world
+    transform:matrix[4,4]f32, // layout units of the panel (x right, y down, z out of its face) to world
     size:[2]f32,
     position:[3]f32,          // of the pivot
     pivot:[2]f32,             // the point at position, in layout units

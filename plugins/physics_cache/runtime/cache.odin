@@ -7,7 +7,7 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
-CACHE_VERSION :: 1
+CACHE_VERSION :: 2
 CACHE_OLDEST :: CACHE_VERSION
 CACHE_MAX_TRACKS :: 4096
 

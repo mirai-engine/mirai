@@ -124,7 +124,7 @@ walking_sprints_and_slows_backward :: proc(t:^testing.T) {
     testing.expectf(t,near(v.z,-5,0.05),"after letting sprint go %v",v)
 }
 
-// The look faces -Z like a camera; the body faces it with +Z, the front of a glTF model.
+// The body faces where the look does: -Z.
 @(test)
 walking_toward_plus_x_turns_the_front_of_the_body_to_plus_x_and_keeps_the_look :: proc(t:^testing.T) {
     f:Loco_Test
@@ -135,8 +135,8 @@ walking_toward_plus_x_turns_the_front_of_the_body_to_plus_x_and_keeps_the_look :
     v:=sim.character_velocity(&f.w,f.ch)
     testing.expectf(t,near(v.x,5,0.05) && abs(v.z)<0.05,"velocity %v",v)
     rotation:=sim.body_transform(&f.w,sim.character_body(&f.w,f.ch)).q
-    front:=mm.quat_rotate(rotation,{0,0,1})
-    testing.expectf(t,near(front.x,1,1e-4),"the body's +Z is %v",front)
+    front:=mm.quat_rotate(rotation,{0,0,-1})
+    testing.expectf(t,near(front.x,1,1e-4),"the body's -Z is %v",front)
     testing.expectf(t,near(sim.character_move(&f.w,f.ch).yaw,look,1e-6),"move yaw %v",sim.character_move(&f.w,f.ch).yaw)
     testing.expectf(t,near(look_yaw_of(mm.QUAT_IDENTITY,rotation),look,1e-4),"the look taken from the body %v",look_yaw_of(mm.QUAT_IDENTITY,rotation))
 }
@@ -403,8 +403,7 @@ a_mode_needs_its_component :: proc(t:^testing.T) {
     core.table_settle(&inputs,&es);core.table_settle(&moves,&es)
     testing.expect(t,core.has(&inputs,walker) && core.has(&moves,walker),"playing adds its Move_Input and its Character_Move")
     looking,_:=core.get(core.read(&inputs),walker)
-    // Its body faces +Z, its look -Z: the look is half a turn from where the Transform turns the body.
-    testing.expectf(t,abs(looking.look_yaw-mm.angle_wrap(2.5-cmath.PI))<1e-4,"it looks where its Transform turns its body, not %v",looking.look_yaw)
+    testing.expectf(t,abs(looking.look_yaw-mm.angle_wrap(2.5))<1e-4,"it looks where its Transform turns its body, not %v",looking.look_yaw)
 }
 
 // The game scales the gravity of a Character for a while through the locomotion, its only writer:

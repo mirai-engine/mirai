@@ -150,7 +150,7 @@ Per tick:
   `animation_physics` says it for each `Character` with `Animation` (the `Character` is the only
   writer of the mode, and its `Character_State` of the wall; animation keeps no copy) and asks for
   the warping of `Animation.motion` while it walks: the game writes no locomotion code. The model
-  on the `Character`'s entity faces its +Z, as the body does
+  on the `Character`'s entity faces its -Z, as the body does
   ([facing](../../mirai-physics/SKILL.md#library-invariants)): it is not turned by hand. Without
   physics, the game calls `match_goal` with what moves its rig.
 - While a `Character` mantles, `animation_physics` gives the window `mantle` of `Animation.motion`

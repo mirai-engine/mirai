@@ -60,7 +60,9 @@ put(&s,board,"Status",&status)                       // what its paths read
 ```
 
 - `facing`: `Billboard` (parallel to the screen), `Billboard_Upright` (turns about up) or `Fixed`
-  (the rotation of the entity). `sizing=.Screen` keeps a constant size on screen at any distance.
+  (the rotation of the entity, with its face toward +Z: a panel that must read from in front of a
+  body is a child turned half a turn about Y).
+  `sizing=.Screen` keeps a constant size on screen at any distance.
 - `depth_test` hides it behind the scene; `passive` lets the pointer through.
 - A player sees the nearest panels only: use few, and hide the far ones.
 - `preview` shows it in the editor while the world does not play.

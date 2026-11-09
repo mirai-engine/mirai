@@ -311,7 +311,7 @@ selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:
 }
 
 // The outline of a face of side 1 on the XY plane of placed, an ellipse or a
-// rectangle, and the arrow of its front (+Z).
+// rectangle, and the arrow of the side it shows (+Z).
 gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color:[4]f32) {
     SEGMENTS :: 32
     if ellipse {
@@ -328,6 +328,6 @@ gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color
             gpu.debug_line(lines,mm.transform_point(placed,corner),mm.transform_point(placed,corners[(i+1)%4]),color)
         }
     }
-    front:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
-    gpu.debug_arrow(lines,placed.position,placed.position+front*0.75,color)
+    shown:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
+    gpu.debug_arrow(lines,placed.position,placed.position+shown*0.75,color)
 }

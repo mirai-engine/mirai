@@ -26,10 +26,10 @@ mirror_names_swap_the_side_token_and_keep_its_case :: proc(t:^testing.T) {
 mirrored_poses_swap_sides_reflect_turns_and_undo_themselves :: proc(t:^testing.T) {
     parents:=[4]i32{-1,0,1,1}
     pairs:=[4]i32{0,1,3,2}
-    rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{.2,-.1,0},1,{1,1,1}},{{-.2,-.1,0},1,{1,1,1}}}
+    rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{-.2,-.1,0},1,{1,1,1}},{{.2,-.1,0},1,{1,1,1}}}
     corrections:[4]math.Quat;scratch:[8]math.Transform
     plane,prepared:=mirror_prepare(parents[:],pairs[:],rest[:],corrections[:],scratch[:])
-    if !testing.expect(t,prepared && abs(plane.normal.x-1)<1e-5 && abs(plane.offset)<1e-5) {return}
+    if !testing.expect(t,prepared && abs(abs(plane.normal.x)-1)<1e-5 && abs(plane.offset)<1e-5) {return}
     out:[4]math.Transform
     testing.expect(t,pose_mirror(parents[:],pairs[:],corrections[:],plane,rest[:],out[:],scratch[:]))
     for value,i in out {testing.expectf(t,mirror_test_same(value,rest[i]),"bone %d keeps its rest",i)}
@@ -40,7 +40,7 @@ mirrored_poses_swap_sides_reflect_turns_and_undo_themselves :: proc(t:^testing.T
     testing.expect(t,pose_mirror(parents[:],pairs[:],corrections[:],plane,pose[:],out[:],scratch[:]))
     testing.expect(t,out[0]==pose[0],"the roots keep their transform")
     testing.expect(t,mirror_test_same(out[1],{{0,1,0},math.quat_axis_angle({0,1,0},-.3),{1,1,1}}),"the pelvis turns the other way")
-    testing.expect(t,mirror_test_same(out[3],{{-.2,-.1,0},math.quat_axis_angle({0,0,1},-.5),{1,1,1}}),"the right leg takes the roll of the left one")
+    testing.expect(t,mirror_test_same(out[3],{{.2,-.1,0},math.quat_axis_angle({0,0,1},-.5),{1,1,1}}),"the right leg takes the roll of the left one")
     testing.expect(t,mirror_test_same(out[2],rest[2]),"the left leg takes the rest of the right one")
     twice:[4]math.Transform
     testing.expect(t,pose_mirror(parents[:],pairs[:],corrections[:],plane,out[:],twice[:],scratch[:]))
@@ -55,7 +55,7 @@ mirrored_poses_keep_rest_offsets_between_sides_with_different_bone_axes :: proc(
     parents:=[4]i32{-1,0,1,1}
     pairs:=[4]i32{0,1,3,2}
     flipped:=math.quat_axis_angle({0,1,0},3.14159265)
-    rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{.2,-.1,0},1,{1,1,1}},{{-.2,-.1,0},flipped,{1,1,1}}}
+    rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{-.2,-.1,0},1,{1,1,1}},{{.2,-.1,0},flipped,{1,1,1}}}
     corrections:[4]math.Quat;scratch:[8]math.Transform
     plane,prepared:=mirror_prepare(parents[:],pairs[:],rest[:],corrections[:],scratch[:])
     if !testing.expect(t,prepared) {return}

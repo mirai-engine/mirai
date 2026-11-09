@@ -188,6 +188,7 @@ Playing :: struct {
     mirror_scratch:[dynamic]mm.Transform,  // two poses in rig space
     mirror_plane:lib.Mirror_Plane,
     body:[lib.Body_Part]i32,               // by part of the body of the skeleton: its bone; 0 when the body has none
+    forward,up:mm.Vec3,                    // where the body of the skeleton faces and its up, in the space of the rig
     regions:[dynamic]i8,                   // by bone: its region of the body (lib.body_regions); empty without a body
     skeleton:base.Asset_Id,
     skeleton_revision:u64,
@@ -294,7 +295,7 @@ animation_tick :: proc(
         }
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
-        facing:=mm.Vec3{0,0,1};placed:=mm.TRANSFORM_IDENTITY
+        facing:=state.forward;placed:=mm.TRANSFORM_IDENTITY
         if state.program.kind==MATCH_KIND {if world,ok:=constraint_world(core.read(transforms),parents,{},e);ok {placed=world;facing=mm.quat_rotate(world.rotation,facing)}}
         rig_goals:[]Match_Goal
         if at:=int(state.program.match.goal)-1;at>=0 && at<len(match_goals) && match_goals[at].rig==e {rig_goals=match_goals[at:][:1]} else if unindexed>0 {

@@ -48,7 +48,7 @@ prefab_save :: proc(o:^Out,s:^asset.Scene_Builder,file:string) {
 // A camera that turns with the look of its body, 4.5 m behind a point height meters above its feet.
 @(private)
 behind_camera :: proc(s:^asset.Scene_Builder,name:string,height:f32) -> base.Entity_Id {
-    view:=placed(s,name,{0,height,-4.5},HALF_TURN,{1,1,1},1)
+    view:=placed(s,name,{0,height,4.5},1,{1,1,1},1)
     asset.builder_set(s,view,render.Camera{fov=game.VIEW_FOV,near=0.05})
     follow:=cam.CAMERA_FOLLOW_DEFAULT
     follow.offset,follow.distance,follow.half_life=[3]f32{0,height,0},4.5,0
@@ -95,7 +95,7 @@ demo_action :: proc(o:^Out,member:game.Action) -> inp.Action {
 // through while it holds aim.
 aim_camera :: proc(s:^asset.Scene_Builder,name:string,aim:inp.Action) {
     setup:=cam.camera_preset(.Aim)
-    view:=placed(s,name,{-0.65,1.55,-1.8},HALF_TURN,{1,1,1},1)
+    view:=placed(s,name,{0.65,1.55,1.8},1,{1,1,1},1)
     lens:=render.Camera{}
     cam.camera_lens_set(&lens,setup.lens)
     asset.builder_set(s,view,lens)
@@ -117,7 +117,7 @@ write_prefabs :: proc(o:^Out) {
     asset.builder_set(&s,1,game.Player{})
     asset.builder_set(&s,1,multiplayer.Replicate{priority=1,radius=1})
     asset.builder_set(&s,1,portals.Traveler{point={0,EYE_HEIGHT,0}})
-    eyes:=placed(&s,"Player view",{0,EYE_HEIGHT,0},HALF_TURN,{1,1,1},1)
+    eyes:=placed(&s,"Player view",{0,EYE_HEIGHT,0},1,{1,1,1},1)
     asset.builder_set(&s,1,inp.Drivable{camera=core.Entity(eyes)})
     asset.builder_set(&s,eyes,render.Camera{fov=game.VIEW_FOV,near=0.05})
     asset.builder_set(&s,eyes,audio.Audio_Listener{})

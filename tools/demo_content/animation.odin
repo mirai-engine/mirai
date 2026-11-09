@@ -33,6 +33,9 @@ rig_path :: proc(model:^importer.Imported_Model,name:string) -> string {
 @(private) GALLERY_STATIONS :: 23
 
 
+// The turn of an actor that looks toward +Z of the world.
+GALLERY_TOWARD_PLUS_Z :: mm.Quat(quaternion(w=0,x=0,y=1,z=0))
+
 // Where a station stands: its actor faces the walkway, and along is the walkway's direction.
 @(private)
 Gallery_Place :: struct {origin:mm.Vec3,facing:mm.Quat,toward,along:mm.Vec3}
@@ -40,7 +43,7 @@ Gallery_Place :: struct {origin:mm.Vec3,facing:mm.Quat,toward,along:mm.Vec3}
 @(private)
 gallery_place :: proc(index:int) -> Gallery_Place {
     side:=f32(-1) if index%2==0 else 1
-    return {{side*GALLERY_SIDE,0,2-f32(index/2)*GALLERY_ROW},mm.quat_axis_angle({0,1,0},-side*mm.PI*.5),{-side,0,0},{0,0,-1}}
+    return {{side*GALLERY_SIDE,0,2-f32(index/2)*GALLERY_ROW},mm.quat_axis_angle({0,1,0},side*mm.PI*.5),{-side,0,0},{0,0,-1}}
 }
 
 // What the stations of the gallery share while the scene is written.
@@ -194,7 +197,7 @@ GALLERY_BATON :: mm.Vec3{.04,.3,.04} // m, the baton held in the grip of the han
 // The sky, the sun, the floor with its walkway and the camera that sees the gallery whole.
 @(private)
 gallery_environment :: proc(o:^Out,s:^asset.Scene_Builder) -> base.Entity_Id {
-    environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,GALLERY_LIGHT,2)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,SCENE_SUN,GALLERY_LIGHT,2)
     sky_set(s,&environment,turn,render.EXPOSURE_DEFAULT)
     sun:=asset.builder_entity(s,"Sun",{position={0,6,0}})
     pose:=sun_pose(to_sun,{0,6,0})
@@ -220,16 +223,16 @@ gallery_environment :: proc(o:^Out,s:^asset.Scene_Builder) -> base.Entity_Id {
 gallery_hand_ik :: proc(g:^Gallery_Build,root:base.Entity_Id,place:Gallery_Place) -> base.Entity_Id {
     o,s:=g.o,g.s
     at:=proc(place:Gallery_Place,local:mm.Vec3) -> mm.Vec3 {return place.origin+mm.quat_rotate(place.facing,local)}
-    reach:=at(place,{-.42,1.3,.42})
+    reach:=at(place,{.42,1.3,-.42})
     target:=asset.builder_entity(s,"Right hand target",{position=reach,scale={.075,.075,.075}})
     asset.builder_set(s,target,render.Mesh_Renderer{shape=.Sphere});asset.builder_set(s,target,render.Tint{color={1,.3,.05,1},emission=nits(GALLERY_LIGHT,{2,.3,0})})
     ik:=anim.IK_CONSTRAINT_DEFAULT;ik.rig,ik.target,ik.hold=core.Entity(root),anim.spatial_point(reach),.Joint
     ik.root,ik.joint,ik.end=anim.bone_ref("RightArm"),anim.bone_ref("RightForeArm"),anim.bone_ref("RightHand")
-    ik.pole=at(place,{-.9,.9,-.6})
+    ik.pole=at(place,{.9,.9,.6})
     rig,_:=mirai_rig(g.model)
     head:=mirai_bone(g.model,"Head")
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.rig,look.bone=core.Entity(root),anim.bone_ref("Head");look.target=ik.target
-    look.forward,look.max_angle=linalg.normalize0(mm.quat_rotate(mm.quat_inverse(rig.rest_world[head].rotation),mm.Vec3{0,0,1})),.6
+    look.forward,look.max_angle=linalg.normalize0(mm.quat_rotate(mm.quat_inverse(rig.rest_world[head].rotation),mm.Vec3{0,0,-1})),.6
     limit:=anim.ROTATION_CONSTRAINT_DEFAULT;limit.rig,limit.bone=core.Entity(root),anim.bone_ref("Head");limit.max_swing,limit.min_twist,limit.max_twist=.35,-.6,.6
     gallery_profile(o,s,root,"mirai_constraints",{ik={ik},look={look},limits={limit}})
     baton:=gallery_cube(s,"Socket baton",{},{1,1,1},{.2,1,.4,1})
@@ -383,7 +386,7 @@ write_animation_scene :: proc(o:^Out) {
     gallery_item(&g,root,.Events,place,"1.2  Events and curves","step markers / the pulse curve sizes the ball",indicator)
 
     place=gallery_next(&g)
-    root=gallery_mirai(&g,"Mirai root motion",place.origin,1,"stride")
+    root=gallery_mirai(&g,"Mirai root motion",place.origin,GALLERY_TOWARD_PLUS_Z,"stride")
     {value,_:=asset.scene_get(&s.scene,root,"Animation",anim.Animation);value.root_motion=.In_Place;asset.builder_set(&s,root,value)}
     gallery_item(&g,root,.Root_Motion,place,"1.3  Root motion","the hips of the stride move the actor")
 
@@ -452,7 +455,7 @@ write_animation_scene :: proc(o:^Out) {
     gallery_cube(&s,"Jump obstacle",place.origin+mm.Vec3{0,.225,0},{1.4,.45,.35},{.35,.25,.16,1},true)
 
     place=gallery_next(&g)
-    root=gallery_mirai(&g,"Mirai warp to a target",game.gallery_warp_start({origin=place.origin,stride=stride}),1,"idle")
+    root=gallery_mirai(&g,"Mirai warp to a target",game.gallery_warp_start({origin=place.origin,stride=stride}),GALLERY_TOWARD_PLUS_Z,"idle")
     {
         value:=anim.ANIMATION_DEFAULT;value.asset,value.motion=clip,programs.reach;value.root_motion=.In_Place;base.text_set(value.clip[:],"idle")
         asset.builder_set(&s,root,value);gallery_motor(&s,root)
@@ -489,7 +492,7 @@ write_animation_scene :: proc(o:^Out) {
         if i==1 {gallery_item(&g,root,.Budget,place,"5.5  Presentation budget","the far one is presented every 4 frames")}
     }
 
-    player:=gallery_mirai_physical(&g,"Mirai",game.GALLERY_START,matching,programs.locomotion,mm.quat_axis_angle({0,1,0},mm.PI))
+    player:=gallery_mirai_physical(&g,"Mirai",game.GALLERY_START,matching,programs.locomotion,1)
     gallery_player(&s,player,spider)
     if g.next!=GALLERY_STATIONS {fmt.eprintfln("demo_content: the gallery placed %d stations, not %d",g.next,GALLERY_STATIONS);o.content.failed=true}
     gallery_save(o,&s,"animation")

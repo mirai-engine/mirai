@@ -279,17 +279,17 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     f:Sight_Test
     sight_init(&f)
     defer sight_destroy(&f)
-    // A guard at the origin looking down +Z (its front), noticing team 1.
+    // A guard at the origin looking down -Z (its front), noticing team 1.
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
     watch.notices=Teams(1<<1)
     watch.forget=2
     core.add(&f.perceivers,guard,watch)
-    ahead:=placed(&f,{0,0,5})
+    ahead:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,ahead,Perceivable{team=1,point=1})
-    friend:=placed(&f,{1,0,5})
+    friend:=placed(&f,{1,0,-5})
     core.add(&f.perceivables,friend,Perceivable{team=2,point=1})
-    behind:=placed(&f,{0,0,-5})
+    behind:=placed(&f,{0,0,5})
     core.add(&f.perceivables,behind,Perceivable{team=1,point=1})
     sight_tick(&f,0) // gives the guard its Perception
     sight_tick(&f,0.1)
@@ -297,14 +297,14 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
-    noise(&f.noises,{0,0,-4},10,behind)
-    noise(&f.noises,{0,0,-40},10,friend)
+    noise(&f.noises,{0,0,4},10,behind)
+    noise(&f.noises,{0,0,40},10,friend)
     sight_tick(&f,0.2)
     mine=core.get(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
     testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
     // What it no longer perceives is forgotten after `forget` seconds.
-    core.get(&f.worlds,ahead).position={0,0,50}
+    core.get(&f.worlds,ahead).position={0,0,-50}
     sight_tick(&f,1.2)
     sight_tick(&f,2.5)
     mine=core.get(&f.perceptions,guard)
@@ -326,7 +326,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     watch:=PERCEIVER_DEFAULT
     watch.forget=100
     core.add(&f.perceivers,guard,watch)
-    seen:=placed(&f,{0,0,5})
+    seen:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,seen,Perceivable{point=1})
     sight_tick(&f,0)
     noise(&f.noises,{3,0,0},10)
@@ -336,7 +336,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     core.destroy(&f.es,seen)
     core.table_settle(&f.perceivables,&f.es);core.table_settle(&f.worlds,&f.es)
     core.entities_settle(&f.es)
-    again:=placed(&f,{0,0,50})
+    again:=placed(&f,{0,0,-50})
     sight_tick(&f,0.2)
     mine=core.get(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(seen))==nil,"the destroyed subject is forgotten")
@@ -358,7 +358,7 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
         g=placed(&f,{f32(i)*2,0,0})
         core.add(&f.perceivers,g,PERCEIVER_DEFAULT)
     }
-    target:=placed(&f,{2,0,6})
+    target:=placed(&f,{2,0,-6})
     core.add(&f.perceivables,target,Perceivable{point=1})
     sight_tick(&f,0)
     for tick in 1..=3 {sight_tick(&f,f64(tick)*0.1)}
@@ -381,7 +381,7 @@ every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
         watch.forget=1
         core.add(&f.perceivers,g,watch)
     }
-    target:=placed(&f,{3,0,6})
+    target:=placed(&f,{3,0,-6})
     core.add(&f.perceivables,target,Perceivable{point=1})
     sight_tick(&f,0)
     for tick in 1..=4 {sight_tick(&f,f64(tick)*0.1)}

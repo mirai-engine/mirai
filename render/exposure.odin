@@ -31,6 +31,7 @@ Exposure_Adapted :: struct {
 	generation:   u32,
 	compensation: f32,
 	light_scale:  f32,
+	bias:         f32, // display_exposure_bias of the transform it was adapted under
 	recorded:     bool,
 }
 
@@ -81,7 +82,7 @@ view_exposure :: proc(p: ^Pass) -> f32 {
 	ev100 := e.ev100
 	if e.mode == .Auto {ev100 = view.ev100 if view.ev100_known else exposure_first(scale, e.range if e.range != {} else AUTO_EXPOSURE_RANGE)}
 	if view == &p.r.main || (p.r.view_count > 0 && view == &p.r.views[0]) {p.r.stats.ev100 = ev100}
-	return exposure_of_ev100(ev100 - e.compensation) / scale
+	return exposure_of_ev100(ev100 - e.compensation, display_exposure_bias(p.r.display_transform)) / scale
 }
 
 // How a view exposes: as its camera, when the camera has an exposure of its
@@ -91,7 +92,7 @@ exposure_of_camera :: proc(r: ^Renderer, camera: Camera) -> Exposure {return cam
 
 // Over the exposure the CPU wrote in the constants of a view, the one the GPU
 // left for it in its last frame, when that frame adapted it with the
-// generation, compensation and light scale of this one: the passes follow an
+// generation, compensation, light scale and bias of this one: the passes follow an
 // auto exposure a frame behind the tonemap. A manual one, and the first frame
 // after a discontinuity, keep the CPU's.
 @(private)
@@ -100,7 +101,7 @@ frame_exposure_copy :: proc(p: ^Pass, constants: rhi.Transient) {
 	e := exposure_of_camera(p.r, p.camera)
 	if e.mode != .Auto || view.exposure == 0 || constants.ptr == nil {return}
 	scale := p.r.scene.light_scale if p.r.scene.light_scale > 0 else 1
-	if view.exposure_adapted != (Exposure_Adapted{generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, recorded = true}) {return}
+	if view.exposure_adapted != (Exposure_Adapted{generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, bias = display_exposure_bias(p.r.display_transform), recorded = true}) {return}
 	rhi.cmd_copy_buffer(p.cmd, view.exposure, u64(offset_of(Gpu_Exposure, exposure)), constants.buffer, constants.offset + u64(offset_of(Gpu_Frame, exposure)), size_of(f32))
 	rhi.cmd_barrier_buffer(p.cmd, constants.buffer, .Shader_Read)
 }
@@ -132,14 +133,15 @@ pass_exposure :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, view.exposure_histogram)
 		rhi.cmd_dispatch(cmd, groups(meter.grid.x, 16), groups(meter.grid.y, 16))
 	}
-	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, pad: [2]u32}
-	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0}
+	bias := display_exposure_bias(r.display_transform)
+	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32}
+	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Exposure_Adapt])
 	set_params(cmd, &adapt)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, view.exposure_histogram)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, view.exposure)
 	rhi.cmd_dispatch(cmd, 1)
-	view.exposure_adapted = {generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, recorded = true}
+	view.exposure_adapted = {generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, bias = bias, recorded = true}
 	rhi.cmd_copy_buffer(cmd, view.exposure, 0, view.exposure_readback[p.slot], 0, size_of(Gpu_Exposure))
 	rhi.cmd_barrier_buffer(cmd, view.exposure_readback[p.slot], .Host_Read)
 	return true

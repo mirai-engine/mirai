@@ -210,7 +210,7 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
         #partial switch item.kind {
         case .Matching:
             placed,_:=core.get(worlds,entity)
-            forward:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,1})
+            forward:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,-1})
             velocity:=forward*(item.speed if manual else speed)
             anim.match_goal(requests,{rig=entity,mode=u16(phys.MODE_WALKING),velocity=velocity,desired=velocity,facing=forward})
             if !manual && gallery_period(item.age,time.dt,9,4.5) {anim.match_play(requests,entity,"wave",u16(phys.MODE_WALKING))}
@@ -257,7 +257,7 @@ gallery_root_motion :: proc(gallery:core.Read(Animation_Gallery),transforms:^cor
         if root:=core.free(transforms,entity);root!=nil {
             root.position+=mm.quat_rotate(root.rotation,motion.translation*root.scale)
             root.rotation=linalg.normalize(root.rotation*motion.rotation)
-            forward:=mm.quat_rotate(root.rotation,mm.Vec3{0,0,1})
+            forward:=mm.quat_rotate(root.rotation,mm.Vec3{0,0,-1})
             along:=linalg.dot(root.position-item.origin,forward)
             if along>1.4 {root.position-=forward*2.8}
             if along< -1.4 {root.position+=forward*2.8}
@@ -268,8 +268,8 @@ gallery_root_motion :: proc(gallery:core.Read(Animation_Gallery),transforms:^cor
 // Where the IK station puts its target, in the frame of its actor: the panel's height and reach
 // when adjusted, a slow circle in front of the hand otherwise.
 gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
-    if item.manual {return {-.42,item.values[0],item.values[1]}}
-    return {-.42+.15*math.sin(item.age),1.3+.12*math.cos(item.age),.42}
+    if item.manual {return {.42,item.values[0],-item.values[1]}}
+    return {.42-.15*math.sin(item.age),1.3+.12*math.cos(item.age),-.42}
 }
 
 @(step="fixed",stage="react",after="animation_advance")
@@ -304,7 +304,7 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
         }
         if item.kind==.IK && item.target!=core.NONE {
             local:=gallery_ik_target(item)
-            if !item.manual {item.values[0],item.values[1]=local.y,local.z}
+            if !item.manual {item.values[0],item.values[1]=local.y,-local.z}
             actor,_:=core.get(core.read(transforms),entity)
             if target:=core.free(transforms,item.target);target!=nil {target.position=item.origin+mm.quat_rotate(actor.rotation,local)}
         }

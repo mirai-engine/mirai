@@ -111,7 +111,7 @@ edit_offset :: proc "contextless" (rig:Body_Rig,e:Offset,input,output:Frames,scr
     }
     forward,up_ok:=anim_unit(rig.body.forward)
     up,_:=anim_unit(rig.body.up)
-    if !up_ok || up=={} {forward,up={0,0,1},{0,1,0}}
+    if !up_ok || up=={} {forward,up={0,0,-1},{0,1,0}}
     axes:=rig.body;axes.forward,axes.up=forward,up
     turns,swings,moves:=OFFSET_TURNS,OFFSET_SWINGS,OFFSET_MOVES
     turn,swing,move:=turns[e.amount],swings[e.amount],moves[e.amount]*height

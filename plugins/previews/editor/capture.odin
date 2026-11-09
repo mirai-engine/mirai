@@ -130,7 +130,7 @@ capture_pose :: proc(st:^Capture_State,frame:int) -> bool {
 // The way the character faces: the body of its skeleton turned with the rig.
 @(private)
 capture_facing :: proc(app:^host.App,st:^Capture_State) -> mm.Vec3 {
-    forward:=mm.Vec3{0,0,1}
+    forward:=mm.Vec3{0,0,-1}
     if len(st.sub.skins)>0 && app.assets!=nil {
         file:asset.Asset
         if host.assets_file(app.assets,st.sub.skins[0].geometry.skeleton,asset.KIND_SKELETON,&file)==.None {
@@ -140,7 +140,7 @@ capture_facing :: proc(app:^host.App,st:^Capture_State) -> mm.Vec3 {
     }
     facing:=mm.quat_rotate(st.parts[0][0].rotation,forward)
     facing.y=0
-    return linalg.normalize0(facing) if linalg.length(facing)>1e-4 else {0,0,1}
+    return linalg.normalize0(facing) if linalg.length(facing)>1e-4 else {0,0,-1}
 }
 
 @(private)
@@ -161,7 +161,7 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     views:=make([dynamic]Capture_View,call.allocator)
     for view in Capture_View {if view in (p.views if p.views!={} else Capture_Views{.Three_Quarter}) {append(&views,view)}}
     // Every view turns the character about its root so the camera sees that side.
-    toward:=linalg.normalize(mm.Vec3{.55,0,.75})
+    toward:=linalg.normalize(mm.Vec3{-.55,0,-.75})
     facing:=capture_facing(app,st)
     pivot:=st.parts[0][0].position
     front:=math.atan2(linalg.cross(facing,toward).y,linalg.dot(facing,toward))

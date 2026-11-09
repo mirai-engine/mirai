@@ -355,11 +355,11 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
 `prefab.list` and the selectors omit them (`asset.registry_listed`): they are not dragged into a
 scene nor enter a game. An open session does not reload them if they change.
 
-La fuente `editor/assets/presence/source/pup.glb` se prepara en Blender como una sola malla,
-de 0,9 m de alto, con origen entre los ojos y mirando hacia -Z. Sus primitivas 0 a 5 son,
-respectivamente, pelaje, arnés, franja, pantalla, lentes y estrellas; las siguientes conservan
-las piezas neutras. La fuente no se guarda en git. `mirai import` con `--root editor/assets` usa
-los ajustes junto a ella y escribe los assets del editor, reduciendo la malla a `max_triangles`.
+The source `editor/assets/presence/source/pup.glb` is prepared in Blender as a single mesh, 0.9 m
+tall, with its origin between the eyes and facing +Z of the file, which the import turns to -Z. Its
+primitives 0 to 5 are fur, harness, stripe, screen, lenses and stars; the following ones keep the
+neutral pieces. The source is not kept in git. `mirai import` with `--root editor/assets` uses the
+settings next to it and writes the assets of the editor, reducing the mesh to `max_triangles`.
 
 ### Pings
 

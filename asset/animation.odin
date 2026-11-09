@@ -25,7 +25,7 @@ import "mirai:std/serial"
 // measures the error on it. How a clip repeats belongs to whoever
 // plays it. A morph target's weight is the target "<path>/@morph/<target>".
 
-ANIMATION_VERSION :: 3
+ANIMATION_VERSION :: 4
 ANIMATION_OLDEST :: ANIMATION_VERSION
 ANIMATION_NAME_CAPACITY :: 64
 // The path of a node or bone below the entity that plays, with its zero: a

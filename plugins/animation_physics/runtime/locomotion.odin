@@ -27,7 +27,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
         input,_:=core.get(inputs,entity)
         placed,_:=core.get(worlds,entity)
         wish:=phys.move_wish(input,mm.QUAT_IDENTITY)
-        facing:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,1}) if character.move_relative_to==.Look else wish
+        facing:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,-1}) if character.move_relative_to==.Look else wish
         state,_:=core.get(found,entity)
         goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=character.turn_speed}
         playing,matching:=anim.animation_match(playback.ptr,entity)
@@ -56,7 +56,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
         if animation.motion=={} || !matching {continue}
         // The warping corrects what the clip travels, in its own direction, toward the body: a clip
         // that strafes or backs off is not turned as if it went forward.
-        along:=playing.travel if playing.travel!={} else mm.Vec3{0,0,1}
+        along:=playing.travel if playing.travel!={} else mm.Vec3{0,0,-1}
         anim.motion_locomotion(warps,{rig=entity,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(placed.rotation,along*playing.speed),weight=1,enabled=(character.mode==phys.MODE_WALKING || character.mode==phys.MODE_CROUCHING) && !playing.forced && playing.speed>0})
     }
 }

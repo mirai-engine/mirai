@@ -24,9 +24,9 @@ a_concave_polygon_triangulates_without_filling_its_notch :: proc(t:^testing.T) {
     testing.expect(t,.Has_Colors in mesh.flags,"the vertex colors of the file are kept")
     for vertex in mesh.vertices {
         testing.expect_value(t,vertex.color,u32(0xff0000ff))
-        testing.expect(t,close_to(unpacked_normal(vertex),{0,0,1},1e-3),"a face without normals is flat")
+        testing.expect(t,close_to(unpacked_normal(vertex),{0,0,-1},1e-3),"a face without normals is flat")
     }
-    testing.expect(t,close_to(mesh.bounds_min,{0,0,0}) && close_to(mesh.bounds_max,{2,2,0}))
+    testing.expect(t,close_to(mesh.bounds_min,{-2,0,0}) && close_to(mesh.bounds_max,{0,2,0}))
     testing.expect_value(t,len(model.materials),1)
     red:=&model.materials[0]
     testing.expect_value(t,red.name,"red")
@@ -46,7 +46,7 @@ objects_of_one_file_become_separate_meshes_and_nodes :: proc(t:^testing.T) {
     testing.expect_value(t,len(model.meshes),2)
     testing.expect_value(t,len(model.nodes),2)
     testing.expect(t,model.meshes[0].name=="Near" && model.meshes[1].name=="Far")
-    testing.expect(t,close_to(model.meshes[1].bounds_min,{10,0,0}) && close_to(model.meshes[1].bounds_max,{11,1,0}))
+    testing.expect(t,close_to(model.meshes[1].bounds_min,{-11,0,0}) && close_to(model.meshes[1].bounds_max,{-10,1,0}))
     testing.expect(t,model.nodes[0].parent==-1 && model.nodes[1].mesh==1)
     testing.expect_value(t,len(model.meshes[0].slots),1)
     testing.expect_value(t,model.meshes[0].slots[0].label,"Slot 1")
@@ -89,8 +89,8 @@ f 1/1 3/3 4/4
     testing.expect_value(t,triangle_count(mesh),2)
     first,second:=importer.mesh_triangle(mesh,0),importer.mesh_triangle(mesh,1)
     testing.expect(t,first[0].uv=={0,1} && first[1].uv=={1,1} && first[2].uv=={1,0},"OBJ counts v from the bottom of the image")
-    testing.expect(t,close_to(unpacked_normal(first[0]),{0,0,1},1e-3) && close_to(unpacked_normal(first[1]),{0.70710678,0,0.70710678},1e-3),"the normals of the file are kept per corner")
-    testing.expect(t,close_to(unpacked_normal(second[0]),{0,0,1},1e-3) && second[2].uv=={0,0},"a face without normals is flat and keeps its texture coordinates")
+    testing.expect(t,close_to(unpacked_normal(first[0]),{0,0,-1},1e-3) && close_to(unpacked_normal(first[1]),{-0.70710678,0,-0.70710678},1e-3),"the normals of the file are kept per corner")
+    testing.expect(t,close_to(unpacked_normal(second[0]),{0,0,-1},1e-3) && second[2].uv=={0,0},"a face without normals is flat and keeps its texture coordinates")
     testing.expect_value(t,len(mesh.vertices),4)
     testing.expect_value(t,len(model.materials),1)
     plaster:=&model.materials[0]

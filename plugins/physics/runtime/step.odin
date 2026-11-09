@@ -720,10 +720,10 @@ yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     return linalg.atan2(-forward.x,-forward.z)
 }
 
-// The look yaw of a character's body rotation (its +Z faces the look) in the frame of the vertical it has, or
+// The look yaw of a character's body rotation (its -Z faces the look) in the frame of the vertical it has, or
 // in the one it takes from its rotation when it is made from the identity.
 look_yaw_of :: proc "contextless" (frame,rotation:mm.Quat) -> f32 {
-    return sim.character_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
+    return sim.up_frame_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
 }
 
 // The frame of the vertical of the character of e: the identity without one.

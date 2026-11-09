@@ -102,6 +102,9 @@ A game is a struct in memory and a list of functions that transform it
 
 ## Invariants
 
+- **One coordinate convention for the whole engine:** right-handed, +Y up, +X right, -Z forward for
+  every entity (bodies, characters, cameras, lights, spawn points, input axes, view space).
+  Models reach it at import; a surface that shows a face (panel, portal, mirror) shows it toward +Z.
 - The generator does not detect mutable package variables: check for them when reading.
 - **One table per component, not archetypes.** The world stores a dense table per component, without
   a query engine, and `core.changes` makes each reader process only what changed.

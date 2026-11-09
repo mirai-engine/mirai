@@ -204,13 +204,14 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
         transform:=core.at(worlds,c.placed)
         // On a mesh: its plane is where the ray meets it when the mesh cannot
         // say, and its text is rasterized for the texels of its texture.
-        facing,density:=widget.facing,f32(0)
-        if widget.target==.Mesh {facing,density=.Fixed,widget.pixels>0?widget.pixels:MESH_TEXELS}
+        facing,density,rotation:=widget.facing,f32(0),transform.rotation
+        // A mesh shows its front toward -Z, and a panel its face toward +Z.
+        if widget.target==.Mesh {facing,density,rotation=.Fixed,widget.pixels>0?widget.pixels:MESH_TEXELS,rotation*quaternion(w=0,x=0,y=1,z=0)}
         append(&gui.plan,Planned{
             entity=c.entity,instance=index,content=content,player=c.player,world=true,passive=true,interactive=widget.input==.Interactive,
             mesh=mesh,variant=ui.style_variant(base.text_get(widget.variant[:])),
             panel={
-                position=transform.position,rotation=transform.rotation,size=widget.size,facing=facing,sizing=widget.sizing,
+                position=transform.position,rotation=rotation,size=widget.size,facing=facing,sizing=widget.sizing,
                 unit=widget_unit(&gui.views[c.player],widget,gui.settings,gui.preferences.scale) if widget.target==.Overlay else widget.scale,pivot=widget.pivot,density=density,depth_test=widget.depth_test,passive=widget.passive,offscreen=widget.target==.Mesh,
             },
         })

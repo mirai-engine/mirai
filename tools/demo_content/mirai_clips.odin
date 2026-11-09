@@ -64,7 +64,7 @@ mirai_steps :: proc(frames:[][]mm.Transform,times:[]f32,left,right:int) -> (mark
         now:=left if pose[left].position.y<pose[right].position.y else right
         if frame>0 {
             previous:=frames[frame-1][now].position.z
-            advance+=max(0,previous-pose[now].position.z)
+            advance+=max(0,pose[now].position.z-previous)
             if now!=lower {append(&list,asset.Animation_Marker_Desc{times[frame],"left_step" if now==left else "right_step"})}
         }
         lower=now
@@ -112,7 +112,7 @@ mirai_wave :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,idle:asset.Anima
     world:=rig.rest_world
     upper:=linalg.normalize(world[fore].position-world[arm].position)
     side:=f32(1) if upper.x>=0 else -1
-    raise:=mm.quat_between(upper,linalg.normalize(mm.Vec3{side*.55,.82,.12}))
+    raise:=mm.quat_between(upper,linalg.normalize(mm.Vec3{side*.55,.82,-.12}))
     parent:=world[rig.parents[arm]].rotation
     arm_rotation:=mm.quat_inverse(parent)*raise*parent*rig.rest[arm].rotation
     arm_world:=raise*world[arm].rotation
@@ -126,7 +126,7 @@ mirai_wave :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,idle:asset.Anima
     for i in 0..<count {
         t:=f32(i)*.125
         angle:=.1+.38*math.sin(t*2*math.PI)
-        swing:=mm.quat_between(lower,linalg.normalize(mm.Vec3{side*math.sin(angle),math.cos(angle),.15}))
+        swing:=mm.quat_between(lower,linalg.normalize(mm.Vec3{side*math.sin(angle),math.cos(angle),-.15}))
         arm_keys[i]={time=t,value=lib.quat_vec4(arm_rotation),interpolation=.Linear}
         fore_keys[i]={time=t,value=lib.quat_vec4(mm.quat_inverse(arm_world)*swing*arm_world*rig.rest[fore].rotation),interpolation=.Linear}
     }
@@ -158,7 +158,7 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
         if track.target!=path || track.property!=.Position {continue}
         keys:=make([]lib.Keyframe,len(track.keys),context.temp_allocator);copy(keys,track.keys)
         for &key in keys {
-            placed:=mm.transform_point(parent,key.value.xyz)+mm.Vec3{0,0,advance*key.time/duration}
+            placed:=mm.transform_point(parent,key.value.xyz)+mm.Vec3{0,0,-advance*key.time/duration}
             point:=mm.transform_inverse_point(parent,placed)
             key.value={point.x,point.y,point.z,0}
         }

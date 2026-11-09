@@ -27,8 +27,8 @@ defaults: `engine.describe`.
 
 No spawn or camera code: `settings.mirai` has `{"Spawn_Settings":{"players":true}}`, the scene a
 `spawn.Spawn_Point{prefab=PLAYER_PREFAB}` entity, and the prefab the pieces below. A content tool
-writes it ([assets](assets.md)); a body faces +Z and a camera -Z, so the eyes
-child is turned half a turn (`HALF_TURN :: quaternion(w=0,x=0,y=1,z=0)`).
+writes it ([assets](assets.md)); a body and a camera both face -Z, so the eyes child needs no
+turn.
 
 ```odin
 root:=asset.scene_new_id(&s); asset.scene_entity_add(&s,root,0,"Player"); s.info.root=root
@@ -40,7 +40,7 @@ asset.scene_set(&s,root,"Character",&character)
 asset.scene_set(&s,root,"Walk",&walk)
 asset.scene_set(&s,root,"Collider",&capsule)
 eyes:=asset.scene_new_id(&s); asset.scene_entity_add(&s,eyes,root,"Eyes")
-asset.scene_set(&s,eyes,"Transform",&core.Transform{{0,1.6,0},HALF_TURN,{1,1,1}})
+asset.scene_set(&s,eyes,"Transform",&core.Transform{{0,1.6,0},1,{1,1,1}})
 asset.scene_set(&s,eyes,"Camera",&render.Camera{fov=70*mm.RAD_PER_DEG,near=0.05,active=true})
 asset.scene_set(&s,eyes,"Camera_Follow",&cam.Camera_Follow{mode=.Eyes,offset={0,1.6,0}})
 asset.scene_set(&s,root,"Drivable",&inp.Drivable{camera=core.Entity(eyes)})

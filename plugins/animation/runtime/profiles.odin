@@ -10,8 +10,8 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
 POSE_KIND :: asset.Fourcc(u32('P')|u32('O')<<8|u32('S')<<16|u32('E')<<24)
-POSE_VERSION :: 5
-POSE_OLDEST :: 4
+POSE_VERSION :: 6
+POSE_OLDEST :: POSE_VERSION
 POSE_CONSTRAINTS :: 256
 
 @(component,description="Applies a pose profile with IK, aiming, joint limits or foot grounding. Gameplay supplies the dynamic targets.")
@@ -134,9 +134,9 @@ pose_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Pose
     profile.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
     profile.correctives=asset.asset_rows(file,types,"correctives","",Pose_Corrective) or_return
     profile.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
-    profile.curve_poses=asset.asset_rows_since(file,types,5,"curve_poses","",Curve_Pose) or_return
-    profile.curve_drives=asset.asset_rows_since(file,types,5,"curve_drives","",Curve_Drive) or_return
-    profile.curve_materials=asset.asset_rows_since(file,types,5,"curve_materials","",Curve_Material) or_return
+    profile.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
+    profile.curve_drives=asset.asset_rows(file,types,"curve_drives","",Curve_Drive) or_return
+    profile.curve_materials=asset.asset_rows(file,types,"curve_materials","",Curve_Material) or_return
     if !pose_profile_check(profile) {return {},.Corrupt}
     return profile,.None
 }

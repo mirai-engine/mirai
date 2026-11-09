@@ -34,7 +34,7 @@ gallery_mirai_matching :: proc(o:^Out,animation:base.Asset_Id) -> base.Asset_Id 
 // A Mirai that walks by its physics: the plugin animation_physics tells its matching what its
 // Character does, and its feet keep to the ground.
 @(private)
-gallery_mirai_physical :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,matching,motion:base.Asset_Id,facing:mm.Quat=1) -> base.Entity_Id {
+gallery_mirai_physical :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,matching,motion:base.Asset_Id,facing:mm.Quat=GALLERY_TOWARD_PLUS_Z) -> base.Entity_Id {
     s:=g.s
     root:=gallery_actor(g.o,s,g.model,g.source,name,position,facing,matching)
     character:=phys.character_default();character.step_height=.3;character.move_relative_to=.Game

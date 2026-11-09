@@ -1,6 +1,7 @@
 package importer
 
 import "core:math"
+import "core:math/linalg"
 import "mirai:asset"
 import mm "mirai:std/math"
 
@@ -15,8 +16,8 @@ import mm "mirai:std/math"
 //   clips and lights                   keys, tangents, ranges, sizes
 //   the mapping of every material map  conjugated by the flip of v
 //
-// The engine's space is the one of glTF: meters, +Y up, +Z the front of a
-// model, right-handed, v from the top of the image. A change of basis is a
+// The engine's space: meters, right-handed, +Y up, +X right, -Z forward for
+// every entity and model, v from the top of the image. A change of basis is a
 // signed permutation of the axes, so transforms stay exact TRS and a
 // mirrored source turns its triangles instead of leaving a negative scale.
 
@@ -29,11 +30,17 @@ V_Origin :: enum u8 {
 
 Source_Space :: struct {
     meters_per_unit:f32,
-    axes:[3]Axis,      // the axis of the source along the engine's +X, +Y (up) and +Z (front); distinct
+    axes:[3]Axis,      // the axis of the source along the engine's +X, +Y (up) and +Z (the back of a model); distinct
     v_origin:V_Origin,
 }
 
 ENGINE_SPACE :: Source_Space{meters_per_unit=1,axes={.X,.Y,.Z},v_origin=.Top}
+
+// The axes of a source that is right-handed, +Y up and whose models face its +Z: half a turn about +Y.
+FACING_PLUS_Z :: [3]Axis{.Negative_X,.Y,.Negative_Z}
+GLTF_SPACE :: Source_Space{meters_per_unit=1,axes=FACING_PLUS_Z,v_origin=.Top}
+
+axis_opposite :: #force_inline proc "contextless" (axis:Axis) -> Axis {return Axis((int(axis)+3)%6)}
 
 // The change of basis of a space: engine axis i is sign[i] times source axis
 // source[i], in meters.
@@ -114,9 +121,9 @@ space_matrix :: proc "contextless" (b:Basis,m:matrix[4,4]f32) -> (out:matrix[4,4
     return
 }
 
-// The turn, in the source, that a reader gives on the right to the node of a
-// light that shines toward -Z of its node in the source, so that once the
-// node is conjugated it shines toward -Z of the engine: the basis itself,
+// The turn, in the source, that the node of a light takes on the right: every
+// format's lights shine toward -Z of their node, and once the node is
+// conjugated this one shines toward -Z of the engine. It is the basis itself,
 // with x reversed in a mirror. Its children take its transpose on the left.
 // x and y of the light stay its x and y, up to their sign.
 light_frame :: proc "contextless" (b:Basis) -> (m:matrix[4,4]f32) {
@@ -138,7 +145,17 @@ space_uv :: #force_inline proc "contextless" (space:Source_Space,uv:[2]f32) -> [
 space_bake :: proc(r:^Reader) {
     b:=r.basis
     if b.identity {return}
+    frame:=light_frame(b)
     for &node in r.nodes {
+        _,is_light:=node.light.?
+        under_light:=false
+        if node.parent>=0 {_,under_light=r.nodes[node.parent].light.?}
+        if is_light || under_light {
+            local:=mm.transform_matrix(node.transform)
+            if is_light {local=local*frame}
+            if under_light {local=linalg.transpose(frame)*local}
+            if turned,decomposed:=mm.transform_from_matrix(local);decomposed {node.transform=turned}
+        }
         node.transform=space_transform(b,node.transform)
         if light,has:=&node.light.?;has {
             light.range*=b.units

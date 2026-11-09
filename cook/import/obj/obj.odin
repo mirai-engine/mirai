@@ -18,7 +18,7 @@ FORMAT :: importer.Format{
     name="OBJ",
     extensions={0=".obj"},
     version=0,
-    space={meters_per_unit=1,axes={.X,.Y,.Z},v_origin=.Bottom},
+    space={meters_per_unit=1,axes=importer.FACING_PLUS_Z,v_origin=.Bottom},
     sniff=sniff,
     read=read,
 }

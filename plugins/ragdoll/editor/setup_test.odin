@@ -63,16 +63,16 @@ setup_test_settle :: proc(data,shared,ed:rawptr) {
     core.entities_settle(&w.entities)
 }
 
-// A standing figure facing +Z with its left at +X, with three spine bones and a bone outside the body.
+// A standing figure facing -Z with its left at -X, with three spine bones and a bone outside the body.
 @(private)
 setup_test_bones :: proc() -> []aa.Skeleton_Bone {
     Row :: struct {name:string,parent:i32,at:[3]f32}
     rows:=[?]Row{
         {"root",-1,{}},{"pelvis",0,{0,1,0}},{"spine_01",1,{0,1.12,0}},{"spine_02",2,{0,1.25,0}},{"spine_03",3,{0,1.38,0}},{"neck_01",4,{0,1.5,0}},{"head",5,{0,1.6,0}},
-        {"clavicle_l",4,{.05,1.45,0}},{"upperarm_l",7,{.2,1.45,0}},{"lowerarm_l",8,{.45,1.45,-.02}},{"hand_l",9,{.7,1.45,0}},
-        {"clavicle_r",4,{-.05,1.45,0}},{"upperarm_r",11,{-.2,1.45,0}},{"lowerarm_r",12,{-.45,1.45,-.02}},{"hand_r",13,{-.7,1.45,0}},
-        {"thigh_l",1,{.1,.95,0}},{"calf_l",15,{.1,.5,.02}},{"foot_l",16,{.1,.08,0}},{"ball_l",17,{.1,.02,.12}},
-        {"thigh_r",1,{-.1,.95,0}},{"calf_r",19,{-.1,.5,.02}},{"foot_r",20,{-.1,.08,0}},{"ball_r",21,{-.1,.02,.12}},
+        {"clavicle_l",4,{-.05,1.45,0}},{"upperarm_l",7,{-.2,1.45,0}},{"lowerarm_l",8,{-.45,1.45,.02}},{"hand_l",9,{-.7,1.45,0}},
+        {"clavicle_r",4,{.05,1.45,0}},{"upperarm_r",11,{.2,1.45,0}},{"lowerarm_r",12,{.45,1.45,.02}},{"hand_r",13,{.7,1.45,0}},
+        {"thigh_l",1,{-.1,.95,0}},{"calf_l",15,{-.1,.5,-.02}},{"foot_l",16,{-.1,.08,0}},{"ball_l",17,{-.1,.02,-.12}},
+        {"thigh_r",1,{.1,.95,0}},{"calf_r",19,{.1,.5,-.02}},{"foot_r",20,{.1,.08,0}},{"ball_r",21,{.1,.02,-.12}},
         {"ik_hand_root",0,{}},
     }
     bones:=make([]aa.Skeleton_Bone,len(rows),context.temp_allocator)

@@ -5,7 +5,7 @@ import "core:math/linalg"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
-FRACTURE_VERSION :: 3
+FRACTURE_VERSION :: 4
 FRACTURE_OLDEST :: FRACTURE_VERSION
 FRACTURE_CLUSTER_POINTS :: 64 // most points kept of the hull of a cluster
 

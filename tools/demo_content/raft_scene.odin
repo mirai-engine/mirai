@@ -28,7 +28,7 @@ write_raft_player :: proc(o:^Out) {
     asset.builder_set(&s,1,swim)
     asset.builder_set(&s,1,capsule)
     asset.builder_set(&s,1,diver)
-    eyes:=placed(&s,"Swimmer view",{0,EYE_HEIGHT,0},HALF_TURN,{1,1,1},1)
+    eyes:=placed(&s,"Swimmer view",{0,EYE_HEIGHT,0},1,{1,1,1},1)
     asset.builder_set(&s,1,inp.Drivable{camera=core.Entity(eyes)})
     asset.builder_set(&s,eyes,render.Camera{fov=game.VIEW_FOV,near=0.05})
     asset.builder_set(&s,eyes,audio.Audio_Listener{})
@@ -47,7 +47,7 @@ write_raft_scene :: proc(o:^Out) {
     environment.luminance,environment.atmosphere,environment.use_background=nits(u,{.42,.56,.78}),false,false
     sky_set(&s,&environment,0)
     sun:=asset.builder_entity(&s,"Sun")
-    sun_placed:=sun_pose(render.SUN_DIRECTION)
+    sun_placed:=sun_pose(SCENE_SUN)
     asset.builder_set(&s,sun,sun_placed)
     asset.builder_set(&s,sun,render.Sun{color={1,0.95,0.86},illuminance=lux(u,3)})
 
@@ -141,7 +141,7 @@ write_raft_scene :: proc(o:^Out) {
     floating(&s,"Stone",{-5,0.4,2},{0.5,0.5,0.5},.Sphere,phys.collider_sphere(0.5),2600,{0.5,0.5,0.52,1})
 
     start:=spawn.Spawn_Point{prefab=RAFT_PLAYER_PREFAB_ID}
-    asset.builder_set(&s,placed(&s,"Swimmer start",{0,0.7,0},HALF_TURN,{1,1,1}),start)
+    asset.builder_set(&s,placed(&s,"Swimmer start",{0,0.7,0},1,{1,1,1}),start)
     holder:=asset.builder_entity(&s,"Raft game")
     asset.builder_set(&s,holder,game.Raft_Game{raft=core.Entity(raft),deck=0.6})
     // After the others, which keep their entities.

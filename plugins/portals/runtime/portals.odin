@@ -137,10 +137,10 @@ portals_travel :: proc(
             config,_:=core.get(portals,portal)
             exit,_:=core.get(worlds,config.exit)
             capsule,_:=core.get(colliders,e)
-            look:=mm.quat_rotate(world.rotation,[3]f32{0,0,1})
+            look:=mm.quat_rotate(world.rotation,[3]f32{0,0,-1})
             if move,driven:=core.get(core.read(moves),e);driven {look=mm.quat_rotate(mm.quat_from_euler({move.look_pitch,move.look_yaw,0}),[3]f32{0,0,-1})}
             feet,yaw:=character_through(through,exit.transform,world.transform,point,look,capsule)
-            core.place(placer,e,feet,mm.quat_axis_angle({0,1,0},yaw+math.PI))
+            core.place(placer,e,feet,mm.quat_axis_angle({0,1,0},yaw))
             phys.set_velocity(requests,e,mm.quat_rotate(through.rotation,motion.linear))
         }
         if move:=core.get(moves,e);move!=nil && core.owned(remotes,e) {look_through(move,through.rotation)}
@@ -161,7 +161,7 @@ look_through :: proc "contextless" (move:^inp.Move_Input,turn:mm.Quat) {
 
 // Where a character that a portal carries comes out: it stays upright, with
 // its point where the portal takes it and turned to where the portal turns
-// its look, a yaw (-Z at 0) that its body faces with +Z. A portal that turns
+// its look, a yaw (-Z at 0) that its body faces. A portal that turns
 // it about another axis than the vertical, as one in the floor to one in a
 // wall, puts its capsule wholly in front of the exit and no lower than its
 // opening.
@@ -170,9 +170,9 @@ character_through :: proc "contextless" (through,exit,placed:mm.Transform,point,
     // A look the portal turns upright faces the way the portal carries what falls into it: out of its exit.
     turned:=mm.quat_rotate(through.rotation,look)
     if linalg.length2(turned.xz)<0.1 {turned=mm.quat_rotate(through.rotation,-UP)}
-    if linalg.length2(turned.xz)<0.1 {turned=mm.quat_rotate(through.rotation,mm.quat_rotate(placed.rotation,[3]f32{0,0,1}))}
+    if linalg.length2(turned.xz)<0.1 {turned=mm.quat_rotate(through.rotation,mm.quat_rotate(placed.rotation,[3]f32{0,0,-1}))}
     yaw=linalg.length2(turned.xz)>1e-8?math.atan2(-turned.x,-turned.z):0
-    upright:=mm.quat_axis_angle(UP,yaw+math.PI)
+    upright:=mm.quat_axis_angle(UP,yaw)
     feet=mm.transform_point(through,mm.transform_point(placed,point))-mm.quat_rotate(upright,point*placed.scale)
     if linalg.dot(mm.quat_rotate(through.rotation,UP),UP)>0.999 {return}
     MARGIN :: 0.02

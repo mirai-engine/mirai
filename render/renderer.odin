@@ -195,9 +195,9 @@ AUTO_EXPOSURE_RANGE :: [2]f32{-6, 18}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
 MIDDLE_GRAY :: f32(0.18)
-// EV every view is exposed above what its meter or its camera gives, as Unreal's default exposure
-// bias: the display transform (ACES 2.0) shows a middle gray at the meter's value dim on an SDR
-// display.
+// EV a view is exposed above what its meter or its camera gives under ACES 2.0, as Unreal's default
+// exposure bias: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
+// transform calibrates to it (display_exposure_bias).
 EXPOSURE_BIAS :: f32(1)
 
 // The EV100 of a camera: an f-number, a shutter time in seconds and an ISO.
@@ -205,9 +205,9 @@ ev100_of :: proc "contextless" (aperture, shutter, iso: f32) -> f32 {
 	return math.log2(aperture * aperture / max(shutter, 1e-9) * 100 / max(iso, 1e-9))
 }
 
-// The scene-linear value of one nit at an exposure value, with EXPOSURE_BIAS.
-exposure_of_ev100 :: proc "contextless" (ev100: f32) -> f32 {
-	return MIDDLE_GRAY * 100 / LIGHT_METER_K * math.pow(2, EXPOSURE_BIAS - ev100)
+// The scene-linear value of one nit at an exposure value, with the bias of a transform.
+exposure_of_ev100 :: proc "contextless" (ev100: f32, bias: f32 = EXPOSURE_BIAS) -> f32 {
+	return MIDDLE_GRAY * 100 / LIGHT_METER_K * math.pow(2, bias - ev100)
 }
 
 // The manual exposure at which a render unit becomes one scene-linear unit, whatever the image
@@ -539,6 +539,7 @@ Renderer :: struct {
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
 	display_lut:     rhi.Texture, // the display transform (display.odin)
+	display_transform: Display_Transform, // the one display_lut holds
 	font:            rhi.Texture,
 	font_size:       [2]int,
 	font_pending:    rhi.Texture_Region, // texels of the atlas the next frame copies; zero: none
@@ -695,7 +696,8 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	white := [4]u8{255, 255, 255, 255}
 	if !renderer_set_font(r, white[:], 1, 1) {return false}
 	if !extension_counters_init(r) || !ui_offscreen_init(r) {return false}
-	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	// ACES 2.0, the transform EXPOSURE_BIAS and the test exposures are calibrated to, until a project chooses.
+	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR, .ACES_2) {return false}
 	r.hardware_rt = info.features.ray_query && r.settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	if info.features.ray_query {
 		verified, note := hardware_rt_self_test(r)

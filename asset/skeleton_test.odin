@@ -55,16 +55,16 @@ skeleton_rejects_ambiguous_paths_cycles_and_invalid_rest :: proc(t:^testing.T) {
     bones[1].translation.x=transmute(f32)u32(0x7fc00000);testing.expect(t,!skeleton_check(good))
 }
 
-// A standing figure: pelvis, spine, head, arms and legs with toes, in meters.
+// A standing figure facing -Z with its left at -X: pelvis, spine, head, arms and legs with toes, in meters.
 @(private="file")
 skeleton_test_figure :: proc() -> []Skeleton_Bone {
     Row :: struct {name:string,parent:i32,at:[3]f32}
     rows:=[?]Row{
         {"root",-1,{}},{"pelvis",0,{0,1,0}},{"spine_01",1,{0,1.2,0}},{"neck_01",2,{0,1.5,0}},{"head",3,{0,1.6,0}},
-        {"upperarm_l",2,{.2,1.45,0}},{"lowerarm_l",5,{.45,1.45,0}},{"hand_l",6,{.7,1.45,0}},
-        {"upperarm_r",2,{-.2,1.45,0}},{"lowerarm_r",8,{-.45,1.45,0}},{"hand_r",9,{-.7,1.45,0}},
-        {"thigh_l",1,{.1,.95,0}},{"calf_l",11,{.1,.5,0}},{"foot_l",12,{.1,.08,0}},{"ball_l",13,{.1,.02,.12}},
-        {"thigh_r",1,{-.1,.95,0}},{"calf_r",15,{-.1,.5,0}},{"foot_r",16,{-.1,.08,0}},{"ball_r",17,{-.1,.02,.12}},
+        {"upperarm_l",2,{-.2,1.45,0}},{"lowerarm_l",5,{-.45,1.45,0}},{"hand_l",6,{-.7,1.45,0}},
+        {"upperarm_r",2,{.2,1.45,0}},{"lowerarm_r",8,{.45,1.45,0}},{"hand_r",9,{.7,1.45,0}},
+        {"thigh_l",1,{-.1,.95,0}},{"calf_l",11,{-.1,.5,0}},{"foot_l",12,{-.1,.08,0}},{"ball_l",13,{-.1,.02,-.12}},
+        {"thigh_r",1,{.1,.95,0}},{"calf_r",15,{.1,.5,0}},{"foot_r",16,{.1,.08,0}},{"ball_r",17,{.1,.02,-.12}},
     }
     bones:=make([]Skeleton_Bone,len(rows),context.temp_allocator)
     for row,i in rows {
@@ -97,7 +97,7 @@ skeleton_keeps_its_body_by_bone_path_through_a_round_trip :: proc(t:^testing.T) 
     count,written:=skeleton_body_rows(bones,map_,&body,&parts)
     testing.expect(t,written && count==17)
     testing.expect_value(t,body.up,[3]f32{0,1,0})
-    testing.expect_value(t,body.forward,[3]f32{0,0,1})
+    testing.expect_value(t,body.forward,[3]f32{0,0,-1})
     doc:Document
     if !testing.expect_value(t,skeleton_document(&doc,&types,{id={3,9},bones=bones,body=&body,body_parts=parts[:count]}),Error.None) {return}
     defer document_destroy(&doc)

@@ -24,8 +24,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
 - `Character`: moves the entity's `Capsule` `Collider` like the solver's
   [physical character](character.md), which supports itself, climbs steps and pushes.
   - Its `Transform` is the position of the feet and the rotation, whose +Y is its
-    [vertical](character.md#the-vertical) and whose +Z faces the yaw of its move, its look (-Z at
-    yaw 0); the capsule rests on the feet (the controller sets its `center` and its surface).
+    [vertical](character.md#the-vertical) and whose -Z faces the yaw of its move, its look; the
+    capsule rests on the feet (the controller sets its `center` and its surface).
   - `up_speed` (degrees per second): how fast its vertical turns toward the opposite of its
     gravity, to walk around a planet; with 0 it stays fixed. Changing it does not recreate the
     character.

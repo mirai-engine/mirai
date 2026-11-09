@@ -56,9 +56,9 @@ test_read :: proc(r:^Reader,bytes:[]u8) -> bool {
 @(private="file")
 test_sniff :: proc(head:[]u8) -> Sniff {return .Extension}
 
-// Centimeters, +Z up and +X the front, left-handed, as Unreal; v from the bottom.
+// Centimeters, +Z up and +X forward, left-handed, as Unreal; v from the bottom.
 @(private="file")
-TEST_FORMAT :: Format{name="Test",extensions={0=".test"},version=7,space={meters_per_unit=0.01,axes={.Negative_Y,.Z,.X},v_origin=.Bottom},sniff=test_sniff,read=test_read}
+TEST_FORMAT :: Format{name="Test",extensions={0=".test"},version=7,space={meters_per_unit=0.01,axes={.Y,.Z,.Negative_X},v_origin=.Bottom},sniff=test_sniff,read=test_read}
 
 @(private="file")
 test_import :: proc(format:Format) -> (Imported_Model,Error) {
@@ -89,24 +89,24 @@ the_space_a_reader_declares_is_baked_once_into_what_the_import_gives :: proc(t:^
     testing.expect_value(t,model.format,"Test")
     testing.expect_value(t,model.version,u32(IMPORTER_VERSION)|7<<16)
 
-    // engine = 0.01 * (-y, z, x) of the source. No node is added.
+    // engine = 0.01 * (y, z, -x) of the source. No node is added.
     testing.expect_value(t,len(model.nodes),2)
     root:=model.nodes[0].transform
-    testing.expect(t,near(root.position,{-2,3,1}) && root.scale==[3]f32{2,3,1},"positions are in meters and scales follow their axes")
-    // A quarter turn about the up of the source turns +Z of the engine (its +X) to -X (its +Y).
-    testing.expect(t,near(linalg.quaternion_mul_vector3(root.rotation,[3]f32{0,0,1}),{-1,0,0}),"a rotation keeps what it does to the source")
-    testing.expect(t,model.nodes[1].parent==0 && model.nodes[1].transform==mm.TRANSFORM_IDENTITY)
+    testing.expect(t,near(root.position,{2,3,-1}) && root.scale==[3]f32{2,3,1},"positions are in meters and scales follow their axes")
+    // A quarter turn about the up of the source turns -Z of the engine (its +X) to +X (its +Y).
+    testing.expect(t,near(linalg.quaternion_mul_vector3(root.rotation,[3]f32{0,0,-1}),{1,0,0}),"a rotation keeps what it does to the source")
+    testing.expect(t,model.nodes[1].parent==0 && near(model.nodes[1].transform.position,{0,0,0}))
     light,has_light:=model.nodes[1].light.?
     testing.expect(t,has_light && abs(light.range-10)<1e-4)
 
     // The mirror turns the triangle: its normal, from the order of its corners, stays outside.
     mesh:=&model.meshes[0]
     corners:=mesh_triangle(mesh,0)
-    testing.expect(t,near(corners[0].position,{0,0,1}) && near(corners[1].position,{0,1,0}) && near(corners[2].position,{-1,0,0}),"the corners are in meters and turned")
+    testing.expect(t,near(corners[0].position,{0,0,-1}) && near(corners[1].position,{0,1,0}) && near(corners[2].position,{1,0,0}),"the corners are in meters and turned")
     winding:=linalg.normalize(linalg.cross(corners[1].position-corners[0].position,corners[2].position-corners[0].position))
-    testing.expect(t,near(winding,linalg.normalize([3]f32{-1,1,1})),"the winding gives the normal of the source")
+    testing.expect(t,near(winding,linalg.normalize([3]f32{1,1,-1})),"the winding gives the normal of the source")
     testing.expect(t,near(mm.normal_unpack(corners[0].normal),{0,1,0}))
-    testing.expect(t,near(mesh.bounds_min,{-1,0,0}) && near(mesh.bounds_max,{0,1,1}))
+    testing.expect(t,near(mesh.bounds_min,{0,0,-1}) && near(mesh.bounds_max,{1,1,0}))
     bind:=mesh.joints[0].inverse_bind
     testing.expect(t,near({bind[0,3],bind[1,3],bind[2,3]},{0,-1,0}) && bind[0,0]==1 && bind[1,1]==1 && bind[2,2]==1,"an inverse bind is conjugated")
 
@@ -119,7 +119,7 @@ the_space_a_reader_declares_is_baked_once_into_what_the_import_gives :: proc(t:^
     bone:=model.skeletons[0].bones[0]
     testing.expect(t,near(bone.translation,{0,1,0}) && bone.scale==[3]f32{2,3,1} && bone.rotation==root.rotation)
     move:=model.animations[0].tracks[0].keys
-    testing.expect(t,near(move[0].value.xyz,{0,0,1}) && near(move[0].in_slope.xyz,{0,0,0.1}) && near(move[0].out_slope.xyz,{-0.2,0,0}) && near(move[1].value.xyz,{0,1,0}))
+    testing.expect(t,near(move[0].value.xyz,{0,0,-1}) && near(move[0].in_slope.xyz,{0,0,-0.1}) && near(move[0].out_slope.xyz,{0.2,0,0}) && near(move[1].value.xyz,{0,1,0}))
     spin:=model.animations[0].tracks[1].keys[0].value
     testing.expect(t,spin==[4]f32{root.rotation.x,root.rotation.y,root.rotation.z,root.rotation.w},"a rotation key turns as the node")
 
@@ -147,11 +147,11 @@ a_source_in_the_space_of_the_engine_is_kept_as_it_is :: proc(t:^testing.T) {
     model_destroy(&model)
 
     // A file states its space: +Z up, the front toward -Y, as USD or Blender write it.
-    stated:=Source_Space{meters_per_unit=1,axes={.X,.Z,.Negative_Y},v_origin=.Top}
+    stated:=Source_Space{meters_per_unit=1,axes={.Negative_X,.Z,.Y},v_origin=.Top}
     engine.data=&stated
     model,ok=test_import_ok(t,engine)
     if !ok {return}
-    testing.expect(t,near(model.nodes[0].transform.position,{100,300,-200}) && near(mesh_triangle(&model.meshes[0],0)[2].position,{0,100,0}),"a rotation of the axes, without a mirror")
+    testing.expect(t,near(model.nodes[0].transform.position,{-100,300,200}) && near(mesh_triangle(&model.meshes[0],0)[2].position,{0,100,0}),"a rotation of the axes, without a mirror")
     testing.expect(t,near(linalg.quaternion_mul_vector3(model.nodes[0].transform.rotation,[3]f32{1,0,0}),{0,0,-1}))
     model_destroy(&model)
 

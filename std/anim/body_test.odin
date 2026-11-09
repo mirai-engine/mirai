@@ -30,7 +30,7 @@ body_test_expect :: proc(t:^testing.T,rig:Body_Test_Rig,map_:Body_Map,part:Body_
 }
 
 // A humanoid rig with the bone names of common game skeletons (pelvis, spine_01 to 05),
-// facing +Z with its left at +X, in meters.
+// facing -Z with its left at -X, in meters.
 body_test_humanoid :: proc() -> Body_Test_Rig {
     side :: proc(bones:^[dynamic]Body_Test_Bone,s:string,x:f32) {
         n :: proc(base,s:string) -> string {return body_test_concat(base,s)}
@@ -38,16 +38,16 @@ body_test_humanoid :: proc() -> Body_Test_Rig {
             Body_Test_Bone{n("clavicle_",s),"spine_05",{x*.03,1.45,0}},
             Body_Test_Bone{n("upperarm_",s),n("clavicle_",s),{x*.17,1.42,0}},
             Body_Test_Bone{n("upperarm_twist_01_",s),n("upperarm_",s),{x*.25,1.42,0}},
-            Body_Test_Bone{n("lowerarm_",s),n("upperarm_",s),{x*.45,1.42,-.02}},
+            Body_Test_Bone{n("lowerarm_",s),n("upperarm_",s),{x*.45,1.42,.02}},
             Body_Test_Bone{n("lowerarm_twist_01_",s),n("lowerarm_",s),{x*.55,1.42,0}},
             Body_Test_Bone{n("hand_",s),n("lowerarm_",s),{x*.70,1.42,0}},
-            Body_Test_Bone{n("index_01_",s),n("hand_",s),{x*.78,1.42,.02}},
-            Body_Test_Bone{n("thumb_01_",s),n("hand_",s),{x*.74,1.41,.04}},
+            Body_Test_Bone{n("index_01_",s),n("hand_",s),{x*.78,1.42,-.02}},
+            Body_Test_Bone{n("thumb_01_",s),n("hand_",s),{x*.74,1.41,-.04}},
             Body_Test_Bone{n("thigh_",s),"pelvis",{x*.09,.93,0}},
             Body_Test_Bone{n("thigh_twist_01_",s),n("thigh_",s),{x*.09,.75,0}},
-            Body_Test_Bone{n("calf_",s),n("thigh_",s),{x*.10,.50,.02}},
-            Body_Test_Bone{n("foot_",s),n("calf_",s),{x*.11,.08,-.02}},
-            Body_Test_Bone{n("ball_",s),n("foot_",s),{x*.12,.02,.12}},
+            Body_Test_Bone{n("calf_",s),n("thigh_",s),{x*.10,.50,-.02}},
+            Body_Test_Bone{n("foot_",s),n("calf_",s),{x*.11,.08,.02}},
+            Body_Test_Bone{n("ball_",s),n("foot_",s),{x*.12,.02,-.12}},
         )
     }
     bones:=make([dynamic]Body_Test_Bone,context.temp_allocator)
@@ -60,10 +60,10 @@ body_test_humanoid :: proc() -> Body_Test_Rig {
         Body_Test_Bone{"neck_01","spine_05",{0,1.48,0}},Body_Test_Bone{"neck_02","neck_01",{0,1.53,0}},
         Body_Test_Bone{"head","neck_02",{0,1.58,0}},
     )
-    side(&bones,"l",1);side(&bones,"r",-1)
+    side(&bones,"l",-1);side(&bones,"r",1)
     append(&bones,
-        Body_Test_Bone{"ik_foot_root","root",{}},Body_Test_Bone{"ik_foot_l","ik_foot_root",{.11,.08,0}},
-        Body_Test_Bone{"ik_hand_root","root",{}},Body_Test_Bone{"ik_hand_gun","ik_hand_root",{-.7,1.4,0}},
+        Body_Test_Bone{"ik_foot_root","root",{}},Body_Test_Bone{"ik_foot_l","ik_foot_root",{-.11,.08,0}},
+        Body_Test_Bone{"ik_hand_root","root",{}},Body_Test_Bone{"ik_hand_gun","ik_hand_root",{.7,1.4,0}},
         Body_Test_Bone{"interaction","root",{}},Body_Test_Bone{"center_of_mass","root",{0,1,0}},
     )
     return body_test_rig(bones[:])
@@ -91,7 +91,7 @@ body_detect_finds_the_parts_of_a_game_humanoid_and_its_axes :: proc(t:^testing.T
         testing.expectf(t,map_.confidence[part]>=.8,"%v confidence %v",part,map_.confidence[part])
     }
     testing.expect_value(t,map_.up,math.Vec3{0,1,0})
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,1})
+    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
     testing.expect(t,map_.axes_confidence>=.8)
     testing.expect(t,body_map_valid(map_,len(rig.parents)))
 
@@ -153,6 +153,7 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
     body_test_expect(t,mixamo,map_,.Knee_L,"mixamorig:LeftLeg")
     body_test_expect(t,mixamo,map_,.Toe_L,"mixamorig:LeftToeBase")
     body_test_expect(t,mixamo,map_,.Foot_R,"mixamorig:RightFoot")
+    // A rig from a source that faces the other way: its left is at +X and it faces +Z, so the detector is covered in both directions.
     testing.expect_value(t,map_.forward,math.Vec3{0,0,1})
 
     // Biped hangs the thighs from the spine, below the pelvis.
@@ -177,9 +178,9 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
     // Motion capture glues the side to the word and calls the wrist before the hand.
     capture:=body_test_rig({
         {"root","",{0,1,0}},{"lowerback","root",{0,1.1,0}},{"thorax","lowerback",{0,1.3,0}},{"neck","thorax",{0,1.5,0}},{"head","neck",{0,1.6,0}},
-        {"lhipjoint","root",{.05,.98,0}},{"lfemur","lhipjoint",{.1,.95,0}},{"ltibia","lfemur",{.1,.5,0}},{"lfoot","ltibia",{.1,.08,0}},{"ltoes","lfoot",{.1,.02,.12}},
-        {"rhipjoint","root",{-.05,.98,0}},{"rfemur","rhipjoint",{-.1,.95,0}},{"rtibia","rfemur",{-.1,.5,0}},{"rfoot","rtibia",{-.1,.08,0}},{"rtoes","rfoot",{-.1,.02,.12}},
-        {"lclavicle","thorax",{.05,1.45,0}},{"lhumerus","lclavicle",{.18,1.42,0}},{"lradius","lhumerus",{.45,1.42,0}},{"lwrist","lradius",{.7,1.42,0}},{"lhand","lwrist",{.75,1.42,0}},
+        {"lhipjoint","root",{-.05,.98,0}},{"lfemur","lhipjoint",{-.1,.95,0}},{"ltibia","lfemur",{-.1,.5,0}},{"lfoot","ltibia",{-.1,.08,0}},{"ltoes","lfoot",{-.1,.02,-.12}},
+        {"rhipjoint","root",{.05,.98,0}},{"rfemur","rhipjoint",{.1,.95,0}},{"rtibia","rfemur",{.1,.5,0}},{"rfoot","rtibia",{.1,.08,0}},{"rtoes","rfoot",{.1,.02,-.12}},
+        {"lclavicle","thorax",{-.05,1.45,0}},{"lhumerus","lclavicle",{-.18,1.42,0}},{"lradius","lhumerus",{-.45,1.42,0}},{"lwrist","lradius",{-.7,1.42,0}},{"lhand","lwrist",{-.75,1.42,0}},
     })
     map_=body_map_empty()
     if !testing.expect(t,body_detect(capture.parents,capture.names,capture.rest,capture.world,&map_)) {return}
@@ -196,13 +197,13 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
 body_detect_sides_unnamed_limbs_by_position_and_keeps_manual_parts :: proc(t:^testing.T) {
     rig:=body_test_rig({
         {"hips","",{0,1,0}},{"chest","hips",{0,1.3,0}},{"neck","chest",{0,1.5,0}},{"head","neck",{0,1.6,0}},
-        {"thigh_a","hips",{.1,.95,0}},{"shin_a","thigh_a",{.1,.5,0}},{"foot_a","shin_a",{.1,.08,0}},{"toe_a","foot_a",{.1,.02,.12}},
-        {"thigh_b","hips",{-.1,.95,0}},{"shin_b","thigh_b",{-.1,.5,0}},{"foot_b","shin_b",{-.1,.08,0}},{"toe_b","foot_b",{-.1,.02,.12}},
-        {"prop","hips",{0,1,.3}},
+        {"thigh_a","hips",{-.1,.95,0}},{"shin_a","thigh_a",{-.1,.5,0}},{"foot_a","shin_a",{-.1,.08,0}},{"toe_a","foot_a",{-.1,.02,-.12}},
+        {"thigh_b","hips",{.1,.95,0}},{"shin_b","thigh_b",{.1,.5,0}},{"foot_b","shin_b",{.1,.08,0}},{"toe_b","foot_b",{.1,.02,-.12}},
+        {"prop","hips",{0,1,-.3}},
     })
     map_:=body_map_empty()
     if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,1})
+    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
     body_test_expect(t,rig,map_,.Foot_L,"foot_a")
     body_test_expect(t,rig,map_,.Knee_R,"shin_b")
     testing.expect(t,map_.confidence[.Foot_L]<1 && map_.confidence[.Foot_L]>.5)
@@ -243,9 +244,9 @@ body_detect_and_queries_reject_inputs_of_other_sizes :: proc(t:^testing.T) {
 body_detect_keeps_hip_and_knee_of_a_leg_without_foot :: proc(t:^testing.T) {
     rig:=body_test_rig({
         {"hips","",{0,1,0}},{"chest","hips",{0,1.3,0}},{"head","chest",{0,1.6,0}},
-        {"left shoulder","chest",{.2,1.45,0}},{"left elbow","left shoulder",{.45,1.45,0}},{"left wrist","left elbow",{.7,1.45,0}},
-        {"right shoulder","chest",{-.2,1.45,0}},{"right elbow","right shoulder",{-.45,1.45,0}},{"right wrist","right elbow",{-.7,1.45,0}},
-        {"left hip","hips",{.1,.95,0}},{"left knee","left hip",{.1,.5,0}},{"right hip","hips",{-.1,.95,0}},{"right knee","right hip",{-.1,.5,0}},
+        {"left shoulder","chest",{-.2,1.45,0}},{"left elbow","left shoulder",{-.45,1.45,0}},{"left wrist","left elbow",{-.7,1.45,0}},
+        {"right shoulder","chest",{.2,1.45,0}},{"right elbow","right shoulder",{.45,1.45,0}},{"right wrist","right elbow",{.7,1.45,0}},
+        {"left hip","hips",{-.1,.95,0}},{"left knee","left hip",{-.1,.5,0}},{"right hip","hips",{.1,.95,0}},{"right knee","right hip",{.1,.5,0}},
     })
     map_:=body_map_empty()
     if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
@@ -254,5 +255,5 @@ body_detect_keeps_hip_and_knee_of_a_leg_without_foot :: proc(t:^testing.T) {
     body_test_expect(t,rig,map_,.Foot_L,"(none)")
     body_test_expect(t,rig,map_,.Shoulder_L,"left shoulder")
     body_test_expect(t,rig,map_,.Hand_R,"right wrist")
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,1})
+    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
 }

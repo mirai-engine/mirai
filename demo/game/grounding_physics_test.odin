@@ -72,7 +72,7 @@ when #config(MIRAI_AVATAR_TEST,false) {
             phase:=cmath.mod(age*speed,f32(4));x:=phase-1 if phase<2 else 3-phase
             if clip_name=="land" {x=0}
             f.state.local[0].position={x,x*.120579,0}
-            f.state.local[0].rotation=mm.quat_axis_angle({0,1,0},mm.PI*.5 if phase<2 else -mm.PI*.5)
+            f.state.local[0].rotation=mm.quat_axis_angle({0,1,0},-mm.PI*.5 if phase<2 else mm.PI*.5)
             lib.skeleton_world(skeleton,f.state.local[:],f.state.world[:])
             before:[2]mm.Transform
             probes:[2]mm.Vec3
@@ -148,7 +148,7 @@ grounding_fixture_init :: proc(f:^Grounding_Fixture,t:^testing.T,angle:f32=0.2) 
     core.table_settle(&f.transforms,&f.entities)
     parents:=[8]i32{-1,0,1,2,3,1,5,6}
     names:=[8]string{"","body","hip.l","knee.l","foot.l","hip.r","knee.r","foot.r"}
-    positions:=[8]mm.Vec3{{},{0,1.7,0},{-0.3,0,0},{0,-0.8,0.1},{0,-0.8,-0.1},{0.3,0,0},{0,-0.8,0.1},{0,-0.8,-0.1}}
+    positions:=[8]mm.Vec3{{},{0,1.7,0},{-0.3,0,0},{0,-0.8,-0.1},{0,-0.8,0.1},{0.3,0,0},{0,-0.8,-0.1},{0,-0.8,0.1}}
     for parent,i in parents {
         reference:=mm.Transform{positions[i],1,{1,1,1}}
         append(&f.state.parents,parent)
@@ -163,7 +163,7 @@ grounding_fixture_init :: proc(f:^Grounding_Fixture,t:^testing.T,angle:f32=0.2) 
         config.legs[i].sole_height=.1
         config.legs[i].hip=anim.bone_ref(names[2+i*3]);config.legs[i].knee=anim.bone_ref(names[3+i*3]);config.legs[i].foot=anim.bone_ref(names[4+i*3])
         config.legs[i].phase=f32(i)*0.5
-        config.legs[i].pole_offset={0,0,1}
+        config.legs[i].pole_offset={0,0,-1}
     }
     core.add(&f.configs,f.rig,config);core.table_settle(&f.configs,&f.entities)
     testing.expect(t,sim.world_init(&f.physics.world,{body_capacity=8,shape_capacity=8,contact_capacity=32,joint_capacity=0}))
@@ -369,20 +369,20 @@ grounding_corrects_released_procedural_reference_clearance_without_restoring_con
 grounding_changes_only_the_knee_plane_for_the_spider_step_corner :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
     _=grounding_spider_step_fixture(&f,t)
-    root:=mm.Transform{{-.29162979,-.050069,0},mm.quat_axis_angle({0,1,0},mm.PI*.5),{1,1,1}}
+    root:=mm.Transform{{-.29162979,-.050069,0},mm.quat_axis_angle({0,1,0},-mm.PI*.5),{1,1,1}}
     f.state.local[0]=root
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
     record:=&f.cache.records[0]
     support:=sim.body_transform(&f.physics.world,f.platform)
     contact:=lib.Surface_Contact{position={.29837227,-.02000001,-.9199996},normal={0,1,0},support=u64(f.platform),support_transform={support.p,support.q,{1,1,1}},valid=true}
-    testing.expect(t,lib.surface_anchor_set(&record.legs[7].anchor,contact))
+    testing.expect(t,lib.surface_anchor_set(&record.legs[0].anchor,contact))
     record.body_offset={0,.00005425,0};record.body_turn=mm.QUAT_IDENTITY
     copy(f.state.local[:],f.state.rest[:]);f.state.local[0]=root
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
-    hip,knee,foot:=record.bones[7][0],record.bones[7][1],record.bones[7][2]
+    hip,knee,foot:=record.bones[0][0],record.bones[0][1],record.bones[0][2]
     points:=[3]mm.Transform{f.state.world[hip],f.state.world[knee],f.state.world[foot]}
-    pole:=points[1].position+mm.quat_rotate(root.rotation,core.get(&f.configs,f.rig).legs[7].pole_offset)
+    pole:=points[1].position+mm.quat_rotate(root.rotation,core.get(&f.configs,f.rig).legs[0].pole_offset)
     for &point in points {point.position+=record.body_offset}
     original,ok:=lib.two_bone_ik(points[0],points[1],points[2],contact.position,pole)
     testing.expect(t,ok && original.reached)
@@ -391,11 +391,11 @@ grounding_changes_only_the_knee_plane_for_the_spider_step_corner :: proc(t:^test
     source:[26]mm.Transform;copy(source[:],f.state.local[:]);saved:=record^
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),1.0/60))
     _,blocked=anim.grounding_limb_hit(grounding_fixture_ground(&f),f.state.world[hip].position,f.state.world[knee].position,f.state.world[foot].position)
-    testing.expect(t,!blocked && record.blocked&128==0)
-    testing.expect(t,linalg.length(record.targets[7].position-contact.position)<.0001)
-    testing.expect(t,record.legs[7].anchor.active && record.legs[7].anchor.support==u64(f.platform) && !record.legs[7].swinging)
-    testing.expect(t,linalg.length(record.legs[7].anchor.position-contact.position)<.0001)
-    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[7].position)<.001)
+    testing.expect(t,!blocked && record.blocked&1==0)
+    testing.expect(t,linalg.length(record.targets[0].position-contact.position)<.0001)
+    testing.expect(t,record.legs[0].anchor.active && record.legs[0].anchor.support==u64(f.platform) && !record.legs[0].swinging)
+    testing.expect(t,linalg.length(record.legs[0].anchor.position-contact.position)<.0001)
+    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[0].position)<.001)
     testing.expect(t,abs(linalg.length(f.state.world[knee].position-f.state.world[hip].position)-linalg.length(f.state.rest[knee].position))<.0001)
     testing.expect(t,abs(linalg.length(f.state.world[foot].position-f.state.world[knee].position)-linalg.length(f.state.rest[foot].position))<.0001)
     expected:=record^;pose:[26]mm.Transform;copy(pose[:],f.state.world[:])
@@ -420,7 +420,7 @@ grounding_procedural_turn_release_keeps_final_segments_above_the_floor :: proc(t
         for frame in 0..<(len(startup) if variant==0 else 80) {
             copy(f.state.local[:],f.state.rest[:])
             turn:=min(max(frame-30,0),20)
-            f.state.local[0]={{1.172305-f32(turn)*.016667,-.050069,0},mm.quat_axis_angle({0,1,0},mm.PI*.5-f32(turn)*9*mm.RAD_PER_DEG),{1,1,1}}
+            f.state.local[0]={{1.172305-f32(turn)*.016667,-.050069,0},mm.quat_axis_angle({0,1,0},-mm.PI*.5-f32(turn)*9*mm.RAD_PER_DEG),{1,1,1}}
             if variant==0 {
                 f.state.local[0]={startup[frame],mm.quat_axis_angle({0,1,0},f32(frame+1)*9*mm.RAD_PER_DEG),{1,1,1}}
                 core.get(&f.configs,f.rig).global_contact=0 if frame<6 else 1
@@ -458,15 +458,15 @@ grounding_procedural_turn_release_keeps_final_segments_above_the_floor :: proc(t
 grounding_replants_unreachable_spider_stance_during_step_descent_without_stretching :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
     _=grounding_spider_step_fixture(&f,t)
-    root:=mm.Transform{{.124236,.09238827,0},mm.quat_axis_angle({0,1,0},-mm.PI*.5),{1,1,1}}
+    root:=mm.Transform{{.124236,.09238827,0},mm.quat_axis_angle({0,1,0},mm.PI*.5),{1,1,1}}
     f.state.local[0]=root
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),1.0/60))
     record:=&f.cache.records[0]
     support:=sim.body_transform(&f.physics.world,f.platform)
     old:=lib.Surface_Contact{position={1.463966,-.02,-.92},normal={0,1,0},support=u64(f.platform),support_transform={support.p,support.q,{1,1,1}},valid=true}
-    testing.expect(t,lib.surface_anchor_set(&record.legs[0].anchor,old))
-    record.legs[0].swinging=false;record.legs[0].weight=1;record.gait.phase=.5
+    testing.expect(t,lib.surface_anchor_set(&record.legs[7].anchor,old))
+    record.legs[7].swinging=false;record.legs[7].weight=1;record.gait.phase=.5
     record.body_offset={0,-.25,0};record.body_turn=mm.QUAT_IDENTITY
     record.root_position=root.position-mm.Vec3{-.69115,0,0}/60
     copy(f.state.local[:],f.state.rest[:]);f.state.local[0]=root
@@ -474,14 +474,14 @@ grounding_replants_unreachable_spider_stance_during_step_descent_without_stretch
     source:[26]mm.Transform;copy(source[:],f.state.local[:])
     saved:=record^
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),1.0/60))
-    hip,knee,foot:=record.bones[0][0],record.bones[0][1],record.bones[0][2]
-    residual:=linalg.length(f.state.world[foot].position-record.targets[0].position)
-    fmt.eprintf("Spider descent residual=%.6f anchor=%v body=%v\n",residual,record.legs[0].anchor.position,record.body_offset)
+    hip,knee,foot:=record.bones[7][0],record.bones[7][1],record.bones[7][2]
+    residual:=linalg.length(f.state.world[foot].position-record.targets[7].position)
+    fmt.eprintf("Spider descent residual=%.6f anchor=%v body=%v\n",residual,record.legs[7].anchor.position,record.body_offset)
     testing.expect(t,residual<.001)
-    testing.expect(t,record.legs[0].anchor.active && !record.legs[0].swinging && record.targets[0].weight==1)
-    testing.expect(t,record.legs[0].anchor.support==u64(f.platform))
-    testing.expect(t,linalg.length(record.legs[0].anchor.position-old.position)>.05 && linalg.length(record.legs[0].anchor.position-old.position)<.2)
-    testing.expect(t,abs(record.legs[0].anchor.position.y+.02)<.0001)
+    testing.expect(t,record.legs[7].anchor.active && !record.legs[7].swinging && record.targets[7].weight==1)
+    testing.expect(t,record.legs[7].anchor.support==u64(f.platform))
+    testing.expect(t,linalg.length(record.legs[7].anchor.position-old.position)>.05 && linalg.length(record.legs[7].anchor.position-old.position)<.2)
+    testing.expect(t,abs(record.legs[7].anchor.position.y+.02)<.0001)
     testing.expect(t,abs(linalg.length(f.state.world[knee].position-f.state.world[hip].position)-linalg.length(f.state.rest[knee].position))<.0001)
     testing.expect(t,abs(linalg.length(f.state.world[foot].position-f.state.world[knee].position)-linalg.length(f.state.rest[foot].position))<.0001)
     testing.expect(t,record.body_offset.y>=-.25001 && record.body_offset.y<=.25001)
@@ -496,9 +496,9 @@ grounding_replants_unreachable_spider_stance_during_step_descent_without_stretch
     sim.body_set_transform(&f.physics.world,f.platform,{.01,-.54,0},1)
     copy(f.state.local[:],source[:]);lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:])
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),1.0/60))
-    testing.expect_value(t,record.legs[0].anchor.support,u64(f.platform))
-    testing.expect(t,linalg.length(record.legs[0].anchor.position-expected.legs[0].anchor.position-mm.Vec3{.01,.01,0})<.0001)
-    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[0].position)<.001)
+    testing.expect_value(t,record.legs[7].anchor.support,u64(f.platform))
+    testing.expect(t,linalg.length(record.legs[7].anchor.position-expected.legs[7].anchor.position-mm.Vec3{.01,.01,0})<.0001)
+    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[7].position)<.001)
     sim.body_set_transform(&f.physics.world,f.platform,{0,-.55,0},1)
     wall:=sim.body_create(&f.physics.world,{type=.Static,position={1.1,.5,-.92}})
     desc:=sim.SHAPE_DESC_DEFAULT;desc.geometry=sim.Box{{.3,.5,.1}}
@@ -506,9 +506,9 @@ grounding_replants_unreachable_spider_stance_during_step_descent_without_stretch
     copy(f.state.local[:],source[:]);record^=saved
     lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:])
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),1.0/60))
-    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[0].position)>.02)
-    testing.expect(t,linalg.length(record.legs[0].anchor.position-old.position)<.0001)
-    testing.expect(t,record.targets[0].weight==1 && record.blocked&1!=0)
+    testing.expect(t,linalg.length(f.state.world[foot].position-record.targets[7].position)>.02)
+    testing.expect(t,linalg.length(record.legs[7].anchor.position-old.position)<.0001)
+    testing.expect(t,record.targets[7].weight==1 && record.blocked&128!=0)
     testing.expect_value(t,f.problems.count,0)
 }
 
@@ -665,7 +665,7 @@ grounding_animated_knee_plane_follows_the_corrected_pelvis :: proc(t:^testing.T)
     record:=&f.cache.records[0]
     testing.expect(t,record.placements[0].anchor.active && record.body_offset.y<-.39)
     corrected_hip:=source_hip+record.body_offset
-    expected:=linalg.normalize0(linalg.cross(record.targets[0].position-corrected_hip,mm.Vec3{0,0,1}))
+    expected:=linalg.normalize0(linalg.cross(record.targets[0].position-corrected_hip,mm.Vec3{0,0,-1}))
     actual:=linalg.normalize0(linalg.cross(f.state.world[4].position-f.state.world[2].position,f.state.world[3].position-f.state.world[2].position))
     testing.expect(t,linalg.dot(expected,actual)>.99999)
     testing.expect(t,linalg.length(f.state.world[4].position-record.targets[0].position)<.001)
@@ -816,7 +816,7 @@ grounding_animated_raised_contacts_keep_the_source_knee_bending_side_while_cross
     minimum_forward:f32=1
     maximum_step:f32
     for step in 0..<9 {
-        copy(f.state.local[:],f.state.rest[:]);f.state.local[0].position.z=-.14-.01*f32(step)
+        copy(f.state.local[:],f.state.rest[:]);f.state.local[0].position.z=.14+.01*f32(step)
         testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
         source:[8]mm.Transform;copy(source[:],f.state.local[:])
         saved:=f.cache.records[0]
@@ -825,7 +825,7 @@ grounding_animated_raised_contacts_keep_the_source_knee_bending_side_while_cross
         testing.expect(t,record.placements[0].anchor.active && record.placements[0].weight==1)
         testing.expect(t,linalg.length(f.state.world[4].position-record.targets[0].position)<.001)
         knee:=f.state.world[3].position
-        minimum_forward=min(minimum_forward,knee.z-f.state.world[2].position.z)
+        minimum_forward=min(minimum_forward,f.state.world[2].position.z-knee.z)
         if step>0 {maximum_step=max(maximum_step,linalg.length(knee-previous_knee))}
         previous_knee=knee
         expected:=record^

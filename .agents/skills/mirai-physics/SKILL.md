@@ -113,7 +113,7 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   moves a body sends a request to `Body_Requests`; whoever teleports it uses `core.place`; whoever
   imposes the pose of another owner writes `core.Pose_Target`; whoever owns a body of another
   library uses proxies. Nobody writes the `Transform` of a body.
-- A Character's body faces +Z (the glTF model front); its look faces -Z like a camera.
+- A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs

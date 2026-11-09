@@ -77,10 +77,12 @@ meshes with `Mesh_Builder`.
 ### Source space
 
 `Source_Space{meters_per_unit,axes,v_origin}`: `axes` says which source axis, with sign, is the
-engine's +X, +Y (up) and +Z (the front of a model). This makes the vertical axis, the front and the
-handedness explicit (a negative determinant is a mirror). `ENGINE_SPACE` is that of the engine and
-of glTF: meters, `{X,Y,Z}`, V from the top. USD with `upAxis = "Z"` is `{X,Z,Negative_Y}`; a
-left-handed source in centimeters with +Z up and +X to the front is `{0.01, {Negative_Y,Z,X}}`.
+engine's +X, +Y (up) and +Z (the back of a model). This makes the vertical axis, the front and the
+handedness explicit (a negative determinant is a mirror). `ENGINE_SPACE` is that of the engine:
+meters, `{X,Y,Z}`, V from the top. A source whose models face its +Z with +Y up, as glTF, turns half
+a turn about +Y: `FACING_PLUS_Z`, `{Negative_X,Y,Negative_Z}`, and `GLTF_SPACE`. USD with
+`upAxis = "Z"` is `{Negative_X,Z,Y}`; a left-handed source in centimeters with +Z up and +X to the
+front is `{0.01, {Y,Z,Negative_X}}`.
 
 The reader converts nothing; the import bakes the space once and what is written is already in
 meters and in the engine's axes, with no added nodes or negative scales:
@@ -95,9 +97,9 @@ meters and in the engine's axes, with no added nodes or negative scales:
 - **When the read ends** (`space_bake`): transforms of nodes and bones conjugated by the change of
   basis (`C T C⁻¹`), inverse binds, keys and tangents of the clips, and the range, radius and size
   of lights. A change of basis is a signed permutation: a TRS stays an exact TRS. A light points
-  to -Z of its node in the engine; a format whose lights look at -Z of their node in the source
-  gives that node `light_frame` of the basis on the right and its children its transpose on the
-  left, and one whose lights look at another axis orients them in its reader.
+  to -Z of its node in the engine: `space_bake` gives the node of a light `light_frame` of the basis
+  on the right and its children its transpose on the left, and a format whose lights look at
+  another axis than -Z of their node orients them in its reader.
 - **In materials**, with `Bottom`, the mapping of each map and `uv_scale`/`uv_offset` are
   conjugated by the inversion of v; the identity stays the same, with no negative zeros.
 - A space equal to the engine's touches nothing: the bytes are those of the source.
@@ -403,14 +405,14 @@ which animal it is.
   gives: the clips of that library name them by path. The animals come from
   `scripts/gen_rig_templates.py` (`animals.odin` and the samples of their surface in
   `cook/rig/animals/`), which takes them from the commit that `fetch_mesh2motion.py` pins.
-- **Humanoid fit** (`rig.humanoid`). The model stands on +Y and faces +Z, in a T- or A-pose with
+- **Humanoid fit** (`rig.humanoid`). The model stands on +Y and faces -Z, in a T- or A-pose with
   the arms away from the body. It is read by horizontal sections: the floor, the top, the crotch
   (the lowest section above the shins that crosses the center line) and the neck (the narrowest
   between the chest and the top); each joint has the rule that reproduces it on the reference
   model (`template.odin`), and the two sides are mirrored. What is not seen (covered crotch, arms
   stuck to the torso) is assumed by proportion with a warning that says which setting to pass.
   The body is detected by name when writing the `.skeleton`.
-- **Animal fit** (`rig.animal`, `register.odin`). The model is on +Y and faces +Z, like the
+- **Animal fit** (`rig.animal`, `register.odin`). The model is on +Y and faces -Z, like the
   template. The surface of the template, weighted to its bones, is deformed with its own skin until
   it covers the mesh: each joint turns, stretches the bone that ends in it and thickens what it
   carries, the two sides mirrored and the central ones only vertically, with pairs of closest
@@ -738,8 +740,8 @@ FBX 7 (2010 and later), binary and ASCII, through
 this path. FBX 6 files are rejected with their version.
 
 - **Space.** The reader declares that of `GlobalSettings`: `UnitScaleFactor` (centimeters if
-  missing) and the axes that ufbx normalizes as right, up and front, which are the engine's +X, +Y
-  and +Z; V from the bottom. ufbx converts nothing: the import bakes it.
+  missing) and the axes that ufbx normalizes as right, up and front: the engine's +X is its left,
+  +Y its up and +Z its back, half a turn so that the front lands on -Z; V from the bottom. ufbx converts nothing: the import bakes it.
 - **Hierarchy.** Each node under the ufbx root, with the local transform that already includes
   pivots, pre- and post-rotations and rotation order. Names lose their namespace
   (`mixamorig:Hips` is `Hips`), unless that makes two siblings equal; the path is those names from

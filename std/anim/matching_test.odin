@@ -15,15 +15,15 @@ match_test_rig :: proc(library:^Library) -> (rig:Match_Rig,clips:[3]Match_Clip,o
     @(static) names:[5]u64
     @(static) rest:=[5]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{.1,-.95,0},1,{1,1,1}},{{-.1,-.95,0},1,{1,1,1}},{{0,.7,0},1,{1,1,1}}}
     for name,i in ([5]string{"root","hips","foot_l","foot_r","head"}) {names[i]=base.name_hash(name)}
-    body:=body_map_empty();body.forward,body.up={0,0,1},{0,1,0}
+    body:=body_map_empty();body.forward,body.up={0,0,-1},{0,1,0}
     body.bones[.Pelvis],body.bones[.Foot_L],body.bones[.Foot_R],body.bones[.Head]=1,2,3,4
-    rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1,forward={0,0,1}}
+    rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1,forward={0,0,-1}}
     if !library_init(library,{max_keys=64,max_tracks=16,max_clips=8,max_markers=2}) {return}
     still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
-    left:=[4]Keyframe{{time=0,value={.1,-.95,.375,0}},{time=.5,value={.1,-.95,-.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,.375,0}}}
-    right:=[4]Keyframe{{time=0,value={-.1,-.95,-.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,.375,0}},{time=1,value={-.1,-.95,-.375,0}}}
-    up:=[2]Keyframe{{time=0,value={.1,-.6,.1,0}},{time=1,value={.1,-.6,.1,0}}}
+    left:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
+    right:=[4]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1,value={-.1,-.95,.375,0}}}
+    up:=[2]Keyframe{{time=0,value={.1,-.6,-.1,0}},{time=1,value={.1,-.6,-.1,0}}}
     descs:=[3]Clip_Desc{
         {name=base.name_hash("idle"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=still[:]},{target=names[3],property=.Position,keys=other[:]}}},
         {name=base.name_hash("walk"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=left[:]},{target=names[3],property=.Position,keys=right[:]}}},
@@ -46,7 +46,7 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     // Without frames that start or stop the walk, the trajectory has to outweigh the pose.
     weights:=MATCH_WEIGHTS_DEFAULT;weights[.Trajectory_Position]=3
     if !testing.expect(t,match_database_build(&db,&library,rig,clips[:],30,weights)==.None) {return}
-    testing.expect(t,len(db.ranges)==3 && db.ranges[0].speed<.05 && abs(db.ranges[1].speed-1.5)<.1 && db.ranges[1].travel.z>0,"the walk in place travels forward at the speed its feet push")
+    testing.expect(t,len(db.ranges)==3 && db.ranges[0].speed<.05 && abs(db.ranges[1].speed-1.5)<.1 && db.ranges[1].travel.z<0,"the walk in place travels forward at the speed its feet push")
     // Each row says how fast the body goes and where it was MATCH_PAST seconds before.
     for r in db.ranges[:2] {
         for row in int(r.first)..<int(r.first+r.count) {
@@ -63,17 +63,17 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     // From standing to a walk, at its own speed and at a half and a third of it by its rate: a
     // slowed walk costs what the body does, not more than one at its own rate; then back.
     for speed in ([3]f32{1.5,.75,.5}) {
-        for facing in ([2]math.Vec3{{0,0,1},{1,0,0}}) {
+        for facing in ([2]math.Vec3{{0,0,-1},{1,0,0}}) {
             request:=Match_Request{query=match_features(&db,int(db.ranges[0].first)),modes=1<<1,min_rate=.3,max_rate=1}
             request.trajectory=match_trajectory(facing*speed,facing*speed,20,20,facing,facing,0)
             path:=request.trajectory
-            testing.expect(t,abs(path.positions[2].y-speed)<1e-4 && abs(path.positions[2].x)<1e-4 && abs(path.directions[0].y-1)<1e-4,"the trajectory is in the frame of the facing")
+            testing.expect(t,abs(path.positions[2].y+speed)<1e-4 && abs(path.positions[2].x)<1e-4 && abs(path.directions[0].y+1)<1e-4,"the trajectory is in the frame of the facing")
             best,_,rate:=match_search(&db,request)
             testing.expect(t,match_range_of(&db,best)==1 && abs(rate*db.ranges[1].speed-speed)<.05,"the walk plays at the rate that covers the speed")
         }
     }
     standing:=Match_Request{query=match_features(&db,int(db.ranges[1].first)+7),modes=1<<1,min_rate=.5,max_rate=1}
-    standing.trajectory=match_trajectory({},{},20,20,{0,0,1},{},0)
+    standing.trajectory=match_trajectory({},{},20,20,{0,0,-1},{},0)
     best,_,_:=match_search(&db,standing)
     testing.expect_value(t,match_range_of(&db,best),0)
     standing.modes=1<<0
@@ -98,7 +98,7 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     if testing.expect(t,match_database_build(&db,&library,rig,rated[:],30,weights)==.None) {
         speed:=db.ranges[1].speed*1.8
         request:=Match_Request{query=match_features(&db,int(db.ranges[1].first)),modes=1<<1,min_rate=.5,max_rate=1}
-        request.trajectory=match_trajectory({0,0,speed},{0,0,speed},20,20,{0,0,1},{0,0,1},0)
+        request.trajectory=match_trajectory({0,0,-speed},{0,0,-speed},20,20,{0,0,-1},{0,0,-1},0)
         _,_,scaled:=match_query(&db,request,1)
         testing.expectf(t,abs(scaled-1.8)<.05,"the walk plays at 1.8 by its own rates: %v",scaled)
         rated[1].rates={}
@@ -114,18 +114,18 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     // A speed set by hand replaces the measured one along the direction the feet push.
     told:=clips;told[1].speed=3
     if testing.expect(t,match_database_build(&db,&library,rig,told[:],30,weights)==.None) {
-        testing.expectf(t,db.ranges[1].speed==3 && abs(db.ranges[1].travel.z-3)<1e-4,"walk told to go 3 m/s: %v",db.ranges[1])
+        testing.expectf(t,db.ranges[1].speed==3 && abs(db.ranges[1].travel.z+3)<1e-4,"walk told to go 3 m/s: %v",db.ranges[1])
         testing.expect(t,abs(db.ranges[0].speed-0)<.05)
     }
     // Feet that do not push (a jump in place) go where the body faces: idle turned a quarter to the
-    // right, told 2 m/s, goes right, whatever its supports measure.
+    // left, told 2 m/s, goes left, whatever its supports measure.
     quarter:=math.quat_axis_angle({0,1,0},cmath.PI/2)
     turned_keys:=[1]Keyframe{{value={imag(quarter),jmag(quarter),kmag(quarter),real(quarter)}}}
     turned_feet:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,.001,0}}}
     turned,turned_error:=clip_add(&library,{name=base.name_hash("turned"),tracks={{target=rig.skeleton.names[1],property=.Rotation,keys=turned_keys[:]},{target=rig.skeleton.names[2],property=.Position,keys=turned_feet[:]}}})
     jumps:=[2]Match_Clip{told[0],{clips={0=turned},modes=1<<0,entry=true,speed=2}}
     if testing.expect(t,turned_error==.None && match_database_build(&db,&library,rig,jumps[:],30,weights)==.None) {
-        testing.expectf(t,linalg.length(db.ranges[1].travel-{2,0,0})<1e-3,"a turned clip in place told 2 m/s goes %v",db.ranges[1].travel)
+        testing.expectf(t,linalg.length(db.ranges[1].travel-{-2,0,0})<1e-3,"a turned clip in place told 2 m/s goes %v",db.ranges[1].travel)
     }
     told[1].speed=-1
     testing.expect_value(t,match_database_build(&db,&library,rig,told[:],30,weights),Match_Build_Error.Invalid)
@@ -134,8 +134,8 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     // their blended pose: its rows are those of a clip keyed halfway between the two, and it
     // travels at half the speed of the walk.
     names:=rig.skeleton.names
-    half_left:=[4]Keyframe{{time=0,value={.1,-.95,.1875,0}},{time=.5,value={.1,-.95,-.1875,0}},{time=.75,value={.1,-.875,0,0}},{time=1,value={.1,-.95,.1875,0}}}
-    half_right:=[4]Keyframe{{time=0,value={-.1,-.95,-.1875,0}},{time=.25,value={-.1,-.875,0,0}},{time=.5,value={-.1,-.95,.1875,0}},{time=1,value={-.1,-.95,-.1875,0}}}
+    half_left:=[4]Keyframe{{time=0,value={.1,-.95,-.1875,0}},{time=.5,value={.1,-.95,.1875,0}},{time=.75,value={.1,-.875,0,0}},{time=1,value={.1,-.95,-.1875,0}}}
+    half_right:=[4]Keyframe{{time=0,value={-.1,-.95,.1875,0}},{time=.25,value={-.1,-.875,0,0}},{time=.5,value={-.1,-.95,-.1875,0}},{time=1,value={-.1,-.95,.1875,0}}}
     still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=.5,value={.1,-.95,0,0}}}
     other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=.5,value={-.1,-.95,0,0}}}
     halfway,e0:=clip_add(&library,{name=base.name_hash("halfway"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=half_left[:]},{target=names[3],property=.Position,keys=half_right[:]}}})
@@ -205,10 +205,10 @@ match_search_skips_runs_by_their_bounds_and_enters_a_mode_by_its_entry_clips :: 
 match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates :: proc(t:^testing.T) {
     Case :: struct {velocity,desired,facing,wanted:math.Vec3,acceleration,braking,turn:f32}
     cases:=[]Case{
-        {velocity={},desired={0,0,3},facing={0,0,1},wanted={0,0,1},acceleration=20,braking=20},
-        {velocity={0,0,3},desired={},facing={0,0,1},acceleration=8,braking=4},
-        {velocity={2,0,0},desired={0,0,-2.5},facing={1,0,0},wanted={0,0,-1},acceleration=6,braking=10,turn=cmath.PI},
-        {velocity={1,5,0},desired={1,0,0},facing={0,0,1},wanted={1,0,0},acceleration=0,braking=0},
+        {velocity={},desired={0,0,-3},facing={0,0,-1},wanted={0,0,-1},acceleration=20,braking=20},
+        {velocity={0,0,-3},desired={},facing={0,0,-1},acceleration=8,braking=4},
+        {velocity={2,0,0},desired={0,0,2.5},facing={1,0,0},wanted={0,0,1},acceleration=6,braking=10,turn=cmath.PI},
+        {velocity={1,5,0},desired={1,0,0},facing={0,0,-1},wanted={1,0,0},acceleration=0,braking=0},
     }
     for c in cases {
         path:=match_trajectory(c.velocity,c.desired,c.acceleration,c.braking,c.facing,c.wanted,c.turn)
@@ -237,25 +237,25 @@ match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates :
         }
     }
     // A wall ahead keeps the body and what it is asked for out of it: along the wall, it slides.
-    blocked:=match_trajectory({0,0,.5},{3,0,3},20,20,{0,0,1},{0,0,1},0,wall={0,0,-1})
+    blocked:=match_trajectory({0,0,-.5},{3,0,-3},20,20,{0,0,-1},{0,0,-1},0,wall={0,0,1})
     testing.expectf(t,abs(blocked.positions[2].y)<1e-4 && blocked.positions[2].x>2 && blocked.velocity=={},"a wall ahead stops what goes into it, not %v",blocked)
     // The past point is where the trail of the body says it was: half a second standing, then a sixth walking.
     trail:Match_Trail
     for _ in 0..<30 {match_trail_add(&trail,{},1.0/60)}
-    for _ in 0..<10 {match_trail_add(&trail,{0,0,3},1.0/60)}
-    walked:=match_trajectory({0,0,3},{0,0,3},20,20,{0,0,1},{0,0,1},0,trail=&trail)
-    steady:=match_trajectory({0,0,3},{0,0,3},20,20,{0,0,1},{0,0,1},0)
-    testing.expectf(t,linalg.length(walked.past-{0,-.5})<1e-4 && linalg.length(walked.velocity-{0,3})<1e-4,"a body that stood until a sixth of a second ago was half a metre back, not %v",walked.past)
-    testing.expectf(t,linalg.length(steady.past-{0,-1})<1e-4,"without a trail it went at its velocity, not %v",steady.past)
+    for _ in 0..<10 {match_trail_add(&trail,{0,0,-3},1.0/60)}
+    walked:=match_trajectory({0,0,-3},{0,0,-3},20,20,{0,0,-1},{0,0,-1},0,trail=&trail)
+    steady:=match_trajectory({0,0,-3},{0,0,-3},20,20,{0,0,-1},{0,0,-1},0)
+    testing.expectf(t,linalg.length(walked.past-{0,.5})<1e-4 && linalg.length(walked.velocity-{0,-3})<1e-4,"a body that stood until a sixth of a second ago was half a metre back, not %v",walked.past)
+    testing.expectf(t,linalg.length(steady.past-{0,1})<1e-4,"without a trail it went at its velocity, not %v",steady.past)
     // The same at any tick: many short ones, or one longer than the past.
     for ticks in ([2]int{240,1}) {
         fast:Match_Trail
         dt:=f32(1)/f32(ticks)
         if ticks>1 {for _ in 0..<ticks/2 {match_trail_add(&fast,{},dt)}}
-        for _ in 0..<max(ticks/6,1) {match_trail_add(&fast,{0,0,3},dt if ticks>1 else 1)}
-        moved:=match_trail_moved(fast,{0,0,3})
+        for _ in 0..<max(ticks/6,1) {match_trail_add(&fast,{0,0,-3},dt if ticks>1 else 1)}
+        moved:=match_trail_moved(fast,{0,0,-3})
         expected:=f32(.5) if ticks>1 else 1
-        testing.expectf(t,abs(moved.z-expected)<1e-3,"%d ticks a second: %.4f m in the past, not %.4f",ticks,moved.z,expected)
+        testing.expectf(t,abs(moved.z+expected)<1e-3,"%d ticks a second: %.4f m in the past, not %.4f",ticks,moved.z,expected)
     }
 }
 
@@ -264,8 +264,8 @@ match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates :
 match_test_steps :: proc(t:^testing.T,library:^Library,db:^Match_Database) -> bool {
     rig,clips,ok:=match_test_rig(library)
     if !ok {return false}
-    left:=[3]Keyframe{{time=0,value={.1,-.95,.375,0}},{time=.25,value={.1,-.95,0,0}},{time=.5,value={.1,-.95,-.375,0}}}
-    right:=[3]Keyframe{{time=0,value={-.1,-.95,-.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,.375,0}}}
+    left:=[3]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.25,value={.1,-.95,0,0}},{time=.5,value={.1,-.95,.375,0}}}
+    right:=[3]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}}}
     step,error:=clip_add(library,{name=base.name_hash("step"),tracks={{target=rig.skeleton.names[2],property=.Position,keys=left[:]},{target=rig.skeleton.names[3],property=.Position,keys=right[:]}}})
     if error!=.None {return false}
     all:=[4]Match_Clip{clips[0],clips[1],clips[2],{clips={0=step},modes=1<<1}}

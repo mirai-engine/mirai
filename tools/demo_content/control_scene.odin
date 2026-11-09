@@ -46,7 +46,7 @@ control_visual :: proc(s:^asset.Scene_Builder,body:base.Entity_Id,dog:bool) {
 control_spawns :: proc(s:^asset.Scene_Builder,name:string,prefab:base.Asset_Id,first:[3]f32) {
     for i in 0..<inp.LOCAL_CAPACITY {
         point:=spawn.Spawn_Point{prefab=prefab}
-        asset.builder_set(s,placed(s,fmt.tprintf("%s %d",name,i+1),first+{f32(i)*2,0,0},HALF_TURN,{1,1,1}),point)
+        asset.builder_set(s,placed(s,fmt.tprintf("%s %d",name,i+1),first+{f32(i)*2,0,0},1,{1,1,1}),point)
     }
 }
 
@@ -56,7 +56,7 @@ write_control_scene :: proc(o:^Out) {
     defer asset.builder_destroy(&s)
     demo:=game.Control_Demo{}
     asset.builder_set(&s,asset.builder_entity(&s,"Control demo"),demo)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.9,-0.6,0}),render.SUN_DIRECTION),LAMPLIT,1.3)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.9,-0.6,0}),SCENE_SUN),LAMPLIT,1.3)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.94,0.85},illuminance=lux(LAMPLIT,1.3),disc=disc}
     sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})

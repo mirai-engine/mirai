@@ -83,12 +83,12 @@ blade :: proc(f:^Fixture) {
     s[SLASH_1]={input={action=PRIMARY,on=.Pressed},tags=Ability_Tags(tag_bit(OPENER)),blocked_by=status_bit(STUNNED),duration=0.7}
     base.text_set(s[SLASH_1].action[:],"slash_1")
     s[SLASH_1].costs[0]={DURABILITY,2}
-    s[SLASH_1].windows[0]={from=0.25,to=0.35,cue=SLASH,hitbox={shape=.Box,center={0,1,1.5},size={1,1,1},effect={attribute=HEALTH,amount=-35,knockback={0,4,8},knockback_seconds=0.1}}}
+    s[SLASH_1].windows[0]={from=0.25,to=0.35,cue=SLASH,hitbox={shape=.Box,center={0,1,-1.5},size={1,1,1},effect={attribute=HEALTH,amount=-35,knockback={0,4,-8},knockback_seconds=0.1}}}
     s[SLASH_1].windows[1]={from=0.6,to=0.7,cancel_into=tag_bit(FOLLOW)|tag_bit(DASH)}
     s[SLASH_2]={input={action=PRIMARY,on=.Released},tags=tag_bit(FOLLOW),blocked_by=status_bit(STUNNED),duration=1}
     base.text_set(s[SLASH_2].action[:],"slash_2")
     s[SLASH_2].costs[0]={DURABILITY,2}
-    s[SLASH_2].windows[0]={from=0.1,to=0.16,hitbox={shape=.Sphere,center={0,1,1.2},size={1.5,0,0},effect={attribute=HEALTH,amount=-35,statuses=status_bit(STUNNED),seconds=1,use=ref(REACT)}}}
+    s[SLASH_2].windows[0]={from=0.1,to=0.16,hitbox={shape=.Sphere,center={0,1,-1.2},size={1.5,0,0},effect={attribute=HEALTH,amount=-35,statuses=status_bit(STUNNED),seconds=1,use=ref(REACT)}}}
     s[SLASH_2].windows[1]={from=0.9,to=1,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
     s[CHARGE]={input={action=SECONDARY,on=.Pressed},tags=tag_bit(DASH),blocked_by=status_bit(STUNNED),duration=1,hold=true,next=ref(DASH_STRIKE)}
     s[CHARGE].conditions[0]={attribute=CHARGES,at_least=1}
@@ -97,7 +97,7 @@ blade :: proc(f:^Fixture) {
     base.text_set(s[DASH_STRIKE].clip[:],"dash")
     s[DASH_STRIKE].costs[0]={CHARGES,1}
     s[DASH_STRIKE].costs[1]={DURABILITY,10}
-    s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,40},mix=.Override},hitbox={shape=.Box,center={0,1,1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}}
+    s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}}
     s[DASH_STRIKE].windows[1]={from=0.24,to=0.4,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
     s[REACT]={tags=tag_bit(REACTION),priority=10,duration=0.5}
     f.kit[0]={buffer=0.2,interrupts=tag_bit(REACTION)}
@@ -136,8 +136,8 @@ fixture_make :: proc(f:^Fixture) {
     core.add(&f.drivables,f.player,inp.Drivable{seat=f.seat})
     core.add(&f.characters,f.player,phys.character_default())
     core.add(&f.characters,f.dummy,phys.character_default())
-    // The player faces +X: its +Z is the world +X.
-    turn:=mm.Quat(linalg.quaternion_angle_axis_f32(math.PI/2,{0,1,0}))
+    // The player faces +X: its -Z is the world +X.
+    turn:=mm.Quat(linalg.quaternion_angle_axis_f32(-math.PI/2,{0,1,0}))
     core.add(&f.worlds,f.player,core.World_Transform{transform={rotation=turn,scale=1}})
     core.add(&f.worlds,f.dummy,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
     core.table_settle(&f.users,&f.es);core.table_settle(&f.seats,&f.es);core.table_settle(&f.drivables,&f.es)

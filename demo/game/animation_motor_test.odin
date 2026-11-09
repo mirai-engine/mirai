@@ -25,7 +25,7 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
     stopped:=animation_motor_input(delta,actor,10,0)
     clamped:=animation_motor_input({translation={100,0,0},rotation=1},actor,10,.1)
     context=saved
-    testing.expect(t,linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9-mm.PI))<1e-5 && input.move.y==0 && stopped.move=={})
+    testing.expect(t,linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9))<1e-5 && input.move.y==0 && stopped.move=={})
     testing.expect(t,abs(linalg.length(clamped.move)-1)<1e-5)
 }
 
@@ -69,7 +69,7 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     controlled,motor,hip,floor:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     character:=phys.character_default();character.move_relative_to=.Game
     walk:=phys.WALK_DEFAULT;walk.max_speed=5;walk.acceleration,walk.braking=1000,1000
-    for entity,i in ([2]core.Entity{controlled,motor}) {core.add(&f.inputs,entity,{look_yaw=mm.PI});core.add(&f.characters,entity,character);core.add(&f.walks,entity,walk);core.add(&f.colliders,entity,phys.collider_character());core.add(&f.transforms,entity,{position={f32(i)*2,0,0},rotation=1,scale={1,1,1}})}
+    for entity,i in ([2]core.Entity{controlled,motor}) {core.add(&f.inputs,entity,{});core.add(&f.characters,entity,character);core.add(&f.walks,entity,walk);core.add(&f.colliders,entity,phys.collider_character());core.add(&f.transforms,entity,{position={f32(i)*2,0,0},rotation=1,scale={1,1,1}})}
     core.add(&f.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&f.parents,hip,{entity=motor});core.add(&f.names,hip,core.name_make("hip"));core.add(&f.motors,motor,ANIMATION_MOTOR_DEFAULT)
     core.add(&f.transforms,floor,{position={0,-.1,0},rotation=1,scale={1,1,1}});collider:=phys.COLLIDER_DEFAULT;collider.size={5,.1,5};core.add(&f.colliders,floor,collider)
     source:=host.Content_Animation{id={0x815,0x816},generation=1,clip_count=1}
@@ -84,7 +84,7 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.characters,&f.entities);core.table_settle(&f.walks,&f.entities);core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.names,&f.entities);core.table_settle(&f.motors,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&f.roots,&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
     for i in 0..<16 {time.tick=u64(i);animation_input_physics(&f,time)}
-    core.get(&f.inputs,controlled).move={-.2,0,0}
+    core.get(&f.inputs,controlled).move={.2,0,0}
     anim.animation_play(core.get(&f.animations,motor),"advance",fade=0,loop=false)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT)
@@ -95,7 +95,7 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     animation_motor_drive(core.read(&f.motors),&f.inputs,core.read(&f.walks),core.read(&f.worlds),{&f.playback},time)
     context=saved
     published_control,_:=core.get(core.read(&f.inputs),controlled);published_motor,_:=core.get(core.read(&f.inputs),motor)
-    testing.expect(t,published_control.move.x==-.2 && abs(published_motor.move.x+.2)<1e-5)
+    testing.expect(t,published_control.move.x==.2 && abs(published_motor.move.x-.2)<1e-5)
     time.tick+=1;animation_input_physics(&f,time)
     after_control,_:=core.get(core.read(&f.transforms),controlled);after_motor,_:=core.get(core.read(&f.transforms),motor)
     testing.expect(t,after_control.position.x>before_control.position.x && after_motor.position.x>before_motor.position.x)

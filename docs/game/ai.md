@@ -32,7 +32,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   mover that must block ways is a `Nav_Obstacle`; a costlier or forbidden zone is a `Nav_Area`;
   jumps, ladders and doors are `Nav_Link`s.
 - Perception: `Perceiver.notices` is a `Teams` mask; the subject has a `Perceivable` with a team
-  and a collider, so the sight ray reaches it. Sight is a cone along the body's +Z.
+  and a collider, so the sight ray reaches it. Sight is a cone along the body's -Z.
 
 ## Recipes
 

@@ -33,12 +33,12 @@ import "mirai:std/serial"
 mirai_avatar_wish :: proc(tick:int) -> (wish:mm.Vec3,jump:bool) {
     switch {
     case tick<60: return {},false
-    case tick<180: return {0,0,1},false
+    case tick<180: return {0,0,-1},false
     case tick<240: return {},false
-    case tick<360: return {0,0,.5},false
+    case tick<360: return {0,0,-.5},false
     case tick<420: return {1,0,0},false
-    case tick<480: return {0,0,-1},false
-    case tick<660: return {0,0,1},tick==540
+    case tick<480: return {0,0,1},false
+    case tick<660: return {0,0,-1},tick==540
     }
     return {},false
 }
@@ -59,7 +59,7 @@ mirai_avatar_body_step :: proc(body:^Mirai_Body,wish:mm.Vec3,jump:bool,dt:f32) {
     } else {
         body.velocity.y-=9.81*dt
     }
-    if linalg.length(wish)>.001 {body.yaw=mm.angle_wrap(mm.angle_approach(body.yaw,cmath.atan2(wish.x,wish.z),MIRAI_AVATAR_TURN*dt))}
+    if linalg.length(wish)>.001 {body.yaw=mm.angle_wrap(mm.angle_approach(body.yaw,cmath.atan2(-wish.x,-wish.z),MIRAI_AVATAR_TURN*dt))}
     body.position+=body.velocity*dt
     if body.mode==MODE_FALLING && body.position.y<=0 && body.velocity.y<=0 {body.position.y,body.velocity.y,body.mode,body.jumped=0,0,MODE_WALKING,false}
 }
@@ -107,7 +107,7 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
         if speed:=linalg.length(wish)*MIRAI_AVATAR_WALK_SPEED;speed!=target {target,changed=speed,tick;metrics.changes+=1}
         // What the animation reads is what the body did in the last tick.
         flat:=mm.Vec3{body.velocity.x,0,body.velocity.z};speed:=linalg.length(flat)
-        facing:=mm.Vec3{cmath.sin(body.yaw),0,cmath.cos(body.yaw)}
+        facing:=mm.Vec3{-cmath.sin(body.yaw),0,-cmath.cos(body.yaw)}
         goals:=[1]Match_Goal{{rig=entity,mode=body.mode,velocity=body.velocity,desired=wish*MIRAI_AVATAR_WALK_SPEED,facing=wish,acceleration=MIRAI_AVATAR_ACCELERATION,braking=MIRAI_AVATAR_BRAKING,turn_rate=MIRAI_AVATAR_TURN}}
         start:=time.tick_now()
         copy(state.local[:],state.rest[:])
@@ -246,13 +246,13 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     left,right:=f.bones[1].target,f.bones[2].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
-    stride_l:=[4]lib.Keyframe{{time=0,value={.1,-.95,.375,0}},{time=.5,value={.1,-.95,-.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,.375,0}}}
-    stride_r:=[4]lib.Keyframe{{time=0,value={-.1,-.95,-.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,.375,0}},{time=1,value={-.1,-.95,-.375,0}}}
-    tucked:=[2]lib.Keyframe{{time=0,value={.1,-.6,.1,0}},{time=1,value={.1,-.6,.1,0}}}
-    rise_l:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.5,.2,0}}}
-    rise_r:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.5,.2,0}}}
-    over_l:=[2]lib.Keyframe{{time=0,value={.1,-.3,.5,0}},{time=2,value={.1,-.3,-.5,0}}}
-    over_r:=[2]lib.Keyframe{{time=0,value={-.1,-.3,.5,0}},{time=2,value={-.1,-.3,.5,0}}}
+    stride_l:=[4]lib.Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
+    stride_r:=[4]lib.Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1,value={-.1,-.95,.375,0}}}
+    tucked:=[2]lib.Keyframe{{time=0,value={.1,-.6,-.1,0}},{time=1,value={.1,-.6,-.1,0}}}
+    rise_l:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.5,-.2,0}}}
+    rise_r:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.5,-.2,0}}}
+    over_l:=[2]lib.Keyframe{{time=0,value={.1,-.3,-.5,0}},{time=2,value={.1,-.3,.5,0}}}
+    over_r:=[2]lib.Keyframe{{time=0,value={-.1,-.3,-.5,0}},{time=2,value={-.1,-.3,-.5,0}}}
     lift_l:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.5,0,0}}}
     lift_r:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.5,0,0}}}
     release:=[1]lib.Marker{{time=.35,id=0}}
@@ -304,7 +304,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
 @(private="file")
 match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,plays:[]Match_Play={},velocity:=mm.Vec3{},desired:=mm.Vec3{},wall:=mm.Vec3{},time_to_land:f32=0) -> bool {
     clear(&f.events.items);clear(&f.events.plays.items)
-    goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
+    goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,-1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
     copy(f.state.local[:],f.state.rest[:])
     output,programmed,ok:=program_resolve(f.state,f.animation,&f.app,nil,&f.graphs,dt,&f.events,&f.playback,&f.content,&f.problems,goals[:],plays)
     return ok && programmed && program_players(f.state,output,&f.content,f.animation,&f.events,&f.playback,dt,-1,nil) && program_pose(&f.playback,f.state,&f.content,f.animation,output,{})
@@ -405,9 +405,9 @@ match_play_hands_back_when_the_body_leaves_its_mode_and_reports_the_end_of_its_c
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
     // A clip that walks tells the direction it travels in, which the warping corrects from.
-    for _ in 0..<10 {testing.expect(t,match_step(&f,.1,GROUND,velocity={0,0,1.5},desired={0,0,1.5}))}
+    for _ in 0..<10 {testing.expect(t,match_step(&f,.1,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
     walking,_:=animation_match(&f.playback,f.rig)
-    testing.expectf(t,walking.speed>0 && linalg.length(walking.travel-mm.Vec3{0,0,1})<1e-3,"the walk travels along +Z: %v",walking.travel)
+    testing.expectf(t,walking.speed>0 && linalg.length(walking.travel-mm.Vec3{0,0,-1})<1e-3,"the walk travels along -Z: %v",walking.travel)
     // On the second tick: the blend starts from the pose of the first, with no history before it.
     testing.expect(t,match_step(&f,.1,GROUND) && match_step(&f,.1,GROUND,match_test_play(&f,"vault",GROUND)))
     forced,_:=animation_match(&f.playback,f.rig)
@@ -580,7 +580,7 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=.8))
         value,_:=animation_match(&f.playback,f.rig)
         testing.expectf(t,value.clip==base.name_hash("jump"),"standing, the jump in place, not %v",value)
-        clips:=match_test_fall(t,&f,dt,.8-dt,turn={0,0,3})
+        clips:=match_test_fall(t,&f,dt,.8-dt,turn={0,0,-3})
         value,_=animation_match(&f.playback,f.rig)
         // Within half a row of its marker and a tick at the fastest landing rate.
         testing.expectf(t,len(clips)==2 && clips[1]==base.name_hash("leap") && abs(value.time-.8)<=.5/30+2*dt+.01,"moving, the leap takes over and lands at %.3f s",value.time)
@@ -685,7 +685,7 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     content.profile.samples=samples
     if !testing.expect(t,match_check(content.profile)) {return}
     dt:=f32(1.0/60)
-    for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,.75},desired={0,0,.75}))}
+    for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
     group:=f.state.program.output.groups[0]
     if !testing.expectf(t,group.count==2 && group.mode==.Weighted,"the blend plays two clips together, not %d",group.count) {return}
     walk,idle:=group.leaves[0],group.leaves[1]
@@ -722,7 +722,7 @@ a_source_with_rates_of_its_own_follows_the_body_between_them :: proc(t:^testing.
     content.profile.clips[1].min_rate,content.profile.clips[1].max_rate=.5,1.5
     if !testing.expect(t,match_check(content.profile)) {return}
     dt:=f32(1.0/60)
-    for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,2.25},desired={0,0,2.25}))}
+    for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-2.25},desired={0,0,-2.25}))}
     value,_:=animation_match(&f.playback,f.rig)
     testing.expectf(t,value.clip==base.name_hash("walk") && abs(value.rate-1.5)<.01,"the walk plays at 1.5: %v",value)
     for refused in ([3][2]f32{{1.5,.5},{0,1},{-1,1}}) {
@@ -741,7 +741,7 @@ a_jump_nothing_forces_waits_the_hold_after_the_one_before :: proc(t:^testing.T) 
     last,gap,jumps:=-1,max(int),u32(0)
     for tick in 0..<120 {
         speed:=f32(1.5) if tick%2==0 else 0
-        testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,speed},desired={0,0,speed}))
+        testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,-speed}))
         value,_:=animation_match(&f.playback,f.rig)
         if value.jumps>jumps && tick>=10 {if last>=0 {gap=min(gap,tick-last)};last=tick}
         jumps=value.jumps
@@ -759,17 +759,17 @@ a_body_that_turns_around_does_not_stand_midway_and_one_against_a_wall_stands :: 
     dt:=f32(1.0/60)
     idle:=base.name_hash("idle")
     speed:=f32(1.4)
-    for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,speed},desired={0,0,speed}))}
+    for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,-speed}))}
     rested:=false
     for tick in 0..<30 {
         speed=max(speed-20*dt,-1.4)
         rested||=abs(speed)<.15
-        testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,speed},desired={0,0,-1.4}))
+        testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,1.4}))
         value,_:=animation_match(&f.playback,f.rig)
         testing.expectf(t,value.clip!=idle,"tick %d at %.2f m/s: a body that turns around walks on, not %v",tick,speed,value)
     }
     testing.expect(t,rested,"the turn passes through rest")
-    for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,desired={0,0,1.4},wall={0,0,-1}))}
+    for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,desired={0,0,-1.4},wall={0,0,1}))}
     value,_:=animation_match(&f.playback,f.rig)
     testing.expectf(t,value.clip==idle,"a body that pushes into a wall stands: %v",value)
 }
@@ -783,16 +783,16 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
         info:=f.graphs.matches[0].profile.info
         hips:=bone_resolve(f.state,bone_ref("hips"))
         dt:=f32(1.0/60)
-        for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,1.5},desired={0,0,1.5}))}
+        for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
         value,_:=animation_match(&f.playback,f.rig)
-        testing.expectf(t,linalg.length(value.lag)<.01 && abs(value.velocity.z-1.5)<.01,"a steady walk keeps the root on the body: %v",value)
-        wall:=mm.Vec3{0,0,-1} if blocked else {}
+        testing.expectf(t,linalg.length(value.lag)<.01 && abs(value.velocity.z+1.5)<.01,"a steady walk keeps the root on the body: %v",value)
+        wall:=mm.Vec3{0,0,1} if blocked else {}
         ahead,change:=f32(0),f32(0);velocity:=value.velocity
         for _ in 0..<60 {
             testing.expect(t,match_step(&f,dt,GROUND,wall=wall))
             value,_=animation_match(&f.playback,f.rig)
             testing.expectf(t,linalg.length(value.lag)<=info.lag+1e-5,"the root strays %.3f m, past its lag",linalg.length(value.lag))
-            ahead=max(ahead,value.lag.z);change=max(change,linalg.length(value.velocity-velocity));velocity=value.velocity
+            ahead=max(ahead,-value.lag.z);change=max(change,linalg.length(value.velocity-velocity));velocity=value.velocity
             rest:=f.state.local[hips].position
             match_lag_apply(f.state,mm.TRANSFORM_IDENTITY)
             testing.expect(t,linalg.length(f.state.local[hips].position-rest-value.lag)<1e-5,"the root of the pose moves by the lag")
@@ -805,7 +805,7 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
             testing.expectf(t,ahead>.02 && change<.5,"the root goes on %.3f m past the stop and slows by %.2f m/s a tick at most",ahead,change)
         }
         // Walking again, it closes on the body within the stride.
-        for _ in 0..<90 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,1.5},desired={0,0,1.5}))}
+        for _ in 0..<90 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
         value,_=animation_match(&f.playback,f.rig)
         testing.expectf(t,linalg.length(value.lag)<.01,"the root settles on the body as it walks: %v",value)
     }
@@ -837,7 +837,7 @@ a_jump_past_its_landing_marker_in_the_air_plays_on_unless_a_row_fits_better :: p
 @(private="file")
 match_step_with :: proc(f:^Match_Fixture,content:^host.Content_Animation,dt:f32,mode:u16,velocity:mm.Vec3) -> bool {
     clear(&f.events.items);clear(&f.events.plays.items)
-    goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=velocity,facing={0,0,1},acceleration=20,braking=20}}
+    goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=velocity,facing={0,0,-1},acceleration=20,braking=20}}
     copy(f.state.local[:],f.state.rest[:])
     output,programmed,ok:=program_resolve(f.state,f.animation,&f.app,nil,&f.graphs,dt,&f.events,&f.playback,content,&f.problems,goals[:],{})
     return ok && programmed && program_players(f.state,output,content,f.animation,&f.events,&f.playback,dt,-1,nil) && program_pose(&f.playback,f.state,content,f.animation,output,{})
@@ -854,9 +854,9 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     left,right:=f.bones[1].target,f.bones[2].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
-    stride_l:=[4]lib.Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.25,value={.1,-.8,0,0}},{time=.5,value={.1,-.95,.375,0}},{time=1,value={.1,-.95,-.375,0}}}
-    stride_r:=[4]lib.Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=.75,value={-.1,-.8,0,0}},{time=1,value={-.1,-.95,.375,0}}}
-    tucked:=[2]lib.Keyframe{{time=0,value={.1,-.6,.1,0}},{time=1,value={.1,-.6,.1,0}}}
+    stride_l:=[4]lib.Keyframe{{time=0,value={.1,-.95,.375,0}},{time=.25,value={.1,-.8,0,0}},{time=.5,value={.1,-.95,-.375,0}},{time=1,value={.1,-.95,.375,0}}}
+    stride_r:=[4]lib.Keyframe{{time=0,value={-.1,-.95,-.375,0}},{time=.5,value={-.1,-.95,.375,0}},{time=.75,value={-.1,-.8,0,0}},{time=1,value={-.1,-.95,-.375,0}}}
+    tucked:=[2]lib.Keyframe{{time=0,value={.1,-.6,-.1,0}},{time=1,value={.1,-.6,-.1,0}}}
     land:=[1]lib.Marker{{time=.8,id=0}}
     descs:=[4]lib.Clip_Desc{
         {name=base.name_hash("idle"),tracks={{target=left,property=.Position,keys=still[:]},{target=right,property=.Position,keys=other[:]}}},
@@ -875,7 +875,7 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_LIBRARY,kind=asset.KIND_ANIMATION,state=.Asset})
     f.assets.registry.by_id[MATCH_TEST_LIBRARY]=u32(len(f.assets.registry.files)-1)
 
-    dt:=f32(1)/30;walking:=mm.Vec3{0,0,1.5}
+    dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
     before:=[2]mm.Vec3{f.state.local[1].position,f.state.local[2].position}
     walked,_:=animation_match(&f.playback,f.rig)

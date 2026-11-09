@@ -24,7 +24,7 @@ FORMAT :: importer.Format{
     name="glTF",
     extensions={0=".gltf",1=".glb"},
     version=2,
-    space=importer.ENGINE_SPACE,
+    space=importer.GLTF_SPACE,
     sniff=sniff,
     read=read,
 }

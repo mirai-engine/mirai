@@ -25,7 +25,7 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
      again with `rig_crotch` or `rig_neck` (heights in meters in the model); arms stuck to the body
      have no fix by adjustment: the mesh has to separate them.
    - Animal: poor coverage says the template did not take the shape of the mesh; another family is
-     tried, or the mesh is reoriented (on +Y, facing +Z).
+     tried, or the mesh is reoriented (on +Y, facing -Z once imported).
    - Importing the same source again writes where the first time did, even if `folder` changes.
 4. **Placing it.** `prefab.instantiate` of the character prefab gives the rig entity. Its rest pose
    is that of the template with the lengths of the character.
@@ -50,7 +50,7 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
   leaves the pose the clip asks for without correcting the arm angle of the mesh.
 - Correcting a joint is reimporting with what is known about the body: `skeleton.bone.set` changes
   the rest, not where the skin was bound.
-- The model is on +Y and faces +Z, like the templates. A humanoid, standing and with the arms
+- The model is on +Y and faces -Z once imported, like the templates: a source that faces its +Z arrives so. A humanoid, standing and with the arms
   separated from the torso.
 
 ## Verification

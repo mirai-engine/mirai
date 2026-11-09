@@ -35,7 +35,7 @@ Without a `Character` (a scripted walker) the step tells the match what the body
 @(step="fixed",before="animation_sample")
 walkers :: proc(items:core.Read(Walker),requests:^anim.Animation_Requests) {
     for row in 0..<core.count(items) {
-        w:=core.at(items,row)   // velocity in world axes, m/s; the model faces +Z
+        w:=core.at(items,row)   // velocity in world axes, m/s; the model faces -Z
         anim.match_goal(requests,{rig=core.entity_at(items,row),mode=u16(phys.MODE_WALKING),
             velocity=w.velocity,desired=w.velocity,facing=w.facing})
     }
