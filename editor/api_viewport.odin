@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:encoding/base64"
 import "core:fmt"
 import "core:os"
+import "core:time"
 import img "mirai:cook/image"
 import "mirai:editor/api"
 import "mirai:host"
@@ -25,7 +26,7 @@ Api_Capture_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
     ui:bool `mirai:"optional,label=The whole window with the editor around what it shows, as the user sees it; false: the image alone"`,
     of:Api_Capture_Of `mirai:"optional,label=What the image alone shows. Game: the game of the caller through its camera with its own interfaces. Scene: what the viewport shows through its camera without panels or gizmos or grid or selection. Auto: Game while the caller has one playing, otherwise Scene"`,
-    frames:int `mirai:"optional,min=0,max=3600,label=Frames drawn first so that what builds up over time settles; 0: as many as the image needs. At most 120 of a game"`,
+    frames:int `mirai:"optional,min=0,max=3600,label=Frames drawn first so that what builds up over time settles; 0: as many as the image needs and its textures streamed in. At most 120 of a game"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Not of a game: the step of each frame of a manual editor"`,
     seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
     generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
@@ -45,6 +46,18 @@ Api_Capture_Params :: struct {
 // A game draws at most these frames for an image.
 API_CAPTURE_GAME_FRAMES :: 120
 
+// The longest a capture of automatic frames waits for textures to stream in.
+API_CAPTURE_TEXTURES_WAIT :: 10*time.Second
+
+// What the renderer counted of the image it drew last.
+@(private)
+Api_Capture_Seen :: struct {
+    textures_pending:int,
+    instances_drawn:int,
+    instances_culled:int,
+    instances_occluded:int,
+}
+
 Api_Capture_Result :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
     width:int `mirai:"label=Pixels of the image"`,
@@ -53,9 +66,14 @@ Api_Capture_Result :: struct {
     rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
     cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
+    textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out"`,
+    instances_drawn:int `mirai:"optional,label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
+    instances_culled:int `mirai:"optional,label=Instances outside the view of its camera or hidden from it"`,
+    instances_occluded:int `mirai:"optional,label=Instances in its view behind something drawn"`,
 }
 Api_Capture_Cell :: struct {
     tick:u64 `mirai:"label=The tick of the game it shows"`,
+    instances_drawn:int `mirai:"label=Instances drawn in it"`,
     at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
 }
 
@@ -108,10 +126,11 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
     pixels:[]u8
     width,height:int
+    wait:=p.frames==0?API_CAPTURE_TEXTURES_WAIT:time.Duration(0)
     if game {
         drawn:bool
-        pixels,width,height,drawn=api_play_pixels(s,r,p.frames>0?p.frames:API_CAPTURE_SETTLE)
-        if !drawn {api.call_fail(call,api.SERVER_ERROR,"The game could not be drawn");return}
+        pixels,width,height,drawn=api_play_pixels(s,r,p.frames>0?p.frames:API_CAPTURE_SETTLE,wait=wait)
+        if !drawn {api.call_failf(call,api.SERVER_ERROR,"The game could not be drawn: %s",host.app_draw_problem(s.app));return}
         if size:=api_capture_size({i32(width),i32(height)},p.width,p.height);int(size.x)!=width || int(size.y)!=height {
             scaled,made:=api_pixels_scale(pixels,width,height,size,s.app.allocator)
             delete(pixels,s.app.allocator)
@@ -127,16 +146,18 @@ api_capture :: proc(s:^Session,call:^api.Call) {
             gpu.renderer_pipelines_wait(s.app.renderer)
             api_frames(s,1,p.dt)
         }
-        if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",s.app.renderer.error);return}
+        if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",host.app_draw_problem(s.app));return}
+        if p.ui && wait>0 {api_capture_textures_settle(s,p.dt,wait)}
         if p.generated && !gpu.renderer_stats(s.app.renderer).generated {
             api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing, frame_generation on in Graphics_Settings and a frame with history")
             return
         }
         size:=api_capture_size(api_capture_viewport(s.app),p.width,p.height)
         read:bool
-        pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated)
-        if !read {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read",size.x,size.y);return}
+        pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated,wait)
+        if !read {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read: %s",size.x,size.y,host.app_draw_problem(s.app));return}
     }
+    seen:=api_capture_seen(s.app)
     if region!={} {
         cropped,error:=img.image_crop({pixels=pixels,width=width,height=height},region,s.app.allocator)
         delete(pixels,s.app.allocator)
@@ -147,14 +168,43 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         if error!=.None {api.call_fail(call,api.SERVER_ERROR,"The region could not be cut: out of memory");return}
         pixels,width,height=cropped.pixels,cropped.width,cropped.height
     }
-    api_capture_answer(s,call,path,pixels,width,height,given=="")
+    api_capture_answer(s,call,path,pixels,width,height,given=="",seen)
+}
+
+// Window frames until no texture of what the window shows is pending or the
+// wait runs out, then enough for what builds up over frames to settle with them.
+@(private)
+api_capture_textures_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
+    started:=time.tick_now()
+    waited:=false
+    for gpu.textures_update(s.app.renderer)>0 && time.tick_since(started)<wait && !s.quit {
+        api_frames(s,1,dt)
+        waited=true
+    }
+    if waited {api_frames(s,API_CAPTURE_SETTLE,dt)}
+}
+
+// What the renderer counted of the image just read from it.
+@(private)
+api_capture_seen :: proc(app:^host.App) -> Api_Capture_Seen {
+    stats:=gpu.renderer_stats_of_last_frame(app.renderer)
+    return {int(stats.textures_pending),int(stats.visible_instances),int(stats.culled_instances),int(stats.occluded_instances)}
+}
+
+@(private)
+api_capture_seen_write :: proc(out:^serial.Writer,seen:Api_Capture_Seen) {
+    api.write_int(out,"textures_pending",i64(seen.textures_pending))
+    api.write_int(out,"instances_drawn",i64(seen.instances_drawn))
+    api.write_int(out,"instances_culled",i64(seen.instances_culled))
+    api.write_int(out,"instances_occluded",i64(seen.instances_occluded))
 }
 
 // What capture answers for one image; shown: MCP also gives the image.
 @(private)
-api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool) {
+api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool,seen:Maybe(Api_Capture_Seen)=nil) {
     serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path)
     api.write_int(call.out,"width",i64(width));api.write_int(call.out,"height",i64(height))
+    if counted,known:=seen.?;known {api_capture_seen_write(call.out,counted)}
     serial.write_u8(call.out,'}')
     if shown {api.call_image(call,path)}
 }
@@ -188,9 +238,9 @@ api_pixels_scale :: proc(pixels:[]u8,width,height:int,size:[2]i32,allocator:runt
 
 // The game of a run drawn now in pixels of the allocator of the application: off the screen
 // through its camera, with the interfaces of the game and nothing of the editor; with window, the
-// Play of the user as the next frames of the window.
+// Play of the user as the next frames of the window. wait: as app_capture_world, off the screen.
 @(private)
-api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false) -> (pixels:[]u8,width,height:int,drawn:bool) {
+api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,drawn:bool) {
     if r.owner==0 && window {
         before:=s.app.stats.frames_drawn
         api_frames(s,frames,0)
@@ -199,7 +249,7 @@ api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false) -> (pixels:[
     }
     input:=s.app.ui_input
     s.app.ui_input=run_ui_input(r,input)
-    pixels,width,height,drawn=host.app_capture_world(s.app,r.world,frames,allocator=s.app.allocator)
+    pixels,width,height,drawn=host.app_capture_world(s.app,r.world,frames,allocator=s.app.allocator,wait=wait)
     s.app.ui_input=input
     s.view_cut=true
     return
@@ -207,16 +257,24 @@ api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false) -> (pixels:[
 
 // Writes pixels of the allocator of the application as a PNG on a job; with a
 // window the editor goes on drawing frames meanwhile, so it does not stop for
-// the compression. A manual editor waits without advancing.
+// the compression. A manual editor waits without advancing. Why path could
+// not be written, "" when it was; path outlives the frames drawn.
 @(private)
-api_png_write :: proc(s:^Session,path:string,pixels:[]u8,width,height:int) -> bool {
+api_png_write :: proc(s:^Session,path:string,pixels:[]u8,width,height:int) -> (problem:string) {
     w:host.Png_Write
     host.app_png_write_start(s.app,&w,path,pixels,width,height)
-    if st:=api_state(s);st==nil || st.manual {return host.app_png_write_wait(s.app,&w)}
-    for {
-        if finished,written:=host.app_png_write_poll(s.app,&w);finished {return written}
-        if api_frames(s,1,0)==0 {return host.app_png_write_wait(s.app,&w)}
+    error:os.Error
+    if st:=api_state(s);st==nil || st.manual {
+        error=host.app_png_write_wait(s.app,&w)
+    } else {
+        for {
+            finished:bool
+            if finished,error=host.app_png_write_poll(s.app,&w);finished {break}
+            if api_frames(s,1,0)==0 {error=host.app_png_write_wait(s.app,&w);break}
+        }
     }
+    if error!=nil {return fmt.tprintf("%s could not be written: %s",path,os.error_string(error))}
+    return ""
 }
 
 // A PNG file as the image content of an MCP tool.

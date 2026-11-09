@@ -216,4 +216,10 @@ the_detail_camera_sees_the_textures_of_the_views_of_the_window :: proc(t: ^testi
 		testing.expectf(t, seen[0].position == (game.position if on else editor.position), "the window sees from the game camera: %v", on)
 		testing.expect(t, seen[1].position == editor.position, "a view into a texture sees from its own")
 	}
+	// An offscreen frame leaves what the window sees unless it asks for its textures to stream.
+	textures_views_record(r, {camera = editor, views = views[:1]})
+	textures_views_record(r, {camera = game, offscreen = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.views[0].position == editor.position, "a preview does not move what textures are seen from")
+	textures_views_record(r, {camera = game, offscreen = true, streamed = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.view_count == 1 && r.textures.residency.views[0].position == game.position, "a capture that waits for its textures is seen from its camera")
 }

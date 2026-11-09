@@ -197,7 +197,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     if text,ok:=call(file.port,"engine.diagnostics",struct{min_level:string,limit:int}{"Warning",20});ok {
         _=json.unmarshal_string(text,&diagnostics,allocator=context.temp_allocator)
     }
-    Size :: struct {width,height:int}
+    Size :: struct {width,height,textures_pending,instances_drawn,instances_culled,instances_occluded:int}
     size:Size
     _=json.unmarshal_string(captured,&size,allocator=context.temp_allocator)
 
@@ -205,6 +205,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     Report :: struct {
         png:string,
         width,height:int,
+        textures_pending,instances_drawn,instances_culled,instances_occluded:int,
         validation_errors,loader_errors:int,
         validation_messages:[]string,
         console:[]Entry,
@@ -213,7 +214,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         diff:Maybe(image.Image_Diff),
         repeat:Maybe(Repeat),
     }
-    report:=Report{png=out,width=size.width,height=size.height,validation_errors=diagnostics.validation.errors,loader_errors=diagnostics.validation.loader_errors,validation_messages=diagnostics.validation.messages,console=diagnostics.console.entries,reference=reference}
+    report:=Report{png=out,width=size.width,height=size.height,textures_pending=size.textures_pending,instances_drawn=size.instances_drawn,instances_culled=size.instances_culled,instances_occluded=size.instances_occluded,validation_errors=diagnostics.validation.errors,loader_errors=diagnostics.validation.loader_errors,validation_messages=diagnostics.validation.messages,console=diagnostics.console.entries,reference=reference}
     picture,load_error:=image.image_load(out)
     if load_error!=nil {fmt.eprintfln("mirai capture: could not read %s: %s",out,image.error_message(load_error));return 1}
     report.stats,_=image.image_stats(picture,{})
@@ -317,8 +318,10 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         if text,ok:=call(port,"engine.diagnostics",struct{min_level:string,limit:int}{"Error",8});ok {_=json.unmarshal_string(text,&d,allocator=context.temp_allocator)}
         return d.validation.errors,d.validation.messages
     }
+    // What the renderer counted of a capture.
+    Counted :: struct {textures_pending,instances_drawn:int}
     // A capture of the view from its scene loaded anew, the clock at zero.
-    shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string) -> bool {
+    shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string,counted:^Counted=nil) -> bool {
         if _,ok:=call(port,"scene.load",struct{path:string}{v.scene});!ok {return false}
         if len(v.position)==3 {
             camera:=make(json.Object,context.temp_allocator)
@@ -328,7 +331,8 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
             if _,ok:=call(port,"camera.set",camera);!ok {return false}
         }
         Capture :: struct {path,of:string,ui:bool,width,height,frames:int,seconds:f64}
-        _,ok:=call(port,"capture",Capture{out,"Scene",false,plan.size.x,plan.size.y,max(plan.frames,1),0})
+        text,ok:=call(port,"capture",Capture{out,"Scene",false,plan.size.x,plan.size.y,max(plan.frames,1),0})
+        if ok && counted!=nil {_=json.unmarshal_string(text,counted,allocator=context.temp_allocator)}
         return ok
     }
     Result :: struct {
@@ -336,6 +340,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         validation_errors:int,
         validation_messages:[]string,
         ssim,max_error,threshold,repeat_ssim:f64,
+        textures_pending,instances_drawn:int,
         written,passed:bool,
         problem:string,
     }
@@ -346,7 +351,9 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         r:=Result{name=v.name,threshold=v.threshold}
         r.png,_=strings.replace_all(join(references,fmt.tprintf("%s.capture.png",v.name)),"\\","/")
         r.reference,_=strings.replace_all(join(references,fmt.tprintf("%s.png",v.name)),"\\","/")
-        if !shoot(file.port,plan,v,r.png) {return 1}
+        counted:Counted
+        if !shoot(file.port,plan,v,r.png,&counted) {return 1}
+        r.textures_pending,r.instances_drawn=counted.textures_pending,counted.instances_drawn
         errors,messages:=errors_now(file.port)
         r.validation_errors,r.validation_messages=errors-before,messages
         before=errors

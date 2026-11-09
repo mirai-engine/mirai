@@ -222,6 +222,8 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     sized,sized_width,sized_height,sized_read:=api_capture_image(&session,false,api_capture_size(app.drawable,64,0))
     defer delete(sized,app.allocator)
     if !testing.expect(t,ui_read && read && sized_read,app.renderer.error) {return}
+    seen:=api_capture_seen(app)
+    testing.expectf(t,seen.instances_drawn>0 && seen.instances_culled==0,"the camera sees the cube: %v",seen)
     testing.expect_value(t,[2]int{ui_width,ui_height},[2]int{128,96})
     testing.expect_value(t,[2]int{width,height},[2]int{128,96})
     testing.expect_value(t,[2]int{sized_width,sized_height},[2]int{64,48})
@@ -235,6 +237,11 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     testing.expect_value(t,count(alone,outline_pixel),0)
     testing.expectf(t,count(alone,cube_pixel)>200,"the world is drawn through the camera: %d pixels",count(alone,cube_pixel))
     testing.expectf(t,count(sized,cube_pixel)>50,"and at the size asked for: %d pixels",count(sized,cube_pixel))
+    host.app_camera_set(app,{position={0,1.2,4},forward={0,0,1},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
+    away,_,_,away_read:=api_capture_image(&session,false,{64,48})
+    defer delete(away,app.allocator)
+    seen=api_capture_seen(app)
+    testing.expectf(t,away_read && seen.instances_drawn==0 && seen.instances_culled>0,"the camera looks away from what is there: %v",seen)
     testing.expect_value(t,api_capture_size({1280,720},0,360),[2]i32{640,360})
     testing.expect_value(t,api_capture_size({1280,720},0,0),[2]i32{1280,720})
     app.scene={0,24,app.drawable.x,app.drawable.y-24}

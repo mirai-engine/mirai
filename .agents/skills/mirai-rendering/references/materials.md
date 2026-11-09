@@ -191,8 +191,8 @@ A texture of an asset resides with the levels that the distance of what shows it
   rows name it in a map. A texture of a Surface program, whose uv its source decides, asks for all
   its levels while something shows it. One that nothing in the scene shows (particles, UI, sky,
   decals, previews) keeps the levels it has unless the pool asks for them.
-- **From where.** The views of the last frame that the window showed (not captures or offscreen
-  frames) and the
+- **From where.** The views of the last frame that the window showed (not offscreen frames, except
+  those of a capture that waits for its textures, `Frame_Desc.streamed`) and the
   [streaming sources](../../mirai-gameplay/references/libraries.md#sources-and-residency)
   of the drawn world with their advanced point (`texture_sources`), seen as from the perspective
   view of the largest scale.

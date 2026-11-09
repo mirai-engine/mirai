@@ -131,7 +131,8 @@ positions misses both.
 1. `mirai capture [project] --out x.png` with the scene and the camera; without `--reference` it
    measures the image (`stats`).
 2. If it exits with 1, read `validation_messages` and `console` of the JSON before repeating (or
-   `engine.diagnostics`).
+   `engine.diagnostics`). If the image looks wrong, `textures_pending` above 0 is streaming that
+   had not finished, and `instances_drawn` at 0 is a camera that sees nothing.
 3. Against a reference: `--reference r.png --threshold 0.95` (SSIM); `mirai image diff
    --out diff.png` shows where it differs.
 
@@ -240,7 +241,9 @@ positions misses both.
   the test methods.
 - The paths of `capture`: `mirai test editor
   capture_paths_take_git_bash_drives_and_are_relative_to_the_project
-  a_capture_makes_its_folder_and_says_why_it_cannot_write`.
+  a_capture_makes_its_folder_and_says_why_it_cannot_write`; its wait for textures: `mirai test
+  host a_capture_goes_on_while_textures_are_pending_until_its_wait_runs_out`; what it counted, with
+  GPU: `capture_without_ui_draws_the_world_alone_at_the_size_asked_for`.
 - An editor method: the tests of its `editor/api_<topic>_test.odin` with
   `mirai test editor <test...>`; profiling, `editor/profile_test.odin` and the recorder in
   `std/base` and `std/jobs`, and for loads

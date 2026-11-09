@@ -7,6 +7,7 @@ import "core:mem"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -21,6 +22,7 @@ Api_Filmstrip_Cell :: struct {
     tick:u64,
     at:[2]f32, // where the followed entity shows, in window points
     seen:bool, // the entity was in front of the camera
+    instances_drawn:int,
 }
 
 @(private)
@@ -34,6 +36,7 @@ Api_Filmstrip :: struct {
     sheet:img.Sheet,
     cells:[]Api_Filmstrip_Cell,
     taken:int,
+    counted:Api_Capture_Seen, // of the last cell, with the most textures any cell found pending
 }
 
 // The filmstrip capture asks for, checked; nil when it asks for one image.
@@ -117,14 +120,14 @@ api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:st
     sheet:=strip.sheet
     // The write takes the pixels.
     strip.sheet={}
-    if !api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height) {api.call_fail(call,api.SERVER_ERROR,"The filmstrip could not be written");return}
-    serial.text_write_raw(call.out,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator))
+    if problem:=api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    serial.text_write_raw(call.out,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator,strip.counted))
     if shown {api.call_image(call,path)}
 }
 
 // What a filmstrip answers besides its image: where it is, its grid and the tick of each cell.
 @(private)
-api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator) -> string {
+api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator,counted:=Api_Capture_Seen{}) -> string {
     out:serial.Writer
     serial.writer_init(&out,1024,allocator)
     serial.text_write_raw(&out,`{"path":`);serial.text_write_string(&out,path)
@@ -137,13 +140,16 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
     for &cell,i in cells {
         if i>0 {serial.write_u8(&out,',')}
         serial.text_write_raw(&out,`{"tick":`);serial.text_write_uint(&out,cell.tick)
+        api.write_int(&out,"instances_drawn",i64(cell.instances_drawn))
         if followed {
             api.write_key(&out,"at")
             if cell.seen {api.write_list(&out,cell.at[:])} else {serial.text_write_raw(&out,"null")}
         }
         serial.write_u8(&out,'}')
     }
-    serial.text_write_raw(&out,"]}")
+    serial.write_u8(&out,']')
+    api_capture_seen_write(&out,counted)
+    serial.write_u8(&out,'}')
     return string(serial.writer_bytes(&out))
 }
 
@@ -156,13 +162,17 @@ api_filmstrip_take :: proc(s:^Session,data:rawptr,_:core.World_Ref,ran:int) -> s
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {return "The game ended"}
     pixels,width,height,drawn:=api_play_pixels(s,r,strip.frames,strip.window)
-    if !drawn {return "The game could not be drawn"}
+    if !drawn {return fmt.tprintf("The game could not be drawn: %s",host.app_draw_problem(s.app))}
     defer delete(pixels,s.app.allocator)
     w:=run_ref(s,r)
     density:=s.app.ui_input.scale>0?s.app.ui_input.scale:1
     view:=[4]f32{0,0,f32(width),f32(height)}
     if r.owner==0 && strip.window && s.viewport.size.x>0 && s.viewport.size.y>0 {view={s.viewport.origin.x*density,s.viewport.origin.y*density,s.viewport.size.x*density,s.viewport.size.y*density}}
     cell:=&strip.cells[strip.taken]
+    counted:=api_capture_seen(s.app)
+    counted.textures_pending=max(counted.textures_pending,strip.counted.textures_pending)
+    strip.counted=counted
+    cell.instances_drawn=counted.instances_drawn
     if t:=core.world_storage_of(w,core.Time);t!=nil {cell.tick=t.tick}
     region:img.Region
     switch {

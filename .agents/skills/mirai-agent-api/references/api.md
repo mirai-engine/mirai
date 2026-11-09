@@ -107,7 +107,8 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
 `.mirai/captures` of the project, and the JSON says where) uses the project's session or
 opens one and closes it: it loads the scene, places the camera (`camera.set`), captures the world
 without UI (`capture` with `of:"Scene"`), reads `engine.diagnostics` and measures the image.
-It prints a JSON with the validation, the console, `stats` and, with `--reference`, `diff`
+It prints a JSON with the counters of the `capture`, the validation, the console, `stats` and,
+with `--reference`, `diff`
 ([`mirai image`](image.md)). It exits with 1 if there are validation errors or if the SSIM against
 `--reference` is below `--threshold`. Each capture starts the window clock at zero (`seconds` of
 `capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads
@@ -115,7 +116,8 @@ the scene again (that of `--scene` or the document's file, if it has no unsaved 
 to the same camera, captures and gives its SSIM; what remains is what two renderers do not share
 and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--view` shows a mode of
 `editor.view_mode.list` and when done restores the one the session had; `collision` is not visible
-because the capture carries no lines.
+because the capture carries no lines. `--frames 0` waits for the textures to stream in as
+`capture` does; the frames it draws by default are exact, so two runs draw the same.
 
 `mirai capture [project] --plan` captures each view of the project's `captures.mirai` (size,
 frames and, per view, scene, camera and `threshold`) from its scene loaded again and compares it
