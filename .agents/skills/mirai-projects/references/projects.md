@@ -230,9 +230,10 @@ with the project library.
   `Aggressive`) it is a single LLVM module, as the shipped game compiles it; with `--dev`
   (`minimal`) or `None`, one module per package.
 - Currency: the fingerprint joins its sources, the declarations of the plugins it imports, the
-  hashes of the engine declarations that `engine.stamp` stores (a runtime counts only those of the
-  engine runtime), the compiler and the flags. An engine change that declares the same compiles no
-  plugin.
+  hashes `engine.stamp` stores for the engine packages those sources and declarations import, the
+  compiler and the flags. An engine change that declares the same compiles no plugin, and a
+  changed declaration compiles only the parts that reach its package, directly or through another.
+  A part that reaches a package without a hash follows every build of the engine.
 - The stale ones are declared first, in order, and each compiles as soon as the ones it links are
   published; the project's, after all. They run at once up to `compilers_at_once()` (by cores and
   free memory; `MIRAI_COMPILERS` sets it) inside a single [turn](build.md#turns-between-processes).
@@ -261,7 +262,9 @@ Each mode has its folder: switching between them compiles nothing.
   control and cinematics are [plugin libraries](#plugin-libraries). `decl/` has their
   declarations, the `mirai` collection of the project libraries, with the `#load` relative to each
   declaration so the cache serves any checkout. `engine.stamp` stores the fingerprints of each
-  part and of its declarations and whether the runtime compilation was left half done.
+  part, one hash per package (of its declarations and of those of the engine packages they import,
+  directly or not: what whoever imports it compiles against) and whether the runtime compilation
+  was left half done.
 - Programs `mirai-editor` and `mirai-player`, which load the `editor` or `play` library of the
   project ([host](../../mirai-core/references/host.md#project-libraries)), and `mirai-import`,
   that of `mirai import` over the editor library
