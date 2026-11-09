@@ -187,9 +187,9 @@ blend_triangulate :: proc(points:[]math.Vec2,allocator:mem.Allocator,failure:^Bl
     hull:[BLEND_MAX_SAMPLES*2]u16
     count:=blend_hull(points,hull[:])
     if count<3 {return nil,false}
-    triangles:=make([dynamic]Blend_Triangle,0,2*len(points),allocator)
+    triangles,no_triangles:=make([dynamic]Blend_Triangle,0,2*len(points),allocator)
     defer delete(triangles)
-    if cap(triangles)<2*len(points) {if failure!=nil {failure^=.Out_Of_Memory};return nil,false}
+    if no_triangles!=nil {if failure!=nil {failure^=.Out_Of_Memory};return nil,false}
     used:[BLEND_MAX_SAMPLES]bool
     for index in hull[:count] {used[index]=true}
     for i in 1..<count-1 {append(&triangles,Blend_Triangle{{hull[0],hull[i],hull[i+1]}})}

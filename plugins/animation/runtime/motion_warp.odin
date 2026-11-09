@@ -341,7 +341,7 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animati
         }
         if kept!=i {runtime.instances[kept]=instance};runtime.rows[index]=i32(kept+1);kept+=1
     }
-    resize(&runtime.instances,kept)
+    base.truncate(&runtime.instances,kept)
     motion_take_requests(runtime,requests,problems)
     return true
 }

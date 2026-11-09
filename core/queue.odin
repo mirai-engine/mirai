@@ -15,8 +15,7 @@ QUEUE_FIRST_ROOM :: 64 // of a queue asked for before its owner served it
 // Pushes within the room the owner reserved: a queue of requests never grows
 // in a stable frame. What does not fit is counted for queue_serve.
 offer :: proc(q:^Queue($T),item:T) {
-    if cap(q.items)==0 {_=reserve(&q.items,QUEUE_FIRST_ROOM)}
-    if len(q.items)>=cap(q.items) {q.dropped+=1;return}
+    if cap(q.items)==0 && reserve(&q.items,QUEUE_FIRST_ROOM)!=nil || len(q.items)>=cap(q.items) {q.dropped+=1;return}
     append(&q.items,item)
 }
 

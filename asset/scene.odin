@@ -368,14 +368,16 @@ scene_value_table :: proc(scene:^Scene,name:string,$T:typeid) -> (table:int,inde
 scene_set :: proc(scene:^Scene,id:base.Entity_Id,name:string,value:^$T) -> Error {
     table,index,same:=scene_value_table(scene,name,T) or_return
     stored:=scene.doc.tables[table].columns[1]
-    image:=make([]u8,stored.size,scene.doc.allocator)
+    image,no_image:=make([]u8,stored.size,scene.doc.allocator)
     defer delete(image,scene.doc.allocator)
+    layout:=types_layout(scene.types,index)
+    if no_image!=nil || layout==nil {return .Out_Of_Memory}
     if same {
-        serial.value_write(types_layout(scene.types,index),image,value,1)
+        serial.value_write(layout,image,value,1)
     } else {
         // The file keeps the layout it was written with: the value goes into it by field names.
         normal:[size_of(T)]u8
-        serial.value_write(types_layout(scene.types,index),normal[:],value,1)
+        serial.value_write(layout,normal[:],value,1)
         migration:serial.Migration
         migration_error:=serial.migration_init(&migration,&scene.types.schema,index,&scene.doc.schema,stored.type,scene.doc.allocator)
         defer serial.migration_destroy(&migration)
@@ -405,19 +407,24 @@ scene_fill :: proc(scene:^Scene,name:string,rows:[]u32,values:[]$T) -> Error {
     for row,at in rows {
         if int(row)>=scene_entity_count(scene) || at>0 && rows[at-1]>=row {return .Invalid}
     }
+    layout:=types_layout(scene.types,index)
+    if layout==nil {return .Out_Of_Memory}
     document_resize(&scene.doc,table,len(rows)) or_return
-    serial.value_write(types_layout(scene.types,index),scene.doc.tables[table].columns[1].data,raw_data(values),len(values))
+    serial.value_write(layout,scene.doc.tables[table].columns[1].data,raw_data(values),len(values))
     copy(component_rows(scene,table),rows)
     return .None
 }
 
 // Removes entities and, with descendants, everything under them: their
 // components, the instances rooted at them and what those recorded. What
-// named them names none.
-scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=true) -> (removed:int) {
+// named them names none. Out_Of_Memory removes nothing. What it works with
+// is temporary, so that it also takes back what a call without memory added.
+scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=true) -> (removed:int,error:Error) {
     count:=scene_entity_count(scene)
-    allocator:=scene.doc.allocator
-    gone:=make([]bool,count,allocator);defer delete(gone,allocator)
+    allocator:=context.temp_allocator
+    gone,no_gone:=make([]bool,count,allocator)
+    remap,no_remap:=make([]i32,count,allocator)
+    if no_gone!=nil || no_remap!=nil {return 0,.Out_Of_Memory}
     for id in ids {
         if row,found:=scene_entity_find(scene,id);found {gone[row]=true}
     }
@@ -431,14 +438,14 @@ scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=tru
             }
         }
     }
-    remap:=make([]i32,count,allocator);defer delete(remap,allocator)
     kept:=0
     for row in 0..<count {
         if gone[row] {remap[row]=-1;removed+=1}
         else {remap[row]=i32(kept);kept+=1}
     }
-    if removed==0 {return 0}
-    left_ids:=make(map[base.Entity_Id]bool,removed,allocator);defer delete(left_ids)
+    if removed==0 {return 0,.None}
+    left_ids,no_left:=make(map[base.Entity_Id]bool,removed,allocator)
+    if no_left!=nil {return 0,.Out_Of_Memory}
     for id,row in scene_ids(scene) {
         if !gone[row] {continue}
         delete_key(&scene.index,id)
@@ -485,7 +492,7 @@ scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=tru
         scene_instance_forget(scene,rootless)
     }
     scene_records_prune(scene)
-    return removed
+    return removed,.None
 }
 
 // Empties the references of the components to the entities given.
@@ -523,21 +530,21 @@ scene_records_prune :: proc(scene:^Scene) {
         scene.members[left]=member
         left+=1
     }
-    resize(&scene.members,left)
+    base.truncate(&scene.members,left)
     left=0
     for override in scene.overrides {
         if !(override.entity in scene.index) || !known(scene,override.instance) {continue}
         scene.overrides[left]=override
         left+=1
     }
-    resize(&scene.overrides,left)
+    base.truncate(&scene.overrides,left)
     left=0
     for record in scene.off {
         if !(record.entity in scene.index) {continue}
         scene.off[left]=record
         left+=1
     }
-    resize(&scene.off,left)
+    base.truncate(&scene.off,left)
 }
 
 // Removes an instance and those it brought in from the records, not its
@@ -669,7 +676,8 @@ scene_adopt :: proc(scene:^Scene) -> Error {
     for &name in scene_names(scene) {name[len(name)-1]=0}
     // Every chain of parents ends: a row is clear once its parent is.
     parents:=scene_parents(scene)
-    state:=make([]u8,count,doc.allocator);defer delete(state,doc.allocator)
+    state,no_state:=make([]u8,count,doc.allocator);defer delete(state,doc.allocator)
+    if no_state!=nil {return .Out_Of_Memory}
     for start in 0..<count {
         row:=start
         for state[row]==0 {
@@ -830,25 +838,26 @@ scene_component_read :: proc(a:^Asset,component:^Scene_Component,schema:^serial.
 }
 
 // Ids that are not 0 nor repeated, parents that exist without cycles, names
-// that end, and records that refer to what the scene has.
-scene_view_check :: proc(view:Scene_View,allocator:=context.allocator) -> bool {
-    index:=make(map[base.Entity_Id]u32,len(view.ids),allocator)
+// that end, and records that refer to what the scene has: Corrupt otherwise.
+scene_view_check :: proc(view:Scene_View,allocator:=context.allocator) -> Error {
+    index,no_index:=make(map[base.Entity_Id]u32,len(view.ids),allocator)
     defer delete(index)
+    state,no_state:=make([]u8,len(view.ids),allocator)
+    defer delete(state,allocator)
+    if no_index!=nil || no_state!=nil {return .Out_Of_Memory}
     for id,row in view.ids {
-        if id==0 || id in index {return false}
+        if id==0 || id in index {return .Corrupt}
         index[id]=u32(row)
     }
-    state:=make([]u8,len(view.ids),allocator)
-    defer delete(state,allocator)
     for start in 0..<len(view.ids) {
         row:=start
         for state[row]==0 {
             state[row]=1
             if view.parents[row]==0 {break}
             parent,known:=index[view.parents[row]]
-            if !known {return false}
+            if !known {return .Corrupt}
             row=int(parent)
-            if state[row]==1 {return false}
+            if state[row]==1 {return .Corrupt}
         }
         for row=start;state[row]==1; {
             state[row]=2
@@ -857,23 +866,23 @@ scene_view_check :: proc(view:Scene_View,allocator:=context.allocator) -> bool {
         }
     }
     for &name in view.names {
-        if name[len(name)-1]!=0 {return false}
+        if name[len(name)-1]!=0 {return .Corrupt}
     }
-    if view.info.root!=0 && !(view.info.root in index) {return false}
+    if view.info.root!=0 && !(view.info.root in index) {return .Corrupt}
     for instance,at in view.instances {
-        if instance.id==0 || !(instance.root in index) || instance.outer>=instance.id {return false}
+        if instance.id==0 || !(instance.root in index) || instance.outer>=instance.id {return .Corrupt}
         for other in view.instances[:at] {
-            if other.id==instance.id {return false}
+            if other.id==instance.id {return .Corrupt}
         }
     }
     for member in view.members {
-        if !(member.entity in index) {return false}
+        if !(member.entity in index) {return .Corrupt}
     }
     for override in view.overrides {
-        if !(override.entity in index) || !override_valid(override) {return false}
+        if !(override.entity in index) || !override_valid(override) {return .Corrupt}
     }
     for record in view.off {
-        if !(record.entity in index) {return false}
+        if !(record.entity in index) {return .Corrupt}
     }
-    return true
+    return .None
 }

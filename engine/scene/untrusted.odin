@@ -122,7 +122,7 @@ untrusted_check :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,rules:Untr
     registry:=&app.assets.registry
     view,view_error:=asset.scene_view(a,&app.assets.types)
     if view_error!=.None {return view_error==.Out_Of_Memory?.Out_Of_Memory:.Corrupt}
-    if !asset.scene_view_check(view,context.temp_allocator) {return .Corrupt}
+    if checked:=asset.scene_view_check(view,context.temp_allocator);checked!=.None {return .Out_Of_Memory if checked==.Out_Of_Memory else .Corrupt}
     if rules.max_entities>0 && len(view.ids)>rules.max_entities {
         refused^={number=f64(len(view.ids)),limit=f64(rules.max_entities)}
         return .Too_Large

@@ -490,17 +490,24 @@ mtl_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 	if encoder == nil {delete(taken, d.allocator); set_error(d, "newArgumentEncoderWithArguments failed for a texture table of %d entries", capacity); return false}
 	default_view := pool_get(&d.textures, base.Handle(d.table_default)).handle
 	before := len(d.table_views)
-	resize(&d.table_textures, capacity)
-	resize(&d.table_views, capacity)
+	buffers: [TEXTURE_TABLE_COPIES]^MTL.Buffer
+	grown := false
+	defer if !grown {
+		for made in buffers {mtl_release(made)}
+		mtl_release(encoder)
+		delete(taken, d.allocator)
+		base.truncate(&d.table_textures, before)
+		base.truncate(&d.table_views, before)
+	}
+	if resize(&d.table_textures, capacity) != nil || resize(&d.table_views, capacity) != nil || reserve(&d.table_resident, capacity + 1) != nil {
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
 	for &view in d.table_views[before:] {view = default_view}
 	length := MTL.ArgumentEncoder_encodedLength(encoder)
-	buffers: [TEXTURE_TABLE_COPIES]^MTL.Buffer
 	for &buffer in buffers {
 		buffer = MTL.Device_newBufferWithLength(d.device, length, {.CPUCacheModeWriteCombined, .HazardTrackingModeTracked})
 		if buffer == nil {
-			for made in buffers {mtl_release(made)}
-			mtl_release(encoder)
-			delete(taken, d.allocator)
 			set_error(d, "newBufferWithLength(%d) failed for the texture table", length)
 			return false
 		}
@@ -508,13 +515,16 @@ mtl_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 		MTL.ArgumentEncoder_setArgumentBuffer(encoder, buffer, 0)
 		MTL.ArgumentEncoder_setTextures(encoder, d.table_views[:], NS.Range{TEXTURE_TABLE_SLOT, NS.UInteger(capacity)})
 	}
+	if !table_changes_reset(&d.table_changes, capacity) {
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
+	grown = true
 	for buffer in d.table_buffers {mtl_defer(d, buffer)}
 	mtl_defer(d, d.table_encoder)
 	d.table_encoder, d.table_buffers = encoder, buffers
 	delete(d.table_taken, d.allocator)
 	d.table_taken = taken
-	table_changes_reset(&d.table_changes, capacity)
-	reserve(&d.table_resident, capacity + 1)
 	mtl_table_resident(d)
 	return true
 }

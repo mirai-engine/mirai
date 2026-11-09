@@ -1,5 +1,6 @@
 package asset
 
+import "base:runtime"
 import "core:mem"
 import "core:os"
 import "core:testing"
@@ -116,7 +117,7 @@ scene_builds_saves_and_loads_entities_and_components :: proc(t:^testing.T) {
     testing.expect(t,len(a.dependencies)==2 && a.dependencies[0]==base.Asset_Id{7,7})
     view,error:=scene_view(&a,&types)
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,scene_view_check(view))
+    testing.expect(t,scene_view_check(view)==.None)
     testing.expect(t,len(view.ids)==3 && view.ids[1]==child && view.parents[1]==root && view.orders[2]==1 && serial.text_field(view.names[2][:])=="Other")
     testing.expect_value(t,len(view.components),5)
     for &component in view.components {
@@ -200,7 +201,8 @@ scene_removes_entities_with_what_hangs_from_them :: proc(t:^testing.T) {
             scene_set(&scene,id,LIGHT,&light)
         }
     }
-    testing.expect_value(t,scene_entities_remove(&scene,{2}),2)
+    removed,remove_error:=scene_entities_remove(&scene,{2})
+    testing.expect(t,removed==2 && remove_error==.None)
     testing.expect_value(t,scene_entity_count(&scene),3)
     ids:=scene_ids(&scene)
     testing.expect(t,ids[0]==1 && ids[1]==4 && ids[2]==5)
@@ -219,9 +221,11 @@ scene_removes_entities_with_what_hangs_from_them :: proc(t:^testing.T) {
     testing.expect(t,!old)
 
     // Without its descendants, what hung from an entity is left without parent.
-    testing.expect_value(t,scene_entities_remove(&scene,{1},false),1)
+    removed,remove_error=scene_entities_remove(&scene,{1},false)
+    testing.expect(t,removed==1 && remove_error==.None)
     testing.expect_value(t,scene_entity(&scene,0),Entity_Record{4,0,1,"e"})
-    testing.expect_value(t,scene_entities_remove(&scene,{77}),0)
+    removed,remove_error=scene_entities_remove(&scene,{77})
+    testing.expect(t,removed==0 && remove_error==.None)
 }
 
 @(private="file")
@@ -258,7 +262,7 @@ scene_refuses_files_whose_tables_contradict_each_other :: proc(t:^testing.T) {
         if !testing.expect_value(t,asset_open(&a,bytes),Error.None,loc) {return}
         defer asset_close(&a)
         view,view_error:=scene_view(&a,types)
-        testing.expect(t,(view_error!=.None || !scene_view_check(view))==view_fails,"the view agrees with the document",loc=loc)
+        testing.expect(t,(view_error!=.None || scene_view_check(view)!=.None)==view_fails,"the view agrees with the document",loc=loc)
     }
     ids :: proc(doc:^Document,column:int) -> []base.Entity_Id {return mem.slice_data_cast([]base.Entity_Id,doc.tables[0].columns[column].data)}
     rows :: proc(doc:^Document) -> []u32 {
@@ -392,7 +396,7 @@ prefab_instances_copy_entities_and_point_references_at_the_copies :: proc(t:^tes
     testing.expect_value(t,asset_open(&asset,serial.writer_bytes(&w)),Error.None)
     defer asset_close(&asset)
     view,_:=scene_view(&asset,&types)
-    testing.expect(t,scene_view_check(view) && len(view.instances)==2 && len(view.members)==6 && len(view.overrides)==1 && view.overrides[0].entity==bulb)
+    testing.expect(t,scene_view_check(view)==.None && len(view.instances)==2 && len(view.members)==6 && len(view.overrides)==1 && view.overrides[0].entity==bulb)
 
     testing.expect_value(t,scene_instance_remove(&loaded,a),Error.None)
     testing.expect(t,scene_entity_count(&loaded)==5 && len(loaded.instances)==1 && len(loaded.members)==3 && len(loaded.overrides)==0)
@@ -579,7 +583,7 @@ prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none ::
     testing.expect_value(t,asset_open(&stored,serial.writer_bytes(&w)),Error.None)
     defer asset_close(&stored)
     view,_:=scene_view(&stored,&types)
-    testing.expect(t,scene_view_check(view))
+    testing.expect(t,scene_view_check(view)==.None)
 }
 
 @(test)
@@ -697,7 +701,7 @@ components_turned_off_survive_saving_and_go_with_their_component :: proc(t:^test
     file:Asset
     testing.expect_value(t,asset_load(&file,path),Error.None)
     view,error:=scene_view(&file,&types)
-    testing.expect(t,error==.None && scene_view_check(view))
+    testing.expect(t,error==.None && scene_view_check(view)==.None)
     testing.expect(t,len(view.off)==1 && view.off[0]==Component_Off{a,light_hash()})
     testing.expect_value(t,len(view.components),1) // the records are not a component
     asset_close(&file)
@@ -950,3 +954,62 @@ a_scene_view_read_again_takes_no_more_memory :: proc(t:^testing.T) {
     }
     testing.expect_value(t,len(a.owned),owned)
 }
+
+// What scenes and documents ask their allocator for, with the memory ending
+// at each request in turn: the call fails whole with Out_Of_Memory, and with
+// memory enough it goes through.
+@(test)
+scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
+    failure:=Type_Allocation_Failure{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{type_failure_allocator,&failure}
+    types:Types;types_init(&types);defer types_destroy(&types)
+    prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
+    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
+    if !testing.expect_value(t,scene_write(&prefab,&out),Error.None) {return}
+    file:Asset
+    if !testing.expect_value(t,asset_open(&file,serial.writer_bytes(&out)),Error.None) {return}
+    defer asset_close(&file)
+    view,view_error:=scene_view(&file,&types)
+    if !testing.expect_value(t,view_error,Error.None) {return}
+    Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset}
+    for call in Call {
+        scene:Scene
+        if !testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0xb,0xb},limited),Error.None) {return}
+        defer scene_destroy(&scene)
+        _,root,placed:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
+        if !testing.expect_value(t,placed,Error.None) {return}
+        before:=scene_entity_count(&scene)
+        done,refused:=false,false
+        for served in 0..<512 {
+            error:Error
+            failure.remaining=served
+            switch call {
+            case .View_Check:
+                error=scene_view_check(view,limited)
+            case .Instantiate:
+                _,_,error=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
+            case .Set:
+                value:=transform(9,9,9)
+                error=scene_set(&scene,root,"Transform",&value)
+            case .Remove:
+                _,error=scene_entities_remove(&scene,{root})
+            case .Diff:
+                w:serial.Writer;serial.writer_init(&w)
+                _,error=document_diff(&scene.doc,&prefab.doc,&w)
+                serial.writer_destroy(&w)
+            case .From_Asset:
+                doc:Document
+                if error=document_from_asset(&doc,&file,limited);error==.None {document_destroy(&doc)}
+            }
+            failure.remaining=max(int)
+            if done=error==.None;done {break}
+            refused=true
+            if !testing.expectf(t,error==.Out_Of_Memory,"%v with %d requests served: %v",call,served,error) {break}
+            if call!=.Remove && call!=.Instantiate {continue}
+            testing.expectf(t,scene_entity_count(&scene)==before,"%v with %d requests served: %d entities, %d before",call,served,scene_entity_count(&scene),before)
+        }
+        // Removing asks the document for nothing: it is what takes back a call that failed.
+        testing.expectf(t,done && refused==(call!=.Remove),"%v: refused without memory, and with it it goes through",call)
+    }
+}
+

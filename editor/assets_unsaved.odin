@@ -114,7 +114,7 @@ assets_discard :: proc(s:^Session,paths:[]string) -> (discarded:int) {
     r:=&s.app.assets.registry
     for path in paths {
         relative:=strings.clone(path,context.temp_allocator)
-        if !asset.registry_memory_drop(r,relative) {continue}
+        if dropped,_:=asset.registry_memory_drop(r,relative);!dropped {continue}
         unsaved_changed(s,relative)
         discarded+=1
     }

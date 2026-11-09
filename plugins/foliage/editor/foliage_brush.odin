@@ -73,7 +73,7 @@ instances_near :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,types:[]u3
     for z in low.y..=high.y {for x in low.x..=high.x {
         cell:=foliage.source_cell(s,{x,z})
         if cell==nil {continue}
-        foliage.cell_build(s,cell,ground_of(ground,cell.coord),work)
+        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),work) {continue}
         for p in work.placed {if slice.contains(types,p.type) && in_brush(p.position,center,radius) {append(out,Near{p.type,p.position})}}
     }}
 }
@@ -131,8 +131,7 @@ Instance_Ref :: struct {
 instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.Quat(1)) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,coord)
     if cell==nil {return}
-    foliage.cell_build(s,cell,ground_of(ground,coord),work)
-    foliage.placed_group(s,work)
+    if !foliage.cell_build(s,cell,ground_of(ground,coord),work) || !foliage.placed_group(s,work) {return}
     t,index:=foliage.source_type(s,type)
     if index<0 {return}
     order:=work.order[work.firsts[index]:work.firsts[index+1]]
@@ -147,7 +146,7 @@ instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[
 instance_placed :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,ref:Instance_Ref,work:^foliage.Build_Work) -> (placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,ref.coord)
     if cell==nil {return}
-    foliage.cell_build(s,cell,ground_of(ground,ref.coord),work)
+    if !foliage.cell_build(s,cell,ground_of(ground,ref.coord),work) {return}
     for p in work.placed {if p.id==ref.id {return p,true}}
     return
 }

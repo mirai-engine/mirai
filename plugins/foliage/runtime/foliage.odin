@@ -275,6 +275,11 @@ data_find :: proc(data:^Foliage_Data,id:base.Asset_Id) -> ^Data_Entry {
 }
 
 @(private)
+memory_problem :: proc(problems:^core.Problems,e:core.Entity,what:string) {
+    core.report(problems,e,"foliage.memory","out of memory for %s; it is tried again: free memory, or give the foliage fewer types or instances",what)
+}
+
+@(private)
 source_unread :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:base.Asset_Id) {
     name:[base.ASSET_ID_TEXT]u8
     core.report(problems,e,"foliage.source_unread","foliage source %s cannot be read: it is missing, of another kind or version (%s, version %d), damaged, or memory ran out; give Foliage.source a .foliage asset",host.assets_name(a,id,&name),EXTENSION,VERSION)
@@ -357,9 +362,9 @@ foliage_load :: proc(data:^Foliage_Data,foliages:core.Read(Foliage),app:^host.Ap
 // The instances of a cell in the space of its entity, on its ground, in
 // work.placed, but those removed (cell_expand); the orphan overrides it has
 // in work.orphans.
-cell_build :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,work:^Build_Work,removed:[]u64={}) {
+cell_build :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,work:^Build_Work,removed:[]u64={}) -> bool {
     clear(&work.placed);clear(&work.orphans)
-    cell_expand(s,cell,ground,&work.placed,&work.orphans,&work.expand,removed)
+    return cell_expand(s,cell,ground,&work.placed,&work.orphans,&work.expand,removed)
 }
 
 // The index in its source of the type of an id, through work.ids; -1 for none.
@@ -374,17 +379,16 @@ type_index :: proc "contextless" (work:^Build_Work,id:u32) -> int {
 // their indices, those of the type of index i of the source from
 // work.firsts[i] to work.firsts[i+1], each type in the order they were
 // placed. Those of a type the source does not have are left out.
-placed_group :: proc(s:^Source,work:^Build_Work) {
+placed_group :: proc(s:^Source,work:^Build_Work) -> bool {
     clear(&work.ids)
     for t,i in s.types {append(&work.ids,[2]u32{t.id,u32(i)})}
     slice.sort_by(work.ids[:],proc(a,b:[2]u32) -> bool {return a[0]<b[0]})
     n:=len(s.types)
-    resize(&work.firsts,n+1)
+    if resize(&work.firsts,n+1)!=nil {return false}
     for &first in work.firsts {first=0}
     for p in work.placed {if i:=type_index(work,p.type);i>=0 {work.firsts[i+1]+=1}}
     for i in 1..=n {work.firsts[i]+=work.firsts[i-1]}
-    resize(&work.order,int(work.firsts[n]))
-    resize(&work.cursor,n)
+    if resize(&work.order,int(work.firsts[n]))!=nil || resize(&work.cursor,n)!=nil {return false}
     copy(work.cursor[:],work.firsts[:n])
     for p,k in work.placed {
         i:=type_index(work,p.type)
@@ -392,6 +396,7 @@ placed_group :: proc(s:^Source,work:^Build_Work) {
         work.order[work.cursor[i]]=u32(k)
         work.cursor[i]+=1
     }
+    return true
 }
 
 // An instance as a batch draws it, carried by the transform of its entity.
@@ -564,7 +569,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         draw.count=len(work.parts)-draw.first
         if type_far(t) && draw.count>0 {
             id:=t.mesh if t.mesh!={} else t.prefab
-            draw.kind=kind_ensure(resident,app,id,work.parts[draw.first:][:draw.count])
+            draw.kind=kind_ensure(resident,app,id,work.parts[draw.first:][:draw.count],problems,owner.entity)
             append(&owner.kinds,id)
             if draw.kind>=0 && kind_ready(&resident.kinds[draw.kind]) {
                 draw.far=true
@@ -614,7 +619,11 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
     placed:=mm.transform_matrix(transform)
     near:scene.Sources_Near
     if reach>0 {near=scene.sources_near(sources,placed,reach)}
-    resize(&work.bands,len(work.types))
+    if resize(&work.bands,len(work.types))!=nil {
+        memory_problem(problems,owner.entity,"the cells of this Foliage")
+        owner.pending=true
+        return
+    }
     for draw,i in work.types {work.bands[i]=draw.far?scene.sources_near(sources,placed,draw.reach):{}}
     crown_reach:=f32(0)
     for draw in work.types {if draw.far {crown_reach=max(crown_reach,draw.reach*CELL_CROWN_REACH)}}
@@ -654,7 +663,11 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
         low,high:=[3]f32{corner.x,-POSITION_MAX,corner.z},[3]f32{corner.x+CELL_SIZE,POSITION_MAX,corner.z+CELL_SIZE}
         // Each type with a far form draws its mesh within its reach of a source, and its crown past it.
         banded:=len(held.near)!=len(work.types)
-        if banded {resize(&held.near,len(work.types))}
+        if banded && resize(&held.near,len(work.types))!=nil {
+            memory_problem(problems,owner.entity,"a cell of this Foliage, which keeps what it showed")
+            held.stale,owner.pending=true,true
+            continue
+        }
         for draw,i in work.types {
             was:=held.near[i]
             held.near[i]=!owner.far_only && (!draw.far || scene.resident(scene.box_near(&work.bands[i],low,high),was))
@@ -739,9 +752,13 @@ role_instance :: proc(role:Batch_Role,variants:u32,owner:mm.Quat,placed:[]Placed
 @(private)
 cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,s:^Source,cell:^Cell,ground:Ground_Cell,removed:[]u64,transform:mm.Transform,id:core.World_Id,app:^host.App,problems:^core.Problems) {
     work:=&resident.work
-    cell_build(s,cell,ground,work,removed)
-    orphans_report(problems,owner.entity,app.assets,owner.source,cell,work.orphans[:])
-    placed_group(s,work)
+    built:=cell_build(s,cell,ground,work,removed)
+    if built {orphans_report(problems,owner.entity,app.assets,owner.source,cell,work.orphans[:])}
+    if !built || !placed_group(s,work) {
+        memory_problem(problems,owner.entity,"a cell of this Foliage, which keeps what it showed")
+        held.stale,owner.pending=true,true
+        return
+    }
     owner_matrix:=mm.transform_matrix(transform)
     clear(&work.batches)
     if len(held.impostors)>0 {resident.impostors.dirty=true}
@@ -862,7 +879,11 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
     held.crown={}
     if !held.far || app.assets==nil {return}
     clear(&work.crowns)
-    resize(&work.crowns,len(work.types))
+    if resize(&work.crowns,len(work.types))!=nil {
+        memory_problem(problems,owner.entity,"the crown of a cell of this Foliage")
+        held.stale,owner.pending=true,true
+        return
+    }
     any:=false
     for draw,i in work.types {
         if !draw.far || draw.kind<0 || !s.types[i].casts_shadow || i<len(held.near) && held.near[i] {continue}

@@ -78,7 +78,10 @@ Lock :: struct {
 // Read-only access to a table: what a function that only reads receives.
 Read :: struct($T:typeid) {table:^Table(T)}
 
-table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) {
+// False without memory.
+table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) -> bool {
+    gone,error:=make([dynamic]Entity,0,GONE_CAPACITY,allocator) // settle never allocates for it: without it, readers read the table whole
+    if error!=nil {return false}
     t.values=make([dynamic]T,allocator)
     t.entities=make([dynamic]Entity,allocator)
     t.stamps=make([dynamic]u64,allocator)
@@ -87,9 +90,10 @@ table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) {
     t.rows=make([dynamic]i32,allocator)
     t.pending=make([dynamic]Pending,allocator)
     t.added=make([dynamic]T,allocator)
-    t.gone=make([dynamic]Entity,0,GONE_CAPACITY,allocator) // settle never allocates for it: without it, readers read the table whole
+    t.gone=gone
     t.owners=make([dynamic]Row_Owner,allocator)
     t.name=name
+    return true
 }
 
 table_destroy :: proc(t:^Table($T)) {
@@ -845,7 +849,7 @@ raw_put :: proc(t:^Raw_Table,info:^runtime.Type_Info,es:^Entities,e:Entity,value
     if t.single && len(t.turns)>=cap(t.turns) {return false}
     for lock in t.locks {if owners:=lock_owners(t,lock);i>=max(len(owners),cap(owners)) {return false}}
     if i<len(t.rows) && t.rows[i]!=0 {raw_drop_index(t,size,i)}
-    if i>=len(t.rows) {resize(&t.rows,i+1)}
+    if i>=len(t.rows) && resize(&t.rows,i+1)!=nil {return false}
     t.version+=1
     if t.single {append(&t.turns,off?0:single_turn(t))}
     row:=t.values.len
@@ -881,7 +885,9 @@ Write_Check :: struct {
 }
 
 write_check_begin :: proc(t:^Raw_Table,size:int) -> Write_Check {
-    c:=Write_Check{t,size,t.version,t.layout,make([]u8,t.values.len*size)}
+    values,error:=make([]u8,t.values.len*size)
+    if error!=nil {return {table=t}} // without a size write_check_end skips it
+    c:=Write_Check{t,size,t.version,t.layout,values}
     if len(c.values)>0 {mem.copy(raw_data(c.values),t.values.data,len(c.values))}
     return c
 }

@@ -208,8 +208,13 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
     }
     extensions,_:=root["extensions"].(json.Array)
     programs,_:=root["program_stages"].(json.Array)
-    assets.extensions=make([]rhi.Shader_Code,len(extensions),allocator)
-    assets.programs=make([]rhi.Shader_Code,len(programs),allocator)
+    extensions_error,programs_error:runtime.Allocator_Error
+    assets.extensions,extensions_error=make([]rhi.Shader_Code,len(extensions),allocator)
+    assets.programs,programs_error=make([]rhi.Shader_Code,len(programs),allocator)
+    if extensions_error!=nil || programs_error!=nil {
+        shader_assets_destroy(&assets)
+        return assets,"out of memory for the shaders of the manifest"
+    }
     for at in 0..<len(shaders)+len(programs)+len(extensions) {
         program:=at>=len(shaders) && at<len(shaders)+len(programs)
         extension:=at>=len(shaders)+len(programs)
@@ -238,7 +243,9 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
         if len(group)!=3 {error="invalid workgroup";break}
         for v,i in group {n,valid:=number(v);if !valid {error="invalid workgroup";break};code.threadgroup[i]=n}
         bindings:=item["bindings"].(json.Array) or_else nil
-        code.bindings=make([]rhi.Binding_Info,len(bindings),allocator)
+        bindings_error:runtime.Allocator_Error
+        code.bindings,bindings_error=make([]rhi.Binding_Info,len(bindings),allocator)
+        if bindings_error!=nil {error=fmt.tprintf("out of memory for the bindings of shader %s",code.name);break}
         for binding,i in bindings {
             b:=binding.(json.Object) or_else nil
             kind,valid_kind:=reflect.enum_from_name(rhi.Binding_Kind,text(b["kind"]));if !valid_kind {error="invalid binding kind";break}
@@ -264,16 +271,18 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
 // stop: once set from any thread, the build makes no more pipelines and fails.
 renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^bool=nil)->^Renderer {
     if !assets.owned {return nil}
-    candidate:=new(Renderer,r.allocator)
+    candidate,candidate_error:=new(Renderer,r.allocator)
+    if candidate_error!=nil {set_error(r,"shader reload: out of memory for its renderer");return nil}
     candidate^=r^
     candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
     candidate.reload_stop=stop
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
 }
-// False when a pipeline is refused: candidate.error says which.
+// False when a pipeline is refused: candidate.error says which. And for the
+// candidate renderer_shader_reload_begin had no memory for.
 renderer_shader_reload_build :: proc(candidate:^Renderer)->bool {
-    if !create_pipelines(candidate) {return false}
+    if candidate==nil || !create_pipelines(candidate) {return false}
     if rhi.device_info(candidate.device).features.ray_query {
         for p,id in candidate.pipelines {if pipeline_uses_hardware(id) && id not_in LAZY_PIPELINES && p==0 {set_error(candidate,"pipeline %v: %s",id,rhi.device_error(candidate.device));return false}}
     }
@@ -334,6 +343,7 @@ renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
         return true
     }
     candidate:=renderer_shader_reload_begin(r,assets)
+    if candidate==nil {return false}
     defer renderer_abort_shader_reload(candidate)
     if !renderer_shader_reload_build(candidate) {set_error(r,"%s",candidate.error);return false}
     renderer_publish_shader_reload(r,assets,candidate)

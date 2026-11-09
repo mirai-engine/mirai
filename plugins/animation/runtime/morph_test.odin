@@ -252,3 +252,35 @@ a_rigid_mesh_the_assets_loaded_is_not_read_again_for_its_rig :: proc(t:^testing.
     testing.expect(t,row!=max(u32) && len(state.rigs[row].morphs)==0 && len(state.rigs[row].influences)==0)
     testing.expect_value(t,problems.count,0)
 }
+
+// The rooms of the morph targets of a rig, with the memory ending at each
+// request in turn: the bind is refused whole with Out_Of_Memory, and with
+// memory enough it goes through.
+@(test)
+morph_bind_without_memory_is_refused_whole :: proc(t:^testing.T) {
+    targets:[3]asset.Morph_Target
+    names:=[3]string{"Smile","Blink","Frown"}
+    for &target,i in targets {
+        target.weight=f32(i)*.25
+        base.text_set(target.name[:],names[i])
+    }
+    saved:=context.allocator
+    failure:=Runtime_Allocation_Failure{owner=saved}
+    for count in 1..=len(targets) {
+        rig:=Skin_Rig{id={5,7},revision=1,morphs=targets[:count]}
+        state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2),curve_count=-1}
+        bound,refused:=false,false
+        for budget in 0..<16 {
+            failure.remaining=budget
+            context.allocator={runtime_failure_allocator,&failure}
+            bound=morph_bind(&state,&rig,{},"Face",1)
+            context.allocator=saved
+            failure.remaining=1000
+            if bound {break}
+            refused=true
+            testing.expectf(t,state.error==.Out_Of_Memory && len(state.current)==0 && len(state.names)==0 && state.mesh=={},"%d targets with %d requests served: %v, %d bound",count,budget,state.error,len(state.current))
+        }
+        testing.expectf(t,bound && refused && state.error==.None && len(state.current)==count && len(state.curve_rows)==count,"%d targets: refused without memory, and bound with it",count)
+        morph_playing_free(&state)
+    }
+}

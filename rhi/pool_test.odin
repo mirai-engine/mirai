@@ -1,5 +1,6 @@
 package rhi
 
+import "base:runtime"
 import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
@@ -80,4 +81,67 @@ pool_of_no_capacity_holds_nothing :: proc(t:^testing.T) {
     defer pool_destroy(&pool,context.allocator)
     testing.expect(t,!pool_has_room(&pool))
     testing.expect_value(t,pool_add(&pool,1),base.Handle(0))
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What the tables every backend shares ask memory for, with the memory ending
+// at each request in turn: the call is refused and the table keeps what it
+// had, and with memory enough it goes through.
+@(test)
+device_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t:^testing.T) {
+    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{memory_limit_proc,&limit}
+    Table :: enum {Pool,Changes,Compact}
+    for table in Table {
+        pool:Pool(int)
+        changes:Table_Changes
+        for &copy in changes {copy=make([dynamic]u64,limited)}
+        device:=new(Device)
+        device.allocator=limited
+        if table==.Changes {
+            if !testing.expect(t,table_changes_reset(&changes,64)) {return}
+            table_changed(&changes,5)
+        }
+        done,refused:=false,false
+        for served in 0..<16 {
+            limit.remaining=served
+            switch table {
+            case .Pool:    done=pool_init(&pool,8,limited)
+            case .Changes: done=table_changes_reset(&changes,1<<16)
+            case .Compact: done=compact_slot_take(device)>0
+            }
+            limit.remaining=max(int)
+            if done {break}
+            refused=true
+            switch table {
+            case .Pool:
+                testing.expectf(t,pool.items==nil && pool.free==nil && !pool_has_room(&pool),"a pool refused with %d requests served holds nothing",served)
+            case .Changes:
+                for copy in changes {testing.expectf(t,copy[0]==1<<5,"a copy lost the entry it had not taken with %d requests served",served)}
+            case .Compact:
+                testing.expectf(t,device.compact_free==nil,"the free slots stay unmade with %d requests served",served)
+            }
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",table)
+        if table==.Changes {
+            for copy in changes {testing.expect(t,copy[0]==0,"a table made again leaves no entry to take")}
+        }
+        pool_destroy(&pool,limited)
+        table_changes_destroy(&changes)
+        delete(device.compact_free)
+        free(device)
+    }
 }

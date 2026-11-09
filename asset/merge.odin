@@ -5,6 +5,7 @@ import "core:mem"
 import vmem "core:mem/virtual"
 import "core:slice"
 import "core:strings"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // A three-way merge: what ours and theirs did to the document they both come
@@ -81,33 +82,39 @@ Merger :: struct {
     tables:[]Table_Merge,
     path:[dynamic]u8, // the fields under the column of the value being merged
     text:serial.Writer,
+    exhausted:bool, // scratch had no memory for a step: the merge ends with Out_Of_Memory
 }
 
 // The value of a column of one row that merge_value is working on.
 @(private="file")
 Spot :: struct {table,row:int,column:string}
 
-document_merge :: proc(m:^Merge,ours,base,theirs:^Document) -> Error {
+document_merge :: proc(m:^Merge,ours,origin,theirs:^Document) -> Error {
     if m.conflicts.allocator.procedure==nil {m.conflicts=make([dynamic]Merge_Conflict,ours.allocator)}
     arena:vmem.Arena
     if vmem.arena_init_growing(&arena)!=nil {return .Out_Of_Memory}
     defer vmem.arena_destroy(&arena)
-    g:=Merger{m=m,docs={ours,base,theirs},scratch=vmem.arena_allocator(&arena)}
-    g.path=make([dynamic]u8,g.scratch)
+    g:=Merger{m=m,docs={ours,origin,theirs},scratch=vmem.arena_allocator(&arena)}
+    g.path=make([dynamic]u8,allocator=g.scratch)
     serial.writer_init(&g.text,allocator=g.scratch)
     first_added:=len(ours.tables)
     columns_follow(&g) or_return
     tables_add(&g) or_return
-    g.tables=make([]Table_Merge,len(ours.tables),g.scratch)
+    no_tables:runtime.Allocator_Error
+    if g.tables,no_tables=make([]Table_Merge,len(ours.tables),g.scratch);no_tables!=nil {return .Out_Of_Memory}
     for &table,at in g.tables {
         table.added=at>=first_added
         sides_read(&g,at) or_return
     }
-    for _,at in g.tables {rows_decide(&g,at)}
-    references_keep(&g)
+    for _,at in g.tables {
+        if !g.exhausted {rows_decide(&g,at)}
+    }
+    if !g.exhausted {references_keep(&g)}
+    if g.exhausted {return .Out_Of_Memory}
     for _,at in g.tables {table_build(&g,at) or_return}
     references_write(&g)
-    rows_sort(&g)
+    if !g.exhausted {rows_sort(&g)}
+    if g.exhausted {return .Out_Of_Memory}
     // What the merge added for nothing, and single rows no side kept.
     for at:=len(ours.tables)-1;at>=0;at-=1 {
         kept:=0
@@ -209,14 +216,19 @@ sides_read :: proc(g:^Merger,at:int) -> Error {
             if s==OURS {side.table=at} else {side.table,_=document_table(side.doc,target.name)}
         }
         if side.table>=0 && !(s==OURS && merge.added) {side.rows=side.doc.tables[side.table].rows}
-        side.data=make([][]u8,len(target.columns),g.scratch)
-        side.refs=make([][]string,len(target.columns),g.scratch)
-        side.keys=make([]string,side.rows,g.scratch)
+        no_data,no_refs,no_keys:runtime.Allocator_Error
+        side.data,no_data=make([][]u8,len(target.columns),g.scratch)
+        side.refs,no_refs=make([][]string,len(target.columns),g.scratch)
+        side.keys,no_keys=make([]string,side.rows,g.scratch)
+        if no_data!=nil || no_refs!=nil || no_keys!=nil {return .Out_Of_Memory}
         if side.rows==0 {continue}
         from:=&side.doc.tables[side.table]
         for &wanted,c in target.columns {
             // A column of rows that a side does not have refers to none there.
-            if wanted.ref>=0 {side.refs[c]=make([]string,side.rows,g.scratch)}
+            if wanted.ref>=0 {
+                no_column:runtime.Allocator_Error
+                if side.refs[c],no_column=make([]string,side.rows,g.scratch);no_column!=nil {return .Out_Of_Memory}
+            }
             found:=c
             if s!=OURS {
                 found=-1
@@ -238,7 +250,8 @@ sides_read :: proc(g:^Merger,at:int) -> Error {
                 side.data[c]=have.data
                 continue
             }
-            migrated:=make([]u8,side.rows*wanted.size,g.scratch)
+            migrated,no_migrated:=make([]u8,side.rows*wanted.size,g.scratch)
+            if no_migrated!=nil {return .Out_Of_Memory}
             migration:serial.Migration
             if serial.migration_init(&migration,&side.doc.schema,have.type,&ours.schema,wanted.type,g.scratch)!=.None {return .Invalid}
             serial.migration_apply(&migration,migrated,have.data,side.rows)
@@ -291,7 +304,7 @@ sides_same :: proc(g:^Merger,merge:^Table_Merge,a,b:int) -> bool {
 // The values of a row and the keys of the rows it refers to, as one text.
 @(private="file")
 row_signature :: proc(g:^Merger,merge:^Table_Merge,s:int,row:int) -> string {
-    text:=make([dynamic]u8,g.scratch)
+    text:=make([dynamic]u8,allocator=g.scratch)
     for &column,c in g.docs[OURS].tables[merge_index(g,merge)].columns {
         if column.ref>=0 {
             append(&text,..transmute([]u8)merge.sides[s].refs[c][row])
@@ -316,7 +329,8 @@ rows_decide :: proc(g:^Merger,at:int) {
     merge:=&g.tables[at]
     target:=&g.docs[OURS].tables[at]
     o,b,t:=&merge.sides[OURS],&merge.sides[BASE],&merge.sides[THEIRS]
-    merge.rows=make([dynamic]Out_Row,0,o.rows+t.rows,g.scratch)
+    no_rows:runtime.Allocator_Error
+    if merge.rows,no_rows=make([dynamic]Out_Row,0,o.rows+t.rows,g.scratch);no_rows!=nil {g.exhausted=true;return}
     single:=.Single in target.flags
     if .Bulk in target.flags {
         from:=OURS
@@ -327,11 +341,12 @@ rows_decide :: proc(g:^Merger,at:int) {
         return
     }
     if merge.keyed && (single || keys_complete(o) && keys_complete(b) && keys_complete(t)) {
-        base_rows:=make(map[string]int,b.rows,g.scratch)
-        theirs_rows:=make(map[string]int,t.rows,g.scratch)
+        base_rows,no_base:=make(map[string]int,b.rows,g.scratch)
+        theirs_rows,no_theirs:=make(map[string]int,t.rows,g.scratch)
+        matched,no_matched:=make([]bool,t.rows,g.scratch)
+        if no_base!=nil || no_theirs!=nil || no_matched!=nil {g.exhausted=true;return}
         for key,row in b.keys {if !(key in base_rows) {base_rows[key]=row}}
         for key,row in t.keys {if !(key in theirs_rows) {theirs_rows[key]=row}}
-        matched:=make([]bool,t.rows,g.scratch)
         for key,row in o.keys {
             base_row,in_base:=base_rows[key]
             if !in_base {base_row=-1}
@@ -360,9 +375,10 @@ rows_decide :: proc(g:^Merger,at:int) {
         return
     }
     // Without keys rows are a set: each side adds and removes rows.
-    in_base:=make(map[string]int,b.rows,g.scratch)
-    in_theirs:=make(map[string]int,t.rows,g.scratch)
-    shared:=make(map[string]int,o.rows,g.scratch) // rows of theirs that ours also kept
+    in_base,no_base:=make(map[string]int,b.rows,g.scratch)
+    in_theirs,no_theirs:=make(map[string]int,t.rows,g.scratch)
+    shared,no_shared:=make(map[string]int,o.rows,g.scratch) // rows of theirs that ours also kept
+    if no_base!=nil || no_theirs!=nil || no_shared!=nil {g.exhausted=true;return}
     for row in 0..<b.rows {in_base[row_signature(g,merge,BASE,row)]+=1}
     for row in 0..<t.rows {in_theirs[row_signature(g,merge,THEIRS,row)]+=1}
     for row in 0..<o.rows {
@@ -390,7 +406,8 @@ rows_decide :: proc(g:^Merger,at:int) {
 @(private="file")
 references_keep :: proc(g:^Merger) {
     ours:=g.docs[OURS]
-    kept:=make([]map[string]int,len(g.tables),g.scratch)
+    kept,no_kept:=make([]map[string]int,len(g.tables),g.scratch)
+    if no_kept!=nil {g.exhausted=true;return}
     for changed:=true;changed; {
         changed=false
         for &set in kept {set=nil}
@@ -399,7 +416,8 @@ references_keep :: proc(g:^Merger) {
                 if column.ref<0 || !g.tables[column.ref].keyed {continue}
                 referred:=&g.tables[column.ref]
                 if kept[column.ref]==nil {
-                    kept[column.ref]=make(map[string]int,len(referred.rows),g.scratch)
+                    no_set:runtime.Allocator_Error
+                    if kept[column.ref],no_set=make(map[string]int,len(referred.rows),g.scratch);no_set!=nil {g.exhausted=true;return}
                     for out,i in referred.rows {
                         if out.keep {kept[column.ref][referred.sides[out.side].keys[out.row]]=i}
                     }
@@ -457,7 +475,8 @@ table_build :: proc(g:^Merger,at:int) -> Error {
     kept:=0
     for out in merge.rows {if out.keep {kept+=1}}
     if kept==0 && .Single in target.flags {return .None}
-    fresh:=make([]Doc_Column,len(target.columns),g.scratch)
+    fresh,no_fresh:=make([]Doc_Column,len(target.columns),g.scratch)
+    if no_fresh!=nil {return .Out_Of_Memory}
     for &column,c in target.columns {
         fresh[c]=column
         fresh[c].data,fresh[c].capacity=nil,0
@@ -511,10 +530,10 @@ merge_value :: proc(g:^Merger,spot:Spot,type:serial.Type_Index,origin,ours,their
     }
     part :: proc(bytes:[]u8,offset,size:int) -> []u8 {return bytes==nil?nil:bytes[offset:][:size]}
     length:=len(g.path)
-    defer resize(&g.path,length)
+    defer base.truncate(&g.path,length)
     for &field in schema.fields[kind.first:][:kind.count] {
         if .Transient in field.flags {continue}
-        resize(&g.path,length)
+        base.truncate(&g.path,length)
         append(&g.path,'.');append(&g.path,field.name)
         offset,size:=int(field.offset),int(schema.types[field.type].size)
         merge_value(g,spot,field.type,part(origin,offset,size),ours[offset:][:size],theirs[offset:][:size],out[offset:][:size])
@@ -526,7 +545,8 @@ merge_value :: proc(g:^Merger,spot:Spot,type:serial.Type_Index,origin,ours,their
 @(private="file")
 references_write :: proc(g:^Merger) {
     ours:=g.docs[OURS]
-    rows:=make([]map[string]int,len(ours.tables),g.scratch)
+    rows,no_rows:=make([]map[string]int,len(ours.tables),g.scratch)
+    if no_rows!=nil {g.exhausted=true;return}
     for &merge,at in g.tables {
         target:=&ours.tables[at]
         for &column,c in target.columns {
@@ -534,7 +554,8 @@ references_write :: proc(g:^Merger) {
             referred:=column.ref
             if !g.tables[referred].keyed || .Single in ours.tables[referred].flags {continue}
             if rows[referred]==nil {
-                rows[referred]=make(map[string]int,ours.tables[referred].rows,g.scratch)
+                no_set:runtime.Allocator_Error
+                if rows[referred],no_set=make(map[string]int,ours.tables[referred].rows,g.scratch);no_set!=nil {g.exhausted=true;return}
                 for row in 0..<ours.tables[referred].rows {rows[referred][string(identity(ours,referred,row))]=row}
             }
             i:=0
@@ -558,7 +579,8 @@ rows_sort :: proc(g:^Merger) {
         target:=&ours.tables[at]
         if through<0 || target.rows<2 {continue}
         refs:=&target.columns[column]
-        order:=make([]Order,target.rows,g.scratch)
+        order,no_order:=make([]Order,target.rows,g.scratch)
+        if no_order!=nil {g.exhausted=true;return}
         sorted:=true
         for &entry,row in order {
             entry={index_load(refs.data,row,refs.size),row}
@@ -568,7 +590,8 @@ rows_sort :: proc(g:^Merger) {
         slice.stable_sort_by(order,proc(a,b:Order) -> bool {return a.index<b.index})
         for &each in target.columns {
             if each.size==0 {continue}
-            copied:=make([]u8,len(each.data),g.scratch)
+            copied,no_copied:=make([]u8,len(each.data),g.scratch)
+            if no_copied!=nil {g.exhausted=true;return}
             copy(copied,each.data)
             for entry,row in order {copy(each.data[row*each.size:][:each.size],copied[entry.row*each.size:][:each.size])}
         }

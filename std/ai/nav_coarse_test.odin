@@ -1,6 +1,8 @@
 package ai
 
+import "base:runtime"
 import "core:math/linalg"
+import "core:mem"
 import "core:testing"
 import math "mirai:std/math"
 
@@ -234,4 +236,73 @@ the_border_of_a_region_of_a_volume_gives_portals_where_its_free_space_goes_on ::
     lowest:=f32(16)
     for point in out[:n] {lowest=min(lowest,point.y)}
     testing.expectf(t,lowest<3,"the route %v",out[:n])
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Coarse_Memory :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+coarse_memory_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Coarse_Memory)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What the coarse graph asks memory for, with the memory ending at each
+// request in turn: the call says so, the graph is as it was, nothing stays
+// allocated, and with memory enough it goes through.
+@(test)
+coarse_graph_calls_without_memory_leave_it_as_it_was :: proc(t:^testing.T) {
+    mesh:Nav_Mesh
+    row_mesh(t,&mesh,3)
+    defer nav_mesh_destroy(&mesh)
+    q:Nav_Query
+    testing.expect(t,nav_query_init(&q,1024))
+    defer nav_query_destroy(&q)
+    filter:=test_filter()
+    others:Nav_Coarse
+    defer nav_coarse_destroy(&others)
+    for key in ([]u64{1,3}) {
+        _,_,made:=nav_coarse_build_region(&others,&mesh,&q,&filter,key,1,region_box(key),region_by_tile,nil)
+        if !testing.expect(t,made) {return}
+    }
+    track:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track,context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+    limit:=Coarse_Memory{owner=mem.tracking_allocator(&track),remaining=max(int)}
+    Call :: enum {Build,Merge,Copy}
+    for call in Call {
+        done,refused:=false,false
+        for served in 0..<256 {
+            context.allocator=runtime.Allocator{coarse_memory_proc,&limit}
+            // The graph holds region 2 before the call, with no room to spare.
+            c,copied:Nav_Coarse
+            _,_,made:=nav_coarse_build_region(&c,&mesh,&q,&filter,2,7,region_box(2),region_by_tile,nil)
+            if !testing.expect(t,made) {return}
+            shrink(&c.regions);shrink(&c.portals);shrink(&c.edges);shrink(&c.corners)
+            before:=[4]int{len(c.regions),len(c.portals),len(c.edges),len(c.corners)}
+            ok:bool
+            limit.remaining=served
+            switch call {
+            case .Build: _,_,ok=nav_coarse_build_region(&c,&mesh,&q,&filter,3,7,region_box(3),region_by_tile,nil)
+            case .Merge: ok=nav_coarse_merge(&c,&others)
+            case .Copy:  ok=nav_coarse_copy(&copied,&c)
+            }
+            limit.remaining=max(int)
+            if !ok {
+                refused=true
+                after:=[4]int{len(c.regions),len(c.portals),len(c.edges),len(c.corners)}
+                testing.expectf(t,after==before && nav_coarse_consistent(&c) && nav_coarse_region(&c,2)!=nil && nav_coarse_region(&c,3)==nil,"%v with %d requests served: the graph changed, %v from %v",call,served,after,before)
+                testing.expectf(t,len(copied.regions)+len(copied.portals)+len(copied.edges)+len(copied.corners)==0,"%v with %d requests served kept a part",call,served)
+            }
+            nav_coarse_destroy(&c);nav_coarse_destroy(&copied)
+            testing.expectf(t,len(track.allocation_map)==0,"%v with %d requests served: %d allocations are left",call,served,len(track.allocation_map))
+            if done=ok;done {break}
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory %v, went through with it %v",call,refused,done)
+    }
 }

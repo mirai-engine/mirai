@@ -117,11 +117,29 @@ catalog_number :: proc(value:json.Value) -> (number:f64,ok:bool) {
     return 0,false
 }
 
+// A text of the catalog, copied. False when the value is not one or there is no memory for it.
+@(private="file")
+catalog_text :: proc(value:json.Value,allocator:runtime.Allocator) -> (text:string,ok:bool) {
+    source:=value.(json.String) or_return
+    copied,error:=strings.clone(source,allocator)
+    return copied,error==nil
+}
+
 // Reads a catalog.json. A program or parameter that does not fit what a
-// material row holds makes the whole catalog invalid: nothing is kept.
+// material row holds makes the whole catalog invalid, as running out of
+// memory does: nothing is kept.
 program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catalog:Program_Catalog,ok:bool) {
     catalog.allocator=allocator
-    defer if !ok {program_catalog_destroy(&catalog)}
+    if !catalog_read(&catalog,bytes) {
+        program_catalog_destroy(&catalog)
+        return {},false
+    }
+    return catalog,true
+}
+
+@(private="file")
+catalog_read :: proc(catalog:^Program_Catalog,bytes:[]u8) -> (ok:bool) {
+    allocator:=catalog.allocator
     value,parse_error:=json.parse(bytes,allocator=context.temp_allocator)
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return}
@@ -138,7 +156,7 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         size:=catalog_number(item["size"]) or_return
         if id<1 || id>f64(max(u32)) || size<0 || size>PROGRAM_PARAMETER_BYTES {return}
         program.id,program.size=u32(id),int(size)
-        program.name=strings.clone(item["name"].(json.String) or_return,allocator)
+        program.name=catalog_text(item["name"],allocator) or_return
         switch item["domain"].(json.String) or_return {
         case "surface":     program.domain=.Surface
         case "postprocess": program.domain=.Postprocess
@@ -180,11 +198,12 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         }
         if resources,listed:=item["resources"].(json.Array);listed {
             if len(resources)>PROGRAM_RESOURCES {return}
-            program.resources=make([]Program_Resource,len(resources),allocator)
+            program.resources,allocation_error=make([]Program_Resource,len(resources),allocator)
+            if allocation_error!=nil {return}
             for entry,at in resources {
                 source:=entry.(json.Object) or_return
                 resource:=&program.resources[at]
-                resource.name=strings.clone(source["name"].(json.String) or_return,allocator)
+                resource.name=catalog_text(source["name"],allocator) or_return
                 switch source["kind"].(json.String) or_return {
                 case "surface": resource.kind=.Surface
                 case "channel": resource.kind=.Channel
@@ -204,11 +223,12 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         }
         if stages,listed:=item["stages"].(json.Array);listed {
             if len(stages)>PROGRAM_STAGES {return}
-            program.stages=make([]Program_Stage,len(stages),allocator)
+            program.stages,allocation_error=make([]Program_Stage,len(stages),allocator)
+            if allocation_error!=nil {return}
             for entry,at in stages {
                 source:=entry.(json.Object) or_return
                 stage:=&program.stages[at]
-                stage.name=strings.clone(source["name"].(json.String) or_return,allocator)
+                stage.name=catalog_text(source["name"],allocator) or_return
                 iterations:=catalog_number(source["iterations"]) or_return
                 neighbors:=catalog_number(source["neighbors"]) or_return
                 if iterations<1 || iterations>255 || !(neighbors>=0) {return}
@@ -235,11 +255,12 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
             }
         }
         parameters:=item["parameters"].(json.Array) or_return
-        program.parameters=make([]Program_Parameter,len(parameters),allocator)
+        program.parameters,allocation_error=make([]Program_Parameter,len(parameters),allocator)
+        if allocation_error!=nil {return}
         for field,index in parameters {
             source:=field.(json.Object) or_return
             parameter:=&program.parameters[index]
-            parameter.name=strings.clone(source["name"].(json.String) or_return,allocator)
+            parameter.name=catalog_text(source["name"],allocator) or_return
             switch source["kind"].(json.String) or_return {
             case "float32": parameter.kind=.Float
             case "int32":   parameter.kind=.Int
@@ -257,7 +278,7 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
             parameter.srgb,_=source["srgb"].(json.Boolean)
             parameter.normal,_=source["normal"].(json.Boolean)
             parameter.color,_=source["color"].(json.Boolean)
-            if group,named:=source["group"].(json.String);named {parameter.group=strings.clone(group,allocator)}
+            if _,named:=source["group"].(json.String);named {parameter.group=catalog_text(source["group"],allocator) or_return}
             if defaults,many:=source["default"].(json.Array);many {
                 for element,axis in defaults {
                     if axis<4 {parameter.defaults[axis],_=catalog_number(element)}
@@ -272,13 +293,15 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         }
         if reach_name!="" && program.vertex.reach_offset<0 {return}
     }
-    return catalog,true
+    return true
 }
 
 // The programs of the shaders the renderer runs.
 renderer_programs :: proc(r:^Renderer) -> []Program {
     if !r.programs.loaded {
-        r.programs,_=program_catalog_parse(r.shader_assets.owned?r.shader_assets.catalog:EMBEDDED_CATALOG,r.allocator)
+        catalog,valid:=program_catalog_parse(r.shader_assets.owned?r.shader_assets.catalog:EMBEDDED_CATALOG,r.allocator)
+        if !valid {set_error(r,"material program catalog: invalid, or out of memory for it");return nil}
+        r.programs=catalog
         r.programs.loaded=true
     }
     return r.programs.programs

@@ -45,7 +45,7 @@ prefab_test_settle :: proc(data,shared,editor:rawptr) {
     core.entities_settle(&w.entities)
 }
 
-prefab_test_clear :: proc(data:rawptr) {
+prefab_test_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Prefab_Test_World)data
     core.table_clear(&w.ids)
     core.table_clear(&w.names)
@@ -55,7 +55,7 @@ prefab_test_clear :: proc(data:rawptr) {
     core.table_clear(&w.lamps)
     core.table_clear(&w.point_lights)
     core.hierarchy_clear(&w.hierarchy)
-    core.entities_clear(&w.entities)
+    return core.entities_clear(&w.entities)
 }
 
 prefab_test_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {

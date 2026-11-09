@@ -148,11 +148,12 @@ clusterize :: proc(b:^Dag_Builder,indices:[]u32,submesh:u32,own:Cluster_Lod,gene
     return .None
 }
 
-// Appends the clusters of a group to the DAG; returns its index.
+// Appends the clusters of a group to the DAG; returns its index. False
+// without memory.
 @(private="file")
-group_output :: proc(b:^Dag_Builder,clusters:[]Pending,cluster_indices:[]u32,parent:Cluster_Lod,level:int) -> u32 #no_bounds_check {
+group_output :: proc(b:^Dag_Builder,clusters:[]Pending,cluster_indices:[]u32,parent:Cluster_Lod,level:int) -> (group:u32,ok:bool) #no_bounds_check {
     dag:=b.dag
-    group:=u32(dag.groups)
+    group=u32(dag.groups)
     dag.groups+=1
     dag.levels=max(dag.levels,level+1)
     for c in clusters {
@@ -166,27 +167,27 @@ group_output :: proc(b:^Dag_Builder,clusters:[]Pending,cluster_indices:[]u32,par
         // Grown by doubling: resize takes exactly what it is asked for, and
         // an allocator that keeps what it gave (an importer's arena) would
         // keep a copy of every length the triangles ever had.
-        if first_triangle+len(indices)>cap(dag.triangles) {reserve(&dag.triangles,max(2*cap(dag.triangles),first_triangle+len(indices)))}
-        resize(&dag.triangles,first_triangle+len(indices))
+        if reserve_more(&dag.triangles,len(indices))!=nil || resize(&dag.triangles,first_triangle+len(indices))!=nil {return 0,false}
         count:=max(meshlet_local_indices(vertices[:],dag.triangles[first_triangle:],indices),0)
         cluster.vertex_count=u32(count)
-        append(&dag.vertices,..vertices[:count])
-        append(&dag.clusters,cluster)
+        if _,error:=append(&dag.vertices,..vertices[:count]);error!=nil {return 0,false}
+        if _,error:=append(&dag.clusters,cluster);error!=nil {return 0,false}
     }
-    return group
+    return group,true
 }
 
 @(private="file")
-lod_merge :: proc(clusters:[]Pending,scratch:runtime.Allocator) -> (merged:Cluster_Lod) {
-    centers:=make([]Vec3,len(clusters),scratch)
-    radii:=make([]f32,len(clusters),scratch)
+lod_merge :: proc(clusters:[]Pending,scratch:runtime.Allocator) -> (merged:Cluster_Lod,ok:bool) {
+    centers,no_centers:=make([]Vec3,len(clusters),scratch)
+    radii,no_radii:=make([]f32,len(clusters),scratch)
+    if no_centers!=nil || no_radii!=nil {return}
     for c,i in clusters {
         centers[i],radii[i]=c.own.center,c.own.radius
         // As large as any of its clusters: the error never shrinks towards the roots.
         merged.error=max(merged.error,c.own.error)
     }
     merged.center,merged.radius=spheres_bound(centers,radii)
-    return
+    return merged,true
 }
 
 @(private="file")
@@ -356,7 +357,8 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
             clear(&merged)
             for c in group {append(&merged,..cluster_indices[c.index_offset:][:c.index_count])}
             target:=int(f32(len(merged)/3)*CLUSTER_SIMPLIFY_RATIO)*3
-            bounds:=lod_merge(group,context.temp_allocator)
+            bounds,bounded:=lod_merge(group,context.temp_allocator)
+            if !bounded {return .Out_Of_Memory}
             resize(&simplified,len(merged))
             options:=Simplify_Options{.Sparse,.Error_Absolute}
             result,failed:=simplify(simplified[:],merged[:],source.positions,target,max(f32),options,source.attributes,source.attribute_weights,locks)
@@ -376,11 +378,12 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
                 for c in group {
                     for index in cluster_indices[c.index_offset:][:c.index_count] {retired[remap[index]]=true}
                 }
-                group_output(&b,group[:],cluster_indices[:],bounds,depth)
+                if _,written:=group_output(&b,group[:],cluster_indices[:],bounds,depth);!written {return .Out_Of_Memory}
                 continue
             }
             bounds.error=max(bounds.error,result.position_error)
-            id:=group_output(&b,group[:],cluster_indices[:],bounds,depth)
+            id,written:=group_output(&b,group[:],cluster_indices[:],bounds,depth)
+            if !written {return .Out_Of_Memory}
             // The triangles that remain, by submesh, each split in clusters of the next level.
             kept:=simplified[:result.index_count]
             resize(&by_submesh,len(kept))
@@ -409,7 +412,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     if len(clusters)==1 {
         root:=clusters[0].own
         root.error=max(f32)
-        group_output(&b,clusters[:],cluster_indices[:],root,depth)
+        if _,written:=group_output(&b,clusters[:],cluster_indices[:],root,depth);!written {return .Out_Of_Memory}
     }
     return .None
 }
@@ -468,7 +471,7 @@ cluster_levels_build :: proc(dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,ran
             context.temp_allocator=runtime.arena_allocator(&work)
             if failed:=clusterize(&b,indices[r.first_index:][:r.index_count],r.submesh,{center,radius,error},NONE,&clusters,&cluster_indices);failed!=.None {return failed}
         }
-        group_output(&b,clusters[:],cluster_indices[:],{center,radius,next},k)
+        if _,written:=group_output(&b,clusters[:],cluster_indices[:],{center,radius,next},k);!written {return .Out_Of_Memory}
     }
     return .None
 }

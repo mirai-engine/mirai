@@ -1,5 +1,6 @@
 package foliage
 
+import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
@@ -248,7 +249,7 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     collision:physics.Collision_Settings
     e:=core.Entity(42)
     for &cell,i in s.cells {cell.version=u32(i+1)}
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1}))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
     // Trees collide, grass does not: the generated cell and the manual tree of cell (1,-1).
     testing.expect_value(t,len(fp.cells),len(s.cells))
     testing.expect_value(t,int(w.body_count),2)
@@ -261,7 +262,7 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     testing.expect(t,!collider_remove(&fp,&w,0,0),"once")
     for handle,i in fp.shapes {if i>0 {testing.expect(t,sim.shape_valid(&w,handle))}}
     // Building again replaces the bodies of the entity.
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1}))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.body_count),2)
     testing.expect_value(t,int(w.shape_count),shapes)
     // Building what changed keeps the bodies of the other cells.
@@ -269,7 +270,7 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     kept:sim.Body_Handle
     for cell in fp.cells {if cell.coord==tree {kept=cell.body}}
     source_cell(&s,{0,0}).version+=10
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.body_count),2)
     testing.expect_value(t,int(w.shape_count),shapes)
     testing.expect_value(t,len(fp.shapes),shapes)
@@ -718,4 +719,85 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
     testing.expect(t,!source_valid(&s),"an inverted offset")
     s.types[0].offset={0,math.inf_f32(1)}
     testing.expect(t,!source_valid(&s))
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What a cell asks memory for (its instances placed, grouped by type, its
+// tile of ground and its collision), with the memory ending at each request
+// in turn: the call is refused and what it works on stays usable, and with
+// memory enough it goes through.
+@(test)
+foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
+    s:Source
+    defer source_destroy(&s)
+    sample(&s)
+    for &cell,i in s.cells {cell.version=u32(i+1)}
+    owner:=context.allocator
+    limit:=Memory_Limit{owner=owner}
+    whole:Build_Work
+    defer build_work_destroy(&whole)
+    if !testing.expect(t,cell_build(&s,source_cell(&s,{0,0}),{},&whole) && len(whole.placed)>0) {return}
+    Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision}
+    for call in Call {
+        work:Build_Work
+        ground:Ground_Owner
+        fp:Foliage_Physics
+        collision:physics.Collision_Settings
+        w:sim.World
+        if !testing.expect(t,sim.world_init(&w,sim.world_desc_default())) {return}
+        if call==.Placed_Group {append(&work.placed,..whole.placed[:])}
+        done,refused:=false,false
+        for served in 0..<64 {
+            limit.remaining=served
+            context.allocator={memory_limit_proc,&limit}
+            switch call {
+            case .Cell_Build:
+                done=cell_build(&s,source_cell(&s,{0,0}),{},&work)
+            case .Placed_Group:
+                done=placed_group(&s,&work)
+            case .Ground_Tile:
+                _,_,tile:=ground_tile(&ground,{0,0},4)
+                done=tile!=nil
+            case .Collision:
+                _,done=physics_owner_build(&fp,&w,&collision,core.Entity(42),&s,{scale={1,1,1},rotation=1})
+            }
+            context.allocator=owner
+            limit.remaining=max(int)
+            if done {break}
+            refused=true
+            #partial switch call {
+            case .Cell_Build:  testing.expectf(t,len(work.placed)==0,"%v with %d requests served leaves %d instances",call,served,len(work.placed))
+            case .Ground_Tile: testing.expectf(t,len(ground.tiles)==0,"%v with %d requests served leaves a tile",call,served)
+            }
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",call)
+        // With memory again what was refused is whole.
+        #partial switch call {
+        case .Cell_Build:
+            testing.expect(t,cell_build(&s,source_cell(&s,{0,0}),{},&work) && len(work.placed)==len(whole.placed))
+        case .Placed_Group:
+            testing.expect(t,len(work.firsts)==len(s.types)+1 && len(work.order)==len(work.placed))
+        case .Ground_Tile:
+            heights,_,tile:=ground_tile(&ground,{0,0})
+            testing.expect(t,tile!=nil && len(heights)==16)
+        }
+        build_work_destroy(&work)
+        ground_owner_destroy(&ground)
+        physics_owner_clear(&fp,&w,core.Entity(42))
+        core.value_free(&fp,type_info_of(Foliage_Physics))
+        sim.world_destroy(&w)
+    }
 }

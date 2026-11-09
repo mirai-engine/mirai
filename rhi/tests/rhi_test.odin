@@ -1,7 +1,9 @@
 package rhi_tests
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
+import "core:strings"
 import "core:math"
 import "core:sync"
 import "core:testing"
@@ -593,4 +595,66 @@ rhi_timestamps_report_ordered_nanoseconds :: proc(t: ^testing.T) {
 	}
 	rhi.timestamps_want(d, false)
 	expect_clean(t, d)
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What a device asks its allocator for, to be created and to grow its texture
+// table, with the memory ending at each request in turn: the call is refused
+// with a message that says so and leaves a device that works, and with memory
+// enough it goes through.
+@(test)
+rhi_device_without_memory_is_refused_and_keeps_its_texture_table :: proc(t:^testing.T) {
+    shared_device.hold(t)
+    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{memory_limit_proc,&limit}
+    desc:=rhi.Device_Desc{app_name="mirai rhi memory tests",validation=true,upload_bytes_per_frame=1<<20,capacities={buffers=16,textures=16,samplers=4,pipelines=4,accels=4,deletions=16},allocator=limited}
+    d:^rhi.Device
+    defer if d!=nil {rhi.device_destroy(d)}
+    texture:rhi.Texture
+    Step :: enum {Create,Table}
+    for step in Step {
+        done,refused:=false,false
+        for served in 0..<96 {
+            message:string
+            limit.remaining=served
+            switch step {
+            case .Create:
+                d,message=rhi.device_create(desc)
+                done=d!=nil
+            case .Table:
+                done=rhi.texture_table_set(d,rhi.TEXTURE_TABLE_FIRST,texture)
+                message=rhi.device_error(d)
+            }
+            limit.remaining=max(int)
+            if done {break}
+            if !strings.contains(message,"out of memory") {
+                // Another refusal than the one of the allocator: there is no device to test with.
+                if step==.Create && rhi.gpu_skip_allowed() {fmt.eprintln("rhi tests skipped:",message)} else {testing.expectf(t,false,"%v with %d requests served: %s",step,served,message)}
+                return
+            }
+            refused=true
+            if step==.Table {testing.expectf(t,rhi.texture_table_set(d,0,texture),"the table of before takes an entry with %d requests served: %s",served,rhi.device_error(d))}
+        }
+        if !testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",step) {return}
+        if step==.Create {
+            texture=rhi.texture_create(d,{width=1,height=1,format=.RGBA8_Unorm,usage={.Sampled},name="entry"})
+            white:=[4]u8{255,255,255,255}
+            if !testing.expect(t,texture!=0 && rhi.texture_upload(d,texture,white[:],4),rhi.device_error(d)) {return}
+            if !testing.expect(t,rhi.texture_table_limit(d)>rhi.TEXTURE_TABLE_FIRST,"the device holds a table that grows") {return}
+        }
+    }
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
 }

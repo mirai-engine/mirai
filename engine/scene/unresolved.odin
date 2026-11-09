@@ -51,8 +51,8 @@ Unresolved_Key :: struct {entity:core.Entity,table:u64,offset:u32}
 
 // The pending targets by field, for whoever asks for many.
 @(private)
-unresolved_map :: proc(u:^Unresolved_References,allocator:=context.temp_allocator) -> map[Unresolved_Key]base.Entity_Id {
-    pending:=make(map[Unresolved_Key]base.Entity_Id,allocator)
+unresolved_map :: proc(u:^Unresolved_References) -> map[Unresolved_Key]base.Entity_Id {
+    pending:=make(map[Unresolved_Key]base.Entity_Id,context.temp_allocator)
     if u==nil {return pending}
     reserve(&pending,len(u.items))
     for item in u.items {pending[{item.entity,item.table,item.offset}]=item.target}
@@ -101,7 +101,7 @@ references_resolve :: proc(w:core.World_Ref) {
         core.raw_touch(table,item.entity)
         append(&u.resolved,item)
     }
-    resize(&u.items,kept)
+    base.truncate(&u.items,kept)
     if len(u.resolved)>taken {u.written+=1}
 }
 

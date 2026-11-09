@@ -606,7 +606,7 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 material_program_roughness_keeps_reflections_active :: proc(t:^testing.T) {
     r:=new(Renderer);defer free(r)
     r.allocator=context.allocator
-    defer delete(r.scene.materials)
+    defer {delete(r.scene.materials);delete(r.scene.material_versions)}
     defer program_catalog_destroy(&r.programs)
     material:=DEFAULT_MATERIAL
     materials_set(r,{material})

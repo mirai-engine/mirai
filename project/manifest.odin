@@ -165,6 +165,7 @@ Error_Code :: enum u8 {
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
     Asset_Kind_Invalid, // the extension subject of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
+    Out_Of_Memory,      // nothing of the files is wrong
 }
 
 Error :: struct {
@@ -430,6 +431,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Source_Invalid:     return fmt.aprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
     case .Asset_Kind_Invalid: return fmt.aprintf("%s: the extension '%s' of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice",file,subject)
     case .Schema_Failed:      return fmt.aprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
+    case .Out_Of_Memory:      return fmt.aprintf("%s: there is not enough memory to read the project and its plugins; free memory and try again",file)
     }
     return ""
 }

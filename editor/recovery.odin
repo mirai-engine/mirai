@@ -179,7 +179,7 @@ recovery_open :: proc(s:^Session) {
         if asset.asset_load(&source,recovery_file(s,slot))==.None {
             info,error:=asset.asset_row(&source,&s.app.assets.types,RECOVERY_TABLE,Recovery_Info)
             view,view_error:=asset.scene_view(&source,&s.app.assets.types)
-            if error==.None && view_error==.None && asset.scene_view_check(view) {
+            if error==.None && view_error==.None && asset.scene_view_check(view)==.None {
                 found.info=info^
                 found.scene=true
             }

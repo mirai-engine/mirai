@@ -4,10 +4,11 @@ import "base:runtime"
 import "core:testing"
 import "mirai:std/serial"
 
-@(private="file")
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private)
 Type_Allocation_Failure :: struct {owner:runtime.Allocator,remaining:int}
 
-@(private="file")
+@(private)
 type_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
     state:=(^Type_Allocation_Failure)(data)
     if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {

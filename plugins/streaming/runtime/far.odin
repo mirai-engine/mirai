@@ -120,13 +120,15 @@ Far_Build :: struct {
     made:host.Mesh_Render_Geometry,
     done:bool,
     built:bool, // done with a mesh
+    starved:bool, // a round had no memory for what it read: no mesh is made of it
     counter:jobs.Counter,
 }
 
 @(private)
 far_build_new :: proc(scene_id:base.Asset_Id,error:f32,limits:host.Assets_Limits) -> ^Far_Build {
     heap:=runtime.heap_allocator()
-    b:=new(Far_Build,heap)
+    b,allocation_error:=new(Far_Build,heap)
+    if allocation_error!=nil {return nil}
     b.scene,b.error,b.limits=scene_id,error,limits
     b.sources=make([dynamic]host.Assets_Source,heap)
     b.wanted=make([dynamic]base.Asset_Id,heap)
@@ -159,6 +161,12 @@ far_build_free :: proc(app:^host.App,b:^Far_Build) {
 @(private)
 far_build_release :: proc(data:rawptr) {far_build_free(nil,(^Far_Build)(data))}
 
+@(private)
+far_starved :: proc(problems:^core.Problems,a:^host.Assets,scene_id:base.Asset_Id) {
+    name:[base.ASSET_ID_TEXT]u8
+    core.report(problems,core.NONE,"streaming.memory","out of memory to make the far mesh of scene %s; it is made again: free memory",host.assets_name(a,scene_id,&name))
+}
+
 // A round of a build, on a job: opens what was found, asks for what is
 // still missing and, with nothing missing, makes the far mesh.
 @(private)
@@ -173,7 +181,8 @@ far_round :: proc(b:^Far_Build,worker:int) {
             far_scene_read(b,source.id,&file)
             asset.asset_close(&file)
         case asset.KIND_MESH:
-            m:=new(Far_Mesh_Read)
+            m,allocation_error:=new(Far_Mesh_Read)
+            if allocation_error!=nil {b.starved=true;asset.asset_close(&file);continue}
             m.file=file
             view,error:=asset.mesh_view(&m.file,&b.types)
             if error!=.None {asset.asset_close(&m.file);continue}
@@ -192,9 +201,10 @@ far_round :: proc(b:^Far_Build,worker:int) {
         case asset.KIND_TEXTURE:
             if view,error:=asset.texture_view(&file,&b.types);error==.None {
                 if texture,ok:=asset.far_texture(view);ok {
-                    t:=new(asset.Far_Texture)
-                    t^=texture
-                    b.textures[source.id]=t
+                    if t,allocation_error:=new(asset.Far_Texture);allocation_error==nil {
+                        t^=texture
+                        b.textures[source.id]=t
+                    } else {b.starved=true}
                 }
             }
             asset.asset_close(&file)
@@ -208,7 +218,7 @@ far_round :: proc(b:^Far_Build,worker:int) {
     far_expand(b,b.scene,linalg.MATRIX4F32_IDENTITY,0,&parts)
     far_want_parts(b,parts[:])
     if len(b.wanted)>0 {return}
-    b.built=far_make(b,parts[:])
+    b.built=!b.starved && far_make(b,parts[:])
     b.done=true
 }
 
@@ -360,7 +370,7 @@ far_want :: proc(far:^Streaming_Far,id:base.Asset_Id) {
 
 // Moves the builds on: gives each round what it asked for, publishes what
 // is made, and makes again the far meshes whose reads changed.
-far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32) {
+far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32,problems:^core.Problems) {
     a:=app.assets
     if a==nil || a.renderer==nil {return}
     far.app=app
@@ -388,11 +398,19 @@ far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32) {
         if s.made && s.error!=error && s.build==nil {s.made=false}
         if s.made || s.build!=nil || building>=FAR_BUILDS {continue}
         s.build=far_build_new(s.scene,error,host.assets_limits(a))
+        if s.build==nil {far_starved(problems,a,s.scene);continue}
         building+=1
     }
     for &s in far.scenes {
         b:=s.build
         if b==nil || jobs.pending(&b.counter) {continue}
+        if b.done && b.starved {
+            // The section keeps the far mesh it had, and a new build starts.
+            far_starved(problems,a,s.scene)
+            host.app_release(app,{far_build_release,b})
+            s.build=nil
+            continue
+        }
         if b.done {
             mesh:base.Asset_Id
             if b.built {mesh,_=host.assets_mesh_publish(a,&b.made)}
@@ -424,7 +442,7 @@ far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32) {
 @(step="frame",loops="game editor",after="scene_sections")
 streaming_far :: proc(
     world:core.World_Ref,app:^host.App,references:core.Read(scene.Scene_Reference),views:core.Ref(scene.Section_Views),settings:core.Ref(Streaming_Settings),
-    transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),proxies:core.Read(scene.Section_Proxy),renderers:core.Read(render.Mesh_Renderer),far:^Streaming_Far,
+    transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),proxies:core.Read(scene.Section_Proxy),renderers:core.Read(render.Mesh_Renderer),far:^Streaming_Far,problems:^core.Problems,
 ) {
     if far==nil || app==nil {return}
     s:=settings.ptr!=nil?settings.ptr^:STREAMING_SETTINGS_DEFAULT
@@ -432,7 +450,7 @@ streaming_far :: proc(
         reference:=core.at(references,row)
         if reference.scene!={} {far_want(far,reference.scene)}
     }
-    far_update(far,app,far_error(s))
+    far_update(far,app,far_error(s),problems)
     // The proxies there are, by reference; one that no longer shows what it should goes.
     shown:=make(map[core.Entity]core.Entity,context.temp_allocator)
     for row in 0..<core.count(proxies) {

@@ -297,7 +297,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
             indices:=[6]u32{a,b,a+1,a+1,b,b+1}
             copy(m.indices[next:],indices[:]);next+=6
         }}
-        resize(&m.indices,next)
+        base.truncate(&m.indices,next)
     }
     if !collision {return true}
     // The collider keeps every sample, whatever the level shown.

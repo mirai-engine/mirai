@@ -55,7 +55,10 @@ grids_load_prepare :: proc(sync:^Particle_Sync,app:^host.App,problems:^core.Prob
         }
         size:=len(cells)*4
         at:=len(sync.load_bytes)
-        resize(&sync.load_bytes,at+size)
+        if resize(&sync.load_bytes,at+size)!=nil {
+            core.report(problems,entry.entity,"vfx.memory","out of memory for the cached state of this grid; it is read again in the next frame: free memory, or bake fewer cells")
+            continue
+        }
         out:=mem.slice_data_cast([]f32,sync.load_bytes[at:])
         phase:=grid_phase(entry.first,entry.cells)
         floats:=int(entry.layers)*4
@@ -130,7 +133,9 @@ grid_bake_take :: proc(sync:^Particle_Sync,app:^host.App,world:core.World_Id,all
     parity:=(cast(^u32)&data[at*4])^&1
     copy_at:=int(entry.offset)+int(parity)*int(count)*floats*4
     kept:=mem.slice_data_cast([]f32,data[copy_at:][:int(count)*floats*4])
-    cells=make([]f32,int(count)*floats,allocator)
+    allocated,allocation_error:=make([]f32,int(count)*floats,allocator)
+    if allocation_error!=nil {return}
+    cells=allocated
     phase:=grid_phase(entry.first,entry.cells)
     for z in 0..<entry.cells.z {
         for y in 0..<entry.cells.y {

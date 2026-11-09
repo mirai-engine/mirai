@@ -122,7 +122,8 @@ protocols_reject_what_they_cannot_replicate_and_hash_every_choice :: proc(t:^tes
         p:Protocol;protocol_init(&p);defer protocol_destroy(&p)
         type_register(&p,name,{{schema=schema,type=type}})
         event_register(&p,"E",schema,type,flags)
-        return protocol_seal(&p)
+        hash,_:=protocol_seal(&p)
+        return hash
     }
     p:Protocol;protocol_init(&p);defer protocol_destroy(&p)
     _,too_wide:=type_register(&p,"Wide",{{schema=&schema,type=wide}})

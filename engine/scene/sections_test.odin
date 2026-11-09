@@ -100,7 +100,7 @@ section_world_settle :: proc(world,shared,editor:rawptr) {
 }
 
 @(private="file")
-section_world_clear :: proc(data:rawptr) {
+section_world_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Section_World)data
     core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms)
     core.table_clear(&w.parents);core.table_clear(&w.disabled);core.table_clear(&w.keeps)
@@ -108,10 +108,11 @@ section_world_clear :: proc(data:rawptr) {
     core.table_clear(&w.dormants);core.table_clear(&w.tombstones)
     core.table_clear(&w.roaming);core.table_clear(&w.lamps);core.table_clear(&w.links);core.table_clear(&w.sources)
     core.table_clear(&w.grounds);core.table_clear(&w.kept)
-    core.entities_clear(&w.entities)
+    if !core.entities_clear(&w.entities) {return false}
     core.hierarchy_clear(&w.hierarchy)
     core.value_free(&w.unresolved,type_info_of(Unresolved_References))
     core.value_free(&w.records,type_info_of(Section_Records))
+    return true
 }
 
 // A project with that World and its assets in a temporary folder, and the
@@ -754,3 +755,70 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     _,error=spawn_member(core.commands_of(w),&f.app,SECTION_ROOM,1,id_in(1,99),at)
     testing.expect_value(t,error,Error.Not_Found)
 }
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// A record that has no memory to look at the tables, or to list what its
+// section turns on, says so and waits: the look that finds memory takes it.
+@(test)
+a_record_without_memory_to_look_waits_for_the_next_look :: proc(t:^testing.T) {
+    f:Section_Fixture
+    if !section_fixture_open(t,&f,"memory") {return}
+    defer section_fixture_close(&f)
+    section_level_write(t,&f)
+    w:=section_ref(&f)
+    if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
+    room:=section_entity(&f,1)
+    section_stream(&f.requests,room,.Active)
+    section_frame(&f)
+    section_frame(&f)
+    records:=core.world_storage_of(w,Section_Records)
+    record:=records_find(records,room)
+    if !testing.expect(t,record!=nil && records.looks==0) {return}
+    limit:=Memory_Limit{owner=context.allocator}
+    Step :: enum {Look,Hold}
+    for step in Step {
+        done,refused:=false,false
+        for served in 0..<64 {
+            error:Error
+            switch step {
+            case .Look:
+                delete(record.seen)
+                record.seen=nil
+                if !record.look {record.look=true;records.looks+=1}
+            case .Hold:
+                if !testing.expect_value(t,section_hold(w,room,true),Error.None) {return}
+                core.world_settle(w)
+            }
+            {
+                limit.remaining=served
+                context.allocator={memory_limit_proc,&limit}
+                error=records_look(w) if step==.Look else section_hold(w,room,false)
+            }
+            core.world_settle(w)
+            done=error==.None
+            if !done {
+                testing.expect_value(t,error,Error.Out_Of_Memory)
+                testing.expect(t,record.look && records.looks==1,"it still waits for a look")
+            }
+            if done {break}
+            refused=true
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",step)
+        testing.expect_value(t,records_look(w),Error.None)
+        testing.expect(t,!record.look && records.looks==0 && len(record.seen)==len(w.info.tables))
+    }
+}
+

@@ -35,17 +35,20 @@ record_init :: proc(r:^Cache_Recorder,desc:Recorder_Desc,allocator:=context.allo
     if u64(desc.frames)>u64(max(u32)) || u64(desc.samples)>u64(max(u32)) || u64(desc.vertices)>u64(max(u32)) || u64(desc.indices)>u64(max(u32)) || desc.frames>max(int)/size_of(Cache_Frame) || desc.samples>max(int)/size_of(Cache_Sample) || desc.vertices>max(int)/size_of(Cache_Vertex) || desc.indices>max(int)/size_of(u32) {return .Invalid}
     r.allocator=allocator
     r.info.origin=desc.origin
-    r.tracks=make([dynamic]Cache_Track,0,desc.tracks,allocator)
-    r.vertices=make([dynamic]Cache_Vertex,0,desc.vertices,allocator)
-    r.indices=make([dynamic]u32,0,desc.indices,allocator)
-    r.materials=make([dynamic]u32,0,desc.indices/3,allocator)
-    r.frames=make([dynamic]Cache_Frame,0,desc.frames,allocator)
-    r.samples=make([dynamic]Cache_Sample,0,desc.samples,allocator)
-    r.scratch=make([]Cache_Sample,desc.tracks,allocator)
-    r.pieces=make([]destruct.Piece_Info,desc.tracks,allocator)
-    r.groups=make([]destruct.Group_Info,desc.tracks,allocator)
+    errors:[9]mem.Allocator_Error
+    r.tracks,errors[0]=make([dynamic]Cache_Track,0,desc.tracks,allocator)
+    r.vertices,errors[1]=make([dynamic]Cache_Vertex,0,desc.vertices,allocator)
+    r.indices,errors[2]=make([dynamic]u32,0,desc.indices,allocator)
+    r.materials,errors[3]=make([dynamic]u32,0,desc.indices/3,allocator)
+    r.frames,errors[4]=make([dynamic]Cache_Frame,0,desc.frames,allocator)
+    r.samples,errors[5]=make([dynamic]Cache_Sample,0,desc.samples,allocator)
+    r.scratch,errors[6]=make([]Cache_Sample,desc.tracks,allocator)
+    r.pieces,errors[7]=make([]destruct.Piece_Info,desc.tracks,allocator)
+    r.groups,errors[8]=make([]destruct.Group_Info,desc.tracks,allocator)
     geom.mesh_buffer_init(&r.geometry,allocator)
-    if cap(r.tracks)<desc.tracks || cap(r.vertices)<desc.vertices || cap(r.indices)<desc.indices || cap(r.materials)<desc.indices/3 || cap(r.frames)<desc.frames || cap(r.samples)<desc.samples || len(r.scratch)<desc.tracks || len(r.pieces)<desc.tracks || len(r.groups)<desc.tracks {
+    starved:=false
+    for error in errors {starved||=error!=nil}
+    if starved || cap(r.tracks)<desc.tracks || cap(r.vertices)<desc.vertices || cap(r.indices)<desc.indices || cap(r.materials)<desc.indices/3 || cap(r.frames)<desc.frames || cap(r.samples)<desc.samples || len(r.scratch)<desc.tracks || len(r.pieces)<desc.tracks || len(r.groups)<desc.tracks {
         record_destroy(r)
         return .Out_Of_Memory
     }

@@ -111,7 +111,7 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
     if host.assets_file(a,document,record.kind,&data)!=.None {return false}
     defer asset.asset_close(&data)
     view,error:=asset.scene_view(&data,&a.types)
-    if error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return false}
+    if error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return false}
     count:=len(view.ids)
     renderers,shown:=document_column(&data,&view,&a.types,"Mesh_Renderer",erender.Mesh_Renderer)
     if renderers==nil {return false}

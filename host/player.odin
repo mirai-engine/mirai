@@ -1,5 +1,6 @@
 package host
 
+import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:math"
@@ -69,6 +70,9 @@ Player_Script :: struct {
     lines:[PLAYER_SCRIPT_CAPACITY]Player_Script_Line,
     count:int,
 }
+
+@(private)
+PLAYER_MEMORY_TEXT :: "mirai: out of memory to start the game"
 
 @(private)
 PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--no-gpu] [--dedicated] [--frames <n>] [--capture <png>]
@@ -314,7 +318,11 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         fmt.eprintfln("mirai: %s",problem)
         return PLAYER_USAGE
     }
-    script:=new(Player_Script)
+    script,script_error:=new(Player_Script)
+    if script_error!=nil {
+        fmt.eprintln(PLAYER_MEMORY_TEXT)
+        return PLAYER_FAILED
+    }
     defer free(script)
     if options.input!="" {
         path:=project.path_absolute(options.input,context.temp_allocator)
@@ -390,12 +398,20 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         platform.set_pacing(app.platform,{limit=u32(1/app.tick_dt+0.5)})
     }
     if options.scene=="" {options.scene=project.start_scene(root,context.temp_allocator)}
-    taken:=make([]bool,len(options.arguments))
+    taken,taken_error:=make([]bool,len(options.arguments))
+    if taken_error!=nil {
+        fmt.eprintln(PLAYER_MEMORY_TEXT)
+        return PLAYER_FAILED
+    }
     defer delete(taken)
     app.launch={scene=options.scene,players=options.players,arguments=options.arguments[:],taken=taken}
     surface:^Player_Surface
     if surfaced {
-        surface=new(Player_Surface)
+        surface_error:runtime.Allocator_Error
+        if surface,surface_error=new(Player_Surface);surface_error!=nil {
+            fmt.eprintln(PLAYER_MEMORY_TEXT)
+            return PLAYER_FAILED
+        }
         if !surface_open(app,surface) {
             free(surface)
             fmt.eprintln("mirai: could not create the shared textures")
@@ -405,7 +421,11 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     defer if surface!=nil {surface_close(app,surface);free(surface)}
     attached:^Player_Attached
     if options.attached && surface==nil {
-        attached=new(Player_Attached)
+        attached_error:runtime.Allocator_Error
+        if attached,attached_error=new(Player_Attached);attached_error!=nil {
+            fmt.eprintln(PLAYER_MEMORY_TEXT)
+            return PLAYER_FAILED
+        }
         if !attached_open(attached) {
             fmt.eprintln("mirai: could not watch standard input")
             return PLAYER_FAILED

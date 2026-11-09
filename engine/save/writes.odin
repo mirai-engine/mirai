@@ -88,8 +88,15 @@ write_queue :: proc(work:^Save_Work,app:^host.App,result:Result,path:string,data
         return .Busy
     }
     if work.writes==nil {work.writes=make([dynamic]^Write,app.allocator)}
-    w:=new(Write,app.allocator)
-    w^={result=result,phase=app.renderer!=nil?.Thumbnail:.Ready,path=strings.clone(path,app.allocator),data=data,asked=work.frame,allocator=app.allocator}
+    w,no_write:=new(Write,app.allocator)
+    kept,no_path:=strings.clone(path,app.allocator)
+    if no_write!=nil || no_path!=nil || reserve(&work.writes,len(work.writes)+1)!=nil {
+        delete(kept,app.allocator)
+        free(w,app.allocator)
+        mem.free_bytes(data,app.allocator)
+        return .Failed
+    }
+    w^={result=result,phase=app.renderer!=nil?.Thumbnail:.Ready,path=kept,data=data,asked=work.frame,allocator=app.allocator}
     append(&work.writes,w)
     return .None
 }
@@ -169,7 +176,11 @@ write_job :: proc(w:^Write,worker:int) {
 // (RGBA8 at twice THUMBNAIL_SIZE) after the header, replacing the file.
 @(private)
 slot_file_write :: proc(path:string,data:[]u8,pixels:[]u8) -> Error {
-    png:=thumbnail_png(pixels,context.temp_allocator) if pixels!=nil else nil
+    png:[]u8
+    if pixels!=nil {
+        made:bool
+        if png,made=thumbnail_png(pixels,context.temp_allocator);!made {return .Write_Failed}
+    }
     out:serial.Writer
     serial.writer_init(&out,len(data)+len(png)+2*serial.WRITER_ALIGNMENT,context.temp_allocator)
     header:=(cast(^Header)raw_data(data))^
@@ -186,12 +197,14 @@ slot_file_write :: proc(path:string,data:[]u8,pixels:[]u8) -> Error {
 }
 
 // The PNG of the thumbnail: the pixels halved, averaging each four in a
-// gamma of 2, which keeps the light of their edges, and without alpha.
+// gamma of 2, which keeps the light of their edges, and without alpha. None,
+// and made, for pixels of another size; not made without memory for it.
 @(private)
-thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> []u8 {
+thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> (png:[]u8,made:bool) {
     width,height:=int(THUMBNAIL_SIZE.x),int(THUMBNAIL_SIZE.y)
-    if len(pixels)!=width*height*16 {return nil}
-    image:=make([]u8,width*height*3,allocator)
+    if len(pixels)!=width*height*16 {return nil,true}
+    image,no_image:=make([]u8,width*height*3,allocator)
+    if no_image!=nil {return nil,false}
     for y in 0..<height {
         for x in 0..<width {
             for channel in 0..<3 {
@@ -204,15 +217,16 @@ thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> []u8 {
             }
         }
     }
-    Sink :: struct {bytes:[dynamic]u8}
+    Sink :: struct {bytes:[dynamic]u8,cut:bool}
     sink:=Sink{bytes=make([dynamic]u8,allocator)}
     sink_write :: proc "c" (user,data:rawptr,size:c.int) {
         sink:=cast(^Sink)user
         context=runtime.default_context()
-        append(&sink.bytes,..([^]u8)(data)[:size])
+        if _,error:=append(&sink.bytes,..([^]u8)(data)[:size]);error!=nil {sink.cut=true}
     }
-    if stbi.write_png_to_func(sink_write,&sink,c.int(width),c.int(height),3,raw_data(image),c.int(width*3))==0 {return nil}
-    return sink.bytes[:]
+    if stbi.write_png_to_func(sink_write,&sink,c.int(width),c.int(height),3,raw_data(image),c.int(width*3))==0 {return nil,true}
+    if sink.cut {return nil,false}
+    return sink.bytes[:],true
 }
 
 // Draws the view of the player for the slots that wait for their thumbnail:

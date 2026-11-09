@@ -18,8 +18,8 @@ Polygon_Rule :: enum {
 // indices into points, counter-clockwise, and returns how many. Every loop
 // edge ends up in exactly one triangle, so collinear and repeated points are
 // kept, with triangles without area where nothing else can use them. A
-// negative loop size, loops of more points than there are or a point that is
-// not finite give no triangles.
+// negative loop size, loops of more points than there are, a point that is
+// not finite or no memory for the triangles give none.
 polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rule:=Polygon_Rule.First_Outline) -> int {
     total:=0
     for size in loop_sizes {
@@ -33,12 +33,13 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
     scratch:=context.temp_allocator
     tr:Triangulator
     triangulator_init(&tr,scratch)
-    doubles:=make([]DVec2,len(points),scratch)
+    doubles,no_doubles:=make([]DVec2,len(points),scratch)
+    sizes,no_sizes:=make([]i32,len(loop_sizes),scratch)
+    if no_doubles!=nil || no_sizes!=nil {return 0}
     for p,i in points {doubles[i]={f64(p.x),f64(p.y)}}
-    sizes:=make([]i32,len(loop_sizes),scratch)
     for size,i in loop_sizes {sizes[i]=i32(size)}
     before:=len(out)
-    triangulate_loops(&tr,doubles,sizes,out,rule)
+    if triangulate_loops(&tr,doubles,sizes,out,rule)!=nil {return 0}
     return (len(out)-before)/3
 }
 
@@ -233,7 +234,6 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         return next
     }
     clear(&tr.reflex)
-    resize(&tr.removed,len(tr.point));resize(&tr.listed,len(tr.point))
     for node:=start;true; {
         tr.removed[node]=false
         tr.listed[node]=node_is_reflex(tr,points,node)
@@ -277,8 +277,24 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
     }
 }
 
-@(private) triangulate_loops :: proc(tr:^Triangulator,points:[]DVec2,loop_sizes:[]i32,out:^[dynamic]u32,rule:Polygon_Rule) #no_bounds_check {
+// Takes its memory before it links a node: every point of a loop is a node,
+// a bridge adds two, and each clip of a node is one triangle. Without memory
+// nothing is appended.
+@(private) triangulate_loops :: proc(tr:^Triangulator,points:[]DVec2,loop_sizes:[]i32,out:^[dynamic]u32,rule:Polygon_Rule) -> runtime.Allocator_Error #no_bounds_check {
     clear(&tr.point);clear(&tr.prev);clear(&tr.next);clear(&tr.loops);clear(&tr.order)
+    nodes,loops:=0,0
+    for size in loop_sizes {
+        if size>=3 {nodes+=int(size)+2;loops+=1}
+    }
+    reserve(&tr.loops,loops) or_return
+    reserve(&tr.order,loops) or_return
+    reserve(&tr.point,nodes) or_return
+    reserve(&tr.prev,nodes) or_return
+    reserve(&tr.next,nodes) or_return
+    reserve(&tr.reflex,nodes) or_return
+    resize(&tr.removed,nodes) or_return
+    resize(&tr.listed,nodes) or_return
+    reserve_more(out,3*nodes) or_return
     first:=i32(0)
     for size in loop_sizes {
         loop:=Tri_Loop{first=first,count=size,parent=-1}
@@ -340,4 +356,5 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         }
         ears_clip(tr,points,start,orphan,out)
     }
+    return nil
 }

@@ -376,8 +376,8 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets
         if state.seen!=runtime.frame {for &slot in state.layers {if slot.active && !slot.finishing {action_end(runtime,&state,&slot,true,problems)}};if index<len(runtime.rows) && runtime.rows[index]==i32(i+1) {runtime.rows[index]=0};continue}
         if kept!=i {runtime.states[kept]=state};runtime.rows[index]=i32(kept+1);kept+=1
     }
-    resize(&requests.queue.items,pending)
-    resize(&runtime.states,kept)
+    base.truncate(&requests.queue.items,pending)
+    base.truncate(&runtime.states,kept)
     return true
 }
 

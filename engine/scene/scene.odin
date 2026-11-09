@@ -176,7 +176,8 @@ load_path :: proc(w:core.World_Ref,app:^host.App,path:string) -> (report:Report,
     if asset.asset_load(&source,path)!=.None {return {},.Invalid}
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&app.assets.types)
-    if view_error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return {},.Corrupt}
+    if view_error!=.None {return {},.Corrupt}
+    if checked:=asset.scene_view_check(view,context.temp_allocator);checked!=.None {return {},.Out_Of_Memory if checked==.Out_Of_Memory else .Corrupt}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
     document:=current(assets_documents(app.assets),&source,&resolved) or_return
@@ -215,7 +216,10 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    w.info.clear(data)
+    if !w.info.clear(data) {
+        host.load_phase_end(app,making)
+        return {},.Out_Of_Memory
+    }
     report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
     host.load_phase_end(app,making,core.world_entities(candidate).alive)
     settling:=host.load_phase_begin(app,.Settle)
@@ -227,7 +231,8 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     references_resolve(candidate)
     propagate(candidate,app)
     w.info.swap(w.data,data)
-    records_look(w)
+    // A look without memory for it stays asked for: scene_sections looks again, and reports it.
+    _=records_look(w)
     return
 }
 
@@ -340,7 +345,7 @@ instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,des
     if desc.parent!=core.NONE && !core.alive(es,desc.parent) {return {},.Invalid}
     view,view_error:=asset.scene_view(a,asset_types)
     if view_error!=.None {return {},view_error==.Invalid?.Invalid:view_error==.Out_Of_Memory?.Out_Of_Memory:.Corrupt}
-    if !asset.scene_view_check(view,context.temp_allocator) {return {},.Corrupt}
+    if checked:=asset.scene_view_check(view,context.temp_allocator);checked!=.None {return {},.Out_Of_Memory if checked==.Out_Of_Memory else .Corrupt}
     count:=len(view.ids)
     if desc.entities!=nil && len(desc.entities)<count {return {},.Invalid}
     types:=schema_of(w)

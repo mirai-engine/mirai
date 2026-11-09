@@ -70,7 +70,7 @@ bridge_destroy :: proc(b:^Bridge_Test) {
 
 @(private="file")
 bridge_step :: proc(b:^Bridge_Test) {
-    foliage_terrain_ground(&b.state,&b.ground,&b.requests,core.ref(&b.data),core.read(&b.foliages),core.read(&b.terrains),core.ref(&b.terrain_data),core.read(&b.worlds),core.ref(&b.sources),nil,{})
+    foliage_terrain_ground(&b.state,&b.ground,&b.requests,core.ref(&b.data),core.read(&b.foliages),core.read(&b.terrains),core.ref(&b.terrain_data),core.read(&b.worlds),core.ref(&b.sources),nil,{},nil)
 }
 
 @(private="file")
@@ -201,7 +201,7 @@ the_ground_under_a_held_stroke_of_the_editor_goes_until_the_stroke_ends :: proc(
     if !testing.expect(t,owner!=nil && foliage.ground_tile_find(owner,{0,0})>=0) {return}
     // A stroke held over cell (0,0): its tile has no ground, the other keeps it.
     focus:=terrain.Terrain_Focus{source={3,3},radius=4,center={10,0,10},stroke=true,low={6,6},high={14,14}}
-    foliage_terrain_ground(&b.state,&b.ground,&b.requests,core.ref(&b.data),core.read(&b.foliages),core.read(&b.terrains),core.ref(&b.terrain_data),core.read(&b.worlds),core.ref(&b.sources),nil,focus)
+    foliage_terrain_ground(&b.state,&b.ground,&b.requests,core.ref(&b.data),core.read(&b.foliages),core.read(&b.terrains),core.ref(&b.terrain_data),core.read(&b.worlds),core.ref(&b.sources),nil,focus,nil)
     tile,_:=foliage.ground_cell(owner,{0,0})
     _,_,ok:=foliage.ground_at(tile,10,10)
     testing.expect(t,!ok,"no ground under the stroke")
@@ -262,4 +262,46 @@ the_ground_far_from_the_sources_is_coarse_and_fine_near_them :: proc(t:^testing.
     revision:=owner.revision
     bridge_step(&b)
     testing.expect_value(t,owner.revision,revision)
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:mem.Allocator,remaining,refused:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:mem.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,mem.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {limit.refused+=1;return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// The first step of a world with a terrain under a foliage, with the memory
+// ending at each request in turn: it ends, and what it could not remember of
+// the chunks of the terrain is a problem; with memory enough it reports none.
+@(test)
+a_step_without_memory_ends_and_reports_the_chunks_it_could_not_remember :: proc(t:^testing.T) {
+    owner:=context.allocator
+    limit:=Memory_Limit{owner=owner}
+    whole,forgot:=false,false
+    for served in 0..<256 {
+        b:Bridge_Test
+        if !bridge_init(t,&b) {return}
+        // As after its terrain loads: the chunks of its source are seen for the first time.
+        b.terrain_data.epoch=1
+        problems:core.Problems
+        limit.remaining,limit.refused=served,0
+        context.allocator={memory_limit_proc,&limit}
+        foliage_terrain_ground(&b.state,&b.ground,&b.requests,core.ref(&b.data),core.read(&b.foliages),core.read(&b.terrains),core.ref(&b.terrain_data),core.read(&b.worlds),core.ref(&b.sources),nil,{},&problems)
+        context.allocator=owner
+        limit.remaining=max(int)
+        whole=limit.refused==0
+        forgot||=problems.count>0
+        if whole {testing.expectf(t,problems.count==0 && len(b.state.sources)==1 && len(b.state.sources[0].versions)==len(b.terrain_data.entries[0].versions),"with %d requests served: %d problems, %d sources seen",served,problems.count,len(b.state.sources))}
+        bridge_destroy(&b)
+        if whole {break}
+    }
+    testing.expect(t,whole && forgot,"a problem without memory, and none with it")
 }

@@ -3,6 +3,7 @@ package ai
 import "base:runtime"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:std/base"
 import math "mirai:std/math"
 
 // A coarse graph of how the regions of a mesh or of a volume join (the
@@ -125,7 +126,7 @@ nav_coarse_merge :: proc(dst,src:^Nav_Coarse) -> bool {
         moved.portal_first,moved.edge_first,moved.corner_first=u32(portals),u32(edges),u32(corners)
         _,e4:=append(&dst.regions,moved)
         if e1!=nil || e2!=nil || e3!=nil || e4!=nil {
-            resize(&dst.portals,portals);resize(&dst.edges,edges);resize(&dst.corners,corners);resize(&dst.regions,regions)
+            base.truncate(&dst.portals,portals);base.truncate(&dst.edges,edges);base.truncate(&dst.corners,corners);base.truncate(&dst.regions,regions)
             nav_coarse_twins(dst)
             return false
         }
@@ -534,7 +535,7 @@ coarse_build_finish :: proc(b:^Nav_Coarse_Build,c:^Nav_Coarse) -> Nav_Coarse_Sta
         _,e:=append(&c.regions,region)
         failed=e!=nil
     }
-    if failed {resize(&c.portals,portals_before);resize(&c.edges,edges_before);resize(&c.corners,corners_before)}
+    if failed {base.truncate(&c.portals,portals_before);base.truncate(&c.edges,edges_before);base.truncate(&c.corners,corners_before)}
     nav_coarse_twins(c)
     return .Failed if failed else .Done
 }

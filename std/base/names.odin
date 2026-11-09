@@ -51,8 +51,8 @@ name_find :: proc "contextless" (name:string,candidates:[]string) -> (index,matc
 
 @(private="file")
 name_fold :: proc(name:string,allocator:runtime.Allocator) -> string {
-    out,_:=make([]u8,len(name),allocator)
-    if out==nil {return ""}
+    out,error:=make([]u8,len(name),allocator)
+    if error!=nil {return ""}
     count:=0
     for c in transmute([]u8)name {
         if name_separator(c) {continue}
@@ -78,8 +78,8 @@ name_inside :: proc "contextless" (a,b:string) -> bool {
 // long, or an edit distance small for its length; nothing near lists nothing.
 names_nearest :: proc(name:string,candidates:[]string,out:[]int,allocator:=context.temp_allocator) -> int {
     Near :: struct {index,kind,distance:int}
-    near,_:=make([]Near,len(candidates),allocator)
-    if near==nil {return 0}
+    near,error:=make([]Near,len(candidates),allocator)
+    if error!=nil {return 0}
     wanted:=name_fold(name,allocator)
     room:=max(len(wanted)/3,1)
     count:=0

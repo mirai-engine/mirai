@@ -10,6 +10,7 @@ Hull_Error :: enum {
     Too_Few_Points, // fewer than three points
     Coincident,     // every point is within the tolerance of one point
     Collinear,      // every point is within the tolerance of one line
+    Out_Of_Memory,
 }
 
 Hull_Desc :: struct {
@@ -65,9 +66,28 @@ hull_build :: proc(points:[]Vec3,desc:Hull_Desc={},allocator:=context.allocator)
     if error!=.None {return}
     if q.flat {return qh_flat(&q,points,desc,allocator)}
     ok:bool
-    hull,ok=qh_emit(&q,points,true,allocator)
-    if !ok {hull,_=qh_emit(&q,points,false,allocator)}
+    no_memory:runtime.Allocator_Error
+    hull,ok,no_memory=qh_emit(&q,points,true,allocator)
+    if !ok && no_memory==nil {hull,_,no_memory=qh_emit(&q,points,false,allocator)}
+    if no_memory!=nil {return {},.Out_Of_Memory}
     return
+}
+
+// The six arrays of a hull, or none of them.
+@(private="file")
+hull_make :: proc(vertices,faces,corners:int,allocator:runtime.Allocator) -> (hull:Hull,error:runtime.Allocator_Error) {
+    hull.allocator=allocator
+    failed:[6]runtime.Allocator_Error
+    hull.vertices,failed[0]=make([]Vec3,vertices,allocator)
+    hull.sources,failed[1]=make([]u32,vertices,allocator)
+    hull.planes,failed[2]=make([]Plane,faces,allocator)
+    hull.faces,failed[3]=make([]Hull_Face,faces,allocator)
+    hull.face_vertices,failed[4]=make([]u32,corners,allocator)
+    hull.half_edges,failed[5]=make([]Hull_Half_Edge,corners,allocator)
+    for f in failed {
+        if f!=nil {hull_destroy(&hull);return {},f}
+    }
+    return hull,nil
 }
 
 // Volume of the convex hull of the points; 0 when they span no volume.
@@ -370,7 +390,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
             f:=&q.faces[entry.face]
             if !f.alive || f.far!=entry.point || f.far_dist!=-key {continue}
             if 2+q.alive/2>=limit {return .None}
-            qh_add_point(q,entry.face,entry.point)
+            if !qh_add_point(q,entry.face,entry.point) {return .Out_Of_Memory}
         }
         if len(q.deferred)==0 {break}
         clear(&everything)
@@ -423,8 +443,8 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
 
 // Faces hidden from the point but enclosed by visible ones would leave a
 // second border: only the largest hidden region stays.
-@(private="file") qh_absorb_islands :: proc(q:^Qh) #no_bounds_check {
-    resize(&q.labels,len(q.faces))
+@(private="file") qh_absorb_islands :: proc(q:^Qh) -> bool #no_bounds_check {
+    if resize(&q.labels,len(q.faces))!=nil {return false}
     for &l in q.labels {l=-1}
     largest,largest_size,regions:=i32(-1),0,i32(0)
     for &f,index in q.faces {
@@ -451,9 +471,11 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         f.stamp=q.stamp
         append(&q.visible,i32(index))
     }
+    return true
 }
 
-@(private="file") qh_add_point :: proc(q:^Qh,seed,point:i32) #no_bounds_check {
+// False without temporary memory.
+@(private="file") qh_add_point :: proc(q:^Qh,seed,point:i32) -> bool #no_bounds_check {
     p:=q.points[point]
     q.stamp+=1
     clear(&q.visible);clear(&q.stack)
@@ -469,7 +491,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         }
     }
     if !qh_horizon(q) {
-        qh_absorb_islands(q)
+        if !qh_absorb_islands(q) {return false}
         if !qh_horizon(q) {
             // The point cannot be added without breaking the surface: forget it.
             f:=&q.faces[seed]
@@ -486,7 +508,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
                 i=following
             }
             qh_push(q,seed)
-            return
+            return true
         }
     }
     clear(&q.created)
@@ -513,6 +535,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         q.alive-=1
     }
     for index in q.created {qh_push(q,index)}
+    return true
 }
 
 @(private="file") Qh_Triangle :: struct {
@@ -528,7 +551,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
 // Builds the output from the triangles of the finished hull. With `merge`,
 // triangles within the tolerance of one plane become one polygon; false means
 // the merged surface failed its checks and the caller emits the triangles.
-@(private="file") qh_emit :: proc(q:^Qh,points:[]Vec3,merge:bool,allocator:runtime.Allocator) -> (hull:Hull,ok:bool) #no_bounds_check {
+@(private="file") qh_emit :: proc(q:^Qh,points:[]Vec3,merge:bool,allocator:runtime.Allocator) -> (hull:Hull,ok:bool,error:runtime.Allocator_Error) #no_bounds_check {
     scratch:=context.temp_allocator
     triangle_of:=make([]i32,len(q.faces),scratch)
     triangles:=make([dynamic]Qh_Triangle,0,q.alive,scratch)
@@ -705,7 +728,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
                 if kept<3 {face.removed=true;changed=true}
             }
             if !changed {break}
-            if round==63 {return {},false}
+            if round==63 {return {},false,nil}
         }
     }
 
@@ -725,11 +748,12 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         v=i32(vertex_count)
         vertex_count+=1
     }
-    if face_count<4 || vertex_count<4 || corner_count%2!=0 || vertex_count-corner_count/2+face_count!=2 {return {},false}
+    if face_count<4 || vertex_count<4 || corner_count%2!=0 || vertex_count-corner_count/2+face_count!=2 {return {},false,nil}
 
+    // One id per corner, and the one that shows there are more: it fails below.
     edge_ids:Key_Map
     key_map_init(&edge_ids,scratch)
-    key_map_reset(&edge_ids,corner_count)
+    if no_ids:=key_map_reset(&edge_ids,corner_count+1);no_ids!=nil {return {},false,no_ids}
     claimed:=make([]bool,corner_count,scratch)
     corner_edges:=make([]u32,corner_count,scratch)
     edge_total:=u32(0)
@@ -739,30 +763,24 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         for i in 0..<face.count {
             a:=u32(vertex_of[loops[face.first+i]])
             b:=u32(vertex_of[loops[face.first+(i+1)%face.count]])
-            if a==b {return {},false}
+            if a==b {return {},false,nil}
             entry,inserted:=key_map_entry(&edge_ids,pair_key(a,b),edge_total)
             id:=entry^
             if inserted {
-                if int(edge_total)+2>corner_count {return {},false}
+                if int(edge_total)+2>corner_count {return {},false,nil}
                 _,twin_inserted:=key_map_entry(&edge_ids,pair_key(b,a),edge_total+1)
-                if !twin_inserted {return {},false}
+                if !twin_inserted {return {},false,nil}
                 edge_total+=2
             }
-            if claimed[id] {return {},false}
+            if claimed[id] {return {},false,nil}
             claimed[id]=true
             corner_edges[corner]=id
             corner+=1
         }
     }
-    if int(edge_total)!=corner_count {return {},false}
+    if int(edge_total)!=corner_count {return {},false,nil}
 
-    hull.allocator=allocator
-    hull.vertices=make([]Vec3,vertex_count,allocator)
-    hull.sources=make([]u32,vertex_count,allocator)
-    hull.planes=make([]Plane,face_count,allocator)
-    hull.faces=make([]Hull_Face,face_count,allocator)
-    hull.face_vertices=make([]u32,corner_count,allocator)
-    hull.half_edges=make([]Hull_Half_Edge,corner_count,allocator)
+    hull=hull_make(vertex_count,face_count,corner_count,allocator) or_return
     for v,i in vertex_of {
         if v<0 {continue}
         hull.vertices[v]=points[i]
@@ -789,7 +807,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         hull.faces[f]={u32(first),u32(face.count),corner_edges[first]}
         f+=1
     }
-    return hull,true
+    return hull,true,nil
 }
 
 
@@ -845,13 +863,8 @@ qh_flat :: proc(q:^Qh,points:[]Vec3,desc:Hull_Desc,allocator:runtime.Allocator) 
     m:=len(polygon)
     if m<3 {return {},.Collinear}
 
-    hull.allocator=allocator
-    hull.vertices=make([]Vec3,m,allocator)
-    hull.sources=make([]u32,m,allocator)
-    hull.planes=make([]Plane,2,allocator)
-    hull.faces=make([]Hull_Face,2,allocator)
-    hull.face_vertices=make([]u32,2*m,allocator)
-    hull.half_edges=make([]Hull_Half_Edge,2*m,allocator)
+    no_memory:runtime.Allocator_Error
+    if hull,no_memory=hull_make(m,2,2*m,allocator);no_memory!=nil {return {},.Out_Of_Memory}
     front:=Vec3{f32(q.normal.x),f32(q.normal.y),f32(q.normal.z)}
     hull.planes[0]={front,-max(f32)}
     hull.planes[1]={-front,-max(f32)}

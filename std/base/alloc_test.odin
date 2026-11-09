@@ -325,3 +325,13 @@ dynamic_arena_without_memory_keeps_refusing :: proc(t:^testing.T) {
         testing.expect_value(t,error,mem.Allocator_Error.Out_Of_Memory)
     }
 }
+
+@(test)
+truncate_only_shortens_a_dynamic_array :: proc(t:^testing.T) {
+    values:=make([dynamic]int,8);defer delete(values)
+    held:=cap(values)
+    for count,i in ([?][2]int{{5,5},{9,5},{-1,0},{0,0}}) {
+        truncate(&values,count[0])
+        testing.expectf(t,len(values)==count[1] && cap(values)==held,"case %d: length %d, capacity %d",i,len(values),cap(values))
+    }
+}

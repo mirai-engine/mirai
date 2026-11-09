@@ -417,6 +417,7 @@ BUILD_CODES :: [Shape_Error]string{
     .Too_Many_Loops="shapes.too_many_loops",
     .Self_Intersecting="shapes.self_intersecting",
     .Geometry="shapes.geometry",
+    .Out_Of_Memory="shapes.memory",
 }
 
 @(private)
@@ -428,4 +429,5 @@ BUILD_MESSAGES :: [Shape_Error]string{
     .Too_Many_Loops="the Shape has more holes than it holds: merge or remove holes",
     .Self_Intersecting="the outline of the Shape crosses or touches itself, or a hole leaves it or meets another: move the vertices so no edges meet",
     .Geometry="the triangulation of the outline or the boolean of the brushes failed: avoid brushes with coincident faces or too thin to have volume",
+    .Out_Of_Memory="no memory to build the Shape: free memory or remove shapes",
 }

@@ -460,14 +460,16 @@ text_member :: proc(r:^Text_Reader,choices:[]Choice,name:string) -> (value:i64,f
         if choice.name==name {return choice.value,true}
     }
     if !r.loose_names {return}
-    index,_:=base.name_find(name,text_choice_names(r,choices))
+    index,_:=base.name_find(name,text_choice_names(choices))
     if index<0 {return}
     return choices[index].value,true
 }
 
+// In temporary memory; without it, no names.
 @(private="file")
-text_choice_names :: proc(r:^Text_Reader,choices:[]Choice) -> []string {
-    names:=make([]string,len(choices),r.names.allocator)
+text_choice_names :: proc(choices:[]Choice) -> []string {
+    names,error:=make([]string,len(choices),context.temp_allocator)
+    if error!=nil {return nil}
     for choice,i in choices {names[i]=choice.name}
     return names
 }
@@ -477,7 +479,7 @@ text_choice_names :: proc(r:^Text_Reader,choices:[]Choice) -> []string {
 text_fail_member :: proc(r:^Text_Reader,offset:int,choices:[]Choice,name:string) -> bool {
     if !r.loose_names {return text_fail_names(r,.Unknown_Member,offset,choices,nil)}
     if r.error.code!=.None {return false}
-    problem:=base.name_problem(name,"one of its names",text_choice_names(r,choices),r.names.allocator)
+    problem:=base.name_problem(name,"one of its names",text_choice_names(choices))
     clear(&r.names)
     append(&r.names,problem)
     r.error={code=.Unknown_Member,offset=offset,names=string(r.names[:]),whole=true}

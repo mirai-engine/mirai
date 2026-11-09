@@ -1,7 +1,10 @@
 package project
 
+import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -627,4 +630,47 @@ a_plugin_of_the_project_brings_its_companions :: proc(t:^testing.T) {
     _,error=open(root,engine)
     testing.expect_value(t,error.code,Error_Code.Plugin_Repeated)
     testing.expect_value(t,base.text_get(error.subject[:]),"unreal_terrain")
+}
+
+// What ordering the plugins asks its allocator for, with the memory ending
+// at each request in turn: Out_Of_Memory with no order and a text that says
+// so, nothing left allocated, and with memory enough the order.
+@(test)
+plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
+    Limit :: struct {owner:runtime.Allocator,remaining:int}
+    limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        limit:=(^Limit)(data)
+        if size>0 && (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) {
+            if limit.remaining<=0 {return nil,.Out_Of_Memory}
+            limit.remaining-=1
+        }
+        return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    }
+    plugins:=make([]Plugin,3,context.temp_allocator)
+    for name,i in ([]string{"noise","terrain","water"}) {base.text_set(plugins[i].manifest.name[:],name)}
+    base.text_set(plugins[1].manifest.dependencies[0][:],"noise")
+    base.text_set(plugins[2].manifest.dependencies[0][:],"terrain")
+    Case :: struct {wanted:[]string,order:[]int}
+    cases:=[]Case{{{"water"},{0,1,2}},{{"terrain","noise"},{0,1}},{{},{}}}
+    for c in cases {
+        done,refused:=false,false
+        for served in 0..<8 {
+            tracking:mem.Tracking_Allocator
+            mem.tracking_allocator_init(&tracking,context.allocator)
+            limit:=Limit{owner=mem.tracking_allocator(&tracking),remaining=served}
+            order,error:=plugins_order(plugins,c.wanted,{limit_proc,&limit})
+            if done=error.code==.None;done {
+                testing.expectf(t,slice.equal(order,c.order),"%v: ordered %v",c.wanted,order)
+            } else {
+                refused=true
+                testing.expectf(t,error.code==.Out_Of_Memory && order==nil,"%v with %d requests served: %v",c.wanted,served,error.code)
+                testing.expect(t,strings.contains(error_text("project",error,context.temp_allocator),"memory"))
+            }
+            delete(order,mem.tracking_allocator(&tracking))
+            testing.expectf(t,len(tracking.allocation_map)==0,"%v with %d requests served: %d left allocated",c.wanted,served,len(tracking.allocation_map))
+            mem.tracking_allocator_destroy(&tracking)
+            if done {break}
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",c.wanted)
+    }
 }

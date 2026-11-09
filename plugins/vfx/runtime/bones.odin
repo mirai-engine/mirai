@@ -132,14 +132,14 @@ bones_pose :: proc(sync:^Particle_Sync,app:^host.App,rig:^Bone_Rig,skin:erender.
         length+=linalg.length(segment.end-segment.start)
         segment.length=length
         if _,error:=append(&sync.segments,segment);error!=nil {
-            resize(&sync.segments,int(first))
+            base.truncate(&sync.segments,int(first))
             return 0,0,false
         }
     }
     count=u32(len(sync.segments))-first
     // Bones of no length give nothing to start on.
     if count==0 || length<=0 {
-        resize(&sync.segments,int(first))
+        base.truncate(&sync.segments,int(first))
         return 0,0,false
     }
     return first,count,true

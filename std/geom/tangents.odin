@@ -513,29 +513,38 @@ triangle_in_all :: proc "contextless" (indices:[]u32,n:int) -> bool {
 // memory or for a mesh that is not valid.
 mesh_tangents :: proc(mesh:Mesh,out:^Mesh_Buffer,tangents:^[dynamic]Vec4,scratch:=context.temp_allocator) -> bool {
     if !mesh_is_valid(mesh) {return false}
-    corners:=make([]Vec4,len(mesh.indices),scratch)
-    if corners==nil && len(mesh.indices)>0 {return false}
+    corners,no_corners:=make([]Vec4,len(mesh.indices),scratch)
+    if no_corners!=nil {return false}
     defer delete(corners,scratch)
     if !corner_tangents(mesh.positions,mesh.normals,mesh.uvs,mesh.indices,corners) {return false}
     Key :: struct {vertex:u32,tangent:Vec4}
-    known:=make(map[Key]u32,len(mesh.positions),scratch)
+    known,no_known:=make(map[Key]u32,len(mesh.positions),scratch)
     defer delete(known)
     mesh_buffer_clear(out)
     clear(tangents)
+    if no_known!=nil || reserve(&out.indices,len(mesh.indices))!=nil || reserve(&out.materials,len(mesh.materials))!=nil {return false}
+    whole:=true
     for index,at in mesh.indices {
         key:=Key{index,corners[at]}
         vertex,seen:=known[key]
         if !seen {
+            // A vertex the map has no memory for is written again: no index is left without one.
             vertex=u32(len(out.positions))
             known[key]=vertex
-            append(&out.positions,mesh.positions[index])
-            if len(mesh.normals)>0 {append(&out.normals,mesh.normals[index])}
-            if len(mesh.uvs)>0 {append(&out.uvs,mesh.uvs[index])}
-            if len(mesh.colors)>0 {append(&out.colors,mesh.colors[index])}
-            append(tangents,corners[at])
+            _,no_position:=append(&out.positions,mesh.positions[index])
+            whole&&=no_position==nil
+            if len(mesh.normals)>0 {_,e:=append(&out.normals,mesh.normals[index]);whole&&=e==nil}
+            if len(mesh.uvs)>0 {_,e:=append(&out.uvs,mesh.uvs[index]);whole&&=e==nil}
+            if len(mesh.colors)>0 {_,e:=append(&out.colors,mesh.colors[index]);whole&&=e==nil}
+            _,no_tangent:=append(tangents,corners[at])
+            whole&&=no_tangent==nil
         }
         append(&out.indices,vertex)
     }
     append(&out.materials,..mesh.materials)
-    return len(out.positions)==len(tangents^)
+    if !whole {
+        mesh_buffer_clear(out)
+        clear(tangents)
+    }
+    return whole
 }

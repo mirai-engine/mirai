@@ -77,7 +77,7 @@ write_records :: proc(o:^Out,file,type:string,$T:typeid,rows:[]Row_Out(T),texts:
     // A table keeps its texts ordered by id, then by language: "" before "es", as they were added.
     slice.stable_sort_by(entries[:],proc(a,b:asset.Records_Text) -> bool {return a.text<b.text})
     images:=make([]u8,len(rows)*size_of(T),context.temp_allocator)
-    if len(rows)>0 {serial.value_write(asset.types_layout(&o.content.types,index),images,raw_data(values),len(rows))}
+    if layout:=asset.types_layout(&o.content.types,index);layout!=nil && len(rows)>0 {serial.value_write(layout,images,raw_data(values),len(rows))}
     desc:=asset.Records_Desc{
         id=records_table_of(file),type=type,ids=ids,names=names,
         schema=&o.content.types.schema,value_type=index,images=images,
