@@ -204,6 +204,9 @@ machine with no other GPU load.
   `engine.status`); past `RENDER_MEMORY_SHARE` of the budget, the system evicts GPU memory, the
   passes that read what was evicted cost several times more and the view warns that its cost does
   not count. With an open `mirai session` of the project it does not start.
+- **Settings**: the editors of a check read no file of the machine
+  (`project.SETTINGS_NO_MACHINE_ENV`): both builds measure what the project asks for, whatever
+  preset was chosen on this computer.
 - **Quality only** (`--quality`): without `profile.capture`, without the `mirai measure` turn and
   without waiting for the other programs, with the captures at the same frames as the full check.
   It asserts nothing about cost; a saved base of the full one serves it, and one of its own does

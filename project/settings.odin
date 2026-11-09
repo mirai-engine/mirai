@@ -36,6 +36,16 @@ SETTINGS_FILE :: "settings.mirai" // next to PROJECT_FILE, in the machine_folder
 SETTINGS_VERSION :: 3
 @(private) SETTINGS_VERSION_KEY :: "version"
 
+// Set in a process, the file of the machine is not read: what mirai render
+// check measures does not depend on what was chosen on this computer.
+SETTINGS_NO_MACHINE_ENV :: "MIRAI_NO_MACHINE_SETTINGS"
+
+// The layers this process reads.
+settings_layers_of_process :: proc() -> Settings_Layers {
+    if value,found:=os.lookup_env(SETTINGS_NO_MACHINE_ENV,context.temp_allocator);found && value!="" && value!="0" {return {.Player,.Project}}
+    return {.Player,.Project,.Engine}
+}
+
 // The files of the settings: SETTINGS_FROM_TOP gives their order.
 Settings_Layer :: enum u8 {Project,Engine,Player}
 Settings_Layers :: bit_set[Settings_Layer;u8]

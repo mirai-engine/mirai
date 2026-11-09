@@ -219,6 +219,8 @@ cmd_render :: proc(root:string,args:[]string) -> int {
 render_check :: proc(root:string,args:[]string) -> int {
     o,problem:=render_options_parse(args)
     if problem!="" {fmt.eprintfln("mirai render: %s\nUsage: mirai %s",problem,RENDER_USAGE);return 2}
+    // Both builds measure what the project asks for, not what this computer chose.
+    _=os.set_env(project.SETTINGS_NO_MACHINE_ENV,"1")
     folder,out:=o.folder,o.out
     if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
         fmt.eprintfln("mirai render: %s is not a project (%s is missing); pass the folder of the project",folder,project.PROJECT_FILE)

@@ -40,7 +40,7 @@ app_settings_load :: proc(app:^App,data:rawptr,place:core.Place) {
     if app.root=="" {return}
     settings:=app_settings(app.info,data,place,app.device)
     if len(settings)==0 {return}
-    if error,layer:=project.settings_load(settings,app.root,app.engine_root,player=app.options);error.code!=.None {
+    if error,layer:=project.settings_load(settings,app.root,app.engine_root,layers=project.settings_layers_of_process(),player=app.options);error.code!=.None {
         log.warnf("%s: %v, line %d",project.settings_file(layer,app.root,app.engine_root,context.temp_allocator,app.options),error.code,error.line)
     }
 }

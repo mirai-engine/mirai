@@ -277,3 +277,11 @@ a_list_of_entries_is_written_up_to_the_last_that_differs :: proc(t:^testing.T) {
     testing.expect_value(t,settings_parse(text,read).code,Error_Code.None)
     testing.expect_value(t,back,value)
 }
+
+@(test)
+a_process_told_so_reads_no_file_of_the_machine :: proc(t:^testing.T) {
+    testing.expect_value(t,settings_layers_of_process(),Settings_Layers{.Player,.Project,.Engine})
+    os.set_env(SETTINGS_NO_MACHINE_ENV,"1")
+    defer os.unset_env(SETTINGS_NO_MACHINE_ENV)
+    testing.expect_value(t,settings_layers_of_process(),Settings_Layers{.Player,.Project})
+}
