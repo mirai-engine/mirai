@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "core:math"
 import "core:slice"
 import "mirai:core"
@@ -96,7 +97,7 @@ simulation_apply_selection :: proc(s:^Session) {
 }
 
 Api_Simulation_Apply_Params :: struct {
-    entities:[64]base.Entity_Id `mirai:"label=Existing scene entities whose world transforms are kept"`,
+    entities:[64]Api_Entity_Text `mirai:"text,entity,label=Existing scene entities whose world transforms are kept"`,
 }
 
 @(private)
@@ -118,9 +119,16 @@ api_simulation_apply :: proc(s:^Session,call:^api.Call) {
     if !api_simulation_guard(s,call) {return}
     if _,own:=api_play_run(s,call);!own {api_play_refused(call);return}
     params:=api.call_params(call,Api_Simulation_Apply_Params)
+    ids:[len(params.entities)]base.Entity_Id
     count:=0
-    for id in params.entities {if id!=0 {count+=1}}
-    if !simulation_apply(s,params.entities[:count]) {
+    for &text,i in params.entities {
+        if text[0]==0 {continue}
+        e,named:=api_call_entity(call,shown_world(s),text[:],fmt.tprintf("entities[%d]",i),true)
+        if !named {return}
+        ids[count]=api_entity_id(shown_world(s),e)
+        count+=1
+    }
+    if !simulation_apply(s,ids[:count]) {
         api.call_fail(call,api.INVALID_PARAMS,"Give distinct entities that exist in both the document and the simulation")
         return
     }

@@ -67,7 +67,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     a.session.mode=.Play;a.session.runs[0]={world=&f.world}
     defaults:=request_defaults()
     authoring_test_register(a,t,"request",Request_Params,request,defaults)
-    result:=authoring_test_execute(a,"request",`{"entity":"11","look":{"target":{"kind":"Entity","entity":"12"}},"reach":[{"hand":"Right","target":{"position":[0.4,1.3,-0.3]}}],"gesture":{"clip":"wave"},"locomote":{"target":{"position":[0,0,-5]},"speed":1.2}}`)
+    result:=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"target":{"kind":"Entity","entity":"0000000000000012"}},"reach":[{"hand":"Right","target":{"position":[0.4,1.3,-0.3]}}],"gesture":{"clip":"wave"},"locomote":{"target":{"position":[0,0,-5]},"speed":1.2}}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expect_value(t,result_shape_mismatch(Request_Result,string(serial_bytes(a))),"")
     goals,controls:=f.world.modifier_requests.queue.items,f.world.modifier_requests.controls.items
@@ -84,18 +84,18 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"kind":"Reach"`) && strings.contains(text,`"kind":"Gesture","name":"wave"`) && strings.contains(text,`"kind":"Locomotion"`))
 
     // Letting go: the controls fade the operations out without new goals.
-    result=authoring_test_execute(a,"request",`{"entity":"11","look":{"off":true,"fade":0.5}}`)
+    result=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"off":true,"fade":0.5}}`)
     testing.expect(t,result.code==0 && len(f.world.modifier_requests.queue.items)==2 && len(f.world.modifier_requests.controls.items)==3)
     off:=f.world.modifier_requests.controls.items[2];testing.expect(t,off.kind==.Look && !off.enabled && off.weight==0 && off.fade==.5)
 
-    result=authoring_test_execute(a,"request",`{"entity":"11","gesture":{"clip":"bow"}}`)
+    result=authoring_test_execute(a,"request",`{"entity":"0000000000000011","gesture":{"clip":"bow"}}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"gesture.clip"`) && strings.contains(result.data,"wave"))
-    result=authoring_test_execute(a,"request",`{"entity":"11","locomote":{"target":{"kind":"Bone","entity":"12"}}}`)
+    result=authoring_test_execute(a,"request",`{"entity":"0000000000000011","locomote":{"target":{"kind":"Bone","entity":"0000000000000012"}}}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Unsupported_Target"))
-    result=authoring_test_execute(a,"request",`{"entity":"11","look":{"target":{"position":[0,1,1]}},"parameters":[{"name":"Speed","value":9}]}`)
+    result=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"target":{"position":[0,1,1]}},"parameters":[{"name":"Speed","value":9}]}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && len(f.world.modifier_requests.queue.items)==2)
     a.session.mode=.Edit
-    result=authoring_test_execute(a,"request",`{"entity":"11","look":{"target":{"position":[0,1,1]}}}`)
+    result=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"target":{"position":[0,1,1]}}}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Runtime_Required") && strings.contains(result.data,"animation.preview"))
     testing.expect_value(t,len(f.world.modifier_requests.queue.items),2)
 }

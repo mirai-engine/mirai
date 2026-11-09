@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import scene "mirai:engine/scene"
@@ -20,7 +21,7 @@ import "mirai:std/serial"
 API_PLAY_PUSH_LIMIT :: 64
 
 Api_Play_Entity_Params :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"text,label=The entity by its name or a path Parent/Child or its id or its handle"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
@@ -30,7 +31,7 @@ Api_Play_Destroy_Result :: struct {
 
 Api_Play_Spawn_Params :: struct {
     asset:[API_PATH_BYTES]u8 `mirai:"text,label=The prefab: its file, a path inside the assets folder or its asset id"`,
-    parent:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=The entity it hangs from by its name or a path Parent/Child or its id or its handle; none: a root"`,
+    parent:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=The entity it hangs from by its name or a path Parent/Child or its id or its handle; none: a root"`,
     position:[3]f32 `mirai:"optional,label=Of its root: in the world or local to parent"`,
     rotation_deg:[3]f32 `mirai:"optional,label=Of its root: in the world or local to parent"`,
     scale:[3]f32 `mirai:"optional,min=0,label=Of its root"`,
@@ -200,8 +201,8 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
     r,ok:=api_play_own_run(s,call,params.player)
     if !ok {return}
     w:=run_ref(s,r)
-    id,locate_error:=prefab_locate(s,base.text_get(params.asset[:]))
-    if locate_error!=.None {api_prefab_fail(call,locate_error);return}
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    if !located {return}
     spawned:=scene.Spawn{prefab=id}
     if base.text_get(params.parent[:])!="" {
         known:bool

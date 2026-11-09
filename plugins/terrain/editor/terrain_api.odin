@@ -39,11 +39,11 @@ Create_Params :: struct {
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
     base_depth:f32 `mirai:"optional,min=0,unit=m,label=Of a 3D Terrain: how deep its solid goes under its lowest point; 0 an open surface"`,
     at:[3]f32 `mirai:"optional,label=Where its entity stands; omitted: under the target of the view"`,
-    ground:base.Entity_Id `mirai:"optional,label=Of a volume: a Heightfield terrain it joins, standing on its samples and centered at at, its field its ground to dig into; it takes the spacing of the Heightfield"`,
+    ground:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Of a volume: a Heightfield terrain it joins, standing on its samples and centered at at, its field its ground to dig into; it takes the spacing of the Heightfield"`,
 }
 
 Edit_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the terrain"`,
     brush:[16]u8 `mirai:"text,label=raise or lower or smooth or flatten or set_height or ramp or terrace or noise or erode or paint or erase or hole or fill or add or remove or union or subtract"`,
     at:[3]f32 `mirai:"label=Where it touches in the world; on a Heightfield the surface under its x and z"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to; the other end of a ramp (at its height) or of a capsule"`,
@@ -70,7 +70,7 @@ Edit_Params :: struct {
 }
 
 Layer_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the terrain"`,
     layer:[LAYER_NAME_BYTES]u8 `mirai:"text,optional,label=The layer to change or take out by its material (a path or its stem; default is one without a material); omitted adds one"`,
     remove:bool `mirai:"optional,label=Takes the layer out: what it covered goes to the others; the last one stays"`,
     material:base.Asset_Id `mirai:"optional,label=Its .mat; omitted: as it is"`,
@@ -85,7 +85,7 @@ Layer_Params :: struct {
 }
 
 Interior_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of a Volume terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Volume terrain"`,
     strata:[terrain.INTERIOR_STRATA]Stratum_Param `mirai:"optional,label=From the surface down; omitted: as they are, an empty list none"`,
     veins:[terrain.INTERIOR_VEINS]Vein_Param `mirai:"optional,label=Over the strata, each over those before it; omitted: as they are, an empty list none"`,
     wave:f32 `mirai:"optional,min=0,unit=m,label=How far the boundaries between strata rise and fall"`,
@@ -108,13 +108,13 @@ Vein_Param :: struct {
 }
 
 Sample_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the terrain"`,
     at:[3]f32 `mirai:"label=A point of the world: what is under its x and z"`,
     player:int `mirai:"optional,min=0,max=3,label=While a game plays: the run of that player of a game a turn plays on the network"`,
 }
 
 Heightmap_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of a Heightfield Terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Heightfield Terrain"`,
     import_path:[512]u8 `mirai:"text,optional,label=An image whose heights it takes scaled and offset; another size gives it its size"`,
     export_path:[512]u8 `mirai:"text,optional,label=A 16-bit PNG it writes from its lowest height to its highest"`,
     height_scale:f32 `mirai:"optional,unit=m"`,
@@ -122,7 +122,7 @@ Heightmap_Params :: struct {
 }
 
 Resize_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of a Heightfield Terrain"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Heightfield Terrain"`,
     samples:[2]u32 `mirai:"label=Samples over x and z: each an even number more or fewer than it has so that its center stays"`,
 }
 
@@ -150,33 +150,34 @@ terrain_api_register :: proc(s:^editor.Session) {
 // The tool, the edited world and the terrain of an id, ready to edit as
 // the tool edits the selected one.
 @(private)
-api_terrain :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id) -> (tool:^Terrain_Tool,world:core.World_Ref,ok:bool) {
-    id:=id
+api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terrain_Tool,world:core.World_Ref,ok:bool) {
     // A terrain just made takes its place in the world with the next frame.
-    if api_terrain_unplaced(s,&id) {editor.api_settle(s,&id,api_terrain_unplaced)}
+    given:=base.text_get(named)
+    if api_terrain_unplaced(s,&given) {editor.api_settle(s,&given,api_terrain_unplaced)}
     tool=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_Tool)
     world=editor.edited_world(s)
     terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
     if tool==nil || terrains==nil || worlds==nil {api.call_fail(call,api.INVALID_PARAMS,"The project has no terrain: activate the plugin terrain in project.mirai");return}
     tool_ready(tool)
     if tool.stroke.active {api.call_fail(call,api.INVALID_PARAMS,"A stroke of the terrain tool is held in the viewport: let it go first");return}
-    e:=editor.api_entity(world,id)
-    if e==core.NONE || !core.has(core.read(terrains),e) {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Terrain: scene.inspect lists them",id);return}
+    e,named_found:=editor.api_call_entity(call,world,named)
+    if !named_found {return}
+    if !core.has(core.read(terrains),e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain: scene.inspect lists them",given);return}
     if s.app==nil || s.app.assets==nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no assets loaded");return}
-    if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %x has no place in the world: give its entity a Transform with scene.set",id);return}
+    if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a Transform with scene.set",given);return}
     marker,_:=core.get(core.read(terrains),e)
-    if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %x is not among the assets: asset.list shows them",id);return}
-    if !stroke_prepare(tool,s.app,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %x could not be read: engine.diagnostics says why",id);return}
+    if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
+    if !stroke_prepare(tool,s.app,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
     if !stroke_baseline(tool) {api.call_fail(call,api.INTERNAL_ERROR,"The terrain history could not be stored: there is not enough memory");return}
     return tool,world,true
 }
 
-// Whether the entity of the id (^base.Entity_Id) is a terrain still without a place in the world.
+// Whether the entity named (^string) is a terrain still without a place in the world.
 @(private)
 api_terrain_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
     world:=editor.edited_world(s)
     terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
-    e:=editor.api_entity(world,(^base.Entity_Id)(user)^)
+    e,_:=editor.api_entity_find(world,(^string)(user)^)
     return terrains!=nil && worlds!=nil && e!=core.NONE && core.has(core.read(terrains),e) && !core.has(core.read(worlds),e)
 }
 
@@ -250,8 +251,8 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     ground:=core.NONE
     if editor.tool_call_given(call,"ground") {
         if kind!=.Volume {api.call_fail(call,api.INVALID_PARAMS,"Only a volume joins a Heightfield: pass kind volume, or leave ground out");return}
-        ground=editor.api_entity(editor.edited_world(s),p.ground)
-        if ground==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"ground %x is no entity: scene.inspect lists the terrains",p.ground);return}
+        known:bool
+        if ground,known=editor.api_call_entity(call,editor.edited_world(s),p.ground[:],"ground");!known {return}
     }
     e:=terrain_create(s,tool,editor.edited_world(s),s.app,p.at,placed,ground,name)
     if e==core.NONE {editor.tool_call_fail(s,call,"The terrain could not be made");return}
@@ -298,7 +299,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
         api_edit_play(s,call,p,editor.run_ref(s,r),kind,level)
         return
     }
-    tool,world,ok:=api_terrain(s,call,p.entity)
+    tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     stroke:=&tool.stroke
     source:=&stroke.source
@@ -438,7 +439,7 @@ api_layer :: proc(s:^editor.Session,call:^api.Call) {
         api_layer_play(s,call,p,editor.run_ref(s,r))
         return
     }
-    tool,world,ok:=api_terrain(s,call,p.entity)
+    tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.stroke.source
     count:=int(source.layer_count)
@@ -484,16 +485,18 @@ layer_values :: proc(call:^api.Call,p:^Layer_Params,layer:^terrain.Terrain_Layer
 // The terrain of an id in a game that plays, its source there, its
 // requests and the transform of the world into it.
 @(private)
-api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> (e:core.Entity,source:^terrain.Source,requests:^terrain.Terrain_Requests,to_local:matrix[4,4]f32,scale:f32,ok:bool) {
+api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.Entity,source:^terrain.Source,requests:^terrain.Terrain_Requests,to_local:matrix[4,4]f32,scale:f32,ok:bool) {
     terrains,worlds:=core.world_table_of(w,terrain.Terrain),core.world_table_of(w,core.World_Transform)
     data,queued:=core.world_storage_of(w,terrain.Terrain_Data),core.world_storage_of(w,terrain.Terrain_Requests)
     if terrains==nil || worlds==nil || data==nil || queued==nil {api.call_fail(call,api.INVALID_PARAMS,"The game has no terrain: activate the plugin terrain in project.mirai");return}
-    e=editor.api_entity(w,id)
+    named_found:bool
+    if e,named_found=editor.api_call_entity(call,w,named,game=true);!named_found {return}
+    given:=base.text_get(named)
     marker,found:=core.get(core.read(terrains),e)
-    if e==core.NONE || !found {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Terrain in the game: play.inspect lists them",id);return}
+    if !found {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain in the game: play.inspect lists them",given);return}
     placed,has:=core.get(core.read(worlds),e)
     source=terrain.terrain_source(core.ref(data),marker.source)
-    if !has || source==nil {api.call_failf(call,api.INVALID_PARAMS,"The source of terrain %x is not loaded in the game yet: step it and call again",id);return}
+    if !has || source==nil {api.call_failf(call,api.INVALID_PARAMS,"The source of terrain %s is not loaded in the game yet: step it and call again",given);return}
     to_local=linalg.inverse(mm.transform_matrix(placed.transform))
     scale=max(abs(placed.scale.x),1e-6)
     return e,source,queued,to_local,scale,true
@@ -502,7 +505,7 @@ api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> (
 // terrain.edit in a game that plays: its touches as requests of the game.
 @(private)
 api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.World_Ref,kind:terrain.Brush_Kind,level:bool) {
-    e,source,requests,to_local,scale,ok:=api_play_terrain(call,w,p.entity)
+    e,source,requests,to_local,scale,ok:=api_play_terrain(call,w,p.entity[:])
     if !ok {return}
     if base.text_get(p.alpha[:])!="" {api.call_fail(call,api.INVALID_PARAMS,"A game asks for brushes without an alpha: leave alpha out");return}
     if kind==.Ramp || kind==.Union || kind==.Subtract {api.call_fail(call,api.INVALID_PARAMS,"While a game plays terrain.edit asks for the brushes that touch along a stroke; a ramp or a shape goes in a request of play.push");return}
@@ -526,7 +529,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
         for f,i in names {if strings.equal_fold(f,name) {falloff,found=geom.Falloff(i),true}}
         if !found {api.call_fail(call,api.INVALID_PARAMS,"falloff is smooth, sphere, linear, sharp or flat");return}
     }
-    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),normal={0,1,0},rotation=1,seed=u32(p.entity)}
+    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),normal={0,1,0},rotation=1,seed=u32(editor.api_entity_id(w,e))}
     if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
     if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?(to_local*[4]f32{p.at.x,p.height,p.at.z,1}).y:from.y}
     step:=to-from
@@ -556,7 +559,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
 // terrain.layer in a game that plays: a request of the game.
 @(private)
 api_layer_play :: proc(s:^editor.Session,call:^api.Call,p:^Layer_Params,w:core.World_Ref) {
-    e,source,requests,_,_,ok:=api_play_terrain(call,w,p.entity)
+    e,source,requests,_,_,ok:=api_play_terrain(call,w,p.entity[:])
     if !ok {return}
     count:=int(source.layer_count)
     index:=-1
@@ -584,7 +587,7 @@ api_layer_play :: proc(s:^editor.Session,call:^api.Call,p:^Layer_Params,w:core.W
 @(private)
 api_interior :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Interior_Params)
-    tool,world,ok:=api_terrain(s,call,p.entity)
+    tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.stroke.source
     if source.kind!=.Volume {api.call_failf(call,api.INVALID_PARAMS,"A %s has no interior: only a Volume holds what is under its surface",terrain_kind_name(source.kind));return}
@@ -638,15 +641,16 @@ api_sample :: proc(s:^editor.Session,call:^api.Call) {
     played:=false
     if r,_:=editor.api_play_run(s,call,p.player);r!=nil {
         w:=editor.run_ref(s,r)
-        _,source,_,to_local,_,played=api_play_terrain(call,w,p.entity)
+        _,source,_,to_local,_,played=api_play_terrain(call,w,p.entity[:])
         if !played {return}
         to_world=linalg.inverse(to_local)
         data:=core.world_storage_of(w,terrain.Terrain_Data)
         terrains:=core.world_table_of(w,terrain.Terrain)
-        marker,_:=core.get(core.read(terrains),editor.api_entity(w,p.entity))
+        found_e,_:=editor.api_entity_find(w,base.text_get(p.entity[:]))
+        marker,_:=core.get(core.read(terrains),found_e)
         check,_=terrain.terrain_source_check(core.ref(data),marker.source)
     } else {
-        tool,_,ok:=api_terrain(s,call,p.entity)
+        tool,_,ok:=api_terrain(s,call,p.entity[:])
         if !ok {return}
         source,to_local,to_world=&tool.stroke.source,tool.stroke.to_local,tool.stroke.to_world
     }
@@ -684,7 +688,7 @@ api_sample :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Heightmap_Params)
-    tool,world,ok:=api_terrain(s,call,p.entity)
+    tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     if tool.stroke.source.kind!=.Heightfield {api.call_fail(call,api.INVALID_PARAMS,"A heightmap is of a Heightfield Terrain");return}
     if editor.tool_call_given(call,"height_scale") {tool.height_scale=p.height_scale}
@@ -714,12 +718,13 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_resize :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Resize_Params)
-    tool,world,ok:=api_terrain(s,call,p.entity)
+    tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     s.toast_length=0
     if !terrain_resize(s,tool,world,s.app,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
     w:=call.out
     serial.text_write_raw(w,"{")
-    api.write_key(w,"id",true);api.write_id(w,p.entity)
+    resized,_:=editor.api_entity_find(world,base.text_get(p.entity[:]))
+    api.write_key(w,"id",true);api.write_id(w,editor.api_entity_id(world,resized))
     serial.text_write_raw(w,"}")
 }

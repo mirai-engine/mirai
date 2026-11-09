@@ -19,7 +19,7 @@ MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.
 
 @(private)
 Api_Material_Slot_Params :: struct {
-    entity:base.Entity_Id,
+    entity:Api_Entity_Text `mirai:"text,entity"`,
     slot:int `mirai:"optional,min=0,label=The slot of its mesh, from 0"`,
 }
 
@@ -51,10 +51,10 @@ material_instance_api_register :: proc(s:^Session,st:^Api_State) {
 }
 
 @(private)
-material_instance_entity :: proc(s:^Session,w:core.World_Ref,call:^api.Call,id:base.Entity_Id,slot:int) -> (e:core.Entity,ok:bool) {
-    e=api_entity(w,id)
-    if e==core.NONE || !entity_has(w,e,erender.Mesh_Renderer) {
-        api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x is not an entity with a Mesh_Renderer in the scene",u64(id))
+material_instance_entity :: proc(s:^Session,w:core.World_Ref,call:^api.Call,text:[]u8,slot:int) -> (e:core.Entity,ok:bool) {
+    e=api_call_entity(call,w,text) or_return
+    if !entity_has(w,e,erender.Mesh_Renderer) {
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no Mesh_Renderer",base.text_get(text))
         return
     }
     mesh,_:=entity_get(w,e,erender.Mesh_Renderer)
@@ -150,7 +150,7 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
 api_material_instance_inspect :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
     w:=edited_world(s)
-    if e,found:=material_instance_entity(s,w,call,p.entity,p.slot);found {material_instance_write(s,call,w,e,p.slot)}
+    if e,found:=material_instance_entity(s,w,call,p.entity[:],p.slot);found {material_instance_write(s,call,w,e,p.slot)}
 }
 
 @(private)
@@ -163,13 +163,13 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
     rpc_init(&request,call,call.raw)
     if !rpc_object_begin(&request,"params") {return}
     fields:Rpc_Object
-    id:base.Entity_Id
+    named:Api_Entity_Text
     values,parameters,textures,overlays:string
     has_id:bool
     slot:int
     for key in rpc_next(&request,&fields) {
         switch key {
-        case "entity": id,has_id=rpc_id(&request,"entity")
+        case "entity": _,has_id=rpc_text(&request,"entity",named[:])
         case "slot":
             number:=rpc_unsigned(&request,"slot") or_break
             slot=int(min(number,u64(erender.MATERIAL_SLOTS)))
@@ -185,7 +185,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         return
     }
     w:=edited_world(s)
-    e,found:=material_instance_entity(s,w,call,id,slot)
+    e,found:=material_instance_entity(s,w,call,named[:],slot)
     if !found {return}
     mesh,_:=entity_get(w,e,erender.Mesh_Renderer)
     a:=appearance_read(s,w,e,mesh,slot)
@@ -366,7 +366,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
 api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
     w:=edited_world(s)
-    e,found:=material_instance_entity(s,w,call,p.entity,p.slot)
+    e,found:=material_instance_entity(s,w,call,p.entity[:],p.slot)
     if !found {return}
     if !api_edit_begin(s,call,"Revert material") {return}
     w=edited_world(s)
@@ -383,7 +383,7 @@ api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_material_instance_apply :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
-    e,found:=material_instance_entity(s,edited_world(s),call,p.entity,p.slot)
+    e,found:=material_instance_entity(s,edited_world(s),call,p.entity[:],p.slot)
     if !found {return}
     if !api_edit_begin(s,call,"Apply to material") {return}
     material,message:=material_apply(s,e,p.slot)

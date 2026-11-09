@@ -74,6 +74,7 @@ Field :: struct {
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
     any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
+    entity_name:bool, // a text that names an entity: the API says so in its schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -425,6 +426,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
         case "any":       field.any_value=true
+        case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
         case "max":       field.max,field.has_max=strconv.parse_f64(value)
         case "step":      field.step,_=strconv.parse_f64(value)

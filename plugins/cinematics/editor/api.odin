@@ -15,7 +15,7 @@ Cinematics_Api :: struct {provider:editor.Api_Provider}
 CINEMATICS_API_DEFAULT :: Cinematics_Api{provider={register=register}}
 
 Inspect_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The timeline or one of its tracks shots markers or viewers"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The timeline or one of its tracks shots markers or viewers"`,
     position:f32 `mirai:"optional,min=-1,unit=ticks,label=Where the values of the tracks and the view are sampled; -1: the head of the preview in Edit or the position of the timeline in Play"`,
 }
 Inspect_Key :: struct {tick:f32 `mirai:"unit=ticks"`,value:[4]f32,ease:mm.Ease,interpolation:lib.Interpolation}
@@ -51,7 +51,7 @@ Inspect_Result :: struct {
 Control_Command :: enum u8 {Play,Pause,Resume,Stop,Seek}
 Control_View :: enum u8 {Keep,Shot,Editor}
 Control_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The timeline or one of its parts"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The timeline or one of its parts"`,
     command:Control_Command,
     position:f32 `mirai:"optional,min=0,unit=ticks,label=Where Play and Seek put the head"`,
     speed:f32 `mirai:"optional,min=0,max=4,label=Edit: the speed of the preview; 0 keeps it"`,
@@ -67,8 +67,8 @@ Control_Result :: struct {
 
 Add_Params :: struct {
     part:Part,
-    timeline:base.Entity_Id `mirai:"optional,label=The timeline the part goes under; not for a Timeline"`,
-    target:base.Entity_Id `mirai:"optional,label=Track: the entity it moves; Shot: its camera"`,
+    timeline:editor.Api_Entity_Text `mirai:"text,entity,optional,label=The timeline the part goes under; not for a Timeline"`,
+    target:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Track: the entity it moves; Shot: its camera"`,
     property:cine.Cinematic_Property `mirai:"optional"`,
     tick:u32 `mirai:"optional,unit=ticks,label=Of a shot or a marker or of the first key of a track which takes the target as it is"`,
     duration_ticks:u32 `mirai:"optional,unit=ticks,label=Timeline; 0: five seconds"`,
@@ -80,7 +80,7 @@ Add_Params :: struct {
 Add_Result :: struct {id:base.Entity_Id}
 
 Key_Params :: struct {
-    track:base.Entity_Id,
+    track:editor.Api_Entity_Text `mirai:"text,entity"`,
     tick:f32 `mirai:"min=0,unit=ticks"`,
     value:[4]f32 `mirai:"optional,label=As cinematics.inspect gives the value of a track"`,
     capture:bool `mirai:"optional,label=Takes the value from the target as it is instead of value"`,
@@ -106,11 +106,11 @@ tool_state :: proc(s:^editor.Session) -> ^Cinematic_Editor {
 
 // The timeline of an id in a world, or the failure of the call.
 @(private)
-timeline_find :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id,field:string) -> core.Entity {
-    e:=editor.api_entity(w,id)
-    if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"%s %016x is not an entity of the scene shown: take ids from scene.inspect or cinematics.inspect",field,u64(id));return core.NONE}
+timeline_find :: proc(call:^api.Call,w:core.World_Ref,named:[]u8,field:string) -> core.Entity {
+    e,found:=editor.api_call_entity(call,w,named,field)
+    if !found {return core.NONE}
     timeline:=timeline_of(w,e)
-    if !editor.entity_has(w,timeline,cine.Cinematic) {api.call_failf(call,api.INVALID_PARAMS,"%s %016x is no timeline nor a part of one: give the entity with Cinematic, or add one with cinematics.add part Timeline",field,u64(id));return core.NONE}
+    if !editor.entity_has(w,timeline,cine.Cinematic) {api.call_failf(call,api.INVALID_PARAMS,"%s %s is no timeline nor a part of one: give the entity with Cinematic, or add one with cinematics.add part Timeline",field,base.text_get(named));return core.NONE}
     return timeline
 }
 
@@ -118,7 +118,7 @@ timeline_find :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id,field:st
 api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Inspect_Params)
     w:=editor.shown_world(s)
-    timeline:=timeline_find(call,w,p.entity,"entity")
+    timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     c:=tool_state(s)
@@ -224,7 +224,7 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Control_Params)
     if s.mode==.Watch {api.call_fail(call,api.INVALID_PARAMS,"this editor watches another one: control the timeline in the editor that runs it");return}
     w:=editor.shown_world(s)
-    timeline:=timeline_find(call,w,p.entity,"entity")
+    timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     out:=api.call_result(call,Control_Result)
@@ -278,12 +278,12 @@ api_add :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.edited_world(s)
     desc:=Part_Desc{part=p.part,property=p.property,tick=p.tick,duration_ticks=p.duration_ticks,blend_ticks=p.blend_ticks,ease=p.ease,values=p.values}
     if p.part!=.Timeline {
-        desc.timeline=timeline_find(call,w,p.timeline,"timeline")
+        desc.timeline=timeline_find(call,w,p.timeline[:],"timeline")
         if desc.timeline==core.NONE {return}
     } else if desc.duration_ticks==0 {desc.duration_ticks=u32(tick_rate(s)*5)}
     if p.part==.Track || p.part==.Shot {
-        desc.target=editor.api_entity(w,p.target)
-        if desc.target==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"target %016x is not an entity of the scene: a %v needs the id of its %s",u64(p.target),p.part,p.part==.Shot?"camera":"target");return}
+        found:bool
+        if desc.target,found=editor.api_call_entity(call,w,p.target[:],"target");!found {return}
     }
     if name:=serial.text_field(p.marker[:]);name!="" {desc.id=base.name_hash(name)}
     if !editor.api_edit_begin(s,call,fmt.tprintf("Add %v",p.part)) {return}
@@ -298,9 +298,10 @@ api_add :: proc(s:^editor.Session,call:^api.Call) {
 api_key_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Key_Params)
     w:=editor.edited_world(s)
-    e:=editor.api_entity(w,p.track)
+    e,named:=editor.api_call_entity(call,w,p.track[:],"track")
+    if !named {return}
     track,found:=editor.entity_get(w,e,cine.Cinematic_Track)
-    if !found {api.call_failf(call,api.INVALID_PARAMS,"track %016x has no Cinematic_Track: take the id of a track from cinematics.inspect",u64(p.track));return}
+    if !found {api.call_failf(call,api.INVALID_PARAMS,"track %s has no Cinematic_Track: take a track from cinematics.inspect",base.text_get(p.track[:]));return}
     key:=lib.Keyframe{time=p.tick,value=mm.Vec4(p.value),ease=p.ease,interpolation=p.interpolation}
     if p.capture && !p.remove {
         captured:bool
@@ -316,5 +317,5 @@ api_key_set :: proc(s:^editor.Session,call:^api.Call) {
     if !editor.api_edit_end(s,call,written) {return}
     if c:=tool_state(s);c!=nil {c.shown=-1}
     out:=api.call_result(call,Key_Result)
-    out.track,out.key_count=p.track,track.key_count
+    out.track,out.key_count=editor.api_entity_id(w,e),track.key_count
 }

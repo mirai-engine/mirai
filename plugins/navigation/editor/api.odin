@@ -29,13 +29,13 @@ Inspect_Params :: struct {
 }
 
 Agent_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 Move_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     to:[3]f32 `mirai:"optional,label=Where it walks; omitted with no target: it stops"`,
-    target:base.Entity_Id `mirai:"optional,label=An entity it follows instead"`,
+    target:editor.Api_Entity_Text `mirai:"text,entity,optional,label=An entity it follows instead"`,
     distance:f32 `mirai:"optional,min=0,unit=m,label=Kept from the target"`,
 }
 
@@ -490,11 +490,12 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Agent_Params)
     n,world,ok:=navigation_of(s,call)
     if !ok {return}
-    e:=core.entity_of(core.world_entities(world),p.entity)
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=s.mode!=.Edit)
+    if !named {return}
     paths:=core.world_table_of(world,nav.Nav_Path)
     agents:=core.world_table_of(world,nav.Nav_Agent)
     far:=far_of(world,e)
-    if e==core.NONE || agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the shown world",p.entity);return}
+    if agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the shown world",base.text_get(p.entity[:]));return}
     w:=call.out
     serial.text_write_raw(w,"{")
     value:nav.Nav_Path
@@ -593,12 +594,13 @@ move :: proc(s:^editor.Session,call:^api.Call) {
     world:=editor.shown_world(s)
     requests:=core.world_storage_of(world,nav.Nav_Requests)
     agents:=core.world_table_of(world,nav.Nav_Agent)
-    e:=core.entity_of(core.world_entities(world),p.entity)
-    if requests==nil || agents==nil || e==core.NONE || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the running world",p.entity);return}
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
+    if !named {return}
+    if requests==nil || agents==nil || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the running world",base.text_get(p.entity[:]));return}
     switch {
-    case p.target!=0:
-        target:=core.entity_of(core.world_entities(world),p.target)
-        if target==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"target %x is not an entity of the running world",p.target);return}
+    case p.target[0]!=0:
+        target,known:=editor.api_call_entity(call,world,p.target[:],"target",true)
+        if !known {return}
         nav.nav_follow(requests,e,target,p.distance)
     case p.to!={}:
         nav.nav_move_to(requests,e,p.to)

@@ -87,13 +87,13 @@ motion_distance_api_queues_forward_playback_rejects_backward_clock_and_allows_ex
     tables:=[2]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Motion_Authoring_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Motion_Authoring_World,animations)}}
     storages:=[2]core.Storage_Info{{type=anim.Playback,info=type_info_of(anim.Playback),offset=offset_of(Motion_Authoring_World,playback)},{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Motion_Authoring_World,requests)}}
     info:=core.World_Info{tables=tables[:],storages=storages[:]};f.session.info,f.session.mode=&info,.Play;f.session.runs[0]={world=&world}
-    result=authoring_test_execute(f,"request",`{"entity":"11","distance":{"name":"stop","distance":1.5}}`)
+    result=authoring_test_execute(f,"request",`{"entity":"0000000000000011","distance":{"name":"stop","distance":1.5}}`)
     testing.expect(t,result.code==0,fmt.tprintf("%s %s",result.message,result.data));testing.expect_value(t,len(world.requests.distances.items),1)
     if len(world.requests.distances.items)>0 {testing.expect_value(t,world.requests.distances.items[0],anim.Animation_Distance_Request{entity=entity,clip=base.name_hash("walk"),time=1})}
-    result=authoring_test_execute(f,"request",`{"entity":"11","distance":{"name":"stop","distance":3}}`)
+    result=authoring_test_execute(f,"request",`{"entity":"0000000000000011","distance":{"name":"stop","distance":3}}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Backwards"));testing.expect_value(t,len(world.requests.distances.items),1)
-    result=authoring_test_execute(f,"request",`{"entity":"11","distance":{"name":"stop","distance":3,"seek":true}}`)
+    result=authoring_test_execute(f,"request",`{"entity":"0000000000000011","distance":{"name":"stop","distance":3,"seek":true}}`)
     testing.expect_value(t,result.code,0);testing.expect_value(t,len(world.requests.distances.items),2)
     if len(world.requests.distances.items)>1 {testing.expect_value(t,world.requests.distances.items[1],anim.Animation_Distance_Request{entity=entity,clip=base.name_hash("walk"),time=0,seek=true})}
-    f.session.mode=.Edit;testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"11","distance":{"name":"stop","distance":1}}`).code,api.INVALID_PARAMS)
+    f.session.mode=.Edit;testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","distance":{"name":"stop","distance":1}}`).code,api.INVALID_PARAMS)
 }

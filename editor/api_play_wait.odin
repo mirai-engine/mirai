@@ -21,7 +21,7 @@ API_PLAY_CONDITIONS :: 16
 Api_Compare :: enum u8 {Exists,Gone,Equal,Not_Equal,Below,At_Most,Above,At_Least}
 
 Api_Play_Condition :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=The entity by its name or a path Parent/Child or its id or its handle"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of an entity"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of a storage or an entity: the entity named is its point (points.0)"`,
     field:[128]u8 `mirai:"optional,text,label=The value: Component.field.0.field of an entity or world_position.2 or the names of fields and indices joined by dots inside a storage or the view (points.0.normalized.0); empty: the entity itself or all of it"`,
@@ -46,7 +46,7 @@ Api_Play_Check_Entry :: struct {
 }
 
 Api_Play_Get_Params :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"text,label=The entity by its name or a path Parent/Child or its id or its handle"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     field:[128]u8 `mirai:"text,label=The value: Component.field.0.field (Motion.linear.1) or a key of the document of the entity as play.inspect writes it (world_position)"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }

@@ -88,7 +88,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     core.add(&f.world.animations,f.rig,stale);pose_bake_test_settle(&f.world,nil,nil)
     defaults:=Setup_Params{want=SETUP_ALL}
     authoring_test_register(a,t,"setup",Setup_Params,setup,&defaults)
-    request:=fmt.tprintf(`{{"entity":"11","library":"%s","folder":"characters"}}`,authoring_test_id_text(library))
+    request:=fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"characters"}}`,authoring_test_id_text(library))
     // Matching follows the modes of the Character: a project without physics has none.
     result:=authoring_test_execute(a,"setup",request)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Missing_Plugin") && strings.contains(result.data,"physics") && !authoring_test_exists(a,"characters/figure.pose"))
@@ -149,10 +149,10 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     result=authoring_test_execute(a,"setup",strings.concatenate({request[:len(request)-1],`,"replace":true,"want":["Look"]}`},context.temp_allocator))
     testing.expectf(t,result.code==0,"%s %s",result.message,result.data)
     // What it plays already names its clips; a plain entity has no skeleton.
-    result=authoring_test_execute(a,"setup",`{"entity":"11","folder":"characters"}`)
+    result=authoring_test_execute(a,"setup",`{"entity":"0000000000000011","folder":"characters"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Already_Exists"))
     plain:=core.create(&f.world.entities);core.add(&f.world.ids,plain,{value=19});pose_bake_test_settle(&f.world,nil,nil)
-    result=authoring_test_execute(a,"setup",`{"entity":"13"}`)
+    result=authoring_test_execute(a,"setup",`{"entity":"0000000000000013"}`)
     testing.expect(t,result.code!=0 && strings.contains(result.data,"Missing_Skeleton"))
 }
 
@@ -164,7 +164,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     test_locomotion_modes(&f.info)
     defaults:=Setup_Params{want=SETUP_ALL}
     authoring_test_register(a,t,"setup",Setup_Params,setup,&defaults)
-    ids:=fmt.tprintf(`"entity":"11","library":"%s","folder":"characters"`,authoring_test_id_text(library))
+    ids:=fmt.tprintf(`"entity":"0000000000000011","library":"%s","folder":"characters"`,authoring_test_id_text(library))
 
     // Only the clips named are classified, at the speed told for them.
     result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"clips":["Idle","Walk"],"speeds":[{{"clip":"Walk","speed":2.5}}],"dry_run":true}}`,ids))
@@ -230,7 +230,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     pace:=base.Asset_Id{840,11}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/pace.anim",a.root),&a.assets.types,{id=pace,clips=paced[:]}),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
-    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"11","library":"%s","folder":"paced","want":["Locomotion"],"blends":[{{"clips":["Idle","Jog"],"samples":[{{"weights":[1,1,0,0,0,0,0,0]}}]}}]}}`,authoring_test_id_text(pace)))
+    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"paced","want":["Locomotion"],"blends":[{{"clips":["Idle","Jog"],"samples":[{{"weights":[1,1,0,0,0,0,0,0]}}]}}]}}`,authoring_test_id_text(pace)))
     testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"blends[0].clips[1]"`) && strings.contains(result.data,"Unequal_Duration") && strings.contains(result.data,"retime"),"%s",result.data)
 
     // A library larger than a .match or an .action takes fails and says how many there are.
@@ -242,7 +242,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     large:=base.Asset_Id{840,9}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/many.anim",a.root),&a.assets.types,{id=large,clips=many[:]}),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
-    crowded:=fmt.tprintf(`"entity":"11","library":"%s","folder":"crowded"`,authoring_test_id_text(large))
+    crowded:=fmt.tprintf(`"entity":"0000000000000011","library":"%s","folder":"crowded"`,authoring_test_id_text(large))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"]}}`,crowded))
     testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Capacity"`) && strings.contains(result.data,"65: walking") && strings.contains(result.data,"Pass clips"),"%s",result.data)
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Gestures"]}}`,crowded))
@@ -259,7 +259,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     testing.expectf(t,strings.has_prefix(text,`{"skeleton":`) && authoring_test_exists(a,"solo/figure.match") && authoring_test_exists(a,"solo/figure.action"),"%s",text)
     after,_:=core.get(core.read(&f.world.animations),f.rig)
     testing.expect(t,after==before && after.asset!=authoring_test_id(a,"solo/figure.match"))
-    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"entity":"11"}}`,solo))
+    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"entity":"0000000000000011"}}`,solo))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Exclusive_Reference"))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{"skeleton":"%s"}}`,authoring_test_id_text(base.Asset_Id{840,2})))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"library"`))

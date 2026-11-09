@@ -1032,19 +1032,6 @@ the_last_play_keeps_its_history_after_stop_until_the_next_play :: proc(t:^testin
 }
 
 @(test)
-a_name_a_game_repeats_still_names_the_entity_of_the_document :: proc(t:^testing.T) {
-    f:=new(Probe);defer free(f)
-    if !probe_open(t,f) {return}
-    defer probe_close(f)
-    game:=run_find(&f.s,0).world
-    world:=cast(^Probe_World)game
-    core.add(&world.names,core.create(&world.entities),core.name_make("Hero"))
-    probe_settle(game,nil,nil)
-    id,problem:=api_entity_text_resolve(&f.s,"Hero")
-    testing.expectf(t,id==1 && problem=="","%v %s",id,problem)
-}
-
-@(test)
 verify_says_the_first_tick_and_field_where_playing_the_past_again_differs :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
     if !probe_open(t,f) {return}

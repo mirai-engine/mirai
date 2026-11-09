@@ -113,7 +113,6 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
         return .Server
     }
     st.server.assets={s,asset_text_resolve}
-    st.server.entities={s,api_entity_text_resolve}
     api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
@@ -706,23 +705,15 @@ rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     return magnitude,true
 }
 
-// The id of the entity a param read by hand names, as any param of type
-// base.Entity_Id takes it; null is none.
+// The id a document read by hand holds; null is none.
 rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"null") {return 0,true}
     text,read:=serial.text_string(&a.r)
-    if !read {return 0,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
-    entities:serial.Text_Entities
-    if a.call.server!=nil {entities=a.call.server.entities}
-    if entities.resolve==nil {
-        value,parsed:=serial.text_parse_hex(text)
-        if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-        return base.Entity_Id(value),true
-    }
-    problem:string
-    if id,problem=entities.resolve(entities.user,text);problem!="" {return 0,rpc_fail(a,"%s: %s",what,problem)}
-    return id,true
+    if !read {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
+    value,parsed:=serial.text_parse_hex(text)
+    if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
+    return base.Entity_Id(value),true
 }
 
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {

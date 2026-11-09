@@ -367,7 +367,6 @@ Text_Reader :: struct {
     names:[dynamic]u8, // of the error
     assets:Text_Assets,
     asset_kinds:string, // of the field being read
-    entities:Text_Entities,
     loose_names:bool,   // text a person or an agent wrote: members of enums and bit sets as base.name_find takes them
 }
 
@@ -377,14 +376,6 @@ Text_Reader :: struct {
 Text_Assets :: struct {
     user:rawptr,
     resolve:proc(user:rawptr,name,kinds:string) -> (id:base.Asset_Id,problem:string),
-}
-
-// How a reader that knows the entities takes the text that goes where an
-// Entity_Id does, which only it can read. problem says what is wrong with the
-// text; "": found.
-Text_Entities :: struct {
-    user:rawptr,
-    resolve:proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string),
 }
 
 text_reader_init :: proc(r:^Text_Reader,text:string,allocator:=context.allocator) {
@@ -843,13 +834,6 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
         intrinsics.mem_copy_non_overlapping(raw_data(bytes),&bits,len(bytes))
         return true
     case .Entity,.Entity_Id:
-        if type.kind==.Entity_Id && r.entities.resolve!=nil {
-            text:=text_string(r) or_return
-            id,problem:=r.entities.resolve(r.entities.user,text)
-            if problem!="" {return text_fail_problem(r,.Unknown_Entity,start,problem)}
-            scalar_store(bytes,u64(id))
-            return true
-        }
         if text_peek(r)=='"' {
             text:=text_string(r) or_return
             value,ok:=text_parse_hex(text)

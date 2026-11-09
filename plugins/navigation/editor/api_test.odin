@@ -58,7 +58,7 @@ nav_agent_tells_what_a_far_agent_does :: proc(t:^testing.T) {
     core.entities_settle(&world.entities)
     testing.expect(t,!core.has(&world.agents,e))
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    params:=Agent_Params{entity=7}
+    params:Agent_Params;copy(params.entity[:],"0000000000000007")
     method:=api.Method{params_id=Agent_Params}
     call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
     agent(&session,&call)

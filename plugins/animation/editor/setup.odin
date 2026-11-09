@@ -46,7 +46,7 @@ Setup_Blend :: struct {
 }
 
 Setup_Params :: struct {
-    entity:base.Entity_Id `mirai:"optional,label=The rig: the entity with the skinned mesh, whose Animation and Pose_Modifiers get the assets. Or skeleton"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=The rig: the entity with the skinned mesh, whose Animation and Pose_Modifiers get the assets. Or skeleton"`,
     skeleton:base.Asset_Id `mirai:"optional,label=The .skeleton instead of id: only writes the assets and returns them, with library"`,
     library:base.Asset_Id `mirai:"optional,label=The .anim with its clips; empty takes what id plays"`,
     clips:[SETUP_CLIPS][64]u8 `mirai:"text,optional,label=The clips of the library to classify by name; omitted is all of them"`,
@@ -277,15 +277,15 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Setup_Params)
     if !authoring_editable(s,call) {return}
     want:=p.want if authoring_field_present(call,"want") else SETUP_ALL
-    if (p.entity!=0)==(p.skeleton!={}) {authoring_failure(call,"entity","Exclusive_Reference","exactly one of entity or skeleton","both" if p.entity!=0 else "neither","Setup needs the rig or its skeleton",fix="Pass id of the rig to assign the assets to it, or skeleton with library to only write them");return}
+    if (p.entity[0]!=0)==(p.skeleton!={}) {authoring_failure(call,"entity","Exclusive_Reference","exactly one of entity or skeleton","both" if p.entity[0]!=0 else "neither","Setup needs the rig or its skeleton",fix="Pass id of the rig to assign the assets to it, or skeleton with library to only write them");return}
     // With the rig: its skeleton and what it plays. With a skeleton alone, no entity changes.
     w:core.World_Ref;e:core.Entity
-    rigged:=p.entity!=0
+    rigged:=p.entity[0]!=0
     skeleton_id:=p.skeleton
     animation:=anim.ANIMATION_DEFAULT
     if rigged {
         ok:bool
-        w,e,ok=subject(s,call,p.entity);if !ok {return}
+        w,e,ok=subject(s,call,p.entity[:]);if !ok {return}
         e=pose_owner(s,w,e)
         skeleton_id=rig_skeleton(s,w,e)
         if skeleton_id=={} {authoring_failure(call,"entity","Missing_Skeleton","an entity that shows a skinned mesh","none","A character needs a skeleton",fix="Pass the id of the rig: the entity with the Mesh_Renderer of a skinned mesh");return}
@@ -661,7 +661,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     }
     out:=call.out
     serial.text_write_raw(out,"{")
-    if rigged {api.write_key(out,"id",true);api.write_id(out,p.entity)} else {api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,p.skeleton);serial.write_u8(out,'"')}
+    if rigged {api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))} else {api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,p.skeleton);serial.write_u8(out,'"')}
     if dry_run {api.write_bool(out,"dry_run",true)}
     api.write_text(out,"body",body_source)
     api.write_key(out,"assets");serial.text_write_raw(out,"[")

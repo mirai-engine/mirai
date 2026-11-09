@@ -39,13 +39,13 @@ Particle_World :: enum u8 {Edit,Play}
 
 @(private)
 Api_Particle_Instance_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
 }
 
 @(private)
 Api_Particle_Id_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 @(private)
@@ -53,7 +53,7 @@ Particle_Action :: enum u8 {Start,Stop,Restart,Pause,Resume,Authored,Burst}
 
 @(private)
 Api_Particle_Control_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the preview of the document; Play: the Play of the caller"`,
     action:Particle_Action `mirai:"label=Start and Stop emit or not whatever active says; Restart drops its particles and starts its cycle; Authored gives it back to its fields; Burst starts count particles at once"`,
     count:u32 `mirai:"optional,max=1048576,label=Particles of a Burst"`,
@@ -453,10 +453,10 @@ particle_world :: proc(s:^editor.Session,call:^api.Call,world:Particle_World) ->
 
 // The entity of an id in a world, which must have a Particle_Emitter.
 @(private)
-particle_entity :: proc(w:core.World_Ref,call:^api.Call,id:base.Entity_Id) -> (e:core.Entity,ok:bool) {
-    e=editor.api_entity(w,id)
-    if e==core.NONE || !editor.entity_has(w,e,vfx.Particle_Emitter) {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity with a Particle_Emitter in this world",u64(id))
+particle_entity :: proc(w:core.World_Ref,call:^api.Call,named:[]u8) -> (e:core.Entity,ok:bool) {
+    e=editor.api_call_entity(call,w,named) or_return
+    if !editor.entity_has(w,e,vfx.Particle_Emitter) {
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no Particle_Emitter",base.text_get(named))
         return
     }
     return e,true
@@ -574,7 +574,7 @@ api_particle_instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Instance_Params)
     w,ok:=particle_world(s,call,p.world)
     if !ok {return}
-    e,found:=particle_entity(w,call,p.entity)
+    e,found:=particle_entity(w,call,p.entity[:])
     if found {particle_instance_write(s,call,w,e,p.world)}
 }
 
@@ -588,12 +588,12 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     editor.rpc_init(&request,call,call.raw)
     if !editor.rpc_object_begin(&request,"params") {return}
     fields:editor.Rpc_Object
-    id:base.Entity_Id
+    named:editor.Api_Entity_Text
     values,parameters:string
     has_id:bool
     for key in editor.rpc_next(&request,&fields) {
         switch key {
-        case "entity": id,has_id=editor.rpc_id(&request,"entity")
+        case "entity": _,has_id=editor.rpc_text(&request,"entity",named[:])
         case "values": values,_=editor.rpc_raw(&request)
         case "parameters": parameters,_=editor.rpc_raw(&request)
         }
@@ -604,7 +604,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,id)
+    e,found:=particle_entity(w,call,named[:])
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
@@ -666,7 +666,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
 api_particle_instance_revert :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.entity)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     if !editor.api_edit_begin(s,call,"Revert particle") {return}
     instance_clear(editor.edited_world(s),e)
@@ -686,7 +686,7 @@ instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
 api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.entity)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     if emitter.particle=={} {
@@ -726,7 +726,7 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     if p.world==.Play {
         if _,own:=editor.api_play_run(s,call);!own {editor.api_play_refused(call);return}
     }
-    e,found:=particle_entity(w,call,p.entity)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     requests:=core.world_storage_of(w,vfx.Particle_Requests)
     if requests==nil {
@@ -742,5 +742,5 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     case .Authored: vfx.authored(requests,e)
     case .Burst: vfx.burst(requests,e,p.count)
     }
-    api.call_result(call,Api_Particle_Control_Result)^={id=p.entity,queued=true}
+    api.call_result(call,Api_Particle_Control_Result)^={id=editor.api_entity_id(w,e),queued=true}
 }

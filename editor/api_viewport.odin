@@ -35,7 +35,7 @@ Api_Capture_Params :: struct {
     count:int `mirai:"optional,min=0,max=64,label=Filmstrip: its cells; the first shows the game before the first tick; with segments and no every they spread evenly over their ticks"`,
     columns:int `mirai:"optional,min=0,max=64,label=Filmstrip: cells across; 0: as square as they fit"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Filmstrip: the input along its ticks as play.step takes it; they say how many ticks it runs"`,
-    follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
+    follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
     size:[2]f32 `mirai:"optional,min=8,max=4096,label=Filmstrip that follows an entity: width and height of a cell in points of the image"`,
     region:[4]f32 `mirai:"optional,label=x y width height of the part written, in pixels from the top left of the image; of a filmstrip, in points, what every cell shows in place of following an entity. None: all of it"`,
     width:int `mirai:"optional,min=0,max=4096,label=Pixels of the image alone; 0 keeps the aspect of what it shows (its size when height is 0 too)"`,

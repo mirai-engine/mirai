@@ -280,9 +280,9 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 
 - **An entity is named once, as `entity`.** Every param that names one (`entity`, `entities`, or
   by its role `parent`, `target`, `ground`, `around`...) takes its name, a path of names
-  `Parent/Child`, its id or its handle: the reader of params resolves a `base.Entity_Id` through
-  the resolver the editor installs (`Server.entities`), so handlers get an id, and hand-read params
-  with `rpc_id`, and their schemas say `x-entity`. A name several entities have is an error that
+  `Parent/Child`, its id or its handle, as text (`Api_Entity_Text`, tagged `entity`, so its schema
+  says `x-entity`); the handler resolves it with `api_call_entity` in the world it acts on, where
+  in Play a handle is a valid text. A name several entities have is an error that
   lists them and how to tell them apart; a text of 16 hexadecimal digits or starting with `0x` is
   tried as an id and a handle first; `scene.write` keeps `id` in its documents, which are what
   `scene.inspect` gives back. Results always give ids.

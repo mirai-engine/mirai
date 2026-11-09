@@ -153,9 +153,9 @@ authoring_motion_distance :: proc(s:^editor.Session,call:^api.Call) {
 
 @(private)
 authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.entity,p.handle);if !ok {return}
+    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
     instance,ready:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity)
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,p.entity)
+    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
     api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,instance.profile);serial.write_u8(call.out,'"')
     api.write_bool(call.out,"ready",ready);api.write_int(call.out,"window",i64(instance.window));api.write_key(call.out,"error");authoring_write_value(call,&instance.error,type_info_of(anim.Motion_Error))
     api.write_key(call.out,"remaining_error");api.write_number(call.out,instance.remaining_error);api.write_numbers(call.out,"source_velocity",instance.source_velocity)
@@ -169,7 +169,7 @@ authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
-        if id,found:=core.get(core.read(ids),target.target.entity);found {named.entity=id.value}
+        if id,found:=core.get(core.read(ids),target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
         api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
         api.write_numbers(call.out,"world_position",target.world.position)
         rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))

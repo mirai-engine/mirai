@@ -22,7 +22,7 @@ import "mirai:std/serial"
 
 @(private)
 Api_Collision_Request :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text,
     component:[64]u8,
     prefix:[128]u8,
     preset:string,
@@ -93,7 +93,7 @@ api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Coll
         if !set && at>=3 {editor.rpc_fail_type(&a,"unknown parameter %q",key);return}
         switch key {
         case "entity":
-            request.id=editor.rpc_id(&a,key) or_return
+            _ = editor.rpc_text(&a,key,request.entity[:]) or_return
         case "component":_ = editor.rpc_text(&a,key,request.component[:63]) or_return
         case "prefix":
             _ = editor.rpc_text(&a,key,request.prefix[:127]) or_return
@@ -110,7 +110,7 @@ api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Coll
         }
     }
     if a.failed {return}
-    if seen&1==0 || request.id==0 {editor.rpc_fail(&a,"id is required");return}
+    if seen&1==0 || request.entity[0]==0 {editor.rpc_fail(&a,"entity is required");return}
     if seen&2!=0 && base.text_get(request.component[:])=="" {editor.rpc_fail(&a,"component must name a component, or be left out for the only collision component of the entity");return}
     if set {
         own:=request.has_sensor || request.has_belongs || request.has_collides
@@ -172,8 +172,7 @@ api_collision_holds :: proc(info:^runtime.Type_Info,set:bool) -> bool {
 // Names in the request the only collision component of its entity; several, or none, fail listing them.
 @(private)
 api_collision_component :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,request:^Api_Collision_Request,set:bool) -> bool {
-    entity:=editor.api_entity(w,request.id)
-    if entity==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the shown world",u64(request.id));return false}
+    entity:=editor.api_call_entity(call,w,request.entity[:]) or_return
     found:=make([dynamic]string,0,4,call.allocator)
     for &table in w.info.tables {
         if table.place!=.World || !editor.inspector_listed(s,&table) || core.raw_find(core.world_table_at(w,&table),table.info,entity)==nil {continue}
@@ -181,13 +180,13 @@ api_collision_component :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     }
     switch len(found) {
     case 0:
-        api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has no collision component: give it a Collider with scene.set",u64(request.id))
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no collision component: give it a Collider with scene.set",base.text_get(request.entity[:]))
         return false
     case 1:
         base.text_set(request.component[:],found[0])
         return true
     }
-    api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has %d collision components (%s): pass component with one of them",u64(request.id),len(found),strings.join(found[:],", ",call.allocator))
+    api.call_failf(call,api.INVALID_PARAMS,"entity %q has %d collision components (%s): pass component with one of them",base.text_get(request.entity[:]),len(found),strings.join(found[:],", ",call.allocator))
     return false
 }
 
@@ -200,10 +199,10 @@ api_collision_target :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,r
     if table.place!=.World || !editor.inspector_listed(s,table) {
         api.call_failf(call,api.INVALID_PARAMS,"component %q is not an editable component of the world",name);return
     }
-    entity:=editor.api_entity(w,request.id)
-    if entity==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the shown world",u64(request.id));return}
+    entity,named:=editor.api_call_entity(call,w,request.entity[:])
+    if !named {return}
     if core.raw_find(core.world_table_at(w,table),table.info,entity)==nil {
-        api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has no %s component",u64(request.id),name);return
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no %s component",base.text_get(request.entity[:]),name);return
     }
     target.table,target.entity=table,entity
     type,origin:=table.info,0
@@ -346,7 +345,7 @@ api_collision_get :: proc(s:^editor.Session,call:^api.Call) {
     info:=w.info
     value:=uintptr(core.raw_find(core.world_table_at(w,target.table),target.table.info,target.entity))
     out:=call.out
-    serial.text_write_raw(out,`{"id":`);api.write_id(out,request.id)
+    serial.text_write_raw(out,`{"id":`);api.write_id(out,editor.api_entity_id(w,target.entity))
     api.write_key(out,"playing");api.write_flag(out,editor.playing(s))
     api.write_key(out,"component");serial.text_write_string(out,base.text_get(request.component[:]))
     api.write_key(out,"prefix");serial.text_write_string(out,target.prefix)
@@ -438,5 +437,5 @@ api_collision_set :: proc(s:^editor.Session,call:^api.Call) {
     if !found {editor.api_edit_end(s,call,false);return}
     changed:=editor.field_write(s,target.table,{target.entity},0,scratch)
     if !editor.api_edit_end(s,call,changed) {return}
-    api.call_result(call,editor.Api_Edit_Result).id=request.id
+    api.call_result(call,editor.Api_Edit_Result).id=editor.api_entity_id(editor.edited_world(s),target.entity)
 }

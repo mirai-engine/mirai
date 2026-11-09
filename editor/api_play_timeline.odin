@@ -40,7 +40,7 @@ Api_Play_Segment :: struct {
 }
 
 Api_Play_Trace :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=The entity by its name or a path Parent/Child or its id or its handle; a name with * stands for any run of characters and takes every entity it fits"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=The entity by its name or a path Parent/Child or its id or its handle; a name with * stands for any run of characters and takes every entity it fits"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of entities"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of entities or a storage: the entities named are its points"`,

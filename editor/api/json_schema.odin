@@ -8,7 +8,7 @@ import "mirai:std/serial"
 // JSON Schema (2020-12) of a type of the registry. Types are written inline:
 // plain data has no cycles. Integers carry the range of their type narrowed by
 // the field's min and max; enums are their member names; bit sets are lists of
-// names; ids are strings, and a param that holds an Entity_Id is a string that
+// names; ids are strings, and a param that names an entity is a string that
 // says with x-entity how it names the entity; an asset is a string, its id or
 // its path, with x-asset the extensions its field holds; a text field is a
 // string of at most N bytes; an
@@ -125,11 +125,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"uniqueItems");raw(w,"true")
     case .Entity,.Entity_Id:
         entry(w,&count,"type");raw(w,`"string"`)
-        if params && type.kind==.Entity_Id {
-            entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)
-        } else {
-            entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
-        }
+        entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
         entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
@@ -168,6 +164,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
     case .Array:
         if decor && field!=nil && .Text in field.flags && serial.type_is_bytes(sc,index) {
             entry(w,&count,"type");raw(w,`"string"`)
+            if field.entity_name {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
             entry(w,&count,"maxLength");serial.text_write_uint(w,u64(type.count))
         } else if field!=nil && .Text in field.flags && serial.type_is_texts(sc,index) {
             shown=nil

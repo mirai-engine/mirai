@@ -51,7 +51,7 @@ API_DRIVE_ACTIONS :: 64
 Api_Drive_Stop :: enum u8 {Arrived,Until,Ticks,Stuck,No_Body,Target_Gone,Run_Ended}
 
 Api_Play_Drive :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Where it goes: the entity by its name or a path Parent/Child or its id or its handle followed where it moves; a solid raised over its feet or one out of its reach arrives only standing on it; in place of position"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=Where it goes: the entity by its name or a path Parent/Child or its id or its handle followed where it moves; a solid raised over its feet or one out of its reach arrives only standing on it; in place of position"`,
     position:[3]f32 `mirai:"optional,label=Where it goes: a point of the world; its y counts: it arrives within within plus a person's height above or below it; in place of entity"`,
     within:f32 `mirai:"optional,min=0,unit=m,label=It stops at this distance across the ground; given with a target it must stand on the distance also counts"`,
     move:[API_DRIVE_ACTIONS]u8 `mirai:"optional,text,label=The Axis2 action that moves; empty: the first bound to keys or to the left stick"`,

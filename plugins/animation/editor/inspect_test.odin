@@ -24,7 +24,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     preview_defaults:=new(Preview_Params,context.temp_allocator);preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16;request_rows_defaults(preview_defaults)
     authoring_test_register(a,t,"preview",Preview_Params,preview,preview_defaults)
     test_locomotion_modes(&f.info)
-    result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"11","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
+    result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expect_value(t,result_shape_mismatch(Setup_Result,string(serial_bytes(a))),"")
     expect :: proc(t:^testing.T,a:^Authoring_Test,request:string,needles:..string,loc:=#caller_location) {
@@ -57,7 +57,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     testing.expect(t,result.code==0 && !strings.contains(string(serial_bytes(a)),`"rig"`))
     // A preview plays the .match on a copy: it builds the database of the skeleton, and a play
     // forces its clip until matching takes over.
-    result=authoring_test_execute(a,"preview",`{"entity":"11","ticks":2,"plays":[{"clip":"Walk","mode":"Walking","tick":1}]}`)
+    result=authoring_test_execute(a,"preview",`{"entity":"0000000000000011","ticks":2,"plays":[{"clip":"Walk","mode":"Walking","tick":1}]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
     testing.expectf(t,strings.contains(text,`"match":{"available": true`) && strings.contains(text,`"clip": "Walk", "mode": "WALKING", "forced": true`),"preview %s",text)
@@ -97,7 +97,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     authoring_test_register(a,t,"setup",Setup_Params,setup,&setup_defaults)
     authoring_test_register(a,t,"instance",Instance_Inspect_Params,instance_inspect,&instance_defaults)
     test_locomotion_modes(&f.info)
-    result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"11","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
+    result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     // Without its id the rig is as one the game made: only its handle names it.
     core.remove(&f.world.ids,f.rig);pose_bake_test_settle(&f.world,nil,nil)

@@ -1246,8 +1246,8 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     core.world_settle(w)
     edits_reset(&f.edits,w)
     prefabs_follow(s,&f.prefabs)
-    id,located:=prefab_locate(s,"lamp")
-    if !testing.expect_value(t,located,Prefab_Error.None) {return}
+    id,problem:=asset_resolve(s,"lamp",".prefab")
+    if !testing.expect_value(t,problem,"") {return}
     placed,placed_error:=prefab_instantiate(s,id,{})
     if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
     prefabs_follow(s,&f.prefabs)

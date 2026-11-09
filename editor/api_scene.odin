@@ -26,8 +26,8 @@ API_INSPECT_DEFAULT :: 256 // entities an inspect gives when a filter narrows it
 API_INSPECT_BRIEF :: 24     // and when none does
 
 Api_Inspect_Params :: struct {
-    root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
+    root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     components:u8 `mirai:"any,optional,label=true: the values of every component; a list of names: only those; omitted: id, name, parent, position and the names of the components"`,
@@ -40,7 +40,7 @@ Api_Inspect_Params :: struct {
 }
 
 Api_Entity_Params :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"text,label=The entity by its name or a path Parent/Child or its id"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id"`,
 }
 
 Api_Edit_Result :: struct {

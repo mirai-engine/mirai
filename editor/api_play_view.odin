@@ -22,7 +22,7 @@ import "mirai:std/serial"
 API_VIEW_POINTS :: 8
 
 Api_Play_View_Point :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=An entity by its name or a path Parent/Child or its id or its handle"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=An entity by its name or a path Parent/Child or its id or its handle"`,
     point:[3]f32 `mirai:"optional,label=A world point in place of an entity"`,
 }
 

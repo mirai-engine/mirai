@@ -746,7 +746,7 @@ when the viewport draws with them, which `mirai shaders` asks for.
 
 ## Prefabs
 
-A prefab is named by `asset`: its file, a path under `assets/` or its id. Those that edit are
+A prefab is named by `asset`, as any asset is: a path under `assets/` or its id. Those that edit are
 transactions. Unknown id, no id, prefab not found, nonexistent override and "is not part of an
 instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).

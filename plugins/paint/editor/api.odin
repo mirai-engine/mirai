@@ -17,7 +17,7 @@ STROKE_POINTS :: 256
 CLEAR_IDS :: 64
 
 Stroke_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     points:[STROKE_POINTS][3]f32 `mirai:"unit=m,label=World points in order: the brush stamps at the first and along each segment to the next"`,
     radius:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Vertices closer than it to the stroke take paint; fully at the center and none at the edge"`,
     strength:f32 `mirai:"optional,min=0,max=1,label=How far the stroke takes a color toward the one of the brush"`,
@@ -33,7 +33,7 @@ Stroke_Result :: struct {
 }
 
 Clear_Params :: struct {
-    entities:[CLEAR_IDS]base.Entity_Id `mirai:"label=Painted entities"`,
+    entities:[CLEAR_IDS]editor.Api_Entity_Text `mirai:"text,entity,label=Painted entities"`,
 }
 
 Clear_Result :: struct {cleared:u32}
@@ -53,15 +53,16 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     app:=s.app
     if app==nil || app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
     w:=editor.edited_world(s)
-    e:=core.entity_of(core.world_entities(w),p.entity)
-    if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.entity);return}
+    e,named:=editor.api_call_entity(call,w,p.entity[:])
+    if !named {return}
+    given:=base.text_get(p.entity[:])
     source,shown:=editor.entity_get(w,e,erender.Mesh_Renderer)
-    if !shown || (source.mesh=={} && source.shape==.None) {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x shows no mesh; give it a Mesh_Renderer with a mesh asset or a shape",p.entity);return}
+    if !shown || (source.mesh=={} && source.shape==.None) {api.call_failf(call,api.INVALID_PARAMS,"entity %s shows no mesh; give it a Mesh_Renderer with a mesh asset or a shape",given);return}
     tool:=Paint_Tool{radius=p.radius,strength=p.strength,color=p.color}
     defer paint_tool_free(&tool)
     stroke:=&tool.stroke
     if !stroke_load(stroke,app.assets,e,source,editor.entity_world(w,e),app.allocator) {
-        api.call_failf(call,api.INVALID_PARAMS,"id: the mesh of entity %x cannot be painted: it is not a mesh asset with vertices and valid indices",p.entity)
+        api.call_failf(call,api.INVALID_PARAMS,"the mesh of entity %s cannot be painted: it is not a mesh asset with vertices and valid indices",given)
         return
     }
     touched:=stamp(stroke.positions,stroke.weights,p.points[0],tool.radius)
@@ -77,7 +78,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     if !written {api.call_fail(call,api.SERVER_ERROR,"The painted mesh could not be written under the asset root")}
     if !editor.api_edit_end(s,call,written) {return}
     out:=api.call_result(call,Stroke_Result)
-    out.id,out.mesh,out.vertices=p.entity,stroke.id,u32(len(stroke.before))
+    out.id,out.mesh,out.vertices=editor.api_entity_id(w,e),stroke.id,u32(len(stroke.before))
     fmt.bprintf(out.path[:],"%s/%016x.mesh",FOLDER,stroke.id[0])
     for vertex,at in stroke.canvas.vertices {
         if vertex.color!=stroke.before[at] {out.changed+=1}
@@ -91,15 +92,15 @@ api_clear :: proc(s:^editor.Session,call:^api.Call) {
     painted:=core.world_table_of(w,paint.Painted)
     entities:[CLEAR_IDS]core.Entity
     count:=0
-    for id,at in p.entities {
-        if id==0 {continue}
-        e:=core.entity_of(core.world_entities(w),id)
-        if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: no entity %x in the scene; scene.inspect lists them",at,id);return}
-        if painted==nil || !core.has(painted,e) {api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: entity %x has no paint to clear: it has no Painted component",at,id);return}
+    for &text,at in p.entities {
+        if text[0]==0 {continue}
+        e,named:=editor.api_call_entity(call,w,text[:],fmt.tprintf("entities[%d]",at))
+        if !named {return}
+        if painted==nil || !core.has(painted,e) {api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: %s has no paint to clear: it has no Painted component",at,base.text_get(text[:]));return}
         entities[count]=e
         count+=1
     }
-    if count==0 {api.call_fail(call,api.INVALID_PARAMS,"ids must list at least one painted entity");return}
+    if count==0 {api.call_fail(call,api.INVALID_PARAMS,"entities must list at least one painted entity");return}
     if !editor.api_edit_begin(s,call,"Clear paint") {return}
     cleared:=paint_restore(w,entities[:count])
     if !editor.api_edit_end(s,call,cleared>0) {return}

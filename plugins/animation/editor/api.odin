@@ -19,7 +19,7 @@ Animation_Api :: struct {provider:editor.Api_Provider}
 ANIMATION_API_DEFAULT :: Animation_Api{provider={register=register}}
 
 Describe_Params :: struct {
-    entity:base.Entity_Id `mirai:"optional"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional"`,
     handle:core.Entity `mirai:"transient"`,
     asset:base.Asset_Id `mirai:"optional"`,
     mesh:base.Asset_Id `mirai:"optional"`,
@@ -32,7 +32,7 @@ Describe_Params :: struct {
 PATH_CAPACITY :: asset.NODE_PATH_CAPACITY // the field asset hides the package in Play_Params
 
 Play_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     asset:base.Asset_Id `mirai:"optional,label=An .anim; a .match, its locomotion; or an .agraph whose parameters go through animation.request; omitted keeps what it plays"`,
     clip:[64]u8 `mirai:"text,optional,label=A clip of the .anim; on layer 0 only with an .anim asset"`,
     speed:f32 `mirai:"optional"`,
@@ -51,13 +51,13 @@ Play_Params :: struct {
 
 // handle: the one animation.inspect resolved, which subject takes over entity.
 Entity_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     handle:core.Entity `mirai:"transient"`,
 }
 
 
 Preview_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     time:f32 `mirai:"optional,min=0"`,
     ticks:u32 `mirai:"optional,min=0,max=3600,label=Ticks of dt the copy runs; plays and actions go at their tick"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25"`,
@@ -115,23 +115,22 @@ within :: proc(w:core.World_Ref,entity,root:core.Entity) -> bool {
     return false
 }
 
-// The entity a call names by id in the world the editor shows, or entity when it is alive there.
+// The entity a call names in the world the editor shows, or entity when it is alive there.
 @(private)
-subject :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,entity:=core.NONE) -> (w:core.World_Ref,e:core.Entity,ok:bool) {
+subject :: proc(s:^editor.Session,call:^api.Call,named:[]u8,entity:=core.NONE) -> (w:core.World_Ref,e:core.Entity,ok:bool) {
     w=editor.shown_world(s)
     if entity!=core.NONE && core.alive(core.world_entities(w),entity) {return w,entity,true}
-    e=find_entity(w,id)
-    if e==core.NONE {
-        fix:="Use an id from scene.inspect" if s.mode==.Edit else "Use an id from play.inspect; the entities the game made have no id: animation.inspect takes their handle in entity"
-        authoring_failure(call,"entity","Missing_Entity","an entity in the shown world",fmt.tprintf("%x",id),"The animation entity does not exist",fix=fix);return
+    problem:string
+    if e,problem=editor.api_entity_select(w,base.text_get(named),"entity",s.mode!=.Edit,call.allocator);problem!="" {
+        authoring_failure(call,"entity","Missing_Entity","an entity in the shown world",base.text_get(named),"The animation entity does not exist",fix=problem);return
     }
     return w,e,true
 }
 
 @(private)
-control_result :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,id:base.Entity_Id) {
+control_result :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity) {
     out:=api.call_result(call,Control_Result)
-    out.id=id
+    out.id=editor.api_entity_id(w,e)
     if value,ok:=editor.entity_get(w,e,anim.Animation);ok {out.playing=value.playing}
     if time,_,_,ok:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);ok {out.time=time}
 }
@@ -165,7 +164,7 @@ edit_end :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,ok:bool) -> b
 play :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Play_Params)
     if !finite(p.speed) || !finite(p.fade) || p.fade<0 || !finite(p.weight) {authoring_failure(call,"speed","Invalid_Value","finite speed, fade and weight; nonnegative fade",fmt.tprintf("speed=%v fade=%v weight=%v",p.speed,p.fade,p.weight),"Animation playback settings are invalid");return}
-    w,e,ok:=subject(s,call,p.entity);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     table:=core.world_table_of(w,anim.Animation)
     if table==nil {authoring_failure(call,"Animation","Unavailable","the animation runtime table","missing table","Animation runtime is not present",api.SERVER_ERROR);return}
     value,present:=core.get(core.read(table),e)
@@ -184,7 +183,7 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     if !edit_begin(s,call,"Play animation") {return}
     core.add(table,e,value)
     if !edit_end(s,call,w,true) {return}
-    control_result(s,call,w,e,p.entity)
+    control_result(s,call,w,e)
 }
 
 
@@ -205,8 +204,8 @@ asset_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^asset
 describe :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Describe_Params)
     animation_id,mesh_id,skeleton_id:=p.asset,p.mesh,p.skeleton
-    if p.entity!=0 || p.handle!=core.NONE {
-        w,e,ok:=subject(s,call,p.entity,p.handle);if !ok {return}
+    if p.entity[0]!=0 || p.handle!=core.NONE {
+        w,e,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
         if a,has:=editor.entity_get(w,e,anim.Animation);has && animation_id=={} {animation_id=a.library if a.library!={} else a.asset}
         if skeleton_id=={} {skeleton_id=rig_skeleton(s,w,e)}
         if m,has:=editor.entity_get(w,e,erender.Mesh_Renderer);has && mesh_id=={} {mesh_id=m.mesh}
@@ -275,7 +274,7 @@ describe :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 preview :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Preview_Params)
-    source,e,ok:=subject(s,call,p.entity);if !ok {return}
+    source,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     skeleton_id:=rig_skeleton(s,source,e)
     e=pose_owner(s,source,e)
     if !editor.entity_has(source,e,anim.Animation) && skeleton_id=={} {authoring_failure(call,"entity","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return}
@@ -316,7 +315,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     targets:=core.world_table_of(world,anim.Animation_Target)
     names:=core.world_table_of(world,core.Name)
     out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.entity)
+    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(source,e))
     progress,_,ended,_:=anim.animation_progress(core.world_storage_of(world,anim.Playback),e);api.write_key(out,"time");api.write_number(out,progress);api.write_bool(out,"ended",ended)
     selected:^anim.Playing;for &state in playback.states {if state.entity==e {selected=&state;break}}
     api.write_key(out,"program");preview_program_write(call,world,s.app,selected,animation,trace.graph)

@@ -35,7 +35,7 @@ Instance_Parts :: bit_set[Instance_Part]
 INSTANCE_PARTS_DEFAULT :: Instance_Parts{.Rig,.Match,.Modifiers,.Actions,.Motion,.Morphs}
 POSE_NAMES :: 16
 Instance_Inspect_Params :: struct {
-    entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as play.inspect gives it"`,
+    entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,entity,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as play.inspect gives it"`,
     parts:Instance_Parts `mirai:"optional,label=Omitted is all of them but Pose, which needs names"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Pose: the bones and sockets to place; a bone by path or name or as a part of the body (@hand_r) and a socket by its name"`,
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,
@@ -371,12 +371,12 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
         api.write_key(out,strings.to_lower(fmt.tprintf("%v",part),call.allocator))
         mark:=out.count
         switch part {
-        case .Rig: inner:=Describe_Params{entity=id,handle=e,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,describe)
+        case .Rig: inner:=Describe_Params{handle=e,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,describe)
         case .Match: instance_match(s,call,w,e)
-        case .Modifiers: inner:=Modifier_Inspect_Params{entity=id,handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,program_modifier_inspect)
-        case .Actions: inner:=Entity_Params{entity=id,handle=e};inspect_with(s,call,&inner,authoring_action_inspect)
-        case .Motion: inner:=Entity_Params{entity=id,handle=e};inspect_with(s,call,&inner,authoring_motion_inspect)
-        case .Morphs: inner:=Morph_Inspect_Params{entity=id,handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,morph_inspect)
+        case .Modifiers: inner:=Modifier_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,program_modifier_inspect)
+        case .Actions: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_action_inspect)
+        case .Motion: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_motion_inspect)
+        case .Morphs: inner:=Morph_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,morph_inspect)
         case .Pose: instance_pose(call,w,e,&query)
         }
         // A part the entity lacks says why; the rest stays.
