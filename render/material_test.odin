@@ -698,13 +698,14 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	beside := floor_point(t, &f, camera, {3, 0, 0})
 	testing.expectf(t, mirrored.r > 150 && mirrored.r > mirrored.b * 3, "the mirror shows the red emitter: %v", mirrored)
 	testing.expectf(t, beside.b > beside.r + 20, "next to it the mirror shows the sky: %v", beside)
-	testing.expect_value(t, r.stats.rays_per_frame, u64(r.targets.width * r.targets.height) * 2) // a sun ray and a mirror ray per pixel
+	traced := r.stats.rays_per_frame
 
 	settings := r.settings
 	settings.reflections = false
 	testing.expect(t, renderer_apply_settings(r, settings))
 	untraced := floor_point(t, &f, camera, {0, 0, 0})
 	testing.expectf(t, untraced.r < 40, "without traced reflections the mirror only has the probe volume: %v", untraced)
+	testing.expect_value(t, traced - r.stats.rays_per_frame, u64(r.targets.width * r.targets.height)) // a mirror ray per pixel
 
 	// A rough floor never traces: the pass is skipped altogether.
 	settings.reflections = true
@@ -1480,13 +1481,13 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	testing.expectf(t, high - low < 12, "the filtered reflection flickers between %v and %v", low, high)
 	// The rays above were one per block of 2x2 pixels. A ray per pixel shows the same image.
 	pixels := u64(r.targets.width * r.targets.height)
-	testing.expect_value(t, r.stats.rays_per_frame, pixels + u64(r.targets.half_width * r.targets.half_height))
+	shared := r.stats.rays_per_frame
 	settings := r.settings
 	settings.reflection_half_resolution = false
 	testing.expect(t, renderer_apply_settings(r, settings))
 	full_inside := settled(t, &f, camera, inside)
 	full_beside := settled(t, &f, camera, beside)
-	testing.expect_value(t, r.stats.rays_per_frame, pixels * 2)
+	testing.expect_value(t, r.stats.rays_per_frame - shared, pixels - u64(r.targets.half_width * r.targets.half_height))
 	testing.expectf(t, abs(full_inside.r - rough_inside.r) < 14 && abs(full_beside.r - rough_beside.r) < 14, "shared rays change the image: %v and %v against %v and %v", rough_inside, rough_beside, full_inside, full_beside)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

@@ -53,7 +53,7 @@ Graphics_Settings :: struct {
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
     render_megapixels=2.0736,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
-    shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=2,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
+    shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=1,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
 Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
@@ -61,10 +61,10 @@ Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
 // The technique of antialiasing is not one of them: it is the same in all.
 // Its pixels are those of a 16:9 image 720, 900, 1080 or 1440 tall.
 GRAPHICS_PRESETS :: [Graphics_Preset]Graphics_Settings{
-    .Low   ={render_megapixels=0.9216,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,light_samples=7,light_half_resolution=true,light_frames=2,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={render_megapixels=1.44,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=2,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={render_megapixels=2.0736,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=2,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={render_megapixels=3.6864,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,light_samples=31,light_frames=2,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={render_megapixels=0.9216,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,light_samples=7,light_half_resolution=true,light_frames=1,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={render_megapixels=1.44,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=1,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={render_megapixels=2.0736,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,light_samples=15,light_half_resolution=true,light_frames=1,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={render_megapixels=3.6864,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,light_samples=31,light_frames=1,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's

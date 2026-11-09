@@ -99,7 +99,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 1, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15, direct_frames = 2,
+	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15, direct_frames = 1,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
