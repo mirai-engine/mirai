@@ -135,7 +135,7 @@ It prints its result with the editor's validation and exits with 1 if there are 
 
 ## `mirai play test`
 
-`mirai play test [project] [scenario...]` plays [scenarios](methods.md#scenarios) in the project's
+`mirai play test [project] [scenario...]` plays [scenarios](../../../../docs/game/testing/scenario.md) in the project's
 session or in one it opens and closes, one `play.scenario.run` per file: those named (a name of
 `tests/scenarios`, or a path) or all of `tests/scenarios`. It prints a line per scenario and, for
 one that fails, its failure and what the failing step answered; it exits with 0 when all pass, 1

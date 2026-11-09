@@ -8,10 +8,10 @@ description: HUD, main menu, pause, settings screens, world panels and keyboard 
 
 Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:engine/save"`.
 
-**A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings,
-Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`; `theme.ui`
-holds the shared look and `tests/scenarios/shell.mirai` drives it. The `.ui` are the source:
-restyle and extend them with [ui.write](ui/writing-ui.md); do not write another menu system.
+**A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings)
+drawn by `assets/ui/shell.ui`, over the engine's Escape, frozen clock, free mouse and kept
+options; `theme.ui` holds the shared look and `tests/scenarios/shell.mirai` drives it. The `.ui`
+are the source: restyle and extend them with [ui.write](ui/writing-ui.md); do not write another menu system.
 
 ## Map
 
@@ -48,17 +48,17 @@ A frame step reads what the widgets asked, once each, also while the clock is st
 
 ```odin
 @(step="frame")
-menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), volumes:^audio.Audio_Volumes) {
+menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Options) {
     screen:=core.entity_at(screens,0)
     events:=gui.events_this_frame(g)
     if gui.clicked(events,screen,"menu_play") {start_game()}
-    if value,ok:=gui.changed_value(events,screen,"volume");ok {volumes.master=f32(value)}
+    if value,ok:=gui.changed_value(events,screen,"difficulty");ok {options.difficulty=i32(value)}
 }
 ```
 
-- Names are `base.name_hash` of the node name. Controls never write their bound value: the game
-  writes it on `Changed`, or the control goes back to what the field holds. Asking for a name the
-  screen does not have is a problem `gui.names` once at run time, with what it has.
+- Names are `base.name_hash` of the node name. A control bound to a setting writes it and the
+  engine keeps it; any other bound value the game writes on `Changed`, or the control goes back to
+  the field. Asking for a name the screen lacks is a problem `gui.names` once at run time.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
   `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
   fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.

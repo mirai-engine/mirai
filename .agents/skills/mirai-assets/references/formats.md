@@ -151,8 +151,7 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 - **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
   `file` (`u8`).
 - **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).
-- **`.ui`** (`UI  `): `nodes`, `styles`, `variants`, `components`, `component_nodes`, `overrides`,
-  `images`, `anims`, `tracks`, `keys`, `parts`, `anim_sets` (the records of `ui.Tree_Data`).
+- **`.ui`** (`UI  `): the records of `ui.Tree_Data` (`ui/tree_data.odin`).
 - **`.records`** (`RCDS`): `records` (`Records_Info`), `rows` with `id`, `name` and `value` (the
   code's type, with the file's schema), `texts` (`Records_Text`) and `text` bulk
   ([records](kinds.md#records)).

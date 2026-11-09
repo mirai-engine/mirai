@@ -39,11 +39,12 @@ mirai rpc --project . play.stop
 - `exits`: each time a button asked the game to quit. The bot holds the request and goes on, so
   an Exit button is expected to appear here, with its tick; if it does not, it is broken.
 - `passed` is false when a monitor saw a violation; `violations` lists them and `repros` are
-  scenario files written for up to four kinds of them.
+  scenario files written for the first kinds of them.
 
 ## QA
 
-Arm right after `play.start`, before any tick, or a violation cannot write a repro:
+Arm it from any tick. A repro plays the run from tick 0, so every tick from the first must come
+from the API or the violation cannot write one:
 
 ```bash
 mirai rpc --project . play.qa.start '{"frame_ms":50}'
@@ -74,11 +75,15 @@ mirai rpc --project . play.qa.report '{"violation":0,"filmstrip":"C:/work/bug.pn
 - `filmstrip` writes one PNG of the ticks around the violation, from the run's past; the game
   stays where it is. Open the image only if the position and tick are not enough.
 - `violation` is the `index` in the report; `-1` or absent writes neither.
+- A repro plays the inputs from tick 0 (holds, devices and the changes of `play.set`,
+  `play.spawn`, `play.destroy` and `play.push`), starts only the monitor of its kind where the run
+  did, and clicks replay at the same window size. `Frame_Time` and `Memory` measure the machine
+  (`Memory` is growth since the start): their repros do not fail reliably.
 
 ## Pitfalls that fail silently
 
-- A run that advanced outside the API cannot write a repro (the answer says why): the monitors
-  may start at any tick, but every tick from the first must come from `play.step`.
+- The monitors count only the ticks the API runs: what an unpaused Play runs is not seen, and a
+  run that advanced or went back outside the API cannot write a repro (the answer says why).
 - `play.explore` in `World` mode on a game with no `Axis2` action fails with a message that says
   to name the action with `move`; `Ui` mode needs a screen with buttons on top (`No_Ui` if none).
 - An exit button never ends the run: look in `exits`, not at `stopped`.

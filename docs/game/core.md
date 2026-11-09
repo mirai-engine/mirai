@@ -74,7 +74,7 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
 
 ## Pitfalls that fail silently
 
-- A literal `Health{}` or `Walk{}` drops the defaults: `core.default(healths)`, `core.add_default`.
+- A literal `Health{}` drops the defaults: use `core.default(commands,Health)`.
 - Writing the `Transform` of a body is refused: `core.place` or a request. A request pushed
   after its owner ran waits for the next tick; events live one tick.
 - A `fixed` function that reads `core.Frame_Input` differs when a tick is replayed: use actions.

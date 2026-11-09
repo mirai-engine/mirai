@@ -7,8 +7,8 @@ description: Import models, textures, fonts, sounds and texts into a Mirai game 
 
 # Game assets
 
-Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every
-asset has an id in its header: code and scenes name assets by id, never by path.
+Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every asset
+has an id in its header: components and scenes name it by id; a prefab spawned from code, by path.
 
 ## Map
 

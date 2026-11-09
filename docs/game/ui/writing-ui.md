@@ -45,11 +45,18 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
 `stat` is a widget, a `.ui` of its own, written first as `stat.json` and named by its file:
 
 ```json
-{"params": {"label": "name.text", "value": "amount.bind_text"},
+{"styles": {"title": {"size": 18, "color": "#3a1d4f"}},
+ "params": {"label": "name.text", "value": "amount.bind_text"},
  "nodes": [{"name": "stat", "kind": "Box", "gap": 6, "children": [
    {"name": "name", "kind": "Text", "style": "title"},
    {"name": "amount", "kind": "Text", "style": "title"}]}]}
 ```
+
+```
+mirai rpc --project . ui.write asset=ui/stat.ui document=@stat.json save=true
+```
+
+A document only sees its own `styles` and those of what it lists in `use`.
 
 - Read it back with `mirai rpc --project . ui.inspect asset=ui/screen.ui --select document`, change
   what you want and write it again. `ui.check` says what does not resolve.

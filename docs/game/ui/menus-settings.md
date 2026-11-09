@@ -14,9 +14,9 @@ sizes), then the `button`, `control` and `panel` styles the widgets take; `butto
 
 ## Add a page
 
-1. A member of `Shell_Page` before `Playing`, in the order of the pages of `shell.ui`.
-2. A page under the `Switcher` of `shell.ui` named after the member, in the same order, with its
-   controls, and a button on the page that opens it:
+1. A member of `Shell_Page` before `Playing`.
+2. A page under the `Switcher` of `shell.ui` named after the member, with its controls, and a
+   button on the page that opens it:
 
 ```json
 {"name": "Controls", "kind": "Box", "style": "dim", "children": [

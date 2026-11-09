@@ -16,7 +16,8 @@ time. The first step that fails ends it.
 ]}
 ```
 
-- `start` takes the params of `play.start` (`players`); leave it out for the defaults.
+- `scene` names the scene it plays; without it, the one open. `start` takes the params of
+  `play.start` (`players`); leave it out for the defaults.
 - A step's `method` is any `play.*` method but `play.start`, `play.stop` and scenarios: the game
   starts before the first step and stops after the last. Params are checked against the method's
   schema before the game starts; a wrong key is refused with the keys it takes.
@@ -98,7 +99,11 @@ mirai play test . shell            # one scenario by name; no name: all of tests
 
 One line per file, `PASS` or `FAIL` with the step and what its method answered; exit 0 all
 passed, 1 one failed, 2 could not run. `play.scenario.run` (`path`: a file or a folder) answers
-every step with its tick and result.
+every step with its tick and result; a file its methods would not take fails whole before the
+game starts, and it fails while a game of the caller already plays or when the game does not build.
+Outside a turn it opens the scene of the scenario if the document is another without unsaved
+changes; in a turn the document must be that scene. A long trace or filmstrip goes in a run of its
+own: the response buffer bounds the results of its steps.
 
 ## Monitors
 
@@ -108,5 +113,5 @@ on any violation, which is how a repro ends ([explore-qa.md](explore-qa.md#qa)).
 ## Pitfalls that fail silently
 
 - `ticks` and `seconds` in one step are refused; `seconds` rounds to whole ticks, at least 1.
-- A condition on a `name` reads the first entity with it; give test entities distinct names.
+- A `name` two entities share fails with their paths: give test entities distinct names.
 - A scenario file in `tests/scenarios` that is a left-over `bug_*.mirai` runs with the rest.

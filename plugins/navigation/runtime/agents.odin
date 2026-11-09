@@ -223,8 +223,6 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
     return filter_make(&n.settings,agent_avoids(agent,swims),agent_can(n,class,agent,walk,gravity))
 }
 
-@(private)
-
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),

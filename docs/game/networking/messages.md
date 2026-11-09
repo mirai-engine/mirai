@@ -1,7 +1,8 @@
 # Messages between server and clients
 
 For what is not an action or replicated state: an announcement, a purchase, a vote. A `struct` of
-plain data up to 256 bytes (an `Entity` field must name a replicated entity). Movement and buttons
+plain data no bigger than `multiplayer.EVENT_BYTES`, or `multiplayer.send` does not compile (an
+`Entity` field must name a replicated entity). Movement and buttons
 are not messages: they travel as the actions of the seat.
 
 - Only the server sends by default; `from="client"` lets a client send it to the server,
