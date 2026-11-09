@@ -1,8 +1,8 @@
 ---
 name: assets
 description: Import models, textures, fonts, sounds and texts into a Mirai game project and write
-  generated assets from a content tool. Use for mirai import, glTF/FBX/OBJ, .mesh .tex .sound .strings
-  .records, asset ids, cook.mirai, tools/content, or an asset missing from the built game.
+  generated assets from a content tool. Use for mirai import, glTF/FBX/OBJ, .mesh .tex .sound
+  .strings .records, asset ids, cook.mirai, tools/content, or an asset missing from the built game.
 ---
 
 # Game assets
