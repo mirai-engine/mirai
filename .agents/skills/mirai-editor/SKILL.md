@@ -236,9 +236,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `ai_codex_models_are_restricted_and_tools_of_the_agent_are_steps_once_they_end`. Its image,
   `editor.action` `ai_chat` and `capture` with the UI in a session.
 - Chat database and its search: the `ai_store_*` tests of `editor/ai_store_test.odin` (reopening,
-  search ranked and kept up to date, a corrupt database left alone, the import of the files of
-  before it, each table, kinds and parents, a second store on the same project); live,
-  `ai.history.search` in a session for a word of the chat.
+  search ranked and kept up to date, a corrupt database left alone, each table, kinds and
+  parents, a second store on the same project); live, `ai.history.search` in a session for a
+  word of the chat.
 - Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`):
   `the_main_chat_is_restored_with_its_transcript_and_never_evicted`,
   `a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user`,

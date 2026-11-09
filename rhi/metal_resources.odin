@@ -100,14 +100,13 @@ buffer_size :: proc(d: ^Device, buffer: Buffer) -> u64 {
 texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	NS.scoped_autoreleasepool()
 	if desc.depth > 1 && (.Storage not_in desc.usage || .Color_Target in desc.usage || .Depth_Target in desc.usage) {set_error(d, "texture %s: a 3D texture needs the Storage usage and no target usage, since shaders write it", desc.name); return 0}
-	if problem := texture_layers_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
+	if problem := texture_desc_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
 	layers := max(desc.layers, 1)
 	if !device_room(d, &d.textures, "textures") {return 0}
 	t := Mtl_Texture{desc = desc}
 	t.desc.name = ""
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
-	assert(t.desc.mip_levels <= MAX_TEXTURE_MIPS)
 	t.format = mtl_format(desc.format)
 	if t.format == .Invalid {set_error(d, "texture %s has an undefined format", desc.name); return 0}
 	usage: MTL.TextureUsage
@@ -297,7 +296,7 @@ sampler_destroy :: proc(d: ^Device, sampler: Sampler) {
 // each copy of the table takes it when its next list begins. The texture
 // must have the Sampled usage alone and be uploaded already.
 texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
-	assert(!d.in_frame, "rhi: the texture table changes between frames")
+	if d.in_frame {set_error(d, "texture_table_set while a frame is being recorded: the table changes between frame_end and frame_begin"); return false}
 	if int(index) >= len(d.table_textures) {
 		grown := table_grown(len(d.table_textures), int(index), d.table_limit)
 		if grown == 0 {set_error(d, "texture table index %d out of range: the device holds %d entries", index, d.table_limit); return false}
@@ -581,11 +580,13 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 	defer mtl_release_buffer_now(d, staging)
 	if start != offset || end != offset + u64(len(data)) {
 		cmd := immediate_begin(d)
+		if cmd == nil {return false}
 		cmd_copy_buffer(cmd, buffer, start, staging, 0, size)
 		if !immediate_end(d, cmd) {return false}
 	}
 	mem.copy(rawptr(uintptr(buffer_mapped(d, staging)) + uintptr(offset - start)), raw_data(data), len(data))
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, start, size)
 	return immediate_end(d, cmd)
 }
@@ -610,6 +611,7 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 		mem.copy(&dst[y * row], &data[y * u64(bytes_per_row)], int(row))
 	}
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
 	return immediate_end(d, cmd)
 }
@@ -633,6 +635,7 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 	defer mtl_release_buffer_now(d, staging)
 	dst := cast([^]u8)buffer_mapped(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	at: u64
 	for level, mip in levels {
 		at = align_up(at, 16)
@@ -656,6 +659,7 @@ buffer_read :: proc(d: ^Device, buffer: Buffer, offset: u64, out: []u8) -> bool 
 	if staging == 0 {return false}
 	defer mtl_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer(cmd, buffer, start, staging, 0, end - start)
 	if !immediate_end(d, cmd) {return false}
 	mem.copy(raw_data(out), rawptr(uintptr(buffer_mapped(d, staging)) + uintptr(offset - start)), len(out))
@@ -673,6 +677,7 @@ texture_read :: proc(d: ^Device, texture: Texture, out: []u8) -> bool {
 	if staging == 0 {return false}
 	defer mtl_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_texture_to_buffer(cmd, texture, staging, 0)
 	if !immediate_end(d, cmd) {return false}
 	mem.copy(raw_data(out), buffer_mapped(d, staging), int(size))

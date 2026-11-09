@@ -40,7 +40,7 @@ version asks to write it again). An effect is like a material: entities name it
     forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
     particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
     `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
-    (`particle_mesh_placement`), so an effect written before these fields looks as it did.
+    (`particle_mesh_placement`).
     `mesh_scale` takes zero or more; the editor's preview reach grows by its largest component;
   - lights: up to `lights` of its particles light the scene; they cast shadows only with
     `light_shadows` ([lights](#particle-lights));

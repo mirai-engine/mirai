@@ -61,28 +61,6 @@ action_profiles_roundtrip_and_reject_invalid_section_links_and_root_layer_polici
     testing.expect_value(t,asset.asset_open(&moving,bytes,context.temp_allocator),asset.Error.None)
     view,error=action_profile_view(&moving,&types)
     testing.expect(t,error==.None && view.actions[0]==profile.actions[0])
-    // A version 1 file, from before actions moved their body, migrates by its schema: they do not.
-    Definition_1 :: struct {
-        name,clip:[64]u8 `mirai:"text"`,layer:u8 `mirai:"optional,min=1,max=3"`,over:Bone_Ref `mirai:"optional"`,mode:Layer_Mode `mirai:"optional"`,curves:Curve_Blend `mirai:"optional"`,root_motion:Root_Motion_Policy `mirai:"optional"`,
-        reference,fade_in,fade_out:f32 `mirai:"optional,min=0,unit=s"`,weight:f32 `mirai:"optional,min=0,max=1"`,speed:f32 `mirai:"optional,min=0"`,priority:i16 `mirai:"optional"`,cancel:Action_Cancel_Policy `mirai:"optional"`,
-        animation:base.Asset_Id `mirai:"optional"`,mesh_space:bool `mirai:"optional"`,clock:Action_Clock `mirai:"optional"`,
-    }
-    olds:[2]Definition_1;wanted:[2]Action_Definition
-    for a,i in profile.actions {
-        olds[i]={name=a.name,clip=a.clip,layer=a.layer,over=a.over,mode=a.mode,curves=a.curves,root_motion=a.root_motion,reference=a.reference,fade_in=a.fade_in,fade_out=a.fade_out,weight=a.weight,speed=a.speed,priority=a.priority,cancel=a.cancel,animation=a.animation,mesh_space=a.mesh_space,clock=a.clock}
-        wanted[i]=a;wanted[i].body_move,wanted[i].body_vertical=.None,false
-    }
-    old:asset.Document;asset.document_init(&old,ACTION_KIND,{3,4});defer asset.document_destroy(&old);old.kind_version=1
-    info:=[1]Action_Info{profile.info}
-    _,put:=asset.document_put(&old,&types,"info",info[:]);testing.expect_value(t,put,asset.Error.None)
-    _,put=asset.document_put(&old,&types,"actions",olds[:]);testing.expect_value(t,put,asset.Error.None)
-    _,put=asset.document_put(&old,&types,"sections",profile.sections);testing.expect_value(t,put,asset.Error.None)
-    _,put=asset.document_put(&old,&types,"windows",profile.windows);testing.expect_value(t,put,asset.Error.None)
-    bytes,written=asset.document_bytes(&old,context.temp_allocator);testing.expect_value(t,written,asset.Error.None)
-    migrated:asset.Asset;defer asset.asset_close(&migrated)
-    testing.expect_value(t,asset.asset_open(&migrated,bytes,context.temp_allocator),asset.Error.None)
-    view,error=action_profile_view(&migrated,&types)
-    testing.expect(t,error==.None && len(view.actions)==2 && view.actions[0]==wanted[0] && view.actions[1]==wanted[1])
 }
 
 // An action whose body_move is not None gives its body the share of the root delta of the tick it

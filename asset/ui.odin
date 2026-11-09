@@ -31,7 +31,6 @@ import "mirai:std/serial"
 // runtime.ui_tree_view.
 
 UI_VERSION :: 5
-UI_OLDEST :: UI_VERSION
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"
@@ -80,8 +79,6 @@ UI_FONT_CAPACITY :: 16
 @(private="file") ui_holds :: proc "contextless" (kind:u8) -> bool {return kind==0 || kind==8 || kind==9 || kind==10 || kind==17 || kind>=22 && kind<=26}
 @(private="file") UI_KIND_COMPONENT :: 7
 @(private="file") UI_KIND_LIST :: 10
-// As ui.Node_Flag.Slot.
-@(private="file") UI_FLAG_SLOT :: u16(1<<11)
 // As ui.NODE_FIELDS_UNKNOWN.
 @(private="file") UI_FIELDS_UNKNOWN :: ~u32(0xffff)
 @(private="file") Ui_Anim_Links :: struct {kind:u8,first,count:u32}
@@ -99,7 +96,7 @@ UI_FONT_CAPACITY :: 16
 // names animations that exist. The values themselves (enums, numbers, texts)
 // are for whoever checks them against the schema.
 ui_check :: proc(a:^Asset,types:^Types) -> bool {
-    if kind_check(a,KIND_UI,UI_OLDEST,UI_VERSION)!=.None {return false}
+    if kind_check(a,KIND_UI,UI_VERSION)!=.None {return false}
     rows :: proc(a:^Asset,types:^Types,name:string,$T:typeid) -> (list:[]T,ok:bool) {
         if _,found:=asset_table(a,name);!found {return nil,true}
         error:Error

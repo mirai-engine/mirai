@@ -233,3 +233,116 @@ mem_nil_allocator :: proc() -> runtime.Allocator {
     }
     return {procedure=refuse}
 }
+
+Test_Nesting :: struct {probe:Id,layer:i16,effect:u16,refused,containers:int,clip,scissor:Rect,clipping:bool}
+test_nesting :: proc(ctx:^Context) -> Test_Nesting {
+    d:=&ctx.draw
+    return {id(ctx,"probe"),ctx.layer,ctx.effect_clip,ctx.effect_refused,ctx.clip_depth,d.clip,d.scissor,d.clipping}
+}
+test_nested_float :: proc(i:int) -> Box {return {float={to=.Parent,layer=i16(i+1)},width=fixed(10),height=fixed(10)}}
+test_nested_layer :: proc(i:int) -> Box {return {layer={enabled=true,opacity=1},fill={255,255,255,255},width=fixed(10),height=fixed(10)}}
+
+@(test)
+nesting_beyond_a_stack_is_not_applied_is_counted_and_unwinds :: proc(t:^testing.T) {
+    Case :: struct {
+        name:string,
+        capacity:int,
+        push,pop:proc(ctx:^Context,i:int),
+        dropped:proc(s:^Stats) -> u32,
+    }
+    nesting :: proc(s:^Stats) -> u32 {return s.dropped_nesting}
+    clips :: proc(s:^Stats) -> u32 {return s.dropped_clips}
+    cases:=[]Case{
+        {"id scopes",ID_STACK_DEPTH,proc(ctx:^Context,i:int) {id_push(ctx,id(ctx,"scope",i+1))},proc(ctx:^Context,i:int) {id_pop(ctx)},nesting},
+        {"floats",LAYER_STACK_DEPTH,proc(ctx:^Context,i:int) {box_begin(ctx,test_nested_float(i))},proc(ctx:^Context,i:int) {box_end(ctx,test_nested_float(i))},nesting},
+        {"layers",ID_STACK_DEPTH,proc(ctx:^Context,i:int) {box_begin(ctx,test_nested_layer(i))},proc(ctx:^Context,i:int) {box_end(ctx,test_nested_layer(i))},nesting},
+        {"clips",CLIP_DEPTH,proc(ctx:^Context,i:int) {clip_push(ctx,{0,0,f32(400-i),300})},proc(ctx:^Context,i:int) {clip_pop(ctx)},clips},
+        {"scissors",SCISSOR_DEPTH,proc(ctx:^Context,i:int) {scissor_push(ctx,{0,0,f32(400-i),300})},proc(ctx:^Context,i:int) {scissor_pop(ctx)},clips},
+        {"suspended clips",LAYOUT_DEPTH+POPUP_DEPTH,proc(ctx:^Context,i:int) {clips_suspend(ctx)},proc(ctx:^Context,i:int) {clips_resume(ctx)},clips},
+    }
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    defer context_destroy(&ctx)
+    input:=test_input()
+    for c in cases {
+        for over in ([]int{1,20}) {
+            before:=c.dropped(&ctx.stats)
+            frame_begin(&ctx,input)
+            empty:=test_nesting(&ctx)
+            for i in 0..<c.capacity {c.push(&ctx,i)}
+            full:=test_nesting(&ctx)
+            testing.expectf(t,full!=empty,"%s: a push that fits is applied",c.name)
+            for i in 0..<over {c.push(&ctx,c.capacity+i)}
+            testing.expectf(t,test_nesting(&ctx)==full,"%s: %d pushes past the capacity change nothing",c.name,over)
+            draw_rect(&ctx,{0,0,10,10},{255,255,255,255})
+            for i:=over-1;i>=0;i-=1 {c.pop(&ctx,c.capacity+i)}
+            testing.expectf(t,test_nesting(&ctx)==full,"%s: their %d pops take nothing off",c.name,over)
+            for i:=c.capacity-1;i>=0;i-=1 {c.pop(&ctx,i)}
+            testing.expectf(t,test_nesting(&ctx)==empty,"%s: the pops of what was pushed leave it as it began",c.name)
+            c.pop(&ctx,0)
+            testing.expectf(t,test_nesting(&ctx)==empty,"%s: a pop with nothing pushed does nothing",c.name)
+            frame:=frame_end(&ctx)
+            testing.expectf(t,frame.overflow && c.dropped(&ctx.stats)-before>=u32(over),"%s: %d pushes past the capacity are counted",c.name,over)
+            testing.expectf(t,len(frame.vertices)>0,"%s: the frame is drawn",c.name)
+            frame=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {label(ctx,"fits")})
+            testing.expectf(t,!frame.overflow,"%s: the next frame carries nothing of it",c.name)
+        }
+    }
+    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+}
+
+@(test)
+a_frame_with_ends_missing_or_repeated_is_closed_and_counted :: proc(t:^testing.T) {
+    Case :: struct {name:string,build:Test_Build,counted:bool}
+    cases:=[]Case{
+        {"a clipping box left open",proc(ctx:^Context,user:rawptr) {
+            box_begin(ctx,{id=id(ctx,"open"),width=fixed(120),height=fixed(40),clip_x=true,clip_y=true,track=true})
+            label(ctx,"inside")
+        },true},
+        {"a world panel left open",proc(ctx:^Context,user:rawptr) {
+            if world_panel_begin(ctx,id(ctx,"panel"),{size={100,50},position={0,0,-2},fill={0,0,0,255}}) {label(ctx,"inside")}
+        },true},
+        {"a composition left open",proc(ctx:^Context,user:rawptr) {
+            composition_begin(ctx,{0,0,100,100},{enabled=true,opacity=0.5})
+            draw_rect(ctx,{0,0,10,10},{255,255,255,255})
+        },true},
+        {"a frame begun inside a frame",proc(ctx:^Context,user:rawptr) {
+            box_begin(ctx,{id=id(ctx,"lost"),width=fixed(10),height=fixed(10)})
+            frame_begin(ctx,test_input())
+            label(ctx,"kept")
+        },true},
+        {"a world panel inside a world panel",proc(ctx:^Context,user:rawptr) {
+            if world_panel(ctx,id(ctx,"outer"),{size={100,50},position={0,0,-2}}) {
+                if world_panel(ctx,id(ctx,"inner"),{size={100,50},position={0,0,-2}}) {label(ctx,"never")}
+                label(ctx,"outer")
+            }
+        },false},
+        {"ends without a begin",proc(ctx:^Context,user:rawptr) {
+            id_pop(ctx);clip_pop(ctx);scissor_pop(ctx);composition_end(ctx);world_panel_end(ctx)
+            box_end(ctx,{float={to=.Parent},layer={enabled=true}})
+            label(ctx,"kept")
+        },false},
+    }
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    defer context_destroy(&ctx)
+    testing.expect_value(t,len(frame_end(&ctx).vertices),0)
+    testing.expect_value(t,ctx.stats.layout_errors,u32(1))
+    input:=test_input()
+    for c in cases {
+        errors:=ctx.stats.layout_errors
+        frame:=test_frame(&ctx,&input,c.build)
+        testing.expectf(t,(ctx.stats.layout_errors>errors)==c.counted,"%s: counted in layout_errors",c.name)
+        begins,ends:=0,0
+        for command in frame.commands {
+            if command.kind==.Begin_Layer {begins+=1}
+            if command.kind==.End_Layer {ends+=1}
+        }
+        testing.expectf(t,begins==ends,"%s: every layer the frame begins ends",c.name)
+        errors=ctx.stats.layout_errors
+        frame=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {label(ctx,"fits")})
+        testing.expectf(t,!frame.overflow && ctx.stats.layout_errors==errors,"%s: the next frame carries nothing of it",c.name)
+    }
+    test_frame(&ctx,&input,cases[0].build)
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"open")),{0,0,120,40}),"a box left open is laid out as if the frame closed it")
+}

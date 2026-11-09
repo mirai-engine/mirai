@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 Create_Error :: enum u8 {
     None,
@@ -88,6 +89,6 @@ project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Er
     attributes:=project.path(root,".gitattributes",allocator=context.temp_allocator)
     existing,_:=os.read_entire_file(attributes,context.temp_allocator)
     kinds,_:=git_plugin_kinds(engine_root,{root},context.temp_allocator)
-    if text,changed:=git_attributes(kinds,false,string(existing),context.temp_allocator);changed && os.write_entire_file(attributes,text)!=nil {return .Copy_Failed}
+    if text,changed:=git_attributes(kinds,false,string(existing),context.temp_allocator);changed && serial.file_write_atomic(attributes,transmute([]u8)text)!=.None {return .Copy_Failed}
     return .None
 }

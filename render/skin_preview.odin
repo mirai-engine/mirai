@@ -71,6 +71,7 @@ skin_preview_sample :: proc(r:^Renderer,state:^Skin_Preview_GPU,palette:[]Mat4,o
     joints:=cast([^]Skin_Joint)rhi.buffer_mapped(device,state.palette)
     for transform,i in palette {rows:=rows_3x4(transform);joints[i]={rows,rows}}
     cmd:=rhi.immediate_begin(device)
+    if cmd==nil {return false}
     for buffer in ([]rhi.Buffer{state.params,state.source,state.palette,state.meshes,state.indices}) {rhi.cmd_barrier_buffer(cmd,buffer,.Shader_Read)}
     rhi.cmd_barrier_buffer(cmd,state.vertices,.Shader_Write)
     skin_dispatch(r,cmd,state.source,state.palette,0,state.meshes,state.vertices,state.indices,{clusters=state.clusters},state.params)

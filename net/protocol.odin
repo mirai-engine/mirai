@@ -304,13 +304,6 @@ type_find :: proc(p:^Protocol,name:string) -> (Type_Id,bool) {
     }
     return TYPE_NONE,false
 }
-event_find :: proc(p:^Protocol,name:string) -> (Event_Id,bool) {
-    hash:=base.name_hash(name)
-    for event,i in p.events {
-        if event.name_hash==hash {return Event_Id(i),true}
-    }
-    return EVENT_NONE,false
-}
 // Change bits of the fields of one fragment of a type.
 type_fragment_mask :: proc(p:^Protocol,type:Type_Id,fragment:int) -> u64 {
     return p.types[type].fragment_bits[fragment]

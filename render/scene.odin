@@ -427,13 +427,6 @@ scene_init :: proc(r: ^Renderer) {
 MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the whole table goes
 
 @(private)
-dielectric_reflectance :: proc "contextless" (ior: f32) -> f32 {
-	value := max(ior, 0)
-	ratio := (value - 1) / (value + 1)
-	return ratio * ratio
-}
-
-@(private)
 gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
 	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
@@ -822,8 +815,6 @@ ray_class :: proc "contextless" (flags: u32) -> u8 {
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
 }
 
-material_count :: proc(r: ^Renderer) -> int {return len(r.scene.materials)}
-
 // ---------------------------------------------------------------- meshes
 
 // Drops every mesh (scene reload). Instances referencing old handles must be
@@ -1010,6 +1001,7 @@ geometry_copies_commit :: proc(r:^Renderer,copies:[]Geometry_Copy,pending:[]rhi.
     if len(copies)==0 && len(pending)==0 && !pool_moves_pending(s) {return true}
     immediate:=cmd==nil
     list:=immediate?rhi.immediate_begin(r.device):cmd
+    if list==nil {set_error(r,"geometry publication: %s",rhi.device_error(r.device));return false}
     pool_moves_record(r,list)
     at:u64
     for copy in copies {

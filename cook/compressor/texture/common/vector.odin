@@ -35,18 +35,6 @@ ssd_rgba4 :: #force_inline proc "contextless" (a,b:V16u8) -> V4i32 {
     return madd_i16(lo,lo)+madd_i16(hi,hi)
 }
 
-// Positions of the lanes of mask that are set, packed down into to; returns how many.
-store_active_i32 :: #force_inline proc "contextless" (to:[^]i32,values:V4i32,mask:V4i32) -> int {
-    m:=u32(transmute(u8)simd.extract_msbs(mask))
-    n:=0
-    v:=simd.to_array(values)
-    for k in 0..<4 {
-        to[n]=v[k]
-        n+=int((m>>uint(k))&1)
-    }
-    return n
-}
-
 // [a0+a1, a2+a3, b0+b1, b2+b3]
 hadd_i32 :: #force_inline proc "contextless" (a,b:V4i32) -> V4i32 {
     return simd.shuffle(a,b,0,2,4,6)+simd.shuffle(a,b,1,3,5,7)

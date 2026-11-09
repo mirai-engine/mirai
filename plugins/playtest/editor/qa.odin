@@ -3,7 +3,6 @@ package playtest_editor
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -746,6 +745,6 @@ qa_repro_write :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,v:^Qa_Viol
     target,bad:=editor.api_file_path(s.project_root,path,context.temp_allocator)
     if bad!="" {return "",bad}
     if why,_:=editor.api_output_prepare(target);why!="" {return "",why}
-    if error:=os.write_entire_file(target,transmute([]u8)text);error!=nil {return "",fmt.tprintf("%s could not be written: %s",target,os.error_string(error))}
+    if serial.file_write_atomic(target,transmute([]u8)text)!=.None {return "",fmt.tprintf("%s could not be written",target)}
     return path,""
 }

@@ -26,7 +26,6 @@ import "mirai:std/serial"
 // plays it. A morph target's weight is the target "<path>/@morph/<target>".
 
 ANIMATION_VERSION :: 4
-ANIMATION_OLDEST :: ANIMATION_VERSION
 ANIMATION_NAME_CAPACITY :: 64
 // The path of a node or bone below the entity that plays, with its zero: a
 // track target, a skeleton bone, a root bone.
@@ -155,7 +154,7 @@ animation_save :: proc(path:string,types:^Types,desc:Animation_Desc,allocator:=c
 }
 
 animation_view :: proc(a:^Asset,types:^Types) -> (view:Animation_View,error:Error) {
-    kind_check(a,KIND_ANIMATION,ANIMATION_OLDEST,ANIMATION_VERSION) or_return
+    kind_check(a,KIND_ANIMATION,ANIMATION_VERSION) or_return
     view.clips=table_rows(a,types,"clips",Animation_Clip) or_return
     view.tracks=table_rows(a,types,"tracks",Animation_Track) or_return
     view.keys=table_rows(a,types,"keys",anim.Keyframe) or_return

@@ -346,18 +346,8 @@ lrm_set_get_base_ptr :: proc "contextless" (set:^Lrm_Set) -> [^]u8 {
     return set.lrms[set.count-1].chunk_base_ptr
 }
 
-lrm_set_get_end_ptr :: proc "contextless" (set:^Lrm_Set) -> [^]u8 {
-    if set==nil || set.count==0 {return nil}
-    l:=set.lrms[0]
-    return padd(l.chunk_base_ptr,l.buf_size)
-}
-
 //===================================================================
 // Cascade
-
-lrm_get_cascade_chunk_size :: proc "contextless" (casc:^Lrm_Cascade) -> int {
-    return casc==nil?0:casc.chunk_size
-}
 
 @(private="file")
 lrm_fill_cascade_setup :: proc(casc:^Lrm_Cascade,buffer:[^]u8,buf_size,step,jump_bits_0,
@@ -438,18 +428,6 @@ lrm_create_cascade_incremental :: proc(buffer:[^]u8,buf_size,step,jump_bits_0,ju
         hash_length,arena)
 }
 
-// A cascade filled at once.
-lrm_create_cascade :: proc(buffer:[^]u8,buf_size,step,jump_bits_0,jump_bits_inc,base_chunk_size,
-    hash_length:int,arena:^entropy.Arena) -> ^Lrm_Cascade {
-    casc:=lrm_cascade_alloc(buffer,buf_size,step,jump_bits_0,jump_bits_inc,base_chunk_size,
-        hash_length,arena)
-    if casc==nil {return nil}
-    for casc.next_chunk<casc.num_chunks {
-        if !lrm_fill_cascade_increment(casc) {lrm_destroy_cascade(casc);return nil}
-    }
-    return casc
-}
-
 lrm_destroy_cascade :: proc(casc:^Lrm_Cascade) {
     if casc==nil {return}
     arena:=casc.arena
@@ -503,35 +481,6 @@ lrm_cascade_get_chunk_index_align :: proc "contextless" (casc:^Lrm_Cascade,start
     if start_up<=pdiff(parse_ptr,casc.buffer) && start_up<=casc.buf_size {return chunk_up}
     start=min(start,casc.buf_size)
     return start/casc.chunk_size
-}
-
-@(private="file")
-lrm_cascade_get_chunk_index :: proc "contextless" (casc:^Lrm_Cascade,start_ptr:[^]u8) -> int {
-    if casc==nil {return 0}
-    start:=pdiff(start_ptr,casc.buffer)
-    if start<=0 {return 0}
-    start=min(start,casc.buf_size)
-    return start/casc.chunk_size
-}
-
-// The set of everything before start_ptr (a chunk boundary).
-lrm_cascade_get_set :: proc "contextless" (casc:^Lrm_Cascade,set:^Lrm_Set,start_ptr:[^]u8) {
-    lrm_cascade_get_set_by_chunk_index(casc,set,lrm_cascade_get_chunk_index(casc,start_ptr))
-}
-
-lrm_cascade_get_set_update_incremental :: proc(casc:^Lrm_Cascade,set:^Lrm_Set,
-    start_ptr:[^]u8) -> bool {
-    ci:=lrm_cascade_get_chunk_index(casc,start_ptr)
-    ok:=lrm_cascade_fill_until(casc,ci)
-    lrm_cascade_get_set_by_chunk_index(casc,set,ci)
-    return ok
-}
-
-// start_ptr aligned up to a chunk boundary when that stays before parse_ptr, else down.
-lrm_cascade_get_set_align :: proc "contextless" (casc:^Lrm_Cascade,set:^Lrm_Set,start_ptr,
-    parse_ptr:[^]u8) {
-    lrm_cascade_get_set_by_chunk_index(casc,set,lrm_cascade_get_chunk_index_align(casc,start_ptr,
-        parse_ptr))
 }
 
 lrm_cascade_get_set_align_update_incremental :: proc(casc:^Lrm_Cascade,set:^Lrm_Set,start_ptr,
@@ -623,27 +572,4 @@ lrm_scanner_windowed_find_match_and_roll :: proc "contextless" (s:^Lrm_Scanner,p
         }
     }
     return ret
-}
-
-// Offset of an LRM match covering all of [raw+raw_pos,raw+raw_pos+quantum_len), or 0.
-lrm_set_check_whole_match_quantum :: proc "contextless" (set:^Lrm_Set,raw:[^]u8,raw_pos:int,
-    quantum_len:i32) -> int {
-    cur:=padd(raw,raw_pos)
-    set_end:=lrm_set_get_end_ptr(set)
-    if set_end==nil || uintptr(cur)<uintptr(set_end) {return 0}
-    start:=uintptr(cur)-LRM_SCANNER_WINDOW_SIZE/2
-    start=max(start,uintptr(raw))
-    start=max(start,uintptr(set_end))
-    end:=padd(cur,int(quantum_len))
-    s:Lrm_Scanner
-    lrm_scanner_windowed_init(&s,set,([^]u8)(start),end,int(max(i32)))
-    off:int
-    for scan:=start;scan<uintptr(cur);scan+=1 {lrm_scanner_windowed_find_match_and_roll(&s,
-        ([^]u8)(scan),end,&off)}
-    l:=lrm_scanner_windowed_find_match_and_roll(&s,cur,end,&off)
-    if l>0 {
-        for l<quantum_len && cur[l]==padd(cur,-off)[l] {l+=1}
-        if l>=quantum_len {return off}
-    }
-    return 0
 }

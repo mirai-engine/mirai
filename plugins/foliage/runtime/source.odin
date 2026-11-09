@@ -22,7 +22,6 @@ import "mirai:std/serial"
 KIND :: asset.Fourcc(u32('F')|u32('O')<<8|u32('L')<<16|u32('I')<<24)
 EXTENSION :: ".foliage"
 VERSION :: 3
-OLDEST :: VERSION
 CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
 CELLS_MAX :: 1 << 20
@@ -525,7 +524,7 @@ rows_or_none :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid)
 // The source an open .foliage holds, checked whole: s is replaced only by a
 // valid one. Its id, or false.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator) -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,KIND,OLDEST,VERSION)!=.None {return}
+    if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"foliage",Foliage_Info)
     if error!=.None || info==nil {return}
     kinds:=rows_or_none(file,types,"types",Foliage_Type) or_return

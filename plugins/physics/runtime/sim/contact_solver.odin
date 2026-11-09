@@ -8,9 +8,7 @@ import "core:simd"
 // one per block of a single lane, through the same code.
 @(private) WIDE :: 4
 @(private) F4 :: #simd[WIDE]f32
-@(private) Vec3w :: [3]F4
 @(private) Sym3 :: struct($N:int) {xx,yy,zz,xy,xz,yz:#simd[N]f32}
-@(private) Sym3w :: Sym3(WIDE)
 
 @(private) dot4 :: #force_inline proc "contextless" (a,b:[3]#simd[$N]f32) -> #simd[N]f32 {return a.x*b.x+a.y*b.y+a.z*b.z}
 @(private) cross4 :: #force_inline proc "contextless" (a,b:[3]#simd[$N]f32) -> [3]#simd[N]f32 {

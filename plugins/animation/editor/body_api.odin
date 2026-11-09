@@ -1,7 +1,6 @@
 package animation_editor
 
 import "core:fmt"
-import "core:math/linalg"
 import "core:strings"
 import aa "mirai:asset"
 import "mirai:editor"
@@ -218,11 +217,4 @@ body_parents :: proc(view:aa.Skeleton_View,allocator:=context.temp_allocator) ->
     parents:=make([]i32,len(view.bones),allocator)
     for &bone,i in view.bones {parents[i]=bone.parent}
     return parents
-}
-
-@(private)
-body_unit :: proc(v:mm.Vec3) -> (mm.Vec3,bool) {
-    length:=linalg.length(v)
-    if !(length>1e-6) {return {},false}
-    return v/length,true
 }

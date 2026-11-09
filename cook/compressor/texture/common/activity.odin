@@ -387,14 +387,6 @@ make_activity_mask_constant_for_rmse :: proc(to,source:Surface) -> Error {
     return .None
 }
 
-// The activity block at texel (x,y) of an R32F surface; the 4x4 must lie inside.
-float_block_fill :: proc "contextless" (to:^Float_Block,source:Surface,x,y:int) {
-    for i in 0..<4 {
-        row:=surface_f32_row(source,y+i)
-        for j in 0..<4 {to[i*4+j]=row[x+j]}
-    }
-}
-
 // The texels of the row r of a block that indices pick from palette.
 bc1_palette_row :: #force_inline proc "contextless" (palette:V16u8,indices:u32,r:int) -> V16u8 {
     sel:=simd.shr(V4u32(indices>>uint(8*r)),V4u32{0,2,4,6})&V4u32(3)

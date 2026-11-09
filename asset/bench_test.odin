@@ -57,7 +57,7 @@ world_delete :: proc(world:^Bench_World) {
 @(private="file") bench_light :: proc(i:int) -> Bench_Light {return {{1,0.9,0.8},f32(1+i%5),10,.Point}}
 
 // Groups of ten: the first of each is the parent of the other nine.
-@(private="file")
+@(private)
 bench_scene :: proc(scene:^Scene,types:^Types,count:int) {
     scene_init(scene,types,KIND_SCENE,{0xbe,0xbe})
     rows:[4][dynamic]u32
@@ -141,7 +141,7 @@ load_file :: proc(world:^Bench_World,types:^Types,path:string,uncached:bool,size
     return world_take(world,&a,types)
 }
 
-@(private="file")
+@(private)
 seconds :: proc(start:time.Tick) -> f64 {return time.duration_seconds(time.tick_since(start))}
 
 @(test)

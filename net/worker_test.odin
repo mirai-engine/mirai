@@ -24,6 +24,7 @@ worker_threads_carry_replication_over_udp_while_the_simulation_only_queues_and_p
     testing.expect_value(t,host_init(client,{mode=.Client,transport=udp_transport(&client_socket),protocol=&tp.protocol,channels=channels,replication=replication,seed=2}),Error.None)
     testing.expect(t,worker_start(server) && worker_start(client))
     testing.expect(t,!worker_start(server))
+    testing.expect(t,!host_update(server,0),"the network half belongs to the worker while it runs")
 
     transforms:[40]Test_Transform
     objects:[40]Object

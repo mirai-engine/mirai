@@ -248,14 +248,6 @@ startup :: proc "contextless" (data:^Startup_Data,block:^BC1_Block,err:^u32,colo
 @(private)
 Means_Flag :: enum u8 {PCA,Reduced_Candidates}
 
-@(private)
-sum_across :: #force_inline proc "contextless" (v:[4]f32) -> f32 {return (v[0]+v[2])+(v[1]+v[3])}
-
-@(private)
-round_clamp_u8 :: #force_inline proc "contextless" (f:f32) -> u8 {
-    return common.clamp_u8(common.round_to_int(f))
-}
-
 // The vector order: lanes B, G, R, A (A forced to 255, so its deviations are 0).
 @(private)
 calc_4means :: proc "contextless" (means:^[4]Color,data:^Startup_Data,colors:^Color_Block,

@@ -123,15 +123,6 @@ settings_load :: proc(s:^Session) {
     }
 }
 
-// Whether the project has settings of the machine: the engine layer holds only those.
-@(private)
-settings_machine_any :: proc(s:^Session) -> bool {
-    for info in s.info.storages {
-        if info.setting==.Machine {return true}
-    }
-    return false
-}
-
 // The names of the settings of the machine, as settings.get and its errors list them.
 @(private)
 settings_machine_names :: proc(s:^Session) -> string {

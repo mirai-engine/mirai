@@ -72,13 +72,6 @@ records_find :: proc(e:^Records_Edit,name:string) -> int {
     return -1
 }
 
-records_find_id :: proc(e:^Records_Edit,id:u64) -> int {
-    for each,row in e.ids {
-        if each==id {return row}
-    }
-    return -1
-}
-
 // A table as its file says now, unsaved in memory or on disk; message says
 // why it cannot be changed when it cannot.
 records_edit_load :: proc(s:^Session,id:base.Asset_Id,e:^Records_Edit,allocator:=context.allocator) -> (message:string) {

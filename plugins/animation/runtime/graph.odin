@@ -11,7 +11,6 @@ import mm "mirai:std/math"
 // locomotion is a .match, and what a character does on top of it are actions and match_play.
 GRAPH_KIND :: asset.Fourcc(u32('A')|u32('G')<<8|u32('R')<<16|u32('F')<<24)
 GRAPH_VERSION :: 3
-GRAPH_OLDEST :: GRAPH_VERSION
 GRAPH_NODES :: 64
 GRAPH_PARAMETERS :: 16
 PROGRAM_GROUPS :: GRAPH_NODES*2
@@ -125,7 +124,7 @@ graph_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile:Graph
     return asset.document_save(&doc,path)
 }
 graph_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Graph_Profile,error:asset.Error) {
-    asset.kind_check(file,GRAPH_KIND,GRAPH_OLDEST,GRAPH_VERSION) or_return
+    asset.kind_check(file,GRAPH_KIND,GRAPH_VERSION) or_return
     info:=asset.asset_row(file,types,"graph",Graph_Info) or_return
     profile.info=info^
     profile.parameters=asset.asset_rows(file,types,"parameters","",Graph_Parameter) or_return

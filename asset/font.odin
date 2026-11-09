@@ -10,7 +10,6 @@ import "mirai:std/base"
 // The interfaces keep the bytes while they show the font (ui.font_add).
 
 FONT_VERSION :: 1
-FONT_OLDEST :: FONT_VERSION
 FONT_BULK_ALIGNMENT :: 4
 
 Font_Outlines :: enum u8 {
@@ -82,7 +81,7 @@ font_save :: proc(path:string,types:^Types,desc:Font_Desc,allocator:=context.all
 }
 
 font_view :: proc(a:^Asset,types:^Types) -> (view:Font_View,error:Error) {
-    kind_check(a,KIND_FONT,FONT_OLDEST,FONT_VERSION) or_return
+    kind_check(a,KIND_FONT,FONT_VERSION) or_return
     view.info=asset_row(a,types,"font",Font_Info) or_return
     view.file=table_rows(a,types,"file",u8) or_return
     view.source=import_info(a,types) or_return

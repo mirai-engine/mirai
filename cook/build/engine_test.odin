@@ -3,6 +3,7 @@ package build
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -358,19 +359,35 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     _,stamped=engine_stamp_read(file)
     testing.expect(t,!stamped,"a stamp of another shape is not read")
 
-    testing.expect(t,os.write_entire_file(file,"1 2 3 4 5 6 7 8 0 9")==nil)
+    testing.expect(t,os.write_entire_file(file,fmt.tprintf("1 2 3 4 5 6 7 %d 0",DECLARE_VERSION))==nil)
     _,stamped=engine_stamp_read(file)
-    testing.expect(t,!stamped,"a stamp with an extra field is not read")
+    testing.expect(t,!stamped,"a stamp with one hash for the declarations of each library is not read")
 
-    testing.expect(t,os.write_entire_file(file,"zz 2 3 4 5 6 7 2 0")==nil)
-    _,stamped=engine_stamp_read(file)
-    testing.expect(t,!stamped,"a stamp whose hashes are not numbers is not read")
-
-    written:=Engine_Stamp{runtime=0xabc,editor=0xdef,programs=0x123,tools=0x456,loads=0x789,decl_runtime=0xfed,decl_editor=0xcba,declares=DECLARE_VERSION,runtime_pending=true}
+    written:=Engine_Stamp{runtime=0xabc,editor=0xdef,programs=0x123,tools=0x456,loads=0x789,declares=DECLARE_VERSION,runtime_pending=true}
+    for &hash,index in written.declared {hash=0xfed+u64(index)}
     testing.expect(t,engine_stamp_write(file,written)==nil)
     read,ok:=engine_stamp_read(file)
     testing.expect(t,ok,"the stamp a build writes is read")
     testing.expect_value(t,read,written)
+    testing.expect(t,!strings.contains(engine_stamp_of(root,context.temp_allocator),"\n"),"what a program keeps of the stamp is one line")
+
+    text,_:=os.read_entire_file(file,context.temp_allocator)
+    lines:=strings.split_lines(string(text),context.temp_allocator)
+    extra,letters,swapped:=slice.clone(lines,context.temp_allocator),slice.clone(lines,context.temp_allocator),slice.clone(lines,context.temp_allocator)
+    extra[0]=strings.concatenate({lines[0]," 9"},context.temp_allocator)
+    letters[0]=strings.concatenate({"zz",lines[0]},context.temp_allocator)
+    swapped[1],swapped[2]=lines[2],lines[1]
+    cases:=[]struct{what:string,lines:[]string}{
+        {"a stamp with an extra field",extra},
+        {"a stamp whose hashes are not numbers",letters},
+        {"a stamp without one of the packages",lines[:len(lines)-1]},
+        {"a stamp with its packages in another order",swapped},
+    }
+    for c in cases {
+        testing.expect(t,os.write_entire_file(file,strings.join(c.lines,"\n",context.temp_allocator))==nil)
+        _,stamped=engine_stamp_read(file)
+        testing.expectf(t,!stamped,"%s is not read",c.what)
+    }
 }
 
 // What a half decides once declare has run: the library follows the stage, so

@@ -56,18 +56,18 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
     // A profile of the current version without curve poses, drives and materials is incomplete,
-    // and one older than the oldest is refused.
+    // and one of another version is refused.
     for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([2]u16{POSE_VERSION,POSE_OLDEST-1}) {
+    for version,i in ([2]u16{POSE_VERSION,POSE_VERSION-1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
         old:asset.Asset
         if !testing.expect_value(t,asset.asset_open(&old,bytes,context.temp_allocator),asset.Error.None) {continue}
         defer asset.asset_close(&old)
-        migrated,error:=pose_profile_view(&old,&types)
+        _,error:=pose_profile_view(&old,&types)
         switch i {
         case 0: testing.expect_value(t,error,asset.Error.Not_Found)
         case 1: testing.expect_value(t,error,asset.Error.Version)

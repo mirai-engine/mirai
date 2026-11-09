@@ -179,27 +179,23 @@ meshes or textures: the search for an import's outputs uses it.
 
 One rule for all types, of the engine and of plugins:
 
-- A type writes its current version (`*_VERSION`) and reads every version from its oldest
-  (`*_OLDEST`) to it: each `*_view` (and a plugin's read) starts with
-  `kind_check(&a,KIND,OLDEST,VERSION)`, which gives `Invalid` for another type and `Version` for a
-  file older than the oldest or newer than the build (`kind_age` names the cases). The engine's
-  types carry both in `KINDS`.
-- **A new table or column with a default does not change the version.** A file that lacks it reads
-  the default: `asset_rows`/`asset_row` with `default` (`MATERIAL_DEFAULTS`) or a table that may be
-  missing (`table_rows`), like `skin` in `vertices`. A longer array neither: the read migrates the
-  table by its schema and keeps the elements that fit (`serial.Migration`).
-- **A change old files need a step for raises the version and keeps the oldest**: rows still
-  migrate by the file's schema, and the read branches on the file's version. A table written since
-  a version reads empty from an older file with `asset_rows_since` (the curves of a `.pose` of
-  version 4). `*_OLDEST` is `*_VERSION` until such a change sets it to the previous number.
-- **A change in what a stored value means that no step undoes raises the version and the oldest
-  together**, and no read path remains for older files. `version_message` says which asset it is,
-  its type, its version and those the build reads and, if it was imported, the `mirai import` that
-  rebuilds it in its folder with the root where its source is; for a newer file, a newer engine.
-  `mirai asset verify` and the `asset_errors` of `engine.diagnostics` show it.
+- **A type reads only the version it writes** (`*_VERSION`): each `*_view` (and a plugin's read)
+  starts with `kind_check(&a,KIND,VERSION)`, which gives `Invalid` for another type and `Version`
+  for a file of another version, older or newer. The engine's types carry theirs in `KINDS`.
+- **A change in what a type stores or in what a stored value means raises its version**, and every
+  file of the type is made again. `version_message` says which asset it is, its type, its version
+  and the one the build reads and, if it was imported, the `mirai import` that rebuilds it in its
+  folder with the root where its source is; for a newer file, a newer engine. `mirai asset verify`
+  and the `asset_errors` of `engine.diagnostics` show it.
+- **Rows are read by the schema the file carries**, by field name (`serial.Migration`): the types
+  a game declares (components, records) change while its files stay, and a field their file lacks
+  reads the default of the read (`asset_rows` with `default`). The rows of an asset type hold
+  every field of its version: its read asks for them `whole`, and a file that does not store one
+  fails with `Version`; `version_message` names the table and the field. A table a file may omit
+  reads empty (`table_rows`, like `skin` in `vertices`).
 - **Saving writes the current version**: a type's `*_document` and a scene taken as `asset.Scene`
   stamp it. A generic `Document` (`mirai asset set`, a merge, a move) keeps the version of the file
-  it came from: its rows keep that file's schema and the read's steps still apply to them.
+  it came from, and its rows that file's schema.
 
 ## Registry
 

@@ -140,8 +140,7 @@ per bone.
   ([model](../../mirai-rendering/references/materials.md#layers-openpbr)).
 - An empty `program` is the standard model; `parameters` keeps its values and, with nonzero
   `overlay`, those of a layer of `overlays`. `hidden` are the names the editor does not show.
-- `material_view` reads absent fields from `MATERIAL_DEFAULTS` and validates ranges, also those of
-  `imported` and `imported_parameters`.
+- `material_view` validates ranges, also those of `imported` and `imported_parameters`.
 
 ### What was imported and what was changed
 

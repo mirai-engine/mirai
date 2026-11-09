@@ -3,7 +3,6 @@ package entropy
 import "base:intrinsics"
 import "mirai:std/compressor"
 
-HUFFMAN_MAX_CODELEN_LIMIT :: 16
 HUFFMAN_ENCODE_CODELEN_LIMIT :: 15
 
 // Code lengths and canonical codes of an alphabet of at most 256 symbols.
@@ -40,26 +39,6 @@ finish_code_lens :: proc "contextless" (h:^Huffman) #no_bounds_check {
     for mx>0 && h.num_codes_of_len[mx]==0 {mx-=1}
     h.min_code_len=mn
     h.max_code_len=mx
-}
-
-// Sets the code lens directly; false when fewer than two symbols are used.
-huffman_provide_code_lens :: proc "contextless" (h:^Huffman,
-    code_lens:[]u8) -> bool #no_bounds_check {
-    h.min_code_len,h.max_code_len=0,0
-    h.got_num_symbols=0
-    h.one_char=-1
-    h.top_sym=0
-    for i in 0..<min(int(h.num_symbols),len(code_lens)) {
-        h.code_len_table[i]=code_lens[i]
-        if code_lens[i]!=0 {
-            h.top_sym=i32(i)
-            h.got_num_symbols+=1
-            h.one_char=i32(i)
-        }
-    }
-    if h.got_num_symbols<=1 {return false}
-    finish_code_lens(h)
-    return true
 }
 
 @(private="file")

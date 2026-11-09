@@ -19,9 +19,9 @@ subcommands with their usage.
 - **`verify`** checks container, hash, decompression, schema and tables, that the stored
   dependencies are the derived ones and that each value meets its schema. For the engine's types it
   checks their version (for one the build does not read, the reason is `version_message`, with the
-  `mirai import` that rebuilds it; one older than the build's that it migrates passes, with
-  `version_notice` after `ok`) and their rules (`*_check`). For a `.ui` it only checks the tree's structure
-  (`asset.ui_check`): the rest is validated on loading it ([interface](kinds.md#interface)).
+  `mirai import` that rebuilds it) and their rules (`*_check`). For a `.ui` it only checks the
+  tree's structure (`asset.ui_check`): the rest is validated on loading it
+  ([interface](kinds.md#interface)).
 - **`set`** rewrites the file atomically, with the dependencies recomputed; if an assignment fails
   nothing is written. The value is JSON of the field's type; from a shell, texts, enum members and
   ids need no quotes, and in a struct the unnamed fields are kept. A number must fit exactly in its

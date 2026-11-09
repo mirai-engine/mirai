@@ -21,7 +21,6 @@ import mm "mirai:std/math"
 
 MATCH_KIND :: asset.Fourcc(u32('A')|u32('M')<<8|u32('T')<<16|u32('C')<<24)
 MATCH_VERSION :: 7
-MATCH_OLDEST :: 6
 MATCH_CLIPS :: 64
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.
 MATCH_LAG_CLOSE :: .5
@@ -138,7 +137,7 @@ match_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile:Match
     return asset.document_save(&doc,path)
 }
 match_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Match_Profile,error:asset.Error) {
-    asset.kind_check(file,MATCH_KIND,MATCH_OLDEST,MATCH_VERSION) or_return
+    asset.kind_check(file,MATCH_KIND,MATCH_VERSION) or_return
     info:=asset.asset_row(file,types,"match",Match_Info) or_return
     profile.info=info^
     profile.clips=asset.asset_rows(file,types,"clips","",Match_Source) or_return

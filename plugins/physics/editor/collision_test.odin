@@ -143,8 +143,6 @@ the_inspector_shows_presets_and_masks_by_name :: proc(t:^testing.T) {
     bit:=ui.id_derive(&f.ctx,ui.id(&f.ctx,"collider_preset_layers"),"bit",1)
     box,boxes:=ui.widget_rect(&f.ctx,bit)
     testing.expect(t,boxes,"a preset shows what it gives, ready to change")
-    testing.expect_value(t,collision_layers_text(&f.info,phys.collision_layers(INSPECTOR_WORLD,INSPECTOR_CAMERA)),"World, Camera")
-    testing.expect_value(t,collision_layers_text(&f.info,phys.COLLISION_LAYERS_ALL),"Everything")
     before:=core.get(&world.colliders,a)^
     center:=[2]f32{box.x+box.w*0.5,box.y+box.h*0.5}
     collision_inspector_frame(t,session,{size={800,600},pointer=center,pressed={.Left},down={.Left}},phys.Collider)

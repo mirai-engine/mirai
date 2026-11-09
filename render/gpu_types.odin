@@ -382,11 +382,6 @@ Gpu_Cull_State :: struct {
 	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
 }
 #assert(size_of(Gpu_Cull_State) == 80)
-// A chunk of the cluster pass: up to CULL_CHUNK clusters of an instance,
-// x the instance and y its first cluster << 6 | how many - 1.
-CULL_CHUNK :: 64
-// The groups of a dispatch along x before it goes on along y.
-CULL_DISPATCH_X :: 32768
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -412,11 +407,6 @@ Gpu_Glass_Dispatch :: struct {
 	pad:  u32,
 }
 #assert(size_of(Gpu_Glass_Dispatch) == 32)
-
-
-pack_half2 :: proc "contextless" (a, b: f32) -> u32 {
-	return u32(transmute(u16)f16(a)) | u32(transmute(u16)f16(b)) << 16
-}
 
 // The parameters of a post-process effect (Post_Parameters of common.slang).
 Gpu_Post_Parameters :: struct {program,exposed,outlined:u32,fade:f32,values:[16]Vec4}

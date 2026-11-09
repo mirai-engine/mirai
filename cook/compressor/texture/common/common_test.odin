@@ -29,7 +29,6 @@ stdsort_and_heaps_order_any_input :: proc(t:^testing.T) {
         }
     }
     v:=[]i32{1,3,3,5,9}
-    testing.expect_value(t,branchless_lower_bound_idx(v,3),1)
     testing.expect_value(t,lower_bound(v,i32(4),less_i32),3)
 }
 
@@ -48,7 +47,6 @@ bc1_palette_and_indices_round_trip :: proc(t:^testing.T) {
             indices:=bc1_find_indices_palette(&colors,&palette,&err)
             testing.expect_value(t,err,0)
             testing.expect_value(t,bc1_palette_ssd_rgba(&colors,&palette,indices),0)
-            testing.expect_value(t,bc1_find_error(&colors,&palette),0)
         }
     }
 }

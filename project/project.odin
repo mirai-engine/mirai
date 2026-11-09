@@ -269,17 +269,6 @@ plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.alloca
     return walk.order[:],{}
 }
 
-// The folder has at least one Odin source: it is a package the compiler accepts.
-package_exists :: proc(folder:string) -> bool {
-    if !os.is_dir(folder) {return false}
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return false}
-    for entry in entries {
-        if entry.type==.Regular && strings.has_suffix(entry.name,".odin") {return true}
-    }
-    return false
-}
-
 // The parts joined with forward slashes, the only separator the manifests,
 // the generated sources and the compiler share on every system.
 path :: proc(parts:..string,allocator:=context.allocator) -> string {
