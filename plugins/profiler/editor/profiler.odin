@@ -92,24 +92,40 @@ profiler_panel :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 		}
 		titles:=TABS
 		ui.tabs(ctx,ui.id(ctx,"tracks"),titles[:],&p.tab,ui.fixed(240),28)
-		switch Tab(p.tab) {
-		case .Cpu:
-			ui.label(ctx,cpu_frame_text(p,c),th.font_small,th.text)
-			rows:=f32(p.depth+p.thread_count)
-			editor.drawing(g,ui.id(ctx,"timeline"),ui.GROW,ui.fixed(rows*(ROW+2)+ROW),timeline_draw,p)
-			editor.drawing(g,ui.id(ctx,"zones"),ui.GROW,ui.fixed(f32(p.top_count)*ROW+ROW),zones_draw,p)
-		case .Gpu:
-			if .Gpu not_in c.tracks {ui.label(ctx,"This capture did not record the GPU track",th.font_small,th.text_muted);break}
-			ui.label(ctx,gpu_frame_text(p,c),th.font_small,th.text)
-			editor.drawing(g,ui.id(ctx,"gpu_timeline"),ui.GROW,ui.fixed(ROW+ROW+4),gpu_timeline_draw,p)
-			editor.drawing(g,ui.id(ctx,"passes"),ui.GROW,ui.fixed(f32(p.pass_count)*ROW+ROW),passes_draw,p)
-		case .Memory:
-			if .Memory not_in c.tracks || len(c.memory)==0 {ui.label(ctx,"This capture did not record the memory track",th.font_small,th.text_muted);break}
-			ui.label(ctx,memory_frame_text(p,c),th.font_small,th.text)
-			editor.drawing(g,ui.id(ctx,"memory"),ui.GROW,ui.fixed(GRAPH+ROW),memory_draw,p)
-			ui.label(ctx,memory_capture_text(c),th.font_small,th.text_muted)
+		// Every tab is as tall as the tallest: the panel, held by its bottom, keeps its tabs under the pointer.
+		if ui.box(ctx,{width=ui.GROW,height=ui.fixed(tabs_height(p,th.font_small)),direction=.Column,gap=TAB_GAP}) {
+			switch Tab(p.tab) {
+			case .Cpu:
+				ui.label(ctx,cpu_frame_text(p,c),th.font_small,th.text)
+				rows:=f32(p.depth+p.thread_count)
+				editor.drawing(g,ui.id(ctx,"timeline"),ui.GROW,ui.fixed(rows*(ROW+2)+ROW),timeline_draw,p)
+				editor.drawing(g,ui.id(ctx,"zones"),ui.GROW,ui.fixed(f32(p.top_count)*ROW+ROW),zones_draw,p)
+			case .Gpu:
+				if .Gpu not_in c.tracks {ui.label(ctx,"This capture did not record the GPU track",th.font_small,th.text_muted);break}
+				ui.label(ctx,gpu_frame_text(p,c),th.font_small,th.text)
+				editor.drawing(g,ui.id(ctx,"gpu_timeline"),ui.GROW,ui.fixed(ROW+ROW+4),gpu_timeline_draw,p)
+				editor.drawing(g,ui.id(ctx,"passes"),ui.GROW,ui.fixed(f32(p.pass_count)*ROW+ROW),passes_draw,p)
+			case .Memory:
+				if .Memory not_in c.tracks || len(c.memory)==0 {ui.label(ctx,"This capture did not record the memory track",th.font_small,th.text_muted);break}
+				ui.label(ctx,memory_frame_text(p,c),th.font_small,th.text)
+				editor.drawing(g,ui.id(ctx,"memory"),ui.GROW,ui.fixed(GRAPH+ROW),memory_draw,p)
+				ui.label(ctx,memory_capture_text(c),th.font_small,th.text_muted)
+			}
 		}
 	}
+}
+
+TAB_GAP :: f32(8)
+
+// The height of the tallest tab of the capture shown: a label of size font
+// over each one's drawings.
+@(private="file")
+tabs_height :: proc(p:^Profiler_Panel,font:f32) -> f32 {
+	label:=font+6
+	cpu:=label+TAB_GAP+f32(p.depth+p.thread_count)*(ROW+2)+ROW+TAB_GAP+f32(p.top_count)*ROW+ROW
+	gpu:=label+TAB_GAP+ROW+ROW+4+TAB_GAP+f32(p.pass_count)*ROW+ROW
+	memory:=label+TAB_GAP+GRAPH+ROW+TAB_GAP+label
+	return max(cpu,gpu,memory)
 }
 
 @(private="file")
@@ -227,8 +243,15 @@ memory_frame_text :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) -> string
 	if p.frame>=len(c.memory) {return ""}
 	m:=c.memory[p.frame]
 	mb :: proc(bytes:u64) -> f64 {return f64(bytes)/(1<<20)}
-	return fmt.tprintf("Frame %d  ·  private %.1f MB  ·  resident %.1f MB  ·  GPU %.1f of %.1f MB  ·  textures %.1f MB  ·  geometry %.1f MB",
-		p.frame+1,mb(m.process.private),mb(m.process.resident),mb(m.gpu_used),mb(m.gpu_budget),mb(m.textures),mb(m.geometry))
+	return fmt.tprintf("Frame %d  ·  private %.1f MB  ·  resident %.1f MB  ·  GPU %.1f of %.1f MB  ·  textures %s  ·  geometry %s",
+		p.frame+1,mb(m.process.private),mb(m.process.resident),mb(m.gpu_used),mb(m.gpu_budget),bytes_text(m.textures),bytes_text(m.geometry))
+}
+
+// A size in MB, or in KB under a tenth of one, so that a small pool does not read as empty.
+@(private="file")
+bytes_text :: proc(bytes:u64) -> string {
+	if bytes<(1<<20)/10 {return fmt.tprintf("%.1f KB",f64(bytes)/(1<<10))}
+	return fmt.tprintf("%.1f MB",f64(bytes)/(1<<20))
 }
 
 @(private="file")
