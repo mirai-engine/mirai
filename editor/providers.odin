@@ -1,11 +1,14 @@
 package editor
 
 import "base:runtime"
+import "core:fmt"
 import "core:log"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
+import "mirai:project"
+import "mirai:std/base"
 import "mirai:ui"
 import mm "mirai:std/math"
 
@@ -81,7 +84,6 @@ Asset_Kind :: struct {
     icon:ui.Icon,
     extension:string, // of its files, with the dot: asset.list names the kind by it
     field:string,     // a word: an Asset_Id field whose name has it takes the kind; empty: none
-    merged:bool,      // a document of rows that are edited: git merges its files row by row and diffs their values, as asset.Kind_Info.merged says of a kind of the engine
     scene_data:bool,  // what a scene makes of itself: the browser lists it with the Plugins filter or a search
 }
 ASSET_KINDS_OF_PROVIDER :: 8
@@ -196,6 +198,25 @@ run_tell_ended :: proc(s:^Session,r:^Run) {
 asset_plugin_kinds :: proc(s:^Session) -> []Asset_Kind {
     p:=providers(s)
     return p.kinds[:p.kind_count]
+}
+
+// What the kinds a provider registers and those the manifest of its plugin
+// declares (asset_kinds, what is known of them without loading the plugin)
+// differ in; "" when they are the same extensions.
+asset_kinds_differ :: proc(provider:Asset_Kind_Provider,m:^project.Plugin_Manifest,allocator:=context.temp_allocator) -> string {
+    provider:=provider
+    registered:=provider.kinds[:clamp(provider.count,0,len(provider.kinds))]
+    declared:=0
+    for &kind in m.asset_kinds {
+        extension:=base.text_get(kind.extension[:])
+        if extension=="" {continue}
+        declared+=1
+        found:=false
+        for each in registered {found||=each.extension==extension}
+        if !found {return fmt.aprintf("%s declares the asset kind %s, which the plugin does not register",project.PLUGIN_FILE,extension,allocator=allocator)}
+    }
+    if declared!=len(registered) {return fmt.aprintf("%s declares %d asset kinds and the plugin registers %d",project.PLUGIN_FILE,declared,len(registered),allocator=allocator)}
+    return ""
 }
 
 // What a plugin declares of a kind of asset; nil for a kind of the engine or of none.

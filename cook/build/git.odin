@@ -4,20 +4,52 @@ import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // Git and the assets of a repository. A kind of asset that is a document
-// (asset.Kind_Info.merged, Git_Kind.merged for one of a plugin) is merged and
-// diffed by git through mirai: its line of .gitattributes names the merge and
-// the diff driver GIT_DRIVER, which the local configuration of each clone
-// defines (git_settings). The other kinds are whole files to git.
+// (asset.Kind_Info.merged for one of the engine, project.Asset_Kind.merged in
+// the manifest of its plugin for another) is merged and diffed by git through
+// mirai: its line of .gitattributes names the merge and the diff driver
+// GIT_DRIVER, which the local configuration of each clone defines
+// (git_settings). The other kinds are whole files to git.
 
 GIT_DRIVER :: "mirai"
 
-// A kind of asset, as a plugin declares its own.
+// A kind of asset of a plugin, as its manifest declares it.
 Git_Kind :: struct {
     extension:string, // of its files, with the dot
     merged:bool,
+}
+
+// The kinds of asset of the plugins that the first of folders that is a
+// checkout of the engine or a project holds or uses, as their manifests
+// declare them: every plugin of the checkout, or the plugins the project
+// uses, its own and those of the engine. None when no folder is either; ok
+// is false when the plugins or the project do not read.
+git_plugin_kinds :: proc(engine_root:string,folders:[]string,allocator:=context.allocator) -> (kinds:[]Git_Kind,ok:bool) {
+    out:=make([dynamic]Git_Kind,allocator)
+    add :: proc(out:^[dynamic]Git_Kind,plugin:^project.Plugin) {
+        for &kind in plugin.manifest.asset_kinds {
+            if extension:=base.text_get(kind.extension[:]);extension!="" {append(out,Git_Kind{strings.clone(extension,out.allocator),kind.merged})}
+        }
+    }
+    for folder in folders {
+        switch {
+        case folder=="":
+        case !project.engine_installed(folder) && project.engine_root_is(folder):
+            found:=make([dynamic]project.Plugin,context.temp_allocator)
+            if project.plugins_discover(project.path(folder,"plugins",allocator=context.temp_allocator),.Engine,&found,context.temp_allocator).code!=.None {return out[:],false}
+            for &plugin in found {add(&out,&plugin)}
+            return out[:],true
+        case os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)):
+            p,error:=project.open(folder,engine_root,context.temp_allocator)
+            if error.code!=.None {return out[:],false}
+            for index in p.active {add(&out,&p.plugins[index])}
+            return out[:],true
+        }
+    }
+    return out[:],true
 }
 
 // The sources of imports that weigh: with LFS they stay out of the history, as
@@ -135,29 +167,50 @@ Git_Wiring :: enum u8 {
     Other,   // set for another copy of the engine
 }
 
-// Whether the clone folder is in has the drivers its .gitattributes name.
-git_wiring :: proc(engine_root,folder:string,allocator:=context.allocator) -> (state:Git_Wiring,repository:string) {
+// The .gitattributes of the clone a folder is in, whose top is repository:
+// the one of the folder when it has one, else the one at the top. text is
+// what git_attributes makes of it with the kinds of the plugins it holds or
+// uses, and changed whether that differs from the file.
+@(private="file")
+git_attributes_of :: proc(engine_root,folder,repository:string) -> (file,existing,text:string,changed,ok:bool) {
+    holder:=folder
+    file=project.path(holder,".gitattributes",allocator=context.temp_allocator)
+    if !os.is_file(file) {
+        holder=repository
+        file=project.path(holder,".gitattributes",allocator=context.temp_allocator)
+    }
+    data,_:=os.read_entire_file(file,context.temp_allocator)
+    existing=string(data)
+    kinds:[]Git_Kind
+    kinds,ok=git_plugin_kinds(engine_root,{holder,folder,repository},context.temp_allocator)
+    text,changed=git_attributes(kinds,false,existing,context.temp_allocator)
+    return
+}
+
+// Whether the clone folder is in has the drivers its .gitattributes names,
+// and whether that file lacks the line of a kind of the engine or of the
+// plugins it holds or uses (stale).
+git_wiring :: proc(engine_root,folder:string,allocator:=context.allocator) -> (state:Git_Wiring,repository:string,stale:bool) {
     found:bool
     repository,found=git_top(folder,allocator)
-    if !found {return .None,""}
-    named:=false
-    for holder in ([2]string{repository,folder}) {
-        text,error:=os.read_entire_file(project.path(holder,".gitattributes",allocator=context.temp_allocator),context.temp_allocator)
-        named||=error==nil && (strings.contains(string(text),"merge="+GIT_DRIVER) || strings.contains(string(text),"diff="+GIT_DRIVER))
-    }
-    if !named {return .None,repository}
+    if !found {return .None,"",false}
+    _,existing,_,changed,read:=git_attributes_of(engine_root,folder,repository)
+    if !strings.contains(existing,"merge="+GIT_DRIVER) && !strings.contains(existing,"diff="+GIT_DRIVER) {return .None,repository,false}
+    stale=read && changed
     unset,other:=git_settings_state(git_settings(engine_root,repository,context.temp_allocator),git_settings_listed(repository))
     switch {
-    case unset!=0: return .Unset,repository
-    case other!=0: return .Other,repository
+    case unset!=0: state=.Unset
+    case other!=0: state=.Other
+    case:          state=.Wired
     }
-    return .Wired,repository
+    return
 }
 
 Git_Setup_Error :: enum u8 {
     None,
     No_Git,            // git did not run
     No_Repository,     // the folder is in no work tree
+    Plugins_Failed,    // the project of the folder, or a plugin it holds, does not read
     Attributes_Failed, // .gitattributes could not be written
     Settings_Failed,   // git did not take a setting
 }
@@ -169,19 +222,19 @@ Git_Setup :: struct {
 }
 
 // Wires the clone folder is in: its .gitattributes with the lines of the
-// kinds of the engine (git_attributes over the one of folder when it has one,
-// else over the one at the top of the work tree) and the drivers in its local
-// configuration. What already is as it would be written stays untouched, so
-// it can run again at any time: after the engine moved, or with a new kind.
+// kinds of the engine and of the plugins it holds or uses (git_attributes
+// over the one of folder when it has one, else over the one at the top of the
+// work tree) and the drivers in its local configuration. What already is as
+// it would be written stays untouched, so it can run again at any time: after
+// the engine moved, or with a new kind or plugin.
 git_setup :: proc(engine_root,folder:string,allocator:=context.allocator) -> (done:Git_Setup,error:Git_Setup_Error) {
     if _,_,_,exec_error:=subprocess.exec({command={"git","--version"}},context.temp_allocator);exec_error!=nil {return {},.No_Git}
     found:bool
     done.repository,found=git_top(folder,allocator)
     if !found {return done,.No_Repository}
-    file:=project.path(folder,".gitattributes",allocator=context.temp_allocator)
-    if !os.is_file(file) {file=project.path(done.repository,".gitattributes",allocator=context.temp_allocator)}
-    existing,_:=os.read_entire_file(file,context.temp_allocator)
-    if text,changed:=git_attributes(existing=string(existing),allocator=context.temp_allocator);changed {
+    file,_,text,changed,read:=git_attributes_of(engine_root,folder,done.repository)
+    if !read {return done,.Plugins_Failed}
+    if changed {
         if os.write_entire_file(file,text)!=nil {return done,.Attributes_Failed}
         done.attributes=strings.clone(file,allocator)
     }

@@ -84,12 +84,10 @@ Git :: struct {
     panel_shown:bool,
 }
 
-// The kinds of asset the plugins declare, as build.git_attributes takes them.
+// The kinds of asset of the plugins the project uses, as their manifests declare them.
 @(private)
 git_plugin_kinds :: proc(s:^Session) -> []build.Git_Kind {
-    declared:=asset_plugin_kinds(s)
-    kinds:=make([]build.Git_Kind,len(declared),context.temp_allocator)
-    for each,i in declared {kinds[i]={each.extension,each.merged}}
+    kinds,_:=build.git_plugin_kinds(s.engine_root,{s.project_root},context.temp_allocator)
     return kinds
 }
 
@@ -152,7 +150,7 @@ git_init_later :: proc(s:^Session,remote:string,lfs:bool) {
 
 // Makes the folder of the project a repository: a .gitignore without .mirai,
 // the .gitattributes of the kinds of asset of the engine and of the plugins
-// of the project (build.git_attributes), which with LFS keeps heavy binaries
+// the project uses (build.git_attributes), which with LFS keeps heavy binaries
 // out of the history, and the remote when one is given.
 git_init :: proc(s:^Session) -> string {
     g:=s.git
