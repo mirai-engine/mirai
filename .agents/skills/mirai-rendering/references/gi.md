@@ -64,9 +64,9 @@ Each technique states its status; what is listed as prepared is not implemented.
 - **Light probes** (implemented): the [volume](#probe-volume). There is no radiance cache or
   screen probes.
 - **Fixed sampling and NEE** (implemented). Each probe traces the same directions every time and
-  contact occlusion a fixed pattern per pixel; at each pixel and at each probe hit, sun and local
-  lights with their shadow ray, chosen by a deterministic light tree
-  ([local lights](lights.md#local-lights)). There is no ReSTIR or stochastic direct light.
+  contact occlusion a fixed pattern; each probe hit takes sun and local lights with their shadow
+  ray, chosen by a deterministic light tree ([local lights](lights.md#local-lights)), and each
+  pixel its [samples](lights.md#direct-light-of-a-view) of fixed places. There is no ReSTIR.
 - **Culling and LOD** (implemented). Frustum, normal cone and two-phase occlusion on the GPU, per
   instance and per cluster ([frame graph](frame-graph.md#frame-graph)). The cut of the DAG or of
   the whole levels takes each cluster whose projected error falls within `lod_error_pixels` and
@@ -79,8 +79,8 @@ Each technique states its status; what is listed as prepared is not implemented.
 ### Temporal and denoising
 
 - **No on-screen history of the indirect.** The volume lives in the world and contact occlusion
-  is computed entirely every frame; what is temporal in the image is TAA and the shadow history
-  ([history](lights.md#shadows)).
+  is computed from the world; what is temporal in the image is TAA, the history of the
+  [direct light](lights.md#direct-light-of-a-view) and the frames of contact occlusion.
 - **Marked changes.** The scene marks where the light changed (`Scene_State.changes`: spheres of
   lights that change, objects that move, change brightness or show a material that changed what
   the light sees; everything on a general change). The probes it reaches are traced at once and
@@ -94,16 +94,22 @@ Each technique states its status; what is listed as prepared is not implemented.
 `shaders/contact.comp.slang` (`pass_contact`, the `Indirect` stage): the probes are far from each
 other and do not see the corner of a table or the floor under a wardrobe.
 
-- Each pixel traces short rays of the hemisphere of its normal in the world, which also see what
-  is off screen or behind something nearer to the eye; the nearest occludes more, so that the
-  edge fades.
-- The directions of a pixel rotate through a fixed pixel pattern, not through its point, which
-  the jitter moves every frame; a bilateral blur over the surface removes the pattern. Nothing
-  changes from one frame to the next if the scene does not change.
+- Points (the first pixel of each 2×2, or each pixel, by the scale) trace short rays of the
+  hemisphere of their normal in the world, which also see what is off screen or behind something
+  nearer to the eye; the nearest occludes more, so that the edge fades. Over frames, like the
+  [direct light](lights.md#direct-light-of-a-view): a frame traces the points of its squares and
+  takes the others from the frame before where their surface was.
+- The directions of a point rotate through a fixed pattern of 4×4 points that
+  `contact_pixels.comp` averages around each pixel, on its surface. Nothing changes from one frame
+  to the next if the scene does not change.
+- `contact_light.comp` leaves the probe light of each point, around its normal and the specular
+  lobe; `contact_pixels.comp` takes both to the pixels with the occlusion, so that the composition
+  receives the irradiance already multiplied by it.
 - The pixels of a nested view (a portal, a mirror) compute it from where their surface is in the
-  world, like those of the view, and the blur does not mix the two sides of the opening: without
-  it, what was seen through a portal was lighter in the corners than what was on this side.
-- The composition multiplies the volume irradiance by it: the indirect shadow is sharp at contact
+  world, like those of the view, and the filter does not mix the two sides of the opening:
+  without it, what was seen through a portal was lighter in the corners than what was on this
+  side.
+- The irradiance of the volume is multiplied by it: the indirect shadow is sharp at contact
   and opens with distance, which is what the volume gives far away.
 - **Small things.** An instance smaller than `SMALL_INSTANCE_REACH` is of the ray class
   `RAY_SMALL`: contact occlusion, reflections and direct light see it, and the volume rays
@@ -142,10 +148,12 @@ other and do not see the corner of a table or the floor under a wardrobe.
   the light of their cell; then those that a change keeps awake, first those nearest to it
   relative to its reach (what a change changes most is near), or their own light; then the one
   that has gone longest without being traced relative to how much pixels use it
-  (`ddgi_mark.comp`), fine cascades first. What is left keeps tracing in turns with the scene
-  still: since the rays are the same, a settled probe gives what it gave. A sky that changes
-  without stopping (a sunset with an atmosphere) is followed in turns, with stains of the
-  previous light until it stops.
+  (`ddgi_mark.comp`), fine cascades first. A probe whose light moves more than its noise
+  (`ddgi_irradiance.comp`) wakes its six neighbors for the next frame, so that a change spreads
+  with its bounces. The probes waiting by turns take a small share of the budget at most, and
+  keep tracing in turns with the scene still: since the rays are the same, a settled probe gives
+  what it gave. A sky that changes without stopping (a sunset with an atmosphere) is followed in
+  turns, with stains of the previous light until it stops.
 - **Relocation** within its cell: a probe inside a wall comes out and one stuck to a surface
   moves away. A covered one keeps the light it had; one that never had it gives nothing.
 - **Reading** (`probe_cascade_read`): DDGI weights (wrapped cosine, Chebyshev without a floor),

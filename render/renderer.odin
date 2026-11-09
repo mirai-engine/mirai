@@ -53,7 +53,11 @@ Settings :: struct {
 	probe_rays:           u32,    // rays of a probe (multiple of 32, at most 256)
 	probe_budget:         u32,    // probes traced at most per frame
 	gi_max_distance:      f32,    // the farthest a traced reflection or glass ray goes, in meters
-	light_budget:         u32,    // shadow rays of a block of 2x2 pixels, each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
+	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes and reflections take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
+	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
+	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
+	shadow_maps:          bool,   // the direct light takes the shadows of the lights that light much of the view, and of the sun, from maps of depth drawn from them every frame (shadow_maps_pass): the hard shadow of the maps at each point, averaged over the points of its surface within its penumbra (direct_samples.comp, direct_spread.comp); the other lights trace rays
+	direct_frames:        u32,    // frames the samples of the direct light of a view are taken over: each takes those of one of each that many squares of 2x2 pixels and moves the rest from the frame before (1 to DIRECT_FRAMES_MAX)
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_compression:  bool,   // upload block compressed textures (BC1, BC3, BC5, BC7) as they are where the device samples them; off, they are decoded to RGBA8
@@ -67,7 +71,7 @@ Settings :: struct {
 	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
-	reference_lights:     bool, // what the lighting approximates, for tests and comparisons: every pixel traces rays to sixteen points of every local light, others each frame
+	reference_lights:     bool, // what the lighting approximates, for tests and comparisons: the direct light of every pixel from DIRECT_REFERENCE_SAMPLES samples
 	reference_gi:         bool, // what the diffuse indirect light approximates, for tests and comparisons: paths from every pixel in place of the probe volume, their mean while the scene and the camera stay (Targets.gi_reference)
 }
 
@@ -95,7 +99,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 1, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, light_budget = 8,
+	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15, direct_frames = 2,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
@@ -105,15 +109,13 @@ DEFAULT_SETTINGS :: Settings{
 
 // The sun as seen from the Earth: 0.27 degrees.
 SUN_RADIUS :: f32(0.0047)
-// The history of a block of shadows, in frames. The light points a block
-// traces to are the same in every frame (block_turn of lighting.slang); what
-// its ray sees repeats every TAA_JITTER_PHASES frames, the pixel of the block
-// that traces it (every four) and the jitter of the view. Where the surface
-// stays still the history spans one round of that: a longer one gathers
-// nothing new and lags behind a change no mark starts again (the TAA, which
-// keeps a still pixel for four rounds, smooths what a round leaves).
-SHADOW_HISTORY_FRAMES :: f32(16)
-SHADOW_HISTORY_STILL_FRAMES :: f32(TAA_JITTER_PHASES)
+// The samples of the direct light of a pixel at most, and those of the
+// reference (direct_samples.slang).
+DIRECT_SAMPLES_MAX :: u32(127)
+DIRECT_REFERENCE_SAMPLES :: u32(127)
+// The frames the samples of a view are taken over at most (direct_square of
+// direct_samples.slang).
+DIRECT_FRAMES_MAX :: u32(3)
 
 // SHARED_RAY_ROUGHNESS of the shaders.
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
@@ -122,7 +124,7 @@ REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 CPU_DEVICE_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 0.5, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
-	gi_max_distance = 1e4, light_budget = 4,
+	gi_max_distance = 1e4, light_budget = 4, direct_samples = 7, direct_frames = 1,
 	firefly_clamp = 20, texture_max_size = 1024,
 	texture_compression = true, texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
 	reflections = false, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 4,
@@ -284,17 +286,17 @@ Stats :: struct {
 }
 
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Lighting, Lighting_Traced, Lighting_Traced_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
-	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Composite, Taa, Hiz,
-	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
-	Lighting_Traced_Color, Lighting_Traced_Color_Hw, Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_History, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
+	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
+	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
+	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
 	Reflect_Color, Reflect_Color_Hw, Translucent_Color, Translucent_Color_Hw,
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
 	Glass_Inside, Glass_Inside_Hw, Glass_Inside_Color, Glass_Inside_Color_Hw,
-	Shadow_Trace, Shadow_Trace_Hw, Shadow_Trace_Color, Shadow_Trace_Color_Hw, Shadow_Temporal, Shadow_Penumbra,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
-	Lighting_Unlayered, Composite_Unlayered, // without: they read no layers
+	Direct_Samples_Color, Direct_Samples_Color_Hw, Direct_Samples_Unlayered_Color, Direct_Samples_Hw_Unlayered_Color, // the glass the light crosses colors it
+	Direct_Samples_Unlayered, Direct_Samples_Hw_Unlayered, Direct_Filter_Unlayered, Direct_Filter_Hw_Unlayered, Composite_Unlayered, // without: they read no layers
 	Reflect_Unlayered, Reflect_Unlayered_Hw, Reflect_Unlayered_Color, Reflect_Unlayered_Color_Hw, // no instance with layers in the scene
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
@@ -306,20 +308,6 @@ Pipeline_Id :: enum {
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
 	Depth_Probe, Ui_Particles,
 	Points,
-}
-
-// Soft shadows of the lights, one ray of each block of `block` x `block`
-// pixels a frame (shadow_trace.comp, shadow_temporal.comp, shadow_penumbra.comp).
-Shadow_Set :: struct {
-	block:         u32,
-	width, height: u32,
-	raw:           rhi.Texture, // this frame's share of light, then the blurred one
-	geometry:      [2]rhi.Texture,
-	history:       [2]rhi.Texture,
-	widths:        [2]rhi.Texture, // how wide a penumbra the casters around each block ask for
-	filter:        [2]rhi.Texture,
-	light:         rhi.Texture, // the luminance of the light that reaches each block with nothing in the way
-	valid:         bool,
 }
 
 Targets :: struct {
@@ -352,13 +340,19 @@ Targets :: struct {
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
 	gi_reference_valid:      bool, // gi_reference holds the paths of the frames before
-	contact:                 [2]rhi.Texture, // the contact occlusion of the probe volume: raw / blurred (contact.comp)
+	contact_history:         [2]rhi.Texture, // at each point, its contact occlusion, linear depth and normal, of each frame of a pair (contact.comp)
+	contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
+	contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
+	contact_scale:           u32, // the pixels across a point of contact_points
+	contact_valid:           bool, // contact_history holds the frame before
 	ldr:                     rhi.Texture,
 	generated:               rhi.Texture, // the image shown before ldr, while the pipeline generates frames: made with the first one
 	ui_layers:               [UI_LAYER_DEPTH_CAPACITY]rhi.Texture,
 	ui_blur:                 [2]rhi.Texture,
 	highlight:               rhi.Texture, // editor selection mask: level and depth of highlighted surfaces
 	highlight_depth:         rhi.Texture,
+	shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
+	shadow_buffers:          Shadow_Buffers,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
 	gi_reference:            rhi.Texture, // Settings.reference_gi: the mean of its paths at full resolution, frames in a
@@ -371,9 +365,14 @@ Targets :: struct {
 	glass_history:           [2]rhi.Texture, // filtered reflections of the nearest layer
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
-	shadow:                  Shadow_Set, // blocks of 2x2 pixels
-	direct_traced:           rhi.Buffer,  // the pixels whose direct light traces rays of its own (DIRECT_TRACED_*)
-	direct_dispatch:         rhi.Buffer,  // the dispatch of lighting_traced.comp over them
+	direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
+	direct_samples:          [2]rhi.Texture, // the light of each point (direct_points of direct_samples.slang) with nothing in the way over its reflectance, and the part of it that got there, of this frame or moved from the one before (direct_samples.comp, direct_history.comp)
+	direct_depth:            [2]rhi.Texture, // the linear depth (0 for none) and the normal of each point of the frame of direct_samples
+	direct_points:           rhi.Texture, // what the filter of the samples gives each point (direct_filter.comp), its part spread over its penumbra (direct_spread.comp)
+	direct_spread:           rhi.Texture, // that part spread along the rows (direct_spread.comp)
+	direct_scale:            u32, // the pixels across a point of the direct targets
+	direct_valid:            bool, // direct_samples and direct_depth hold the frame before
+	direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
 	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
@@ -508,7 +507,7 @@ view_camera_cut :: proc(v:^View_State) {
     v.prev_jitter={}
     t:=&v.targets
     t.taa_valid,t.reflect_valid,t.gi_reference_valid=false,false,false
-    t.shadow.valid,t.glass_valid,t.hiz_valid=false,false,false
+    t.glass_valid,t.hiz_valid=false,false
 }
 
 Renderer :: struct {
@@ -831,10 +830,19 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Cull_Clusters_Candidates, .Cull_Clusters_Candidates_Comp)
 	compute(list, r, .Cull_Programs, .Cull_Programs_Comp)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp)
-	compute(list, r, .Lighting, .Lighting_Comp)
-	compute(list, r, .Lighting_Unlayered, .Lighting_Unlayered_Comp)
-	compute(list, r, .Lighting_Traced, .Lighting_Traced_Comp)
-	compute(list, r, .Lighting_Traced_Color, .Lighting_Traced_Color_Comp)
+	compute(list, r, .Light_Grid_Count, .Light_Grid_Comp)
+	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
+	compute(list, r, .Light_Grid_Fill, .Light_Grid_Fill_Comp)
+	compute(list, r, .Light_Grid_Weights, .Light_Grid_Weights_Comp)
+	compute(list, r, .Direct_Rays, .Direct_Rays_Comp)
+	compute(list, r, .Direct_Samples, .Direct_Samples_Comp)
+	compute(list, r, .Direct_Samples_Unlayered, .Direct_Samples_Unlayered_Comp)
+	compute(list, r, .Direct_Samples_Color, .Direct_Samples_Color_Comp)
+	compute(list, r, .Direct_Samples_Unlayered_Color, .Direct_Samples_Unlayered_Color_Comp)
+	compute(list, r, .Direct_History, .Direct_History_Comp)
+	compute(list, r, .Direct_Spread, .Direct_Spread_Comp)
+	compute(list, r, .Direct_Filter, .Direct_Filter_Comp)
+	compute(list, r, .Direct_Filter_Unlayered, .Direct_Filter_Unlayered_Comp)
 	compute(list, r, .Ddgi_Trace, .Ddgi_Trace_Comp)
 	compute(list, r, .Ddgi_Trace_Color, .Ddgi_Trace_Color_Comp)
 	compute(list, r, .Ddgi_Irradiance, .Ddgi_Irradiance_Comp)
@@ -845,6 +853,8 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Ddgi_Touch, .Ddgi_Touch_Comp)
 	compute(list, r, .Ddgi_Mark, .Ddgi_Mark_Comp)
 	compute(list, r, .Contact, .Contact_Comp)
+	compute(list, r, .Contact_Light, .Contact_Light_Comp)
+	compute(list, r, .Contact_Pixels, .Contact_Pixels_Comp)
 	compute(list, r, .Composite, .Composite_Comp)
 	compute(list, r, .Composite_Unlayered, .Composite_Unlayered_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
@@ -864,17 +874,16 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Reflect_Resolve_Glass, .Reflect_Resolve_Glass_Comp)
 	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
 	compute(list, r, .Points, .Points_Comp)
-	compute(list, r, .Shadow_Trace, .Shadow_Trace_Comp)
-	compute(list, r, .Shadow_Trace_Color, .Shadow_Trace_Color_Comp)
-	compute(list, r, .Shadow_Temporal, .Shadow_Temporal_Comp)
-	compute(list, r, .Shadow_Penumbra, .Shadow_Penumbra_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	compute(list, r, .Skin_Triangles, .Skin_Triangles_Comp)
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp)
-	compute(list, r, .Shadow_Trace_Hw, .Shadow_Trace_Hw_Comp)
-	compute(list, r, .Shadow_Trace_Color_Hw, .Shadow_Trace_Color_Hw_Comp)
-	compute(list, r, .Lighting_Traced_Hw, .Lighting_Traced_Hw_Comp)
-	compute(list, r, .Lighting_Traced_Color_Hw, .Lighting_Traced_Color_Hw_Comp)
+	compute(list, r, .Direct_Rays_Hw, .Direct_Rays_Hw_Comp)
+	compute(list, r, .Direct_Samples_Hw, .Direct_Samples_Hw_Comp)
+	compute(list, r, .Direct_Samples_Hw_Unlayered, .Direct_Samples_Hw_Unlayered_Comp)
+	compute(list, r, .Direct_Samples_Color_Hw, .Direct_Samples_Color_Hw_Comp)
+	compute(list, r, .Direct_Samples_Hw_Unlayered_Color, .Direct_Samples_Hw_Unlayered_Color_Comp)
+	compute(list, r, .Direct_Filter_Hw, .Direct_Filter_Hw_Comp)
+	compute(list, r, .Direct_Filter_Hw_Unlayered, .Direct_Filter_Hw_Unlayered_Comp)
 	compute(list, r, .Ddgi_Trace_Hw, .Ddgi_Trace_Hw_Comp)
 	compute(list, r, .Ddgi_Trace_Color_Hw, .Ddgi_Trace_Color_Hw_Comp)
 	compute(list, r, .Contact_Hw, .Contact_Hw_Comp)
@@ -968,6 +977,11 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	highlight.name = "highlight mask"
 	graphics(list, r, .Highlight, highlight)
 	compute(list, r, .Highlight_Filter, .Highlight_Filter_Comp)
+	graphics(list, r, .Shadow_Map, {
+		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps",
+	})
+	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	graphics(list, r, .Tonemap, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Tonemap_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "tonemap",
@@ -1152,20 +1166,20 @@ renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 @(private)
 pipeline_uses_hardware :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
-    case .Lighting_Traced_Hw,.Ddgi_Trace_Hw,.Contact_Hw,.Reflect_Hw,.Translucent_Hw,.Glass_Hw,.Shadow_Trace_Hw,.Shadow_Trace_Color_Hw,
-         .Lighting_Traced_Color_Hw,.Ddgi_Trace_Color_Hw,.Reflect_Color_Hw,.Translucent_Color_Hw,.Glass_Color_Hw,.Gi_Reference_Hw,.Glass_Inside_Hw,.Glass_Inside_Color_Hw,
+    case .Direct_Rays_Hw,.Direct_Samples_Hw,.Direct_Samples_Hw_Unlayered,.Direct_Samples_Color_Hw,.Direct_Samples_Hw_Unlayered_Color,.Direct_Filter_Hw,.Direct_Filter_Hw_Unlayered,.Ddgi_Trace_Hw,.Contact_Hw,.Reflect_Hw,.Translucent_Hw,.Glass_Hw,
+         .Ddgi_Trace_Color_Hw,.Reflect_Color_Hw,.Translucent_Color_Hw,.Glass_Color_Hw,.Gi_Reference_Hw,.Glass_Inside_Hw,.Glass_Inside_Color_Hw,
          .Reflect_Unlayered_Hw,.Reflect_Unlayered_Color_Hw:
         return true
     }
     return false
 }
 
-// Their frames trace rays by software. Not Contact: its blur runs with either.
+// Their frames trace rays by software.
 @(private)
 pipeline_uses_software :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
-    case .Lighting_Traced,.Lighting_Traced_Color,.Ddgi_Trace,.Ddgi_Trace_Color,.Reflect,.Reflect_Color,.Reflect_Unlayered,.Reflect_Unlayered_Color,
-         .Translucent,.Translucent_Color,.Glass,.Glass_Color,.Glass_Inside,.Glass_Inside_Color,.Shadow_Trace,.Shadow_Trace_Color,.Gi_Reference:
+    case .Direct_Rays,.Direct_Samples,.Direct_Samples_Unlayered,.Direct_Samples_Color,.Direct_Samples_Unlayered_Color,.Direct_Filter,.Direct_Filter_Unlayered,.Ddgi_Trace,.Ddgi_Trace_Color,.Contact,.Reflect,.Reflect_Color,.Reflect_Unlayered,.Reflect_Unlayered_Color,
+         .Translucent,.Translucent_Color,.Glass,.Glass_Color,.Glass_Inside,.Glass_Inside_Color,.Gi_Reference:
         return true
     }
     return false
@@ -1318,7 +1332,6 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	}
 	r.settings = settings
 	r.textures.residency.stale = true
-	if old.reference_lights != settings.reference_lights {r.targets.shadow.valid = false}
 	if old.reference_gi != settings.reference_gi {r.targets.gi_reference_valid = false}
 	if old.colored_shadows != settings.colored_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness {
 		r.targets.reflect_valid, r.targets.gi_reference_valid, r.targets.taa_valid = false, false, false
@@ -1408,9 +1421,7 @@ destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 		t.reactive, t.nested_depth, t.aerial,
 	}
 	for tex in textures {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	s := &t.shadow
-	for tex in ([]rhi.Texture{s.raw, s.light, s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1], s.filter[0], s.filter[1]}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	for b in ([]rhi.Buffer{t.direct_traced, t.direct_dispatch}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	destroy_direct_targets(r, t)
 	for tex in t.ui_layers {if tex!=0 {rhi.texture_destroy(d,tex)}}
 	for tex in t.ui_blur {if tex!=0 {rhi.texture_destroy(d,tex)}}
 	destroy_gi_targets(r, t)
@@ -1468,22 +1479,32 @@ ensure_instance_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 	return target(r, nil, &t.instance, t.width, t.height, .R32_Uint, {.Color_Target, .Sampled}, "instance ids")
 }
 
-// The targets of a set of soft shadows, a texel for each block of `block` x `block` pixels.
 @(private)
-ensure_shadow_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets, set: ^Shadow_Set, block: u32) -> bool {
-	if set.raw != 0 {return true}
-	set.block = block
-	set.width, set.height = (t.width + block - 1) / block, (t.height + block - 1) / block
-	w, h := set.width, set.height
-	ok := target(r, cmd, &set.raw, w, h, .RGBA16_Float, HISTORY_USAGE, "shadow rays", true)
-	ok &&= target(r, cmd, &set.light, w, h, .R16_Float, HISTORY_USAGE, "shadow light", true)
-	for i in 0 ..< 2 {
-		ok &&= target(r, cmd, &set.geometry[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow geometry", true)
-		ok &&= target(r, cmd, &set.history[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow history", true)
-		ok &&= target(r, cmd, &set.widths[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow widths", true)
-		ok &&= target(r, cmd, &set.filter[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow filter", true)
+destroy_direct_targets :: proc(r: ^Renderer, t: ^Targets) {
+	for tex in ([]rhi.Texture{t.direct_blockers, t.direct_samples[0], t.direct_samples[1], t.direct_depth[0], t.direct_depth[1], t.direct_points, t.direct_spread, t.direct_marks}) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
+	t.direct_blockers, t.direct_samples, t.direct_depth, t.direct_points, t.direct_spread, t.direct_marks, t.direct_scale, t.direct_valid = 0, {}, {}, 0, 0, 0, 0, false
+	destroy_shadow_maps(r, t)
+}
+
+// The targets of the direct light of a view from samples (direct_samples.slang),
+// made again when the pixels across a point change.
+@(private)
+ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets, scale: u32) -> bool {
+	if t.direct_samples[0] != 0 && t.direct_scale == scale {return true}
+	if t.direct_samples[0] != 0 {
+		rhi.device_wait_idle(r.device)
+		destroy_direct_targets(r, t)
 	}
-	set.valid = false
+	t.direct_scale = scale
+	width, height := (t.width + scale - 1) / scale, (t.height + scale - 1) / scale
+	ok := target(r, cmd, &t.direct_blockers, width, height, .R32_Uint, {.Sampled, .Storage}, "direct blockers")
+	for i in 0 ..< 2 {
+		ok &&= target(r, cmd, &t.direct_samples[i], width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct samples")
+		ok &&= target(r, cmd, &t.direct_depth[i], width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct depth")
+	}
+	ok &&= target(r, cmd, &t.direct_points, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct points")
+	ok &&= target(r, cmd, &t.direct_spread, width, height, .R16_Float, {.Sampled, .Storage}, "direct spread")
+	ok &&= target(r, cmd, &t.direct_marks, t.width, t.height, .R8_Unorm, HISTORY_USAGE, "direct marks", true)
 	return ok
 }
 
@@ -1491,8 +1512,8 @@ ensure_shadow_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 // makes again.
 @(private)
 destroy_gi_targets :: proc(r: ^Renderer, t: ^Targets) {
-	for tex in t.contact {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
-	t.contact = {}
+	for tex in ([]rhi.Texture{t.contact_history[0], t.contact_history[1], t.contact_points[0], t.contact_points[1], t.contact}) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
+	t.contact_history, t.contact_points, t.contact, t.contact_scale, t.contact_valid = {}, {}, 0, 0, false
 }
 
 // Traced reflections: the rays of the frame, per pixel and per block of 2x2,

@@ -90,9 +90,9 @@ mode.
 - **Diffuse transmission.** That of OpenPBR on a thin surface and
   `KHR_materials_diffuse_transmission`: the weight takes that part of the diffuse lobe and lets it
   pass, tinted, from the other side, which is lit like a Lambert with an inverted normal
-  (`shading_back`, `back_irradiance`). The per-block shadows store only one side, so a pixel that
-  transmits goes to the `lighting_traced` list with the back side marked
-  (`DIRECT_TRACED_BACK`). For the GI it reflects only its diffuse part. It is a sheet without
+  (`shading_back`, `back_irradiance`). The samples of the direct light store only the front side,
+  so the back side of a pixel that transmits is lit by `direct_lighting` in the direct filter
+  with its own rays. For the GI it reflects only its diffuse part. It is a sheet without
   volume.
 - **Anisotropy.** Anisotropic GGX over the vertex tangent (MikkTSpace) rotated by `rotation` and by
   the map; the environment is read with a normal bent toward the groove (Revie 2011) and the
@@ -428,9 +428,10 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   much they yield to the probe volume is decided by the material's roughness, not the one widened
   by specular antialiasing, which only enlarges the ray footprint and the lobe energy.
 - **Sampling.** Each pixel chooses a direction of its GGX lobe with the VNDF, trimming the tail;
-  below `MIRROR_ROUGHNESS` it traces the mirror direction, without a spatial filter. At the hit,
-  one ray to each light up to `reflection_light_budget`; above it, groups of the
-  [light tree](lights.md#local-lights).
+  below `MIRROR_ROUGHNESS` it traces the mirror direction, without a spatial filter. At a sharp
+  hit (`Reflections.Detailed`), one ray to each light up to `reflection_light_budget`; above it,
+  groups of the [light tree](lights.md#local-lights). A rough reflection (`Reflections.Traced`)
+  takes the light of what it hits from the probe volume instead of lights and shadows.
 - **Half resolution.** From `REFLECTION_SHARED_ROUGHNESS` a 2×2 block shares a ray that each frame
   traces a different pixel; `reflection_half_resolution` turns it off.
 - **Filters.** The spatial one weights samples of a disc that grows with the roughness by the
@@ -526,8 +527,8 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 The light that crosses glass is paid for with its detail only where it is seen:
 
 - **With detail**, the filter of each texel
-  ([colored shadows](lights.md#colored-shadow-filters)): the direct light of the view (shadow
-  blocks, `direct rays`) and the sharp reflections.
+  ([colored shadows](lights.md#colored-shadow-filters)): the direct light of the view (its
+  samples) and the sharp reflections.
 - **With the instance's medium filter**: the rays of the probe volume, the rough reflections, the
   scene that the glass traces behind itself, the shadow rays of what all of them find and the own
   light of the blend surfaces. The sky light enters through a stained-glass window with its color.

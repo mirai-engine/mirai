@@ -128,8 +128,9 @@ inscribed ellipse).
   strongest lights of its exit's room (`PORTAL_LIGHT_CAPACITY`) through the light hook, as lights
   seen from behind the opening with the shape of their entity (`sphere_desc`, `rect_desc`): they
   light only through it, with the beam's edge soft according to the light's size, and carry two
-  shadow rays, to the opening and from the exit. They enter the shadow blocks like any light, and
-  the penumbra of what is on the other side continues on this side.
+  shadow rays, to the opening and from the exit. They enter the
+  [direct light](../../mirai-rendering/references/lights.md#direct-light-of-a-view) like any light,
+  and the penumbra of what is on the other side continues on this side.
 
 **Travel** (`portals.odin`):
 

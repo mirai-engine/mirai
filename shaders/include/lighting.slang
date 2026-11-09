@@ -265,25 +265,6 @@ float3 light_aim(Light light, float3 position, float3 normal) {
     return center + light.axis.xyz * along;
 }
 
-// Which of the sixteen points of a light the shadow ray of a block of 2x2
-// goes to: the blocks of a 4x4 take all sixteen, in an order that keeps
-// neighbors far apart along it (Bayer), the same in every frame.
-static const uint LIGHT_POINT_ORDER[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
-uint block_turn(int2 block) {
-    return LIGHT_POINT_ORDER[(uint(block.y) & 3u) * 4u + (uint(block.x) & 3u)];
-}
-
-// Where in its cell the point of a turn falls (x) and how a disc is turned
-// (y, radians): the same for the blocks of a 4x4, so that they take sixteen
-// points evenly spread, and another for each 4x4, so that a wide light gives
-// a graded penumbra after the filter instead of sixteen hard shadows. The
-// same in every frame: points that moved from frame to frame changed the
-// shadow of what is thinner than a block in every frame.
-float2 light_point_shift(int2 block) {
-    uint h = hash_u32(uint(block.x >> 2) * 73856093u ^ uint(block.y >> 2) * 19349663u);
-    return float2(float(h & 0xffffu) / 65536.0, float(h >> 16) / 65536.0 * 2.0 * PI);
-}
-
 // The shadow ray to the sun: to the point `k` of sixteen across its disc,
 // `radius` radians wide (its fraction: how far out in its ring), turned by
 // `spin`, as light_point lays out the disc of a sphere.
@@ -791,21 +772,6 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 #define LIGHTS_LOCAL 2u
 #define LIGHTS_EXTENSION 4u
 #define LIGHTS_ALL 7u
-
-// The pixels whose direct light traces rays of its own, which lighting.comp
-// lists for lighting_traced.comp: how many, at 0, then from
-// DIRECT_TRACED_FIRST each pixel as x | y << DIRECT_TRACED_Y_SHIFT, with
-// what it traces: the light of its side (DIRECT_TRACED_FRONT: thin geometry,
-// whose surface no block of shadows holds) and that of its other side
-// (DIRECT_TRACED_BACK: a thin surface that lets light through, whose blocks
-// hold the shadows of its side alone). Their dispatch counts groups of
-// DIRECT_TRACED_GROUP (render.DIRECT_TRACED_*).
-#define DIRECT_TRACED_FIRST 1u
-#define DIRECT_TRACED_GROUP 64u
-#define DIRECT_TRACED_Y_SHIFT 15u
-#define DIRECT_TRACED_X_MASK 0x7FFFu
-#define DIRECT_TRACED_FRONT (1u << 30u)
-#define DIRECT_TRACED_BACK (1u << 31u)
 
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local

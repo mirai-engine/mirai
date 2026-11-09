@@ -856,7 +856,7 @@ split_screen_preserves_views_and_composes_global_ui :: proc(t:^testing.T) {
     testing.expect(t,renderer_apply_settings(r,settings))
     for _ in 0..<4 {testing.expect(t,renderer_frame(r,{views=views[:],ui=layers}),r.error)}
     for view in r.views {
-        testing.expect(t,view.targets.shadow.valid && view.targets.taa_valid)
+        testing.expect(t,view.targets.taa_valid)
     }
     for &view in views {view.disabled=true}
     testing.expect(t,renderer_frame(r,{views=views[:],ui=layers}),r.error)
@@ -888,11 +888,11 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
     pipelines,probes,irradiance:=r.pipelines,r.ddgi.probes,r.ddgi.irradiance
     testing.expect(t,r.has_previous && r.targets.taa_valid)
     r.targets.reflect_valid,r.targets.gi_reference_valid=true,true
-    r.targets.shadow.valid,r.targets.glass_valid,r.targets.hiz_valid=true,true,true
+    r.targets.glass_valid,r.targets.hiz_valid=true,true
     renderer_camera_cut(r)
     testing.expect(t,!r.has_previous && r.prev_jitter=={})
     testing.expect(t,!r.targets.taa_valid && !r.targets.reflect_valid && !r.targets.gi_reference_valid)
-    testing.expect(t,!r.targets.shadow.valid && !r.targets.glass_valid && !r.targets.hiz_valid)
+    testing.expect(t,!r.targets.glass_valid && !r.targets.hiz_valid)
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.ddgi.probes,probes)
     testing.expect_value(t,r.ddgi.irradiance,irradiance)

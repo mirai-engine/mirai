@@ -242,7 +242,8 @@ Gpu_Mesh :: struct {
 	uv_step:         f32,
 	uv1_step:        f32,
 	lod_reach:       f32, // how far a sphere of its levels reaches past its box, in its space
-	pad:             [2]u32,
+	bounds_word:     u32, // of a pose: the box and the cone of the normals of each cluster it poses, POSED_BOUNDS_WORDS each in the vertex pool, as the skin writes them; GPU_NONE: none
+	pad0:            u32,
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,

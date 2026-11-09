@@ -125,7 +125,11 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
     Cluster c = mesh_cluster(mesh, ordinal);
     bool posed = mesh.posed_word != INVALID;
     float3 low = inst.bounds_min.xyz, high = inst.bounds_max.xyz;
+    // A cluster of a pose has a box where the skin wrote one this frame.
+    Posed_Bounds pose;
+    bool boxed = !posed || posed_bounds(mesh, ordinal, pose);
     if (!posed) cluster_world_box(inst, mesh, c, low, high);
+    else if (boxed) instance_world_box(inst, pose.low, pose.high, low, high);
     // What the vertex hook moves of an instance of a batch stays in its box grown by its reach.
     if (!posed && instance_batched(index)) {
         float reach = batch_reach(batch_row(batch_of(index)));
@@ -133,16 +137,17 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         high += reach;
     }
 #ifdef MIRAI_CULL_CANDIDATES
-    if (!posed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
+    if (boxed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
 #else
     float scale = instance_scale(inst);
     Cluster_Cut cut = cluster_cut(inst, scale, mesh, c, frame.cut.x);
     if (!cut.drawn) return;
     if (materials[material_of(inst, cluster_material(mesh, c))].shared.alpha_mode == ALPHA_BLEND) return;
-    if (!posed) {
-        if (!frustum_visible(low, high) || cluster_backfacing(inst, scale, mesh, c, low, high)) return;
+    if (boxed) {
+        bool away = posed ? pose.cone && cone_backfacing(inst, scale, mesh, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, mesh, c, low, high);
+        if (!frustum_visible(low, high) || away) return;
         // What the depth pyramid hides asks too: it shows once what hides it moves.
-        if (cut.request) page_request(instance_mesh(inst), c.child_page, cut.pixels);
+        if (!posed && cut.request) page_request(instance_mesh(inst), c.child_page, cut.pixels);
         if (params.occlusion != 0u) {
             if (params.phase == 0u) {
                 if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {

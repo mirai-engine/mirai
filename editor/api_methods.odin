@@ -1069,7 +1069,13 @@ api_editor_capture :: proc(s:^Session,call:^api.Call) {
         gpu.renderer_pipelines_wait(s.app.renderer)
         api_frames(s,1,params.dt)
     }
-    if s.app.stats.frames_drawn==drawn {
+    // A minimized window draws nothing; the world alone is drawn into an image of its own.
+    minimized:=platform.input_frame(s.app.platform).window.minimized
+    if s.app.stats.frames_drawn==drawn && minimized && params.ui {
+        api.call_fail(call,api.SERVER_ERROR,"The window of the editor is minimized and draws nothing: restore it for the image with the UI, or pass ui false for the world alone through the camera of the viewport")
+        return
+    }
+    if s.app.stats.frames_drawn==drawn && !minimized {
         api.call_fail(call,api.SERVER_ERROR,fmt.tprintf("The renderer could not draw the frame: %s",s.app.renderer.error))
         return
     }

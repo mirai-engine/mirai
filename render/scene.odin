@@ -348,6 +348,10 @@ Scene_State :: struct {
 	light_tree_capacity:  int,
 	light_buffer:         rhi.Buffer,
 	light_tree_buffer:    rhi.Buffer,
+	light_grid:           Light_Grid,
+	light_grid_buffer:    rhi.Buffer,
+	light_grid_stale:     bool, // a light changed since the grid was placed
+	light_grid_dirty:     bool, // the grid was placed again and the GPU fills it in the next frame (light_grid_record)
 	lights_dirty:         bool,               // every light and node goes to the GPU
 	light_ranges:         [dynamic]Pool_Range, // else the lights that changed since the last upload
 	light_node_ranges:    [dynamic]Pool_Range, // and the nodes of the tree
@@ -1921,7 +1925,7 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
     r.gi_warm=true
     for view in views_all(r) {
         view.targets.reflect_valid,view.targets.gi_reference_valid,view.targets.taa_valid=false,false,false
-        view.targets.glass_valid,view.targets.shadow.valid,view.targets.hiz_valid=false,false,false
+        view.targets.glass_valid,view.targets.hiz_valid=false,false
         if reset_camera {view.has_previous=false}
     }
 }
@@ -2151,6 +2155,7 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			} else {ok = false}
 		}
 	}
+	if s.lights_dirty || len(s.light_ranges) > 0 {s.light_grid_stale = true}
 	if s.lights_dirty {
 		if s.light_region.lights > 0 {rhi.cmd_fill_buffer(cmd, s.light_buffer, u64(len(s.lights) * size_of(Gpu_Light)), u64(light_region_lights(s.light_region) * size_of(Gpu_Light)), 0)}
 		if upload_transient(r, cmd, s.lights[:], s.light_buffer) && upload_transient(r, cmd, s.light_tree[:], s.light_tree_buffer) {
@@ -2166,6 +2171,7 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	}
 	// The programs of the instances read the tables just uploaded.
 	if ok && !displaced_record(r, cmd) {ok = false}
+	ok &&= light_grid_update(r)
 	return ok
 }
 
@@ -2201,7 +2207,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

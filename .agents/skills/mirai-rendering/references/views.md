@@ -142,8 +142,8 @@ discarding them. Zero: there was none.
   `core.View` into the texture in this frame with a [pipeline](#render-pipelines)),
   `view_texture_pixels(app, texture)`, `view_texture_capture(app, texture)` and
   `view_texture_remove(app, texture)`.
-- The standard `Light` pipeline leaves out contact occlusion, traced reflections and per-block
-  shadows (hard per-pixel shadows), for views that are shown small.
+- The standard `Light` pipeline leaves out contact occlusion, traced reflections and the indirect
+  light, for views that are shown small.
 - What runs once per frame (probes, the extensions' `Simulate` stage, previews) goes with the first
   window view: a texture view reads the probes of the previous frame. In a textures-only frame,
   the `Simulate` stage goes with the first of them.
@@ -204,7 +204,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
   requested leaves its place.
 - **Standard** (`Standard_Pipeline`, `standard_pipeline_passes`), always present:
   - `Full`: all the stages ([frame graph](frame-graph.md#frame-graph)).
-  - `Light`: `Full` without `Reflections` or `Indirect`, with `Direct` in `Traced` mode.
+  - `Light`: `Full` without `Reflections` or `Indirect`.
 - **Use.** `Frame_View.pipeline` chooses a view's. 0 is the frame's main one
   (`renderer_main_pipeline`, which lasts that frame) in a window view, and `Full` in a texture one.
   Changing pipeline cuts the view's histories.
@@ -465,8 +465,8 @@ Restrictions of the `pass_*`:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like `shadow_trace.comp`) and
-    receives that of the rays the renderer traces: by hardware, and through the colored-shadow glass
+    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like
+    `direct_samples.comp`) and receives that of the rays the renderer traces: by hardware, and through the colored-shadow glass
     filters (`colored_shadows` and some blend instance). Without the variant, the stage itself: one
     that traces without `hw` does not see the scene with ray queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
@@ -518,8 +518,8 @@ Hooks:
   `frame.time`; the G-buffer also calls it with the previous time for the motion vectors. It moves
   only what is rasterized: shadows and reflections see the mesh at rest.
 - **Lights** (`mirai_extension_light_count` and an `Extension_Light` per index, in
-  `lighting.slang`): they are lights like the others. The [shadow](lights.md#shadows) blocks trace
-  their ray (and the optional second) to a point of their disc and `direct` adds their unshadowed
+  `lighting.slang`): they are lights like the others. The
+  [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to a point of their disc and adds their unshadowed
   light; `direct_lighting` adds them in a single loop on thin geometry and on reflection, GI and
   probe hits.
 

@@ -97,4 +97,21 @@ Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading
     light.coat_radiance = around[PROBE_COAT] * frame.gi_strength;
     return light;
 }
+
+// A light in the bits of one float: 8 bits of each channel under an exponent
+// they share, of 5 bits over the range of a half float, and bit 29 set with
+// bit 30 clear, so that the float is a normal one, which a texture keeps as it
+// is (contact_pixels.comp takes two to the composition in one texel).
+float light_pack(float3 light) {
+    light = clamp(finite_or_zero(light), 0.0, 65000.0);
+    float most = max(light.r, max(light.g, light.b));
+    int e = clamp(int(floor(log2(max(most, 1e-30)))) + 1, -15, 16);
+    uint3 q = min(uint3(light * exp2(float(8 - e)) + 0.5), uint3(255u));
+    return asfloat((1u << 29) | (uint(e + 15) << 24) | (q.r << 16) | (q.g << 8) | q.b);
+}
+float3 light_unpack(float packed) {
+    uint bits = asuint(packed);
+    float3 q = float3(float((bits >> 16) & 255u), float((bits >> 8) & 255u), float(bits & 255u));
+    return q * exp2(float(int((bits >> 24) & 31u) - 23));
+}
 #endif

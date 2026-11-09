@@ -34,7 +34,7 @@ skin_preview_init :: proc(r:^Renderer,state:^Skin_Preview_GPU,g:asset.Mesh_Geome
     vertex_words:=make([dynamic]u32,0,len(g.vertices)*VERTEX_WORDS,context.temp_allocator)
     index_words:=make([dynamic]u32,0,len(g.clusters)*CLUSTER_WORDS,context.temp_allocator)
     row:=Gpu_Mesh{cluster_count=next.clusters,level_count=u32(len(g.levels)),page_count=u32(len(g.pages)),vertex_count=count,flags=mesh_stream_flags(g.flags),
-        posed_word=GPU_NONE,previous_word=GPU_NONE,part_word=GPU_NONE,position_step=g.position_step,uv_step=g.uv_step,uv1_step=g.uv1_step}
+        posed_word=GPU_NONE,previous_word=GPU_NONE,part_word=GPU_NONE,bounds_word=GPU_NONE,position_step=g.position_step,uv_step=g.uv_step,uv1_step=g.uv1_step}
     append(&index_words,..mem.slice_data_cast([]u32,g.clusters))
     row.page_word=u32(len(index_words))
     if !pages_append(g,&vertex_words,&index_words,0) {return false}
@@ -56,7 +56,7 @@ skin_preview_init :: proc(r:^Renderer,state:^Skin_Preview_GPU,g:asset.Mesh_Geome
     (cast(^Gpu_Mesh)rhi.buffer_mapped(device,next.meshes))^=row
     mem.copy(rhi.buffer_mapped(device,next.vertices),raw_data(vertex_words),len(vertex_words)*4)
     mem.copy(rhi.buffer_mapped(device,next.indices),raw_data(index_words),len(index_words)*4)
-    (cast(^Skin_Params)rhi.buffer_mapped(device,next.params))^={clusters=next.clusters,output=next.posed_word,previous=next.posed_word+count*POSED_WORDS}
+    (cast(^Skin_Params)rhi.buffer_mapped(device,next.params))^={clusters=next.clusters,output=next.posed_word,previous=next.posed_word+count*POSED_WORDS,bounds=GPU_NONE}
     skin_preview_destroy(device,state)
     state^=next;success=true
     return true

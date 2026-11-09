@@ -760,6 +760,24 @@ bool occluder_changed(float3 origin, float3 direction, float reach, uint stopper
     return false;
 }
 
+// Whether a box of what changed since the frame before (frame.moved) reaches
+// into the cone from o along `axis` (unit), `far` metres long and `spread`
+// wider over each metre: what any shadow ray inside it may have met of it, at
+// one test a box for all of them (occluder_changed).
+bool occluder_changed_in_cone(float3 o, float3 axis, float far, float spread) {
+    uint count = frame.moved.x;
+    for (uint i = 0u; i < count; i++) {
+        float3 low = frame.moved_boxes[2u * i].xyz;
+        float3 high = frame.moved_boxes[2u * i + 1u].xyz;
+        float3 to = 0.5 * (low + high) - o;
+        float t = clamp(dot(to, axis), 0.0, far);
+        float3 off = to - axis * t;
+        float room = 0.5 * length(high - low) + spread * t;
+        if (dot(off, off) <= room * room) return true;
+    }
+    return false;
+}
+
 // Whether light `index` of the lights of the scene moved or changed its shape
 // since the frame before.
 bool light_moved(uint index) {

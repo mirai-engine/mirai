@@ -280,16 +280,6 @@ int2 block_pixel(uint frame_index, uint block) {
     return p;
 }
 
-// What the shadow ray of a block (shadow_trace.comp) adds to the state its
-// share keeps when it met an occluder that changed since the frame before
-// (occluder_changed of trace.slang), or a light that moved: the history of
-// the block starts again (shadow_temporal.comp). The state is 0 (no light
-// faces the pixel), 1 (no ray met a caster) or 2 and the blur its penumbras
-// ask for, which stays under 1.
-#define SHADOW_RAY_MOVED 4.0
-bool shadow_ray_moved(float state) { return state >= SHADOW_RAY_MOVED - 0.5; }
-float shadow_ray_state(float state) { return shadow_ray_moved(state) ? state - SHADOW_RAY_MOVED : state; }
-
 // ---------------------------------------------------------------- instances of batches
 // Below frame.instance_count an instance index names an instance of the
 // scene; from it on, an instance of a batch (render/batch.odin): its slot

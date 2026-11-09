@@ -68,7 +68,6 @@ Render_Jitter :: gpu.Render_Jitter
 RENDER_MIPS_ALL :: gpu.RENDER_MIPS_ALL
 CUSTOM_PASS_SLOTS :: gpu.CUSTOM_PASS_SLOTS
 Pass_Camera :: gpu.Camera // what Pass.camera holds: the camera of the view a pass is for
-Direct_Mode :: gpu.Direct_Mode
 Standard_Pipeline :: gpu.Standard_Pipeline
 Format :: rhi.Format
 
