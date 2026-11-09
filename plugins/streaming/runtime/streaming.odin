@@ -91,7 +91,7 @@ Home :: struct {entity,section:core.Entity}
 streaming_crossings :: proc(
     motions:core.Read(core.Motion),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),roaming:core.Read(scene.Roaming),
     hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),members:^core.Table(scene.Section_Member),
-    crossings:^Streaming_Crossings,
+    crossings:^Streaming_Crossings,problems:^core.Problems,
 ) {
     if hierarchy.ptr.version!=crossings.hierarchy {
         clear(&crossings.homes)
@@ -107,7 +107,10 @@ streaming_crossings :: proc(
         at:=core.row_of(worlds,e)
         if at<0 || !moved.all && core.stamp(worlds,at)<=moved.since {continue}
         index:=core.entity_index(e)
-        if index>=len(crossings.homes) {resize(&crossings.homes,index+1)}
+        if index>=len(crossings.homes) && resize(&crossings.homes,index+1)!=nil {
+            core.report(problems,e,"streaming.memory","out of memory to follow what moves between sections; this entity stays in the section it hangs from: free memory")
+            continue
+        }
         if crossings.homes[index].entity!=e {
             section:=core.NONE
             for up:=core.parent_of(hierarchy,e);up!=core.NONE;up=core.parent_of(hierarchy,up) {

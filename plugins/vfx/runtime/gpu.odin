@@ -1,5 +1,6 @@
 package vfx
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -351,13 +352,16 @@ pool_make :: proc(pool:^Pool,capacity:u32,allocator:=context.allocator) -> bool 
     previous,refused:=pool.capacity,pool.refused
     pool_free(pool,allocator)
     pool^={capacity=capacity,previous=previous,refused=refused}
-    pool.slots=make([]Pool_Slot,EMITTER_CAPACITY,allocator)
-    pool.order=make([]u16,EMITTER_CAPACITY,allocator)
-    pool.free=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.attribute_free=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.gpu=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
-    pool.draws=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
-    if pool.slots==nil || pool.order==nil || pool.free==nil || pool.attribute_free==nil || pool.gpu==nil || pool.draws==nil {
+    errors:[6]runtime.Allocator_Error
+    pool.slots,errors[0]=make([]Pool_Slot,EMITTER_CAPACITY,allocator)
+    pool.order,errors[1]=make([]u16,EMITTER_CAPACITY,allocator)
+    pool.free,errors[2]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
+    pool.attribute_free,errors[3]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
+    pool.gpu,errors[4]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
+    pool.draws,errors[5]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
+    starved:=false
+    for error in errors {starved||=error!=nil}
+    if starved {
         pool_free(pool,allocator)
         return false
     }
