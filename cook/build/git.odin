@@ -5,6 +5,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
 // Git and the assets of a repository. A kind of asset that is a document
@@ -235,7 +236,7 @@ git_setup :: proc(engine_root,folder:string,allocator:=context.allocator) -> (do
     file,_,text,changed,read:=git_attributes_of(engine_root,folder,done.repository)
     if !read {return done,.Plugins_Failed}
     if changed {
-        if os.write_entire_file(file,text)!=nil {return done,.Attributes_Failed}
+        if serial.file_write_atomic(file,transmute([]u8)text)!=.None {return done,.Attributes_Failed}
         done.attributes=strings.clone(file,allocator)
     }
     settings:=git_settings(engine_root,done.repository,context.temp_allocator)

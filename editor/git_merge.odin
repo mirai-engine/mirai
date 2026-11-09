@@ -3,7 +3,6 @@ package editor
 import "core:fmt"
 import "core:mem"
 import vmem "core:mem/virtual"
-import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/build"
@@ -404,7 +403,7 @@ git_merge_finish :: proc(s:^Session) -> string {
     clear(&g.finish_paths)
     for &file,f in g.merge.files {
         data:=git_merge_resolved(s,f)
-        if data!=nil && os.write_entire_file(git_file_absolute(g,&file),data)!=nil {return fmt.tprintf("%s could not be written",base.text_get(file.path[:]))}
+        if data!=nil && serial.file_write_atomic(git_file_absolute(g,&file),data)!=.None {return fmt.tprintf("%s could not be written",base.text_get(file.path[:]))}
         append(&g.finish_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))
     }
     git_start(s,.Finish)

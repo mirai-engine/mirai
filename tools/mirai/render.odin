@@ -146,7 +146,7 @@ Render_Run :: struct {
     name:string, // head or base
     checkout,project,commit,editor:string,
     quality:bool,          // measured without the cost (--quality)
-    dev:bool,              // built --dev; a report from before it existed was built --release
+    dev:bool,              // built --dev
     loaded:bool,           // something else loaded the GPU while it measured
     conditions:json.Value, // of the first profile.capture
     notes:[dynamic]string,

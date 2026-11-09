@@ -29,7 +29,6 @@ import "mirai:std/serial"
 // its program; overlays and hidden names are always the material's own.
 
 MATERIAL_VERSION :: 1
-MATERIAL_OLDEST :: MATERIAL_VERSION
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
@@ -282,7 +281,7 @@ material_bytes :: proc(types:^Types,desc:Material_Desc,allocator:=context.alloca
 
 // A material stored before a field existed reads that field from MATERIAL_DEFAULTS.
 material_view :: proc(a:^Asset,types:^Types) -> (view:Material_View,error:Error) {
-    kind_check(a,KIND_MATERIAL,MATERIAL_OLDEST,MATERIAL_VERSION) or_return
+    kind_check(a,KIND_MATERIAL,MATERIAL_VERSION) or_return
     defaults:=MATERIAL_DEFAULTS
     view.info=asset_row(a,types,"material",Material_Info,&defaults) or_return
     if _,found:=asset_table(a,"imported");found {view.imported=asset_row(a,types,"imported",Material_Info,&defaults) or_return}

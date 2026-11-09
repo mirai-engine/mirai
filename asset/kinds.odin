@@ -34,29 +34,28 @@ Kind_Info :: struct {
     kind:Fourcc,
     extension:string,
     name:string,
-    version:u16, // the kind_version this build writes (kind_check); 0 for a kind whose plugin keeps it
-    oldest:u16,  // the oldest kind_version it reads, migrating it
+    version:u16, // the kind_version this build writes and reads (kind_check); 0 for a kind whose plugin keeps it
     presentation:bool, // only shown or heard: a dedicated server, which has neither renderer nor mixer, ships none
     merged:bool,       // a document of rows that are edited: git merges it row by row and diffs its values (mirai asset merge, dump); false: bulk an import, a bake or a recording makes, which git keeps whole
 }
 
 KINDS :: [?]Kind_Info{
-    {KIND_MESH,".mesh","mesh",MESH_VERSION,MESH_OLDEST,false,false},
-    {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,TEXTURE_OLDEST,true,false},
-    {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,MATERIAL_OLDEST,false,true},
-    {KIND_SCENE,".scene","scene",SCENE_VERSION,SCENE_OLDEST,false,true},
-    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,SCENE_OLDEST,false,true},
-    {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,ANIMATION_OLDEST,false,false},
-    {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,SKELETON_OLDEST,false,true},
-    {KIND_SOUND,".sound","sound",SOUND_VERSION,SOUND_OLDEST,true,false},
-    {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,SOUND_SET_OLDEST,true,true},
-    {KIND_UI,".ui","ui",UI_VERSION,UI_OLDEST,true,true},
-    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,FRACTURE_OLDEST,false,false},
-    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,0,false,false},
-    {KIND_FONT,".font","font",FONT_VERSION,FONT_OLDEST,true,false},
-    {KIND_STRINGS,".strings","strings",STRINGS_VERSION,STRINGS_OLDEST,false,true},
-    {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,PROMPTS_OLDEST,true,true},
-    {KIND_RECORDS,".records","records",RECORDS_VERSION,RECORDS_OLDEST,false,true},
+    {KIND_MESH,".mesh","mesh",MESH_VERSION,false,false},
+    {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,true,false},
+    {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,false,true},
+    {KIND_SCENE,".scene","scene",SCENE_VERSION,false,true},
+    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,false,true},
+    {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,false,false},
+    {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,false,true},
+    {KIND_SOUND,".sound","sound",SOUND_VERSION,true,false},
+    {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,true,true},
+    {KIND_UI,".ui","ui",UI_VERSION,true,true},
+    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,false,false},
+    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,false,false},
+    {KIND_FONT,".font","font",FONT_VERSION,true,false},
+    {KIND_STRINGS,".strings","strings",STRINGS_VERSION,false,true},
+    {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,true,true},
+    {KIND_RECORDS,".records","records",RECORDS_VERSION,false,true},
 }
 
 kind_of_extension :: proc(path:string) -> (kind:Fourcc,found:bool) {
@@ -74,67 +73,29 @@ kind_info :: proc(kind:Fourcc) -> (info:Kind_Info,found:bool) {
 
 // The rule of the versions of every kind, the engine's and the plugins':
 //
-//   - A kind writes its current version and reads every version from its
-//     oldest one to it: rows migrate by the schema the file carries.
-//   - A table, or a column of a row, added with a default keeps the version: a
-//     file without it reads the default (asset_rows with a default, a table
-//     that may be missing).
-//   - A change the schema migrates but whose old files need a step (a table
-//     that must exist since a version, a value an old file means otherwise)
-//     raises the version and keeps the oldest: the reader branches on the
-//     version of the file (asset_rows_since).
-//   - A change of what a stored value means that no step undoes raises the
-//     version and the oldest together: an older file fails with Version and
-//     version_message says how to make it again.
-//   - A file newer than the build fails with Version too.
+//   - A kind reads only the version it writes: a file of another version,
+//     older or newer, fails with Version and version_message says how to make
+//     it again.
+//   - A change of what a kind stores (a table, a column, what a value means)
+//     raises its version, and every file of the kind is made again.
+//   - Rows are read by the schema the file carries, by the names of their
+//     fields: a game changes its types (a component, a record) while its
+//     files stay.
 //
 // What every reader of a kind checks first.
-kind_check :: proc "contextless" (a:^Asset,kind:Fourcc,oldest,current:u16) -> Error {
+kind_check :: proc "contextless" (a:^Asset,kind:Fourcc,version:u16) -> Error {
     if a.blob.header.kind!=kind {return .Invalid}
-    if kind_age(a.blob.header.kind_version,oldest,current)>=.Too_Old {return .Version}
+    if a.blob.header.kind_version!=version {return .Version}
     return .None
 }
 
-Kind_Age :: enum u8 {
-    Current,
-    Old,     // older than the build's, and read by migrating it
-    Too_Old, // older than the oldest the build reads
-    Newer,   // written by a newer build
-}
-
-kind_age :: proc "contextless" (version,oldest,current:u16) -> Kind_Age {
-    switch {
-    case version==current: return .Current
-    case version>current: return .Newer
-    case version<oldest: return .Too_Old
-    }
-    return .Old
-}
-
-// The rows of a table that a kind writes since a version: a file of an older
-// version reads none when it lacks it.
-asset_rows_since :: proc(a:^Asset,types:^Types,since:u16,table_name,column_name:string,$T:typeid,default:^T=nil) -> (rows:[]T,error:Error) {
-    if a.blob.header.kind_version<since {
-        if _,found:=asset_table(a,table_name);!found {return nil,.None}
-    }
-    return asset_rows(a,types,table_name,column_name,T,default)
-}
-
-// What to tell of an asset its kind reads by migrating it: its version and how
-// to write the current one. Empty for one of the current version or one the
-// build does not read (version_message).
-version_notice :: proc(version:u16,info:Kind_Info,allocator:=context.allocator) -> string {
-    if kind_age(version,info.oldest,info.version)!=.Old {return ""}
-    return fmt.aprintf("a %s of version %d, which this build reads by migrating it and writes as version %d: import it again or save it from the editor to write the current version",info.name,version,info.version,allocator=allocator)
-}
-
 // What to tell of an asset that failed with Version: which file it is, its
-// kind and version, the versions this build reads, and how to make it again:
+// kind and version, the version this build reads, and how to make it again:
 // for an imported one the command that imports its source again into its
 // folder, for one newer than the build a newer engine. path: the file of the
-// asset; oldest and current: the versions its kind reads, those of KINDS for a
-// kind of the engine when both are 0.
-version_message :: proc(a:^Asset,types:^Types,path:string,oldest:u16=0,current:u16=0,allocator:=context.allocator) -> string {
+// asset; current: the version its kind reads, that of KINDS for a kind of the
+// engine when it is 0.
+version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocator:=context.allocator) -> string {
     slashed :: proc(path:string) -> string {
         result,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
         return result
@@ -147,17 +108,16 @@ version_message :: proc(a:^Asset,types:^Types,path:string,oldest:u16=0,current:u
     }
     buffer:[4]u8
     kind:=fourcc_text(a.blob.header.kind,&buffer)
-    oldest,current:=oldest,current
+    current:=current
     if known,found:=kind_info(a.blob.header.kind);found {
         kind=known.name
-        if oldest==0 && current==0 {oldest,current=known.oldest,known.version}
+        if current==0 {current=known.version}
     }
     version:=a.blob.header.kind_version
     stale:=fmt.tprintf("%s is a %s of version %d, which this build does not read",slashed(path),kind,version)
     if current!=0 {
-        reads:=fmt.tprintf("version %d",current) if oldest>=current else fmt.tprintf("versions %d to %d",oldest,current)
-        if version>current {return fmt.aprintf("%s is a %s of version %d, newer than this build, which reads %s: open it with a newer engine",slashed(path),kind,version,reads,allocator=allocator)}
-        stale=fmt.tprintf("%s is a %s of version %d, older than this build reads (%s)",slashed(path),kind,version,reads)
+        if version>current {return fmt.aprintf("%s is a %s of version %d, newer than this build, which reads version %d: open it with a newer engine",slashed(path),kind,version,current,allocator=allocator)}
+        stale=fmt.tprintf("%s is a %s of version %d, older than this build reads (version %d)",slashed(path),kind,version,current)
     }
     info,_:=import_info(a,types)
     if info==nil {return fmt.aprintf("%s; it was not imported: make it again",stale,allocator=allocator)}

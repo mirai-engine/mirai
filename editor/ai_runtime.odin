@@ -81,7 +81,6 @@ ai_initialize :: proc(s:^Session) {
     count,_:=ai_store_list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
     for &conversation in waiting[:count] {
         if m.task_count==AI_TASK_CAPACITY {break}
-        if conversation.kind==.Archived && ai_external_client(string(conversation.provider[:conversation.provider_len]))=="" {continue}
         if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(s,task)}
     }
 }

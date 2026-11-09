@@ -50,7 +50,6 @@ ai_store_reopens_chats_with_metadata_and_changed_stream_text :: proc(t:^testing.
     testing.expect_value(t,ai_store_save(&store,&c,&transcript,1),"")
     ai_store_close(&store)
     testing.expect(t,os.is_file(project.path(root,".mirai/ai/chat.db",allocator=context.temp_allocator)))
-    testing.expect(t,!os.exists(project.path(root,".mirai/ai/chats/1.json",allocator=context.temp_allocator)))
     testing.expect_value(t,ai_store_open(&store,root),"")
     conversations:[8]Ai_Conversation
     count,list_message:=ai_store_list(&store,conversations[:])
@@ -266,72 +265,6 @@ ai_store_reports_a_corrupt_database_and_keeps_it :: proc(t:^testing.T) {
     testing.expect_value(t,store.folder,"")
     kept,error:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,error==nil && string(kept)==garbage,"and stays as it was")
-}
-
-@(private="file")
-ai_store_test_write :: proc(t:^testing.T,folder,name,text:string) {
-    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",folder,name),text)==nil)
-}
-
-@(test)
-ai_store_imports_a_legacy_folder_once :: proc(t:^testing.T) {
-    root:=ai_store_test_root("legacy")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
-    folder:=project.path(root,".mirai/ai/chats",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(folder)==nil)
-    ai_store_test_write(t,folder,"7.json",`{"version":1,"id":7,"title":"Old chat","document":"scene/old.scene","provider":"codex","model":"m","effort":"low","native_session":"n","last":"Bye","created_at":10,"updated_at":20,"seconds":1.5,"usage":{"input":3}}`)
-    ai_store_test_write(t,folder,"7.log",
-        `{"sequence":0,"kind":1,"text":"Paint the barn","role":"user"}`+"\n"+
-        `{"sequence":1,"annotation":true,"role":"early","event_type":"early"}`+"\n"+
-        `{"sequence":1,"text":"The barn","role":"assistant"}`+"\n"+
-        `{"sequence":1,"text":"The barn is red","role":"assistant"}`+"\n"+
-        `{"sequence":0,"annotation":true,"role":"user","event_type":"user_message","context":"{}"}`+"\n"+
-        `{"sequence":2,"text":"cut in the mi`)
-    ai_store_test_write(t,folder,"7.review.json","{}")
-    ai_store_test_write(t,folder,"9.json","no json")
-    ai_store_test_write(t,folder,"12.log","")
-    ai_store_test_write(t,project.path(root,".mirai/ai",allocator=context.temp_allocator),"search.db","old index")
-
-    store:Ai_Store
-    defer ai_store_close(&store)
-    testing.expect_value(t,ai_store_open(&store,root),"")
-    for round in 0..<2 {
-        conversations:[4]Ai_Conversation
-        count,message:=ai_store_list(&store,conversations[:])
-        testing.expect_value(t,message,"")
-        testing.expect_value(t,count,1)
-        testing.expect_value(t,conversations[0].id,u64(7))
-        testing.expect_value(t,conversations[0].kind,Ai_Conversation_Kind.Archived)
-        testing.expect_value(t,string(conversations[0].title[:conversations[0].title_len]),"Old chat")
-        testing.expect_value(t,conversations[0].usage.input,i64(3))
-        lines:[8]Ai_Stored_Line
-        line_count,page_message:=ai_store_page(&store,7,-1,lines[:])
-        testing.expect_value(t,page_message,"")
-        testing.expect_value(t,line_count,2)
-        testing.expect_value(t,lines[0].kind,Ai_Line_Kind.Prompt)
-        testing.expect_value(t,lines[0].event_type,"user_message")
-        testing.expect_value(t,lines[1].text,"The barn is red")
-        testing.expect_value(t,lines[1].role,"assistant")
-        testing.expect_value(t,lines[1].event_type,"text")
-        testing.expect_value(t,ai_store_latest_user_message(&store,7),i64(0))
-        testing.expect_value(t,len(ai_store_test_hits(t,&store,"barn")),2)
-        testing.expect_value(t,len(ai_store_test_hits(t,&store,"cut")),0)
-        if round==0 {
-            ai_store_close(&store)
-            testing.expect_value(t,ai_store_open(&store,root),"")
-        }
-    }
-    for gone in ([]string{"7.json","7.log","12.log","../search.db"}) {
-        testing.expectf(t,!os.exists(fmt.tprintf("%s/%s",folder,gone)),"%s stays",gone)
-    }
-    for kept in ([]string{"7.review.json","9.json"}) {
-        testing.expectf(t,os.exists(fmt.tprintf("%s/%s",folder,kept)),"%s is gone",kept)
-    }
-    id,message:=ai_store_next_id(&store)
-    testing.expect_value(t,message,"")
-    testing.expect_value(t,id,u64(10))
 }
 
 @(test)

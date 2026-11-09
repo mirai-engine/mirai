@@ -23,7 +23,6 @@ import phys "plugins:physics/runtime"
 BAKE_KIND :: asset.Fourcc(u32('N')|u32('A')<<8|u32('V')<<16|u32('M')<<24)
 BAKE_EXTENSION :: ".navmesh"
 BAKE_VERSION :: 3
-BAKE_OLDEST :: BAKE_VERSION
 
 // The navigation meshes the scene saves, on an entity of the scene; none:
 // built when it loads. Each one in the world, of the scene or of a section,
@@ -212,7 +211,7 @@ bake_rows :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid) ->
 // zones; false when the file is not one this version reads, leaving the
 // meshes as they were.
 bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_Keys=nil) -> (count:int,ok:bool) {
-    if asset.kind_check(file,BAKE_KIND,BAKE_OLDEST,BAKE_VERSION)!=.None {return}
+    if asset.kind_check(file,BAKE_KIND,BAKE_VERSION)!=.None {return}
     classes:=bake_rows(file,types,"classes",Bake_Class) or_return
     tiles:=bake_rows(file,types,"tiles",Bake_Tile) or_return
     links:=bake_rows(file,types,"links",Bake_Link) or_return

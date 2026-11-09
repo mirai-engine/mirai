@@ -13,7 +13,6 @@ import "mirai:std/serial"
 KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
 EXTENSION :: ".terrain"
 VERSION :: 9
-OLDEST :: VERSION
 HEIGHT_SAMPLES_MAX :: 16385
 MESH_SAMPLES_MAX :: 1025
 VOLUME_SAMPLES_MAX :: 129
@@ -190,7 +189,7 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
 // pages in that file (asset_load_front opens it without them), read when
 // needed.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,editable:=true,pages:="") -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,KIND,OLDEST,VERSION)!=.None {return}
+    if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
     if info.kind==.Mesh {return source_mesh_load(s,file,info^,types,allocator)}

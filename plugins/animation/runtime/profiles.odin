@@ -11,7 +11,6 @@ import mm "mirai:std/math"
 
 POSE_KIND :: asset.Fourcc(u32('P')|u32('O')<<8|u32('S')<<16|u32('E')<<24)
 POSE_VERSION :: 6
-POSE_OLDEST :: POSE_VERSION
 POSE_CONSTRAINTS :: 256
 
 @(component,description="Applies a pose profile with IK, aiming, joint limits or foot grounding. Gameplay supplies the dynamic targets.")
@@ -119,7 +118,7 @@ pose_profile_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profil
     return asset.document_save(&doc,path)
 }
 pose_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Pose_Profile,error:asset.Error) {
-    asset.kind_check(file,POSE_KIND,POSE_OLDEST,POSE_VERSION) or_return
+    asset.kind_check(file,POSE_KIND,POSE_VERSION) or_return
     profile.ik=asset.asset_rows(file,types,"ik","",IK_Constraint) or_return
     profile.look=asset.asset_rows(file,types,"look","",Look_Constraint) or_return
     profile.limits=asset.asset_rows(file,types,"limits","",Rotation_Constraint) or_return

@@ -1461,8 +1461,8 @@ api_records_export :: proc(s:^Session,call:^api.Call) {
     }
     c,leaves:=records_api_context(s,&e)
     text,columns:=records_api_csv(&c,leaves)
-    if error:=os.write_entire_file(file,text);error!=nil {
-        api.call_failf(call,api.INVALID_PARAMS,"%s could not be written: %v; its folder has to exist",file,error)
+    if serial.file_write_atomic(file,transmute([]u8)text)!=.None {
+        api.call_failf(call,api.INVALID_PARAMS,"%s could not be written; its folder has to exist",file)
         return
     }
     out:=call.out

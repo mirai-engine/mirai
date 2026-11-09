@@ -29,7 +29,6 @@ import "mirai:std/serial"
 KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('R')<<16|u32('T')<<24)
 EXTENSION :: ".particle"
 VERSION :: 2
-OLDEST :: VERSION
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
@@ -227,7 +226,7 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
 
 // A particle stored before a field existed reads that field from PARTICLE_DEFAULTS.
 particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,error:asset.Error) {
-    asset.kind_check(a,KIND,OLDEST,VERSION) or_return
+    asset.kind_check(a,KIND,VERSION) or_return
     defaults:=PARTICLE_DEFAULTS
     view.info=asset.asset_row(a,types,"particle",Particle_Info,&defaults) or_return
     view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
