@@ -61,6 +61,19 @@ a_wait_goes_on_while_the_process_works_and_a_silent_one_has_hung :: proc(t:^test
     testing.expect(t,client_hung(&waiting,8,at(start,CLIENT_HUNG_SECONDS*3)),"no CPU for the whole time")
 }
 
+// A build of minutes says so a few times, not every half minute.
+@(test)
+each_notice_of_a_long_wait_comes_twice_as_late_as_the_last :: proc(t:^testing.T) {
+    noticed,interval,notices:=0,0,0
+    for notices<8 && client_notice_next(noticed)<600 {
+        next:=client_notice_next(noticed)
+        if interval>0 {testing.expect_value(t,next-noticed,2*interval)}
+        interval,noticed=next-noticed,next
+        notices+=1
+    }
+    testing.expectf(t,notices>0 && notices<=4,"%d notices in ten minutes",notices)
+}
+
 @(test)
 a_process_says_its_work_or_that_it_ended :: proc(t:^testing.T) {
     first:=process_sample(os.get_pid())

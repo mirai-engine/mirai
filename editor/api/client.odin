@@ -14,14 +14,14 @@ import "mirai:std/serial"
 CLIENT_MAX_RESPONSE :: 32<<20
 CLIENT_POLL_MS :: 1000      // between looks at the editor while no answer comes
 CLIENT_HUNG_SECONDS :: 30   // without any CPU use by the editor: it hung, it is not busy
-CLIENT_NOTICE_SECONDS :: 30 // between the notices of a call that goes on waiting
+CLIENT_NOTICE_SECONDS :: 30 // until the first notice of a call that goes on waiting
 
 // What a client knows of the editor it waits for, to tell one that works from
 // one that ended or hung. Zero for a wait bound only by its timeout.
 Client_Watch :: struct {
     pid:int,      // 0: unknown, only the connection tells
     log:string,   // of that editor; "" when it has none
-    label:string, // what the notices of a long wait name; "": no notices
+    label:string, // what the notices of the call name; "": no notices
 }
 
 // What the system says of a process. work grows while any of its threads
@@ -116,13 +116,18 @@ client_wait :: proc(socket:net.TCP_Socket,port,timeout_ms:int,watch:Client_Watch
             if sample.gone {return client_ended(allocator,port,watch)}
             if sample.known && client_hung(waiting,sample.work,time.tick_now()) {return client_hung_error(allocator,port,watch)}
         }
-        if seconds:=elapsed/1000;watch.label!="" && seconds>=waiting.noticed+CLIENT_NOTICE_SECONDS {
+        if seconds:=elapsed/1000;watch.label!="" && seconds>=client_notice_next(waiting.noticed) {
             waiting.noticed=seconds
             who:=watch.pid!=0?fmt.tprintf("the editor (pid %d) is working",watch.pid):fmt.tprintf("the editor at 127.0.0.1:%d has not answered",port)
             fmt.eprintfln("%s: still waiting, %d s so far: %s; --timeout S limits the wait",watch.label,seconds,who)
         }
     }
 }
+
+// The second of the next notice of a wait after one at noticed: each interval
+// doubles the one before, so a long build says little.
+@(private)
+client_notice_next :: proc(noticed:int) -> int {return noticed*2+CLIENT_NOTICE_SECONDS}
 
 // Whether the process has used no CPU for CLIENT_HUNG_SECONDS up to now, with
 // work its reading at that moment.
@@ -182,14 +187,14 @@ response_head :: proc(head:string) -> (status,length:int) {
 
 // The fields of a JSON-RPC response: result and error are JSON text.
 @(private)
-Envelope :: struct {id,result,error:string}
+Envelope :: struct {id,result,error,note:string}
 
 @(private)
 envelope_read :: proc(allocator:runtime.Allocator,text:string) -> (envelope:Envelope,ok:bool) {
-    values:[4]string
-    if !object_values(allocator,text,{"jsonrpc","id","result","error"},values[:]) {return {},false}
+    values:[5]string
+    if !object_values(allocator,text,{"jsonrpc","id","result","error","note"},values[:]) {return {},false}
     if values[0]!=`"2.0"` {return {},false}
-    return {values[1],values[2],values[3]},true
+    return {values[1],values[2],values[3],values[4]},true
 }
 
 @(private)
@@ -203,7 +208,8 @@ error_read :: proc(allocator:runtime.Allocator,text:string) -> Error {
 
 // Calls a method of the server on port, in the turn of an AI task when task
 // is not empty, or as the agent client names. params is a JSON object. The
-// result is JSON text. watch tells an editor that ended or hung from one that works.
+// result is JSON text. watch tells an editor that ended or hung from one that
+// works, and its label names on stderr the note of an answer.
 rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:runtime.Allocator,task:string="",client:string="",watch:=Client_Watch{}) -> (result:string,error:Error,ok:bool) {
     w:serial.Writer
     serial.writer_init(&w,len(params)+128,allocator)
@@ -221,6 +227,7 @@ rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:r
     if envelope.id!=expected || envelope.result=="" {
         return "",client_error(allocator,BAD_RESPONSE,"the answer does not match the request"),false
     }
+    if note,noted:=string_value(allocator,envelope.note);noted && watch.label!="" {fmt.eprintfln("%s: %s",watch.label,note)}
     return envelope.result,{},true
 }
 

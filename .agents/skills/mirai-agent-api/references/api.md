@@ -88,7 +88,7 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   headless one too, between calls, instead of loading the library into the old one: it runs the
   program and reads the stamp of the folder it started from (`Session.program`), not where the
   system says its moved executable is, and the session record follows it to the new process, so
-  the next call reaches it through the port file (`--wait` covers its start), its `build.status`
+  the next call reaches it through the port file, its `build.status`
   says `Built`, and `mirai session` still knows it as the project's. `mirai build engine` does not restart sessions: it names them.
 - `stop` never saves: unsaved changes (from `editor.documents` and `asset.unsaved`) are discarded
   automatically if all are copies under `.mirai/tmp/`; otherwise it fails listing them and
@@ -147,8 +147,8 @@ machine with a GPU.
 
 ```sh
 mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
-  [--wait-until CONDITION [--every S]]
-  [--project P] [--port N] [--timeout S] [--wait S]
+  [--wait-until CONDITION]
+  [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
 mirai rpc --batch <calls.jsonl> [the same options]
 ```
@@ -160,11 +160,13 @@ mirai rpc --batch <calls.jsonl> [the same options]
   looks like JSON, quote it as JSON or use the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
   starts its headless `--dev` session as `mirai session start` does and then makes the call,
-  saying so on stderr; `engine.shutdown` never starts one. Without `--project` or `--port`, the
-  port is that of `MIRAI_API_PORT` or the editor of the project at or above the current folder,
-  failing when it has none and never starting one; the default port only outside any project.
-- `--wait S` retries while nobody is listening. A call waits as long as the editor process is
-  alive and working, saying on stderr that it still waits; `--timeout S` limits it or, with
+  saying so on stderr; a method that only makes sense with an editor already open
+  (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
+  `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the
+  current folder, failing when it has none and never starting one; the default port only outside
+  any project.
+- A call waits as long as the editor process is alive and working, saying on stderr that it still
+  waits, less often the longer it takes; `--timeout S` limits it or, with
   `--wait-until`, the whole wait. An editor whose process ended is `-32096` at once, and one whose
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
@@ -182,27 +184,25 @@ mirai rpc --batch <calls.jsonl> [the same options]
 Every method takes two reserved params the server handles: `_select` (`"a.b,c[0].d"`) answers
 only those fields, as an object by their paths, and `_wait_until` (`"phase=Built"`) calls the
 method again until the condition holds, the editor going on meanwhile, for at most
-`api.WAIT_UNTIL_SECONDS`. Over MCP the text of the answer is the selection and
-`structuredContent` stays the whole result, which clients check against the tool's schema.
-Selecting reads the result of a call that already ran, so a field that is not there is no error:
-the answer keeps the whole result and says which field is missing and which exist, in the `note`
-member of the JSON-RPC response or in a second text of the MCP content.
-`--select` and `--wait-until` of `mirai rpc` do the same from the client, and `--wait-until` also
-waits for an editor that restarts.
+`api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout` sends. Over MCP the text of the
+answer is the selection and `structuredContent` stays the whole result, which clients check
+against the tool's schema. Selecting reads the result of a call that already ran, so a field that
+is not there is no error: the answer keeps the fields it found and says briefly which are missing
+and which exist, in the `note` member of the JSON-RPC response or in a second text of the MCP
+content. `--select` and `--wait-until` of `mirai rpc` send these params: the server does both, and
+the client only calls again when the editor restarts during the wait.
 
 A field is a path in the result: names separated by dots and `[i]` for element `i` of an array,
 from the end if `i` is negative (`entities[0].id`, `entities[-1]`); a name that is a number on an
 array is that index (`entities.0.id`).
 
 - `--select a.b,c[0].d` prints those fields, one per line: a text without quotes, a number or
-  `true`/`false`/`null` as is, and an object or array as JSON. With a field that is not there it
-  prints the whole result, says on stderr which field is missing and which exist, and exits 0.
-- `--wait-until '<field><op><value>'` repeats the call every `--every S` until it is met and
-  prints that result. `op` is `=` (`==`), `!=`, `<`, `<=`, `>` or `>=`; the ordering ones need
+  `true`/`false`/`null` as is, and an object or array as JSON. A field that is not there is left
+  out, and one line on stderr says which is missing and which exist; the exit code is 0.
+- `--wait-until '<field><op><value>'` is met in the server and prints that result. `op` is `=` (`==`), `!=`, `<`, `<=`, `>` or `>=`; the ordering ones need
   numbers. Numbers are compared as numbers (exact integers), a text by its content, with or
-  without quotes, and the rest as JSON without spaces (`selection=[]`). An editor that does not
-  respond or ends while it answers (`-32099`, `-32097`, `-32096`) keeps being waited for, because
-  Build restarts it; another error, a
+  without quotes, and the rest as JSON without spaces (`selection=[]`). An editor that restarts
+  during the wait (`-32096`) keeps being waited for, because Build restarts it; another error, a
   field that is not there or a value that cannot be ordered end immediately. After `--timeout` it
   exits with `-32097`, the last value in the message and `data:{field,value}`. Example:
   `mirai rpc play.network.status --wait-until 'connected=true' --select connected`.
@@ -232,8 +232,9 @@ methods). Which plugins exist is told by `engine.describe`.
 - With `--project` the port is the one `.mirai/api.json` of that project names, read again on
   every message and never the fixed port, so it only reaches that project's editor, also after
   it restarts on another port. While the project has no editor it answers `initialize` itself
-  (with `listChanged: true`) and lists one placeholder tool, whose description and whose call say
-  to run `mirai session start`. When an editor appears, or another replaces it, it sends
+  (with `listChanged: true`) and lists one placeholder tool, and a tool call starts the session
+  like [`mirai rpc`](#mirai-rpc), by the same rule; what cannot start it says to run
+  `mirai session start`. When an editor appears, or another replaces it, it sends
   `notifications/tools/list_changed` once that editor answers.
 - Without `--project` and without an editor it answers `initialize` itself (with
   `listChanged: true` and the instruction to open the editor), `ping` and an empty `tools/list`; a

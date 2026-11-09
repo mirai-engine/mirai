@@ -1,10 +1,12 @@
 package api
 
 import "core:encoding/json"
+import "core:net"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "mirai:std/subprocess"
 
@@ -170,20 +172,26 @@ rpc_result_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     code,out,err=run_tool(tool,"","rpc","test.shapes",`{"position":[1,2,3],"flags":["Ice"]}`,"--select","position[-1],flags","--port",port)
     testing.expectf(t,code==0 && out=="3\n[\n  \"Ice\"\n]\n","%d %q %s",code,out,err)
     code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--select","total")
-    testing.expectf(t,code==0,"the call ran: %d %s",code,err)
-    testing.expect_value(t,integer(at(parse_json(t,out),"sum")),5)
-    testing.expect(t,strings.contains(err,"has no 'total'; it has: sum"),err)
+    testing.expectf(t,code==0 && out=="","the call ran and has nothing to print: %d %q %s",code,out,err)
+    testing.expect(t,strings.contains(err,"has no 'total'; it has: sum") && strings.count(err,"\n")==1,err)
+    code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--select","total,sum")
+    testing.expectf(t,code==0 && out=="5\n","only what it found: %d %q %s",code,out,err)
+    code,_,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--select","a..b")
+    testing.expect_value(t,code,1)
+    testing.expect_value(t,integer(at(parse_json(t,err),"error","code")),INVALID_PARAMS)
+    testing.expect(t,strings.contains(err,"a..b"),err)
     code,out,err=run_tool(tool,"","rpc","test.add","a=2","b=3","--port",port,"--select","sum")
     testing.expectf(t,code==0 && out=="5\n","key=value arguments: %d %q %s",code,out,err)
     code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--wait-until","sum>=5","--select","sum")
     testing.expectf(t,code==0 && out=="5\n","%d %q %s",code,out,err)
-    code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--wait-until","sum=6","--every","0.2","--timeout","1")
+    code,out,err=run_tool(tool,"","rpc","test.add",`{"a":2,"b":3}`,"--port",port,"--wait-until","sum=6","--timeout","1")
     testing.expect_value(t,code,1)
     testing.expect_value(t,out,"")
     waited:=parse_json(t,err)
     testing.expect_value(t,integer(at(waited,"error","code")),TIMEOUT)
     testing.expect(t,strings.contains(string_of(at(waited,"error","message")),"sum is 5"),err)
     testing.expect_value(t,integer(at(waited,"error","data","value")),5)
+    rpc_restart_case(t,tool)
     code,out,err=run_tool(tool,"","rpc","describe","test.echo","--port",port)
     testing.expectf(t,code==0,"%d %s",code,err)
     for line in ([]string{"test.echo (core)\n","    times: integer 1..4, default 1\n","  example: mirai rpc test.echo '{\"text\":\"x\"}'\n","    text: string up to 160\n"}) {
@@ -200,6 +208,55 @@ rpc_result_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     testing.expect_value(t,code,1)
     testing.expect_value(t,integer(at(parse_json(t,err),"error","code")),METHOD_NOT_FOUND)
     testing.expect(t,strings.contains(err,"similar: test.add"),err)
+}
+
+@(private="file")
+Restarting_Editor :: struct {listener:net.TCP_Socket,asked:bool}
+
+// Closes its first connection, as an editor that restarts during a wait, and
+// answers the second with what the server keeps of a selection.
+@(private="file")
+restarting_editor_run :: proc(worker:^thread.Thread) {
+    editor:=(^Restarting_Editor)(worker.data)
+    read :: proc(socket:net.TCP_Socket) -> string {
+        data:[dynamic]u8
+        data.allocator=context.temp_allocator
+        chunk:[4096]u8
+        for !strings.has_suffix(string(data[:]),"}") {
+            n,err:=net.recv_tcp(socket,chunk[:])
+            if err!=nil || n==0 {break}
+            append(&data,..chunk[:n])
+        }
+        return string(data[:])
+    }
+    first,_,first_error:=net.accept_tcp(editor.listener)
+    if first_error!=nil {return}
+    read(first)
+    net.close(first)
+    second,_,second_error:=net.accept_tcp(editor.listener)
+    if second_error!=nil {return}
+    defer net.close(second)
+    request:=read(second)
+    editor.asked=strings.contains(request,`"_wait_until":"a=1"`) && strings.contains(request,`"_select":"a"`)
+    body:=`{"jsonrpc":"2.0","id":2,"result":{"a":1}}`
+    net.send_tcp(second,transmute([]u8)strings.concatenate({"HTTP/1.1 200 OK\r\nContent-Length: ",tprint_int(len(body)),"\r\nConnection: close\r\n\r\n",body},context.temp_allocator))
+}
+
+// The server does the wait; the client only calls again when its editor restarts.
+rpc_restart_case :: proc(t:^testing.T,tool:Tool) {
+    listener,listen_error:=net.listen_tcp({address=net.IP4_Loopback,port=0},2)
+    if !testing.expect(t,listen_error==nil) {return}
+    defer net.close(listener)
+    endpoint,_:=net.bound_endpoint(listener)
+    editor:=Restarting_Editor{listener=listener}
+    worker:=thread.create(restarting_editor_run)
+    worker.data=&editor
+    thread.start(worker)
+    defer thread.destroy(worker)
+    code,out,err:=run_tool(tool,"","rpc","test.add","--port",tprint_int(endpoint.port),"--wait-until","a=1","--select","a","--timeout","20")
+    thread.join(worker)
+    testing.expectf(t,code==0 && out=="1\n","%d %q %s",code,out,err)
+    testing.expect(t,editor.asked,"the call carries the reserved params to the server")
 }
 
 mcp_session_cases :: proc(t:^testing.T,tool:Tool,port:string) {

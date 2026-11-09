@@ -10,18 +10,21 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION [--every S]] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> [--project P|--port N] [--timeout S] [--wait S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> [--project P|--port N] [--timeout S] [--client NAME]"
 
-// How often --wait-until calls again without --every, in milliseconds.
-RPC_ENDING_WAIT :: 3*time.Second
-RPC_EVERY_MS :: 1000
-RPC_WAIT_UNTIL_MS :: 30000 // how long --wait-until repeats its call without --timeout
+RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
+RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
+RPC_WAIT_MARGIN_MS :: 5000 // a --wait-until reads the answer past its limit: the server says what it last saw
 RPC_ECHO_BYTES :: 240 // of a result an error repeats
+
+// The methods, by their tool names, that only make sense with an editor
+// already open: calling one never starts a session.
+RPC_NEEDS_OPEN_EDITOR :: [?]string{"engine_shutdown","ai_turn_end"}
 
 Connection :: struct {
     port,timeout_ms:int,
-    wait_ms:int, // how long to retry while nobody listens
     timed:bool,  // --timeout gave timeout_ms
+    root:string, // of the engine, where a session is started from
     agent:Agent_Environment, // the task context the calls to the editor of that port belong to
     project:string, // with --project and no --port: whose api.json names the port, read again on every attempt
     named:bool,     // --project named project, which a call may open a session of
@@ -45,7 +48,7 @@ agent_environment :: proc() -> Agent_Environment {
     return {task,port}
 }
 
-// --port N, --project P, --timeout SECONDS, --wait SECONDS and --client NAME;
+// --port N, --project P, --timeout SECONDS and --client NAME;
 // everything else is returned in order. Without --port, the port is the one
 // of the editor of --project (api.PORT_FILE), or that of agent, or of the
 // project at or above the working directory; api.DEFAULT_PORT only outside
@@ -55,15 +58,11 @@ connection_args :: proc(args:[]string,agent:Agent_Environment) -> (connection:Co
     folder:=""
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
-        case "--port","--timeout","--wait":
+        case "--port","--timeout":
             if i+1>=len(args) {return}
             value,valid:=strconv.parse_int(args[i+1],10)
             if !valid || value<=0 || (args[i]=="--port" && value>65535) {return}
-            switch args[i] {
-            case "--port":    connection.port=value
-            case "--timeout": connection.timeout_ms,connection.timed=value*1000,true
-            case "--wait":    connection.wait_ms=value*1000
-            }
+            if args[i]=="--port" {connection.port=value} else {connection.timeout_ms,connection.timed=value*1000,true}
             i+=1
         case "--project":
             if i+1>=len(args) || args[i+1]=="" {return}
@@ -133,37 +132,82 @@ connection_task :: proc(connection:Connection,port:int) -> string {
 }
 
 // What a call to a project without an open editor says.
-no_editor_text :: proc(project:string,allocator:=context.temp_allocator) -> string {
-    return fmt.aprintf("%s has no open editor: mirai session start %s",project,project,allocator=allocator)
+no_editor_text :: proc(project:string) -> string {
+    return fmt.tprintf("%s has no open editor: mirai session start %s",project,project)
 }
 
-// One call, retried while nobody listens and the wait allows.
-rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (result:string,err:api.Error,called:bool) {
+// Whether a call of method may start the session of the project --project
+// names. method is a method or its tool; "" is not a call of one.
+connection_opens :: proc(connection:Connection,method:string) -> bool {
+    if !connection.named || method=="" {return false}
+    tool,_:=strings.replace_all(method,".","_",context.temp_allocator)
+    bound:=RPC_NEEDS_OPEN_EDITOR
+    for name in bound {
+        if name==tool {return false}
+    }
+    return true
+}
+
+// The editor a call of method goes to, opening the session of its project
+// when it has none and the method may; err says why there is none to call.
+connection_ready :: proc(connection:Connection,method:string) -> (editor:Connection_Editor,err:api.Error) {
+    editor=connection_editor(connection)
+    if editor.port==0 && connection_opens(connection,method) {
+        if err=connection_session_start(connection);err.code!=0 {return}
+        editor=connection_editor(connection)
+    }
+    if editor.port==0 {err={api.UNREACHABLE,no_editor_text(connection.project),""}}
+    return
+}
+
+// Whether a call of method found nobody listening because its editor is
+// ending: a killed process still counts as alive for a moment after it closed
+// its port. Then connection_ready opens another session and the call is made again.
+connection_ended :: proc(connection:Connection,method:string,err:api.Error) -> bool {
+    if err.code!=api.UNREACHABLE || !connection_opens(connection,method) {return false}
     start:=time.tick_now()
-    for {
-        if editor:=connection_editor(connection);editor.port!=0 {
-            watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
-            result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch)
-        } else {
-            err={api.UNREACHABLE,no_editor_text(connection.project,context.allocator),""}
-        }
-        if called || err.code!=api.UNREACHABLE || time.duration_milliseconds(time.tick_since(start))>=f64(connection.wait_ms) {return}
-        time.sleep(250*time.Millisecond)
+    for connection_editor(connection).port!=0 {
+        if time.tick_since(start)>=RPC_ENDING_WAIT {return false}
+        time.sleep(100*time.Millisecond)
+    }
+    return true
+}
+
+// Starts the headless session of the project of connection, saying so on
+// stderr, where all that mirai session start prints goes too: stdout is the
+// answer of the call.
+connection_session_start :: proc(connection:Connection) -> api.Error {
+    fmt.eprintfln("mirai: %s has no open editor; starting its headless session (mirai session start %s --dev)",connection.project,connection.project)
+    self,error:=os.get_executable_path(context.temp_allocator)
+    if error!=nil {return {api.UNREACHABLE,fmt.tprintf("could not start the session of %s: %v",connection.project,error),""}}
+    if run_with(connection.root,{self,"session","start",connection.project,"--dev"},os.stderr)!=0 {
+        return {api.UNREACHABLE,fmt.tprintf("mirai session start %s --dev failed; what it said is above",connection.project),""}
+    }
+    return {}
+}
+
+// One call, in the editor connection_ready gives it.
+rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (result:string,err:api.Error,called:bool) {
+    for retried:=false;;retried=true {
+        editor:Connection_Editor
+        editor,err=connection_ready(connection,method)
+        if err.code!=0 {return}
+        watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
+        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch)
+        if called || retried || !connection_ended(connection,method,err) {return}
     }
 }
 
-// A call of mirai rpc and what it does with the result: the fields it
-// prints and the condition it calls again until.
+// A call of mirai rpc and what it asks of the result: FIELDS and CONDITION as
+// they were written, which the server reads.
 Rpc_Request :: struct {
     method,params:string,
-    select:[dynamic]api.Json_Path,
-    until:api.Condition,
-    waits:bool,
-    every_ms:int,
+    select,until:string,
 }
 
 cmd_rpc :: proc(root:string,args:[]string) -> int {
     connection,ok:=connection_args(args,agent_environment())
+    connection.root=root
     if connection.client=="" {connection.client=client_environment()}
     if !ok || len(connection.rest)==0 {
         fmt.eprintfln("Usage: mirai %s",RPC_USAGE)
@@ -172,10 +216,8 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     switch connection.rest[0] {
     case "--batch":
         if len(connection.rest)!=2 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
-        if code:=rpc_session_open(root,connection);code!=0 {return code}
         return rpc_batch(connection,connection.rest[1])
     case "describe":
-        if code:=rpc_session_open(root,connection);code!=0 {return code}
         return rpc_describe(connection,connection.rest[1:])
     }
     request,problem,parsed:=rpc_request(connection.rest[:])
@@ -188,80 +230,61 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     if !api.json_valid(context.allocator,params) || !params_is_object(params) {
         return rpc_fail({api.INVALID_PARAMS,"params must be a JSON object: key=value arguments, '{...}' as one argument, - to read it from stdin, or --file F",""})
     }
-    if request.method!="engine.shutdown" {
-        if code:=rpc_session_open(root,connection);code!=0 {return code}
-    }
-    if request.waits {return rpc_wait(connection,request,params)}
-    result,err,called:=rpc_call_waiting(connection,request.method,params,1)
-    if !called && request.method!="engine.shutdown" && rpc_editor_ended(connection,err) {
-        if code:=rpc_session_open(root,connection);code!=0 {return code}
-        result,err,called=rpc_call_waiting(connection,request.method,params,1)
-    }
+    result,err,called:=rpc_request_call(connection,request,params)
     if !called {return rpc_fail(rpc_hint(connection,request.method,err))}
-    return rpc_print(result,request.select[:])
+    return rpc_print(result,request.select!="")
 }
 
-// Whether nobody listened because the editor of --project is ending: a killed
-// process still counts as alive for a moment after it closed its port.
-rpc_editor_ended :: proc(connection:Connection,err:api.Error) -> bool {
-    if !connection.named || err.code!=api.UNREACHABLE {return false}
+// The call of a request, whose --select and --wait-until the server does. All
+// that is left here is an editor that restarts during the wait, as a build
+// can: the call is made again for what remains, and that restart opens no session.
+rpc_request_call :: proc(connection:Connection,request:Rpc_Request,params:string) -> (result:string,err:api.Error,called:bool) {
+    if request.until=="" {return rpc_call_waiting(connection,request.method,rpc_params_reserved(request,params,0),1)}
+    limit:=connection.timed?connection.timeout_ms:api.WAIT_UNTIL_SECONDS*1000
     start:=time.tick_now()
-    for connection_editor(connection).port!=0 {
-        if time.tick_since(start)>=RPC_ENDING_WAIT {return false}
-        time.sleep(100*time.Millisecond)
+    attempt:=connection
+    restarting:=false
+    for id:=1;;id+=1 {
+        remaining:=limit-int(time.duration_milliseconds(time.tick_since(start)))
+        if remaining<=0 {return}
+        attempt.timeout_ms=remaining+RPC_WAIT_MARGIN_MS
+        result,err,called=rpc_call_waiting(attempt,request.method,rpc_params_reserved(request,params,remaining),id)
+        if called || !(err.code==api.CLOSED || restarting && err.code==api.UNREACHABLE) {return}
+        restarting,attempt.named=true,false
+        time.sleep(RPC_RESTART_PAUSE)
     }
-    return true
 }
 
-// Opens the headless session of the project --project names when it has no
-// editor, saying so on stderr, where all that mirai session start prints goes
-// too: stdout is the answer of the call. 0 when there is an editor to call.
-rpc_session_open :: proc(root:string,connection:Connection) -> int {
-    if !connection.named || connection_editor(connection).port!=0 {return 0}
-    fmt.eprintfln("mirai rpc: %s has no open editor; starting its headless session (mirai session start %s --dev)",connection.project,connection.project)
-    self,error:=os.get_executable_path(context.temp_allocator)
-    if error!=nil {return rpc_fail({api.UNREACHABLE,fmt.tprintf("could not start the session of %s: %v",connection.project,error),""})}
-    if run_with(root,{self,"session","start",connection.project,"--dev"},os.stderr)!=0 {
-        return rpc_fail({api.UNREACHABLE,fmt.tprintf("mirai session start %s --dev failed; what it said is above",connection.project),""})
+// params, a JSON object, with the reserved params of the request; wait_ms is
+// how long its --wait-until may take.
+rpc_params_reserved :: proc(request:Rpc_Request,params:string,wait_ms:int) -> string {
+    parts:=make([dynamic]string,context.temp_allocator)
+    if members:=strings.trim_space(params[1:len(params)-1]);members!="" {append(&parts,members)}
+    if request.select!="" {append(&parts,fmt.tprintf(`"%s":%s`,api.PARAM_SELECT,serial.text_quote(request.select)))}
+    if request.until!="" {
+        append(&parts,fmt.tprintf(`"%s":%s`,api.PARAM_WAIT_UNTIL,serial.text_quote(request.until)))
+        append(&parts,fmt.tprintf(`"%s":%.3f`,api.PARAM_WAIT_SECONDS,f64(wait_ms)/1000))
     }
-    return 0
+    return strings.concatenate({"{",strings.join(parts[:],",",context.temp_allocator),"}"},context.temp_allocator)
 }
 
 // The method, its params and what to do with the result, from what
 // connection_args left. problem says what is wrong, unless it is plain misuse.
 rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:bool) {
     request.params="{}"
-    request.every_ms=RPC_EVERY_MS
-    request.select=make([dynamic]api.Json_Path,context.temp_allocator)
     positional:=make([dynamic]string,context.temp_allocator)
     fields:=make([dynamic]string,context.temp_allocator)
     file:=""
-    every:=false
     for i:=0;i<len(args);i+=1 {
         arg:=args[i]
         switch arg {
-        case "--select","--wait-until","--every","--file":
+        case "--select","--wait-until","--file":
             if i+1>=len(args) {return request,fmt.tprintf("%s needs a value",arg),false}
             i+=1
-            value:=args[i]
             switch arg {
-            case "--select":
-                for part in strings.split(value,",",context.temp_allocator) {
-                    path,valid:=api.json_path_parse(strings.trim_space(part))
-                    if !valid {return request,fmt.tprintf("--select: '%s' is not a field: names separated by dots and [i] for element i, from the end when negative (a.b,c[0].d,[-1])",part),false}
-                    append(&request.select,path)
-                }
-            case "--wait-until":
-                condition,valid:=api.condition_parse(value)
-                if !valid {return request,fmt.tprintf("--wait-until: '%s' is not <field><op><value>: op is =, !=, <, <=, > or >=, and the last four compare numbers (phase=Done, errors>0)",value),false}
-                request.until,request.waits=condition,true
-            case "--every":
-                seconds,valid:=strconv.parse_f64(value)
-                if !valid || !(seconds>0) || seconds>3600 {return request,fmt.tprintf("--every needs seconds greater than 0 and up to 3600, not '%s'",value),false}
-                request.every_ms=max(int(seconds*1000),1)
-                every=true
-            case "--file":
-                file=value
+            case "--select":     request.select=args[i]
+            case "--wait-until": request.until=args[i]
+            case "--file":       file=args[i]
             }
         case:
             switch {
@@ -271,7 +294,6 @@ rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:boo
             }
         }
     }
-    if every && !request.waits {return request,"--every is the interval of --wait-until",false}
     if len(positional)==0 || len(positional)>2 || (len(positional)==2 && file!="") {return request,"",false}
     request.method=positional[0]
     if len(fields)>0 {
@@ -345,75 +367,17 @@ rpc_fields_params :: proc(args:[]string) -> (params,problem:string) {
     return strings.to_string(b),""
 }
 
-// The result, or the fields of it select names, each a line: a string
-// without quotes, a number, true, false or null, and the rest as indented
-// JSON. Selecting reads the result of a call that already ran: a field that
-// is not there says so on stderr and prints the whole result.
-rpc_print :: proc(result:string,select:[]api.Json_Path) -> int {
-    if len(select)==0 {
+// The result, or with selected the fields the server kept of it, each a line:
+// a string without quotes, a number, true, false or null, and the rest as
+// indented JSON.
+rpc_print :: proc(result:string,selected:bool) -> int {
+    if !selected {
         fmt.println(api.json_pretty(result,context.allocator))
         return 0
     }
-    values:=make([]string,len(select),context.temp_allocator)
-    missing:=false
-    for path,i in select {
-        value,problem:=api.json_at(result,path)
-        if problem!="" {
-            fmt.eprintfln("mirai rpc: --select %s: %s; this is the whole result",path.text,problem)
-            missing=true
-        }
-        values[i]=value
-    }
-    if missing {
-        fmt.println(api.json_pretty(result,context.allocator))
-        return 0
-    }
-    for value in values {fmt.println(api.json_scalar_text(value))}
+    members,_:=api.json_members(result)
+    for member in members {fmt.println(api.json_scalar_text(member.value))}
     return 0
-}
-
-// Calls every request.every_ms until the field of the condition meets it, for
-// at most --timeout in all (RPC_WAIT_UNTIL_MS without it, a limit between
-// calls that does not cut one that runs), and prints the result that met it.
-// An editor that does not answer, or that ends while it answers, is waited
-// for: Build restarts it, and the call is made again anyway.
-@(private="file")
-rpc_wait :: proc(connection:Connection,request:Rpc_Request,params:string) -> int {
-    start:=time.tick_now()
-    elapsed :: proc(start:time.Tick) -> int {return int(time.duration_milliseconds(time.tick_since(start)))}
-    last:=""
-    last_error:api.Error
-    limit:=connection.timed?connection.timeout_ms:RPC_WAIT_UNTIL_MS
-    for id:=1;;id+=1 {
-        remaining:=limit-elapsed(start)
-        if remaining<=0 {break}
-        attempt:=connection
-        if connection.timed {attempt.timeout_ms=remaining}
-        attempt.wait_ms=min(connection.wait_ms,remaining)
-        result,err,called:=rpc_call_waiting(attempt,request.method,params,id)
-        switch {
-        case called:
-            value,problem:=api.json_at(result,request.until.path)
-            if problem!="" {return rpc_fail({api.INVALID_PARAMS,fmt.tprintf("--wait-until %s: %s",request.until.text,problem),strings.concatenate({`{"result":`,result,"}"},context.temp_allocator)})}
-            met,mismatch:=api.condition_met(request.until,value)
-            if mismatch!="" {return rpc_fail({api.INVALID_PARAMS,fmt.tprintf("--wait-until %s: %s",request.until.text,mismatch),""})}
-            if met {return rpc_print(result,request.select[:])}
-            last,last_error=value,{}
-        case err.code==api.UNREACHABLE || err.code==api.TIMEOUT || err.code==api.CLOSED:
-            last_error=err
-        case:
-            return rpc_fail(rpc_hint(connection,request.method,err))
-        }
-        if pause:=min(request.every_ms,limit-elapsed(start));pause>0 {time.sleep(time.Duration(pause)*time.Millisecond)}
-    }
-    message:=fmt.tprintf("%s did not meet %s in %d s",request.method,request.until.text,limit/1000)
-    data:=""
-    if last!="" {
-        message=fmt.tprintf("%s: %s is %s",message,request.until.path.text,api.json_brief(last))
-        data=strings.concatenate({`{"field":`,serial.text_quote(request.until.path.text),`,"value":`,last,"}"},context.temp_allocator)
-    }
-    if last_error.code!=0 {message=fmt.tprintf("%s; the last call: %s",message,last_error.message)}
-    return rpc_fail({api.TIMEOUT,fmt.tprintf("%s; --timeout S waits longer",message),data})
 }
 
 // The error of a call with what to do next: a longer --timeout, or the
@@ -423,7 +387,7 @@ rpc_hint :: proc(connection:Connection,method:string,err:api.Error) -> api.Error
     err:=err
     switch err.code {
     case api.TIMEOUT:
-        err.message=fmt.tprintf("%s; --timeout S waits longer (now %d s)",err.message,connection.timeout_ms/1000)
+        err.message=fmt.tprintf("%s; --timeout S waits longer",err.message)
     case api.METHOD_NOT_FOUND:
         if similar:=rpc_similar(connection,method);similar!="" {
             err.message=fmt.tprintf("%s; similar: %s; mirai rpc describe <method> gives their params",err.message,similar)

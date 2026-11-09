@@ -170,28 +170,44 @@ the_project_of_a_folder_is_the_nearest_with_a_manifest :: proc(t:^testing.T) {
 }
 
 @(test)
-rpc_arguments_take_select_wait_until_and_every :: proc(t:^testing.T) {
+rpc_arguments_go_to_the_server_as_reserved_params :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    request,problem,ok:=rpc_request({"build.status","--select","phase,errors","--wait-until","phase=Idle","--every","0.25"})
+    request,problem,ok:=rpc_request({"build.status","--select","phase,errors","--wait-until","phase=Idle"})
     testing.expectf(t,ok,"parsed: %s",problem)
-    testing.expect_value(t,request.method,"build.status")
-    testing.expect_value(t,request.params,"{}")
-    testing.expect_value(t,len(request.select),2)
-    testing.expect_value(t,request.select[1].text,"errors")
-    testing.expect(t,request.waits && request.until.op==.Equal && request.until.value=="Idle")
-    testing.expect_value(t,request.every_ms,250)
+    testing.expect(t,request.method=="build.status" && request.params=="{}" && request.select=="phase,errors" && request.until=="phase=Idle")
+    params:=rpc_params_reserved(request,`{"a":1}`,1500)
+    testing.expect(t,api.json_valid(context.allocator,params),params)
+    testing.expect_value(t,api.json_member(params,"a"),"1")
+    testing.expect_value(t,api.json_member(params,api.PARAM_SELECT),`"phase,errors"`)
+    testing.expect_value(t,api.json_member(params,api.PARAM_WAIT_UNTIL),`"phase=Idle"`)
+    testing.expect_value(t,api.json_member(params,api.PARAM_WAIT_SECONDS),"1.500")
+    testing.expect_value(t,rpc_params_reserved({},"{ }",0),"{}")
     request,_,ok=rpc_request({"test.add",`{"a":1}`})
-    testing.expect(t,ok && request.params==`{"a":1}` && !request.waits)
-    _,problem,ok=rpc_request({"build.status","--every","1"})
-    testing.expect(t,!ok && strings.contains(problem,"--wait-until"),problem)
-    _,problem,ok=rpc_request({"build.status","--select","a..b"})
-    testing.expect(t,!ok && strings.contains(problem,"a..b"),problem)
-    _,problem,ok=rpc_request({"build.status","--wait-until","phase"})
-    testing.expect(t,!ok && strings.contains(problem,"phase"),problem)
-    _,problem,ok=rpc_request({"build.status","--sleep","1"})
-    testing.expect(t,!ok && strings.contains(problem,"--sleep"),problem)
+    testing.expect(t,ok && request.params==`{"a":1}` && request.until=="" && request.select=="")
+    for option in ([]string{"--sleep","--every","--wait"}) {
+        _,problem,ok=rpc_request({"build.status",option,"1"})
+        testing.expect(t,!ok && strings.contains(problem,option),problem)
+    }
     _,problem,ok=rpc_request({"a","{}","c"})
     testing.expect(t,!ok && problem=="")
+}
+
+// The hook that ends a turn runs with no editor as well: it never opens one.
+@(test)
+only_a_call_that_works_without_an_open_editor_starts_a_session :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    named,_:=connection_args({"--project","elsewhere"},{})
+    cases:=[?]struct{method:string,opens:bool}{
+        {"scene.inspect",true},{"scene_inspect",true},
+        {"engine.shutdown",false},{"engine_shutdown",false},
+        {"ai.turn_end",false},{"ai_turn_end",false},
+        {"",false},
+    }
+    for c in cases {testing.expectf(t,connection_opens(named,c.method)==c.opens,"%q",c.method)}
+    by_port,_:=connection_args({"--port","7951"},{})
+    testing.expect(t,!connection_opens(by_port,"scene.inspect"),"a port names no project to open")
+    editor,err:=connection_ready(named,"ai.turn_end")
+    testing.expect(t,editor.port==0 && err.code==api.UNREACHABLE && strings.contains(err.message,"no open editor"),err.message)
 }
 
 @(test)
