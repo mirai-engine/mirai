@@ -392,7 +392,7 @@ the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_v
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     server:=api.Server{max_response=1<<16}
     method:=api.Method{params_id=Api_Section_View_Params}
-    params:=Api_Section_View_Params{id=2}
+    params:=Api_Section_View_Params{entity=2}
     base.text_set(params.state[:],"Off")
     call:=api.Call{server=&server,method=&method,params=&params,out=&out,allocator=context.temp_allocator}
     api_section_view(s,&call)

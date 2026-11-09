@@ -125,10 +125,10 @@ action_control_policy :: proc(call:^api.Call,definition:anim.Action_Definition,d
     return false
 }
 authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.id,p.entity);if !ok {return}
-    description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"id","Missing_Component","an Animation component","none","The entity has no Animation component");return}
+    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.entity,p.handle);if !ok {return}
+    description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","none","The entity has no Animation component");return}
     runtime:=core.world_storage_of(w,anim.Action_Runtime);playback:=core.world_storage_of(w,anim.Playback)
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id);api.write_key(out,"profile");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.actions);serial.write_u8(out,'"')
+    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.entity);api.write_key(out,"profile");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.actions);serial.write_u8(out,'"')
     problems:[PREVIEW_PROBLEMS]Problem_Result
     shown,_:=entity_problems(s.app,w,e,"animation.action",problems[:])
     serial.text_write_raw(out,",\"problems\":[")

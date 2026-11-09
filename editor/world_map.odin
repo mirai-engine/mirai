@@ -438,11 +438,11 @@ map_item_draw :: proc(ctx:^ui.Context,m:^World_Map,rect:ui.Rect,item:^Map_Item,h
 // ---------------------------------------------------------------- the API
 
 Api_Section_Id_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
+    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
 }
 
 Api_Section_View_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
+    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
     state:[16]u8 `mirai:"text,label=Active (loaded and on), Loaded (loaded and off), Unloaded, or Auto (what its reference asks)"`,
 }
 
@@ -525,7 +525,7 @@ api_sections :: proc(s:^Session,call:^api.Call) {
 api_section_view :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_View_Params)
     w:=edited_world(s)
-    e,ok:=api_section_reference(call,w,params.id)
+    e,ok:=api_section_reference(call,w,params.entity)
     if !ok {return}
     given:=base.text_get(params.state[:])
     state:scene.Section_State
@@ -551,13 +551,13 @@ api_section_view :: proc(s:^Session,call:^api.Call) {
 api_section_travel :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_Id_Params)
     w:=edited_world(s)
-    e,ok:=api_section_reference(call,w,params.id)
+    e,ok:=api_section_reference(call,w,params.entity)
     if !ok {return}
     if why:=section_travel(s,w,e);why!="" {
         api.call_fail(call,api.INVALID_PARAMS,why)
         return
     }
-    if m:=world_map_of(s);m!=nil {m.chosen=params.id}
+    if m:=world_map_of(s);m!=nil {m.chosen=params.entity}
     api_sections_settle(s)
     api_section_write(s,call.out,edited_world(s),e,false)
 }

@@ -13,7 +13,7 @@ import anim "plugins:animation/runtime"
 // Preserve keeps the root's trajectory in the clip; In_Place pins it to its reference.
 Pose_Bake_Root :: enum u8 {Preserve,In_Place}
 Pose_Bake_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     path:[1024]u8 `mirai:"text,label=An .anim: the clip is added to what is there"`,
     clip:[64]u8 `mirai:"text,label=A clip of that name is replaced"`,
     start,end:f32 `mirai:"min=0,unit=s"`,
@@ -62,12 +62,12 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     if there {loaded:bool;existing,loaded=authoring_clip_open(s,call,output_id,&destination);if !loaded {return}} else {
         created:bool;destination,output_id,created=authoring_create_target(s,call,base.text_get(p.path[:]),".anim");if !created {return}
     }
-    source,entity,found:=subject(s,call,p.id);if !found {return}
+    source,entity,found:=subject(s,call,p.entity);if !found {return}
     entity=pose_owner(s,source,entity)
-    if !editor.entity_has(source,entity,anim.Animation) && rig_skeleton(s,source,entity)=={} {authoring_failure(call,"id","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no evaluable pose");return}
+    if !editor.entity_has(source,entity,anim.Animation) && rig_skeleton(s,source,entity)=={} {authoring_failure(call,"entity","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no evaluable pose");return}
     preview:=new(Preview_Params,call.allocator)
     if preview==nil {authoring_failure(call,"bake","Out_Of_Memory","memory for bake requests","allocation failed","The bake requests could not be prepared",api.SERVER_ERROR);return}
-    preview.id=p.id;preview.time,preview.ticks,preview.dt=p.start,u32(steps64),1/p.rate
+    preview.entity=p.entity;preview.time,preview.ticks,preview.dt=p.start,u32(steps64),1/p.rate
     copy(preview.parameters[:],p.parameters[:]);copy(preview.controls[:],p.controls[:]);copy(preview.goals[:],p.goals[:]);copy(preview.plays[:],p.plays[:]);copy(preview.actions[:],p.actions[:])
     // One store per value until odin-lang/Odin#7937.
     preview.locomotion=p.locomotion;preview.distance=p.distance;preview.locomote=p.locomote

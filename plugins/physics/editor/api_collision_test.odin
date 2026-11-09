@@ -87,36 +87,36 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expectf(t,strings.contains(text,`{"name":"trigger","sensor":true,"belongs":["default"],"collides":["*"]}`),"%s",text)
     testing.expect(t,!strings.contains(text,`"custom"`))
     testing.expectf(t,strings.contains(text,`"undeclared":[{"field":"presets","index":4,"value":9}]`),"%s",text)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collider"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"7","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out))
     testing.expectf(t,strings.contains(text,`"preset":"default","sensor":false,"belongs":["default"],"collides":["*"],"pushes":{},"group":"0x0000000000000009"`),"%s",text)
     // Without component: the only one of the entity, or an error that lists them.
-    error=execute(state,&out,"physics.collision.get",`{"id":"b"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"b"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"component":"Collider"`),"%s",text)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"7"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expectf(t,strings.contains(error.message,"Collider, Collision_Test_Filter"),"%s",error.message)
-    error=execute(state,&out,"physics.collision.get",`{"id":"9"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"9"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expectf(t,strings.contains(error.message,"no collision component"),"%s",error.message)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
     if !testing.expect_value(t,error.code,0) {return}
     value,_:=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.belongs==0b10 && value.collides==0b1100 && !value.sensor)
     testing.expect(t,value.group==held && value.friction==collider.friction)
     testing.expect_value(t,edits.cursor,1)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","sensor":true}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collider","sensor":true}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.sensor && value.belongs==0b10 && value.collides==0b1100)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"trigger"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_TRIGGER && value.group==held)
     // Custom chosen as a preset keeps what the preset gave as its own.
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"custom"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collider","preset":"custom"}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.sensor && value.belongs==1 && value.collides==phys.COLLISION_LAYERS_ALL)
@@ -128,45 +128,45 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     edits.author=editor.EDIT_AUTHOR_USER
     before:=editor.edits_scene_state(&edits);cursor:=edits.cursor
     for params in ([]string{
-        `{"id":"7","component":"Collider","preset":"Trigger"}`,
-        `{"id":"7","component":"Collider","belongs":["missing"]}`,
-        `{"id":"7","component":"Collider","collides":["world","missing"]}`,
-        `{"id":"7","component":"Collider","sensor":"yes"}`,
-        `{"id":"7","component":"Collider","preset":"trigger","belongs":["world"]}`,
-        `{"id":"7","component":"Collider","hits":["camera"]}`,
-        `{"id":"7","component":"Collider"}`,
-        `{"id":"7","component":"Collision_Test_Wrong","preset":"trigger"}`,
-        `{"id":"7","component":"Collision_Test_Filter","hits":["missing"]}`,
-        `{"id":"7","component":"Collision_Test_Filter","preset":"trigger"}`,
+        `{"entity":"7","component":"Collider","preset":"Trigger"}`,
+        `{"entity":"7","component":"Collider","belongs":["missing"]}`,
+        `{"entity":"7","component":"Collider","collides":["world","missing"]}`,
+        `{"entity":"7","component":"Collider","sensor":"yes"}`,
+        `{"entity":"7","component":"Collider","preset":"trigger","belongs":["world"]}`,
+        `{"entity":"7","component":"Collider","hits":["camera"]}`,
+        `{"entity":"7","component":"Collider"}`,
+        `{"entity":"7","component":"Collision_Test_Wrong","preset":"trigger"}`,
+        `{"entity":"7","component":"Collision_Test_Filter","hits":["missing"]}`,
+        `{"entity":"7","component":"Collision_Test_Filter","preset":"trigger"}`,
     }) {
         error=execute(state,&out,"physics.collision.set",params)
         testing.expect_value(t,error.code,api.INVALID_PARAMS)
         testing.expect_value(t,editor.edits_scene_state(&edits),before);testing.expect_value(t,edits.cursor,cursor)
     }
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collision_Test_Filter","hits":["player","world"]}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collision_Test_Filter","hits":["player","world"]}`)
     testing.expect_value(t,error.code,0)
     filtered,_:=core.get(core.read(&world.filters),entity)
     testing.expect(t,filtered.filter.filter.block==6 && filtered.filter.filter.layers==phys.COLLISION_LAYERS_ALL && filtered.filter.objects==0)
     testing.expect(t,filtered.filter.debris && filtered.unchanged==93)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collision_Test_Filter"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"7","component":"Collision_Test_Filter"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"prefix":"filter","hits":["player","world"],"sensors":false`),"%s",text)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
     testing.expect_value(t,error.code,0)
     nested,_:=core.get(core.read(&world.nested),entity)
     testing.expect(t,nested.region.filter.filter.block==8 && nested.region.filter.overlaps && nested.region.filter.objects==0)
     testing.expect(t,nested.region.filter.debris && nested.region.unchanged==93)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collision_Test_Nested","prefix":"region.filter"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"7","component":"Collision_Test_Nested","prefix":"region.filter"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
-    error=execute(state,&out,"physics.collision.set",`{"id":"b","sensor":true}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"b","sensor":true}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,core.get(&world.colliders,alone).sensor)
     session.mode=.Play;session.runs[0]={world=&world}
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collider"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"7","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expect(t,strings.contains(text,`"playing":true`))
     world.settings.presets[3]={preset=phys.PRESET_CUSTOM,belongs=1}
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"trigger"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"7","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,api.SERVER_ERROR)
 }

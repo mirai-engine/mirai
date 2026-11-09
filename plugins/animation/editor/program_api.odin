@@ -57,7 +57,7 @@ Graph_Write_Params :: struct {
     mask_bones:[512]Program_Graph_Mask_Bone `mirai:"optional"`,
     dry_run:bool `mirai:"optional,label=Validates the definition with its references and sources without writing"`,
 }
-Modifier_Inspect_Params :: struct {id:base.Entity_Id,entity:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
+Modifier_Inspect_Params :: struct {entity:base.Entity_Id,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Modifier_Goal_Kind :: enum u8 {IK,Look,Contact,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
 MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Contact=.Contact,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
 @(private)
@@ -328,7 +328,7 @@ program_modifier_profile :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
         config,present:=editor.entity_get(world,entity,anim.Pose_Modifiers)
         if present {id=config.profile}
     }
-    if id=={} {authoring_failure(call,"id","Missing_Profile","Animation.retarget for Chain_Retarget or Pose_Modifiers.profile for other kinds","unassigned","The rig operation has no assigned profile");return {},false}
+    if id=={} {authoring_failure(call,"entity","Missing_Profile","Animation.retarget for Chain_Retarget or Pose_Modifiers.profile for other kinds","unassigned","The rig operation has no assigned profile");return {},false}
     return authoring_profile_open(s,call,id,file)
 }
 
@@ -363,7 +363,7 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
 @(private)
 program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Modifier_Inspect_Params)
-    world,entity,ok:=subject(s,call,p.id,p.entity);if !ok {return}
+    world,entity,ok:=subject(s,call,p.entity,p.handle);if !ok {return}
     config,present:=editor.entity_get(world,entity,anim.Pose_Modifiers)
     file:Authoring_File;defer asset.asset_close(&file.file)
     retarget_file:Authoring_File;defer asset.asset_close(&retarget_file.file)
@@ -372,10 +372,10 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
     profile.retarget_chains=nil
     animation,animated:=editor.entity_get(world,entity,anim.Animation)
     if animated && animation.retarget!={} {retarget,loaded:=authoring_profile_open(s,call,animation.retarget,&retarget_file);if !loaded {return};profile.retarget_chains=retarget.retarget_chains}
-    if !present && (!animated || animation.retarget=={}) {authoring_failure(call,"id","Missing_Profile","Pose_Modifiers or Animation.retarget","none","The entity has no rig operation profile");return}
+    if !present && (!animated || animation.retarget=={}) {authoring_failure(call,"entity","Missing_Profile","Pose_Modifiers or Animation.retarget","none","The entity has no rig operation profile");return}
     runtime:=core.world_storage_of(world,anim.Modifier_Runtime)
     total:=0;for kind in anim.Modifier_Kind {total+=program_modifier_count(profile,kind)}
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,p.id)
+    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,p.entity)
     api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,config.profile);serial.write_u8(call.out,'"')
     api.write_key(call.out,"retarget_profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,animation.retarget);serial.write_u8(call.out,'"')
     api.write_uint(call.out,"total",u64(total));api.write_key(call.out,"last_request_error");request_error:=anim.modifier_request_error(runtime,entity);authoring_write_value(call,&request_error,type_info_of(anim.Modifier_Request_Error));api.write_key(call.out,"modifiers");serial.text_write_raw(call.out,"[")

@@ -67,7 +67,7 @@ Intent_Gesture :: struct {
 }
 REQUEST_ROWS :: 64
 Request_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
     seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
     parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
@@ -133,7 +133,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
             return
         }
     }
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity);if !ok {return}
     e=pose_owner(s,w,e)
     applied:=make([dynamic]Request_Applied,call.allocator)
     if !edit_begin(s,call,"Animation request") {return}
@@ -144,7 +144,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     }
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
     out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id)
+    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.entity)
     if value,has:=editor.entity_get(w,e,anim.Animation);has {api.write_bool(out,"playing",value.playing)}
     if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {api.write_key(out,"time");api.write_number(out,time)}
     api.write_key(out,"applied");serial.text_write_raw(out,"[")
@@ -177,7 +177,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     reaches,_:=api.params_array_count(call,"reach")
     animation,present:=editor.entity_get(world,entity,anim.Animation)
     needs:=count>0 || plays>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
-    if needs && !present {authoring_failure(call,"id","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
+    if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
     changed:=false
     when intrinsics.type_has_field(T,"stop") {
         if authoring_field_present(call,"stop") && p.stop {animation.playing=false;changed=true;request_note(applied,"Stop","")}
@@ -529,7 +529,7 @@ request_source_check :: proc(s:^editor.Session,call:^api.Call,world:core.World_R
 preview_run :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,p:^$T,time:f32,ticks:u32,dt:f32,each:proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,tick:u32,data:rawptr) -> bool,data:rawptr) -> bool {
     source,e,ok:=subject(s,call,id);if !ok {return false}
     e=pose_owner(s,source,e)
-    if !editor.entity_has(source,e,anim.Animation) && rig_skeleton(s,source,e)=={} {authoring_failure(call,"id","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return false}
+    if !editor.entity_has(source,e,anim.Animation) && rig_skeleton(s,source,e)=={} {authoring_failure(call,"entity","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return false}
     clone:=preview_world_clone(s,call,source);if clone==nil {return false}
     defer host.app_world_free(s.app,clone)
     world:=core.world_ref(clone,s.info)

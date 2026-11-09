@@ -15,10 +15,10 @@ until saved. `mirai rpc --project . describe terrain.create` lists every paramet
 P="mirai rpc --project ."
 $P terrain.create '{"kind":"heightfield","samples":257,"spacing":2,"height_scale":60}'
 # -> {"id":ID,...}; from a heightmap: '{"kind":"heightfield","heightmap":"source/hills.png"}'
-$P terrain.edit '{"id":ID,"brush":"noise","at":[256,0,256],"radius":200,"scale":40}'
-$P terrain.edit '{"id":ID,"brush":"flatten","at":[0,0,0],"radius":12}'
-$P terrain.layer '{"id":ID,"material":"materials/grass.mat","tiling":4}'
-$P terrain.layer '{"id":ID,"material":"materials/rock.mat","automatic":true,"slope":[35,90]}'
+$P terrain.edit '{"entity":ID,"brush":"noise","at":[256,0,256],"radius":200,"scale":40}'
+$P terrain.edit '{"entity":ID,"brush":"flatten","at":[0,0,0],"radius":12}'
+$P terrain.layer '{"entity":ID,"material":"materials/grass.mat","tiling":4}'
+$P terrain.layer '{"entity":ID,"material":"materials/rock.mat","automatic":true,"slope":[35,90]}'
 $P asset.save '{"all":true}'; $P scene.save '{}'
 ```
 
@@ -32,7 +32,7 @@ $P asset.save '{"all":true}'; $P scene.save '{}'
   where the slope (degrees) and `height` (metres) are in its ranges, so rock lands on steep faces
   and grass on flat ones with no painting. Layer materials are `.mat`
   assets: import a PBR texture set ([assets](../assets.md)) and give their paths.
-- `terrain.sample {id,at}` reads what is under a point; `terrain.heightmap` imports or exports a
+- `terrain.sample {entity,at}` reads what is under a point; `terrain.heightmap` imports or exports a
   16-bit PNG; `terrain.resize` changes the samples.
 - `Terrain.solid` makes the ground collide (the default of a new one); a character walks on it.
 
@@ -40,9 +40,9 @@ $P asset.save '{"all":true}'; $P scene.save '{}'
 
 ```sh
 $P foliage.create '{}'                                      # -> {"id":ID}
-$P foliage.type_add '{"id":ID,"mesh":"meshes/pine.mesh","name":"pine","density":0.05,
+$P foliage.type_add '{"entity":ID,"mesh":"meshes/pine.mesh","name":"pine","density":0.05,
   "scale":[0.8,1.4],"yaw":360,"align":0.3,"rule":true,"slope":[0,30],"wind":0.5}'
-$P foliage.paint '{"id":ID,"mode":"generate","at":[256,0,256],"radius":200}'
+$P foliage.paint '{"entity":ID,"mode":"generate","at":[256,0,256],"radius":200}'
 ```
 
 - `foliage.type_add` makes a type from a `.mesh` with the settings given (its name, by default that

@@ -28,7 +28,7 @@ import "plugins:vfx/runtime/effect"
 PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"},"resources":{"type":"object","description":"What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"}},"additionalProperties":false}`
 
 @(private)
-PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string","description":"The entity with the Particle_Emitter, by its id"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["id"],"additionalProperties":false}`
+PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{"type":"string","description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
 
 // The keys of the params of an effect besides its name, path and values.
 @(private)
@@ -39,13 +39,13 @@ Particle_World :: enum u8 {Edit,Play}
 
 @(private)
 Api_Particle_Instance_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
 }
 
 @(private)
 Api_Particle_Id_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
 }
 
 @(private)
@@ -53,7 +53,7 @@ Particle_Action :: enum u8 {Start,Stop,Restart,Pause,Resume,Authored,Burst}
 
 @(private)
 Api_Particle_Control_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     world:Particle_World `mirai:"optional,label=Edit: the preview of the document; Play: the Play of the caller"`,
     action:Particle_Action `mirai:"label=Start and Stop emit or not whatever active says; Restart drops its particles and starts its cycle; Authored gives it back to its fields; Burst starts count particles at once"`,
     count:u32 `mirai:"optional,max=1048576,label=Particles of a Burst"`,
@@ -574,7 +574,7 @@ api_particle_instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Instance_Params)
     w,ok:=particle_world(s,call,p.world)
     if !ok {return}
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity)
     if found {particle_instance_write(s,call,w,e,p.world)}
 }
 
@@ -593,15 +593,15 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     has_id:bool
     for key in editor.rpc_next(&request,&fields) {
         switch key {
-        case "id": id,has_id=editor.rpc_id(&request,"id")
+        case "entity": id,has_id=editor.rpc_id(&request,"entity")
         case "values": values,_=editor.rpc_raw(&request)
         case "parameters": parameters,_=editor.rpc_raw(&request)
-        case: editor.rpc_fail(&request,"%s is not a parameter: id, values, parameters",key)
+        case: editor.rpc_fail(&request,"%s is not a parameter: entity, values, parameters",key)
         }
     }
     if request.failed {return}
     if !has_id {
-        api.call_fail(call,api.INVALID_PARAMS,"id is required")
+        api.call_fail(call,api.INVALID_PARAMS,"entity is required")
         return
     }
     w:=editor.edited_world(s)
@@ -667,7 +667,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
 api_particle_instance_revert :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity)
     if !found {return}
     if !editor.api_edit_begin(s,call,"Revert particle") {return}
     instance_clear(editor.edited_world(s),e)
@@ -687,7 +687,7 @@ instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
 api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity)
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     if emitter.particle=={} {
@@ -727,7 +727,7 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     if p.world==.Play {
         if _,own:=editor.api_play_run(s,call);!own {editor.api_play_refused(call);return}
     }
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity)
     if !found {return}
     requests:=core.world_storage_of(w,vfx.Particle_Requests)
     if requests==nil {
@@ -743,5 +743,5 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     case .Authored: vfx.authored(requests,e)
     case .Burst: vfx.burst(requests,e,p.count)
     }
-    api.call_result(call,Api_Particle_Control_Result)^={id=p.id,queued=true}
+    api.call_result(call,Api_Particle_Control_Result)^={id=p.entity,queued=true}
 }

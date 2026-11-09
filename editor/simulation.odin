@@ -96,7 +96,7 @@ simulation_apply_selection :: proc(s:^Session) {
 }
 
 Api_Simulation_Apply_Params :: struct {
-    ids:[64]base.Entity_Id `mirai:"label=Existing scene entities whose world transforms are kept"`,
+    entities:[64]base.Entity_Id `mirai:"label=Existing scene entities whose world transforms are kept"`,
 }
 
 @(private)
@@ -119,8 +119,8 @@ api_simulation_apply :: proc(s:^Session,call:^api.Call) {
     if _,own:=api_play_run(s,call);!own {api_play_refused(call);return}
     params:=api.call_params(call,Api_Simulation_Apply_Params)
     count:=0
-    for id in params.ids {if id!=0 {count+=1}}
-    if !simulation_apply(s,params.ids[:count]) {
+    for id in params.entities {if id!=0 {count+=1}}
+    if !simulation_apply(s,params.entities[:count]) {
         api.call_fail(call,api.INVALID_PARAMS,"Give distinct entities that exist in both the document and the simulation")
         return
     }

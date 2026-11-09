@@ -44,7 +44,7 @@ Clip_Edit_Params :: struct {
     asset:base.Asset_Id `mirai:"label=The .anim with the clip"`,
     clip:[64]u8 `mirai:"text,optional,label=Its clip; empty is the first"`,
     skeleton:base.Asset_Id `mirai:"optional,label=Its skeleton; or id"`,
-    id:base.Entity_Id `mirai:"optional,label=An entity whose rig gives the skeleton"`,
+    entity:base.Entity_Id `mirai:"optional,label=An entity whose rig gives the skeleton"`,
     edits:[CLIP_EDIT_STEPS]Clip_Edit_Step `mirai:"optional,label=Applied in order; empty copies the clip with its keys as they are"`,
     name:[64]u8 `mirai:"text,optional,label=Name of the new clip; empty keeps the clip's in another .anim and adds ' edited' in asset"`,
     path:[1024]u8 `mirai:"text,optional,label=The .anim it goes into: a new one, or one whose clips move the same skeleton; empty is asset"`,
@@ -57,7 +57,7 @@ Analyze_Params :: struct {
     asset:base.Asset_Id `mirai:"optional,label=An .anim to measure a clip of; with skeleton or id"`,
     clip:[64]u8 `mirai:"text,optional"`,
     skeleton:base.Asset_Id `mirai:"optional"`,
-    id:base.Entity_Id `mirai:"optional,label=A rig whose skeleton to measure on"`,
+    entity:base.Entity_Id `mirai:"optional,label=A rig whose skeleton to measure on"`,
     rate:f32 `mirai:"optional,min=1,max=240"`,
     loop:Clip_Loop `mirai:"optional"`,
     contacts:u32 `mirai:"optional,max=64,label=How many foot contacts to list"`,
@@ -240,7 +240,7 @@ clip_analyze :: proc(s:^editor.Session,call:^api.Call) {
     file,skeleton_file:Authoring_File;defer aa.asset_close(&file.file);defer aa.asset_close(&skeleton_file.file)
     animation,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,animation,base.text_get(p.clip[:]));if !found {return}
-    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.id,&skeleton_file);if !has {return}
+    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.entity,&skeleton_file);if !has {return}
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
     if !metrics_write(call.out,"",sampled.rig,skeleton.bones,sampled.frames,int(p.contacts)) {authoring_failure(call,"clip","Unmeasured","frames that compose on the skeleton","metrics failed","The clip could not be measured",api.SERVER_ERROR)}
 }
@@ -327,7 +327,7 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
     file,skeleton_file:Authoring_File;defer aa.asset_close(&file.file);defer aa.asset_close(&skeleton_file.file)
     animation,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,animation,base.text_get(p.clip[:]));if !found {return}
-    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.id,&skeleton_file);if !has {return}
+    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.entity,&skeleton_file);if !has {return}
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
     steps,_:=api.params_array_count(call,"edits")
     steps=min(steps,CLIP_EDIT_STEPS)

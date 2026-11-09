@@ -13,9 +13,9 @@ import "mirai:std/serial"
 
 @(private) API_COLLISION_LIST :: `"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":31}`
 @(private) API_COLLISION_NAMES :: `{`+API_COLLISION_LIST+`}`
-@(private) API_COLLISION_TARGET :: `"id":{"type":"string","maxLength":18},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
-@(private) API_COLLISION_GET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`},"required":["id"],"additionalProperties":false}`
-@(private) API_COLLISION_SET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`,"preset":{"type":"string","minLength":1,"maxLength":31,"description":"Of a Collider; 'custom' keeps what it is as its own"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: of its own, which make it custom from what it is"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits; '*' is all"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["id"],"additionalProperties":false}`
+@(private) API_COLLISION_TARGET :: `"entity":{"type":"string"},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
+@(private) API_COLLISION_GET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`},"required":["entity"],"additionalProperties":false}`
+@(private) API_COLLISION_SET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`,"preset":{"type":"string","minLength":1,"maxLength":31,"description":"Of a Collider; 'custom' keeps what it is as its own"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: of its own, which make it custom from what it is"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits; '*' is all"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["entity"],"additionalProperties":false}`
 @(private) API_COLLISION_SETTINGS_SCHEMA :: `{"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"},"description":"Declared in code; names.create declares one"},"presets":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"sensor":{"type":"boolean"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`},"required":["name","sensor","belongs","collides"]},"description":"What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"},"pushes":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"},"force":{"type":"number","exclusiveMinimum":0,"x-unit":"N","description":"The most they push with"}},"required":["a","b","force"]},"description":"Pairs of categories whose dynamic bodies yield to each other"},"undeclared":{"type":"array","items":{"type":"object","properties":{"field":{"enum":["presets","pushes"]},"index":{"type":"integer","minimum":0},"value":{"type":"integer","minimum":0}},"required":["field","index","value"]},"description":"Entries of Collision_Settings for values no code declares"}},"required":["categories","presets","pushes","undeclared"],"additionalProperties":false}`
 @(private) API_COLLISION_PUSHES :: `{"type":"object","additionalProperties":{"type":"number","exclusiveMinimum":0,"x-unit":"N"},"description":"Of a Collider: the categories its dynamic body yields to, with the force"}`
 @(private) API_COLLISION_RESULT_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string"},"playing":{"type":"boolean"},"component":{"type":"string"},"prefix":{"type":"string"},"preset":{"type":"string","description":"Of a Collider"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: from its preset, or its own when custom"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"pushes":`+API_COLLISION_PUSHES+`,"group":{"type":["string","null"],"description":"Of a Collider"},"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["id","playing","component","prefix"],"additionalProperties":false}`
@@ -76,7 +76,7 @@ api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Coll
     for key in editor.rpc_next(&a,&object) {
         at:=0
         switch key {
-        case "id":at=0
+        case "entity":at=0
         case "component":at=1
         case "prefix":at=2
         case "preset":at=3
@@ -92,8 +92,7 @@ api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Coll
         seen|=bit
         if !set && at>=3 {editor.rpc_fail(&a,"unknown parameter %q",key);return}
         switch key {
-        case "id":
-            if serial.text_peek(&a.r)!='"' {editor.rpc_fail(&a,"id must be an entity id as a hexadecimal string");return}
+        case "entity":
             request.id=editor.rpc_id(&a,key) or_return
         case "component":_ = editor.rpc_text(&a,key,request.component[:63]) or_return
         case "prefix":

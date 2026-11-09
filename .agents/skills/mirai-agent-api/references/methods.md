@@ -74,7 +74,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `library_panel` (Tab) toggles the shared left panel keeping its tab and state.
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
-- `editor.section_edit`: `id` of an entity with `Scene_Reference`: its section is edited in the
+- `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
   world of the open scene, `scene.save` also writes its scene (and that of each section edited
   this way that changed) and the rest stays read-only; `id` 0 ends it. Only in Edit and in a
   scene. Returns `{editing,unsaved}`: `unsaved` is the section it stopped editing with unsaved
@@ -83,11 +83,11 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   (`asked`), what the view asks for (`view`, `Auto` with nothing), what it shows (`shown`, with
   `Loading`), its box in the world and its cost (`entities`, `meshes`, `textures`, `gpu_bytes` of
   its assets on the GPU now and `file_bytes`); the streaming sources and the camera.
-- `editor.section_view`: `id` and `state` (`Active`, `Loaded`, `Unloaded` or `Auto`): turns it on,
+- `editor.section_view`: `entity` and `state` (`Active`, `Loaded`, `Unloaded` or `Auto`): turns it on,
   off or back to the default in the editor view, without editing. It answers once it is loaded.
-- `editor.section_travel`: `id`: takes the camera to the section and turns it on in the view if
+- `editor.section_travel`: `entity`: takes the camera to the section and turns it on in the view if
   what asks for it does not ask for it active, loaded when it answers.
-- `editor.section_preview`: `id` of an entity with `Scene_Reference`: the editor draws the `Sky`
+- `editor.section_preview`: `entity` with `Scene_Reference`: the editor draws the `Sky`
   and the `Sun` of its section instead of the enabled ones, and the view takes the look of the
   inside of its box; `id` 0 goes back. Only in Edit; returns the `{sky,sun}` drawn (0 where the
   section has none).
@@ -732,7 +732,7 @@ Runs the whole scene with the editor's camera and controls, without player input
 - `simulation.move`: the movement pushes dynamic bodies and a large one can take several ticks;
   `release` leaves zero velocity on arrival. Rejects characters and children of a compound body:
   the entity that owns the body is moved.
-- `simulation.apply`: the `ids` must be distinct and exist in the copy and the document. It does
+- `simulation.apply`: the `entities` must be distinct and exist in the copy and the document. It does
   not include created entities or component changes.
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
@@ -817,7 +817,7 @@ instance" are `-32602`; the rest, `-32000`
 
 - `prefab.list`: a `stale` instance has a stamp that is not the hash of its prefab's file, or that
   prefab brings an outdated one.
-- `prefab.inspect` with `id`: `kind` of an override is `field`, `added`, `removed`, `turned` or
+- `prefab.inspect` with `entity`: `kind` of an override is `field`, `added`, `removed`, `turned` or
   `child` (the entity was added by the instance); a turned-off member is an `added` of `Disabled`.
   With `asset` it gives the prefab with its own instances up to date, and its `base` and
   `chain` if it is a [variant](../../mirai-editor/references/prefabs.md#variants) (zero and empty
@@ -1004,12 +1004,12 @@ instance" are `-32602`; the rest, `-32000`
     or a grid, `iterations`, `neighbors`).
   - `particle.set` leaves the `.particle` in an undo step (`history.undo`), attributed to the AI
     turn that calls them.
-  - `particle.grid.bake` (`id` of an entity with `Particle_Grid`, `path`): holds the call until
+  - `particle.grid.bake` (`entity` with `Particle_Grid`, `path`): holds the call until
     the cells come back from the GPU, writes the `.grid` in an undo step of its own and returns
     `{path,grid}`, or fails if they do not come back. A grid the world did not take (another with
     its name, invalid cells or layers) is
     `-32602` with the `vfx.grid` problem that rejected it.
-- **Emitters** (`id` of the entity; `world` `Edit`, the document, or `Play`, the caller's):
+- **Emitters** (`entity`; `world` `Edit`, the document, or `Play`, the caller's):
   - `particle.instance.inspect` (`world` `Edit` by default): `values` (what it shows), `overrides`
     (its own values by path), `parameters` (its own), `problem` and `status` (`state` `Idle`,
     `Playing`, `Paused`, `Finishing` or `Done`, `control`, `seconds`, `generation`, `births`).

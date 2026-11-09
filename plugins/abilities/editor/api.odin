@@ -16,11 +16,11 @@ Abilities_Api :: struct {provider:editor.Api_Provider}
 ABILITIES_API_DEFAULT :: Abilities_Api{provider={register=register}}
 
 Inspect_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
 }
 
 Use_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     ability:[ab.ABILITY_NAME]u8 `mirai:"text,label=The name of an Ability row"`,
     table:[1024]u8 `mirai:"text,optional,label=The .records path when two tables have a row of that name"`,
 }
@@ -79,10 +79,10 @@ row_write :: proc(w:^serial.Writer,key:string,rows:core.Records(ab.Ability),ref:
 inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Inspect_Params)
     world:=editor.shown_world(s)
-    e:=core.entity_of(core.world_entities(world),p.id)
+    e:=core.entity_of(core.world_entities(world),p.entity)
     users:=core.world_table_of(world,ab.Ability_User)
     if e==core.NONE || users==nil || !core.has(core.read(users),e) {
-        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the shown world: add one, or pick another entity",p.id)
+        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the shown world: add one, or pick another entity",p.entity)
         return
     }
     u,_:=core.get(core.read(users),e)
@@ -276,10 +276,10 @@ use :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     world:=editor.shown_world(s)
-    e:=core.entity_of(core.world_entities(world),p.id)
+    e:=core.entity_of(core.world_entities(world),p.entity)
     users:=core.world_table_of(world,ab.Ability_User)
     if e==core.NONE || users==nil || !core.has(core.read(users),e) {
-        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the running game: add one, or pick another entity",p.id)
+        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the running game: add one, or pick another entity",p.entity)
         return
     }
     abilities,_:=sets(s)

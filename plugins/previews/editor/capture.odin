@@ -25,7 +25,7 @@ CAPTURE_FRAMES :: 16
 CAPTURE_RATE :: 60
 
 Animation_Capture_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     frames:u32 `mirai:"optional,min=1,max=16,label=Frames of the strip spread over seconds"`,
     seconds:f32 `mirai:"optional,min=0,max=60,unit=s"`,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where it starts"`,
@@ -154,7 +154,7 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     for i in 0..<frames {st.ticks[i]=u32(math.round(f32(i)*f32(ticks)/f32(max(frames-1,1)))) if frames>1 else 0}
     context.allocator=app.allocator
     defer {subject_skins_clear(&st.sub);delete(st.sub.skins);delete(st.sub.locals);delete(st.sub.posed);delete(st.sub.materials)}
-    if !aed.preview_run(s,call,p.id,p,p.time,ticks,1.0/CAPTURE_RATE,capture_frame,st) {return}
+    if !aed.preview_run(s,call,p.entity,p,p.time,ticks,1.0/CAPTURE_RATE,capture_frame,st) {return}
     if st.taken<frames {api.call_fail(call,api.SERVER_ERROR,"The copy stopped before the last frame");return}
     host.assets_commit(app.assets)
     views:=make([dynamic]Capture_View,call.allocator)
@@ -187,7 +187,7 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     }
     side:=int(p.size)
     width,height:=side*frames,side*len(views)
-    path,writable:=editor.api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("animation-%x.png",p.id),call.allocator)
+    path,writable:=editor.api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("animation-%x.png",p.entity),call.allocator)
     if !writable {return}
     // The vertices and images outgrow the scratch of a call.
     turned,turned_error:=make([]gpu.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
@@ -218,7 +218,7 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     host.app_png_write_start(app,&write,path,image,width,height)
     if error:=host.app_png_write_wait(app,&write);error!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written: %s",path,os.error_string(error));return}
     report:serial.Writer;serial.writer_init(&report,0,context.temp_allocator)
-    serial.write_u8(&report,'{');api.write_key(&report,"id",true);api.write_id(&report,p.id);api.write_text(&report,"image",path)
+    serial.write_u8(&report,'{');api.write_key(&report,"id",true);api.write_id(&report,p.entity);api.write_text(&report,"image",path)
     api.write_int(&report,"size",i64(side));api.write_bool(&report,"short",st.sub.short)
     api.write_key(&report,"frames");serial.write_u8(&report,'[')
     for frame in 0..<frames {if frame>0 {serial.write_u8(&report,',')};api.write_number(&report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}

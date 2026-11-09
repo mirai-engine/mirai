@@ -268,7 +268,7 @@ shapes_api_stamps_and_moves_corners_as_steps_of_undo :: proc(t:^testing.T) {
     testing.expect(t,refused.failed && refused.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,1)
 
-    corner:=Corner_Params{id=id,op=.Move,at={1.5,0.5,0},to={2,1,0}}
+    corner:=Corner_Params{entity=id,op=.Move,at={1.5,0.5,0},to={2,1,0}}
     moved:Corner_Result
     move:=api.Call{method=&corner_method,params=&corner,result=&moved,raw=`{"op":"Move","at":[1.5,0.5,0],"to":[2,1,0]}`,allocator=context.temp_allocator}
     api_corner(s,&move)

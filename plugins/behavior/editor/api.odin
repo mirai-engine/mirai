@@ -18,11 +18,11 @@ Behavior_Api :: struct {provider:editor.Api_Provider}
 BEHAVIOR_API_DEFAULT :: Behavior_Api{provider={register=register}}
 
 Entity_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
 }
 
 Query_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The querier"`,
+    entity:base.Entity_Id `mirai:"label=The querier"`,
     layout:behavior.Place_Layout `mirai:"optional"`,
     around:base.Entity_Id `mirai:"optional,label=Around this entity; omitted: around the querier, or point"`,
     point:[3]f32 `mirai:"optional"`,
@@ -144,9 +144,9 @@ minds :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,_,agents,ok:=entity_of(s,call,p.id,behavior.Mind_Agent,"Mind_Agent")
+    world,_,agents,ok:=entity_of(s,call,p.entity,behavior.Mind_Agent,"Mind_Agent")
     if !ok {return}
-    agent:=&agents.values[core.row_of(agents,core.entity_of(core.world_entities(world),p.id))]
+    agent:=&agents.values[core.row_of(agents,core.entity_of(core.world_entities(world),p.entity))]
     entry:=behavior.mind_of(minds_of(s),agent.mind)
     w:=call.out
     serial.text_write_raw(w,"{")
@@ -212,7 +212,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 perception :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,e,_,ok:=entity_of(s,call,p.id,behavior.Perceiver,"Perceiver")
+    world,e,_,ok:=entity_of(s,call,p.entity,behavior.Perceiver,"Perceiver")
     if !ok {return}
     w:=call.out
     serial.text_write_raw(w,`{"remembers":[`)
@@ -239,7 +239,7 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 offers :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,e,objects,ok:=entity_of(s,call,p.id,behavior.Smart_Object,"Smart_Object")
+    world,e,objects,ok:=entity_of(s,call,p.entity,behavior.Smart_Object,"Smart_Object")
     if !ok {return}
     object,_:=core.get(core.read(objects),e)
     state:behavior.Smart_State
@@ -299,7 +299,7 @@ influence :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
-    world,e,_,ok:=entity_of(s,call,p.id,core.World_Transform,"place in the world")
+    world,e,_,ok:=entity_of(s,call,p.entity,core.World_Transform,"place in the world")
     if !ok {return}
     entities:=core.world_entities(world)
     q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,spacing=p.spacing,teams=p.teams,use=p.use,keep=p.keep}

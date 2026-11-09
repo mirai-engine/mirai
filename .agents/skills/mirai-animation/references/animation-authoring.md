@@ -74,7 +74,7 @@ libraries.
 
 `animation.character.setup` builds a character from the saved body of the skeleton of its rig (or a
 detected unsaved one) and a clip library (by default, the one it plays). With `skeleton` instead of
-`id` it needs `library`, only writes the assets and returns them, and changes no entity.
+`entity` it needs `library`, only writes the assets and returns them, and changes no entity.
 
 - It classifies the clips by the words of their name: idle, stand, walk, jog, run and sprint serve
   the walking mode (with start, stop, turn or pivot they do not loop); fall, air or a looping jump,
@@ -146,8 +146,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 - `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone, graph,
   modifiers, actions, motion and morphs; `diagnostics` adds solver and fades). A part that does not
   apply answers `{available:false, code, reason}` without failing the call; a graph that does not
-  evaluate gives `Program_Error`. In Play or Simulate `entity` names a rig by the handle
-  `play.inspect` gives, the only name of one the game made; in Edit it takes `id`.
+  evaluate gives `Program_Error`. `entity` also takes, in Play or Simulate, the handle
+  `play.inspect` gives, the only name of an entity the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
   forced search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps

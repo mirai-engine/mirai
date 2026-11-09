@@ -29,11 +29,11 @@ Inspect_Params :: struct {
 }
 
 Agent_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
 }
 
 Move_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     to:[3]f32 `mirai:"optional,label=Where it walks; omitted with no target: it stops"`,
     target:base.Entity_Id `mirai:"optional,label=An entity it follows instead"`,
     distance:f32 `mirai:"optional,min=0,unit=m,label=Kept from the target"`,
@@ -492,11 +492,11 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Agent_Params)
     n,world,ok:=navigation_of(s,call)
     if !ok {return}
-    e:=core.entity_of(core.world_entities(world),p.id)
+    e:=core.entity_of(core.world_entities(world),p.entity)
     paths:=core.world_table_of(world,nav.Nav_Path)
     agents:=core.world_table_of(world,nav.Nav_Agent)
     far:=far_of(world,e)
-    if e==core.NONE || agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the shown world",p.id);return}
+    if e==core.NONE || agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the shown world",p.entity);return}
     w:=call.out
     serial.text_write_raw(w,"{")
     value:nav.Nav_Path
@@ -595,8 +595,8 @@ move :: proc(s:^editor.Session,call:^api.Call) {
     world:=editor.shown_world(s)
     requests:=core.world_storage_of(world,nav.Nav_Requests)
     agents:=core.world_table_of(world,nav.Nav_Agent)
-    e:=core.entity_of(core.world_entities(world),p.id)
-    if requests==nil || agents==nil || e==core.NONE || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the running world",p.id);return}
+    e:=core.entity_of(core.world_entities(world),p.entity)
+    if requests==nil || agents==nil || e==core.NONE || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the running world",p.entity);return}
     switch {
     case p.target!=0:
         target:=core.entity_of(core.world_entities(world),p.target)

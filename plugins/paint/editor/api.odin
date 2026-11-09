@@ -17,7 +17,7 @@ STROKE_POINTS :: 256
 CLEAR_IDS :: 64
 
 Stroke_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     points:[STROKE_POINTS][3]f32 `mirai:"unit=m,label=World points in order: the brush stamps at the first and along each segment to the next"`,
     radius:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Vertices closer than it to the stroke take paint; fully at the center and none at the edge"`,
     strength:f32 `mirai:"optional,min=0,max=1,label=How far the stroke takes a color toward the one of the brush"`,
@@ -33,7 +33,7 @@ Stroke_Result :: struct {
 }
 
 Clear_Params :: struct {
-    ids:[CLEAR_IDS]base.Entity_Id `mirai:"label=Painted entities"`,
+    entities:[CLEAR_IDS]base.Entity_Id `mirai:"label=Painted entities"`,
 }
 
 Clear_Result :: struct {cleared:u32}
@@ -53,15 +53,15 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     app:=s.app
     if app==nil || app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
     w:=editor.edited_world(s)
-    e:=core.entity_of(core.world_entities(w),p.id)
-    if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.id);return}
+    e:=core.entity_of(core.world_entities(w),p.entity)
+    if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.entity);return}
     source,shown:=editor.entity_get(w,e,erender.Mesh_Renderer)
-    if !shown || (source.mesh=={} && source.shape==.None) {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x shows no mesh; give it a Mesh_Renderer with a mesh asset or a shape",p.id);return}
+    if !shown || (source.mesh=={} && source.shape==.None) {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x shows no mesh; give it a Mesh_Renderer with a mesh asset or a shape",p.entity);return}
     tool:=Paint_Tool{radius=p.radius,strength=p.strength,color=p.color}
     defer paint_tool_free(&tool)
     stroke:=&tool.stroke
     if !stroke_load(stroke,app.assets,e,source,editor.entity_world(w,e),app.allocator) {
-        api.call_failf(call,api.INVALID_PARAMS,"id: the mesh of entity %x cannot be painted: it is not a mesh asset with vertices and valid indices",p.id)
+        api.call_failf(call,api.INVALID_PARAMS,"id: the mesh of entity %x cannot be painted: it is not a mesh asset with vertices and valid indices",p.entity)
         return
     }
     touched:=stamp(stroke.positions,stroke.weights,p.points[0],tool.radius)
@@ -69,7 +69,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
         if stamp_segment(stroke.positions,stroke.weights,p.points[at-1],p.points[at],tool.radius) {touched=true}
     }
     if !touched {
-        api.call_failf(call,api.INVALID_PARAMS,"points: no vertex of entity %x is within %g m of the stroke; give points on its surface or a larger radius",p.id,tool.radius)
+        api.call_failf(call,api.INVALID_PARAMS,"points: no vertex of entity %x is within %g m of the stroke; give points on its surface or a larger radius",p.entity,tool.radius)
         return
     }
     if !editor.api_edit_begin(s,call,"Paint") {return}
@@ -77,7 +77,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     if !written {api.call_fail(call,api.SERVER_ERROR,"The painted mesh could not be written under the asset root")}
     if !editor.api_edit_end(s,call,written) {return}
     out:=api.call_result(call,Stroke_Result)
-    out.id,out.mesh,out.vertices=p.id,stroke.id,u32(len(stroke.before))
+    out.id,out.mesh,out.vertices=p.entity,stroke.id,u32(len(stroke.before))
     fmt.bprintf(out.path[:],"%s/%016x.mesh",FOLDER,stroke.id[0])
     for vertex,at in stroke.canvas.vertices {
         if vertex.color!=stroke.before[at] {out.changed+=1}
@@ -91,7 +91,7 @@ api_clear :: proc(s:^editor.Session,call:^api.Call) {
     painted:=core.world_table_of(w,paint.Painted)
     entities:[CLEAR_IDS]core.Entity
     count:=0
-    for id,at in p.ids {
+    for id,at in p.entities {
         if id==0 {continue}
         e:=core.entity_of(core.world_entities(w),id)
         if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"ids[%d]: no entity %x in the scene; scene.inspect lists them",at,id);return}

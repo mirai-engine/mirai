@@ -15,7 +15,7 @@ Cinematics_Api :: struct {provider:editor.Api_Provider}
 CINEMATICS_API_DEFAULT :: Cinematics_Api{provider={register=register}}
 
 Inspect_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The timeline or one of its tracks shots markers or viewers"`,
+    entity:base.Entity_Id `mirai:"label=The timeline or one of its tracks shots markers or viewers"`,
     position:f32 `mirai:"optional,min=-1,unit=ticks,label=Where the values of the tracks and the view are sampled; -1: the head of the preview in Edit or the position of the timeline in Play"`,
 }
 Inspect_Key :: struct {tick:f32 `mirai:"unit=ticks"`,value:[4]f32,ease:mm.Ease,interpolation:lib.Interpolation}
@@ -51,7 +51,7 @@ Inspect_Result :: struct {
 Control_Command :: enum u8 {Play,Pause,Resume,Stop,Seek}
 Control_View :: enum u8 {Keep,Shot,Editor}
 Control_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The timeline or one of its parts"`,
+    entity:base.Entity_Id `mirai:"label=The timeline or one of its parts"`,
     command:Control_Command,
     position:f32 `mirai:"optional,min=0,unit=ticks,label=Where Play and Seek put the head"`,
     speed:f32 `mirai:"optional,min=0,max=4,label=Edit: the speed of the preview; 0 keeps it"`,
@@ -118,7 +118,7 @@ timeline_find :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id,field:st
 api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Inspect_Params)
     w:=editor.shown_world(s)
-    timeline:=timeline_find(call,w,p.id,"id")
+    timeline:=timeline_find(call,w,p.entity,"entity")
     if timeline==core.NONE {return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     c:=tool_state(s)
@@ -224,7 +224,7 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Control_Params)
     if s.mode==.Watch {api.call_fail(call,api.INVALID_PARAMS,"this editor watches another one: control the timeline in the editor that runs it");return}
     w:=editor.shown_world(s)
-    timeline:=timeline_find(call,w,p.id,"id")
+    timeline:=timeline_find(call,w,p.entity,"entity")
     if timeline==core.NONE {return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     out:=api.call_result(call,Control_Result)

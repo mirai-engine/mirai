@@ -30,7 +30,7 @@ Create_Params :: struct {
 }
 
 Type_Add_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     mesh:base.Asset_Id `mirai:"label=The .mesh it shows"`,
     name:[32]u8 `mirai:"text,optional,label=What names it; omitted: that of its mesh"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
@@ -52,7 +52,7 @@ Type_Add_Params :: struct {
 }
 
 Type_Set_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name as foliage.query lists them"`,
     name:[32]u8 `mirai:"text,optional,label=Another name; no other type may have it"`,
     mesh:base.Asset_Id `mirai:"optional,label=Another mesh: its instances stay"`,
@@ -75,12 +75,12 @@ Type_Set_Params :: struct {
 }
 
 Type_Remove_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name: it goes with its instances"`,
 }
 
 Paint_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     mode:[16]u8 `mirai:"text,label=paint or erase or reapply or generate or ungenerate"`,
     at:[3]f32 `mirai:"label=Where the brush touches in the world: the surface under it"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to touching every half radius"`,
@@ -92,13 +92,13 @@ Paint_Params :: struct {
 }
 
 Place_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name"`,
     at:[3]f32 `mirai:"label=Where it stands in the world: on the surface under it"`,
 }
 
 Query_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     min:[3]f32 `mirai:"optional,label=A corner of the box of the world it lists; without min and max: only the types and their counts"`,
     max:[3]f32 `mirai:"optional"`,
     limit:u32 `mirai:"optional,min=1,max=4096,clamp,label=Instances listed at most"`,
@@ -243,7 +243,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_add :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Add_Params)
-    tool,world,_,_,ground,ok:=api_foliage(s,call,p.id)
+    tool,world,_,_,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     count,_:=api.params_array_count(call,"layers")
     layers,named:=rule_layers(s,call,ground,p.layers[:],count)
@@ -263,7 +263,7 @@ api_type_add :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Set_Params)
-    tool,world,_,_,ground,ok:=api_foliage(s,call,p.id)
+    tool,world,_,_,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     source:=&tool.edit.source
     t:=type_named(call,source,base.text_get(p.type[:]))
@@ -293,7 +293,7 @@ api_type_set :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_remove :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Remove_Params)
-    tool,world,_,_,_,ok:=api_foliage(s,call,p.id)
+    tool,world,_,_,_,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     t:=type_named(call,&tool.edit.source,base.text_get(p.type[:]))
     if t==nil {return}
@@ -316,7 +316,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     case "ungenerate": mode,generate=.Generate,false
     case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, generate or ungenerate");return
     }
-    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.id)
+    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     source:=&tool.edit.source
     // What the brush of the tool holds goes back to it after the stroke.
@@ -365,7 +365,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_place :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Place_Params)
-    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.id)
+    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     source:=&tool.edit.source
     t:=type_named(call,source,base.text_get(p.type[:]))
@@ -389,7 +389,7 @@ api_place :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
-    tool,_,_,owner,ground,ok:=api_foliage(s,call,p.id)
+    tool,_,_,owner,ground,ok:=api_foliage(s,call,p.entity)
     if !ok {return}
     source:=&tool.edit.source
     w:=call.out

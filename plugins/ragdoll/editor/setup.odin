@@ -30,7 +30,7 @@ Ragdoll_Part :: enum u8 {Pelvis,Spine,Chest,Head,Upper_Arm_L,Forearm_L,Hand_L,Up
 Ragdoll_Joint_Kind :: enum u8 {None,Hinge,Swing_Twist}
 
 Ragdoll_Setup_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh"`,
+    entity:base.Entity_Id `mirai:"label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh"`,
     mass:f32 `mirai:"optional,min=0,max=100000,unit=kg,label=Total mass, split by volume; 0 weighs each body as water"`,
     mode:rag.Ragdoll_Mode `mirai:"optional"`,
 }
@@ -125,10 +125,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         failure(call,{"plugins","Unavailable","the tables of ragdoll, animation and physics","missing","The world has no ragdoll or physics components","Activate the plugin ragdoll in project.mirai and rebuild"},api.SERVER_ERROR)
         return
     }
-    rig:=core.entity_of(core.world_entities(w),p.id)
-    if rig==core.NONE {failure(call,{"id","Missing_Entity","an entity of the edited scene",fmt.tprintf("%x",p.id),"The rig does not exist","Use an id from scene.inspect"});return}
+    rig:=core.entity_of(core.world_entities(w),p.entity)
+    if rig==core.NONE {failure(call,{"entity","Missing_Entity","an entity of the edited scene",fmt.tprintf("%x",p.entity),"The rig does not exist","Use an id from scene.inspect"});return}
     if source,shared:=editor.entity_get(w,rig,anim.Pose_Source);shared && source.rig!=core.NONE {rig=source.rig}
-    if !editor.entity_has(w,rig,anim.Animation) {failure(call,{"id","Missing_Component","a rig with an Animation","no Animation","The rig has no Animation, so a ragdoll could not follow its pose","Give it an Animation, for example with animation.play"});return}
+    if !editor.entity_has(w,rig,anim.Animation) {failure(call,{"entity","Missing_Component","a rig with an Animation","no Animation","The rig has no Animation, so a ragdoll could not follow its pose","Give it an Animation, for example with animation.play"});return}
     skeleton_id:base.Asset_Id
     if shown,has:=editor.entity_get(w,rig,erender.Mesh_Renderer);has && shown.mesh!={} {
         file:aa.Asset
@@ -137,7 +137,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             aa.asset_close(&file)
         }
     }
-    if skeleton_id=={} {failure(call,{"id","Missing_Skeleton","a rig whose Mesh_Renderer shows a skinned mesh","none","The rig has no skeleton","Pass the id of the entity with the Mesh_Renderer of a skinned mesh"});return}
+    if skeleton_id=={} {failure(call,{"entity","Missing_Skeleton","a rig whose Mesh_Renderer shows a skinned mesh","none","The rig has no skeleton","Pass the id of the entity with the Mesh_Renderer of a skinned mesh"});return}
     file:aa.Asset;defer aa.asset_close(&file)
     if error:=host.assets_file(s.app.assets,skeleton_id,aa.KIND_SKELETON,&file);error!=.None {failure(call,{"skeleton","Read_Error","a readable .skeleton",fmt.tprintf("%v",error),"The skeleton of the rig could not be read",""},api.SERVER_ERROR);return}
     view,error:=aa.skeleton_view(&file,&s.app.assets.types)
@@ -152,7 +152,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     for row in 0..<core.count(bindings) {if bindings.values[row].rig==rig {append(&previous,core.entity_at(bindings,row))}}
     for body in previous {
         for at,depth:=rig,0;at!=core.NONE && depth<1024;depth+=1 {
-            if at==body {failure(call,{"id","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing it would remove the rig","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
+            if at==body {failure(call,{"entity","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing it would remove the rig","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
             parent,placed:=core.get(core.read(parents),at)
             at=parent.entity if placed else core.NONE
         }
@@ -166,7 +166,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if len(previous)>0 {editor.entities_delete(s,previous[:])}
     for body in previous {
         if editor.entity_alive(w,body) {
-            failure(call,{"id","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
+            failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
             editor.api_edit_end(s,call,false)
             return
         }
@@ -176,7 +176,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         if !body.present {continue}
         e:=editor.entity_create(s,{preset=.Empty,name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
         if e==core.NONE {
-            failure(call,{"id","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
+            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
             editor.api_edit_end(s,call,false)
             return
         }

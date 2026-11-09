@@ -15,11 +15,11 @@ import "mirai:std/serial"
 // edits it.
 
 @(private)
-MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string","description":"The entity with the Mesh_Renderer, by its id"},"slot":{"type":"integer","minimum":0,"description":"The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"},"values":{"type":"object","description":"Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"},"parameters":{"type":"object","description":"Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"},"textures":{"type":"object","description":"Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, \"\" for none, null takes it away"},"overlays":{"type":["array","null"],"description":"Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"}},"required":["id"],"additionalProperties":false}`
+MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{"type":"string","description":"The entity with the Mesh_Renderer"},"slot":{"type":"integer","minimum":0,"description":"The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"},"values":{"type":"object","description":"Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"},"parameters":{"type":"object","description":"Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"},"textures":{"type":"object","description":"Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, \"\" for none, null takes it away"},"overlays":{"type":["array","null"],"description":"Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"}},"required":["entity"],"additionalProperties":false}`
 
 @(private)
 Api_Material_Slot_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     slot:int `mirai:"optional,min=0,label=The slot of its mesh, from 0"`,
 }
 
@@ -54,7 +54,7 @@ material_instance_api_register :: proc(s:^Session,st:^Api_State) {
 material_instance_entity :: proc(s:^Session,w:core.World_Ref,call:^api.Call,id:base.Entity_Id,slot:int) -> (e:core.Entity,ok:bool) {
     e=api_entity(w,id)
     if e==core.NONE || !entity_has(w,e,erender.Mesh_Renderer) {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity with a Mesh_Renderer in the scene",u64(id))
+        api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x is not an entity with a Mesh_Renderer in the scene",u64(id))
         return
     }
     mesh,_:=entity_get(w,e,erender.Mesh_Renderer)
@@ -150,7 +150,7 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
 api_material_instance_inspect :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
     w:=edited_world(s)
-    if e,found:=material_instance_entity(s,w,call,p.id,p.slot);found {material_instance_write(s,call,w,e,p.slot)}
+    if e,found:=material_instance_entity(s,w,call,p.entity,p.slot);found {material_instance_write(s,call,w,e,p.slot)}
 }
 
 @(private)
@@ -169,7 +169,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
     slot:int
     for key in rpc_next(&request,&fields) {
         switch key {
-        case "id": id,has_id=rpc_id(&request,"id")
+        case "entity": id,has_id=rpc_id(&request,"entity")
         case "slot":
             number:=rpc_unsigned(&request,"slot") or_break
             slot=int(min(number,u64(erender.MATERIAL_SLOTS)))
@@ -177,12 +177,12 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         case "parameters": parameters,_=rpc_raw(&request)
         case "textures": textures,_=rpc_raw(&request)
         case "overlays": overlays,_=rpc_raw(&request)
-        case: rpc_fail(&request,"%s is not a parameter: id, slot, values, parameters, textures, overlays",key)
+        case: rpc_fail(&request,"%s is not a parameter: entity, slot, values, parameters, textures, overlays",key)
         }
     }
     if request.failed {return}
     if !has_id {
-        api.call_fail(call,api.INVALID_PARAMS,"id is required")
+        api.call_fail(call,api.INVALID_PARAMS,"entity is required")
         return
     }
     w:=edited_world(s)
@@ -367,7 +367,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
 api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
     w:=edited_world(s)
-    e,found:=material_instance_entity(s,w,call,p.id,p.slot)
+    e,found:=material_instance_entity(s,w,call,p.entity,p.slot)
     if !found {return}
     if !api_edit_begin(s,call,"Revert material") {return}
     w=edited_world(s)
@@ -384,7 +384,7 @@ api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_material_instance_apply :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Material_Slot_Params)
-    e,found:=material_instance_entity(s,edited_world(s),call,p.id,p.slot)
+    e,found:=material_instance_entity(s,edited_world(s),call,p.entity,p.slot)
     if !found {return}
     if !api_edit_begin(s,call,"Apply to material") {return}
     material,message:=material_apply(s,e,p.slot)

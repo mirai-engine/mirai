@@ -35,14 +35,14 @@ Sequence_Editor :: struct {owner,source,reference:core.Entity,frame:int}
 
 Sequence_Frame_Params :: struct {pose:mm.Transform `mirai:"optional"`,duration:f32 `mirai:"optional,min=0,unit=s,label=To arrive at the pose"`,hold:f32 `mirai:"optional,min=0,unit=s"`,ease:mm.Ease `mirai:"optional"`,interpolation:lib.Sequence_Interpolation `mirai:"optional"`}
 Sequence_Value_Params :: struct {frames:[anim.KEYFRAME_PATH_FRAMES]Sequence_Frame_Params `mirai:"label=1 to 16; their count is the length"`,speed:f32 `mirai:"optional"`,loop:lib.Loop `mirai:"optional"`,playing,relative:bool `mirai:"optional"`}
-Sequence_Set_Params :: struct {id:base.Entity_Id,value:Sequence_Value_Params}
+Sequence_Set_Params :: struct {entity:base.Entity_Id,value:Sequence_Value_Params}
 Sequence_Capture_Params :: struct {
-    id:base.Entity_Id,
+    entity:base.Entity_Id,
     frame:u32 `mirai:"min=0,max=15"`,
     source:base.Entity_Id `mirai:"optional,label=The entity whose transform it captures; omitted is the owner"`,
     reference:base.Entity_Id `mirai:"optional,label=Required by a relative sequence"`,
 }
-Sequence_Preview_Params :: struct {id:base.Entity_Id,time:f32}
+Sequence_Preview_Params :: struct {entity:base.Entity_Id,time:f32}
 Sequence_Preview_Result :: struct {pose:mm.Transform,duration:f32}
 Sequence_Edit_Result :: struct {id:base.Entity_Id,queued:bool}
 
@@ -75,12 +75,12 @@ sequence_set :: proc(s:^editor.Session,call:^api.Call) {
     value:=anim.Keyframe_Path{count=u8(count),speed=p.value.speed,loop=p.value.loop,playing=p.value.playing,relative=p.value.relative}
     for frame,i in p.value.frames[:count] {value.frames[i]={pose=frame.pose,duration=frame.duration,hold=frame.hold,ease=frame.ease,interpolation=frame.interpolation}}
     if !sequence_valid(&value) {authoring_failure(call,"value","Invalid_Definition","valid transform frames and finite playback settings","invalid sequence","The sequence definition is invalid");return}
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity);if !ok {return}
     table:=core.world_table_of(w,anim.Keyframe_Path)
     if table==nil {authoring_failure(call,"Keyframe_Path","Unavailable","the sequence runtime table","missing table","The sequence runtime is unavailable",api.SERVER_ERROR);return}
     if !edit_begin(s,call,"Set animation sequence") {return}
     core.add(table,e,value)
-    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.id}}
+    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.entity}}
 }
 
 sequence_capture_pose :: proc(w:core.World_Ref,owner,source,reference:core.Entity,relative:bool) -> (pose:mm.Transform,ok:bool) {
@@ -95,7 +95,7 @@ sequence_capture_pose :: proc(w:core.World_Ref,owner,source,reference:core.Entit
 @(private)
 sequence_capture :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Capture_Params)
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity);if !ok {return}
     value,present:=editor.entity_get(w,e,anim.Keyframe_Path)
     if !present || p.frame>=u32(value.count) || p.frame>=anim.KEYFRAME_PATH_FRAMES {authoring_failure(call,"frame","Out_Of_Range","an existing frame in a Keyframe_Path component",fmt.tprintf("%d",p.frame),"The sequence frame does not exist");return}
     source:=e
@@ -107,16 +107,16 @@ sequence_capture :: proc(s:^editor.Session,call:^api.Call) {
     if !sequence_valid(&value) {authoring_failure(call,"frame","Invalid_Value","a valid transform pose","invalid captured transform","The captured pose is invalid");return}
     if !edit_begin(s,call,"Capture animation frame") {return}
     core.add(core.world_table_of(w,anim.Keyframe_Path),e,value)
-    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.id}}
+    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.entity}}
 }
 
 
 @(private)
 sequence_preview :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Preview_Params)
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity);if !ok {return}
     value,present:=editor.entity_get(w,e,anim.Keyframe_Path)
-    if !present {authoring_failure(call,"id","Missing_Component","a Keyframe_Path component","missing component","The entity has no Keyframe_Path component");return}
+    if !present {authoring_failure(call,"entity","Missing_Component","a Keyframe_Path component","missing component","The entity has no Keyframe_Path component");return}
     pose,sampled:=lib.sequence_sample(anim.keyframe_path_frames(&value),p.time,value.loop)
     if !sampled {authoring_failure(call,"time","Invalid_Value","a valid sequence and sample time",fmt.tprintf("%v",p.time),"The sequence or sample time is invalid");return}
     if value.relative {

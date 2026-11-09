@@ -336,7 +336,7 @@ entity_roots :: proc(w:core.World_Ref) -> []core.Entity {
 }
 
 Api_Section_Preview_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose sky, sun and look the editor draws; 0 goes back to those on"`,
+    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose sky, sun and look the editor draws; 0 goes back to those on"`,
 }
 
 api_section_preview :: proc(s:^Session,call:^api.Call) {
@@ -347,10 +347,10 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"The preview of a section is of Edit: stop Play or Simulate first")
         return
     }
-    if params.id==0 {
+    if params.entity==0 {
         p^={}
     } else {
-        e,ok:=api_section_reference(call,w,params.id)
+        e,ok:=api_section_reference(call,w,params.entity)
         if !ok {return}
         if !section_previewed(w,e) {section_preview_toggle(s,w,e)}
     }
@@ -632,7 +632,7 @@ sections_save :: proc(s:^Session) -> bool {
 }
 
 Api_Section_Edit_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; 0 stops"`,
+    entity:base.Entity_Id `mirai:"label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; 0 stops"`,
 }
 
 api_section_edit :: proc(s:^Session,call:^api.Call) {
@@ -643,9 +643,9 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
         return
     }
     e:=core.NONE
-    if params.id!=0 {
+    if params.entity!=0 {
         ok:bool
-        if e,ok=api_section_reference(call,w,params.id);!ok {return}
+        if e,ok=api_section_reference(call,w,params.entity);!ok {return}
     }
     left:=section_editing(s)
     kept:=left!=core.NONE && left!=e && section_unsaved(s,w,left)
