@@ -215,7 +215,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         }
         previous:=s.document.previous
         serial.text_write_raw(w,`{"id":`);api_write_id(w,params.id)
-        api.write_key(w,"locked");api.write_flag(w,prefab_member_locked(s,e))
+        api.write_key(w,"locked");api.write_flag(w,prefab_member_locked(s,world,e))
         api.write_key(w,"links");serial.write_u8(w,'[')
         overrides:=make([dynamic]asset.Override,call.allocator)
         if previous!=nil {
@@ -331,7 +331,7 @@ api_prefab_new_path :: proc(s:^Session,name:string) -> string {
 @(private)
 api_prefab_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Create_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     e,found:=api_prefab_entity(s,call,params.id)
     if !found {return}
     path:=base.text_get(params.path[:])
@@ -349,7 +349,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Instantiate_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     id,locate_error:=prefab_locate(s,base.text_get(params.asset[:]))
     if locate_error!=.None {
         api_prefab_fail(call,locate_error)
@@ -389,7 +389,7 @@ api_paths_split :: proc(text:string,allocator:=context.temp_allocator) -> []stri
 @(private)
 api_prefab_apply :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Apply_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     e,found:=api_prefab_entity(s,call,params.id)
     if !found {return}
     count,error:=prefab_apply(s,e,api_paths_split(base.text_get(params.paths[:])),false,params.target)
@@ -403,7 +403,7 @@ api_prefab_apply :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Variant_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     base_id,locate_error:=prefab_locate(s,base.text_get(params.prefab[:]))
     if locate_error!=.None {
         api_prefab_fail(call,locate_error)
@@ -427,7 +427,7 @@ api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_revert :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Entity_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     e,found:=api_prefab_entity(s,call,params.id)
     if !found {return}
     count,error:=prefab_revert(s,e,api_paths_split(base.text_get(params.paths[:])))
@@ -441,7 +441,7 @@ api_prefab_revert :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     id:base.Asset_Id
     if named:=base.text_get(params.asset[:]);named!="" {
         located,error:=prefab_locate(s,named)
@@ -462,7 +462,7 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_prefab_unlink :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Unlink_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     e,found:=api_prefab_entity(s,call,params.id)
     if !found {return}
     if error:=prefab_unlink(s,e,params.recursive);error!=.None {

@@ -227,7 +227,10 @@ positions misses both.
 - The timeline, trace and filmstrip of a step: `mirai test editor
   a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first
   a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last
-  a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_entity`;
+  a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_entity`; what
+  answers with no game and an idempotent `play.start`:
+  `play_start_is_idempotent_and_reads_answer_without_a_game`; the edit API while a game plays:
+  `the_api_edits_the_document_while_a_game_plays`;
   the input of a person and what the player sees: `mirai test editor
   play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
   play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:

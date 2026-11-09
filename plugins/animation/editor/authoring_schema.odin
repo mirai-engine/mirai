@@ -43,7 +43,6 @@ authoring_failure :: proc(call:^api.Call,path,code,expected,actual,message:strin
 @(private)
 authoring_fix :: proc(code,path,expected:string) -> string {
     switch code {
-    case "Invalid_Mode": return "Stop Play or Simulation with play.stop, or pass dry_run to only validate"
     case "Runtime_Required": return "Start Play or Simulation, or use animation.preview on a copy"
     case "Missing_Entity": return "Use an id from scene.inspect"
     case "Missing_Component": return "Assign playback first with animation.play"

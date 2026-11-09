@@ -152,7 +152,6 @@ asset_create_refusal :: proc(s:^Session) -> string {
     switch {
     case files_registry(s)==nil: return "The project has no assets folder"
     case watching(s):            return "A watcher does not change the files of the host"
-    case s.mode!=.Edit:          return "Stop Play or Simulate first"
     case import_busy(s)!="":     return import_busy(s)
     }
     return ""
@@ -164,7 +163,7 @@ asset_create_refusal :: proc(s:^Session) -> string {
 @(private)
 asset_create_gesture :: proc(s:^Session,label:string) -> (opened,ready:bool) {
     if s.edits==nil {return false,true}
-    opened,ready=edit_open(s,label)
+    opened,ready=edit_open(s,label,document=true)
     return
 }
 

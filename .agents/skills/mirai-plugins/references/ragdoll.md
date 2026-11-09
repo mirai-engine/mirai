@@ -28,7 +28,7 @@ is detected in memory for the call and the `.skeleton` does not change.
 - The rig is the entity with `Animation` whose `Mesh_Renderer` shows a skeletal mesh; a skin with
   `Pose_Source` leads to its rig. A body that cannot be detected, or one without a pelvis, which
   is the root, fails and the `fix` asks for `skeleton.body.set`.
-- Only in Edit. It validates rig, skeleton, scale, joints and masses before writing; bodies,
+- On the document, also while a game plays. It validates rig, skeleton, scale, joints and masses before writing; bodies,
   components and the rig's `Ragdoll` (from `RAGDOLL_DEFAULT`, with `mode`) enter a single undo
   step, or nothing remains. The ragdoll the rig had leaves in that same step.
 - One body per part: pelvis, spine and chest (the chain between pelvis and neck split at its

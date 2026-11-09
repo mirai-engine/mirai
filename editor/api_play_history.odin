@@ -59,6 +59,7 @@ Api_Play_Verify :: struct {
 
 // What play.history writes: Api_Play_History_Info and its trace.
 Api_Play_History_Result :: struct {
+    playing:bool `mirai:"label=A game of the caller plays; false with stopped its last Play, and without both the rest is empty"`,
     on:bool `mirai:"label=The run keeps its past"`,
     stopped:bool `mirai:"label=It is the last Play of the user, kept after it stopped until the next Play: play.seek opens it again, paused"`,
     tick:u64 `mirai:"label=Where the run is"`,
@@ -76,6 +77,7 @@ Api_Play_History_Result :: struct {
 }
 @(private)
 Api_Play_History_Info :: struct {
+    playing:bool,
     on:bool,
     stopped:bool,
     tick:u64,
@@ -175,12 +177,11 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
     looks:=traced || p.verify
     info:Api_Play_History_Info
     if r==nil {
-        if looks {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
         api_text_put(info.reason[:],"No game is playing")
         api_play_history_write(s,call,&info,nil)
         return
     }
-    info.stopped=stopped
+    info.playing,info.stopped=!stopped,stopped
     if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {info.tick=t.tick}
     if reason:=history_reason(s,r);reason!="" {
         if looks {api.call_fail(call,api.SERVER_ERROR,reason);return}

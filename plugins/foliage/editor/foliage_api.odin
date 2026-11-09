@@ -124,7 +124,6 @@ foliage_api_register :: proc(s:^editor.Session) {
 // The tool and the edited world with the source of a Foliage ready to edit.
 @(private)
 api_foliage :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id) -> (tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,ok:bool) {
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Foliage is edited in the edited scene: stop Play or Simulate first");return}
     id:=id
     // A Foliage just made takes its place in the world with the next frame.
     if api_foliage_unplaced(s,&id) {editor.api_settle(s,&id,api_foliage_unplaced)}
@@ -227,7 +226,6 @@ type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:u32) {
 @(private)
 api_create :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Create_Params)
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Foliage is made in the edited scene: stop Play or Simulate first");return}
     tool:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Foliage_Tool)
     if tool==nil {api.call_fail(call,api.INVALID_PARAMS,"The project has no foliage: activate the plugin foliage in project.mirai");return}
     tool_ready(tool)

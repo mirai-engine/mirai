@@ -268,10 +268,17 @@ document_close_active :: proc(s:^Session) {
 
 documents_dirty :: proc(s:^Session) -> bool {
     if document_dirty(s) {return true}
-    for &tab,index in s.documents {
-        if index!=s.active_document && (tab.document.unsaved || edits_scene_state(&tab.edits)!=tab.document.saved) {return true}
+    for index in 0..<len(s.documents) {
+        if document_tab_dirty(s,index) {return true}
     }
     return false
+}
+
+// Whether the document of a tab has changes its file does not.
+document_tab_dirty :: proc(s:^Session,index:int) -> bool {
+    if index==s.active_document {return document_dirty(s)}
+    tab:=&s.documents[index]
+    return tab.document.unsaved || edits_scene_state(&tab.edits)!=tab.document.saved
 }
 
 documents_quit_next :: proc(s:^Session) {

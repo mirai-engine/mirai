@@ -7,7 +7,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// Spatial queries on the document in Edit, over the meshes the viewport
+// Spatial queries on the document, in Edit or while a game runs, over the meshes the viewport
 // picks: rays, boxes and resting entities on what is under them. Places come
 // from the locals, so they see the edits of this frame.
 
@@ -66,13 +66,6 @@ spatial_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="scene.raycast",summary="The first mesh of the document a ray meets: the one picking in the viewport would select.",params=Api_Raycast_Params,result=Api_Raycast_Result,defaults=&raycast,flags={.Read_Only},run=api_scene_raycast})
     api_register(s,st,{name="scene.bounds",summary="The boxes in the world of entities of the document with what hangs from them and the box around them all.",params=Api_Spatial_Entities_Params,result=Api_Bounds_Result,flags={.Read_Only},run=api_scene_bounds})
     api_register(s,st,{name="scene.ground",summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=Api_Ground_Params,result=Api_Ground_Result,run=api_scene_ground})
-}
-
-@(private="file")
-spatial_in_edit :: proc(s:^Session,call:^api.Call,method:string) -> bool {
-    if !playing(s) {return true}
-    api.call_failf(call,api.SERVER_ERROR,"%s works on the document in Edit; play.stop first, or read the world of the game with play.inspect",method)
-    return false
 }
 
 // Whether the params name a key, whatever its value.
@@ -150,7 +143,6 @@ spatial_finite :: proc "contextless" (values:[]f32) -> bool {
 
 @(private)
 api_scene_raycast :: proc(s:^Session,call:^api.Call) {
-    if !spatial_in_edit(s,call,"scene.raycast") {return}
     params:=api.call_params(call,Api_Raycast_Params)
     w:=edited_world(s)
     ignore,known:=api_call_entities(call,w,params.ignore[:],"ignore")
@@ -203,7 +195,6 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_scene_bounds :: proc(s:^Session,call:^api.Call) {
-    if !spatial_in_edit(s,call,"scene.bounds") {return}
     params:=api.call_params(call,Api_Spatial_Entities_Params)
     w:=edited_world(s)
     entities,known:=api_call_entities(call,w,params.entities[:],"entities")
@@ -260,7 +251,6 @@ spatial_ground_surface :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,e:
 
 @(private)
 api_scene_ground :: proc(s:^Session,call:^api.Call) {
-    if !spatial_in_edit(s,call,"scene.ground") {return}
     params:=api.call_params(call,Api_Ground_Params)
     if !spatial_finite({params.offset}) {
         api.call_fail(call,api.INVALID_PARAMS,"offset must be a finite number of meters")

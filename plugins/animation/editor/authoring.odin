@@ -60,7 +60,6 @@ authoring_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,kind:as
 
 @(private)
 authoring_editable :: proc(s:^editor.Session,call:^api.Call) -> bool {
-    if s.mode!=.Edit && !authoring_dry_run(call) {authoring_failure(call,"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"Asset authoring requires Edit mode: stop the run with play.stop");return false}
     if s.app==nil || s.app.assets==nil {authoring_failure(call,"asset","Unavailable","an initialized asset service","unavailable","Assets are unavailable",api.SERVER_ERROR);return false}
     return true
 }

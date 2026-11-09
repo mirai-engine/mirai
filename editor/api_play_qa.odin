@@ -56,6 +56,7 @@ Api_Play_Qa_Report_Params :: struct {
 }
 
 Api_Play_Qa_Report :: struct {
+    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     passed:bool `mirai:"label=No violation"`,
     tick:u64 `mirai:"label=The tick of the game now"`,
     violations:[1]Api_Play_Qa_Violation `mirai:"list"`,
@@ -463,7 +464,7 @@ qa_violations_write :: proc(s:^Session,out:^serial.Writer,q:^Run_Qa) {
 api_play_qa_report :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Qa_Report_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_play_none(call,`{"passed":false,"tick":0,"violations":[]}`);return}
     q:=r.qa
     if q==nil || !q.armed {api.call_fail(call,api.INVALID_PARAMS,"No monitors on this game: play.qa.start first");return}
     strip_path:=base.text_get(p.filmstrip[:])

@@ -139,7 +139,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     defer delete(bytes,app.allocator)
     // The new file is part of the step: undo takes it away, and it stays in
     // the memory of the registry until it is saved.
-    editor.edits_begin(s.edits,s.selection,converted!=core.NONE?"Convert to terrain":"Add terrain")
+    editor.edits_begin(s.edits,editor.document_selection(s),converted!=core.NONE?"Convert to terrain":"Add terrain")
     if !editor.file_write(s,path,bytes,"Add terrain") {editor.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
     e:=converted
     if e==core.NONE {
@@ -153,7 +153,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         core.remove(meshes,e)
     }
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
-    editor.edits_end(s.edits);editor.selection_set(s.selection,{e})
+    editor.edits_end(s.edits);editor.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})
     stroke_free(tool)
     return e
@@ -241,7 +241,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     static,found:=core.get(core.read(meshes),operand)
     placed,positioned:=core.get(core.read(worlds),operand)
     if !found || !positioned {editor.notify(s,"Select the terrain and a closed mesh operand");return}
-    if editor.prefab_member_locked(s,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
+    if editor.prefab_member_locked(s,world,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
     if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil && core.has(core.read(terrains),operand) {editor.notify(s,"The operand must be a static mesh");return}
     if parents:=core.world_table_of(world,core.Parent);parents!=nil {
         for parent in parents.values {if parent.entity==operand {editor.notify(s,"The mesh operand must have no children");return}}

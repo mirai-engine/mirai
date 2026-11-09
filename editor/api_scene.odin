@@ -60,7 +60,7 @@ Api_File_Result :: struct {
 Api_Inspect_Result :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the document; empty before it has one"`,
     dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
-    playing:bool `mirai:"label=Whether the editor is out of Edit mode"`,
+    playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: whether a game of the caller plays, without one the rest is empty"`,
     total:int `mirai:"label=Entities alive in the world"`,
     offset:int,
     entities:[1]Api_Inspect_Entity `mirai:"list,label=Parents before their children and siblings in their order"`,
@@ -95,6 +95,7 @@ Api_Inspect_Prefab :: struct {
 
 // What api_play_player writes: Play_Player_Snapshot as JSON.
 Api_Play_Player_Result :: struct {
+    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     available:bool `mirai:"label=Whether a local seat has focus; without one the rest is empty"`,
     tick:u64,
     seconds:f32 `mirai:"label=The time of the game"`,
@@ -329,7 +330,7 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     offset:=only!=core.NONE?0:params.offset
     serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
     api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
-    api.write_key(out,"playing");api.write_flag(out,s.mode!=.Edit)
+    api.write_key(out,"playing");api.write_flag(out,play || s.mode!=.Edit)
     api.write_key(out,"total");serial.text_write_int(out,i64(entities.alive))
     api.write_key(out,"offset");serial.text_write_int(out,i64(offset))
     api.write_key(out,"entities");serial.write_u8(out,'[')
@@ -414,7 +415,10 @@ api_scene_inspect :: proc(s:^Session,call:^api.Call) {api_inspect_run(s,call,edi
 api_play_inspect :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Inspect_Params).player)
     if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
+        out:=call.out
+        serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
+        api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
+        serial.text_write_raw(out,`,"playing":false,"total":0,"offset":0,"entities":[],"shown":0,"matched":0,"omitted":0}`)
         return
     }
     api_inspect_run(s,call,core.world_ref(r.world,s.info),true)
@@ -736,7 +740,7 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
     if text:=section_lock_text(s,w,e,true);text!="" {return 0,rpc_fail(a,"entity: %s",text)}
     if has_parent && entity_parent(w,e)!=parent {
         if _,reason:=section_target_texts(s,w,parent);reason!="" {return 0,rpc_fail(a,"%s",reason)}
-        if prefab_member_locked(s,e) {
+        if prefab_member_locked(s,w,e) {
             return 0,rpc_fail(a,"parent: the entity is a member of an instance of a prefab and keeps the place its prefab gives it; edit the prefab or unlink the instance")
         }
         if !entity_reparent(s,e,parent) {return 0,rpc_fail(a,"parent: the parent is the entity or hangs from it, or has no size in some axis")}
@@ -753,7 +757,7 @@ api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entit
         api.call_failf(call,api.SERVER_ERROR,"scene.delete: %s",text)
         return false
     }
-    if prefab_member_locked(s,e) {
+    if prefab_member_locked(s,w,e) {
         api.call_fail(call,api.SERVER_ERROR,"scene.delete: the entity is a member of an instance of a prefab; turn it off with scene.set enabled false to leave it out of this instance, delete the instance, or unlink it")
         return false
     }
@@ -952,7 +956,7 @@ api_document_fail :: proc(call:^api.Call,error:Document_Error,path:string) {
 @(private)
 api_scene_save :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Path_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     if !collab_can_save(s) {
         api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
         return
@@ -974,10 +978,6 @@ api_scene_save :: proc(s:^Session,call:^api.Call) {
 api_scene_open :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
     params:=api.call_params(call,Api_Path_Params)
-    if s.recovery.pending {
-        api.call_fail(call,api.SERVER_ERROR,"Resolve the pending recovery with editor.recover before opening another scene")
-        return
-    }
     if !collab_can_open(s) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before opening another scene (collab.leave)")
         return

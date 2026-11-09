@@ -146,11 +146,6 @@ moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T)
     last:=move_test_last_file(m)
     testing.expect_value(t,last,moved)
 
-    // Nothing moves while the user plays, nor a file of a plugin.
-    s.mode=.Play
-    _,message=asset_move(s,MOVE_TEST_USER,"Moved","")
-    testing.expect(t,message!="" && move_test_path(m,MOVE_TEST_USER)=="user.mat")
-    s.mode=.Edit
 }
 
 @(private="file")

@@ -163,7 +163,6 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     case n.phase!=.Idle:              return "A network game is running; stop it first"
     case s.mode!=.Edit:               return "A network game starts from Edit"
     case !s.has_project:              return "A network game needs a project"
-    case s.recovery.pending:          return "Recover or discard the scene first"
     case s.build.phase==.Running:     return "A build is running; wait for it"
     }
     editor.tools_release(s)

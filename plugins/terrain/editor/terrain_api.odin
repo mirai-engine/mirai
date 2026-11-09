@@ -150,7 +150,6 @@ terrain_api_register :: proc(s:^editor.Session) {
 // the tool edits the selected one.
 @(private)
 api_terrain :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id) -> (tool:^Terrain_Tool,world:core.World_Ref,ok:bool) {
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Terrains are edited in the edited scene: stop Play or Simulate first");return}
     id:=id
     // A terrain just made takes its place in the world with the next frame.
     if api_terrain_unplaced(s,&id) {editor.api_settle(s,&id,api_terrain_unplaced)}
@@ -213,7 +212,6 @@ layer_named :: proc(s:^editor.Session,call:^api.Call,source:^terrain.Source,name
 @(private)
 api_create :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Create_Params)
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Terrains are made in the edited scene: stop Play or Simulate first");return}
     tool:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_Tool)
     if tool==nil {api.call_fail(call,api.INVALID_PARAMS,"The project has no terrain: activate the plugin terrain in project.mirai");return}
     tool_ready(tool)
@@ -679,7 +677,7 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
     s.toast_length=0
     if imported!="" {
         // Import works on the selected terrain, as the panel does.
-        editor.selection_set(s.selection,{tool.stroke.entity})
+        editor.selection_set(editor.document_selection(s),{tool.stroke.entity})
         if !heightmap_import(s,tool,world,s.app,imported) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
     }
     if exported!="" && !heightmap_export(s,tool,exported) {editor.tool_call_fail(s,call,"The heightmap could not be written");return}
@@ -697,7 +695,7 @@ api_resize :: proc(s:^editor.Session,call:^api.Call) {
     tool,world,ok:=api_terrain(s,call,p.id)
     if !ok {return}
     e:=tool.stroke.entity
-    editor.selection_set(s.selection,{e})
+    editor.selection_set(editor.document_selection(s),{e})
     s.toast_length=0
     if !terrain_resize(s,tool,world,s.app,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
     w:=call.out

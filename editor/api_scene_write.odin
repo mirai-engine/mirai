@@ -200,10 +200,6 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
         }
         given[d.id]=i
     }
-    if s.mode!=.Edit {
-        api.call_fail(call,api.SERVER_ERROR,"A game is playing; scene.write writes the document from Edit")
-        return
-    }
     if !api_edit_begin(s,call,"Write entities") {return}
     result,applied:=api_write_apply(s,call,edited_world(s),root,decls[:])
     if api_edit_end(s,call,applied) {api.call_result(call,Api_Write_Result)^=result}
@@ -213,7 +209,7 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
 // transaction. False after failing the call, with where in the document.
 @(private)
 api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.Entity_Id,decls:[]Api_Write_Entity) -> (result:Api_Write_Result,ok:bool) {
-    links:=prefab_links(s,call.allocator)
+    links:=prefab_links(s,w,call.allocator)
     member :: proc(w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link,e:core.Entity) -> bool {
         link,linked:=links[api_entity_id(w,e)]
         return linked && !link.root
@@ -566,7 +562,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     api.write_key(out,"total");serial.text_write_int(out,i64(core.world_entities(w).alive))
     api.write_key(out,"offset");serial.write_u8(out,'0')
     api.write_key(out,"entities");serial.write_u8(out,'[')
-    api_tree_entity_write(s,w,out,root,prefab_links(s,call.allocator),scratch,values)
+    api_tree_entity_write(s,w,out,root,prefab_links(s,w,call.allocator),scratch,values)
     serial.write_u8(out,']')
     api.write_key(out,"shown");serial.text_write_int(out,i64(len(part)))
     api.write_key(out,"matched");serial.text_write_int(out,i64(len(part)))

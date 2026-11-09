@@ -630,13 +630,13 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
     bytes,error:=foliage.source_bytes(&source,id,&a.types,app.allocator)
     if error!=.None {editor.notify(s,"The foliage could not be written");return core.NONE}
     defer delete(bytes,app.allocator)
-    editor.edits_begin(s.edits,s.selection,"Add foliage")
+    editor.edits_begin(s.edits,editor.document_selection(s),"Add foliage")
     if !editor.file_write(s,path,bytes,"Add foliage") {editor.edits_cancel(s.edits,world);editor.notify(s,"The foliage could not be written");return core.NONE}
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     e:=editor.entity_create(s,{preset=.Empty,name=label,transform={position=position,rotation=1,scale={1,1,1}}})
     core.add(table,e,foliage.Foliage{source=id,revision=1})
     editor.edits_end(s.edits)
-    editor.selection_set(s.selection,{e})
+    editor.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=foliage.foliage_stamp(a,id)})
     return e
 }

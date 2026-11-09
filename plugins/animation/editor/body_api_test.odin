@@ -99,8 +99,6 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Invalid_Axes"`))
     f.session.mode=.Play
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))
-    testing.expect(t,result.code!=0 && strings.contains(result.data,`"fix":"Stop Play`))
-    result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s","dry_run":true}}`,identity))
     testing.expect_value(t,result.code,0)
     testing.expect(t,authoring_test_exists(f,"figure.skeleton"))
 }

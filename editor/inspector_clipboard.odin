@@ -314,5 +314,5 @@ value_pending_apply :: proc(s:^Session,pending:[]Value_Pending,label:string) {
     if !edit_ready {return}
     defer edit_close(s,opened)
     for p in pending {component_add(s,p.e,p.t,raw_data(p.bytes))}
-    core.world_settle(shown_world(s))
+    core.world_settle(editing_world(s))
 }

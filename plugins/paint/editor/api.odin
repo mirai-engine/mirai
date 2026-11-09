@@ -50,7 +50,6 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Stroke_Params)
     count,_:=api.params_array_count(call,"points")
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"points must list at least one world point of the stroke");return}
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Painting is done from Edit: stop the game or the simulation with play.stop");return}
     app:=s.app
     if app==nil || app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
     w:=editor.edited_world(s)
@@ -88,7 +87,6 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_clear :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Clear_Params)
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Paint is cleared from Edit: stop the game or the simulation with play.stop");return}
     w:=editor.edited_world(s)
     painted:=core.world_table_of(w,paint.Painted)
     entities:[CLEAR_IDS]core.Entity

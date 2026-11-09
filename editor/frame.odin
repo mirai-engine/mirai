@@ -129,7 +129,7 @@ Action_State :: struct {
 
 // What an action shows now. Disabled actions do nothing when run.
 action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
-    if s.recovery.pending && action!=.Quit {state.disabled=true;return}
+    if s.gui!=nil && s.gui.modal==.Recovery && action!=.Quit {state.disabled=true;return}
     w:=shown_world(s)
     selected:=len(s.selection.entities)>0
     edit:=s.mode==.Edit
@@ -198,7 +198,7 @@ action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
     case .Inspector_Panel: state.checked=s.gui.layout.right_open
     case .Console_Panel:   state.checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Console
     case .Build_Panel:     state.checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Build
-    case .Play,.Play_From_Camera,.Simulate: state.disabled=s.mode!=.Edit || s.recovery.pending || play_plugin_active(s)
+    case .Play,.Play_From_Camera,.Simulate: state.disabled=s.mode!=.Edit || play_plugin_active(s)
     case .Apply_Simulation: state.disabled=!simulating(s) || !selected
     case .Pause:
         state.disabled=s.mode==.Edit || s.mode==.Watch
@@ -212,7 +212,7 @@ action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
     case .Graphics:  state.checked=ui.popup_is_open(s.gui.ctx,graphics_popup(s.gui))
     case .Settings:  state.disabled=!s.has_project || s.mode!=.Edit; state.checked=s.gui.modal==.Settings
     case .Prefab_Create,.Prefab_Apply,.Prefab_Revert,.Prefab_Unlink,.Prefab_Apply_Base: state.disabled=prefab_action_disabled(s,action)
-    case .Camera_Preview: state.disabled=!edit || s.recovery.pending || camera_preview_target(s,w)==core.NONE
+    case .Camera_Preview: state.disabled=!edit || camera_preview_target(s,w)==core.NONE
     case .Camera_Keep,.Camera_Discard: state.disabled=!camera_previewing(s)
     }
     return

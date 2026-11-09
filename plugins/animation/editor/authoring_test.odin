@@ -110,7 +110,7 @@ skeleton_authoring_preserves_identity_and_validates_sockets :: proc(t:^testing.T
     testing.expect_value(t,result.code,0)
     f.session.mode=.Play
     result=authoring_test_execute(f,"socket",fmt.tprintf(`{{"asset":"%s","name":"hand","bone":"root"}}`,authoring_test_id_text(id)))
-    testing.expect_value(t,result.code,api.INVALID_PARAMS)
+    testing.expect_value(t,result.code,0)
 }
 
 @(test)

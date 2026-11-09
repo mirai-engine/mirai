@@ -35,7 +35,6 @@ PREFAB_CYCLE_DEPTH :: 16
 Prefab_Error :: enum u8 {
     None,
     No_Assets,       // the application has no assets folder
-    Playing,         // a game is playing
     Unknown_Entity,
     No_Id,           // the entity has no Id: it is not an entity of a scene
     Member_Locked,   // a member of an instance that is not its root
@@ -57,7 +56,6 @@ prefab_error_text :: proc(error:Prefab_Error) -> string {
     switch error {
     case .None:           return ""
     case .No_Assets:      return "the project has no assets folder"
-    case .Playing:        return "a game is playing; stop it first"
     case .Importing:      return "an import writes assets now; try again when it ends (asset.import_status)"
     case .Unknown_Entity: return "no such entity in the scene"
     case .No_Id:          return "the entity has no id: it is not an entity of the scene"
@@ -228,10 +226,10 @@ prefab_link_of :: proc(s:^Session,id:base.Entity_Id) -> (link:Prefab_Link,found:
 // The link of every entity an instance placed in the document, for many
 // lookups while the document does not change. Empty when prefab_member_locked
 // would not lock anything.
-prefab_links :: proc(s:^Session,allocator:=context.temp_allocator) -> map[base.Entity_Id]Prefab_Link {
+prefab_links :: proc(s:^Session,w:core.World_Ref,allocator:=context.temp_allocator) -> map[base.Entity_Id]Prefab_Link {
     links:=make(map[base.Entity_Id]Prefab_Link,allocator)
     previous:=s.document.previous
-    if s.mode!=.Edit || previous==nil || len(previous.instances)==0 || !prefab_linked(s) {return links}
+    if w.data!=s.edit_world || previous==nil || len(previous.instances)==0 || !prefab_linked(s) {return links}
     placed:=make(map[u32]int,len(previous.instances),context.temp_allocator)
     for instance,at in previous.instances {if instance.outer==0 && !(instance.id in placed) {placed[instance.id]=at}}
     for member in previous.members {
@@ -251,8 +249,8 @@ prefab_member_locked_in :: proc(s:^Session,links:map[base.Entity_Id]Prefab_Link,
 
 // An entity of an instance that is not its root: it keeps the place its
 // prefab gives it, and is not the root of a prefab of its own.
-prefab_member_locked :: proc(s:^Session,e:core.Entity) -> bool {
-    if s.mode!=.Edit {return false}
+prefab_member_locked :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> bool {
+    if w.data!=s.edit_world {return false}
     // An entity of a section is edited in its own scene, or in its world while its section is.
     if section_locked(s,edited_world(s),e) {return true}
     if !prefab_linked(s) {return false}
@@ -447,7 +445,6 @@ prefab_bytes :: proc(sc:^asset.Scene) -> []u8 {
 prefab_begin :: proc(s:^Session) -> (e:Prefab_Edit,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
-    if s.mode!=.Edit {return {},.Playing}
     if import_busy(s)!="" {return {},.Importing}
     if prefab_previous(s)==nil {return {},.Out_Of_Memory}
     // A history replaced since the prefabs last followed it (the scene of a
@@ -503,8 +500,9 @@ prefab_world_replace :: proc(s:^Session,cap:^asset.Scene) -> Prefab_Error {
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&a.types)
     if view_error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return .Rejected}
+    selection:=document_selection(s)
     selected:=make([dynamic]base.Entity_Id,context.temp_allocator)
-    for e in s.selection.entities {
+    for e in selection.entities {
         if id:=api_entity_id(w,e);id!=0 {append(&selected,id)}
     }
     w.info.clear(w.data)
@@ -516,7 +514,7 @@ prefab_world_replace :: proc(s:^Session,cap:^asset.Scene) -> Prefab_Error {
     for id in selected {
         if e:=api_entity(w,id);e!=core.NONE {append(&picked,e)}
     }
-    selection_set(s.selection,picked[:])
+    selection_set(selection,picked[:])
     return .None
 }
 
@@ -536,7 +534,7 @@ prefab_finish :: proc(e:^Prefab_Edit,label:string) -> Prefab_Error {
     // A step that only writes prefab files still has its place in the history: its undo takes them back.
     if changed || len(e.files)>0 {
         before_state:=edits_scene_state(s.edits)
-        _,edit_ready:=edit_open(s,label)
+        _,edit_ready:=edit_open(s,label,document=true)
         if !edit_ready {prefab_scene_free(cap);return .Out_Of_Memory}
         if changed {error=prefab_world_replace(s,cap)}
         edits_end(s.edits)
@@ -545,7 +543,7 @@ prefab_finish :: proc(e:^Prefab_Edit,label:string) -> Prefab_Error {
             prefab_scene_free(cap)
             return error
         }
-        if !edits_commit(s.edits,edited_world(s),s.selection,true) {
+        if !edits_commit(s.edits,edited_world(s),document_selection(s),true) {
             edits_cancel(s.edits,edited_world(s))
             prefab_scene_free(cap)
             return .Out_Of_Memory
@@ -576,7 +574,7 @@ prefab_finish :: proc(e:^Prefab_Edit,label:string) -> Prefab_Error {
 // edits that may have changed them, and brings a document just opened up to date with its prefabs.
 @(step="input")
 prefabs_follow :: proc(s:^Session,p:^Prefabs) {
-    if playing(s) || s.app.assets==nil {return}
+    if s.app.assets==nil {return}
     edits:=s.edits
     if p.epoch!=edits.epoch {
         p.epoch=edits.epoch
@@ -848,7 +846,7 @@ prefab_files_reload :: proc(s:^Session,paths:[]string) {
 // or while edits wait for their step. On an error the overrides stay as they
 // were, and the next calls give it until something changes.
 prefab_observe :: proc(s:^Session) -> Prefab_Error {
-    if s.mode!=.Edit || s.app.assets==nil {return .None}
+    if s.app.assets==nil {return .None}
     p:=prefabs_of(s)
     edits:=s.edits
     w:=edited_world(s)
@@ -1321,7 +1319,7 @@ prefab_create_entities :: proc(s:^Session,entities:[]core.Entity,path:string) ->
     if len(roots)==0 {return {},.Unknown_Entity}
     for e in roots {
         _=prefab_entity_id(s,e) or_return
-        if prefab_member_locked(s,e) {return {},.Member_Locked}
+        if prefab_member_locked(s,edited_world(s),e) {return {},.Member_Locked}
     }
     file:=prefab_new_file(s,path) or_return
     edit:=prefab_begin(s) or_return
@@ -1505,7 +1503,6 @@ Prefab_Placement :: struct {
 prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement) -> (root:base.Entity_Id,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return 0,.No_Assets}
-    if s.mode!=.Edit {return 0,.Playing}
     placement:=placement
     automatic_parent:=placement.parent==core.NONE?document_root(s,edited_world(s)):core.NONE
     if automatic_parent!=core.NONE {placement.parent=automatic_parent}
@@ -1563,7 +1560,6 @@ Prefab_Report :: struct {
 prefab_refresh :: proc(s:^Session,prefab_id:base.Asset_Id,quiet:=false) -> (report:Prefab_Report,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
-    if s.mode!=.Edit {return {},.Playing}
     if !prefab_linked(s) {return}
     assets_rescan(s)
     edit:=prefab_begin(s) or_return
@@ -1976,10 +1972,9 @@ prefab_place_linked :: proc(s:^Session,prefab_id:base.Asset_Id,point:[3]f32) -> 
 
 // Called when entities were copied: the instances whose root was copied are registered again in the
 // copy, with their members and overrides. sources and copies are parallel.
-prefab_copied :: proc(s:^Session,sources,copies:[]core.Entity) {
+prefab_copied :: proc(s:^Session,w:core.World_Ref,sources,copies:[]core.Entity) {
     previous:=s.document.previous
-    if s.mode!=.Edit || previous==nil || len(previous.instances)==0 {return}
-    w:=edited_world(s)
+    if w.data!=s.edit_world || previous==nil || len(previous.instances)==0 {return}
     mapped:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
     for source,i in sources {
         from,to:=api_entity_id(w,source),api_entity_id(w,copies[i])
@@ -2041,7 +2036,7 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
         roots:=selection_roots(s.selection,edited_world(s))
         if len(roots)==0 {return true}
         for e in roots {
-            if prefab_member_locked(s,e) || api_entity_id(edited_world(s),e)==0 {return true}
+            if prefab_member_locked(s,edited_world(s),e) || api_entity_id(edited_world(s),e)==0 {return true}
         }
         return false
     }

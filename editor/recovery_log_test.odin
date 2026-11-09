@@ -170,7 +170,8 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     recovery_open(s)
     testing.expect(t,s.recovery.pending)
     if !testing.expect_value(t,len(s.recovery.found),2) {return}
-    testing.expect(t,recovery_resolve(s,false))
+    resolved,reason:=recovery_resolve(s,false)
+    testing.expect(t,resolved && reason=="" && !s.recovery.pending,reason)
     if !testing.expect_value(t,len(s.documents),2) {return}
     testing.expect(t,document_activate(s,0))
     testing.expect(t,document_dirty(s) && !document_is_prefab(s))
@@ -179,4 +180,99 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     testing.expect(t,document_dirty(s) && document_is_prefab(s))
     testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),root_id)),"Changed in the prefab")
     testing.expect(t,document_activate(s,0))
+}
+
+// What an editor left waits for the user whatever happens: this editor edits
+// and saves under other files and a recovery opens beside its changes.
+@(test)
+a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"recovery-aside")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    s.project_root=f.root
+    testing.expect(t,jobs.system_init(&f.app.jobs,{threads=1,allocator=context.allocator}))
+    defer jobs.system_destroy(&f.app.jobs)
+    defer recovery_log_destroy(s)
+    defer documents_free(s)
+    defer recovery_wait(s)
+    w:=edited_world(s)
+    plain:=entity_create(s,{name="Plain",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    prefabs_follow(s,&f.prefabs)
+    plain_id:=api_entity_id(w,plain)
+    if !testing.expect_value(t,scene_save(s,"crashed.scene"),Document_Error.None) {return}
+    recovery_update(s)
+    crashed_slot:=s.recovery.slot
+    entity_rename(s,api_entity(w,plain_id),"Lost in the crash")
+    prefab_fixture_step(f)
+    recovery_update(s)
+    testing.expect(t,recovery_log_flush(s,true))
+    crash :: proc(s:^Session) {
+        recovery_chains_close(s,false)
+        documents_free(s)
+        s.active_document=0
+        s.recovery.chain={}
+        scene_new(s)
+        recovery_open(s)
+    }
+
+    // The next editor: an unsaved asset of an earlier editor and the chain above are offered.
+    kept:=recovery_assets_folder(s,1)
+    os.make_directory_all(kept)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",kept,UNSAVED_MANIFEST),transmute([]u8)string(`{"assets":[],"removed":[]}`))==nil)
+    crash(s)
+    testing.expect(t,s.recovery.pending && len(s.recovery.found)==1 && len(s.recovery.assets)==1,"the chain and the assets are offered")
+    crashed_log:=recovery_log_path(s,crashed_slot,1)
+    crashed_bytes,_:=os.read_entire_file(crashed_log,context.temp_allocator)
+    testing.expect(t,len(crashed_bytes)>0)
+
+    // Loading, editing and saving go on: another slot and another folder, the offer intact.
+    w=edited_world(s)
+    later:=entity_create(s,{name="Later",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    prefabs_follow(s,&f.prefabs)
+    entity_rename(s,later,"Edited meanwhile")
+    prefab_fixture_step(f)
+    testing.expect_value(t,scene_save(s,"later.scene"),Document_Error.None)
+    entity_rename(s,later,"Still unsaved")
+    prefab_fixture_step(f)
+    recovery_update(s)
+    live_slot:=s.recovery.slot
+    testing.expect(t,live_slot!=0 && live_slot!=crashed_slot,"this editor writes under a slot of its own")
+    testing.expect(t,recovery_assets_own(s)!=kept,"and under a folder of its own")
+    now,_:=os.read_entire_file(crashed_log,context.temp_allocator)
+    testing.expect(t,string(now)==string(crashed_bytes),"what is offered is not touched")
+    testing.expect(t,s.recovery.pending && document_dirty(s))
+
+    // Recovering opens it beside a tab with changes.
+    resolved,reason:=recovery_resolve(s,false)
+    testing.expect(t,resolved && reason=="" && !s.recovery.pending,reason)
+    if !testing.expect_value(t,len(s.documents),2) {return}
+    testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),plain_id)),"Lost in the crash")
+    testing.expect(t,document_activate(s,0))
+    testing.expect_value(t,entity_name(edited_world(s),later),"Still unsaved")
+    testing.expect(t,s.recovery.slot==live_slot && len(recovery_log_generations(s,live_slot))>0,"the chain of the tab with changes goes on")
+
+    // Discarding what is offered leaves the chains of this editor.
+    crash(s)
+    testing.expect(t,s.recovery.pending && len(s.recovery.found)>0)
+    offered:=s.recovery.found[0].slot
+    w=edited_world(s)
+    other:=entity_create(s,{name="Other",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    prefabs_follow(s,&f.prefabs)
+    entity_rename(s,other,"Mine")
+    prefab_fixture_step(f)
+    recovery_update(s)
+    mine:=s.recovery.slot
+    resolved,reason=recovery_resolve(s,true)
+    testing.expect(t,resolved && reason=="" && !s.recovery.pending,reason)
+    testing.expect(t,len(recovery_log_generations(s,offered))==0,"what was offered is gone")
+    testing.expect(t,len(recovery_log_generations(s,mine))>0,"the chain of this editor stays")
+    resolved,reason=recovery_resolve(s,false)
+    testing.expect(t,!resolved && reason=="","with nothing offered there is nothing to resolve, and no error")
 }

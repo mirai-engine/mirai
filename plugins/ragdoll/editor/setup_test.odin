@@ -275,7 +275,7 @@ ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_a
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))
     f.session.mode=.Play
     result,_=setup_test_call(f,`{"id":"11"}`)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"play.stop"))
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`),"the document is what it validates while a game plays")
     testing.expect_value(t,f.edits.cursor,1)
 }
 

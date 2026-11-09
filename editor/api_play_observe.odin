@@ -24,6 +24,7 @@ Api_Play_Ui_Params :: struct {
 }
 
 Api_Play_Ui :: struct {
+    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     contexts:[1]Api_Play_Ui_Context `mirai:"list,label=The window and the part of each local player that showed interfaces"`,
     interfaces:[1]Api_Play_Ui_Interface `mirai:"list,label=Each context from the bottom up: screens by order then World_Widgets"`,
 }
@@ -74,6 +75,7 @@ Api_Play_Audio_Params :: struct {
 }
 
 Api_Play_Audio :: struct {
+    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     voices:[1]Api_Play_Audio_Voice `mirai:"list,label=One per Audio_Source that plays"`,
     stats:Api_Play_Audio_Stats `mirai:"label=Of the voices of this game"`,
     mixer:Api_Play_Audio_Mixer `mirai:"optional,label=The mixer of the editor that every game and the editor share; absent without one and then nothing plays"`,
@@ -114,7 +116,7 @@ play_observe_api_register :: proc(s:^Session,st:^Api_State) {
 api_play_ui :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Ui_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_play_none(call,`{"contexts":[],"interfaces":[]}`);return}
     // The names come from the files of the interfaces, which can be larger than the scratch of a request.
     arena:virtual.Arena
     if virtual.arena_init_growing(&arena)!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no memory to read the interfaces");return}
@@ -129,7 +131,7 @@ api_play_ui :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_audio :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Audio_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_play_none(call,`{"voices":[],"stats":{"started":0,"ended":0}}`);return}
     play_audio_write(s,call.out,host.app_world_storage(s.app,r.world,eaudio.Voices),core.world_ref(r.world,s.info),s.app.mixer)
 }
 

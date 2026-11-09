@@ -178,8 +178,9 @@ scene_raycast_says_what_is_wrong_with_its_params :: proc(t:^testing.T) {
     base.text_set(ignored.ignore[0][:],"99")
     expect_error(t,f,&method,ignored,`{"origin":[0,1,0],"direction":[0,-1,0],"ignore":["99"]}`,`ignore[0]: "99" names no entity of the scene`)
     f.s.mode=.Simulate
-    expect_error(t,f,&method,{origin={0,1,0},direction={0,-1,0},reach=PICK_REACH},`{"origin":[0,1,0],"direction":[0,-1,0]}`,"works on the document in Edit",api.SERVER_ERROR)
-    _=result
+    ray:=Api_Raycast_Params{origin={0,1,0},direction={0,-1,0},reach=PICK_REACH}
+    played:=spatial_call(f,api_scene_raycast,&method,&ray,&result,`{"origin":[0,1,0],"direction":[0,-1,0]}`)
+    testing.expect(t,!played.failed,played.error.message)
 }
 
 @(test)
@@ -276,10 +277,11 @@ scene_ground_fails_whole_and_says_which_entity :: proc(t:^testing.T) {
     call=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Nobody"]}`)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,"names no entity of the scene"),call.error.message)
     f.s.mode=.Play
+    params={}
     copy(params.entities[0][:],"Crate")
     call=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Crate"]}`)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.message,"in Edit"),call.error.message)
-    testing.expect_value(t,edits_undo_count(&f.edits),undo_before)
+    testing.expect(t,!call.failed,call.error.message)
+    testing.expectf(t,abs(spatial_y(f,f.crate)-0.5)<1e-3,"the document moved while a game plays: y %v moved %v",spatial_y(f,f.crate),result.entities[0].moved)
 }
 
 @(test)

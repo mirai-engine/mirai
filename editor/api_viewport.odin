@@ -31,11 +31,11 @@ Api_Capture_Params :: struct {
     seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
     generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
-    every:int `mirai:"optional,min=0,max=3600,label=Filmstrip: the ticks the game runs between two cells of one image; 0: an image of now"`,
+    every:int `mirai:"optional,min=0,max=3600,label=Filmstrip: the ticks the game runs between two cells of one image; with segments and no count as many cells as they last; 0: an image of now"`,
     every_seconds:f32 `mirai:"optional,min=0,unit=s,label=Filmstrip: the game time between two cells in place of every"`,
-    count:int `mirai:"optional,min=0,max=64,label=Filmstrip: its cells; the first shows the game before the first tick"`,
+    count:int `mirai:"optional,min=0,max=64,label=Filmstrip: its cells; the first shows the game before the first tick; with segments and no every they spread evenly over their ticks"`,
     columns:int `mirai:"optional,min=0,max=64,label=Filmstrip: cells across; 0: as square as they fit"`,
-    segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Filmstrip: the input along its ticks as play.step takes it; after them nothing is held"`,
+    segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Filmstrip: the input along its ticks as play.step takes it; they say how many ticks it runs"`,
     follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
     size:[2]f32 `mirai:"optional,min=8,max=4096,label=Filmstrip that follows an entity: width and height of a cell in points of the image"`,
     region:[4]f32 `mirai:"optional,label=x y width height of the part written, in pixels from the top left of the image; of a filmstrip, in points, what every cell shows in place of following an entity. None: all of it"`,
@@ -65,6 +65,7 @@ Api_Capture_Result :: struct {
     columns:int `mirai:"optional,label=A filmstrip: its cells across"`,
     rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
+    ticks:int `mirai:"optional,label=A filmstrip: the ticks it ran"`,
     cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
     textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out"`,
     instances_drawn:int `mirai:"optional,label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
@@ -81,7 +82,7 @@ Api_Capture_Cell :: struct {
 api_viewport_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result_schema=API_VIEWPORT_RESULT,flags={.Core,.Read_Only,.Idempotent},mcp_content=true,run=api_view_viewport})
     capture_default:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,size={256,256}}
-    api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Capture_Params,result=Api_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_capture})
+    api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count, or segments with every or count, it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Capture_Params,result=Api_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_capture})
 }
 
 // What the caller is playing as an image, the scene the viewport shows or the
@@ -93,7 +94,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if p.ui && p.of!=.Auto {api.call_fail(call,api.INVALID_PARAMS,"of chooses what the image alone shows: leave it out with ui");return}
     if p.ui && (p.width>0 || p.height>0) {api.call_fail(call,api.INVALID_PARAMS,"width and height size the image alone: leave ui out with them, or leave them out for the window");return}
     if p.generated && !p.ui {api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it");return}
-    filmstrip:=p.every>0 || p.every_seconds>0
+    filmstrip:=p.every>0 || p.every_seconds>0 || api_filmstrip_spread(call,p)
     if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
     game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
     if (game || filmstrip) && r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}

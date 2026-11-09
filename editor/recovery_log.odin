@@ -271,7 +271,7 @@ recovery_log_write :: proc(s:^Session) {
 recovery_log_update :: proc(s:^Session) {
     l:=&s.recovery.log
     recovery_log_sync_collect(s,false)
-    if s.project_root=="" || s.edits==nil || s.recovery.pending {return}
+    if s.project_root=="" || s.edits==nil {return}
     if !l.following || l.world!=s.edits.world || l.epoch!=s.edits.epoch || l.info!=s.info || !s.edits.logging {recovery_log_begin(s)}
     recovery_log_write(s)
     if l.sync_due!=0 && platform.clock_ns()>=l.sync_due && !l.sync.busy && l.file!=nil {
@@ -330,7 +330,8 @@ recovery_log_destroy :: proc(s:^Session) {
     recovery_log_close(s)
     recovery_log_tables_free(s)
     delete(s.recovery.found)
-    s.recovery.found=nil
+    delete(s.recovery.assets)
+    s.recovery.found,s.recovery.assets=nil,nil
 }
 
 // ---------------------------------------------------------------- putting back
