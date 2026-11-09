@@ -56,5 +56,5 @@ mirai rpc --project . capture \
 ## Pitfalls that fail silently
 
 - A goal with no entity names makes the agent wander: name what to reach.
-- Without `play_qa_start`, a violation the agent finds is not reported.
-- Time stands still between calls: a wait the agent wants is a `play_step` with `until`.
+- Without a `call` of `play.qa.start`, a violation the agent finds is not reported.
+- Time stands still between calls: a wait the agent wants is `step` with `until` in `play.observe`.

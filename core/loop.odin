@@ -255,7 +255,7 @@ View_Exposure_Adaptation :: enum u8 {Time,Speed}
 
 VIEW_DEFAULT :: View{position={0,2,6},rotation=1,fov=60*mm.RAD_PER_DEG,near=0.1,far=0}
 
-view_forward :: proc "contextless" (v:View) -> [3]f32 {return mm.quat_rotate(v.rotation,[3]f32{0,0,-1})}
+view_forward :: proc "contextless" (v:View) -> [3]f32 {return mm.quat_forward(v.rotation)}
 
 // The ray from the eye through a point of the window, in pixels from the top left.
 view_ray :: proc "contextless" (v:View,pixel:[2]f32) -> (origin,direction:[3]f32) {

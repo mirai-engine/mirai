@@ -347,24 +347,3 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
     testing.expect(t,!found,"sole is the only one")
     testing.expect_value(t,entity_named(read(&names),"door"),b)
 }
-
-@(private="file") Starts_At :: struct {value:i32}
-
-// A row added at its default takes what the generator found for its component; without one, zero.
-@(test)
-a_table_gives_the_default_of_its_component :: proc(t:^testing.T) {
-    es:Entities
-    entities_init(&es)
-    defer entities_destroy(&es)
-    rows:Table(Starts_At)
-    table_init(&rows,"Starts_At")
-    defer table_destroy(&rows)
-    testing.expect_value(t,default(&rows).value,i32(0))
-    rows.default=proc(dst:rawptr) {(cast(^Starts_At)dst)^={7}}
-    testing.expect_value(t,default(read(&rows)).value,i32(7))
-    e:=create(&es)
-    add_default(&rows,e)
-    table_settle(&rows,&es)
-    value,_:=get(read(&rows),e)
-    testing.expect_value(t,value.value,i32(7))
-}

@@ -10,6 +10,7 @@ import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:ui"
 
 // What the interfaces of a context read of the game (ui.Game_Source.user):
@@ -323,7 +324,7 @@ source_particles :: proc(user:rawptr,id:ui.Id,effect:base.Asset_Id,size:[2]f32) 
         shown.drawn=gui.frame
         core.push(&src.effects.queue,UI_Effect{key=key,effect=effect,view=shown.texture})
         camera:=gpu.Camera{
-            position={0,0,2*PARTICLE_VIEW_METERS},forward={0,0,-1},up={0,1,0},fov_y=60,near=0.01,far=8*PARTICLE_VIEW_METERS,
+            position={0,0,2*PARTICLE_VIEW_METERS},forward=mm.FORWARD,up={0,1,0},fov_y=60,near=0.01,far=8*PARTICLE_VIEW_METERS,
             projection=.Orthographic,height=PARTICLE_VIEW_METERS,
         }
         host.app_effect_view_add(app,{texture=shown.texture,camera=camera})

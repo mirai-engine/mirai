@@ -14,7 +14,7 @@ transform_sequences_preserve_holds_easing_quaternion_arcs_and_reverse_time :: pr
     testing.expect(t,ok && duration==5)
     at,valid:=sequence_sample(frames[:],0.5);testing.expect(t,valid && at.position.x==0)
     at,valid=sequence_sample(frames[:],2);testing.expect(t,valid && near(at.position.x,1))
-    axis:=math.quat_rotate(at.rotation,{0,0,-1});testing.expect(t,near(axis.x,-0.3826834))
+    axis:=math.quat_forward(at.rotation);testing.expect(t,near(axis.x,-0.3826834))
     at,valid=sequence_sample(frames[:],3.5);testing.expect(t,valid && at.position.x==4)
     at,valid=sequence_sample(frames[:],4.9);testing.expect(t,valid && at.position.x==4)
     at,valid=sequence_sample(frames[:],5);testing.expect(t,valid && at.position.x==8)

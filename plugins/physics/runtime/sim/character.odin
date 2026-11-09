@@ -368,8 +368,8 @@ up_frame_turn :: proc "contextless" (frame:Quat,up:Vec3,angle:=max(f32)) -> Quat
 }
 // The yaw of a rotation in a frame of the vertical: where its -Z heads, about the up, as a camera looks.
 up_frame_yaw :: proc "contextless" (frame,rotation:Quat) -> f32 {
-    forward:=q_rotate(conj(frame)*rotation,{0,0,-1})
-    return cmath.atan2(-forward.x,-forward.z)
+    forward:=q_rotate(conj(frame)*rotation,math.FORWARD)
+    return math.yaw_of_direction(forward)
 }
 // The body of a character faces its yaw with -Z, as a look does.
 character_rotation :: #force_inline proc "contextless" (frame:Quat,yaw:f32) -> Quat {

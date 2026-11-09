@@ -329,7 +329,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     for &value,which in capabilities {value.status=.Skipped if which not_in want else .Missing}
     say :: proc(capability:^Capability,status:Setup_Status,detail,fix:string) {capability^={status,detail,fix}}
     up,forward:=body.up,body.forward
-    if !lib.body_axes_valid(forward,up) {up,forward={0,1,0},{0,0,-1}}
+    if !lib.body_axes_valid(forward,up) {up,forward={0,1,0},mm.FORWARD}
 
     pose:anim.Pose_Profile
     looks:=make([dynamic]anim.Look_Constraint,call.allocator)

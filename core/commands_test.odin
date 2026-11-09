@@ -77,7 +77,7 @@ commands_add_a_row_at_the_default_of_its_table :: proc(t:^testing.T) {
     w:Made_World
     made_init(&w)
     defer made_destroy(&w)
-    w.made.default=proc(dst:rawptr) {(cast(^Made)dst)^={9}}
+    w.tables[1].default=proc(dst:rawptr) {(cast(^Made)dst)^={9}}
     c:=commands(&w,&w.info)
     testing.expect_value(t,default(c,Made).value,i32(9))
     e:=commands_create(c)

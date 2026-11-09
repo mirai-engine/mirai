@@ -102,7 +102,7 @@ write_dig_scene :: proc(o:^Out) {
     asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","dig"))
     defer asset.builder_destroy(&s)
     u:=daylight(3)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.75,0.6,0}),SCENE_SUN),u,3)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.75,0.6,0}),render.SUN_DIRECTION),u,3)
     sky_set(&s,&environment,turn)
     sun:=asset.builder_entity(&s,"Sun")
     pose:=sun_pose(to_sun)

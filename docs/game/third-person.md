@@ -6,13 +6,13 @@ description: A worked third-person game from plugins to a test - plugins, settin
 
 # A third-person game
 
-`mirai new <folder>` plays already: floor, spawn point, sky and sun, main menu, pause, settings and
-HUD. Follow these steps; then [rules-test.md](third-person/rules-test.md) (rules, the test).
-Links are only for what a step does not cover.
+`mirai new <folder> --template game` plays already: floor, spawn point, sky and sun, main menu,
+pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/rules-test.md)
+(rules, the test). Links are only for what a step does not cover.
 
 ## 1. Plugins and settings
 
-`project.mirai`: `"plugins": ["spawn","physics","playtest","terrain","foliage","water","fog"]`.
+`project.mirai`: add `"terrain","foliage","water","fog"` to the `plugins` the game already has.
 Remove a plugin only after its imports are gone from `game/` and `tools/`. `settings.mirai` stays:
 `Spawn_Settings.players` gives each player a body at the `Spawn_Point`, with no spawn or camera
 code. A sunny scene needs no exposure setting and no fog: `render.SKY_DEFAULT` and a 100000 lux sun

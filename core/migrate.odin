@@ -204,16 +204,16 @@ Raw_By_World_Entry :: struct {
 #assert(size_of(Raw_By_World_Entry)==size_of(By_World_Entry(u8)))
 
 // The rows of src go to dst; dst keeps what makes it a table of its library
-// (its name, its locks, its default, whether it is base or single) and src takes the
+// (its name, its locks, whether it is base or single) and src takes the
 // empty rows dst had.
 @(private="file")
 table_take :: proc(dst,src:^Raw_Table) {
-    name,locks,is_base,single,starts:=dst.name,dst.locks,dst.base,dst.single,dst.default
-    old_name,old_locks,old_base,old_single,old_starts:=src.name,src.locks,src.base,src.single,src.default
+    name,locks,is_base,single:=dst.name,dst.locks,dst.base,dst.single
+    old_name,old_locks,old_base,old_single:=src.name,src.locks,src.base,src.single
     // Through memory: a multiple assignment of values over 64 bytes (odin-lang/Odin#7937, ODIN_WORKAROUNDS).
     slice.ptr_swap_non_overlapping(dst,src,size_of(Raw_Table))
-    dst.name,dst.locks,dst.base,dst.single,dst.default=name,locks,is_base,single,starts
-    src.name,src.locks,src.base,src.single,src.default=old_name,old_locks,old_base,old_single,old_starts
+    dst.name,dst.locks,dst.base,dst.single=name,locks,is_base,single
+    src.name,src.locks,src.base,src.single=old_name,old_locks,old_base,old_single
 }
 
 // The values of the rows dst took, converted to its type. Those of another

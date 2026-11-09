@@ -126,7 +126,7 @@ punctual_lights_become_light_descriptions :: proc(t:^testing.T) {
     light,has_light:=model.nodes[0].light.?
     testing.expect(t,has_light && light.kind==.Spot && light.color=={1,0.5,0.25} && light.intensity==40 && light.range==12)
     testing.expect(t,abs(light.inner_cone-0.2)<1e-6 && abs(light.outer_cone-0.6)<1e-6)
-    shines:=mm.quat_rotate(model.nodes[0].transform.rotation,[3]f32{0,0,-1})
+    shines:=mm.quat_forward(model.nodes[0].transform.rotation)
     testing.expectf(t,close_to(shines,{0,0,1},1e-4),"what shone toward -Z of the file shines where the half turn takes it: %v",shines)
 }
 

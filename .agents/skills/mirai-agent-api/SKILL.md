@@ -42,7 +42,7 @@ difference with the catalog, it rules.
   and a repro of a run as a scenario: the `playtest` plugin, `play.observe`, `play.qa.*` and
   `play.explore` in [Play](references/methods.md#play).
 - Writing a gameplay test once as a file and playing it again after every change, from the API
-  or from CI: [scenarios](references/methods.md#scenarios),
+  or from CI: [scenarios](../../../docs/game/testing/scenario.md),
   [`mirai play test`](references/api.md#mirai-play-test).
 - Values of entities at past ticks without changing the game, and whether replaying the past
   repeats it (first tick and field that differ): [`play.history`](references/methods.md#play).
@@ -131,7 +131,7 @@ positions misses both.
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
    `points.0.on_screen`; `until` with them waits for the moment. Look at one image at the moments
    that matter: values can pass while the picture is wrong.
-4. Once the sequence passes, write it as a [scenario](references/methods.md#scenarios) in
+4. Once the sequence passes, write it as a [scenario](../../../docs/game/testing/scenario.md) in
    `tests/scenarios/` instead of a script: the same steps and params, played again with
    `play.scenario.run` or `mirai play test` after each change. A scenario holds one behavior;
    another setup is another file, not a script that runs part of another.

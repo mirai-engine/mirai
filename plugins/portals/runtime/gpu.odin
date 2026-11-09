@@ -147,7 +147,7 @@ portals_render :: proc(
         spot:=core.at(spots,row)
         if world,placed:=core.get(worlds,e);placed && !erender.is_hidden(hidden,parents,e) {
             desc:=erender.sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
-            desc.direction,desc.cone=mm.quat_rotate(world.rotation,[3]f32{0,0,-1}),spot.angle
+            desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
             gate_lights_add(&gates,desc,.Spot)
         }
     }

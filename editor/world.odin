@@ -337,7 +337,7 @@ sound_components :: proc(w:core.World_Ref,e:core.Entity,sound:base.Asset_Id) {
 preset_rotation :: proc(preset:Preset) -> mm.Quat {
     #partial switch preset {
     case .Sun:        return mm.quat_between([3]f32{0,0,1},linalg.normalize(erender.SUN_DIRECTION))
-    case .Spot_Light: return mm.quat_between([3]f32{0,0,-1},[3]f32{0,-1,0})
+    case .Spot_Light: return mm.quat_between(mm.FORWARD,[3]f32{0,-1,0})
     }
     return 1
 }

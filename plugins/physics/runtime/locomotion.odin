@@ -226,7 +226,7 @@ locomotion_step :: proc(
             if wanted,from_ground:=mantle_wanted(c,mantle,ground,given,jump);wanted {
                 l:=link_find(physics.ptr,e)
                 if placed,ok:=core.world_of(locals,parents,e);ok && l!=nil && l.kind==.Character {
-                    facing:=mm.quat_rotate(frame*mm.quat_axis_angle({0,1,0},given.look_yaw),{0,0,-1})
+                    facing:=mm.quat_forward(frame*mm.quat_axis_angle({0,1,0},given.look_yaw))
                     if to,height,found_ledge:=ledge_find(&physics.world,l.character,facing,mantle,from_ground);found_ledge {mantle_start(c,placed.position,to,height)}
                 }
             }

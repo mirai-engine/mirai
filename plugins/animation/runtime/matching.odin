@@ -409,7 +409,7 @@ match_database :: proc(content:^Match_Content,library:^host.Content_Animation,st
                 taken:=false;for other in body.bones {if int(other)==bones[i] {taken=true}}
                 if !taken {body.bones[part]=i32(bones[i])}
             }
-            rig:=lib.Match_Rig{skeleton={parents=state.parents[:],names=state.targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2]),forward=state.forward}
+            rig:=lib.Match_Rig{skeleton={parents=state.parents[:],names=state.targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2])}
             weights:=lib.Match_Weights{.Foot_Position=info.foot_position,.Foot_Velocity=info.foot_velocity,.Hip_Velocity=info.hip_velocity,.Body_Velocity=info.body_velocity,.Trajectory_Position=info.trajectory_position,.Trajectory_Direction=info.trajectory_direction}
             // Each clip names its landing with a marker of its own: every one of that name.
             event:=make([dynamic]u32,context.temp_allocator)

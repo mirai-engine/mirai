@@ -69,7 +69,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - The loop function that calls `behavior.minds_tick` must be `@(step="fixed", server)`; without
   `server` it runs on clients too. Gate on `time.playing`. Call `minds_unknown` once per tick.
 - A `Mind_Agent` name that no `minds_tick` runs does nothing; `engine.diagnostics` lists the
-  problem `behavior.mind`. Names are 15 bytes at most; 16 minds per game.
+  problem `behavior.mind`. `Mind_Name` bounds a name, `MINDS_CAPACITY` the minds of a game.
 - `Exit` must release what `Enter` requested. `move_act` and `follow_act` stop the agent on abort;
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.

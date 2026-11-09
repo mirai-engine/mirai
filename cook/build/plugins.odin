@@ -271,7 +271,7 @@ plugin_library_prepare :: proc(p:^project.Project,lib:^Plugin_Library) -> []stri
 		failed[0]=fmt.aprintf("%s: the declarations it compiles against could not be copied",lib.stage)
 		return failed
 	}
-	entry_write(lib.stage,PLUGIN_ENTRY,lib.packages,"plugins")
+	entry_write(lib.stage,PLUGIN_ENTRY,entry_imports("plugins",lib.packages)[:])
 	if !plugin_definition_write(lib) {
 		failed:=make([]string,1)
 		failed[0]=fmt.aprintf("%s: its module definition could not be written",lib.stage)

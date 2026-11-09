@@ -52,10 +52,10 @@ lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
 	testing.expectf(t, abs(capsule.radius - 0.2) < 1e-6 && abs(capsule.length - 0.8) < 1e-5, "stretched 6 by 2: radius 0.2 and a segment that ends 0.6 from its center, not %v and %v", capsule.radius, capsule.length)
 	testing.expectf(t, near(capsule.axis, mm.quat_rotate(turned, [3]f32{1, 0, 0})), "along the axis it stretches most, turned: %v", capsule.axis)
 	spot := sync.lights[3]
-	testing.expectf(t, near(spot.direction, mm.quat_rotate(turned, [3]f32{0, 0, -1})) && spot.cone == 0.5, "toward -z, its angle the half of its cone: %v %v", spot.direction, spot.cone)
+	testing.expectf(t, near(spot.direction, mm.quat_forward(turned)) && spot.cone == 0.5, "toward -z, its angle the half of its cone: %v %v", spot.direction, spot.cone)
 	rectangle := sync.lights[4]
 	testing.expectf(t, rectangle.size == {2, 0.5} && rectangle.radius == 0 && rectangle.intensity == 2, "the square of its entity, x by y: %v", rectangle.size)
-	testing.expectf(t, near(rectangle.direction, mm.quat_rotate(turned, [3]f32{0, 0, -1})) && near(rectangle.axis, mm.quat_rotate(turned, [3]f32{-1, 0, 0})), "facing -z, wide along -x, its right seen from the side it lights: %v %v", rectangle.direction, rectangle.axis)
+	testing.expectf(t, near(rectangle.direction, mm.quat_forward(turned)) && near(rectangle.axis, mm.quat_rotate(turned, [3]f32{-1, 0, 0})), "facing -z, wide along -x, its right seen from the side it lights: %v %v", rectangle.direction, rectangle.axis)
 	testing.expectf(t, sync.sun.enabled && sync.sun.illuminance == 3 && near(sync.sun.direction, mm.quat_rotate(turned, [3]f32{0, 0, 1})), "the sun shown, shining toward -z: %v", sync.sun)
 }
 

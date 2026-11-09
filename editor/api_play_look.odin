@@ -113,5 +113,5 @@ api_look_steer :: proc(s:^Session,r:^Run,look:^Api_Look) -> string {
 // The yaw about up and the pitch up from level of a direction.
 @(private)
 look_yaw_pitch :: proc(direction:[3]f32) -> [2]f32 {
-    return {linalg.atan2(-direction.x,-direction.z),linalg.asin(clamp(direction.y,-1,1))}
+    return {mm.yaw_of_direction(direction),linalg.asin(clamp(direction.y,-1,1))}
 }

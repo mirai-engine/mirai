@@ -61,7 +61,7 @@ orbit_places_the_camera_around_its_target :: proc(t:^testing.T) {
 orbit_rotation_faces_the_target_with_up_kept :: proc(t:^testing.T) {
     o:=orbit_make({0,1,0},4,0.7,0.3)
     q:=orbit_rotation(o)
-    forward:=math.quat_rotate(q,{0,0,-1})
+    forward:=math.quat_forward(q)
     testing.expect(t,near_vec(forward,-orbit_direction(o),1e-3))
     up:=math.quat_rotate(q,{0,1,0})
     testing.expect(t,up.y>0)

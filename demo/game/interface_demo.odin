@@ -2,7 +2,6 @@ package game
 
 import "core:math"
 import "mirai:core"
-import eaudio "mirai:engine/audio"
 import "mirai:engine/gui"
 import render "mirai:engine/render"
 import inp "mirai:engine/input"
@@ -108,7 +107,7 @@ Interface_Demo :: struct {
 interface_demo :: proc(
     demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:core.Read(render.Hidden),shows:^Show_Requests,
     names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
-    ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,volumes:^eaudio.Audio_Volumes,
+    ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),problems:^core.Problems,
 ) {
     holder,found:=core.sole(demos)
@@ -132,7 +131,6 @@ interface_demo :: proc(
     if inp.pressed(actions,.Inventory) {ask_hidden(shows,inventory,!core.has(hidden,inventory))}
 
     // The menu: what its controls wrote, and the buttons that close it.
-    if value,ok:=gui.changed_value(events,menu,"volume");ok {volumes.master=f32(value)}
     if value,ok:=gui.changed_value(events,menu,"quality");ok {demo.quality=i32(value)}
     languages:=INTERFACE_LANGUAGES
     if value,ok:=gui.changed_value(events,menu,"language");ok {preferences.language=languages[clamp(int(value),0,len(languages)-1)]}

@@ -32,7 +32,7 @@ gallery_move :: proc(input:^inp.Move_Input,rotation:mm.Quat,wish:mm.Vec3,dt:f32)
     input.look_yaw=yaw_of(rotation)
     input.move={}
     if amount:=linalg.length(wish);amount>.001 {
-        desired:=math.atan2(-wish.x,-wish.z)
+        desired:=mm.yaw_of_direction(wish)
         input.look_yaw=mm.angle_wrap(mm.angle_approach(input.look_yaw,desired,GALLERY_TURN_SPEED*mm.RAD_PER_DEG*dt))
         input.move=mm.quat_rotate(mm.quat_axis_angle({0,1,0},-input.look_yaw),wish/max(amount,1))
     }

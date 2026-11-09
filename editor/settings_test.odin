@@ -92,6 +92,17 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,world.rule,Layer_Rule{count=2})
     testing.expect(t,strings.contains(string(session.toast[:session.toast_length]),"Layer_Rule"))
 
+    // A process that reads no file of the machine, as mirai render check, has what the code and the project say.
+    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layer_Setting": {"quality": 3, "scale": 2}, "Layer_Rule": {"count": 8}}`)==nil)
+    settings_load(&session)
+    testing.expect_value(t,world.setting,Layer_Setting{quality=3,scale=5})
+    session.toast_length=0
+    os.set_env(project.SETTINGS_NO_MACHINE_ENV,"1")
+    settings_load(&session)
+    os.unset_env(project.SETTINGS_NO_MACHINE_ENV)
+    testing.expect_value(t,world.setting,Layer_Setting{quality=1,scale=5})
+    testing.expect_value(t,session.toast_length,0)
+
     error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":4,"scale":7}}}`)
     testing.expect_value(t,error.code,0)
     testing.expect_value(t,world.setting,Layer_Setting{quality=4,scale=5})

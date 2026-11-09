@@ -103,9 +103,9 @@ Match_Database :: struct {
     allocator:mem.Allocator,
 }
 Match_Build_Error :: enum u8 {None,Invalid,Memory_Limit,Out_Of_Memory}
-// What the features read of a skeleton: bones of the feet and the hips, the
-// body its clips are measured with, and its forward in the space of the rig.
-Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32,forward:math.Vec3}
+// What the features read of a skeleton: bones of the feet and the hips, and
+// the body its clips are measured with, whose forward is in the space of the rig.
+Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32}
 
 // Where the body goes and went, raw, in the frame of its facing: its velocity now (m/s), where it
 // was MATCH_PAST seconds before, and where it is and faces at each MATCH_HORIZON.
@@ -146,7 +146,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     n:=len(rig.skeleton.parents)
     if n==0 || len(clips)==0 || !anim_finite(rate) || rate<=0 || rate>FRAMES_MAX_RATE || !skeleton_validate(rig.skeleton) {return}
     for bone in ([3]i32{rig.left_foot,rig.right_foot,rig.hips}) {if bone<0 || int(bone)>=n {return}}
-    forward,unit:=anim_unit(math.Vec3{rig.forward.x,0,rig.forward.z});if !unit {return}
+    forward,unit:=anim_unit(math.Vec3{rig.body.forward.x,0,rig.body.forward.z});if !unit {return}
     for weight in weights {if !anim_finite(weight) || weight<0 {return}}
     MAX_FRAMES :: 1<<20
     total,longest,blend_tracks:=0,0,0
@@ -668,7 +668,7 @@ match_trajectory :: proc "contextless" (velocity,desired:math.Vec3,acceleration,
         if into:=linalg.dot(v,normal);into<0 {v-=normal*into}
         if into:=linalg.dot(goal,normal);into<0 {goal-=normal*into}
     }
-    heading,known:=anim_unit(flat(facing));if !known {heading={0,0,-1}}
+    heading,known:=anim_unit(flat(facing));if !known {heading=math.FORWARD}
     rate:=braking if goal=={} else acceleration
     change:=goal-v;distance:=linalg.length(change)
     reach:=distance/rate if rate>0 && anim_finite(rate) else max(f32)
@@ -744,7 +744,7 @@ match_lane :: #force_inline proc "contextless" (values:[]f32) -> simd.f32x4 {ret
 
 // The rotation about Y that takes -Z to a horizontal direction.
 match_yaw :: proc "contextless" (direction:math.Vec3) -> math.Quat {
-    return math.quat_axis_angle({0,1,0},cmath.atan2(-direction.x,-direction.z))
+    return math.quat_axis_angle({0,1,0},math.yaw_of_direction(direction))
 }
 
 @(private)

@@ -14,7 +14,7 @@ import "core:math/linalg"
 SHAPE_SEGMENTS :: 32 // around the Y axis
 SHAPE_RINGS    :: 16 // latitude bands of the sphere
 
-@(private="file") vertex :: #force_inline proc(out:^Mesh_Buffer,position,normal:Vec3,uv:Vec2) {
+@(private) vertex :: #force_inline proc(out:^Mesh_Buffer,position,normal:Vec3,uv:Vec2) {
     append(&out.positions,position)
     append(&out.normals,normal)
     append(&out.uvs,uv)

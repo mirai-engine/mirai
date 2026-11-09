@@ -47,7 +47,7 @@ write_raft_scene :: proc(o:^Out) {
     environment.luminance,environment.atmosphere,environment.use_background=nits(u,{.42,.56,.78}),false,false
     sky_set(&s,&environment,0)
     sun:=asset.builder_entity(&s,"Sun")
-    sun_placed:=sun_pose(SCENE_SUN)
+    sun_placed:=sun_pose(render.SUN_DIRECTION)
     asset.builder_set(&s,sun,sun_placed)
     asset.builder_set(&s,sun,render.Sun{color={1,0.95,0.86},illuminance=lux(u,3)})
 

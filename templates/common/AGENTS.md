@@ -8,9 +8,8 @@ This is a Mirai game project.
   the topics and their sub-pages, each with what it holds.
 - Read what the step at hand needs, with `section` for part of a topic (`mirai docs core prefabs`);
   do not sweep it in advance.
-- Start from the code already here: `game/game.odin` and `assets/scenes/main.scene` play as they
-  are; `game/shell.odin` is the main menu, pause and graphics settings, and
-  `tests/scenarios/shell.mirai` drives them. Extend them instead of studying the engine.
+- Start from the code already here: it runs as it is and `README.md` says what each file is.
+  Extend it instead of studying the engine.
 - Engine sources are not the documentation. Do not read them to learn the API.
 
 ## Verify

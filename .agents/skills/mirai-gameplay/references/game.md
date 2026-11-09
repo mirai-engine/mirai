@@ -37,8 +37,8 @@ of its owner and is taken by the function in parentheses:
   (`scene_spawns`), or `scene.spawn(spawner, path, at)` for the root.
 - **Save or load**: `save.request_save(&r, "slot")`, `request_load`, `request_delete` in
   `^save.Save_Requests` (`saves_serve`).
-- **Send a network message**: `net.send(&outbox, time, value)` with a struct
-  `@(net_message)` in `^net.Net_Outbox` (`net_tick_tail`); it does not queue while a rollback
+- **Send a network message**: `multiplayer.send(&outbox, time, value)` with a struct
+  `@(net_message)` in `^multiplayer.Net_Outbox` (`net_tick_tail`); it does not queue while a rollback
   replays the tick.
 
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,

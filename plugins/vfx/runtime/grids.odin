@@ -264,7 +264,7 @@ grids_sync :: proc(g:^Grids,grids:core.Read(Particle_Grid),volumes:core.Read(Par
 // sees the waves where it looks; one low over it, those in front of it too.
 @(private)
 view_ahead :: proc "contextless" (view:core.View,height,width,depth:f32) -> [2]f32 {
-    forward:=mm.quat_rotate(view.rotation,{0,0,-1})
+    forward:=mm.quat_forward(view.rotation)
     flat:=[2]f32{forward.x,forward.z}
     along:=linalg.length(flat)
     if !(along>1e-4) {return view.position.xz}

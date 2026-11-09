@@ -90,7 +90,7 @@ locomotion_seat :: proc(
             // It turns toward its move or, facing, toward where the camera looks.
             amount:=linalg.length(toward)
             if facing || amount>0.001 {
-                desired:=facing?yaw:linalg.atan2(-toward.x,-toward.z)
+                desired:=facing?yaw:mm.yaw_of_direction(toward)
                 turn:=c.turn_speed>0?c.turn_speed*time.dt*core.pace_of(clock,paces,e):mm.PI
                 move.look_yaw=mm.angle_wrap(mm.angle_approach(move.look_yaw,desired,turn))
             }

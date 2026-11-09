@@ -17,7 +17,7 @@ match_test_rig :: proc(library:^Library) -> (rig:Match_Rig,clips:[3]Match_Clip,o
     for name,i in ([5]string{"root","hips","foot_l","foot_r","head"}) {names[i]=base.name_hash(name)}
     body:=body_map_empty();body.forward,body.up={0,0,-1},{0,1,0}
     body.bones[.Pelvis],body.bones[.Foot_L],body.bones[.Foot_R],body.bones[.Head]=1,2,3,4
-    rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1,forward={0,0,-1}}
+    rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1}
     if !library_init(library,{max_keys=64,max_tracks=16,max_clips=8,max_markers=2}) {return}
     still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}

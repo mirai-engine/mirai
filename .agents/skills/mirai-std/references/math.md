@@ -5,7 +5,8 @@ types and procedures; this holds the conventions and the contracts that cross fi
 
 - The types (`Vec2`…`Vec4`, `Quat`, `Mat3`, `Mat4`) are aliases of the native Odin ones, so
   `core:math/linalg` operates on them without conversion.
-- Right-handed, Y up, +X right, -Z forward, meters, seconds, radians, column vectors.
+- Right-handed, Y up, +X right, -Z forward, meters, seconds, radians, column vectors. Code names
+  the forward `FORWARD`, `quat_forward` and `yaw_of_direction`, never `{0,0,-1}` or `atan2(-x,-z)`.
 
 ## Transform and TRS composition (`transform.odin`, `types.odin`)
 

@@ -164,7 +164,7 @@ observe_facing :: proc(w:core.World_Ref,body:core.Entity) -> [3]f32 {
         }
     }
     if view:=core.world_storage_of(w,core.View);view!=nil {return core.view_forward(view^)}
-    return {0,0,-1}
+    return mm.FORWARD
 }
 
 // A stand or a walk on nothing: the bool of the physics that a game may not have.

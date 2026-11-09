@@ -89,7 +89,7 @@ screen_ray :: proc "contextless" (screen,viewport:Vec2,view,projection:Mat4) -> 
         direction=linalg.normalize0(Vec3{(x+projection[0,2])/projection[0,0],(y+projection[1,2])/projection[1,1],-1})
     } else {
         origin={(x-projection[0,3])/projection[0,0],(y-projection[1,3])/projection[1,1],(1-projection[2,3])/projection[2,2]}
-        direction={0,0,-1}
+        direction=FORWARD
     }
     // The inverse of a rigid view: its rotation transposed.
     offset:=origin-Vec3{view[0,3],view[1,3],view[2,3]}

@@ -141,7 +141,7 @@ GALLERY_BATON :: mm.Vec3{.04,.3,.04} // m, the baton held in the grip of the han
 // The sky, the sun, the floor with its walkway and the camera that sees the gallery whole.
 @(private)
 gallery_environment :: proc(o:^Out,s:^asset.Scene_Builder) -> base.Entity_Id {
-    environment,turn,to_sun,disc:=sky_of(o,.Day,SCENE_SUN,GALLERY_LIGHT,2)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,GALLERY_LIGHT,2)
     sky_set(s,&environment,turn,render.EXPOSURE_DEFAULT)
     sun:=asset.builder_entity(s,"Sun",{position={0,6,0}})
     pose:=sun_pose(to_sun,{0,6,0})
@@ -176,7 +176,7 @@ gallery_hand_ik :: proc(g:^Gallery_Build,root:base.Entity_Id,place:Gallery_Place
     rig,_:=mirai_rig(g.model)
     head:=mirai_bone(g.model,"Head")
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.rig,look.bone=core.Entity(root),anim.bone_ref("Head");look.target=ik.target
-    look.forward,look.max_angle=linalg.normalize0(mm.quat_rotate(mm.quat_inverse(rig.rest_world[head].rotation),mm.Vec3{0,0,-1})),.6
+    look.forward,look.max_angle=linalg.normalize0(mm.quat_forward(mm.quat_inverse(rig.rest_world[head].rotation))),.6
     limit:=anim.ROTATION_CONSTRAINT_DEFAULT;limit.rig,limit.bone=core.Entity(root),anim.bone_ref("Head");limit.max_swing,limit.min_twist,limit.max_twist=.35,-.6,.6
     gallery_profile(o,s,root,"mirai_constraints",{ik={ik},look={look},limits={limit}})
     baton:=gallery_cube(s,"Socket baton",{},{1,1,1},{.2,1,.4,1})

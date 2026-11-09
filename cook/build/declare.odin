@@ -619,7 +619,7 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
 }
 
 // The string literal right after the next #load, #load_hash or #load_directory.
-@(private="file")
+@(private)
 directive_path :: proc(text:string) -> (at:struct{start,end:int}) {
     at={-1,-1}
     search:=0

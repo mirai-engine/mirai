@@ -135,7 +135,7 @@ write_physics_gallery :: proc(o:^Out) {
     exposure.compensation=1
     sky_set(&s,&environment,0,exposure)
     sun:=asset.builder_entity(&s,"Sun")
-    sun_placed:=sun_pose(SCENE_SUN)
+    sun_placed:=sun_pose(render.SUN_DIRECTION)
     asset.builder_set(&s,sun,sun_placed)
     asset.builder_set(&s,sun,render.Sun{color={1,.94,.85},illuminance=lux(u,3)})
     gallery_cube(&s,"Gallery floor",{0,-.25,-20},{36,.5,51},{.1,.14,.2,1},true)

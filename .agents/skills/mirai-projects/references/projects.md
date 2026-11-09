@@ -439,7 +439,8 @@ tools come from `.deps`, also from a worktree.
 ### Project
 
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
-  empty; `--list` gives the first line of the `README.md` of each template.
+  empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
+  and so is no template; `--list` gives the first line of the `README.md` of each template.
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and

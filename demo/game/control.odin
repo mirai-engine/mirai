@@ -153,7 +153,7 @@ game_follow :: proc(
         distance:=linalg.length(delta)
         move.move,move.buttons={},{}
         if distance<=max(follow.distance,0.5) {continue}
-        move.look_yaw=math.atan2(-delta.x,-delta.z)
+        move.look_yaw=mm.yaw_of_direction(delta)
         move.move.z=-min(distance-follow.distance,1)
     }
 }

@@ -60,7 +60,7 @@ are linear), `lowpass`, `reverb`, ducking
 (`settings.get` shows the shape) or `audio.audio_bus_setting_set`.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
-options: a slider binds `Audio_Volumes.music` and the step writes what it asks on `Changed` there.
+options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing.
 
 ## Rooms and occlusion
 

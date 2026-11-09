@@ -11,7 +11,7 @@ aim_up_keeps_secondary_axis_and_applies_influence_once :: proc(t:^testing.T) {
     solved,ok:=aim_at(tilted,{0,0,-1},{0,0,-1},{0,1,0},{0,1,0},math.PI,.5)
     testing.expect(t,ok && abs(math.quat_angle(solved,1)-.5)<1e-4)
     solved,ok=aim_at(1,{0,0,-1},{1,0,0},{0,1,0},{0,1,0},math.PI)
-    testing.expect(t,ok && linalg.length(math.quat_rotate(solved,{0,0,-1})-math.Vec3{1,0,0})<1e-4 && linalg.length(math.quat_rotate(solved,{0,1,0})-math.Vec3{0,1,0})<1e-4)
+    testing.expect(t,ok && linalg.length(math.quat_forward(solved)-math.Vec3{1,0,0})<1e-4 && linalg.length(math.quat_rotate(solved,{0,1,0})-math.Vec3{0,1,0})<1e-4)
     _,ok=aim_at(1,{0,0,-1},{0,1,0},{0,1,0},{0,1,0},math.PI);testing.expect(t,ok)
     _,ok=aim_at(1,{0,0,-1},{1,0,0},{0,0,1},{0,1,0},math.PI);testing.expect(t,!ok)
 }

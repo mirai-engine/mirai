@@ -139,7 +139,7 @@ pose_stride_warp_keeps_nearly_straight_knees_on_the_source_side_when_shortening_
     for angle,i in ([2]f32{1.3,-.9}) {
         rest[0].rotation=math.quat_axis_angle({0,1,0},angle)
         skeleton:=Skeleton{parents[:],names[:],rest[:]};local:=rest;world:[4]math.Transform
-        forward:=math.quat_rotate(rest[0].rotation,{0,0,-1})
+        forward:=math.quat_forward(rest[0].rotation)
         valid &&=pose_warp(skeleton,local[:],world[:],{pelvis=0,legs=legs[:],up={0,1,0},direction=forward,stride=.05,weight=1})
         sides[i]=linalg.dot(world[2].position-world[1].position,forward)
         front &&=sides[i]>.02

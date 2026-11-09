@@ -214,7 +214,6 @@ Generator :: struct {
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
     errors:[dynamic]string,
-    warnings:[dynamic]Diagnostic,
     engine_root,root:string,
 }
 
@@ -225,7 +224,6 @@ Generator :: struct {
 Generated :: struct {
     game_world,editor_world,shipped_world,editor_main,play_main,game_main:string,
     errors:[]string,
-    warnings:[]Diagnostic, // what builds and runs and most likely does not do what it was written for
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
 }
 
@@ -249,7 +247,6 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {steps_read(&g,pkg)}
     rules_check(&g)
     out.errors=g.errors[:]
-    out.warnings=g.warnings[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
     out.editor_world=world_write(&g,true)
@@ -1651,7 +1648,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
-            if _,found:=default_value(t);found {fmt.sbprintf(w,"    w.%s.default=default_%s\n",t.field,t.field)}
         }
         for t in g.types {
             if t.place!=place || t.kind!=.Storage || t.by_world || !included(t,editor) {continue}

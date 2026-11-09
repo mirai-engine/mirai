@@ -436,25 +436,17 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   components of runtime state (also the diagnostics hidden in Play or Simulate) without making
   them editable or persistent.
 
-**Presets of `scene.add`**: `empty` (a group), `cube`, `sphere`, `cylinder`, `cone`, `capsule`,
-`plane`, `prism`, `pyramid`, `point_light`, `spot_light`, `rect_light`, `sun`, `camera`, a camera
-that follows the player in a mode (`isometric_camera`, `top_down_camera`, `side_camera`,
-`first_person_camera`, `third_person_camera`, `aim_camera`), `spawn` (a `spawn.Spawn_Point`),
-or the card of an active plugin by its label (`decal`, `screen`, `portal`, `particles` with `vfx`;
+**`scene.add`.** `preset` is a name of `Preset` (`editor/world.odin`), case-insensitive:
+`empty` (a group), `cube`, `sphere`, `cylinder`, `cone`, `capsule`, `plane`, `prism`, `pyramid`,
+`point_light`, `spot_light`, `rect_light`, `sun`, `camera`, a camera that follows the player in a
+mode (`isometric_camera`, `top_down_camera`, `side_camera`, `first_person_camera`,
+`third_person_camera`, `aim_camera`), `spawn` (a `spawn.Spawn_Point`), or the card of an active
+plugin by its label (`decal`, `screen`, `portal`, `particles` with `vfx`;
 [cards](../../mirai-editor/references/extensions.md#create-cards)). Without `name`, that of
 the preset (with a number if it already exists); without `parent`, root. `position`, `rotation_deg`
 and `scale` are local to the parent. Lights shine toward their -Z; without `rotation_deg`, `sun`
 looks from `render.SUN_DIRECTION` and `spot_light` downward. Adding, showing or turning on a `Sun`
 turns off the `Sun` that was on, in the same undo step
-([one sun](../../mirai-editor/references/document.md#world-edit-procedures)).
-
-**`scene.add`.** `preset` is a name of `Preset` (`editor/world.odin`), case-insensitive
-(`point_light`, `third_person_camera`), or the card of an active plugin by its label (`spawn`,
-`decal`, `portal`;
-[cards](../../mirai-editor/references/extensions.md#create-cards)). Without `name`, that of
-the preset (with a number if it already exists); without `parent`, root. Lights shine toward their
--Z; without `rotation_deg`, `sun` looks from `render.SUN_DIRECTION` and `spot_light` downward.
-Adding, showing or turning on a `Sun` turns off the one that was on, in the same undo step
 ([one sun](../../mirai-editor/references/document.md#world-edit-procedures)).
 
 **`components`, `enabled` and `off` of `scene.add` and `scene.set`**
@@ -644,25 +636,9 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   monitors when `play.qa.start` armed them, else from comparing the place between two observes
   while the body asks to move. With `step` it first runs `play.step` with those params and adds
   its `ran`, `met` and `trace`, so one call is act plus observe.
-- `play.qa.start` and `play.qa.report`: monitors of the ticks the API runs. The first call of the
-  API on a run reserves the log of its inputs, which a tick writes into; a run the API never
-  touched tests one pointer per tick.
-  - They count only those ticks: what the user's unpaused Play runs is not seen, and repros
-    refuse a run that advanced or went back outside them.
-  - `Frame_Time` and `Memory` measure the machine (`Memory` is growth since the start): their
-    repros do not fail reliably. The others are of the game and repeat with it.
-  - A repro is a regression test: it fails while the bug exists and passes once it is fixed. It
-    plays the inputs from tick 0 (holds, devices and the changes of `play.set`, `play.spawn`,
-    `play.destroy` and `play.push`), starts only the monitor of that kind where the run did and
-    ends in a `play.qa.report`; the monitors may start at any tick, but every tick from the
-    first must come from the API. Clicks replay at the same window size.
-  - In a scenario, a step `play.qa.report` fails it on any violation.
-- `play.explore`: no model; a game that reads only its World repeats it from the same seed.
-  - `Ui` presses what it never pressed, then the button of the shortest way to a page with one
-    left, then Escape twice, then stops.
-  - A button that asks the game to quit is listed in `exits` and the run goes on; it also
-    stops at its ticks, so a pause or a quit loop cannot hold it.
-  - It arms the monitors if nothing did, and writes one repro per kind of violation.
+- `play.qa.*` and `play.explore`: [explore and QA](../../../../docs/game/testing/explore-qa.md).
+  The first call of the API on a run reserves the log of its inputs, which a tick writes into; a
+  run the API never touched tests one pointer per tick.
 - `play.player`: fails without a run. The seat is that of the focused local player
   (`input.focused`); body and camera come from `Drivable` and `render.View_Camera`. The AI context
   reads the player with the same `play_player_snapshot`.
@@ -673,13 +649,8 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   element.
 - `play.audio`: the voices of `Voices`, with volume and pitch given before bus and distance. The
   mixer is the editor's, shared by all runs; it reports no pause.
-- `play.scenario.run`: plays scenario files ([format](#scenarios)) one after the other in the
-  caller's run and answers one report per file. A file that its methods would not take fails
-  whole before the game starts, with the step and why. Outside a turn it opens the scenario's
-  scene if the document is another without unsaved changes; in a turn the document must be that
-  scene. It fails a scenario while a game of the caller already plays, and when `play.start`
-  fails (the code does not build: the error says where). Steps hold the server like `play.step`; the response buffer bounds the size
-  of their results, so a long trace or filmstrip goes in a run of its own.
+- `play.scenario.run`: plays scenario files one after the other in the caller's run and answers
+  one report per file ([scenarios](../../../../docs/game/testing/scenario.md)).
 
 **Networked game**
 ([networked Play](../../mirai-networking/references/multiplayer.md#networked-play)).
@@ -689,40 +660,6 @@ do not exist. Only outside a turn. Their players read the saved files: with unsa
 `assets_unsaved_paths` and the fix (save them with `asset.save` or pass `saved_only:true`, which
 plays with what the files have), like the question of the UI's networked Play. `play.join` fails
 if the host does not serve a game.
-
-### Scenarios
-
-A scenario is a gameplay test written once and played again: a JSON file of the project, by
-convention `tests/scenarios/<name>.mirai`, run by `play.scenario.run` and by
-[`mirai play test`](api.md#mirai-play-test).
-
-```json
-{
-  "scene": "scenes/control.scene",
-  "start": {"players": 1},
-  "steps": [
-    {"name": "settle", "method": "play.step", "params": {"ticks": 30}},
-    {"name": "walk", "method": "play.step",
-     "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 1}]}},
-    {"method": "play.step", "params": {"ticks": 120, "until": [
-      {"entity": "Door", "component": "Door", "field": "open", "compare": "Equal", "number": 1}]}},
-    {"method": "play.check", "params": {"conditions": [
-      {"storage": "Score", "field": "points", "compare": "At_Least", "number": 1}]}}
-  ]
-}
-```
-
-- `scene` names the scene it plays (empty: the one open); `start` takes the params of
-  `play.start`; each step is a play method and its params as that method takes them, checked
-  against its schema before the game starts. `play.start` and `play.stop` are the runner's: every
-  scenario starts on a fresh copy of its scene at tick 0 and stops after its last step, or after
-  the first that fails.
-- A step fails when its call fails, when its answer says `passed:false` (`play.check`) or when
-  `play.step` with `until` runs out of its ticks before they hold: `until` with `ticks` is the wait
-  with a timeout. The report gives each step run with what its method answered (what each
-  condition read) and the tick after it.
-- Only the steps advance the game, by fixed ticks: the same file plays the same ticks every time.
-  What waits on assets that stream in, or on wall time, is not part of a scenario.
 
 ## Simulation
 

@@ -128,15 +128,10 @@ shipped_loads :: proc(sources:[]string,allocator:=context.allocator) -> []string
         if error!=nil {continue}
         rest:=string(data)
         for {
-            at:=strings.index(rest,"#load")
-            if at<0 {break}
-            rest=rest[at+len("#load"):]
-            open:=strings.index_byte(rest,'"')
-            paren:=strings.index_byte(rest,'(')
-            if open<0 || paren<0 || paren>open || strings.trim_space(rest[paren+1:open])!="" {continue}
-            close:=strings.index_byte(rest[open+1:],'"')
-            if close<0 {break}
-            relative:=rest[open+1:open+1+close]
+            at:=directive_path(rest)
+            if at.start<0 {break}
+            relative:=rest[at.start+1:at.end-1]
+            rest=rest[at.end:]
             clean,_:=filepath.clean(strings.concatenate({source[:strings.last_index_byte(source,'/')],"/",relative},context.temp_allocator),context.temp_allocator)
             file:=slashes(clean,context.temp_allocator)
             if found[file] {continue}
@@ -200,7 +195,9 @@ job_shipped_start :: proc(job:^Job,p:^project.Project,force:bool) -> Failure {
         job.result.text=strings.join(errors,"\n",a)
         return .Generate
     }
-    if !shipped_entry_write(s,runtime_packages[:]) {return .Write_Failed}
+    imports:=entry_imports("mirai",runtime_packages[:])
+    append(&imports,..entry_imports("plugins",s.packages)[:])
+    if _,written:=entry_write(s.stage,SHIPPED_ENGINE_ENTRY,imports[:]);!written {return .Write_Failed}
     if !force && shipped_cache_take(job.engine_root,s) {
         if !shipped_stamp_write(s) {return .Write_Failed}
         job.result.shipped_engine=.Restored
@@ -221,19 +218,6 @@ job_shipped_start :: proc(job:^Job,p:^project.Project,force:bool) -> Failure {
     return .None
 }
 
-// The package the library is built from: it imports every other, of both collections.
-@(private="file")
-shipped_entry_write :: proc(s:^Shipped_Engine,engine_packages:[]string) -> bool {
-    folder:=project.path(s.stage,SHIPPED_ENGINE_ENTRY,allocator=context.temp_allocator)
-    if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return false}
-    b:=strings.builder_make(context.temp_allocator)
-    fmt.sbprintfln(&b,"package %s\n",SHIPPED_ENGINE_ENTRY)
-    for path in engine_packages {fmt.sbprintfln(&b,"import _ \"mirai:%s\"",path)}
-    for path in s.packages {fmt.sbprintfln(&b,"import _ \"plugins:%s\"",path)}
-    _,error:=write_changed(project.path(folder,"library.odin",allocator=context.temp_allocator),strings.to_string(b))
-    return error==nil
-}
-
 @(private="file")
 shipped_stamp_write :: proc(s:^Shipped_Engine) -> bool {
     return os.write_entire_file(s.stamp,fmt.tprintf("%x",s.key))==nil
@@ -246,24 +230,16 @@ shipped_stamp_write :: proc(s:^Shipped_Engine) -> bool {
 job_shipped_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
     s:=&job.shipped
-    streams:[2]string
-    for file,i in compile.streams {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    failed:=exit_code!=0 || !library_present(s.library,s.linked)
+    text,errors,_:=job_compile_read(job,compile.streams)
+    failed:=errors || exit_code!=0 || !library_present(s.library,s.linked)
     plugins:=project.path(job.engine_root,"plugins",allocator=context.temp_allocator)
     for &diagnostic in job.result.diagnostics {
         if strings.has_prefix(diagnostic.file,s.stage_plugins) {diagnostic.file=project.path(plugins,diagnostic.file[len(s.stage_plugins):],allocator=a)}
         else if strings.has_prefix(diagnostic.file,s.stage) {diagnostic.file=project.path(job.engine_root,diagnostic.file[len(s.stage):],allocator=a)}
-        if diagnostic.severity==.Error {failed=true}
     }
     if failed {
-        job.result.text=strings.trim_space(strings.concatenate({rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+        job.result.text=text
+        job_compile_fail(job,exit_code)
         return
     }
     job.result.diagnostics=nil
