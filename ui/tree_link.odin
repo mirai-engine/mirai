@@ -147,7 +147,9 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         if found<0 || found>=len(file.styles) {return {},false}
         styles[row]=styles[int(at.style)+found]
         had:=file.style_infos[found]
-        info.layout,info.layout_keys,info.blur=had.layout,had.layout_keys,had.blur
+        info.layout=had.layout
+        info.layout_keys=had.layout_keys
+        info.blur=had.blur
         for i:=len(variants)-1;i>=0;i-=1 {if int(variants[i].style)==row {ordered_remove(&variants,i)}}
         for variant in file.variants {
             if int(variant.style)!=found {continue}

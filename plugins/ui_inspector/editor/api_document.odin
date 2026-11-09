@@ -2160,9 +2160,10 @@ doc_params_apply :: proc(args:^Tree_Args,r:^Records,row:int,params:[]ui.Tree_Par
         template:ui.Tree_Node
         source:^Records
         if node!="" {
-            found:bool
-            template,source,found=doc_widget_node(args,d.widget,node)
-            if !found {return doc_failed(call,"%s goes to node '%s', which its widget does not have",key,node)}
+            found:^ui.Tree_Node
+            found,source=doc_widget_node(args,d.widget,node)
+            if found==nil {return doc_failed(call,"%s goes to node '%s', which its widget does not have",key,node)}
+            template=found^
         }
         style:=0
         if p.field==.Style {
@@ -2177,7 +2178,7 @@ doc_params_apply :: proc(args:^Tree_Args,r:^Records,row:int,params:[]ui.Tree_Par
 // The node a path of names reaches in a widget as a use expands it, and the
 // records its rows are of.
 @(private)
-doc_widget_node :: proc(args:^Tree_Args,widget:base.Asset_Id,path:string) -> (found:ui.Tree_Node,source:^Records,ok:bool) {
+doc_widget_node :: proc(args:^Tree_Args,widget:base.Asset_Id,path:string) -> (found:^ui.Tree_Node,source:^Records) {
     lib:=doc_lib_of(doc_libs_slice(args),widget)
     if lib==nil {return}
     expanded,expanded_ok:=ui.tree_expand(lib.linked,context.temp_allocator)
@@ -2185,8 +2186,8 @@ doc_widget_node :: proc(args:^Tree_Args,widget:base.Asset_Id,path:string) -> (fo
     for &n in expanded {
         if serial.text_field(n.name[:])!=path {continue}
         source=new(Records,context.temp_allocator)
-        if !records_load(source,lib.linked,context.temp_allocator) {return}
-        return n,source,true
+        if !records_load(source,lib.linked,context.temp_allocator) {return nil,nil}
+        return &n,source
     }
     return
 }

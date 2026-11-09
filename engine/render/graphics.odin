@@ -190,5 +190,6 @@ graphics_apply :: proc(settings:^Graphics_Settings,sync:^Render_Sync,app:^host.A
         if app.device!=nil && pacing.vsync!=platform.pacing(app.platform).vsync {rhi.swapchain_set_vsync(app.device,pacing.vsync)}
         platform.set_pacing(app.platform,pacing)
     }
-    sync.graphics,sync.graphics_applied=graphics,true
+    sync.graphics=graphics
+    sync.graphics_applied=true
 }

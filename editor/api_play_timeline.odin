@@ -225,7 +225,11 @@ api_timeline_presses :: proc(timeline:[]Api_Step_Input,allocator:=context.alloca
             at+=1
             continue
         }
-        expanded[at],expanded[at+1],expanded[at+2]={ticks=1,press=step.press},{ticks=API_PRESS_HELD,buttons={.Left}},{ticks=1+step.ticks}
+        expanded[at].ticks=1
+        expanded[at].press=step.press
+        expanded[at+1].ticks=API_PRESS_HELD
+        expanded[at+1].buttons={.Left}
+        expanded[at+2].ticks=1+step.ticks
         at+=3
     }
     return expanded
