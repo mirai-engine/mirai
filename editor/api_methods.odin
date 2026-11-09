@@ -1387,7 +1387,7 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.INVALID_PARAMS,problem)
             return
         }
-        run.sampler={every=params.trace.every,take=api_trace_take,data=&trace}
+        run.sampler,run.every=&trace,params.trace.every
     }
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)

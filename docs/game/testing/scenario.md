@@ -32,12 +32,13 @@ time. The first step that fails ends it.
 {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}
 {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"}
 {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}
-{"entity": "Door", "component": "Open", "compare": "Exists"}
+{"entity": "Door", "field": "Open", "compare": "Exists"}
 {"entity": "Pickup", "compare": "Gone"}
 ```
 
 - The subject is an `entity`, by its name, a path Parent/Child, its id or its handle, or a
-  `storage`; `component` and `field` go inside it, joined by dots (`velocity.1`).
+  `storage`. `field` names the value inside it: `Component.field.0.field` for an entity
+  (`Motion.linear.1`, where `a[0].b` is `a.0.b`), and `play.get` takes the same path.
 - `compare`: `Exists` (the default), `Gone`, `Equal`, `Not_Equal`, `Below`, `At_Most`, `Above`,
   `At_Least`. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
 - Names of components, storages and fields: `component.list` and `play.inspect`; `Open`,

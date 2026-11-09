@@ -18,7 +18,7 @@
      "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
     {"name": "paused and frozen", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"},
-      {"entity": "Shell", "component": "UI_Screen", "field": "pause", "compare": "Equal", "number": 1},
+      {"entity": "Shell", "field": "UI_Screen.pause", "compare": "Equal", "number": 1},
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}]}},
     {"name": "Escape resumes", "method": "play.step",
      "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},

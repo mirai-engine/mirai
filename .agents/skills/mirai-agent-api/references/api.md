@@ -291,7 +291,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   results keep ids. A miss lists the nearest paths of that kind.
 - **Params are taken as they can only be meant**, in one place before anything reads them
   (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
-  the singular or the plural of one field (`id` and `ids` also of `entity` and `entities`), a
+  the singular or the plural of one field, a
   single value where a list goes, a list of one where a single value goes, and a number or a
   boolean, as its text, where the schema takes only a string. A list of several for a single
   value fails saying so.

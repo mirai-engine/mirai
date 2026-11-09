@@ -86,9 +86,6 @@ Api_Play_Observe_Target :: struct {
 // What play.observe keeps of a run between two calls.
 Run_Observed :: struct {
     serial:u64,        // the Problems.serial it has listed
-    anchor:[3]f32,     // where the body was when it last moved or did not ask to
-    anchor_seconds:f64,
-    anchored:bool,
 }
 
 @(private)
@@ -186,15 +183,11 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
     _,body:=editor.play_focused(w)
     moved:[3]f32
     if body!=core.NONE {moved=editor.entity_world(w,body).position}
-    // The tracker: a body is stuck that asked to move and stayed where it was.
     slot:=playtest_run(s,r)
     if slot==nil {return}
-    o:=&slot.observed
-    if body==core.NONE || !play_moving(w,body) || !o.anchored || linalg.length(moved-o.anchor)>=QA_STUCK_DISTANCE {
-        o.anchor,o.anchor_seconds,o.anchored=moved,seconds,true
-    }
-    stuck:=seconds-o.anchor_seconds>=API_OBSERVE_STUCK_SECONDS
-    if q:=slot.qa;q!=nil && q.limits.stuck_seconds>0 {stuck=q.stuck}
+    limit:=API_OBSERVE_STUCK_SECONDS
+    if q:=slot.qa;q!=nil && q.limits.stuck_seconds>0 {limit=f64(q.limits.stuck_seconds)}
+    stuck:=stuck_watch(&slot.stuck,w,body,moved,seconds)>=limit
     serial.write_u8(out,'{')
     api.write_uint(out,"tick",tick,true)
     api.write_key(out,"seconds");api.write_number(out,observe_round(f32(seconds)))
@@ -214,7 +207,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
         serial.write_u8(out,'}')
     }
     observe_ui_write(s,out,r)
-    observe_problems_write(s,out,r,o,w)
+    observe_problems_write(s,out,r,&slot.observed,w)
     if found:=observe_targets_find(s,w,names,body,max(nearest,1),allocator);len(names)>0 {
         api.write_key(out,"targets");serial.write_u8(out,'[')
         for &f,i in found {

@@ -33,8 +33,6 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"typed",`{"methods":"a"}`,`{"methods":["a"]}`,""},
         {"typed",`{"entity":["x"]}`,`{"entity":"x"}`,""},
         {"typed",`{"entities":["x"]}`,`{"entity":"x"}`,""},
-        {"typed",`{"id":"x"}`,`{"entity":"x"}`,""},
-        {"typed",`{"ids":["x"]}`,`{"entity":"x"}`,""},
         {"typed",`{"count":[3]}`,`{"count":3}`,""},
         {"typed",`{"rows":{"x":1}}`,`{"rows":[{"x":1}]}`,""},
         {"typed",`{"rows":[{"xs":1}]}`,`{"rows":[{"x":1}]}`,""},
@@ -106,7 +104,6 @@ a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes :: proc(t:^t
         {`{"entity":"Floor"}`,"7 0 0",""},
         {`{"entity":123}`,"8 0 0",""},
         {`{"entity":"0000000000000009","parent":"Floor","list":["Floor","123"]}`,"9 7 8",""},
-        {`{"id":"Floor"}`,"7 0 0",""},
         {`{"entity":"Nope"}`,"",`entity: "Nope" names no entity`},
         {`{"entity":"Floor","list":["Floor","Nope"]}`,"",`list[1]: "Nope" names no entity`},
     }

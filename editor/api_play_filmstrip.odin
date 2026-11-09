@@ -84,12 +84,12 @@ api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:stri
 api_filmstrip_past_cells :: proc(s:^Session,r:^Run,strip:^Api_Filmstrip,first,to,every:u64) -> string {
     h:=r.history
     if !history_seek(s,r,first).ok {return "No memory to go back to that tick"}
-    if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
+    if problem:=api_filmstrip_take(s,strip,0);problem!="" {return problem}
     walk:=history_walk(h,first,to,every)
     for _,due in history_walk_next(&walk) {
         if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
         if !due {continue}
-        if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
+        if problem:=api_filmstrip_take(s,strip,0);problem!="" {return problem}
     }
     return ""
 }
@@ -185,7 +185,7 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     }
     strip.ticks=api_filmstrip_ticks(values[3]!=""?api_timeline_ticks(steps):-1,p.every,p.count,API_FILMSTRIP_CELLS,call.allocator)
     if r.owner==0 && simulating(s) && api_timeline_input(timeline) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-    strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler={every=1,take=api_filmstrip_take,data=strip}}
+    strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler=strip,every=1}
     strip.count=len(strip.ticks)
     strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
     return strip,true
@@ -198,7 +198,7 @@ api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:st
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     if strip.run.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
-    if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    if problem:=api_filmstrip_take(s,strip,0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     ran,_,problem:=api_step_run(s,&strip.run,api_step_frame)
     if problem!="" {
         api.call_failf(call,api.SERVER_ERROR,"%s, after %d cells",problem,strip.taken)
@@ -243,8 +243,7 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
 // A cell of the filmstrip: the game drawn now, the part of it it shows put
 // in the grid with the tick in its corner.
 @(private)
-api_filmstrip_take :: proc(s:^Session,data:rawptr,_:core.World_Ref,ran:int) -> string {
-    strip:=cast(^Api_Filmstrip)data
+api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
     if strip.taken>=strip.count || strip.ticks!=nil && ran!=strip.ticks[strip.taken] {return ""}
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {return "The game ended"}

@@ -354,7 +354,7 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     probe_tick(running,nil,nil,nil)
     testing.expect_value(t,running.score.points,7)
     // Conditions, as assertions.
-    error,text=probe_call(f,"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7},{"entity":"Hero","component":"Probe_Health","field":"points","compare":"Below","number":3},{"entity":"Hero","field":"world_position.1","compare":"Equal","number":5},{"storage":"Probe_Score","field":"state","compare":"Equal","text":"Waiting"},{"entity":"Nobody","compare":"Gone"}]}`)
+    error,text=probe_call(f,"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7},{"entity":"Hero","field":"Probe_Health.points","compare":"Below","number":3},{"entity":"Hero","field":"world_position.1","compare":"Equal","number":5},{"storage":"Probe_Score","field":"state","compare":"Equal","text":"Waiting"},{"entity":"Nobody","compare":"Gone"}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.has_prefix(text,`{"passed":false`),text)
     testing.expect(t,strings.contains(text,`"results":[{"passed":true,"value":7},{"passed":false,"value":3},{"passed":true,"value":5},{"passed":true,"value":"Waiting"},{"passed":true,"value":null}]`),text)
@@ -410,12 +410,17 @@ play_get_reads_one_value_of_an_entity_as_play_inspect_and_play_check_name_it :: 
         {`{"entity":"Hero","field":"world_position[0]"}`,`"value":1`},
         {`{"entity":"Foe","field":"position.0"}`,`"value":5`},
         {`{"entity":"Hero","field":"name"}`,`"value":"Hero"`},
+        {`{"entity":"Hero","field":"Transform.position.0"}`,`"value":1`},
+        {`{"entity":"Hero","field":"Transform.position[0]"}`,`"value":1`},
     }
     for c in read {
         error,text=probe_call(f,"play.get",c.params)
         testing.expectf(t,error.code==0 && strings.contains(text,c.value),"%s: %v %s",c.params,error,text)
     }
+    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Transform.position.0","compare":"Equal","number":1},{"entity":"Hero","field":"Transform.position[0]","compare":"Equal","number":1},{"entity":"Foe","field":"Probe_Health.points","compare":"Gone"}]}`)
+    testing.expectf(t,error.code==0 && strings.contains(text,`"passed":true`),"%v %s",error,text)
     refused:=[?]struct{params,says:string}{
+        {`{"entity":"Hero","field":"components.Probe_Health.points"}`,"named by itself"},
         {`{"entity":"Foe","field":"Probe_Health.points"}`,"no Probe_Health"},
         {`{"entity":"Hero","field":"Probe_Health.lives"}`,"points"},
         {`{"entity":"Hero","field":"nothing"}`,"world_position"},
@@ -612,7 +617,7 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
-    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","component":"Character_State","field":"standing","compare":"Equal","number":1}]}`)
+    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Character_State.standing","compare":"Equal","number":1}]}`)
     testing.expect(t,error.code==0 && strings.contains(text,`"passed":true`),text)
     error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"seconds":5}`)
     testing.expectf(t,error.code==0,"%v",error)
@@ -641,15 +646,21 @@ Probe_Seen :: struct {
 }
 
 @(private="file")
-probe_seen :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> string {
-    seen:=cast(^Probe_Seen)data
+probe_seen :: proc(seen:^Probe_Seen,w:core.World_Ref) {
     given:=core.world_storage_of(w,core.Input)
     seen.keys[seen.count],seen.deltas[seen.count]=given.keys_down,given.mouse_delta
     seen.pressed[seen.count],seen.released[seen.count]=given.keys_pressed,given.keys_released
     if seats:=core.world_table_of(w,input.Seat);seats!=nil && seen.seat!=core.NONE {seen.jumps[seen.count]=input.seat_action(core.read(seats),seen.seat,PROBE_JUMP)}
     seen.ticks[seen.count]=core.world_storage_of(w,core.Time).tick
     seen.count+=1
-    return ""
+}
+
+// A frame that also reads what the game took, into the Probe_Seen of the context.
+@(private="file")
+probe_frame_seen :: proc(s:^Session) -> bool {
+    probe_frame(s)
+    probe_seen(cast(^Probe_Seen)context.user_ptr,run_ref(s,run_find(s,0)))
+    return true
 }
 
 @(test)
@@ -660,8 +671,9 @@ a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first :: 
     seen:=new(Probe_Seen,context.temp_allocator)
     seen.seat=f.seat
     timeline:=[]Api_Step_Input{{ticks=2,keys={.Space},mouse_delta={3,0}},{ticks=1},{ticks=1,tap_keys={.Space}},{ticks=1,keys={.Enter}}}
-    run:=Api_Step_Run{timeline=timeline,sampler={every=1,take=probe_seen,data=seen}}
-    ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
+    run:=Api_Step_Run{timeline=timeline}
+    context.user_ptr=seen
+    ran,_,problem:=api_step_run(&f.s,&run,probe_frame_seen)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,ran,5)
     testing.expect_value(t,seen.count,5)
@@ -719,8 +731,9 @@ a_step_plays_the_devices_of_a_person_tick_by_tick :: proc(t:^testing.T) {
     seen:=new(Probe_Seen,context.temp_allocator)
     seen.seat=f.seat
     timeline:=[]Api_Step_Input{{ticks=1,tap_keys={.Space}},{ticks=2},{ticks=3,keys={.Space}},{ticks=2},{ticks=48,keys={.Space}},{ticks=2}}
-    run:=Api_Step_Run{timeline=timeline,sampler={every=1,take=probe_seen,data=seen}}
-    ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
+    run:=Api_Step_Run{timeline=timeline}
+    context.user_ptr=seen
+    ran,_,problem:=api_step_run(&f.s,&run,probe_frame_seen)
     testing.expect_value(t,problem,"")
     if !testing.expect_value(t,ran,58) {return}
     j:=seen.jumps
@@ -743,7 +756,7 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
     p:=Api_Play_Trace{every=2}
     copy(p.entity[:],"Hero")
     copy(p.fields[0][:],"world_position[0]")
-    copy(p.fields[1][:],"components.Probe_Health.points")
+    copy(p.fields[1][:],"Probe_Health.points")
     trace:Api_Trace
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&p,`{"entity":"Hero","fields":["",""]}`,5,&trace),"")
     score:=Api_Play_Trace{every=2}
@@ -751,14 +764,7 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
     copy(score.fields[0][:],"points")
     scores:Api_Trace
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&score,`{"fields":[""]}`,5,&scores),"")
-    // Both traces sample at the same ticks; the run takes one sampler.
-    both :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> string {
-        traces:=cast(^[2]^Api_Trace)data
-        if problem:=api_trace_take(s,traces[0],w,ran);problem!="" {return problem}
-        return api_trace_take(s,traces[1],w,ran)
-    }
-    traces:=[2]^Api_Trace{&trace,&scores}
-    run:=Api_Step_Run{timeline=[]Api_Step_Input{{ticks=5}},sampler={every=2,take=both,data=&traces}}
+    run:=Api_Step_Run{timeline=[]Api_Step_Input{{ticks=5}},sampler=&scores,every=2}
     start,points:=running.time.tick,running.score.points
     ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
     testing.expect_value(t,problem,"")
@@ -767,6 +773,7 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
     expected:=strings.builder_make(context.temp_allocator)
     for at,i in rows {fmt.sbprintf(&expected,`%s{{"tick":%d,"values":[%d]}}`,i>0?",":"",start+at,points+int(at))}
     testing.expect_value(t,string(serial.writer_bytes(&scores.rows)),strings.to_string(expected))
+    testing.expect_value(t,api_trace_take(&f.s,&trace,run_ref(&f.s,r),ran),"")
     testing.expect(t,strings.has_suffix(string(serial.writer_bytes(&trace.rows)),fmt.tprintf(`{{"tick":%d,"values":[1,3]}}`,start+5)),string(serial.writer_bytes(&trace.rows)))
     serial.writer_reset(&f.out)
     api_play_step_write(&f.s,&call,r,ran,false,&trace)
@@ -778,7 +785,8 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
         {`{"trace":{"fields":["points"]}}`,"name what it reads"},
         {`{"trace":{"storage":"Probe_Score","fields":[]}}`,"trace.fields is empty"},
         {`{"ticks":3600,"trace":{"storage":"Probe_Score","fields":["points"]}}`,"give every 15 or more"},
-        {`{"trace":{"entity":"Hero","fields":["components.Nothing.x"]}}`,"Nothing"},
+        {`{"trace":{"entity":"Hero","fields":["Nothing.x"]}}`,"Nothing"},
+        {`{"trace":{"entity":"Hero","fields":["components.Probe_Health.points"]}}`,"named by itself"},
     }
     for c in refused {
         error,_:=probe_call(f,"play.step",c.params)
@@ -806,10 +814,11 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     testing.expect(t,slice.equal(strip.ticks,[]int{0,3,6,9}),"a cell before the first tick and every 3")
     // The cells without the GPU: what each one sees.
     seen:Probe_Seen
-    strip.run.sampler.take,strip.run.sampler.data=probe_seen,&seen
+    strip.run.sampler=nil
+    context.user_ptr=&seen
     start:=running.time.tick
-    probe_seen(&f.s,&seen,run_ref(&f.s,r),0)
-    ran,_,problem:=api_step_run(&f.s,&strip.run,probe_frame)
+    probe_seen(&seen,run_ref(&f.s,r))
+    ran,_,problem:=api_step_run(&f.s,&strip.run,probe_frame_seen)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,ran,9)
     testing.expect_value(t,running.time.tick,start+9)
@@ -884,13 +893,13 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
 @(private="file")
 probe_steps :: proc(f:^Probe,ticks:int,trace:^Api_Trace=nil) -> bool {
     run:=Api_Step_Run{timeline=[]Api_Step_Input{{ticks=ticks}}}
-    if trace!=nil {run.sampler={every=1,take=api_trace_take,data=trace}}
+    if trace!=nil {run.sampler,run.every=trace,1}
     ran,_,problem:=api_step_run(&f.s,&run,probe_frame)
     return ran==ticks && problem==""
 }
 
 @(private="file")
-PROBE_HISTORY_TRACE :: `{"entity":"Hero","fields":["world_position[0]","components.Probe_Health.points"]}`
+PROBE_HISTORY_TRACE :: `{"entity":"Hero","fields":["world_position[0]","Probe_Health.points"]}`
 
 @(test)
 the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again :: proc(t:^testing.T) {
@@ -913,7 +922,7 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     p:=Api_Play_Trace{every=1}
     copy(p.entity[:],"Hero")
     copy(p.fields[0][:],"world_position[0]")
-    copy(p.fields[1][:],"components.Probe_Health.points")
+    copy(p.fields[1][:],"Probe_Health.points")
     live:Api_Trace
     start:=running.time.tick
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&p,PROBE_HISTORY_TRACE,12,&live),"")
@@ -1076,7 +1085,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     }
     hero:=fmt.tprintf("%016x",u64(f.hero))
     health :: proc(compare:string,points:int) -> string {
-        return strings.concatenate({`{"entity":"Hero","component":"Probe_Health","field":"points","compare":"`,compare,`","number":`,fmt.tprint(points),`}`},context.temp_allocator)
+        return strings.concatenate({`{"entity":"Hero","field":"Probe_Health.points","compare":"`,compare,`","number":`,fmt.tprint(points),`}`},context.temp_allocator)
     }
     write(folder,"a_weakens.mirai",strings.concatenate({`{"steps":[`,
         `{"name":"weaken","method":"play.set","params":{"entity":"`,hero,`","components":{"Probe_Health":{"points":1}}}},`,

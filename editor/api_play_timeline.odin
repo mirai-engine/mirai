@@ -45,7 +45,7 @@ Api_Play_Trace :: struct {
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of entities"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of entities or a storage: the entities named are its points"`,
-    fields:[API_TRACE_FIELDS][128]u8 `mirai:"text,label=Paths inside the document of an entity as play.inspect writes it (or inside the storage or the view): names joined by dots and [i] for element i as world_position or components.Motion.linear[1] or points[0].normalized"`,
+    fields:[API_TRACE_FIELDS][128]u8 `mirai:"text,label=Values as play.get names them for an entity (Motion.linear.1 or world_position) or names of fields and indices joined by dots inside the storage or the view (points.0.normalized); a[0].b is a.0.b"`,
     every:int `mirai:"optional,min=1,max=3600,label=Ticks between two rows"`,
     include_runtime:bool `mirai:"optional,label=Hidden fields and transient component state as play.inspect with include_runtime reads them"`,
 }
@@ -277,15 +277,18 @@ api_timeline_input :: proc(timeline:[]Api_Step_Input) -> bool {
     return false
 }
 
+// What a step samples along its ticks: a trace, or a filmstrip.
+@(private)
+Api_Step_Sampler :: union {^Api_Trace,^Api_Filmstrip}
+
 // Takes a sample of the game w after ran ticks of the step; "" or why the step fails.
 @(private)
-Api_Step_Sample :: #type proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> string
-
-@(private)
-Api_Step_Sampler :: struct {
-    every:int, // ticks between two samples
-    take:Api_Step_Sample, // nil: none
-    data:rawptr,
+api_step_sample :: proc(s:^Session,sampler:Api_Step_Sampler,w:core.World_Ref,ran:int) -> string {
+    switch taken in sampler {
+    case ^Api_Trace:     return api_trace_take(s,taken,w,ran)
+    case ^Api_Filmstrip: return api_filmstrip_take(s,taken,ran)
+    }
+    return ""
 }
 
 // One frame of the editor, in which the runs asked for a tick take it; false when it ends.
@@ -304,6 +307,7 @@ Api_Step_Run :: struct {
     timeline:[]Api_Step_Input,
     until:[]Api_Play_Condition, // checked by the caller
     sampler:Api_Step_Sampler,   // the sample before the first tick is the caller's
+    every:int,                  // ticks between two samples
     drive:^Api_Drive,           // nil: none; it steers before each tick
     look:^Api_Look,             // nil: none; it turns the view before each tick
 }
@@ -319,7 +323,7 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
         if met,problem=api_conditions_read(s,run_ref(s,target),run.until,nil,"until");problem!="" {return}
     }
     if run.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
-    every:=max(run.sampler.every,1)
+    every:=max(run.every,1)
     total:=api_timeline_ticks(run.timeline)
     sampled:=0
     segment,at:=0,0
@@ -346,12 +350,12 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
                 return
             }
         }
-        if run.sampler.take!=nil && ran%every==0 {
-            if problem=run.sampler.take(s,run.sampler.data,run_ref(s,target),ran);problem!="" {return}
+        if run.sampler!=nil && ran%every==0 {
+            if problem=api_step_sample(s,run.sampler,run_ref(s,target),ran);problem!="" {return}
             sampled=ran
         }
     }
-    if run.sampler.take!=nil && sampled!=ran {problem=run.sampler.take(s,run.sampler.data,run_ref(s,target),ran)}
+    if run.sampler!=nil && sampled!=ran {problem=api_step_sample(s,run.sampler,run_ref(s,target),ran)}
     return
 }
 
@@ -380,7 +384,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     values:[1]string
     api.object_values(call.allocator,raw,{"fields"},values[:])
     trace.field_count=api.json_count(values[0])
-    if trace.field_count==0 {return `trace.fields is empty: give the paths to read, as ["world_position", "components.Motion.linear"]`}
+    if trace.field_count==0 {return `trace.fields is empty: give the paths to read, as ["world_position", "Motion.linear"]`}
     for &field,i in trace.fields[:trace.field_count] {
         field=base.text_get(p.fields[i][:])
         if field=="" {return fmt.tprintf("trace.fields[%d] is empty: give a path as world_position",i)}
@@ -437,8 +441,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
 // In the first row a path that is not there fails, unless it names a
 // component the entity does not have yet; later it is null.
 @(private)
-api_trace_take :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> string {
-    trace:=cast(^Api_Trace)data
+api_trace_take :: proc(s:^Session,trace:^Api_Trace,w:core.World_Ref,ran:int) -> string {
     st:=api_state(s)
     out:=&trace.rows
     tick:u64
@@ -452,6 +455,7 @@ api_trace_take :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> strin
     for d in 0..<(trace.storage>=0 || trace.view?1:trace.count) {
         serial.writer_reset(&doc)
         there:=true
+        is_entity:=!trace.view && trace.storage<0
         if trace.view {
             targets:[API_TRACE_ENTITIES]Play_View_Target
             for e,i in trace.entities[:trace.count] {targets[i]={entity=e,named=true}}
@@ -462,22 +466,24 @@ api_trace_take :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> strin
             info:=&s.info.storages[trace.storage]
             api_value_out(w,info.info,rawptr(uintptr(w.data)+info.offset),trace.scratch,handles=true)
             serial.text_write(&doc,&st.schema,st.storage_types[trace.storage],trace.scratch[:info.info.size],.Line,omit_fields=omitted)
-        } else if e:=trace.entities[d];core.alive(core.world_entities(w),e) {
-            api_entity_write(s,w,&doc,e,true,trace.scratch,true,trace.include_runtime)
-        } else {there=false}
+        } else {there=core.alive(core.world_entities(w),trace.entities[d])}
         whole:json.Value
-        if there {
+        if there && !is_entity {
             parse_error:json.Error
             if whole,parse_error=json.parse(serial.writer_bytes(&doc),allocator=context.temp_allocator);parse_error!=nil {return "trace: a value could not be read back as JSON"}
         }
         for field,i in trace.fields[:trace.field_count] {
             if d>0 || i>0 {serial.write_u8(out,',')}
             if !there {serial.text_write_raw(out,"null");continue}
-            leaf,missing:=api_json_select(whole,field)
+            leaf:json.Value
+            there_value:=true
+            missing:string
+            if is_entity {leaf,there_value,missing=api_entity_value(s,w,trace.entities[d],field,trace.include_runtime,context.temp_allocator,trace.scratch)}
+            else {leaf,missing=api_json_select(whole,field)}
             switch {
-            case missing=="":
+            case missing=="" && there_value:
                 serial.text_write_raw(out,api_json_text(leaf))
-            case trace.row_count==0 && !api_trace_component_absent(s,whole,field):
+            case missing!="" && trace.row_count==0:
                 return fmt.tprintf("trace.fields[%d] %q: %s",i,field,missing)
             case:
                 serial.text_write_raw(out,"null")
@@ -487,20 +493,6 @@ api_trace_take :: proc(s:^Session,data:rawptr,w:core.World_Ref,ran:int) -> strin
     serial.text_write_raw(out,"]}")
     trace.row_count+=1
     return ""
-}
-
-// Whether a path names a component of the game that the document of an entity lacks.
-@(private)
-api_trace_component_absent :: proc(s:^Session,whole:json.Value,path:string) -> bool {
-    if !strings.has_prefix(path,"components.") {return false}
-    rest:=path[len("components."):]
-    name:=rest
-    if end:=strings.index_any(rest,".[");end>=0 {name=rest[:end]}
-    if component_table(s,name)==nil {return false}
-    doc,_:=whole.(json.Object)
-    components,_:=doc["components"].(json.Object)
-    _,has:=components[name]
-    return !has
 }
 
 // The result of play.step: that of the other play methods, and its trace.

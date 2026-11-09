@@ -34,10 +34,7 @@ Api_Git_Accept_Params :: struct {
 
 API_GIT_SECONDS :: 600
 
-Api_Git_Done :: struct {
-    ok:bool,
-    error:[512]u8 `mirai:"text,label=What git said when it failed; empty when it worked"`,
-}
+Api_Git_Done :: struct {ok:bool}
 Api_Git_Chosen :: struct {chosen:bool}
 Api_Git_Accept_Result :: struct {left:int `mirai:"label=Items that still wait to be accepted"`}
 
@@ -119,10 +116,8 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
         api.call_failf(call,api.SERVER_ERROR,"git still runs after %d s; git.status says when it ends",API_GIT_SECONDS)
         return
     }
-    result:=api.call_result(call,Api_Git_Done)
-    text:=base.text_get(s.git.error[:])
-    result.ok=text==""
-    base.text_set(result.error[:],text)
+    if text:=base.text_get(s.git.error[:]);text!="" {api.call_fail(call,api.SERVER_ERROR,text);return}
+    api.call_result(call,Api_Git_Done).ok=true
 }
 
 @(private)

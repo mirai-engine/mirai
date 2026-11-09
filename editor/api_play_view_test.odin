@@ -143,7 +143,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     refused:=Api_Play_Condition{view=true}
     copy(refused.storage[:],"Time")
     _,wrong=api_condition_read(&s,ref,&refused)
-    testing.expect(t,strings.contains(wrong,"leave storage and component out"),wrong)
+    testing.expect(t,strings.contains(wrong,"leave storage out"),wrong)
     call:=api.Call{allocator=context.temp_allocator}
     p:=Api_Play_Trace{view=true,every=1}
     copy(p.entity[:],"Hero")

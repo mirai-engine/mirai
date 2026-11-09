@@ -1,6 +1,7 @@
 package main
 
 import "core:os"
+import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -32,4 +33,17 @@ the_tool_is_built_without_a_list_of_attributes :: proc(t:^testing.T) {
     }
     testing.expect(t,slice.contains(command[:],"-ignore-unknown-attributes"))
     testing.expect(t,slice.contains(command[:],"-out:out.exe"))
+}
+
+// A content tool runs with the collections it may import, and its own arguments after --.
+@(test)
+a_content_tool_runs_with_its_collections_and_its_arguments :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    command:=content_command("C:/engine","C:/game","C:/game/tools/content","",{"--fast"})
+    for wanted in ([]string{"-collection:mirai=C:/engine","-collection:plugins=C:/engine/plugins","-collection:project=C:/game","-ignore-unknown-attributes","--","--fast"}) {
+        testing.expectf(t,slice.contains(command[:],wanted),"%s in %v",wanted,command)
+    }
+    alone:=content_command("C:/engine","C:/game","C:/game/tools/content","",nil)
+    testing.expect(t,!slice.contains(alone[:],"--"),"nothing after it")
+    testing.expect_value(t,alone[2],"C:/game/tools/content")
 }

@@ -548,16 +548,19 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - Edges are against what the previous tick held, so a press is a segment with the key and a
     release the next one without it. A tap (`tap_keys`, `tap_buttons`, a gamepad's `tapped`) is
     pressed and released inside one tick and never down, like a press shorter than a tick.
-  - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and paths of
-    `--select` inside the document `play.inspect` (or `play.view`) writes. Its rows are read
+  - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and the values
+    as [`play.get`](#play) names them (or paths inside the storage or the view). Its rows are read
     between ticks, before the first, every `every` and after the last, so the rows of a long step
     need a larger `every`. In the first row a path that is not there fails, unless it names a
     component the entity does not have yet; later, what is gone is `null`. With `view` the
     entities named are its `points`.
-- `play.check` (`read_only`): each condition reads a field (`field` with dots and indices) of a
-  component of an `entity`, of a storage or of the `view`, as
-  `play.inspect` or `play.view` write them, and compares it with `number` or `text`; without a
-  component, the entity gives its `world_position`. With `view` the entity named is `points.0`.
+- One syntax names a value in Play, for `play.get`, `play.check`, `until` and `trace`:
+  `Component.field.0.field` (`a[0].b` reads as `a.0.b`), or a key of the document of the entity
+  (`world_position.2`).
+- `play.check` (`read_only`): each condition reads a value (`field`) of an `entity`, of a storage
+  or of the `view`, as `play.inspect` or `play.view` write them, and compares it with `number` or
+  `text`; without `field`, the entity gives its `world_position`. With `view` the entity named is
+  `points.0`.
   `Exists` and `Gone` say whether the entity, the component or the field is there: what is not
   there is a reading, not an error. A name or a field the game does not have is `-32602` with what
   exists. A `passed:false` is a result, not a failure.

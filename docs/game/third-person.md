@@ -20,7 +20,7 @@ are a clear day, auto exposure meters it.
 
 ## 2. The player
 
-Replace `write_player` in `tools/content/main.odin` and run the tool, as its header comment says:
+Replace `write_player` in `tools/content/main.odin` and run the tool with `mirai content`:
 
 ```odin
 write_player :: proc(c:^asset.Content) {

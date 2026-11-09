@@ -25,10 +25,7 @@ PLAYER_PREFAB_ID :: base.Asset_Id{0x6d6972616967616d,0x706c617965720001} // the 
 // hum (.sound, imported from the WAV this writes into source/) and the scene
 // assets/scenes/main.scene that uses the .ui of assets/ui. The .ui are the
 // source: an agent changes them with ui.write and the visual editor edits the
-// same files, so running this again leaves them alone. From the folder of the
-// project:
-//
-//   odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins -collection:project=. -ignore-unknown-attributes
+// same files, so running this again leaves them alone. mirai content runs it.
 
 PROJECT :: "game_content"
 BADGE_SIZE :: 64
