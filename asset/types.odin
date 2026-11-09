@@ -75,9 +75,14 @@ types_update :: proc(types:^Types) -> bool {
     return true
 }
 
+// How a type is saved. nil, with Out_Of_Memory in types.error, without memory for it.
 types_layout :: proc(types:^Types,index:serial.Type_Index) -> ^serial.Layout {
     if types.layouts[index]==nil {
-        layout:=new(serial.Layout,types.allocator)
+        layout,no_layout:=new(serial.Layout,types.allocator)
+        if no_layout!=nil {
+            types.error=.Out_Of_Memory
+            return nil
+        }
         serial.layout_init(layout,&types.schema,index,types.allocator)
         types.layouts[index]=layout
     }

@@ -19,7 +19,7 @@ scene_merge :: proc(m:^Merge,types:^Types,ours,origin,theirs:^Document) -> Error
         for id,row in ids {parents[id]=links[row]}
     }
     document_merge(m,ours,origin,theirs) or_return
-    parents_fix(m,ours,parents)
+    parents_fix(m,ours,parents) or_return
     return records_fix(m,ours,origin,theirs,types,&before)
 }
 
@@ -72,20 +72,21 @@ entity_columns :: proc(doc:^Document) -> (ids,parents:[]base.Entity_Id,found:boo
 // A parent the merge removed leaves its child at the root; a loop the two
 // sides closed between them opens where a parent is not the one of ours.
 @(private="file")
-parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity_Id) {
+parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity_Id) -> Error {
     ids,parents,found:=entity_columns(doc)
-    if !found {return}
+    if !found {return .None}
     table,_:=document_table(doc,TABLE_ENTITIES)
-    rows:=make(map[base.Entity_Id]int,len(ids),doc.allocator)
+    rows,no_rows:=make(map[base.Entity_Id]int,len(ids),doc.allocator)
     defer delete(rows)
+    state,no_state:=make([]u8,len(ids),doc.allocator)
+    defer delete(state,doc.allocator)
+    if no_rows!=nil || no_state!=nil {return .Out_Of_Memory}
     for id,row in ids {rows[id]=row}
     for &parent,row in parents {
         if parent==0 || parent in rows {continue}
         parent=0
         merge_conflict_add(m,.Removed,doc,table,row,true,true,".parent")
     }
-    state:=make([]u8,len(ids),doc.allocator)
-    defer delete(state,doc.allocator)
     for {
         mem.zero_slice(state)
         looped:=-1
@@ -103,7 +104,7 @@ parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity
                 row=rows[parents[row]]
             }
         }
-        if looped<0 {return}
+        if looped<0 {return .None}
         opened:=false
         row:=looped
         for {
@@ -135,8 +136,9 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
     records_read(theirs,types,&theirs_records) or_return
     defer records_destroy(&theirs_records)
     ids,_,_:=entity_columns(doc)
-    exists:=make(map[base.Entity_Id]bool,len(ids),doc.allocator)
+    exists,no_exists:=make(map[base.Entity_Id]bool,len(ids),doc.allocator)
     defer delete(exists)
+    if no_exists!=nil {return .Out_Of_Memory}
     for id in ids {exists[id]=true}
     ours_had :: proc(list:[]$T,value:T) -> bool {
         for each in list {if each==value {return true}}
@@ -146,8 +148,9 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
     // Instances theirs placed take ids after every other when ours gave theirs.
     highest:u32
     for instance in now.instances {highest=max(highest,instance.id)}
-    taken:=make(map[u32]bool,len(now.instances),doc.allocator)
+    taken,no_taken:=make(map[u32]bool,len(now.instances),doc.allocator)
     defer delete(taken)
+    if no_taken!=nil {return .Out_Of_Memory}
     for instance in now.instances {
         if ours_had(before.instances[:],instance) {taken[instance.id]=true}
     }
@@ -179,7 +182,7 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
         now.instances[kept]=instance
         kept+=1
     }
-    resize(&now.instances,kept)
+    base.truncate(&now.instances,kept)
     instance_known :: proc(instances:[]Instance,id:u32) -> bool {
         for instance in instances {if instance.id==id {return true}}
         return false
@@ -193,21 +196,21 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
         now.members[kept]=member
         kept+=1
     }
-    resize(&now.members,kept)
+    base.truncate(&now.members,kept)
     kept=0
     for override in now.overrides {
         if !exists[override.entity] || !instance_known(now.instances[:],override.instance) {continue}
         now.overrides[kept]=override
         kept+=1
     }
-    resize(&now.overrides,kept)
+    base.truncate(&now.overrides,kept)
     kept=0
     for record in now.off {
         if !exists[record.entity] {continue}
         now.off[kept]=record
         kept+=1
     }
-    resize(&now.off,kept)
+    base.truncate(&now.off,kept)
 
     // The counters only grow: the highest of the three, and no conflict over them.
     info:Scene_Info

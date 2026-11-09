@@ -12,7 +12,7 @@ import "mirai:project"
 // the rest are cleaned: mirai check runs the lint on these only. When every
 // runtime package is here the list goes away and alloc_lint_applies answers
 // by what a game binary contains.
-ALLOC_LINT_PACKAGES :: [?]string{}
+ALLOC_LINT_PACKAGES :: [?]string{"asset","engine/save","engine/scene"}
 
 Alloc_Finding :: struct {line,column:int,call:string}
 

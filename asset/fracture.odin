@@ -184,11 +184,12 @@ fracture_view :: proc(a:^Asset,types:^Types) -> (view:Fracture_View,error:Error)
 // its points. A cluster takes the full hulls of its children, which follow it, so each piece is read once.
 @(private="file")
 fracture_cluster_hulls :: proc(view:Fracture_View,hulls:^[dynamic]Fracture_Cluster_Hull,points:^[dynamic][3]f32) -> Error {
-    gathered:=make([][dynamic][3]f32,len(view.clusters))
+    gathered,no_gathered:=make([][dynamic][3]f32,len(view.clusters))
     defer {
         for &cluster in gathered {delete(cluster)}
         delete(gathered)
     }
+    if no_gathered!=nil {return .Out_Of_Memory}
     for piece in view.pieces {
         if piece.cluster<0 {continue}
         for vertex in view.vertices[piece.first_vertex:][:piece.vertex_count] {append(&gathered[piece.cluster],vertex.position)}

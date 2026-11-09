@@ -480,7 +480,7 @@ prefab_world_replace :: proc(s:^Session,cap:^asset.Scene) -> Prefab_Error {
     if asset.asset_open(&source,data)!=.None {return .Rejected}
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&a.types)
-    if view_error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return .Rejected}
+    if view_error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return .Rejected}
     selection:=document_selection(s)
     selected:=make([dynamic]base.Entity_Id,context.temp_allocator)
     for e in selection.entities {

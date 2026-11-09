@@ -3,6 +3,7 @@ package asset
 import "base:intrinsics"
 import "core:mem"
 import "core:slice"
+import "mirai:std/base"
 import "mirai:std/compressor"
 import "mirai:std/compressor/lz"
 
@@ -572,7 +573,7 @@ page_pack :: proc(coder:^Page_Coder,encoder:^lz.Encoder,g:Mesh_Geometry,page:^Me
             page.data_bytes,page.coded_bytes=u32(smaller),u32(size)
         }
     }
-    resize(data,at+int(page.data_bytes))
+    base.truncate(data,at+int(page.data_bytes))
     return .None
 }
 

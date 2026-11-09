@@ -185,7 +185,7 @@ animation_player :: proc(m:^Thumbnail_Models,a:^host.Assets,file:^asset.Registry
     if host.assets_file(a,file.id,file.kind,&data)!=.None {return}
     defer asset.asset_close(&data)
     view,error:=asset.scene_view(&data,&a.types)
-    if error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return}
+    if error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return}
     player:=-1
     refs:=make([dynamic]serial.Ref,context.temp_allocator)
     for &component in view.components {

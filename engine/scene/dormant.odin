@@ -133,15 +133,21 @@ records_add :: proc(w:core.World_Ref,e:core.Entity,locals:[]base.Entity_Id) -> ^
 
 // Every record waiting for a look sees each table as it is, past the rows the
 // next settle stamps for it (fresh): what is written after is a change. One
-// that has no shapes yet takes those of its entities now.
-records_look :: proc(w:core.World_Ref) {
+// that has no shapes yet takes those of its entities now. Out_Of_Memory when
+// a record had no memory to look: it waits for the next call.
+records_look :: proc(w:core.World_Ref) -> Error {
     r:=core.world_storage_of(w,Section_Records)
-    if r==nil || r.looks==0 {return}
+    if r==nil || r.looks==0 {return .None}
+    waiting:=0
     for &record in r.items {
         if !record.look {continue}
         if len(record.seen)!=len(w.info.tables) {
             delete(record.seen)
-            record.seen=make([]u64,len(w.info.tables))
+            no_seen:mem.Allocator_Error
+            if record.seen,no_seen=make([]u64,len(w.info.tables));no_seen!=nil {
+                waiting+=1
+                continue
+            }
         }
         for &info,at in w.info.tables {
             if info.place!=w.place {continue}
@@ -156,7 +162,8 @@ records_look :: proc(w:core.World_Ref) {
             record.shaped=true
         }
     }
-    r.looks=0
+    r.looks=waiting
+    return .Out_Of_Memory if waiting>0 else .None
 }
 
 // The tables whose rows say nothing of whether an entity of a section changed:

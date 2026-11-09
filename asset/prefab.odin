@@ -138,7 +138,7 @@ scene_override_add :: proc(scene:^Scene,entity:base.Entity_Id,component:u64,path
         scene.overrides[left]=override
         left+=1
     }
-    resize(&scene.overrides,left)
+    base.truncate(&scene.overrides,left)
     copy(added.path[:],path)
     append(&scene.overrides,added)
     return .None
@@ -189,7 +189,7 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
         if migration_error!=.None {return migration_error==.Out_Of_Memory?.Out_Of_Memory:.Invalid}
         clear(&refs)
         if !serial.refs_collect(&scene.doc.schema,type,&refs,MAX_REFS) {return .Invalid}
-        resize(&image,size)
+        if resize(&image,size)!=nil {return .Out_Of_Memory}
         ids:=scene_ids(prefab)
         placement:=(keep!=0 || adopt!=0) && source.name_hash==base.name_hash(INSTANCE_PLACEMENT)
         for entity_row,row in mem_rows(source) {
@@ -243,10 +243,11 @@ mem_rows :: proc(table:^Doc_Table) -> []u32 {
 // as instances the given one brought in: those whose root is among the
 // entities remap gives.
 @(private="file")
-nested_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]base.Entity_Id,instance:u32) {
-    if len(prefab.instances)==0 {return}
-    ids:=make(map[u32]u32,len(prefab.instances),scene.doc.allocator)
+nested_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]base.Entity_Id,instance:u32) -> Error {
+    if len(prefab.instances)==0 {return .None}
+    ids,no_ids:=make(map[u32]u32,len(prefab.instances),scene.doc.allocator)
     defer delete(ids)
+    if no_ids!=nil {return .Out_Of_Memory}
     // An instance has a larger id than the one that brought it in, here too.
     for _ in 0..<len(prefab.instances) {
         added:=false
@@ -271,6 +272,7 @@ nested_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]base.En
         copied.instance,copied.entity=ids[override.instance],entity
         append(&scene.overrides,copied)
     }
+    return .None
 }
 
 // Copies entities of src with their components into dst, each with the id
@@ -300,8 +302,9 @@ scene_instance_adopt :: proc(scene:^Scene,prefab:^Scene,prefab_id:base.Asset_Id,
     if !has_root || scene==prefab || len(members)!=scene_entity_count(prefab) {return 0,.Invalid}
     // In the order of the prefab's entities, as scene_instantiate records them.
     ids,parents,names:=scene_ids(prefab),scene_parents(prefab),scene_names(prefab)
-    sources:=make(map[base.Entity_Id]base.Entity_Id,len(members),scene.doc.allocator)
+    sources,no_sources:=make(map[base.Entity_Id]base.Entity_Id,len(members),scene.doc.allocator)
     defer delete(sources)
+    if no_sources!=nil {return 0,.Out_Of_Memory}
     for source,prefab_row in ids {
         entity,present:=members[source]
         row,in_scene:=scene_entity_find(scene,entity)
@@ -346,15 +349,16 @@ scene_instantiate :: proc(scene:^Scene,prefab:^Scene,prefab_id:base.Asset_Id,par
     root_source,has_root:=prefab_root(prefab)
     if !has_root || scene==prefab {return 0,0,.Invalid}
     if parent!=0 && !(parent in scene.index) {return 0,0,.Not_Found}
-    remap:=make(map[base.Entity_Id]base.Entity_Id,scene_entity_count(prefab),scene.doc.allocator)
+    remap,no_remap:=make(map[base.Entity_Id]base.Entity_Id,scene_entity_count(prefab),scene.doc.allocator)
     defer delete(remap)
+    if no_remap!=nil {return 0,0,.Out_Of_Memory}
     first:=scene_entity_count(scene)
     for row in 0..<scene_entity_count(prefab) {
         record:=scene_entity(prefab,row)
         id:=scene_new_id(scene)
         _,error=scene_entity_add(scene,id,0,record.name,int(record.order))
         if error!=.None {
-            scene_entities_remove(scene,scene_ids(scene)[first:],false)
+            _,_=scene_entities_remove(scene,scene_ids(scene)[first:],false)
             return 0,0,error
         }
         remap[record.id]=id
@@ -370,15 +374,15 @@ scene_instantiate :: proc(scene:^Scene,prefab:^Scene,prefab_id:base.Asset_Id,par
         else {scene_parents(scene)[first+row]=remap[source.parent]}
     }
     if error=components_copy(scene,prefab,&remap,0);error!=.None {
-        scene_entities_remove(scene,scene_ids(scene)[first:],false)
+        _,_=scene_entities_remove(scene,scene_ids(scene)[first:],false)
         return 0,0,error
     }
     scene.info.last_instance+=1
     instance=scene.info.last_instance
     append(&scene.instances,Instance{id=instance,prefab=prefab_id,root=root,stamp=prefab.stamp})
     for id in scene_ids(prefab) {append(&scene.members,Member{instance,id,remap[id]})}
-    nested_copy(scene,prefab,&remap,instance)
-    return instance,root,.None
+    error=nested_copy(scene,prefab,&remap,instance)
+    return instance,root,error
 }
 
 // Brings an instance up to date with its prefab: members, hierarchy, names
@@ -432,7 +436,7 @@ scene_instance_update :: proc(scene:^Scene,instance:u32,prefab:^Scene) -> Error 
     components_copy(scene,prefab,&remap,instance,root) or_return
     // Every member hangs where the prefab puts it, so what is still under
     // one that leaves is what the instance added there.
-    scene_entities_remove(scene,vanished[:])
+    _=scene_entities_remove(scene,vanished[:]) or_return
     for {
         nested:=u32(0)
         for candidate in scene.instances {
@@ -442,7 +446,7 @@ scene_instance_update :: proc(scene:^Scene,instance:u32,prefab:^Scene) -> Error 
         scene_instance_forget(scene,nested)
     }
     scene_records_prune(scene)
-    nested_copy(scene,prefab,&remap,instance)
+    nested_copy(scene,prefab,&remap,instance) or_return
     if at=scene_instance_find(scene,instance);at>=0 {scene.instances[at].stamp=prefab.stamp}
     return .None
 }
@@ -468,7 +472,7 @@ scene_instance_remove :: proc(scene:^Scene,instance:u32) -> Error {
     for member in scene.members {
         if member.instance==instance {append(&ids,member.entity)}
     }
-    scene_entities_remove(scene,ids[:],false)
+    _=scene_entities_remove(scene,ids[:],false) or_return
     return .None
 }
 
@@ -553,7 +557,7 @@ scene_child_apply :: proc(scene:^Scene,instance:u32,entity:base.Entity_Id,prefab
                 if error:=serial.migration_init(&migration,&scene.doc.schema,from.columns[1].type,&prefab.doc.schema,type,allocator);error!=.None {return error==.Out_Of_Memory?.Out_Of_Memory:.Invalid}
                 clear(&refs)
                 if !serial.refs_collect(&prefab.doc.schema,type,&refs,MAX_REFS) {return .Invalid}
-                resize(&image,prefab.doc.tables[target].columns[1].size)
+                if resize(&image,prefab.doc.tables[target].columns[1].size)!=nil {return .Out_Of_Memory}
             }
             serial.migration_apply(&migration,image[:],stored,1)
             for ref in refs {
@@ -604,7 +608,7 @@ scene_child_revert :: proc(scene:^Scene,instance:u32,entity:base.Entity_Id) -> E
     if !placed_check(scene,instance,nil) || !(entity in scene.index) {return .Invalid}
     sources:=members_of(scene,instance)
     if entity in sources {return .Invalid}
-    scene_entities_remove(scene,added_subtree(scene,entity,sources),false)
+    _=scene_entities_remove(scene,added_subtree(scene,entity,sources),false) or_return
     return .None
 }
 
@@ -715,7 +719,8 @@ resolver_prefab :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> (prefab:^Scene,e
     if checked.scene!=nil {return checked.scene,.None}
     file:=r.files.open(r.files.data,id)
     if file==nil {return nil,.None}
-    prefab=new(Scene,r.allocator)
+    no_scene:runtime.Allocator_Error
+    if prefab,no_scene=new(Scene,r.allocator);no_scene!=nil {return nil,.Out_Of_Memory}
     if error=scene_from_asset(prefab,r.types,file,r.allocator);error!=.None {
         free(prefab,r.allocator)
         return nil,error
@@ -782,9 +787,10 @@ registry_prefab_files :: proc(files:^Registry_Prefabs) -> Prefab_Files {
         a:^Asset
         if file,found:=registry_find(files.registry,id);found && file.kind==KIND_PREFAB {
             // What the registry holds of it unsaved, else the disk.
-            a=new(Asset,files.allocator)
+            no_asset:runtime.Allocator_Error
+            a,no_asset=new(Asset,files.allocator)
             data,read_error:=registry_read(files.registry,file.path,files.allocator)
-            if read_error!=.None || asset_take(a,data,files.allocator)!=.None {
+            if no_asset!=nil || read_error!=.None || asset_take(a,data,files.allocator)!=.None {
                 free(a,files.allocator)
                 a=nil
             }

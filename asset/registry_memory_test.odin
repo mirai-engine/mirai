@@ -60,7 +60,7 @@ registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: 
     testing.expect(t,!found,"a removed file is not there")
     _,error=registry_read(&r,"materials/stone.mat",context.temp_allocator)
     testing.expect_value(t,error,Error.Not_Found)
-    testing.expect(t,registry_memory_drop(&r,"materials/stone.mat"))
+    {dropped,_:=registry_memory_drop(&r,"materials/stone.mat");testing.expect(t,dropped)}
     held,found=registry_find(&r,stone)
     testing.expect(t,found && held.size==i64(len(on_disk)) && len(registry_dependencies(&r,held))==0,"dropped, the disk answers again")
 
@@ -95,7 +95,7 @@ registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testin
     _,kept:=registry_memory_find(&r,source)
     testing.expect(t,kept && len(r.files)==0,"a scan keeps it in memory and out of the files")
 
-    testing.expect(t,registry_memory_drop(&r,source))
+    {dropped,_:=registry_memory_drop(&r,source);testing.expect(t,dropped)}
     testing.expect(t,len(r.files)==0 && len(r.memory)==0,"dropped, memory holds nothing of it")
 
     testing.expect_value(t,registry_memory_set(&r,source,transmute([]u8)string("written")),Error.None)

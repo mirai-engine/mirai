@@ -359,7 +359,7 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types,notice:^strin
     case asset.KIND_SCENE,asset.KIND_PREFAB:
         view,error:=asset.scene_view(a,types)
         if error!=.None {return "scene: a component table names rows that do not exist or are out of order"}
-        if !asset.scene_view_check(view) {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
+        if asset.scene_view_check(view)!=.None {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
     case asset.KIND_ANIMATION:
         if _,error:=asset.animation_view(a,types);error!=.None {return "animation: an invalid range, key or name"}
     case asset.KIND_SKELETON:
@@ -508,7 +508,8 @@ asset_diff :: proc(args:[]string) -> int {
     a,b:asset.Document
     if !load("diff",args[0],&a) || !load("diff",args[1],&b) {return 2}
     w:serial.Writer;serial.writer_init(&w)
-    count:=asset.document_diff(&a,&b,&w)
+    count,error:=asset.document_diff(&a,&b,&w)
+    if error!=.None {fmt.eprintfln("mirai asset diff: %v",error);return 2}
     print(&w)
     return count==0?0:1
 }

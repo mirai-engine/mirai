@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:slice"
+import "mirai:std/base"
 
 Site_Pattern :: enum {
     Uniform,   // spread evenly in the box
@@ -334,12 +335,12 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
         positions,indices:=f.mesh.positions[first_vertex:],f.mesh.indices[first_index:]
         mass:=mesh_mass_properties(positions,indices)
         if !(mass.volume>max(min_volume,0)) {
-            resize(&f.mesh.positions,first_vertex)
-            if has_normals {resize(&f.mesh.normals,first_vertex)}
-            if has_uvs {resize(&f.mesh.uvs,first_vertex)}
-            if has_colors {resize(&f.mesh.colors,first_vertex)}
-            resize(&f.mesh.indices,first_index)
-            resize(&f.mesh.materials,first_index/3)
+            base.truncate(&f.mesh.positions,first_vertex)
+            if has_normals {base.truncate(&f.mesh.normals,first_vertex)}
+            if has_uvs {base.truncate(&f.mesh.uvs,first_vertex)}
+            if has_colors {base.truncate(&f.mesh.colors,first_vertex)}
+            base.truncate(&f.mesh.indices,first_index)
+            base.truncate(&f.mesh.materials,first_index/3)
             continue
         }
         piece:=u32(len(f.pieces))

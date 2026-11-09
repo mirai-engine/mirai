@@ -735,3 +735,75 @@ a_slot_waiting_for_its_thumbnail_is_written_before_a_load_or_after_a_while :: pr
     testing.expect(t,s.results.queue.items[0].op==.Save && s.results.queue.items[1].op==.Load && s.results.queue.items[1].error==.None)
     testing.expect_value(t,placed_at(w,5),[3]f32{4,5,6})
 }
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What the library asks memory for to write a slot, with the memory ending
+// at each request in turn: the slot is refused, nothing of it stays, and with
+// memory enough it goes through.
+@(test)
+a_slot_without_memory_is_refused_and_leaves_nothing :: proc(t:^testing.T) {
+    f:Save_Test
+    if !save_test_init(t,&f) {return}
+    defer save_test_destroy(&f)
+    s:Serve
+    if !serve_init(t,&f,&s) {return}
+    defer serve_destroy(&f,&s)
+    owner:=f.app.allocator
+    limit:=Memory_Limit{owner=owner}
+    Step :: enum {Queue,Thumbnail,File}
+    for step in Step {
+        done,refused:=false,false
+        for served in 0..<16 {
+            limit.remaining=served
+            switch step {
+            case .Queue:
+                data,_:=make([]u8,64,owner)
+                f.app.allocator={memory_limit_proc,&limit}
+                error:=write_queue(&s.work,&f.app,Result{op=.Save},"slot",data)
+                f.app.allocator=owner
+                done=error==.None
+                if done {
+                    work_free(&s.work)
+                } else {
+                    testing.expect_value(t,error,Error.Failed)
+                    testing.expect_value(t,len(s.work.writes),0)
+                }
+            case .Thumbnail:
+                pixels:=make([]u8,int(THUMBNAIL_SIZE.x)*int(THUMBNAIL_SIZE.y)*16,context.temp_allocator)
+                limit.owner=context.temp_allocator
+                png,made:=thumbnail_png(pixels,{memory_limit_proc,&limit})
+                done=made
+                testing.expectf(t,made==(len(png)>0),"%d requests served: a thumbnail only when it was made",served)
+            case .File:
+                pixels:=make([]u8,int(THUMBNAIL_SIZE.x)*int(THUMBNAIL_SIZE.y)*16,context.temp_allocator)
+                captured:=make([]u8,mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT)+64,context.temp_allocator)
+                path:=fmt.tprintf("%s/limit.save",s.folder)
+                limit.owner=context.temp_allocator
+                context.temp_allocator={memory_limit_proc,&limit}
+                error:=slot_file_write(path,captured,pixels)
+                done=error==.None
+                if !done {
+                    testing.expect_value(t,error,Error.Write_Failed)
+                    testing.expect(t,!os.exists(path),"no file of a slot that was not written")
+                }
+            }
+            if done {break}
+            refused=true
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",step)
+    }
+}
+
