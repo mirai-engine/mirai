@@ -12,7 +12,27 @@ import "mirai:project"
 // the rest are cleaned: mirai check runs the lint on these only. When every
 // runtime package is here the list goes away and alloc_lint_applies answers
 // by what a game binary contains.
-ALLOC_LINT_PACKAGES :: [?]string{"asset","engine/save","engine/scene"}
+ALLOC_LINT_PACKAGES :: [?]string{"asset","engine/save","engine/scene",
+    "plugins/animation/runtime",
+    "plugins/behavior/runtime",
+    "plugins/destruct/runtime",
+    "plugins/destruct/runtime/fracture",
+    "plugins/destruct_multiplayer/runtime",
+    "plugins/foliage/runtime",
+    "plugins/foliage_terrain/runtime",
+    "plugins/multiplayer/runtime",
+    "plugins/navigation/runtime",
+    "plugins/physics/runtime",
+    "plugins/physics/runtime/sim",
+    "plugins/physics_cache/runtime",
+    "plugins/shapes/runtime",
+    "plugins/streaming/runtime",
+    "plugins/terrain/runtime",
+    "plugins/terrain_multiplayer/runtime",
+    "plugins/vfx/runtime",
+    "plugins/vfx/runtime/effect",
+    "plugins/vfx/runtime/gridfile",
+}
 
 Alloc_Finding :: struct {line,column:int,call:string}
 
