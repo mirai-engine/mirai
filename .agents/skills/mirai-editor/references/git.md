@@ -2,8 +2,9 @@
 
 Version control with the installed `git`, without branches: the Git tab of the left panel
 (`editor/git_panel.odin`), the state and operations (`editor/git.odin`) and the `git.*` methods of
-the API (`editor/api_git.odin`). Assets are merged with [`mirai asset
-merge`](../../mirai-assets/references/cli.md#merge), which the editor configures as the driver.
+the API (`editor/api_git.odin`). Which assets git merges and diffs through `mirai`, the
+`.gitattributes` and the drivers of a clone:
+[git and assets](../../mirai-assets/references/cli.md#git).
 
 ## Operations
 
@@ -23,14 +24,14 @@ merge`](../../mirai-assets/references/cli.md#merge), which the editor configures
 - Paths are relative to the repository root and the scope is the project folder
   (`git rev-parse --show-prefix`): a project inside another repository, like `demo` inside the
   engine, sees and commits only its own.
-- **Initialize** writes `.gitignore` (`.mirai/`) and `.gitattributes` if missing (`merge=mirai` for
-  the assets merged by entity and, with LFS, `filter=lfs` for the heavy binaries and their
-  sources: `GIT_MERGED`, `GIT_LFS`); then `git init -b main`, the driver in the local
-  configuration, `git lfs install --local` and the `origin` remote. A project created with
-  Initialize Git repository on the [projects](panels.md#projects) screen runs it when the first
-  read finishes (`git_init_later`).
-- Each state read sets `merge.mirai.driver` in the local configuration when it is not this
-  engine's `mirai` (a clone, another checkout).
+- **Initialize** writes `.gitignore` (`.mirai/`) if missing and the `.gitattributes` with the
+  kinds of the engine and of the project's plugins (`build.git_attributes`, with LFS when ticked);
+  then `git init -b main`, the drivers in the local configuration (`build.git_settings`),
+  `git lfs install --local` and the `origin` remote. A project created with Initialize Git
+  repository on the [projects](panels.md#projects) screen runs it when the first read finishes
+  (`git_init_later`).
+- Each state read sets in the local configuration the drivers that are missing or are not this
+  engine's (a clone, an engine that moved).
 - **Commit** takes the saved files: with anything unsaved it does not run. Without files left out
   it commits the whole project folder, also what was saved after the last read. **Push** sets the
   upstream the first time.
@@ -49,9 +50,9 @@ merge`](../../mirai-assets/references/cli.md#merge), which the editor configures
 (Details).
 
 - On detecting `U` files, the editor reads their three versions from git (`git show :1:`, `:2:`,
-  `:3:`) and merges again in memory the assets merged by entity (`asset.scene_merge`). What remains
-  are **items**: the conflicts of an entity of a file, or a file merged whole (code, textures, an
-  asset that could not be read).
+  `:3:`) and merges again in memory the assets of a document kind (`asset.scene_merge`). What
+  remains are **items**: the conflicts of an entity of a file, or a file merged whole (code,
+  textures, an asset that could not be read).
 - **Each conflict takes what arrived (theirs)** until one's own is chosen. The open scene shows the
   choices instantly: the document is built in memory with them and replaces the world
   (`git_scene_show`), without writing the file, and stays unsaved. The entities of unaccepted items

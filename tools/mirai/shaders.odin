@@ -173,10 +173,11 @@ engine_shaders_report :: proc(result:shaders.Result,out:=os.stdout) -> bool {
     return true
 }
 
-SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path"
+SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path | setup git [folder]"
 
 cmd_setup :: proc(root:string,args:[]string) -> int {
     if len(args)==1 && args[0]=="path" {return setup_path(root)}
+    if len(args)>0 && args[0]=="git" {return setup_git(root,args[1:])}
     if len(args)==0 || args[0]!="slang" && args[0]!="rg" && args[0]!="ripgrep" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
     archive:string
     for i:=1;i<len(args);i+=1 {

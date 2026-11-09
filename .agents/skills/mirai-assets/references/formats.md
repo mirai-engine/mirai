@@ -266,6 +266,7 @@ scan opens every file and writes it again.
 - One row per line. With a single unnamed column the row is the value; otherwise, an object with one
   value per column.
 - `"schema"` is written with `Text_Options.schema`. `Bulk` tables carry no `"data"`: with
-  `bulk=.Files` each column names its file.
+  `bulk=.Files` each column names its file. `Text_Options.diff` is the text
+  [git diffs](cli.md#git).
 - `document_text_read` rebuilds the document (with a `Bulk_Loader` for the files) and reports
   `Text_Problem {code, rule, offset}`.

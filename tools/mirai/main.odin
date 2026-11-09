@@ -35,7 +35,7 @@ COMMANDS :: [?]Command{
     {"image",IMAGE_USAGE,"Compares PNG captures (SSIM, PSNR, MAE, RMSE), measures light mottling, describes them, puts them side by side, crops them, zooms them or reads their pixels",cmd_image},
     {"agent",AGENT_USAGE,"Installs and manages the ACP adapters of the editor in the folder of the user; requires an explicit action",cmd_agent},
     {"shaders",SHADERS_USAGE,"Generates SPIR-V, MSL and Odin tables from Slang",cmd_shaders},
-    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, or adds mirai and ripgrep to the PATH",cmd_setup},
+    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, adds mirai and ripgrep to the PATH, or sets the git of a clone to merge and diff its assets through mirai",cmd_setup},
     {"session",SESSION_USAGE,"Opens a headless editor of the project in the background for rpc, capture and mcp, or closes it",cmd_session},
     {"capture",CAPTURE_USAGE,"Captures the world of the project without the editor UI, with its validation errors and image statistics",cmd_capture},
     {"record",RECORD_USAGE,"Records the game of the project frame after frame at a fixed rate as 16-bit PNG or EXR images and a WAV, with a contact sheet and a manifest of its frames and its validation errors",cmd_record},

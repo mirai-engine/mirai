@@ -130,7 +130,8 @@ That builds and opens the editor with the included [demo](demo). To play it inst
 platform from the [releases](https://github.com/mirai-engine/mirai/releases).
 
 Building needs Odin `dev-2026-11` and the platform's graphics driver; `./mirai doctor` says what is
-missing. Platform setup, templates and commands are in
+missing. `./mirai setup git`, once per clone, makes git merge and diff scenes and other
+documents. Platform setup, templates and commands are in
 [projects](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 ## Documentation

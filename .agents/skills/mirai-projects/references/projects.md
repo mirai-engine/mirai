@@ -415,6 +415,7 @@ tools come from `.deps`, also from a worktree.
 | See who is building or measuring | `mirai locks` |
 | Search the code | `rg <pattern> [folder]` |
 | Check the machine and a project | `mirai doctor [project]` |
+| Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
 
 - `edit` and `play` without a flag compile with `--release`, because a person uses them; an agent
@@ -441,7 +442,9 @@ tools come from `.deps`, also from a worktree.
 
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
   empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
-  and so is no template; `--list` gives the first line of the `README.md` of each template.
+  and so is no template; `--list` gives the first line of the `README.md` of each template. It
+  writes the project's `.gitattributes`, which no template carries
+  ([git and assets](../../mirai-assets/references/cli.md#git)).
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
@@ -454,6 +457,9 @@ tools come from `.deps`, also from a worktree.
 
 ### Tool and machine
 
+- `mirai setup git [folder]` wires the clone the folder is in, once per clone
+  ([git and assets](../../mirai-assets/references/cli.md#git)); `mirai doctor` reports a clone
+  whose `.gitattributes` names the drivers and whose configuration lacks them.
 - `mirai setup path` puts the `bin/` of this copy of the engine first in the user's `PATH` and
   removes that of another copy; it is run once per copy, because a build replaces `bin/mirai` in
   place. `mirai setup rg` installs the pinned ripgrep in `.deps` and puts it in the `PATH`: it is

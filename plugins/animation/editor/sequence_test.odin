@@ -1,7 +1,9 @@
 package animation_editor
 
+import "core:os"
 import "core:testing"
 import "core:strings"
+import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -87,4 +89,15 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     before:=w.sequences.values[0];cursor:=edits.cursor;serial.writer_reset(&writer)
     error,_=api.method_execute(&server,method_set,`{"entity":"0000000000000002","value":{"frames":[]}}`,&writer)
     testing.expect(t,error.code==api.INVALID_PARAMS && strings.contains(error.data,`"path":"value.frames"`) && w.sequences.values[0]==before && edits.cursor==cursor)
+}
+
+// The engine's own repository merges and diffs the kinds of this plugin as it declares them.
+@(test)
+the_git_attributes_of_the_engine_have_the_kinds_of_the_plugin :: proc(t:^testing.T) {
+    text,_:=os.read_entire_file(#directory+"../../../.gitattributes",context.temp_allocator)
+    provider:=ANIMATION_KINDS_DEFAULT.provider
+    for kind in provider.kinds[:provider.count] {
+        line:=build.git_attributes_line({kind.extension,kind.merged},allocator=context.temp_allocator)
+        testing.expectf(t,strings.contains(string(text),strings.concatenate({line,"\n"},context.temp_allocator)),"the .gitattributes of the engine lacks the line %q",line)
+    }
 }

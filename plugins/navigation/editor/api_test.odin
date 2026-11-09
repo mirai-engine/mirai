@@ -1,7 +1,9 @@
 package navigation_editor
 
+import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -80,4 +82,15 @@ a_route_is_the_next_corner_and_what_is_left :: proc(t:^testing.T) {
     near:=[1]ai.Nav_Corner{{position={0.1,0,0}}}
     testing.expect_value(t,route_of(near[:],{}).state,editor.Route_State.None)
     testing.expect_value(t,route_of(nil,{}).state,editor.Route_State.None)
+}
+
+// The engine's own repository merges and diffs the kinds of this plugin as it declares them.
+@(test)
+the_git_attributes_of_the_engine_have_the_kinds_of_the_plugin :: proc(t:^testing.T) {
+    text,_:=os.read_entire_file(#directory+"../../../.gitattributes",context.temp_allocator)
+    provider:=NAV_KINDS_DEFAULT.provider
+    for kind in provider.kinds[:provider.count] {
+        line:=build.git_attributes_line({kind.extension,kind.merged},allocator=context.temp_allocator)
+        testing.expectf(t,strings.contains(string(text),strings.concatenate({line,"\n"},context.temp_allocator)),"the .gitattributes of the engine lacks the line %q",line)
+    }
 }

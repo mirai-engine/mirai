@@ -15,8 +15,10 @@ types, scene/prefab, registry).
 
 ## Map
 
-- Inspecting or editing a file: [cli.md](references/cli.md); three-way merge and git driver:
+- Inspecting or editing a file: [cli.md](references/cli.md); three-way merge:
   [merge](references/cli.md#merge).
+- Which kinds git merges and diffs, `.gitattributes` and the drivers of a clone
+  (`mirai setup git`): [git](references/cli.md#git).
 - Container, tables, `Asset`/`Document`, types, versions, registry and asset JSON:
   [formats.md](references/formats.md).
 - LZ, packs and decoders: [compression](references/formats.md#compression); what each codec
@@ -102,8 +104,10 @@ types, scene/prefab, registry).
 
 - `mirai test std/serial` and `mirai test asset`, whose cases are named for what they check;
   generated assets, with `mirai asset verify`. Focal tests by topic:
-  - merge: `asset/merge_test.odin`; with git, a repository with the driver and two branches that
-    edit different fields and the same field of a scene;
+  - merge: `asset/merge_test.odin`; git: the `git_*` tests and
+    `the_git_attributes_of_the_engine_follow_its_kinds` of `cook/build`, and by hand a repository
+    after `mirai setup git` with two branches that edit different fields and the same field of a
+    scene (`git diff`, `git merge`);
   - prefab instances: the `prefab_*` and
     `stale_prefab_instances_resolve_against_the_files_of_their_prefabs` (`asset/scene_test.odin`),
     `mirai test engine/scene` (on loading) and

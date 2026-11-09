@@ -128,7 +128,7 @@ git_merge_compute :: proc(s:^Session) {
         for b in file.stages[1] {
             if b==0 {file.text=false;break}
         }
-        if a==nil || file.stages[1]==nil || file.stages[2]==nil || !git_merges_entities(name) {
+        if a==nil || file.stages[1]==nil || file.stages[2]==nil || !git_merges_entities(s,name) {
             git_merge_item_add(m,f,0,name,0,0)
             continue
         }
@@ -190,12 +190,15 @@ git_merge_item_add :: proc(m:^Git_Merge,file:int,key:base.Entity_Id,name:string,
     append(&m.items,item)
 }
 
-// Whether a file is an asset the merge of assets reads entity by entity.
-git_merges_entities :: proc(path:string) -> bool {
-    dot:=strings.last_index_byte(path,'.')
-    if dot<0 {return false}
-    for extension in GIT_MERGED {
-        if path[dot+1:]==extension {return true}
+// Whether a file is of a kind of asset that merges row by row and field by
+// field: asset.Kind_Info.merged, or Asset_Kind.merged for one of a plugin.
+git_merges_entities :: proc(s:^Session,path:string) -> bool {
+    if kind,found:=asset.kind_of_extension(path);found {
+        info,_:=asset.kind_info(kind)
+        return info.merged
+    }
+    for &declared in asset_plugin_kinds(s) {
+        if declared.merged && declared.extension!="" && strings.has_suffix(path,declared.extension) {return true}
     }
     return false
 }
