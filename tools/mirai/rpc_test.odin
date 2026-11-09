@@ -245,17 +245,19 @@ describe_shows_types_defaults_an_example_and_the_result :: proc(t:^testing.T) {
 }
 
 @(test)
-describe_without_arguments_groups_the_methods_by_plugin :: proc(t:^testing.T) {
+describe_without_arguments_shows_the_index_of_the_methods :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    listing:=`{"server":{"name":"mirai","version":"6"},"methods":[
-        {"name":"engine.describe","plugin":"editor","summary":"Lists the methods."},
-        {"name":"animation.play","plugin":"animation","summary":"Plays a clip."},
-        {"name":"scene.add","plugin":"editor","summary":"Adds entities."}],
-        "plugins":[{"name":"animation","active":true},{"name":"terrain","active":false}]}`
-    testing.expect_value(t,rpc_describe_list_text(listing),"editor\n  engine.describe  Lists the methods.\n  scene.add        Adds entities.\n\nanimation\n  animation.play   Plays a clip.\n\ninactive plugins: terrain\n")
+    listing:=`{"server":{"name":"mirai","version":"6"},
+        "core":[{"name":"engine.describe","summary":"Lists the methods"},{"name":"scene.add","summary":"Adds entities"}],
+        "others":[{"plugin":"editor","methods":"scene.save scene.open"},{"plugin":"animation","methods":"animation.play"}],
+        "active_plugins":["animation"],"other_plugins":["terrain"]}`
+    text:=rpc_describe_list_text(listing)
+    for line in ([]string{"core\n  engine.describe  Lists the methods\n  scene.add        Adds entities\n","\neditor\n  scene.save scene.open\n","\nanimation\n  animation.play\n","\ninactive plugins: terrain\n","mirai rpc describe <method>"}) {
+        testing.expectf(t,strings.contains(text,line),"%q in:\n%s",line,text)
+    }
     testing.expect(t,rpc_describe_is_plugin(listing,"animation") && rpc_describe_is_plugin(listing,"terrain") && rpc_describe_is_plugin(listing,"editor"))
     testing.expect(t,!rpc_describe_is_plugin(listing,"scene.") && !rpc_describe_is_plugin(listing,"scene.add"),"a prefix or a method is not a plugin")
-    testing.expect_value(t,rpc_similar_names(listing,"scene.ad"),"scene.add")
+    testing.expect_value(t,rpc_similar_names(listing,"scene.ad"),"scene.add, scene.save, scene.open")
 }
 
 // Quoting a JSON object differs per shell: key=value arguments need none.

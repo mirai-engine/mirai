@@ -200,7 +200,7 @@ rpc_result_cases :: proc(t:^testing.T,tool:Tool,port:string) {
     code,out,err=run_tool(tool,"","rpc","describe","test.echo","test.add","--port",port)
     testing.expectf(t,code==0 && strings.contains(out,"test.echo (core)\n") && strings.contains(out,"example: mirai rpc test.add"),"%d %s %s",code,out,err)
     code,out,_=run_tool(tool,"","rpc","describe","--port",port)
-    testing.expectf(t,code==0 && strings.contains(out,"Adds two integers.") && !strings.contains(out,"example"),"%d %s",code,out)
+    testing.expectf(t,code==0 && strings.contains(out,"Adds two integers") && !strings.contains(out,"example"),"%d %s",code,out)
     code,_,err=run_tool(tool,"","rpc","describe","scene.","--port",port)
     testing.expect_value(t,code,1)
     testing.expect(t,strings.contains(err,"no method starts with 'scene.'"),err)

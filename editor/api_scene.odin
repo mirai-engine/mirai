@@ -22,7 +22,8 @@ import "mirai:std/serial"
 // when any part of it fails.
 
 API_BATCH_LIMIT :: 64
-API_INSPECT_DEFAULT :: 256
+API_INSPECT_DEFAULT :: 256 // entities an inspect gives when a filter narrows it
+API_INSPECT_BRIEF :: 24     // and when none does
 
 Api_Inspect_Params :: struct {
     root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
@@ -32,7 +33,7 @@ Api_Inspect_Params :: struct {
     components:u8 `mirai:"any,optional,label=true: the values of every component; a list of names: only those; omitted: id, name, parent, position and the names of the components"`,
     include_runtime:bool `mirai:"optional,label=Include hidden fields and transient component state for inspection"`,
     offset:int `mirai:"optional,min=0"`,
-    limit:int `mirai:"optional,min=1,max=4096,clamp"`,
+    limit:int `mirai:"optional,min=0,max=4096,clamp,label=Entities it gives at most; 0 or omitted: a few when no entity or name or component narrows them"`,
     player:int `mirai:"optional,min=0,max=3,label=play.inspect: the run of that player of a game a turn plays on the network"`,
     storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: in play.inspect the score or the state of a match"`,
     storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages"`,
@@ -66,6 +67,7 @@ Api_Inspect_Result :: struct {
     shown:int,
     matched:int `mirai:"label=Entities the filters take"`,
     omitted:int `mirai:"label=Entities matched past the limit"`,
+    left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
     storages:u8 `mirai:"any,optional,label=With storages: by name the value of each storage of the world that is plain data with Entity fields as the entities are named"`,
 }
 Api_Inspect_Entity :: struct {
@@ -120,9 +122,8 @@ Api_Batch_Entry :: struct {
 
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
-    inspect:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
-    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_scene_inspect})
-    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_play_inspect})
+    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_scene_inspect})
+    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_inspect})
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
     api_register(s,st,{name="scene.add",flags={.Core},params_schema=API_ADD_SCHEMA,summary="Creates an entity from a preset or the card of a plugin.",result=Api_Edit_Result,run=api_scene_add})
     api_register(s,st,{name="scene.set",flags={.Core},params_schema=API_SET_SCHEMA,summary="Changes an entity; what the params leave out stays as it is.",result=Api_Edit_Result,run=api_scene_set})
@@ -289,6 +290,8 @@ api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator)
 @(private)
 api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     params:=api.call_params(call,Api_Inspect_Params)
+    narrowed:=base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!=""
+    if params.limit==0 {params.limit=narrowed || base.text_get(params.root[:])!=""?API_INSPECT_DEFAULT:API_INSPECT_BRIEF}
     if base.text_get(params.root[:])!="" {
         if play {api.call_fail(call,api.INVALID_PARAMS,"root is of scene.inspect: the document scene.write takes");return}
         api_inspect_tree(s,call,w,params)
@@ -330,7 +333,9 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     api.write_key(out,"total");serial.text_write_int(out,i64(entities.alive))
     api.write_key(out,"offset");serial.text_write_int(out,i64(offset))
     api.write_key(out,"entities");serial.write_u8(out,'[')
+    only_storages:=(params.storages || storages!="") && !narrowed
     candidates:=[]core.Entity{only} if only!=core.NONE else api_entities_ordered(w)
+    if only_storages {candidates=nil}
     matched,shown:=0,0
     for e in candidates {
         if pattern!="" && !api_name_match(pattern,entity_name(w,e)) {continue}
@@ -344,7 +349,15 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     serial.write_u8(out,']')
     api.write_key(out,"shown");serial.text_write_int(out,i64(shown))
     api.write_key(out,"matched");serial.text_write_int(out,i64(matched))
-    api.write_key(out,"omitted");serial.text_write_int(out,i64(max(matched-offset-shown,0)))
+    omitted:=max(matched-offset-shown,0)
+    api.write_key(out,"omitted");serial.text_write_int(out,i64(omitted))
+    if omitted>0 {
+        api.write_key(out,"left_out")
+        serial.text_write_string(out,fmt.tprintf("%d more entities: ask for them with entity, name or component, or with offset and limit",omitted))
+    } else if only_storages {
+        api.write_key(out,"left_out")
+        serial.text_write_string(out,"the entities: with storages they come only with entity, name or component")
+    }
     if params.storages || storages!="" {
         api.write_key(out,"storages")
         api_storages_write(s,w,out,storages,scratch,play,params.include_runtime)

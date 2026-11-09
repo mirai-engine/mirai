@@ -166,36 +166,48 @@ fixture_plugins :: proc(t:^testing.T,f:^Fixture) {
 }
 
 @(test)
-describe_without_params_lists_each_method_with_its_plugin_and_the_plugins_found :: proc(t:^testing.T) {
+describe_without_params_is_an_index_of_names_short_summaries_and_plugins :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     fixture_plugins(t,&f)
     reply:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe"}`)
-    methods,ok:=at(reply,"result","methods").(json.Array)
-    testing.expect(t,ok && len(methods)==9,"the built-in method, the seven samples and the one of the plugin")
+    testing.expect(t,at(reply,"result","methods")==nil,"no entries with schemas")
     testing.expect_value(t,string_of(at(reply,"result","server","name")),"mirai")
-    testing.expect_value(t,string_of(at(methods[0],"name")),"engine.describe")
-    testing.expect_value(t,string_of(at(methods[0],"plugin")),"editor")
-    testing.expect_value(t,string_of(at(methods[1],"summary")),"Adds two integers.")
-    testing.expect(t,at(methods[1],"params")==nil && at(methods[1],"flags")==nil && at(methods[1],"tool")==nil,"only the name, the summary and the plugin")
-    testing.expect_value(t,string_of(at(methods[8],"name")),"anim.play")
-    testing.expect_value(t,string_of(at(methods[8],"plugin")),"animation")
-    testing.expect_value(t,len(at(reply,"result","plugins").(json.Array)),2)
-    testing.expect_value(t,string_of(at(reply,"result","plugins",0,"name")),"animation")
-    testing.expect(t,is_bool(at(reply,"result","plugins",0,"active"),true))
-    testing.expect(t,is_bool(at(reply,"result","plugins",1,"active"),false),"a plugin the project does not use is listed too")
+    core_methods,ok:=at(reply,"result","core").(json.Array)
+    testing.expect(t,ok && len(core_methods)>=2,"the methods used most")
+    testing.expect_value(t,string_of(at(core_methods[0],"name")),"engine.describe")
+    testing.expect(t,len(string_of(at(core_methods[0],"summary")))<=DESCRIBE_BRIEF,"a short summary")
+    testing.expect(t,at(core_methods[1],"params")==nil && at(core_methods[1],"flags")==nil && at(core_methods[1],"tool")==nil,"only the name and the summary")
+    groups:=at(reply,"result","others").(json.Array)
+    found:=false
+    for group in groups {
+        if string_of(at(group,"plugin"))=="animation" {found=strings.contains(string_of(at(group,"methods")),"anim.play")}
+    }
+    testing.expect(t,found,"the other methods go by name under their plugin")
+    testing.expect_value(t,string_of(at(reply,"result","active_plugins",0)),"animation")
+    testing.expect_value(t,string_of(at(reply,"result","other_plugins",0)),"terrain")
+    testing.expect(t,strings.contains(string_of(at(reply,"result","more")),"methods"),"it says how to ask for the rest")
+}
+
+// The first sentence or clause, and a word boundary when that is too long.
+@(test)
+a_brief_summary_keeps_its_first_clause_and_cuts_at_a_word :: proc(t:^testing.T) {
+    testing.expect_value(t,summary_brief("Lists them; methods gives more."),"Lists them")
+    testing.expect_value(t,summary_brief("Moves scene.add around. Then more."),"Moves scene.add around")
+    testing.expect_value(t,summary_brief("one two three four",9),"one two")
 }
 
 @(test)
-describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^testing.T) {
+describe_gives_schemas_of_named_methods_and_summaries_of_a_prefix_or_a_plugin :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     fixture_plugins(t,&f)
     reply:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"prefix":"test."}}`)
     methods:=at(reply,"result","methods").(json.Array)
     testing.expect_value(t,len(methods),7)
-    for method in methods {testing.expect(t,strings.has_prefix(string_of(at(method,"name")),"test.") && at(method,"params")!=nil)}
-    testing.expect(t,at(reply,"result","plugins")==nil,"the plugins come only with the list")
+    for method in methods {testing.expect(t,strings.has_prefix(string_of(at(method,"name")),"test.") && at(method,"summary")!=nil && at(method,"params")==nil,"an area gives its summaries")}
+    testing.expect(t,at(reply,"result","core")==nil && at(reply,"result","active_plugins")==nil,"the index comes only without params")
+    reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.add","test.raw"]}}`)
     add:=at(reply,"result","methods",0)
     testing.expect_value(t,string_of(at(add,"tool")),"test_add")
     testing.expect_value(t,string_of(at(add,"plugin")),"editor")
@@ -205,7 +217,7 @@ describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^te
     testing.expect_value(t,string_of(at(add,"params","required",1)),"b")
     testing.expect(t,is_bool(at(add,"params","additionalProperties"),false),"boolean flag")
     testing.expect_value(t,string_of(at(add,"result","properties","sum","type")),"integer")
-    raw_method:=at(reply,"result","methods",4)
+    raw_method:=at(reply,"result","methods",1)
     testing.expect_value(t,string_of(at(raw_method,"name")),"test.raw")
     testing.expect(t,at(raw_method,"result")!=nil,"a free-form result is described as any JSON")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.echo","test.add","test.echo"]}}`)

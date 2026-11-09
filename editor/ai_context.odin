@@ -408,7 +408,7 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
         for name in AI_PROMPT_SCHEMAS {
             method:=api.method_find(&st.server,name)
             if method==nil {continue}
-            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it lists the methods and the plugins, and `methods`, `plugin` or `prefix` give the schemas of a few):\n");listed=true}
+            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it is a short index of the methods and the plugins, and `methods` gives the schemas of a few):\n");listed=true}
             w:serial.Writer
             serial.writer_init(&w,0,context.temp_allocator)
             api.method_schema_write(&w,&st.server,method,false)

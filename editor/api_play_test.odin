@@ -255,6 +255,7 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     error,text:=probe_call(f,"play.inspect",`{"storage":"Probe_*","limit":1}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"storages":{"Probe_Score":{"points": 0, "state": "Waiting", "seen": {"version": 0, "gone": 0}}`),text)
+    testing.expect(t,strings.contains(text,`"entities":[]`) && strings.contains(text,`"left_out"`),"with storage only the storages")
     error,_=probe_call(f,"play.inspect",`{"storage":"Score"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     // A component and a teleport, without the document.

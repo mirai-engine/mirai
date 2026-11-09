@@ -76,15 +76,19 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     error:=api_test_execute(state,&out,"project.set",`{"version":"1.2.3","identifier":"com.studio.game","icon":"icon.png","start_scene":"scenes/main.scene","window":{"mode":"Fullscreen"},"plugins":{"beta":true}}`)
     testing.expect_value(t,error.code,0)
     text:=strings.clone(string(serial.writer_bytes(&out)),context.temp_allocator)
-    api_result_shape_expect(t,text,Api_Project)
+    api_result_shape_expect(t,text,Api_Project_Changed)
+    testing.expect(t,strings.contains(text,`"building": false`) && strings.contains(text,`"beta"`) && !strings.contains(text,"manifest"),text)
     written:=read(file)
     testing.expect_value(t,base.text_get(written.version[:]),"1.2.3")
     testing.expect_value(t,base.text_get(written.identifier[:]),"com.studio.game")
     testing.expect_value(t,written.window.mode,project.Window_Mode.Fullscreen)
     testing.expect_value(t,written.window.width,i32(1280))
     testing.expect_value(t,base.text_get(written.plugins[0][:]),"beta")
+    error=api_test_execute(state,&out,"project.get",`{}`)
+    testing.expect_value(t,error.code,0)
+    text=strings.clone(string(serial.writer_bytes(&out)),context.temp_allocator)
+    api_result_shape_expect(t,text,Api_Project)
     testing.expect(t,strings.contains(text,`"name": "alpha", "active": true, "named": false, "needed_by": "beta"`),text)
-    testing.expect(t,strings.contains(text,`"building": false`),text)
 
     // Each of these is refused with what is wrong and how to fix it, and leaves the file as it is.
     refusals:=[?]struct{params,says:string}{
