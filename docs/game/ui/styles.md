@@ -66,8 +66,8 @@ And a screen that uses it:
 
 ```json
 {"use": ["ui/theme.ui", "ui/select_row.ui"],
- "nodes": [{"name": "quality", "kind": "select_row", "label": "Quality",
-            "options": "Low|High", "bind": "Graphics_Settings.quality"}]}
+ "nodes": [{"name": "sun", "kind": "select_row", "label": "Sun shadows",
+            "options": "Off|On", "bind": "Graphics_Settings.sun_shadows"}]}
 ```
 
 - `params` says where each goes: `node.field` (`text`, `style`, `bind_text`, `bind_value`,

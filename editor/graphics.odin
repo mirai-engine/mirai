@@ -15,8 +15,8 @@ import "mirai:ui"
 
 // The Graphics popup of the bar: the Graphics_Settings of the project, which
 // the game draws with and the editor too. An option is a row of named
-// choices; a preset (erender.GRAPHICS_PRESETS) sets the quality ones, and
-// Graphics_Settings.quality says which is on. Antialiasing offers Off, TAA and the techniques active plugins offer
+// choices; a preset (erender.GRAPHICS_PRESETS) sets the quality ones, and the
+// one on is erender.graphics_quality_of, what the fields are at. Antialiasing offers Off, TAA and the techniques active plugins offer
 // (erender.antialiasing_offer), and a plugin adds rows of its own: the fields
 // of its @(storage,setting="machine") tagged `graphics=Label`, an enum or a
 // bool. A choice is written to the edited World and to the settings at once,
@@ -54,7 +54,7 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
 GRAPHICS_RESOLUTIONS :: [?]f32{0,0.5,0.75,1}
 GRAPHICS_LIGHTS :: [?]u32{2,4,8,16}
 GRAPHICS_FRAME_LIMITS :: [?]u32{30,60,120,144,240,0}
-GRAPHICS_PRESET_LABELS :: [erender.Graphics_Preset]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra"}
+GRAPHICS_QUALITY_LABELS :: [erender.Graphics_Quality]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra",.Custom="Custom"}
 
 @(storage)
 Graphics :: struct {
@@ -135,8 +135,8 @@ graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choi
 
 // The name of a quality: of its preset, or Custom.
 graphics_quality_label :: proc(quality:erender.Graphics_Quality) -> string {
-    labels:=GRAPHICS_PRESET_LABELS
-    return quality==.Custom?"Custom":labels[erender.Graphics_Preset(u8(quality))]
+    labels:=GRAPHICS_QUALITY_LABELS
+    return labels[quality]
 }
 
 // The graphics settings of the edited World; nil for a project without the render library.
@@ -147,9 +147,9 @@ graphics_settings :: proc(s:^Session) -> ^erender.Graphics_Settings {
 // Applies a preset, by its name, to the graphics settings among list; message
 // says what is wrong.
 settings_graphics_preset :: proc(list:[]project.Setting,name:string) -> (message:string) {
-    labels:=GRAPHICS_PRESET_LABELS
+    labels:=GRAPHICS_QUALITY_LABELS
     for label,preset in labels {
-        if !strings.equal_fold(label,name) {continue}
+        if preset==.Custom || !strings.equal_fold(label,name) {continue}
         for setting in list {
             if setting.name=="Graphics_Settings" {
                 erender.graphics_preset_apply((^erender.Graphics_Settings)(setting.value),preset)
@@ -174,8 +174,6 @@ graphics_base :: proc(s:^Session) -> erender.Graphics_Settings {
 graphics_commit :: proc(s:^Session,next:erender.Graphics_Settings) -> bool {
     g:=graphics_settings(s)
     if g==nil {return false}
-    next:=next
-    erender.graphics_quality_settle(&next,g.quality)
     if s.engine_root!="" {
         if s.settings_engine==nil {settings_engine_load(s)}
         if engine:=(^erender.Graphics_Settings)(setting_engine_value(s,"Graphics_Settings"));engine!=nil {
@@ -216,7 +214,8 @@ graphics_build :: proc(s:^Session) {
     defaults:=graphics_choices(graphics_base(s),offered)
     next:=current^
     changed:=false
-    option_labels,preset_labels:=GRAPHICS_OPTION_LABELS,GRAPHICS_PRESET_LABELS
+    option_labels,preset_labels:=GRAPHICS_OPTION_LABELS,GRAPHICS_QUALITY_LABELS
+    shown:=erender.graphics_quality_of(current^)
     row:=ui.Box{width=ui.GROW,height=ui.fixed(GRAPHICS_ROW),gap=7,align_y=.Center}
     segment:=ui.Button{style=.Tab,width=-1,height=th.row-4,size=th.font_small,center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {
@@ -239,16 +238,17 @@ graphics_build :: proc(s:^Session) {
                         defer ui.box_end(ctx,{})
                         ui.label(ctx,"Preset",th.font_small,th.text_label,GRAPHICS_LABEL_WIDTH)
                         if ui.segments(ctx,ui.GROW,th.row) {
-                            for candidate in erender.Graphics_Preset {
+                            for candidate in erender.Graphics_Quality {
+                                if candidate==.Custom {continue}
                                 button:=segment
-                                button.label,button.active=preset_labels[candidate],current.quality==erender.Graphics_Quality(u8(candidate))
+                                button.label,button.active=preset_labels[candidate],shown==candidate
                                 if ui.button(ctx,ui.id(ctx,"preset",int(candidate)+1),button).clicked {
                                     erender.graphics_preset_apply(&next,candidate)
                                     changed=true
                                 }
                             }
                             custom:=segment
-                            custom.label,custom.active="Custom",current.quality==.Custom
+                            custom.label,custom.active=preset_labels[.Custom],shown==.Custom
                             ui.button(ctx,ui.id(ctx,"preset_custom"),custom)
                         }
                         ui.spacer(ctx,REVERT_SIDE,1)

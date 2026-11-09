@@ -15,7 +15,8 @@ import "mirai:host"
 // while the screen shows, and the mouse is free while a Modal is up.
 //
 // Its settings page binds the fields of Graphics_Settings and Display_Settings
-// directly: its selectors write them and the engine keeps them.
+// directly: its selectors write them and the engine keeps them. The preset
+// selector binds Shell.quality, the preset the fields are at, and names one here.
 
 // The pages of shell.ui: its Switcher shows the page named like the member.
 // While Playing there is none and the screen is hidden.
@@ -33,15 +34,17 @@ Shell_Hud :: struct {}
 @(storage,keep)
 Shell :: struct {
     page:Shell_Page,
+    quality:render.Graphics_Quality, // what shell.ui shows: render.graphics_quality_of of the settings
 }
 
 // What shell.ui asked for in this frame.
 @(private="file")
-shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,app:^host.App) {
+shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,graphics:^render.Graphics_Settings,app:^host.App) {
     if gui.clicked(events,screen,"menu_play") || gui.clicked(events,screen,"pause_resume") {shell.page=.Playing}
     if gui.clicked(events,screen,"pause_settings") {shell.page=.Settings}
     if gui.clicked(events,screen,"settings_back") {shell.page=.Pause}
     if gui.clicked(events,screen,"menu_exit") {host.app_exit(app,0)}
+    if preset,changed:=gui.changed_value(events,screen,"settings_quality");changed {render.graphics_preset_apply(graphics,render.Graphics_Quality(int(preset)))}
     if gui.clicked(events,screen,"pause_quit") {
         // A network session has no menu to go back to: it leaves.
         if !solo {host.app_exit(app,0);return}
@@ -55,14 +58,15 @@ shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:
 @(step="frame")
 shell_frame :: proc(
     shell:^Shell,g:^gui.Gui,shell_screens:core.Read(Shell_Screen),ui_screens:^core.Table(gui.UI_Screen),huds:core.Read(Shell_Hud),
-    network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),app:^host.App,
+    network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,
 ) {
     solo:=network.role==.Standalone
     if !solo && shell.page==.Menu {shell.page=.Playing}
 
     screen,_:=core.sole(shell_screens)
     events:=gui.events_this_frame(g)
-    shell_events(events,screen,shell,solo,scenes,app)
+    shell_events(events,screen,shell,solo,scenes,graphics,app)
+    shell.quality=render.graphics_quality_of(graphics^)
 
     if gui.menu_pressed(events) {
         #partial switch shell.page {

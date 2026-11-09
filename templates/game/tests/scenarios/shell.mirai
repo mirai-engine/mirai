@@ -35,18 +35,18 @@
     {"name": "render scale changed by hand", "method": "play.step",
      "params": {"segments": [{"ticks": 2, "keys": ["Down"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
     {"name": "the preset says Custom", "method": "play.check", "params": {"conditions": [
-      {"storage": "Graphics_Settings", "field": "quality", "compare": "Equal", "text": "Custom"}]}},
+      {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Custom"}]}},
     {"name": "back to a preset, left of Custom is Ultra", "method": "play.step",
      "params": {"segments": [{"ticks": 2, "keys": ["Up"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
     {"name": "Ultra follows the target of the preset", "method": "play.check", "params": {"conditions": [
-      {"storage": "Graphics_Settings", "field": "quality", "compare": "Equal", "text": "Ultra"},
+      {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Ultra"},
       {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
       {"storage": "Graphics_Settings", "field": "sun_shadows", "compare": "Equal", "number": 1},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Detailed"}]}},
     {"name": "two presets down", "method": "play.step",
      "params": {"segments": [{"ticks": 2, "keys": ["Left"]}, {"ticks": 6}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
     {"name": "Medium reached the engine", "method": "play.check", "params": {"conditions": [
-      {"storage": "Graphics_Settings", "field": "quality", "compare": "Equal", "text": "Medium"},
+      {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Medium"},
       {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Traced"}]}},
     {"name": "and High again", "method": "play.step",
