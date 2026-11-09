@@ -56,7 +56,7 @@ THUMBNAIL_SHAPE_TINT :: [4]f32{0.7,0.7,0.7,1}
 THUMBNAIL_RENDERER :: 3
 THUMBNAIL_LOADS :: 8
 THUMBNAIL_FILE_MAGIC :: u32('M')|u32('T')<<8|u32('H')<<16|u32('B')<<24
-THUMBNAIL_FILE_VERSION :: 2
+THUMBNAIL_FILE_VERSION :: 3
 THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the LZ image after it
 
 // A stored preview as its file holds it, and the coders of its image.

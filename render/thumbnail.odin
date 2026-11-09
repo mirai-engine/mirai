@@ -119,7 +119,7 @@ preview_lighting :: proc(f:^Gpu_Frame,light:Preview_Light) {
     behind:=luminance_of(environment.background if environment.use_background else environment.sky)
     metered:=math.sqrt(max(behind,1e-3)*max(MIDDLE_GRAY*key,1e-3))
     ev100:=clamp(math.log2(metered*100/LIGHT_METER_K),AUTO_EXPOSURE_RANGE[0],AUTO_EXPOSURE_RANGE[1])
-    f.exposure=exposure_of_ev100(ev100)/scale
+    f.exposure=exposure_of_ev100(ev100,display_exposure_bias(.Neutral))/scale
 }
 
 @(private)
