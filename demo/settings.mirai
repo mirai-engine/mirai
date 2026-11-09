@@ -7,9 +7,6 @@
     "languages": ["English", "Spanish"],
     "prompts": "81aa127badfbdbeb988b5d3a1c12ab30"
   },
-  "Display_Transform_Settings": {
-    "transform": "ACES_2"
-  },
   "Graphics_Settings": {
     "shadowed_lights": 16,
     "glass_shadows": true,

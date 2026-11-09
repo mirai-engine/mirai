@@ -89,7 +89,7 @@ portal_cube :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32) {
 
 write_portal_chamber_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    feature_scene_begin(&s,o,"portal_chamber",.Night,{0.55,0.68,1},0.05,{0.3,0.8,0.5},LAMPLIT)
+    feature_scene_begin(&s,o,"portal_chamber",.Night,{0.55,0.68,1},0.05,{0.3,0.8,0.5},LAMPLIT,-0.4)
     // The floor, 2 m thick, around a pit 6 m deep in the west whose bottom takes portals.
     chamber:=asset.builder_entity(&s,"Chamber")
     // It reaches under the walls, which stand on it: the hole of a portal in a wall has floor under it.
