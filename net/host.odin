@@ -542,11 +542,12 @@ connection_stats :: proc(h:^Host,connection:Connection) -> (Connection_Stats,boo
 
 // Runs the network half on the calling thread: applies the frames queued by
 // the simulation, receives, and sends what is due. now is in seconds and must
-// not go back. Not to be called while a worker runs.
-host_update :: proc(h:^Host,now:f64) {
-    assert(h.worker==nil)
+// not go back. False, doing nothing, while a worker runs: the half is its.
+host_update :: proc(h:^Host,now:f64) -> bool {
+    if h.worker!=nil {return false}
     frame_submit(h)
     back_update(h,now)
+    return true
 }
 
 @(private)
