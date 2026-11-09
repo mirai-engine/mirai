@@ -5,7 +5,7 @@ import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
 
-// The horror house (scenes/horror.scene): a dark room under the moon, lamps
+// The horror house (horror/horror.scene): a dark room under the moon, lamps
 // that a switch on the wall turns on and off with use (E), one of them
 // flickering, and a flashlight the player carries and turns on and off with
 // the flashlight action (F).

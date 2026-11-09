@@ -27,8 +27,8 @@ AI_ARENAS :: [?]struct {kind:game.Arena_Kind,origin:mm.Vec3,agents:i32,title,det
     {.Senses,{65,0,55},6,"Senses: hearing, forgetting","Listeners that barely see go to the bells they hear, and forget them."},
 }
 
-WAVES_FILE :: "assets/data/horde_waves.records"
-ZOMBIES_FILE :: "assets/data/zombie_kinds.records"
+WAVES_FILE :: "assets/ai/horde_waves.records"
+ZOMBIES_FILE :: "assets/ai/zombie_kinds.records"
 
 // The waves of the horde and the kinds of zombie they send: three of ten,
 // so the horde ends as many as it had before it had waves.
@@ -98,7 +98,7 @@ write_ai_scene :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/ai.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/ai.scene")))
+    check(o,"assets/ai/ai.scene",asset.scene_save(&s.scene,path(o,"assets/ai/ai.scene")))
 }
 
 // A piece of an arena in the scene, as arena_piece_add puts it in a running world.

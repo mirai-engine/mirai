@@ -3,7 +3,7 @@ package ui
 // What the host hands a context every frame. The platform layer fills it from
 // its events; nothing here knows about windows or devices.
 
-Mouse_Button :: enum u8 {Left,Right,Middle}
+Mouse_Button :: enum u8 {Left,Right,Middle,Back}
 Mouse_Buttons :: bit_set[Mouse_Button;u8]
 
 // The keys the library itself gives a meaning to. Shortcuts of the host are

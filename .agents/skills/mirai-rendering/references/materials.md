@@ -545,7 +545,7 @@ The light that crosses glass is paid for with its detail only where it is seen:
 - A nearer hit ray also finds the glass beyond its hit if it visits it first: then it traverses
   again up to the hit (`trace_segment`).
 - Focal test: `glass_tints_the_indirect_light_with_its_mean`, with each tracer; demo scene:
-  `scenes/church.scene`.
+  `church/church.scene`.
 - **Limits.** The medium filter has no drawing nor depends on the direction; a ray that exits
   through an extension's door counts in its first segment also the glass between the door and what
   it would have found without it; the [indirect reference](gi.md#indirect-reference) goes through

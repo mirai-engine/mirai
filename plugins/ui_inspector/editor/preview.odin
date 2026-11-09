@@ -99,7 +99,7 @@ stage_reference :: proc(st:^Stage) -> [2]f32 {
     return {max(st.custom.x,REFERENCE_LEAST),max(st.custom.y,REFERENCE_LEAST)}
 }
 
-// The note of the heading of the preview: how far the stage is zoomed, once it is.
+// The note of the toolbar: how far the stage is zoomed, once it is.
 stage_note :: proc(u:^Ui_Inspector) -> string {
     zoom:=u.stage.zoom if u.stage.zoom>0 else 1
     if abs(zoom-1)<1e-3 && u.stage.pan=={} {return ""}
@@ -559,14 +559,15 @@ preview_column :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App) {
     area:=ui.id(ctx,"stage_area")
     // The zoom and the pan of this frame move the area too: they come before it.
     room:=ui.Rect{0,0,640,360}
+    under:=editor.asset_workspace_under(s.gui)
     if r,found:=ui.widget_rect(ctx,area);found {
-        room={r.x+16,r.y+16,max(r.w-32,64),max(r.h-32,64)}
+        room={r.x+16+under,r.y+16,max(r.w-32-under,64),max(r.h-32,64)}
         // Try takes no gesture of Edit; one that holds the pointer keeps the stage still.
         if u.stage.trying {u.ux.gesture.handle=.None}
         if p.valid && u.ux.gesture.handle==.None {stage_navigate(ctx,u,r)}
     }
     // It clips: the stage it holds is made from its size and must not ask for one.
-    area_box:=ui.Box{id=area,width=ui.GROW,height=ui.GROW,padding=ui.padding_all(16),align_x=.Center,align_y=.Center,track=true,clip_x=true,clip_y=true,clip_floats=true,scroll=-u.stage.pan}
+    area_box:=ui.Box{id=area,width=ui.GROW,height=ui.GROW,padding={16+under,16,16,16},align_x=.Center,align_y=.Center,track=true,clip_x=true,clip_y=true,clip_floats=true,scroll=-u.stage.pan}
     ui.box_begin(ctx,area_box)
     defer ui.box_end(ctx,area_box)
     if !p.valid {
@@ -1039,6 +1040,7 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
         ui.checkbox(ctx,ui.id(ctx,"navigation"),&u.stage.navigation)
         ui.label(ctx,"Navigation",th.font_small,th.text_muted)
     }
+    if note:=stage_note(u);note!="" {ui.label(ctx,note,th.font_label,th.text_muted)}
 }
 
 // The language the localized texts show in: one of the game, the one they

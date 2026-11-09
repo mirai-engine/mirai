@@ -101,6 +101,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 
 ## Invariants
 
+- Asset folders are thematic, never by type (the browser filters by type): what the editor
+  imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
@@ -182,7 +184,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   and, in `tools/mirai`, `the_commands_of_an_agent_call_its_editor_in_its_context`; live, a command
   agent added with `ai.agent.add` whose turn runs `mirai rpc`, then `ai.status` and `ai.revert` of
   that turn.
-- Floating or Docked panels: `editor/shell_dock_test.odin`; its image, `preferences.set` of the
+- The rail, the left panel and a docked Details: `editor/shell_dock_test.odin`; its image, `preferences.set` of the
   `Layout` and `editor.capture` with the UI.
 - Project panels: `panels_read_back_what_they_write`,
   `panel_buttons_set_their_fields_as_one_step`,
@@ -258,7 +260,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`. Content
   browser: `editor/content_test.odin`, and its image with `editor.capture` with the UI and
   `editor.input` in a session. Create and `asset.create`: `editor/asset_create_test.odin`,
-  `content_shows_empty_folders_and_the_line_of_create_inside_its_folder` and
+  `content_shows_empty_folders_and_the_line_of_create` and
   `a_right_click_on_a_folder_creates_an_asset_named_in_place`; rename, move and duplicate,
   `editor/asset_move_test.odin`; the empty `.ui`,
   `an_empty_interface_is_a_root_box_that_grows_to_the_surface` in `plugins/ui_inspector/editor`.

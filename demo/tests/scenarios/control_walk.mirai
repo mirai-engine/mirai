@@ -1,5 +1,5 @@
 {
-  "scene": "scenes/control.scene",
+  "scene": "control/control.scene",
   "steps": [
     {"name": "the intro ends", "method": "play.step", "params": {"ticks": 600, "until": [
       {"name": "Control intro", "component": "Cinematic", "field": "status",

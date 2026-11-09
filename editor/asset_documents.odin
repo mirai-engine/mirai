@@ -606,35 +606,57 @@ asset_documents_prune :: proc(s:^Session) {
 
 // ---------------------------------------------------------------- where it is drawn
 
-// The part of the window a document takes: between the left panel and the
-// edge, under the bars and over the bottom panel.
+// The part of the window a document takes: from a little under the left
+// panel, as the scene, so its rounded corners show the document, to the edge
+// and the bottom of the window, under the bars. The panels float over it.
 asset_workspace_rect :: proc(g:^Editor_Ui) -> ui.Rect {
     ctx:=g.ctx
-    th:=&ctx.theme
-    x0:=th.margin
-    if r:=g.rects.left;r.w>0 && r.h>0 {x0=r.x+r.w+th.margin}
-    y0:=th.bar_height+toolbar_height(g)+th.margin
-    x1,y1:=ctx.size.x-th.margin,ctx.size.y-th.margin
-    if r:=g.rects.bottom;r.w>0 && r.h>0 {y1=r.y-th.margin}
-    return {x0,y0,max(x1-x0,120),max(y1-y0,120)}
+    x0:f32
+    if r:=g.rects.left;r.w>0 && r.h>0 {x0=r.x+r.w-asset_workspace_under(g)}
+    y0:=ctx.theme.bar_height+toolbar_height(g)
+    return {x0,y0,max(ctx.size.x-x0,120),max(ctx.size.y-y0,120)}
 }
 
-// The panel of the document in front, for ui.panel, laid out as a column.
+// What of the left of a document the left panel covers: a canvas runs under
+// it, and what must be read starts past it.
+asset_workspace_under :: proc(g:^Editor_Ui) -> f32 {return g.rects.left.w>RAIL_WIDTH?LEFT_UNDER:0}
+
+// What of the bottom of a document the bottom panel covers.
+@(private)
+asset_workspace_bottom :: proc(g:^Editor_Ui) -> f32 {
+    if r:=g.rects.bottom;r.w>0 && r.h>0 {return max(g.ctx.size.y-r.y,0)}
+    return 0
+}
+
+// The panel of the document in front, for ui.panel, laid out as a column,
+// its content where no panel covers it.
 asset_workspace :: proc(g:^Editor_Ui) -> ui.Panel_Float {
     r:=asset_workspace_rect(g)
-    return {width=ui.fixed(r.w),height=ui.fixed(r.h),anchor=.Top_Left,pivot=.Top_Left,offset={r.x,r.y}}
+    return {width=ui.fixed(r.w),height=ui.fixed(r.h),padding={asset_workspace_under(g),0,0,asset_workspace_bottom(g)},anchor=.Top_Left,pivot=.Top_Left,offset={r.x,r.y},docked=true,backdrop=true}
 }
 
-// A document with Details at its right, as a scene shows its entity: the
-// panel of the document in the room Details leaves, and Details as a scene
-// places it, as high as its content up to max_height.
-asset_workspace_details :: proc(g:^Editor_Ui) -> (document,details:ui.Panel_Float,max_height:f32) {
-    th:=&g.ctx.theme
+// A document with Details at its right, as a scene shows its entity: Details
+// floats over the panel of the document as high as its content up to
+// max_height or, docked, takes its edge and the document what is left. The
+// panel runs under the left panel: its canvas does, and what is read in it
+// starts after asset_workspace_under.
+asset_workspace_details :: proc(s:^Session) -> (document,details:ui.Panel_Float,max_height:f32) {
+    g:=s.gui
+    ctx:=g.ctx
     r:=asset_workspace_rect(g)
-    width:=width_of(RIGHT_WIDTH,g.ctx.size.x)
-    document={width=ui.fixed(max(r.w-width-th.margin,120)),height=ui.fixed(r.h),anchor=.Top_Left,pivot=.Top_Left,offset={r.x,r.y}}
-    details={width=ui.fixed(width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-th.margin,r.y},stroke=SIDE_PANEL_RULE}
-    return document,details,r.h
+    bottom:=asset_workspace_bottom(g)
+    room:=max(r.h-bottom,120)
+    document={width=ui.fixed(r.w),height=ui.fixed(r.h),padding={0,0,0,bottom},anchor=.Top_Left,pivot=.Top_Left,offset={r.x,r.y},docked=true,backdrop=true}
+    if panel_mode(&g.layout,.Asset)==.Docked && ctx.size.x>=760 {
+        width:=dock_right_width(s)
+        document.width=ui.fixed(max(r.w-width,120))
+        details={width=ui.fixed(width),height=ui.fixed(room),anchor=.Top_Right,pivot=.Top_Right,offset={0,r.y},docked=true}
+        dock_edge(s,width,r.y,room)
+        return document,details,room
+    }
+    radius:=ctx.theme.radius_panel
+    details={width=ui.fixed(width_of(RIGHT_WIDTH,ctx.size.x)),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,r.y+DETAILS_MARGIN},docked=true,corners={radius,radius,radius,radius}}
+    return document,details,max(room-2*DETAILS_MARGIN,120)
 }
 
 // The room the toolbar leaves to the document in front, after save, undo

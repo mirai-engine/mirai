@@ -262,12 +262,15 @@ popup_scope_end :: proc(ctx:^Context,id:Id,desc:Popup,open:bool) {
 
 // The title of a menu of a bar. While it returns true its popup is open:
 // build the items. Next to an open menu, pointing at a title opens its own.
+// look: an icon before the title and its inset.
 @(deferred_in_out=menu_scope_end)
-menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26) -> bool {
+menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26,look:Button={}) -> bool {
     p:=&ctx.popup
     list:=id_derive(ctx,id,"menu")
     open:=popup_is_open(ctx,list)
-    it:=button(ctx,id,{label=title,style=.Ghost,active=open,height=height})
+    title_button:=look
+    title_button.label,title_button.style,title_button.active,title_button.height=title,.Ghost,open,height
+    it:=button(ctx,id,title_button)
     anchor,_:=widget_rect(ctx,id)
     anchor={anchor.x,ctx.theme.bar_height-4 if ctx.surface==0 && anchor.y<ctx.theme.bar_height else anchor.y+anchor.h-4,anchor.w,0}
     if it.clicked && !open {
@@ -279,7 +282,7 @@ menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26) -> bool {
     return popup_begin(ctx,list,{min_width=MENU_WIDTH})
 }
 @(private)
-menu_scope_end :: proc(ctx:^Context,id:Id,title:string,height:f32,open:bool) {
+menu_scope_end :: proc(ctx:^Context,id:Id,title:string,height:f32,look:Button,open:bool) {
     if open {popup_end(ctx,id_derive(ctx,id,"menu"))}
 }
 menu_is_open :: proc(ctx:^Context,id:Id) -> bool {return popup_is_open(ctx,id_derive(ctx,id,"menu"))}
@@ -611,6 +614,8 @@ Panel_Float :: struct {
     popup:bool,          // the fill and the radius of a popup
     bare:bool,           // no background
     docked:bool,         // against an edge of the surface: its fill, square, without border or shadow
+    corners:[4]f32,      // docked: of each corner, top left first clockwise; 0: square
+    backdrop:bool,       // in layer 0, under every other panel, whatever layer says
     stroke:Color,        // the border; that of the theme when transparent
 }
 
@@ -618,11 +623,13 @@ Panel_Float :: struct {
 @(deferred_in=panel_end)
 panel :: proc(ctx:^Context,id:Id,p:Panel_Float) -> bool {
     th:=&ctx.theme
-    b:=Box{id=id,layout=p.layout,float={to=.Safe if p.safe else .Surface,anchor=p.anchor,pivot=p.pivot,offset=p.offset,layer=p.layer if p.layer!=0 else LAYER_PANEL},block=true}
+    layer:=p.layer if p.layer!=0 else LAYER_PANEL
+    if p.backdrop {layer=0}
+    b:=Box{id=id,layout=p.layout,float={to=.Safe if p.safe else .Surface,anchor=p.anchor,pivot=p.pivot,offset=p.offset,layer=layer},block=true}
     b.direction=.Row if p.row else .Column
     switch {
     case p.bare:
-    case p.docked: b.fill=th.panel
+    case p.docked: b.fill,b.corners=th.panel,p.corners
     case:
         b.fill=th.popup if p.popup else th.panel;b.stroke=p.stroke if p.stroke[3]>0 else th.border
         b.radius=th.radius_popup if p.popup else th.radius_panel;b.shadow=true

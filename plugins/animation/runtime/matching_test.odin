@@ -173,7 +173,7 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     graphs:Graph_Assets;defer graph_assets_free(&graphs)
     ids:[3]base.Asset_Id
-    for file,i in ([3]string{"assets/animations/mirai_matching.match","assets/animations/mirai_locomotion.anim","assets/models/mirai/Armature.skeleton"}) {
+    for file,i in ([3]string{"assets/characters/mirai/mirai_matching.match","assets/characters/mirai/mirai_locomotion.anim","assets/characters/mirai/Armature.skeleton"}) {
         record,present:=asset.registry_find_path(&assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id

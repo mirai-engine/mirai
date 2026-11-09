@@ -23,11 +23,11 @@ import "mirai:ui"
 
 // Writes every generated asset of the demo project: the imports of
 // demo/source (sources.odin) and the showcase, which is the scene
-// demo/assets/scenes/showcase.scene and the assets it uses: a HUD and a sign
+// demo/assets/showcase/showcase.scene and the assets it uses: a HUD and a sign
 // (.ui) with their two images (.tex), the clips of a lift (.anim) and the hum
 // of a speaker (.sound, imported from a WAV this also writes). Running it
-// again gives the same bytes. The other scenes, the prefabs of
-// demo/assets/prefabs and the materials of demo/assets/materials are authored.
+// again gives the same bytes. The other scenes and prefabs and the materials
+// of demo/assets/surfaces are authored.
 //
 //   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -custom-attribute:component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record -- [root of the repository]
 
@@ -86,7 +86,7 @@ write_badge :: proc(o:^Out) -> base.Asset_Id {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    check(o,"assets/textures/hud_badge.tex",asset.texture_save(path(o,"assets/textures/hud_badge.tex"),&o.types,
+    check(o,"assets/showcase/hud_badge.tex",asset.texture_save(path(o,"assets/showcase/hud_badge.tex"),&o.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -108,7 +108,7 @@ write_panel :: proc(o:^Out) -> base.Asset_Id {
             pixels[at+3]=u8(235*coverage(distance,RADIUS))
         }
     }
-    check(o,"assets/textures/hud_panel.tex",asset.texture_save(path(o,"assets/textures/hud_panel.tex"),&o.types,
+    check(o,"assets/showcase/hud_panel.tex",asset.texture_save(path(o,"assets/showcase/hud_panel.tex"),&o.types,
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
@@ -158,7 +158,7 @@ write_hud :: proc(o:^Out,badge,panel:base.Asset_Id) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Text,name="state",style=5,text="Running",bind_visible="Showcase.running"}),
     }
     data:=ui.Tree_Data{text=texts[:],nodes=nodes,styles=styles,images=images,anims=anims,tracks=tracks,keys=keys,anim_sets=anim_sets}
-    check(o,"assets/ui/hud.ui",host.ui_tree_save(path(o,"assets/ui/hud.ui"),&o.types,id,data))
+    check(o,"assets/showcase/hud.ui",host.ui_tree_save(path(o,"assets/showcase/hud.ui"),&o.types,id,data))
     return id
 }
 
@@ -183,7 +183,7 @@ write_sign :: proc(o:^Out) -> base.Asset_Id {
         ui.tree_node_record(&texts,0,{kind=.Progress,name="charge",style=2,bind_value="Showcase.charge",layout={width=ui.fixed(200),height=ui.fixed(10)}}),
         ui.tree_node_record(&texts,0,{kind=.Button,name="toggle",style=3,text="Stop / go",layout={width=ui.fixed(110),height=ui.fixed(28)}}),
     }
-    check(o,"assets/ui/sign.ui",host.ui_tree_save(path(o,"assets/ui/sign.ui"),&o.types,id,{nodes=nodes,styles=styles,variants=sign_variants[:],text=texts[:]}))
+    check(o,"assets/showcase/sign.ui",host.ui_tree_save(path(o,"assets/showcase/sign.ui"),&o.types,id,{nodes=nodes,styles=styles,variants=sign_variants[:],text=texts[:]}))
     return id
 }
 
@@ -205,7 +205,7 @@ write_lift :: proc(o:^Out) -> base.Asset_Id {
         {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{seconds/2,"top"}}},
         {name="parked",tracks={{target="Platform",property=.Position,keys=rise[:1]}}},
     }
-    check(o,"assets/animations/lift.anim",asset.animation_save(path(o,"assets/animations/lift.anim"),&o.types,{id=id,clips=clips}))
+    check(o,"assets/showcase/lift.anim",asset.animation_save(path(o,"assets/showcase/lift.anim"),&o.types,{id=id,clips=clips}))
     return id
 }
 
@@ -233,7 +233,7 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
         o.failed=true
         return {}
     }
-    report,error:=sources.import_source(source,path(o,"assets/sounds"),{root=fmt.tprintf("%s/demo",o.root)})
+    report,error:=sources.import_source(source,path(o,"assets/showcase"),{root=fmt.tprintf("%s/demo",o.root)})
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s",error.message)
         o.failed=true
@@ -363,7 +363,16 @@ write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/showcase.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/showcase.scene")))
+    check(o,"assets/showcase/showcase.scene",asset.scene_save(&s.scene,path(o,"assets/showcase/showcase.scene")))
+}
+
+@(private)
+AREAS :: [?]string{
+    "ai","animation_gallery/rig_playground","blockout","characters/jelly","characters/mirai","characters/player","characters/robot",
+    "characters/spider","characters/tall_mirai","church","control","decals","deform","destruction","dig","gallery","horror","interface",
+    "lights","monitors","ocean","physics_gallery/ragdoll","portals","raft","showcase","sky","surfaces/bricks","surfaces/cobblestone",
+    "surfaces/glass","surfaces/marble","surfaces/metal","surfaces/neon","surfaces/paint","surfaces/tiles","surfaces/water","surfaces/wood",
+    "vfx_gallery",
 }
 
 main :: proc() {
@@ -373,7 +382,7 @@ main :: proc() {
     defer asset.types_destroy(&o.types)
     actions_load(&o)
     if o.failed {os.exit(1)}
-    for folder in ([]string{"assets/ui","assets/animations","assets/sounds","assets/textures","assets/scenes","assets/prefabs","assets/data"}) {os.make_directory_all(path(&o,folder))}
+    for folder in AREAS {os.make_directory_all(path(&o,fmt.tprintf("assets/%s",folder)))}
     if len(os.args)>2 && os.args[2]=="--physics-only" {
         write_destruction_scene(&o)
         if o.failed {os.exit(1)}

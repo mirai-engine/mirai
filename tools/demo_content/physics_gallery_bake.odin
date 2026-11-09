@@ -118,6 +118,6 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
         if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.failed=true;return id}
         if frame<150 {sim.world_step(&physics.world,1.0/30)}
     }
-    check(o,"recorded.physics_cache",cache.cache_save(path(o,"assets/physics/recorded.physics_cache"),&o.types,id,cache.record_view(&record)))
+    check(o,"recorded.physics_cache",cache.cache_save(path(o,"assets/physics_gallery/recorded.physics_cache"),&o.types,id,cache.record_view(&record)))
     return id
 }

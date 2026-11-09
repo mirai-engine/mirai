@@ -223,7 +223,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 
   ```json
   {
-    "roots": ["materials/Chrome.mat", "prefabs/", "3b4cb4195321a2f7fe61aa57ece0c255"],
+    "roots": ["surfaces/metal/Chrome.mat", "characters/player/", "3b4cb4195321a2f7fe61aa57ece0c255"],
     "textures": "blocks"
   }
   ```

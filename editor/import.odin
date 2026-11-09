@@ -116,13 +116,26 @@ import_busy :: proc(s:^Session) -> string {
     return fmt.tprintf("%s is being imported and writes assets; try again when it ends (asset.import_status)",filepath.base(job.source))
 }
 
+// The folder under the assets an import goes to: a model has one of its own in it.
+@(private)
+import_destination :: proc(kind:sources.Source_Kind,folder,model:string) -> string {
+    if kind!=.Model {return folder}
+    return folder==""?model:fmt.tprintf("%s/%s",folder,model)
+}
+
+// Where what the user imports goes: the folder the browser is in.
+@(private)
+import_place :: proc(s:^Session) -> string {
+    return s.content!=nil?string(s.content.place[:s.content.place_length]):""
+}
+
 // Starts importing a source file into the asset folder; false, with the
 // reason shown, when it cannot. The source may be anywhere: only what it
 // writes is in the project, and its settings are kept next to it only when it
 // is inside. A source imported before writes the assets it wrote then,
 // wherever they are; into names that import when the source was moved.
-// folder, a folder of the assets (asset_folder_clean), replaces models,
-// textures, sounds, fonts, texts or prompts. profiled records the zones of
+// folder, a folder of the assets (asset_folder_clean), is where it goes, a
+// model in a folder of its own inside; none is the root. profiled records the zones of
 // the import (importer.profile_totals) for asset.import_status.
 // rig, when given, has the rig, rig_crotch and rig_neck that replace the
 // source's settings, which a model inside the project keeps for its next import.
@@ -155,7 +168,6 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     // A source outside the project keeps no settings next to it: the editor
     // writes only into the project, and reimporting finds it by its path.
     options.no_save=filepath.is_abs(importer.source_path(options,source))
-    destination:=folder
     formats:=import_formats(s)
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
     whole,claimed:=import_whole(s,source)
@@ -163,8 +175,6 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     switch kind {
     case .None:
     case .Model:
-        if folder=="" {destination="models"}
-        destination=fmt.tprintf("%s/%s",destination,sources.model_folder(source,formats))
         if _,given:=rig.?;given || skeleton!={} {
             stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
             if settings_error.code!=.None {
@@ -176,7 +186,6 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
             if skeleton!={} {options.skeleton=skeleton}
         }
     case .Image:
-        if folder=="" {destination="textures"}
         options.image=sources.image_use(source)
         if use,given:=image.?;given {
             stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
@@ -187,12 +196,9 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
             options.settings,options.ignore_stored=stored,true
             options.image=use
         }
-    case .Sound: if folder=="" {destination="sounds"}
-    case .Font: if folder=="" {destination="fonts"}
-    case .Strings: if folder=="" {destination="texts"}
-    case .Prompts: if folder=="" {destination="prompts"}
+    case .Sound,.Font,.Strings,.Prompts:
     }
-    destination=asset.registry_file_path(&a.registry,strings.trim_prefix(destination,"/"),context.temp_allocator)
+    destination:=asset.registry_file_path(&a.registry,import_destination(kind,folder,kind==.Model?sources.model_folder(source,formats):""),context.temp_allocator)
     job:=new(Import_Job,allocator)
     job^={kind=kind,options=options,allocator=allocator,started=time.tick_now(),profiled=profiled}
     job.source=strings.clone(source,allocator)
@@ -537,7 +543,7 @@ import_frame :: proc(s:^Session) {
     p:=s.app.platform
     if p==nil || s.app.assets==nil {return}
     answer:=platform.dialog_result(p)
-    if answer.tag==DIALOG_IMPORT && answer.state==.Accepted {import_file(s,answer.path)}
+    if answer.tag==DIALOG_IMPORT && answer.state==.Accepted {import_file(s,answer.path,folder=import_place(s))}
     if answer.tag==DIALOG_AI_REFERENCE && answer.state==.Accepted {ai_reference_add(s,answer.path)}
     for event in platform.input_events(p) {
         if drop,dropped:=event.(platform.Drop_Event);dropped {
@@ -548,7 +554,7 @@ import_frame :: proc(s:^Session) {
                 ai_reference_add(s,path)
                 continue
             }
-            import_file(s,path)
+            import_file(s,path,folder=import_place(s))
         }
     }
 }

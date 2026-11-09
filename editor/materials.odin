@@ -343,14 +343,11 @@ texture_quad :: proc(s:^Session,texture:base.Asset_Id) -> ui.Quad {
     return ui.quad_whole(.Image,image&~gpu.UI_MATERIAL_IMAGE_BIT)
 }
 
-// The name of a texture as its slot shows it: its path inside textures/, without the extension.
+// The name of a texture as its slot shows it: its file, without the extension.
 @(private)
 texture_label :: proc(path:string) -> string {
-    name:=strings.trim_prefix(path,"textures/")
-    for i:=len(name)-1;i>=0;i-=1 {
-        if name[i]=='/' {break}
-        if name[i]=='.' {return name[:i]}
-    }
+    name:=path[strings.last_index_byte(path,'/')+1:]
+    if dot:=strings.last_index_byte(name,'.');dot>=0 {return name[:dot]}
     return name
 }
 

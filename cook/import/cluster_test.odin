@@ -40,7 +40,7 @@ the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow :: proc
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    for relative in ([]string{"demo/assets/models/vase.obj/Vase.mesh","demo/assets/models/plant.gltf/Plant.mesh","demo/assets/models/mirai/output_unwrapped.mesh"}) {
+    for relative in ([]string{"demo/assets/gallery/vase.obj/Vase.mesh","demo/assets/gallery/plant.gltf/Plant.mesh","demo/assets/characters/mirai/output_unwrapped.mesh"}) {
         file:asset.Asset
         vertices,indices,submeshes,ok:=demo_level0(t,relative,&file,&types)
         if !ok {return}

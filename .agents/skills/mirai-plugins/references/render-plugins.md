@@ -435,19 +435,19 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
 - The cards: `scene.add` (`preset` `decal`, `screen`, `portal` or `mirror`), `scene.set` to give
   the slot and `editor.capture` with the entity selected.
 - What to look at per scene:
-  - `scenes/decals.scene`: decals on floor, wall, steps and a sphere; order between two
+  - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two
     overlapping ones; the one that emits; edges up close.
-  - `scenes/deform.scene`: shadows and reflections that follow the shape, normals without facets,
+  - `deform/deform.scene`: shadows and reflections that follow the shape, normals without facets,
     nothing blurry in motion; the wall's hoses use the demo's equation.
-  - `scenes/monitors.scene`: screens up close and far away (the level follows the size); looking
+  - `monitors/monitors.scene`: screens up close and far away (the level follows the size); looking
     away lowers the cost; the floor reflects the light of each screen.
-  - `scenes/portals.scene`, `scenes/portal_chamber.scene` (the [portal game][game]) and
-    `scenes/portal_lab.scene`: the doors from the front, from the side and from behind, the eye on
+  - `portals/portals.scene`, `portals/portal_chamber.scene` (the [portal game][game]) and
+    `portals/portal_lab.scene`: the doors from the front, from the side and from behind, the eye on
     the plane, the shafts and the light that enter through an opening with the shadows of the other
     side, the wall's hole and the half-crossed cube.
-  - `scenes/main.scene`: the gallery mirror from the front, from the side and with the camera
+  - `gallery/main.scene`: the gallery mirror from the front, from the side and with the camera
     moving: reflections with their reflections, sharp edges, no trail; with `ellipse`.
-  - `scenes/church.scene`: the sun shafts of the stained glass windows cross the nave with their
+  - `church/church.scene`: the sun shafts of the stained glass windows cross the nave with their
     colors and the candles have their halo. Hiding `Haze` (`scene.set` with `Hidden`) isolates its
     cost.
 - In Play, by API (`editor.input` with keys, one frame per tick): walk toward a door and capture
@@ -455,7 +455,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   the gaze turns with the portal and the velocity is preserved); come back through the other one;
   throw a cube through. Measure with the portal visible and hidden (`scene.set` with `visible`).
 - Lens, in a project that enables it: `mirai test plugins/lens/runtime` (who decides, the volume
-  blend and the circle of confusion) and, in `scenes/night.scene` with a `Lens_Volume`, a capture
+  blend and the circle of confusion) and, in `lights/night.scene` with a `Lens_Volume`, a capture
   per effect against the same view without it (`--reference`) and `--repeat` (the image does not
   change between frames). Motion blur is captured by flying with `editor.input` (right button and
   a key held) and `editor.capture` with UI before releasing them.

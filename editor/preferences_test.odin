@@ -1,10 +1,8 @@
 package editor
 
 import "core:os"
-import "core:slice"
 import "core:strings"
 import "core:testing"
-import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
@@ -51,7 +49,7 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect(t,strings.has_suffix(f.p.file,"/.mirai/"+PREFERENCES_FILE),f.p.file)
     defer delete(f.p.file)
     f.g.layout.bottom_open,f.g.layout.bottom_height=true,300
-    f.c.view.size,f.c.view.mode=96,.Grid
+    f.c.view.columns,f.c.view.mode=7,.Grid
     f.v.snap,f.v.fly_speed=true,9
     f.console.hidden={.Debug,.Info}
     f.n.players=3
@@ -60,10 +58,10 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     data,error:=os.read_entire_file(f.p.file,context.temp_allocator)
     testing.expect(t,error==nil)
     text:=string(data)
-    for part in ([]string{`"bottom_height": 300`,`"size": 96`,`"snap": true`,`"players": 3`,`"show_agents_in_scene": false`,`"Info"`}) {
+    for part in ([]string{`"bottom_height": 300`,`"columns": 7`,`"snap": true`,`"players": 3`,`"show_agents_in_scene": false`,`"Info"`}) {
         testing.expectf(t,strings.contains(text,part),"%s in %s",part,text)
     }
-    testing.expectf(t,!strings.contains(text,`"left_open"`) && !strings.contains(text,`"show_names"`),"only what differs: %s",text)
+    testing.expectf(t,!strings.contains(text,`"left_open"`) && !strings.contains(text,`"show_parts"`),"only what differs: %s",text)
     // The next editor starts from the code and reads the file over it.
     path:=f.p.file
     f.p.file=""
@@ -72,7 +70,7 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect_value(t,f.p.file,path)
     delete(path)
     testing.expect(t,f.g.layout.bottom_open && f.g.layout.bottom_height==300 && f.g.layout.left_open)
-    testing.expect(t,f.c.view.size==96 && f.c.view.show_names)
+    testing.expect(t,f.c.view.columns==7 && f.c.view.arrangement==.Names)
     testing.expect(t,f.v.snap && f.v.fly_speed==9 && f.v.grid==0.5)
     testing.expect(t,f.console.hidden=={.Debug,.Info} && f.n.players==3 && !f.ai.show_agents_in_scene)
     // Nothing changed: nothing is written; a Play keeps its layout out of the file.
@@ -95,16 +93,16 @@ a_headless_editor_neither_reads_nor_writes_preferences_unless_asked :: proc(t:^t
     defer free(f.ai)
     preferences_test_open(f,folder)
     preferences_open(&f.s,{})
-    f.c.view.size=120
+    f.c.view.columns=8
     preferences_save(&f.s)
     delete(f.p.file)
     preferences_test_open(f,folder)
     preferences_open(&f.s,{headless=true})
-    testing.expect(t,f.p.file=="" && f.c.view.size==CONTENT_VIEW_DEFAULT.size)
-    f.c.view.size=50
+    testing.expect(t,f.p.file=="" && f.c.view.columns==CONTENT_VIEW_DEFAULT.columns)
+    f.c.view.columns=5
     preferences_save(&f.s)
     preferences_open(&f.s,{headless=true,preferences=true})
-    testing.expect(t,f.p.file!="" && f.c.view.size==120)
+    testing.expect(t,f.p.file!="" && f.c.view.columns==8)
     delete(f.p.file)
     // Without the engine there is nowhere to keep them.
     preferences_test_open(f,"")
@@ -151,11 +149,8 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     f.s.project_root=project
     preferences_open(&f.s,{})
     content_place_set(&f.c,"Meshes/nested")
-    f.c.categories,f.c.unused,f.c.recent_closed={.Mesh},true,true
-    f.c.view.chip_kinds[0]=CONTENT_TEST_PLUGIN_KIND
-    append(&f.c.kinds,CONTENT_TEST_PLUGIN_KIND)
-    open:=[?]u64{CONTENT_FAVORITES_GROUP,content_test_hash("Meshes"),content_test_hash("Meshes/nested")}
-    append(&f.c.open,..open[:])
+    f.c.categories,f.c.unused={.Mesh},true
+    content_enter(&f.c,.None,"Meshes/nested")
     f.c.filter_length=copy(f.c.filter[:],"box")
     preferences_save(&f.s)
     data,_:=os.read_entire_file(f.p.marks_file,context.temp_allocator)
@@ -167,13 +162,12 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     f.s.project_root=project
     preferences_open(&f.s,{})
     defer {delete(f.p.file);delete(f.p.marks_file);core.value_free(&f.c,type_info_of(Content))}
-    expect_kept :: proc(t:^testing.T,c:^Content,open:[]u64) {
+    expect_kept :: proc(t:^testing.T,c:^Content) {
         testing.expect_value(t,string(c.place[:c.place_length]),"Meshes/nested")
-        testing.expect(t,c.categories=={.Mesh} && c.unused && c.recent_closed && c.filter_length==0)
-        testing.expect(t,slice.equal(c.kinds[:],[]asset.Fourcc{CONTENT_TEST_PLUGIN_KIND}))
-        testing.expect(t,slice.equal(c.open[:],open))
+        testing.expect_value(t,string(c.at.folder[:c.at.length]),"Meshes/nested")
+        testing.expect(t,c.categories=={.Mesh} && c.unused && c.filter_length==0)
     }
-    expect_kept(t,&f.c,open[:])
+    expect_kept(t,&f.c)
     testing.expect(t,f.c.restore)
     // The registry still has all of it: the browser is left as it was read
     // and nothing is written again.
@@ -181,7 +175,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     defer content_test_registry_free(&registry)
     content_registry_read(&f.c,&registry,{CONTENT_TEST_PLUGIN_KIND})
     content_navigation_restore(&f.c,&registry)
-    expect_kept(t,&f.c,open[:])
+    expect_kept(t,&f.c)
     testing.expect(t,!f.c.restore)
     written:=f.p.marks_written
     preferences_save(&f.s)

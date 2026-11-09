@@ -40,9 +40,9 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         skins:core.Table(eanim.Pose_Source);defer core.table_destroy(&skins);scene.skins=&skins
         meshes:core.Table(erender.Mesh_Renderer);defer core.table_destroy(&meshes);scene.meshes=&meshes
         rig:=core.create(&entities)
-        mesh,found:=asset.registry_find_path(&assets.registry,"models/mirai/output_unwrapped.mesh")
-        skeleton,found_skeleton:=asset.registry_find_path(&assets.registry,"models/mirai/Armature.skeleton")
-        animation,found_animation:=asset.registry_find_path(&assets.registry,"animations/mirai_locomotion.anim")
+        mesh,found:=asset.registry_find_path(&assets.registry,"characters/mirai/output_unwrapped.mesh")
+        skeleton,found_skeleton:=asset.registry_find_path(&assets.registry,"characters/mirai/Armature.skeleton")
+        animation,found_animation:=asset.registry_find_path(&assets.registry,"characters/mirai/mirai_locomotion.anim")
         if !testing.expect(t,found && found_skeleton && found_animation,"generate the Mirai gallery assets before this integration test") {return}
         core.add(&transforms,rig,core.TRANSFORM_IDENTITY);core.add(&meshes,rig,{mesh=mesh.id})
         core.table_settle(&transforms,&entities);core.table_settle(&meshes,&entities)

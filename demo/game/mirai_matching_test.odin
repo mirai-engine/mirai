@@ -23,7 +23,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo",root),capacity=512})) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids:[2]base.Asset_Id
-    for file,i in ([2]string{"assets/animations/mirai_matching.match","assets/models/mirai/output_unwrapped.mesh"}) {
+    for file,i in ([2]string{"assets/characters/mirai/mirai_matching.match","assets/characters/mirai/output_unwrapped.mesh"}) {
         record,present:=asset.registry_find_path(&f.assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id

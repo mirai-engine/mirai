@@ -47,24 +47,25 @@ Theme :: struct {
     activate_on_press:bool,
 }
 
-// Ink and violet: neutral greys a step lighter at each layer (bar, canvas,
-// panel, card, raised) so a panel stands out from what is behind it and a card
-// from its panel, and a saturated violet that keeps white text above 4.5:1.
+// Graphite and violet: neutral greys a step lighter at each layer (bar, panel,
+// field, raised) so a panel stands out from what is behind it and a field from
+// its panel, and a saturated violet, for what matters most, that keeps white
+// text above 4.5:1.
 THEME_EDITOR :: Theme{
     backdrop     = {6,6,9,170},
     bar_top      = {11,11,14,255},
     bar_bottom   = {11,11,14,255},
-    panel        = {28,28,34,255},
-    popup        = {36,36,43,255},
+    panel        = {27,27,32,255},
+    popup        = {38,38,44,255},
     raised       = {52,52,61,255},
     field        = {44,44,52,255},
     field_hover  = {52,52,61,255},
     field_active = {58,52,96,255},
-    well         = {18,18,22,255},
+    well         = {18,18,21,255},
     well_stroke  = {60,60,70,255},
     well_stroke_hover = {92,92,106,255},
     border       = {58,58,68,255},
-    divider      = {49,49,58,255},
+    divider      = {46,46,54,255},
     rule         = {255,255,255,30},
     row_rule     = {255,255,255,16},
     card         = {39,39,47,255},
@@ -74,11 +75,11 @@ THEME_EDITOR :: Theme{
     toggle_on    = {36,30,68,255},
     toggle_on_stroke = {112,80,240,255},
     success      = {107,210,138,255},
-    text_caption = {163,163,174,255},
+    text_caption = {184,184,194,255},
     text         = {242,242,245,255},
-    text_muted   = {179,179,189,255},
-    text_faint   = {145,145,155,255},
-    text_label   = {196,196,205,255},
+    text_muted   = {184,184,194,255},
+    text_faint   = {142,142,153,255},
+    text_label   = {184,184,194,255},
     text_body    = {212,212,219,255},
     accent       = {112,80,240,255},
     accent_hover = {129,105,245,255},
@@ -92,7 +93,7 @@ THEME_EDITOR :: Theme{
     axis         = {{239,90,90,255},{76,199,119,255},{75,142,240,255},{179,179,189,255}},
     channel      = {{230,90,90,255},{90,200,110,255},{90,140,240,255},{150,150,160,255}},
 
-    radius_panel   = 10,
+    radius_panel   = 8,
     radius_popup   = 6,
     radius_control = 5,
 

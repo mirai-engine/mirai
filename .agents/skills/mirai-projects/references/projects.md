@@ -535,6 +535,9 @@ any user and nothing in the engine depends on them; bash remains only in the lau
   ([turns](build.md#turns-between-processes)); `mirai measure -- ./mirai <args>` also works on
   Windows, with the Git Bash of `mirai.cmd`.
 - `scripts/check_docs.py` valida la documentación.
+- `scripts/video_frames.py` takes the frames (a labelled strip like those of `play.capture`) and
+  the sound of a section of a YouTube or X video, or of a file, to compare with Mirai captures. It
+  needs Windows, and what it downloads stays in `.mirai/tmp/video_frames`, never in git.
 
 ### ACP agents
 

@@ -193,7 +193,7 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     if !waved || !strode {o.failed=true;return}
     clips:=[]asset.Animation_Clip_Desc{idle,walk,mirai_clip_scaled(walk,"jog",.72,1.2),wave,stride_clip}
     for &clip in clips {clip.skeleton=idle.skeleton}
-    file:="assets/animations/mirai_gallery.anim"
+    file:="assets/characters/mirai/mirai_gallery.anim"
     check(o,file,asset.animation_save(path(o,file),&o.types,{id=id,clips=clips}))
     // What the stride covers and how long it lasts: the window of its warp (mirai_reach.motion).
     return id,advance,duration

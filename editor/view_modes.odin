@@ -239,7 +239,7 @@ view_mode_build :: proc(s: ^Session) {
 		label = entry.title if entry.title != "" else entry.label
 	}
 	id, popup := shell_id(g, "view_mode"), shell_id(g, "view_mode_popup")
-	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, style = .Field, height = 26, size = ctx.theme.font_small, active = ui.popup_is_open(ctx, popup)}).clicked {
+	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, style = .Ghost, height = 26, size = ctx.theme.font_small, active = ui.popup_is_open(ctx, popup)}).clicked {
 		anchor, _ := ui.widget_rect(ctx, id)
 		ui.popup_open(ctx, popup, {anchor.x, anchor.y + anchor.h, anchor.w, 0})
 	}

@@ -779,6 +779,10 @@ a_pixel_budget_lowers_the_views_of_the_window_together :: proc(t:^testing.T) {
     for view in r.views[:2] {testing.expect(t,view.targets.width==50 && view.targets.height==50 && view.targets.output_width==100)}
     testing.expect(t,renderer_frame(r,{views=views[:1]}),r.error)
     testing.expect_value(t,r.views[0].targets.width,u32(71))
+    // The visible part of a wider view has the scale of the whole: it draws fewer pixels.
+    part:=[1]Frame_View{{camera=camera,rect={100,0,100,100},view_width=200}}
+    testing.expect(t,renderer_frame(r,{views=part[:]}),r.error)
+    testing.expect_value(t,r.views[0].targets.width,u32(50))
     // Never below the least render scale.
     budget(t,r,&settings,0.0001)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)

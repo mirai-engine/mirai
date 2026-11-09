@@ -14,7 +14,7 @@ import "mirai:ui"
 // it, and drowns when its breath runs out. The breath is a rule of this game
 // over how deep the physics says its head is.
 
-RAFT_SCENE :: "scenes/raft.scene"
+RAFT_SCENE :: "raft/raft.scene"
 RAFT_PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x7261667400000001}
 RAFT_DROWNED_SECONDS :: 3 // the message stays this long
 

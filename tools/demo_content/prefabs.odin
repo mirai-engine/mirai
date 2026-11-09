@@ -118,7 +118,7 @@ write_prefabs :: proc(o:^Out) {
     put(&s,eyes,"Audio_Listener",&audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,game.EYE_HEIGHT,0}}
     put(&s,eyes,"Camera_Follow",&first_person)
-    prefab_save(o,&s,"assets/prefabs/Player.prefab")
+    prefab_save(o,&s,"assets/characters/player/Player.prefab")
 
     // The person and the dog of the control scene, each with a camera behind it.
     person:Scene_Out
@@ -134,7 +134,7 @@ write_prefabs :: proc(o:^Out) {
     put(&person,1,"Drivable",&inp.Drivable{camera=core.Entity(view)})
     control_visual(&person,1,false)
     aim_camera(&person,"Person aim camera",demo_action(o,.Aim))
-    prefab_save(o,&person,"assets/prefabs/Person.prefab")
+    prefab_save(o,&person,"assets/control/Person.prefab")
 
     dog:Scene_Out
     prefab_root(o,&dog,game.DOG_PREFAB,"Dog")
@@ -148,7 +148,7 @@ write_prefabs :: proc(o:^Out) {
     dog_view:=behind_camera(&dog,"Dog camera",0.45)
     put(&dog,1,"Drivable",&inp.Drivable{camera=core.Entity(dog_view)})
     control_visual(&dog,1,true)
-    prefab_save(o,&dog,"assets/prefabs/Dog.prefab")
+    prefab_save(o,&dog,"assets/control/Dog.prefab")
 
     thrown:Scene_Out
     prefab_root(o,&thrown,game.THROWN_CUBE,"Thrown cube")
@@ -167,5 +167,5 @@ write_prefabs :: proc(o:^Out) {
     put(&thrown,1,"Collider",&collider)
     put(&thrown,1,"Projectile",&projectile)
     put(&thrown,1,"Traveler",&portals.Traveler{})
-    prefab_save(o,&thrown,"assets/prefabs/Thrown cube.prefab")
+    prefab_save(o,&thrown,"assets/characters/player/Thrown cube.prefab")
 }

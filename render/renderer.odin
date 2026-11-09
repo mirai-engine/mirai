@@ -445,6 +445,7 @@ Frame_View :: struct {
 	camera:Camera,
 	camera_cut:bool,
 	rect:[4]i32, // where in the drawable; for a view into a texture, z and w are its size
+	view_width:i32, // of the whole view rect is the visible part of, for the pixels of the settings; 0: the width of rect
 	disabled:bool,
 	texture:Texture_Handle, // of view_texture_add: the view is drawn into it, before those of the window
 	pipeline:Render_Pipeline_Handle, // 0: the main pipeline of the frame for a view of the window, Full for one drawn into a texture

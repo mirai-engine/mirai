@@ -2,6 +2,7 @@ package editor
 
 import "core:strings"
 import "core:testing"
+import "mirai:cook/import/sources"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
@@ -51,4 +52,12 @@ asset_import_takes_the_skeleton_of_the_clips_by_its_id :: proc(t:^testing.T) {
     // An id passes on to the import, which here has no asset folder to write into.
     known:=run(&s,"0123456789abcdef0123456789abcdef")
     testing.expect(t,known.failed && known.error.code==api.SERVER_ERROR && strings.contains(known.error.message,"asset folder"),known.error.message)
+}
+
+@(test)
+an_import_goes_where_it_is_asked_and_no_folder_is_named_after_its_type :: proc(t:^testing.T) {
+    Case :: struct {kind:sources.Source_Kind,folder,model,expected:string}
+    for c in ([]Case{{.Model,"","knight","knight"},{.Model,"characters","knight","characters/knight"},{.Image,"","",""},{.Image,"surfaces/wood","","surfaces/wood"},{.Sound,"","",""}}) {
+        testing.expect_value(t,import_destination(c.kind,c.folder,c.model),c.expected)
+    }
 }

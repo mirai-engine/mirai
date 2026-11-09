@@ -188,7 +188,7 @@ prepare_views :: proc(r:^Renderer,views:[]Frame_View,alone:=false) -> bool {
         if view.texture!=0 {continue}
         windows+=1
         whole=view.rect=={0,0,i32(r.window_width),i32(r.window_height)}
-        pixels+=f32(view.rect.z)*f32(view.rect.w)
+        pixels+=f32(view.view_width>0?view.view_width:view.rect.z)*f32(view.rect.w)
     }
     count:=windows if windows>1 || windows==1 && !whole else 0
     if count>VIEW_CAPACITY {set_error(r,"too many views: %d",count);return false}

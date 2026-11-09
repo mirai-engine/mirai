@@ -44,7 +44,7 @@ Procedures, with their action and API method:
   without rotation and with its scale, and the subtree's instances travel with it.
   `prefab_create_entities` (from Details, Edit or the Scene menu) reduces the selection to its roots
   and, with several, creates a group that keeps their world poses; grouping, link and file are one
-  step. The action creates `prefabs/<name of the active entity>` and is disabled if one of the roots
+  step. The action creates `<name of the active entity>` beside the scene and is disabled if one of the roots
   is an internal member of an instance.
 - `prefab_instantiate` (drag to the viewport, placement from Assets, `prefab.instantiate`) places
   an instance with new ids and returns the root.

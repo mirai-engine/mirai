@@ -485,7 +485,7 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
     subject_name:=""
     if p.mesh!={} {subject_name=editor.asset_name_of(a,p.mesh)} else if scene.names!=nil {subject_name=core.name_get(core.read(scene.names),root)}
     animation_say(d,p,clip,duration,subject_name)
-    document,details,room:=editor.asset_workspace_details(g)
+    document,details,room:=editor.asset_workspace_details(s)
     id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"animation")
     if ui.panel(ctx,id,document) {
         ui.id_push(ctx,id)
@@ -495,7 +495,9 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column}) {
             it,area:=editor.asset_image_show(s,&p.image)
             editor.asset_view_input(ctx,&p.camera,it,area)
-            animation_timeline(s,p,a,clip,duration)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={editor.asset_workspace_under(g),0,0,0}}) {
+                animation_timeline(s,p,a,clip,duration)
+            }
         }
     }
     details_id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"animation_details")

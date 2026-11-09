@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "identifier": "",
   "icon": "",
-  "start_scene": "scenes/main.scene",
+  "start_scene": "arena/main.scene",
   "plugins": ["spawn", "physics", "destruct", "multiplayer"],
   "window": {
     "title": "",

@@ -60,5 +60,5 @@ write_destruction_scene :: proc(o:^Out) {
         o.failed=true
         return
     }
-    check(o,"assets/scenes/destruction.scene",asset.scene_save(&s.scene,path(o,"assets/scenes/destruction.scene")))
+    check(o,"assets/destruction/destruction.scene",asset.scene_save(&s.scene,path(o,"assets/destruction/destruction.scene")))
 }

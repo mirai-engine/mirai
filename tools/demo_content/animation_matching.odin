@@ -26,7 +26,7 @@ gallery_mirai_matching :: proc(o:^Out,animation:base.Asset_Id) -> base.Asset_Id 
     info.interval=.2;info.bias=.5;info.keep_loop_phase=true;info.stationary_speed=.15
     // Cover both the slow automatic path and the player's full walking speed.
     info.min_rate=.05;info.max_rate=1.3
-    file:="assets/animations/mirai_matching.match"
+    file:="assets/characters/mirai/mirai_matching.match"
     check(o,file,anim.match_save(path(o,file),&o.types,id,{info=info,clips=clips[:]}))
     return id
 }
@@ -42,7 +42,7 @@ gallery_mirai_physical :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,mat
     capsule:=phys.collider_character()
     put(s,root,"Character",&character);put(s,root,"Walk",&walk);put(s,root,"Collider",&capsule)
     animation,_:=asset.scene_get(&s.scene,root,"Animation",anim.Animation);animation.motion=motion;put(s,root,"Animation",&animation)
-    gallery_profile(g.o,s,root,"mirai_grounding",{grounding={mirai_feet(g.model)}})
+    gallery_profile(g.o,s,root,"characters/mirai","mirai_grounding",{grounding={mirai_feet(g.model)}})
     return root
 }
 

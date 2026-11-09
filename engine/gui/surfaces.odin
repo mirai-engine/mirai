@@ -73,11 +73,15 @@ surface_create :: proc(gui:^Gui,app:^host.App,p:int) -> bool {
     return true
 }
 
-// The part of the window of player p of count, in points: all of it for the window.
+// The part of the window of player p of count, in points: for the window, all
+// of it right of what the editor keeps at the side of the view.
 @(private)
 surface_rect :: proc(app:^host.App,p,count:int) -> [4]f32 {
     size:=app.ui_input.size
-    if p==0 {return {0,0,size.x,size.y}}
+    if p==0 {
+        left:=host.app_scene_points(app).x
+        return {left,0,size.x-left,size.y}
+    }
     r:=host.app_player_rect(app,p-1,count)
     d:=max(app.density,0.01)
     return {f32(r.x),f32(r.y),f32(r.z),f32(r.w)}/d
