@@ -7,6 +7,7 @@ import "core:mem"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
@@ -665,19 +666,7 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
 
 // The value a component starts with when the editor adds it.
 component_default :: proc(type:typeid,out:[]u8) {
-    put :: proc(out:[]u8,value:$T) {
-        value:=value
-        if len(out)>=size_of(T) {mem.copy(raw_data(out),&value,size_of(T))}
-    }
-    mem.zero_slice(out)
-    switch type {
-    case core.Transform:          put(out,core.TRANSFORM_IDENTITY)
-    case erender.Mesh_Renderer:     put(out,erender.Mesh_Renderer{shape=.Cube})
-    case erender.Tint:            put(out,erender.TINT_DEFAULT)
-    case erender.Camera:          put(out,erender.CAMERA_DEFAULT)
-    case erender.Exposure:        put(out,erender.EXPOSURE_DEFAULT)
-    case erender.Draw_Offset:     put(out,erender.Draw_Offset{rotation=1})
-    }
+    author.component_default(type,out)
 }
 
 // Offsets of the Entity fields of a type, nested ones included.

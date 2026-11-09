@@ -1,5 +1,7 @@
 package serial
 
+import "base:runtime"
+
 // The pieces of JSON written by hand around the values of a schema.
 
 // A key of an object, after a comma unless it is the first.
@@ -23,4 +25,48 @@ json_list :: proc(w:^Writer,values:[]f32) {
         json_number(w,value)
     }
     write_u8(w,']')
+}
+
+// The JSON text indented two spaces per level, with its objects in the order it has them.
+json_pretty :: proc(text:string,allocator:runtime.Allocator) -> string {
+    w:Writer
+    writer_init(&w,len(text)*2+64,allocator)
+    depth,i:=0,0
+    for i<len(text) {
+        c:=text[i]
+        switch c {
+        case ' ','\t','\n','\r':
+        case '"':
+            end:=i+1
+            for end<len(text) && text[end]!='"' {end+=text[end]=='\\'?2:1}
+            end=min(end+1,len(text))
+            write_bytes(&w,transmute([]u8)text[i:end])
+            i=end-1
+        case '{','[':
+            close:=u8(c=='{'?'}':']')
+            next:=i+1
+            for next<len(text) && (text[next]==' ' || text[next]=='\n' || text[next]=='\r' || text[next]=='\t') {next+=1}
+            if next<len(text) && text[next]==close {
+                write_u8(&w,c);write_u8(&w,close)
+                i=next
+            } else {
+                write_u8(&w,c)
+                depth+=1
+                text_write_break(&w,depth)
+            }
+        case '}',']':
+            depth=max(depth-1,0)
+            text_write_break(&w,depth)
+            write_u8(&w,c)
+        case ',':
+            write_u8(&w,',')
+            text_write_break(&w,depth)
+        case ':':
+            text_write_raw(&w,": ")
+        case:
+            write_u8(&w,c)
+        }
+        i+=1
+    }
+    return string(writer_bytes(&w))
 }

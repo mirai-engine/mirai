@@ -297,46 +297,7 @@ rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:r
 
 // The JSON text indented two spaces per level, with its objects in the order it has them.
 json_pretty :: proc(text:string,allocator:runtime.Allocator) -> string {
-    w:serial.Writer
-    serial.writer_init(&w,len(text)*2+64,allocator)
-    depth,i:=0,0
-    for i<len(text) {
-        c:=text[i]
-        switch c {
-        case ' ','\t','\n','\r':
-        case '"':
-            end:=i+1
-            for end<len(text) && text[end]!='"' {end+=text[end]=='\\'?2:1}
-            end=min(end+1,len(text))
-            serial.write_bytes(&w,transmute([]u8)text[i:end])
-            i=end-1
-        case '{','[':
-            close:=u8(c=='{'?'}':']')
-            next:=i+1
-            for next<len(text) && (text[next]==' ' || text[next]=='\n' || text[next]=='\r' || text[next]=='\t') {next+=1}
-            if next<len(text) && text[next]==close {
-                serial.write_u8(&w,c);serial.write_u8(&w,close)
-                i=next
-            } else {
-                serial.write_u8(&w,c)
-                depth+=1
-                serial.text_write_break(&w,depth)
-            }
-        case '}',']':
-            depth=max(depth-1,0)
-            serial.text_write_break(&w,depth)
-            serial.write_u8(&w,c)
-        case ',':
-            serial.write_u8(&w,',')
-            serial.text_write_break(&w,depth)
-        case ':':
-            serial.text_write_raw(&w,": ")
-        case:
-            serial.write_u8(&w,c)
-        }
-        i+=1
-    }
-    return string(serial.writer_bytes(&w))
+    return serial.json_pretty(text,allocator)
 }
 
 // JSON text on one line: outside strings a line break is only formatting.

@@ -22,6 +22,7 @@ import "mirai:std/subprocess"
 //   decl/            the declarations projects compile against instead of those sources
 //   mirai-editor, mirai-player  the programs that load the library of a project
 //   mirai-import     the program of mirai import, on the editor library
+//   mirai-author     the program of mirai ui and mirai scene, on the editor library
 //   stage-runtime/, stage-editor/  the copies the libraries are built from (declare.odin)
 //
 // Each part is built again only for what it reads: the runtime library for
@@ -82,6 +83,7 @@ Engine_Paths :: struct {
     runtime_import,editor_import:string,  // what links against them
     editor_program,player_program:string,
     import_program:string,                // runs cook/import/sources.command: what mirai import does
+    author_program:string,                // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
 }
 
@@ -154,6 +156,7 @@ engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allo
     paths.editor_program=project.path(paths.folder,strings.concatenate({"mirai-editor",EXECUTABLE_EXTENSION},context.temp_allocator))
     paths.player_program=project.path(paths.folder,strings.concatenate({"mirai-player",EXECUTABLE_EXTENSION},context.temp_allocator))
     paths.import_program=project.path(paths.folder,strings.concatenate({"mirai-import",EXECUTABLE_EXTENSION},context.temp_allocator))
+    paths.author_program=project.path(paths.folder,strings.concatenate({"mirai-author",EXECUTABLE_EXTENSION},context.temp_allocator))
     paths.stamp=project.path(paths.folder,ENGINE_STAMP)
     return
 }
@@ -231,7 +234,7 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths) ->
     plan.runtime_current=previous.runtime==plan.runtime && library_present(paths.runtime,paths.runtime_import) && os.is_dir(paths.decl)
     plan.editor_current=previous.editor==plan.editor && library_present(paths.editor,paths.editor_import)
     programs:=previous.programs==plan.programs
-    for program in ([3]string{paths.editor_program,paths.player_program,paths.import_program}) {programs&&=os.is_file(program)}
+    for program in ([4]string{paths.editor_program,paths.player_program,paths.import_program,paths.author_program}) {programs&&=os.is_file(program)}
     plan.current=plan.runtime_current && plan.editor_current && programs
     return
 }
@@ -389,7 +392,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
     }
 
     // The programs are built against the declarations of both libraries.
-    programs:=[3]struct{name,package_name,source,output:string}{
+    programs:=[4]struct{name,package_name,source,output:string}{
         {"editor program","editor","package main\n\nimport \"core:os\"\nimport \"mirai:editor\"\n\nmain :: proc() {os.exit(editor.launch(os.args[1:]))}\n",paths.editor_program},
         {"player program","host","package main\n\nimport \"core:os\"\nimport \"mirai:host\"\n\nmain :: proc() {os.exit(host.launch(os.args[1:]))}\n",paths.player_program},
         {"import program","import",`package main
@@ -399,6 +402,13 @@ import "mirai:cook/import/sources"
 
 main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
 `,paths.import_program},
+        {"author program","author",`package main
+
+import "core:os"
+import "mirai:cook/author"
+
+main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
+`,paths.author_program},
     }
     build_programs:=stamp.programs!=plan.programs
     for program in programs {
@@ -440,7 +450,7 @@ main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.t
 engine_installed_present :: proc(root:string) -> bool {
     paths:=engine_paths(root,ENGINE_MODE_INSTALLED,context.temp_allocator)
     present:=library_present(paths.runtime,paths.runtime_import) && library_present(paths.editor,paths.editor_import) && os.is_dir(paths.decl) && os.is_file(paths.stamp)
-    for program in ([3]string{paths.editor_program,paths.player_program,paths.import_program}) {present&&=os.is_file(program)}
+    for program in ([4]string{paths.editor_program,paths.player_program,paths.import_program,paths.author_program}) {present&&=os.is_file(program)}
     return present
 }
 

@@ -50,7 +50,7 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     testing.expect(t,!engine_current(root,.Keep))
     paths:=engine_paths(root,.Dev)
     testing.expect(t,os.make_directory_all(paths.decl)==nil)
-    for file in ([]string{paths.runtime,paths.runtime_import,paths.editor,paths.editor_import,paths.editor_program,paths.player_program,paths.import_program,paths.stamp}) {
+    for file in ([]string{paths.runtime,paths.runtime_import,paths.editor,paths.editor_import,paths.editor_program,paths.player_program,paths.import_program,paths.author_program,paths.stamp}) {
         testing.expect(t,os.write_entire_file(file,"built")==nil,file)
     }
     result=engine_build({engine_root=root,mode=.Dev})

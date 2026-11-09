@@ -247,14 +247,14 @@ path_why :: proc(info:^core.World_Info,scope:Path_Scope,path:string,kind:Bind_Ki
     _,leaf,walked:=path_walk(info,scope,path,{},&stop)
     if walked {
         if leaf==nil || type_fits(leaf,kind) {return fmt.tprintf("the game cannot show it there: this binding takes %s",takes[kind])}
-        return fmt.tprintf("it is a %v, and this binding takes %s",leaf.id,takes[kind])
+        return fmt.tprintf("it is a %v, and this binding takes %s",leaf,takes[kind])
     }
     if stop.name=="" {return "the game does not have it"}
     if stop.leaf!=nil {
         if array,is_array:=runtime.type_info_base(stop.leaf).variant.(runtime.Type_Info_Array);is_array {
             if _,number:=strconv.parse_uint(stop.name,10);number {return fmt.tprintf("the array has %d elements: %s is past the last, %d",array.count,stop.name,array.count-1)}
         }
-        return fmt.tprintf("'%s' is a %v, which has no fields for the path to go on to",stop.name,stop.leaf.id)
+        return fmt.tprintf("'%s' is a %v, which has no fields for the path to go on to",stop.name,stop.leaf)
     }
     names:=make([dynamic]string,context.temp_allocator)
     entries:=path_entries(info,stop.scope,.Data)
@@ -272,7 +272,7 @@ path_why :: proc(info:^core.World_Info,scope:Path_Scope,path:string,kind:Bind_Ki
     case .Entity:  return fmt.tprintf("the game has no component '%s' for an Entity to lead to; %s %s",stop.name,"it declares" if game else "there are",has)
     case .Struct:
     }
-    return fmt.tprintf("%v has no field '%s'; it has %s",stop.scope.info.id,stop.name,has)
+    return fmt.tprintf("%v has no field '%s'; it has %s",stop.scope.info,stop.name,has)
 }
 
 

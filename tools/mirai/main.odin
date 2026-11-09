@@ -45,6 +45,8 @@ COMMANDS :: [?]Command{
     {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
     {"texts",TEXTS_USAGE,"Takes the translatable texts of the project's .ui files to a CSV to translate, and back, through the open editor",cmd_texts},
+    {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
+    {"scene",SCENE_USAGE,"Reads, writes and checks the scenes and prefabs of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> --out <folder> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
 }
