@@ -10,7 +10,12 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 ## Map
 
 - Package contract (units, context, layout, drawing, font, widgets, data tree, world panels):
-  [references/ui.md](references/ui.md).
+  [units](references/ui.md#units), [context and frame](references/ui.md#context-and-frame),
+  [ids and layout](references/ui.md#ids-and-layout), [draw list](references/ui.md#draw-list),
+  [font](references/ui.md#font), [interaction](references/ui.md#interaction),
+  [widgets](references/ui.md#widgets), [game interfaces](references/ui.md#game-interfaces),
+  [data tree](references/ui.md#data-tree), [world panels](references/ui.md#world-panels) and
+  [known limits](references/ui.md#known-limits).
 - Files of `ui/` by topic:
   - Frame and layout: `context.odin`, `layout.odin` (`Box`), `element.odin` (elements and their
     drawing in order), `layout_tree.odin` (sizes, text, placement and commands), `retain.odin`
@@ -31,8 +36,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
 - Inspecting and editing a `.ui` in the editor: the
-  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md) plugin. Format of the `.ui` asset:
-  [kinds.md](../mirai-assets/references/kinds.md#interface).
+  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md#document) plugin.
+  Format of the `.ui` asset: [kinds.md](../mirai-assets/references/kinds.md#interface).
 
 ## Workflow
 
@@ -84,6 +89,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **Containers with clip up to `Context_Desc.max_clips`**; the others are built without clip and
   counted in `dropped_clips`. Containers nest up to `LAYOUT_DEPTH`: a deeper one is discarded with
   its content and counted in `dropped_elements`.
+- **No order of calls ends the process.** An id scope, a float, a layer, a clip or a scissor nested
+  deeper than its stack holds is not applied and is counted (`dropped_nesting`, `dropped_clips`),
+  and its end takes nothing off. An end without its begin does nothing, and `frame_end` closes what
+  a frame left open and counts it in `layout_errors`.
 - **Editable text is US-keyboard ASCII**, one line, without shaping or IME. Displayed text is UTF-8
   within the glyphs of `FONT_RANGES` (Latin, Greek, Cyrillic and `FONT_EXTRA`); the rest is shown
   as `?`. GPOS kerning moves the pen; nothing substitutes glyphs.

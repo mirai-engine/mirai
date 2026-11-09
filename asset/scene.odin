@@ -35,7 +35,6 @@ import "mirai:std/serial"
 // everything else.
 
 SCENE_VERSION :: 2
-SCENE_OLDEST :: SCENE_VERSION
 ENTITY_NAME_BYTES :: 64
 OVERRIDE_PATH_BYTES :: 96
 
@@ -644,8 +643,7 @@ scene_load :: proc(scene:^Scene,types:^Types,path:string,allocator:=context.allo
 scene_adopt :: proc(scene:^Scene) -> Error {
     doc,types:=&scene.doc,scene.types
     if doc.kind!=KIND_SCENE && doc.kind!=KIND_PREFAB {return .Invalid}
-    if kind_age(doc.kind_version,SCENE_OLDEST,SCENE_VERSION)>=.Too_Old {return .Version}
-    doc.kind_version=SCENE_VERSION
+    if doc.kind_version!=SCENE_VERSION {return .Version}
     entities,found:=document_table(doc,TABLE_ENTITIES)
     if !found || len(doc.tables[entities].columns)!=4 {return .Corrupt}
     if entities!=0 {
@@ -795,7 +793,7 @@ scene_view :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
 scene_view_read :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
     kind:=a.blob.header.kind
     if kind!=KIND_SCENE && kind!=KIND_PREFAB {return {},.Invalid}
-    if kind_age(a.blob.header.kind_version,SCENE_OLDEST,SCENE_VERSION)>=.Too_Old {return {},.Version}
+    if a.blob.header.kind_version!=SCENE_VERSION {return {},.Version}
     view.ids=asset_rows(a,types,TABLE_ENTITIES,"id",base.Entity_Id) or_return
     view.parents=asset_rows(a,types,TABLE_ENTITIES,"parent",base.Entity_Id) or_return
     view.orders=asset_rows(a,types,TABLE_ENTITIES,"order",u32) or_return

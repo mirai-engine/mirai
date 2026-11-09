@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:host"
 import "mirai:project"
+import "mirai:std/serial"
 
 RESTART_ASSETS :: "restart-assets"
 
@@ -41,7 +42,7 @@ documents_save_restart :: proc(s:^Session,folder:string) -> (file:string,ok:bool
     data,error:=json.marshal(saved,{},context.temp_allocator)
     if error!=nil {return "",false}
     file=project.path(folder,"restart-documents.json",allocator=context.temp_allocator)
-    return file,os.write_entire_file(file,data)==nil
+    return file,serial.file_write_atomic(file,data)==.None
 }
 
 // The tabs a file keeps, the first in the tab in front or, with beside,

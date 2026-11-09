@@ -407,7 +407,7 @@ api_texts_export :: proc(s:^editor.Session,call:^api.Call) {
         if !records_read(a,file.id,&records,context.temp_allocator) {continue}
         count+=texts_csv_file(&b,file.path,file.id,&records,order,source)
     }
-    if os.write_entire_file(path,transmute([]u8)strings.to_string(b))!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
+    if serial.file_write_atomic(path,transmute([]u8)strings.to_string(b))!=.None {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
     api.call_result(call,Ui_Texts_Exported)^={path=p.path,texts=count}
 }
 

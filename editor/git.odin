@@ -10,6 +10,7 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 // Git from the editor, with the git installed: the project in a repository,
 // its changes, commit, push and pull. An operation is a list of git commands
@@ -158,11 +159,11 @@ git_init :: proc(s:^Session) -> string {
     if !g.available {return "Git was not found"}
     if g.repository {return "The project is already in a repository"}
     ignore:=project.path(s.project_root,".gitignore",allocator=context.temp_allocator)
-    if !os.exists(ignore) && os.write_entire_file(ignore,string(".mirai/\n"))!=nil {return "The .gitignore could not be written"}
+    if !os.exists(ignore) && serial.file_write_atomic(ignore,transmute([]u8)string(".mirai/\n"))!=.None {return "The .gitignore could not be written"}
     attributes:=project.path(s.project_root,".gitattributes",allocator=context.temp_allocator)
     existing,_:=os.read_entire_file(attributes,context.temp_allocator)
     if text,changed:=build.git_attributes(git_plugin_kinds(s),g.lfs,string(existing),context.temp_allocator);changed {
-        if os.write_entire_file(attributes,text)!=nil {return "The .gitattributes could not be written"}
+        if serial.file_write_atomic(attributes,transmute([]u8)text)!=.None {return "The .gitattributes could not be written"}
     }
     git_start(s,.Init)
     return ""

@@ -191,10 +191,10 @@ panels_resolve :: proc(ctx:^Context) {
 }
 
 // Opens a panel of the world; what is built until world_panel_end is laid out
-// in its surface. Returns false, building nothing, when no panel is left.
+// in its surface. Returns false, building nothing, when no panel is left or
+// one is open: panels do not nest.
 world_panel_begin :: proc(ctx:^Context,id:Id,p:World_Panel) -> bool {
-    assert(ctx.surface==0,"World panels do not nest")
-    if ctx.panel_count>=len(ctx.panels) || ctx.skipped>0 {ctx.stats.dropped_panels+=1;return false}
+    if ctx.surface!=0 || ctx.panel_count>=len(ctx.panels) || ctx.skipped>0 {ctx.stats.dropped_panels+=1;return false}
     panel:=panel_place(ctx,id,p)
     if previous:=previous_panel(ctx,id);previous!=nil {panel.pointer,panel.pointed=previous.pointer,previous.pointed}
     index:=ctx.panel_count

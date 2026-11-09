@@ -459,7 +459,7 @@ the reverb of the room where the listener is and what covers each source.
     sends all by default and `play_asset` none.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
-  ([water](../../mirai-plugins/references/water.md#sound)) before `audio_reverb` and
+  ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
   `audio_buses`, from where the listener is (`listener_position`); at zeros it is air.
   `audio_reverb` mixes its reverb by its weight over that of the room, with the same fade, and
   `audio_buses` gives the master the lower cutoff between that of `Audio_Settings` and that of the
@@ -633,7 +633,8 @@ one per local player that has screens or sees a `World_Widget`.
   (`World_Widget`s in view that did not fit: the farthest are left out; `Gui.dropped_widgets`
   counts them), `gui.mesh` (the renderer did not give the texture of a `Mesh`), `gui.events` (more
   than `EVENT_BATCH` events in a frame), `gui.play` and `gui.request` (a request that was not
-  applied); what does not fit in the renderer is `gui.draws` of the world.
+  applied); what does not fit in the renderer is `gui.draws` of the world, and what an interface
+  nests deeper than a frame holds (`ui.Stats.dropped_nesting`), `gui.nesting`.
 - `pointer_consumed`/`keyboard_consumed` say whether the UI had the pointer or the keyboard.
 - Flow: `gui_frame_begin` (`ui`, stage `begin`: plan, copies, rays and which contexts are built),
   `gui_widgets` (the first of `intent`), `gui_frame_end` (`end`: passes layers, panels and textures
@@ -775,9 +776,9 @@ its weight goes from 1 to 0.
   linear toward the center inside; with `radius` 0, the same at any distance. Without any,
   `GRAVITY_WORLD` applies. `gravity_of` is the value of a field at a point, the same for the bodies
   of [physics](../../mirai-physics/references/engine.md#gravity) and for the particles of
-  [vfx](../../mirai-plugins/references/vfx.md#game), which do not depend on physics.
+  [vfx](../../mirai-world/references/vfx.md#game), which do not depend on physics.
 
 ## `vfx`
 
-Particles are the [`vfx`](../../mirai-plugins/references/vfx.md#game) plugin: emitters, `.particle`
+Particles are the [`vfx`](../../mirai-world/references/vfx.md#game) plugin: emitters, `.particle`
 effects, instance values, world clocks and requests.

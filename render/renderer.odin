@@ -783,6 +783,10 @@ dfg_build :: proc(r: ^Renderer) -> bool {
 		return false
 	}
 	cmd := rhi.immediate_begin(d)
+	if cmd == nil {
+		set_error(r, "dfg table: %s", rhi.device_error(d))
+		return false
+	}
 	rhi.cmd_bind_pipeline(cmd, pipeline)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, table)
 	rhi.cmd_dispatch(cmd, groups(DFG_SIZE, 8), groups(DFG_SIZE, 8))

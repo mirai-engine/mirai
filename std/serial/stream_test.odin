@@ -188,6 +188,15 @@ file_errors_name_what_failed :: proc(t:^testing.T) {
     testing.expect_value(t,file_write_atomic(path,buffer[:]),File_Error.None)
     _,limit_error:=file_read(path,limit=3)
     testing.expect_value(t,limit_error,File_Error.Too_Large)
+    // A write that fails leaves the file as it was.
+    staging:=fmt.tprintf("%s.%d.tmp",path,os.get_pid())
+    testing.expect(t,os.make_directory(staging)==nil)
+    defer os.remove(staging)
+    other:=[?]u8{9,9,9,9,9}
+    testing.expect_value(t,file_write_atomic(path,other[:]),File_Error.Open)
+    kept,kept_error:=file_read(path)
+    defer delete(kept)
+    testing.expect(t,kept_error==.None && len(kept)==len(buffer) && kept[0]==buffer[0])
     empty:=test_path("empty.bin")
     defer os.remove(empty)
     testing.expect_value(t,file_write_atomic(empty,nil),File_Error.None)

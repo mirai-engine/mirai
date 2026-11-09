@@ -2,9 +2,10 @@
 name: mirai-assets
 description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
-  their container, `std/serial`, the registry and the `mirai asset` tool. Use when reading,
-  creating or editing an asset, adding an asset type or a serialized component, or touching
-  `asset/`, `std/serial/` or `tools/mirai/asset.odin`.
+  their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
+  compression of assets (`std/compressor`, `cook/compressor`), `std/serial` and the `mirai asset`
+  tool. Use when reading, creating or editing an asset, adding an asset type or a serialized
+  component, compressing or decoding asset data, or when an asset does not load.
 ---
 
 # Mirai assets
@@ -15,19 +16,33 @@ types, scene/prefab, registry).
 
 ## Map
 
-- Inspecting or editing a file: [cli.md](references/cli.md); three-way merge:
+- Inspecting or editing a file: [subcommands](references/cli.md#subcommands),
+  [paths](references/cli.md#paths) and
+  [editing by unpack and pack](references/cli.md#editing-by-unpackpack); three-way merge:
   [merge](references/cli.md#merge).
 - Which kinds git merges and diffs, `.gitattributes` and the drivers of a clone
   (`mirai setup git`): [git](references/cli.md#git).
 - Container, tables, `Asset`/`Document`, types, versions, registry and asset JSON:
-  [formats.md](references/formats.md).
+  [container](references/formats.md#container), [typed tables](references/formats.md#typed-tables),
+  [asset types](references/formats.md#asset-types), [versions](references/formats.md#versions),
+  [registry](references/formats.md#registry) and [text](references/formats.md#text).
 - LZ, packs and decoders: [compression](references/formats.md#compression); what each codec
   package does: [codec packages](references/formats.md#codec-packages).
-- Streams, schemas, migration, paths, text: [serial.md](references/serial.md).
+- Streams, schemas, migration, paths, text: [serial](references/serial.md#stdserial).
 - Mesh, skeleton, texture, material, fracture, animation, sound, sound set, `.ui`, font, texts,
-  prompts and game data tables (`.records`): [kinds.md](references/kinds.md). A plugin's types are
-  its own: `.particle` ([vfx](../mirai-plugins/references/vfx.md#format)), `.terrain`, `.foliage`.
-- Scenes, prefabs, instances and overrides: [scenes.md](references/scenes.md).
+  prompts and game data tables (`.records`): [mesh](references/kinds.md#mesh),
+  [skeleton](references/kinds.md#skeleton), [texture](references/kinds.md#texture),
+  [material](references/kinds.md#material), [fracture](references/kinds.md#fracture),
+  [animation](references/kinds.md#animation), [sound](references/kinds.md#sound),
+  [sound set](references/kinds.md#sound-set), [interface](references/kinds.md#interface),
+  [font](references/kinds.md#font), [texts](references/kinds.md#texts),
+  [records](references/kinds.md#records) and [prompts](references/kinds.md#prompts). A plugin's
+  types are its own: `.particle` ([vfx](../mirai-world/references/vfx.md#format)), `.terrain`,
+  `.foliage`.
+- Scenes, prefabs, instances and overrides:
+  [scene and prefab](references/scenes.md#scene-and-prefab),
+  [prefab instances](references/scenes.md#prefab-instances) and
+  [resolution](references/scenes.md#resolution-against-the-current-prefab).
 
 ## Workflow
 
@@ -38,15 +53,13 @@ types, scene/prefab, registry).
    prefabs. In a game they are files of `assets/` written through the API or the editor; only the
    demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
-3. **Changing a serialized struct.** Adding, removing, reordering or changing the type of a field
-   requires neither a version nor a converter: the reader migrates by field name.
+3. **Changing a serialized struct.** A component or a record of a game changes without a version
+   or a converter: the reader migrates its rows by field name.
    - Renaming a field makes it another one: the previous value is lost and the new one takes the
      default.
-   - A new field that must not be zero needs a default in the read (`asset_row(..., &defaults)`),
-     like `MATERIAL_DEFAULTS`.
-   - A change old files need a step for raises the type's `*_VERSION` and keeps `*_OLDEST`: the
-     read branches on the file's version. A change in what a value means raises both: older files
-     fail with `Version` and are made again ([version rule](references/formats.md#versions)).
+   - A change in what an asset type stores (a field of its rows too) or in what a value means
+     raises its `*_VERSION`: files of another version fail with `Version` and are made again
+     ([version rule](references/formats.md#versions)).
 4. **Adding an asset type.** Choose a fourcc and extension, declare the flat structs of its tables,
    write them with `document_put`/`document_put_row` and read them with `asset_rows`/`asset_row`.
    Minimal example: `asset/texture.odin` (description, `*_document`, `*_view`, `*_check`).

@@ -7,8 +7,6 @@ import cmath "core:math"
 // caller (hull vertices or a small array on the stack). At most 255 points.
 Proxy :: struct {points:[]Vec3,radius:f32,disc:f32}
 
-PROXY_MAX_POINTS :: 255
-
 // Index of the point farthest along a direction; the lowest index wins ties.
 proxy_support :: proc "contextless" (p:Proxy,direction:Vec3) -> int #no_bounds_check {
     best:=0

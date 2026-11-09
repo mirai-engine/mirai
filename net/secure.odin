@@ -97,11 +97,6 @@ key_generate :: proc(private,public:^Key) -> bool {
         return false
     }
 }
-key_public :: proc(private:Key) -> (public:Key) {
-    private:=private
-    x25519.scalarmult_basepoint(public[:],private[:])
-    return
-}
 
 // A key pair for whoever issues tokens: public is the token_key of the servers.
 token_key_generate :: proc(private,public:^Key) -> bool {

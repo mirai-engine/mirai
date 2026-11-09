@@ -6,7 +6,6 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 FRACTURE_VERSION :: 4
-FRACTURE_OLDEST :: FRACTURE_VERSION
 FRACTURE_CLUSTER_POINTS :: 64 // most points kept of the hull of a cluster
 
 Fracture_Info :: struct {source_mesh:base.Asset_Id}
@@ -167,7 +166,7 @@ fracture_save :: proc(path:string,types:^Types,desc:Fracture_Desc,allocator:=con
 }
 
 fracture_view :: proc(a:^Asset,types:^Types) -> (view:Fracture_View,error:Error) {
-    kind_check(a,KIND_FRACTURE,FRACTURE_OLDEST,FRACTURE_VERSION) or_return
+    kind_check(a,KIND_FRACTURE,FRACTURE_VERSION) or_return
     view.info=asset_row(a,types,"fracture",Fracture_Info) or_return
     view.pieces=asset_rows(a,types,"pieces","",Fracture_Piece) or_return
     view.connections=asset_rows(a,types,"connections","",Fracture_Connection) or_return

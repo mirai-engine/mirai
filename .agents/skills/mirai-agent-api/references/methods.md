@@ -254,7 +254,7 @@ leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#pain
   copy. Each stroke writes a new unsaved `.mesh` copy; `paint.clear` goes back to what the entity
   showed before the first one.
 - `shapes.stamp` and `shapes.corner`: the Stamp and Corners modes of the Shapes tool at world
-  points ([shapes tool](../../mirai-plugins/references/shapes.md#shapes-tool)). A cut that touches
+  points ([shapes tool](../../mirai-world/references/shapes.md#shapes-tool)). A cut that touches
   no outline shape, a refused stamp or a corner move that would cross edges is `-32602`. The
   brushes of a Solid are child entities with `Shape_Brush`, edited with the `scene.*` methods.
 - `placement.drop`: creates the entities, simulates only physics on a copy of the scene with the
@@ -923,7 +923,7 @@ instance" are `-32602`; the rest, `-32000`
   field that does not exist or an out-of-range value is `-32602` with those that exist, and changes
   nothing.
 - **Particle effects** (`.particle`): registered by the `vfx` plugin with its `Api_Provider`;
-  without it they do not exist ([vfx in the editor](../../mirai-plugins/references/vfx-editor.md)).
+  without it they do not exist ([vfx in the editor](../../mirai-world/references/vfx-editor.md)).
   - `particle.inspect`: `{particle,path,values,parameters,hidden,resources,problem}`. `values` is
     the text of `effect.Particle_Info` (enums by name, ids in hexadecimal); `parameters`, those of
     the Vfx program by name; `hidden`, the fields its instances do not show; `resources`, the mesh

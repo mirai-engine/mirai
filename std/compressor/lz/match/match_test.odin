@@ -109,11 +109,11 @@ ctmf_parse :: proc(t:^testing.T,c:^$C,data:[]u8,arena:^entropy.Arena) -> int {
     end:=len(data)-8
     found:=0
     when intrinsics.type_is_specialization_of(C,Ctmf) {
-        set_next(c,padd(base,half))
+        ctmf_set_next(c,padd(base,half))
         for pos:=half;pos<end; {
             ptr:=padd(base,pos)
             row,row2,hash:=c.next_row,c.next_row_second,c.next_hash
-            set_next(c,padd(ptr,1))
+            ctmf_set_next(c,padd(ptr,1))
             cand:[32]u32
             mask:=ctmf_find_candidates(c,raw_data(cand[:]),row,row2,u32(pos),hash)
             ctmf_insert(c,row,u32(pos),hash)
@@ -128,26 +128,8 @@ ctmf_parse :: proc(t:^testing.T,c:^$C,data:[]u8,arena:^entropy.Arena) -> int {
             if best>=4 && pos+best<end {
                 found+=1
                 for i in 0..<best {testing.expect(t,data[pos+i]==data[pos+i-best_off])}
-                step_and_insert(c,ptr,best)
+                ctmf_step_and_insert(c,ptr,best)
                 pos+=best
-            } else {
-                pos+=1
-            }
-        }
-    } else when intrinsics.type_is_specialization_of(C,Ctmf2) {
-        set_next(c,padd(base,half))
-        for pos:=half;pos<end; {
-            ptr:=padd(base,pos)
-            h1:=ctmf2_hash1(c,ptr)
-            off:=pos-int(c.hash1[h1])
-            ctmf2_insert1(c,ptr,h1)
-            l:=0
-            if off>0 && off<=pos {l=getmatchlen_mml4(ptr,padd(ptr,-off),padd(base,len(data)))}
-            if l>=4 && pos+l<end {
-                found+=1
-                for i in 0..<l {testing.expect(t,data[pos+i]==data[pos+i-off])}
-                step_and_insert(c,ptr,l)
-                pos+=l
             } else {
                 pos+=1
             }
@@ -179,8 +161,6 @@ ctmf_tables_find_real_matches :: proc(t:^testing.T) {
     {c:Ctmf(u32,0,0,4);testing.expect(t,ctmf_parse(t,&c,data,&arena)>0)}
     {c:Ctmf(u16,1,0,4);testing.expect(t,ctmf_parse(t,&c,data,&arena)>=0)}
     {c:Ctmf(u16,0,0,4);testing.expect(t,ctmf_parse(t,&c,data,&arena)>=0)}
-    {c:Ctmf2(u32,4,8,8);testing.expect(t,ctmf_parse(t,&c,data,&arena)>0)}
-    {c:Ctmf2(u16,4,0,4);testing.expect(t,ctmf_parse(t,&c,data,&arena)>0)}
     {c:Fast_Ctmf(u32);testing.expect(t,ctmf_parse(t,&c,data,&arena)>0)}
     {c:Fast_Ctmf(u16);testing.expect(t,ctmf_parse(t,&c,data,&arena)>0)}
 }

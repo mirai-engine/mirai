@@ -26,9 +26,6 @@ RD_Options :: struct {
     bc3_alpha_lambda:int,
 }
 
-// The distortion the RDO weighs against the bits it saves.
-Metric :: enum u8 {Perceptual_RGBA, RMSE_RGBA}
-
 Error :: enum u8 {
     None,
     Out_Of_Memory,

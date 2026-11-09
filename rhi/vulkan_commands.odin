@@ -537,13 +537,6 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	c.device.dvk.CmdDraw(c.cmd, vertex_count, instance_count, first_vertex, first_instance)
 }
 
-cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, vertex_offset: i32 = 0, first_instance: u32 = 0) {
-	assert(c.in_render_pass)
-	if !vk_check_pass_buffer(c, c.index_buffer, .Index_Read, "index") {return}
-	if !vk_flush_bindings(c) {return}
-	c.device.dvk.CmdDrawIndexed(c.cmd, index_count, instance_count, first_index, vertex_offset, first_instance)
-}
-
 cmd_draw_indexed_indirect :: proc(c: ^Command_List, buffer: Buffer, offset: u64, draw_count: u32, stride: u32 = size_of(Draw_Indexed_Indirect)) {
 	assert(c.in_render_pass)
 	b := pool_get(&c.device.buffers, base.Handle(buffer))

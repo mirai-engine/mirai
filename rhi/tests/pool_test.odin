@@ -38,6 +38,33 @@ rhi_full_pool_refuses_a_resource_and_counts_it :: proc(t:^testing.T) {
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// A description the device cannot make, and a transaction out of its place,
+// fail with the error of the device and leave it working.
+@(test)
+rhi_what_cannot_be_made_or_done_now_fails_with_an_error :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    testing.expect_value(t,rhi.texture_create(d,{width=4,height=4,mip_levels=rhi.MAX_TEXTURE_MIPS+1,format=.RGBA8_Unorm,usage={.Sampled},name="mips"}),rhi.Texture(0))
+    testing.expect(t,rhi.device_error(d)!="","a refused texture leaves a message")
+    texture:=rhi.texture_create(d,{width=4,height=4,format=.RGBA8_Unorm,usage={.Sampled},name="texels"})
+    texels:[4*4*4]u8
+    testing.expect(t,texture!=0 && rhi.texture_upload(d,texture,texels[:],16),rhi.device_error(d))
+    testing.expect(t,rhi.frame_alloc(d,64).ptr==nil,"transient memory exists inside a frame")
+    cmd,ok:=rhi.frame_begin(d)
+    testing.expect(t,ok,rhi.device_error(d));if !ok {return}
+    again,begun:=rhi.frame_begin(d)
+    testing.expect(t,again==nil && !begun,"a frame begins once")
+    testing.expect(t,!rhi.texture_table_set(d,0,texture),"the table changes between frames")
+    testing.expect(t,!rhi.texture_upload(d,texture,texels[:],16),"a load transaction runs between frames")
+    testing.expect(t,rhi.immediate_begin(d)==nil && !rhi.immediate_end(d,cmd))
+    testing.expect(t,rhi.frame_end(d,cmd),rhi.device_error(d))
+    testing.expect(t,!rhi.frame_end(d,cmd),"a frame ends once")
+    testing.expect(t,rhi.texture_table_set(d,0,texture) && rhi.texture_upload(d,texture,texels[:],16),rhi.device_error(d))
+    rhi.device_wait_idle(d)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
 @(test)
 rhi_device_reports_what_is_alive :: proc(t:^testing.T) {
     d:=small_device(t,{})

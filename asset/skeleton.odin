@@ -5,7 +5,6 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 SKELETON_VERSION :: 3
-SKELETON_OLDEST :: SKELETON_VERSION
 SKELETON_MAX_BONES :: 65536
 
 Skeleton_Info :: struct {bone_count:u32}
@@ -195,7 +194,7 @@ skeleton_save :: proc(path:string,types:^Types,desc:Skeleton_Desc,allocator:=con
 }
 
 skeleton_view :: proc(a:^Asset,types:^Types) -> (view:Skeleton_View,error:Error) {
-    kind_check(a,KIND_SKELETON,SKELETON_OLDEST,SKELETON_VERSION) or_return
+    kind_check(a,KIND_SKELETON,SKELETON_VERSION) or_return
     view.info=asset_row(a,types,"skeleton",Skeleton_Info) or_return
     view.bones=asset_rows(a,types,"bones","",Skeleton_Bone) or_return
     view.sockets=table_rows(a,types,"sockets",Skeleton_Socket) or_return

@@ -90,7 +90,7 @@ and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
   The other way around, the copy went past the end of the buffer and the nodes there did not
   exist: a traversal read zeros, groups whose second child is the root.
 - What the GI stores of them is not marked as a light change: the probes take them when traced
-  ([particles](../../mirai-plugins/references/vfx.md#particle-lights)).
+  ([particles](../../mirai-world/references/vfx.md#particle-lights)).
 
 ### Unshadowed light of a pixel
 
@@ -119,7 +119,7 @@ it:
 - Budgets: shadow blocks (`light_budget`), reflection hits (`reflection_light_budget`), volume
   probes (up to `PROBE_LIGHT_BUDGET`), glass and overlays. Both settings go up to `LIGHT_CUT_MAX`
   (32).
-- **Lit particles** ([`vfx`](../../mirai-plugins/references/vfx.md#passes)): the unshadowed light
+- **Lit particles** ([`vfx`](../../mirai-world/references/vfx.md#passes)): the unshadowed light
   of both trees from all sides, with the estimate of the light that arrives from each.
 
 ## Shadows
@@ -168,7 +168,7 @@ it:
     filter blurs it like a newly uncovered one. The box of what changed joins where it was and
     where it is, so the ray of the shadow that leaves crosses it in the frame in which it leaves.
   - TAA treats the pixel of a marked block as one that moves
-    ([TAA](frame-graph.md#frame-graph)), and the fog does not blend the history of a froxel whose
+    ([TAA](frame-graph.md#passes)), and the fog does not blend the history of a froxel whose
     ray crosses what changed ([`fog`](../../mirai-plugins/references/render-plugins.md)).
   - A batch that casts shadows marks its box when it arrives, leaves or changes (`batch_set`,
     `batch_remove`).

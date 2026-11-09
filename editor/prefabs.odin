@@ -787,10 +787,8 @@ prefab_files_restore :: proc(s:^Session,files:[]Prefab_File,after:bool) {
         exists:=current_error==nil
         matches:=(expected==nil && !exists) || (expected!=nil && exists && slice.equal(current,expected))
         if !matches {continue}
-        if wanted==nil {
-            os.remove(file.path)
-        } else {
-            _=os.write_entire_file(file.path,wanted)
+        if wanted==nil?os.remove(file.path)!=nil:serial.file_write_atomic(file.path,wanted)!=.None {
+            notify(s,fmt.tprintf("%s could not be restored",file.path))
         }
     }
     paths:=make([]string,len(files),context.temp_allocator)

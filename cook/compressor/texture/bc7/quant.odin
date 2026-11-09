@@ -155,37 +155,6 @@ calc_indexes_exact :: proc "contextless" (st:^Subset_State,in_:^Subset_Input,$M:
     }
 }
 
-// Four texels of a subset as channel vectors (the Block_Input padding covers
-// reads past the subset).
-@(private)
-load_pixels4 :: #force_inline proc "contextless" (p:[^]Color,i:int) -> [4]V4i {
-    v:=intrinsics.unaligned_load((^V4u)(&p[i]))
-    m:=V4u(0xff)
-    return {
-        transmute(V4i)(v&m),
-        transmute(V4i)(simd.shr(v,V4u(8))&m),
-        transmute(V4i)(simd.shr(v,V4u(16))&m),
-        transmute(V4i)simd.shr(v,V4u(24)),
-    }
-}
-
-// floor((x+32)/64) for x > -16384, with logical shifts.
-@(private)
-round_shift6 :: #force_inline proc "contextless" (x:V4i) -> V4i {
-    return transmute(V4i)simd.shr(transmute(V4u)(x+V4i(32+16384)),V4u(6))-V4i(256)
-}
-
-// The BC7 weights of indices q in [0,2^ib): (64q+max/2)/max with max=2^ib-1,
-// the division by multiplication (exact below 4681).
-@(private)
-lerp_weights4 :: #force_inline proc "contextless" (q:V4i,ib:int) -> V4i {
-    MAGIC :: [5]i32{0,0,21846,9363,4370}
-    magic:=MAGIC
-    half:=i32(((1<<uint(ib))-1)>>1)
-    x:=q*V4i(64)+V4i(half)
-    return transmute(V4i)simd.shr(transmute(V4u)(x*V4i(magic[clamp(ib,2,4)])),V4u(16))
-}
-
 // Lanes of the four texels from i that are inside the subset.
 @(private)
 lane_mask :: #force_inline proc "contextless" (i,n:int) -> V4i {

@@ -40,7 +40,7 @@ version asks to write it again). An effect is like a material: entities name it
     forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
     particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
     `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
-    (`particle_mesh_placement`), so an effect written before these fields looks as it did.
+    (`particle_mesh_placement`).
     `mesh_scale` takes zero or more; the editor's preview reach grows by its largest component;
   - lights: up to `lights` of its particles light the scene; they cast shadows only with
     `light_shadows` ([lights](#particle-lights));
@@ -93,7 +93,7 @@ Values of an instance:
   [prefab overrides](../../mirai-assets/references/scenes.md#prefab-instances), with the same
   functions of `asset/overrides.odin`: `value_leaves`, `overrides_mark` and `override_keep`.
 
-### Surfaces, bones and resources
+## Surfaces, bones and resources
 
 What an emitter reads besides its values are resources, in rows that the GPU finds through the
 emitter: first the surface or bones of its shape, then those that its program declares
@@ -135,7 +135,7 @@ emitter binds or one of the world by its name ([grids](#grids-and-stages)).
 - Each row carries the pose of this frame and that of the previous one: the velocity of a point of
   the surface is that of its motion, which `inherit_velocity` passes to the particles.
 
-### Grids and stages
+## Grids and stages
 
 A world grid is a `Particle_Grid` on an entity: a name, its cells along the world axes (an axis of
 one cell is flat), the size of a cell and its layers of four floats.
@@ -170,7 +170,7 @@ left (a constraint solver reads the other particles already moved).
 - Grids and fluids are grids and stages of this contract, not another system (the `fluids` plugin
   lives in the mirai-fluids repository).
 
-### World textures
+## World textures
 
 A `Particle_World_Texture` next to an entity's `Particle_Grid` lets materials read a layer
 (`layer`) of its grid by the grid's name:
@@ -192,7 +192,7 @@ A `Particle_World_Texture` next to an entity's `Particle_Grid` lets materials re
 - The views of a frame read what the previous frame's steps left, with their region: the first
   view draws before the steps of its frame.
 
-### Grid states
+## Grid states
 
 `plugins/vfx/runtime/gridfile` (`gridfile.KIND` `VGRD`, `.grid`): what the cells of a grid's region
 had, from its first cell (x fastest, then y and z), with their layers.
@@ -211,7 +211,7 @@ had, from its first cell (x fastest, then y and z), with their layers.
 - A grid whose last writer left the pool, with its particles, is emptied once: nothing moves or
   turns off what it stores (the smoke of a deleted fountain).
 
-### Volumes
+## Volumes
 
 A `Particle_Volume` next to an entity's `Particle_Grid` draws its grid as a medium: in its first
 layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (problem
@@ -229,7 +229,7 @@ layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (p
 - Its screen triangle is on the near plane: the `Blend` depth test lets each pixel through and the
   march is cut at the scene.
 
-### Channels
+## Channels
 
 A game gives births to a channel (`channel_emit` over `Particle_Channels`, a world queue): where,
 with what velocity, color, size, how many and values that its programs read
@@ -257,7 +257,7 @@ resource.
 - A channel stores those of its last ticks (`CHANNEL_BIRTHS`); the older ones are lost and counted.
   One that no emitter listens to is released.
 
-### Data channels
+## Data channels
 
 A program reads and writes entries of words in the world's data channel of a name
 (`//! resource name data words`, `data.odin`): what the programs add in a frame is read in the next
@@ -270,7 +270,7 @@ while some program of the world uses it, with the most words that any asks for; 
 it. The layout of the words belongs to whoever writes and reads: the channels of an imported asset
 store the asset's variables in their order.
 
-### UI effects
+## UI effects
 
 A `Particles` node of a `.ui` asks on each frame it is shown for its effect in a texture
 (`gui.UI_Effects`, which `gui` clears and fills;
@@ -284,7 +284,7 @@ A `Particles` node of a `.ui` asks on each frame it is shown for its effect in a
 - While the world's time is stopped and the UI shows effects, the world's emitters stay paused and
   the pool advances with the frames.
 
-### Reports
+## Reports
 
 `report` of an effect (or of its sub effect) names what the game hears from its particles: deaths
 or hits, with position, velocity and normal, through the emitter's entity.

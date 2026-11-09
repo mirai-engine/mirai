@@ -36,10 +36,6 @@ RAY_CUT_STEP :: f32(1)
 // starts to serve is not built and let go over and over.
 RAY_CUT_KEEP :: u64(600)
 
-// The offset of the origin of a ray from a surface the eye sees at distance
-// (view_bias of lighting.slang).
-ray_view_bias :: proc "contextless" (distance: f32) -> f32 {return 0.01 + 0.0015 * distance}
-
 // The spacing of the cascade of probes that holds a point at distance from
 // the eye: each holds probe_grid / 2 of its spacings around the eye, and the
 // next doubles it.

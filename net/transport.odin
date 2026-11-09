@@ -183,10 +183,6 @@ sim_network_advance :: proc(n:^Sim_Network,now:f64) {
     sync.mutex_guard(&n.lock)
     n.now=max(n.now,now)
 }
-sim_network_stats :: proc(n:^Sim_Network) -> Sim_Stats {
-    sync.mutex_guard(&n.lock)
-    return n.stats
-}
 // Conditions of everything the endpoint sends from now on.
 sim_endpoint_conditions :: proc(n:^Sim_Network,endpoint:int,conditions:Sim_Conditions) {
     sync.mutex_guard(&n.lock)

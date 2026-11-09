@@ -31,13 +31,12 @@ names the Surface program of a water without its own material (empty or unknown:
   shadows and glass see the same surface in which bodies float.
 - **`Water_Surface`** (`shaders/water_surface.slang`): bends the normal with the small-wave trains
   of `water.slang`, the same ones that the caustics follow.
-- **Medium.** The glass solid absorbs and scatters on every path through the water, from above,
-  from below and in what it traces
-  ([glass](../../mirai-rendering/references/materials.md#glass)). Each fluid also hands `fog` a
-  medium of its box (a plane, a box around the camera under its troughs) that only gives the sun
-  shafts (`shafts`), that is cut by the dry boxes of higher priority and that turns off the
-  sunlight on the way down according to the water's absorption
-  ([media from other plugins](render-plugins.md#media-from-other-plugins)).
+- **Medium.** The glass solid absorbs and scatters on every path through the water, from above, from
+  below and in what it traces ([glass](../../mirai-rendering/references/materials.md#glass)). Each
+  fluid also hands `fog` a medium of its box (a plane, a box around the camera under its troughs)
+  that only gives the sun shafts (`shafts`), that is cut by the dry boxes of higher priority and
+  that turns off the sunlight on the way down according to the water's absorption ([media from other
+  plugins](../../mirai-plugins/references/render-plugins.md#media-from-other-plugins)).
 - **Caustics.** `water_caustics.comp` builds each frame, in the `Lit` stage, the pattern that the
   small waves give to sunlight at a depth: the area to which each part of the surface sends the
   light, a repetition of the waves per texture. `water_light.comp` adds to the direct light

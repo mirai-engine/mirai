@@ -74,12 +74,6 @@ varbits_put_end_ptr :: #force_inline proc "contextless" (vb:^Var_Bits) -> [^]u8 
 varbits_put_size_bytes :: #force_inline proc "contextless" (vb:^Var_Bits, base:[^]u8) -> int {
     return ptr_diff(vb.cur,base)+(vb.bitlen+7)/8
 }
-varbits_put_size_bits :: #force_inline proc "contextless" (vb:^Var_Bits, base:[^]u8) -> int {
-    return ptr_diff(vb.cur,base)*8+vb.bitlen
-}
-varbits_back_put_size_bits :: #force_inline proc "contextless" (vb:^Var_Bits, end:[^]u8) -> int {
-    return ptr_diff(end,vb.cur)*8+vb.bitlen
-}
 
 bit_level_nonzero :: #force_inline proc "contextless" (v:u32) -> u32 {
     return 32-u32(intrinsics.count_leading_zeros(v))
@@ -100,12 +94,6 @@ count_bits_elias_gamma :: #force_inline proc "contextless" (val:u32) -> int {
 count_bits_exp_golomb :: #force_inline proc "contextless" (val:u32, rshift:u32) -> int {
     return count_bits_elias_gamma(val>>rshift)+int(rshift)
 }
-count_bits_flat :: proc "contextless" (symbol:u32, num_symbols:u32) -> int {
-    if num_symbols<=1 {return 0}
-    bits:=ilog2ceil(num_symbols)
-    threshold:=(u32(1)<<bits)-num_symbols
-    return symbol<threshold ? int(bits)-1 : int(bits)
-}
 
 write_unary :: proc "contextless" (vb:^Var_Bits, val:u32) {
     val:=val
@@ -116,16 +104,6 @@ write_unary :: proc "contextless" (vb:^Var_Bits, val:u32) {
     }
     varbits_put(vb,1,int(val)+1)
     varbits_output(vb)
-}
-write_unary_back :: proc "contextless" (vb:^Var_Bits, val:u32) {
-    val:=val
-    for val>=VARBITS_MAX_BITS_PER_STEP {
-        varbits_put(vb,0,VARBITS_MAX_BITS_PER_STEP)
-        varbits_output_back(vb)
-        val-=VARBITS_MAX_BITS_PER_STEP
-    }
-    varbits_put(vb,1,int(val)+1)
-    varbits_output_back(vb)
 }
 
 write_rice :: proc "contextless" (vb:^Var_Bits, val:u32, bits:u32) {
@@ -144,63 +122,9 @@ write_elias_gamma :: proc "contextless" (vb:^Var_Bits, val:u32) {
         varbits_output(vb)
     }
 }
-write_elias_gamma_back :: proc "contextless" (vb:^Var_Bits, val:u32) {
-    v:=val+1
-    topbit:=bit_level_nonzero(v)-1
-    write_unary_back(vb,topbit)
-    if topbit>0 {
-        v-=u32(1)<<topbit
-        varbits_put(vb,u64(v),int(topbit))
-        varbits_output_back(vb)
-    }
-}
 
 write_exp_golomb :: proc "contextless" (vb:^Var_Bits, val:u32, rshift:u32) {
     write_elias_gamma(vb,val>>rshift)
     varbits_put(vb,u64(val&((u32(1)<<rshift)-1)),int(rshift))
     varbits_output(vb)
-}
-write_exp_golomb_back :: proc "contextless" (vb:^Var_Bits, val:u32, rshift:u32) {
-    write_elias_gamma_back(vb,val>>rshift)
-    varbits_put(vb,u64(val&((u32(1)<<rshift)-1)),int(rshift))
-    varbits_output_back(vb)
-}
-
-write_escaping :: proc "contextless" (vb:^Var_Bits, val:u32, bits:u32, bitincr:u32) {
-    val,bits:=val,bits
-    for {
-        maxval:=(u32(1)<<bits)-1
-        if val<maxval {
-            varbits_put(vb,u64(val),int(bits))
-            varbits_output(vb)
-            return
-        }
-        varbits_put(vb,u64(maxval),int(bits))
-        varbits_output(vb)
-        val-=maxval
-        bits=min(bits+bitincr,56)
-    }
-}
-
-write_flat :: proc "contextless" (vb:^Var_Bits, symbol:u32, num_symbols:u32) {
-    if num_symbols<=1 {return}
-    bits:=ilog2ceil(num_symbols)
-    threshold:=(u32(1)<<bits)-num_symbols
-    if symbol<threshold {
-        varbits_put(vb,u64(symbol),int(bits)-1)
-    } else {
-        varbits_put(vb,u64(symbol+threshold),int(bits))
-    }
-    varbits_output(vb)
-}
-write_flat_back :: proc "contextless" (vb:^Var_Bits, symbol:u32, num_symbols:u32) {
-    if num_symbols<=1 {return}
-    bits:=ilog2ceil(num_symbols)
-    threshold:=(u32(1)<<bits)-num_symbols
-    if symbol<threshold {
-        varbits_put(vb,u64(symbol),int(bits)-1)
-    } else {
-        varbits_put(vb,u64(symbol+threshold),int(bits))
-    }
-    varbits_output_back(vb)
 }

@@ -14,7 +14,6 @@ import "mirai:std/serial"
 // A key has at most one entry per language; one it lacks has none.
 
 STRINGS_VERSION :: 1
-STRINGS_OLDEST :: STRINGS_VERSION
 
 String_Language :: struct {
     code:[16]u8 `mirai:"text"`,
@@ -79,7 +78,7 @@ strings_bytes :: proc(types:^Types,desc:Strings_Desc,allocator:=context.allocato
 }
 
 strings_view :: proc(a:^Asset,types:^Types) -> (view:Strings_View,error:Error) {
-    kind_check(a,KIND_STRINGS,STRINGS_OLDEST,STRINGS_VERSION) or_return
+    kind_check(a,KIND_STRINGS,STRINGS_VERSION) or_return
     view.languages=table_rows(a,types,"languages",String_Language) or_return
     view.keys=table_rows(a,types,"keys",String_Key) or_return
     view.entries=table_rows(a,types,"entries",String_Entry) or_return

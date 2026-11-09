@@ -297,25 +297,18 @@ asset_deps :: proc(args:[]string) -> int {
 }
 
 // Everything that can be checked of a file without knowing who will use it,
-// and the rules of its kind when it is one the engine defines. notice: what
-// to tell of a file that reads, such as a version older than the build's.
+// and the rules of its kind when it is one the engine defines.
 @(private)
-verify :: proc(path:string,types:^asset.Types) -> (reason,notice:string) {
-    reason=verify_file(path,types,&notice)
-    return
-}
-
-@(private="file")
-verify_file :: proc(path:string,types:^asset.Types,notice:^string) -> string {
+verify :: proc(path:string,types:^asset.Types) -> string {
     a:asset.Asset
     if error:=asset.asset_load(&a,path);error!=.None {return error_text(error)}
     defer asset.asset_close(&a)
-    return verify_asset(&a,path,types,notice)
+    return verify_asset(&a,path,types)
 }
 
 // path: where the asset is, for what it says of a version this build does not read.
 @(private="file")
-verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types,notice:^string) -> string {
+verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     if !asset.blob_verify_hash(&a.blob) {return error_text(.Hash)}
     for &table in a.tables {
         for _,column in table.columns {
@@ -341,11 +334,9 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types,notice:^strin
             }
         }
     }
-    // An asset this build does not read says how to make it again; an older one it migrates, how
-    // to write the current version.
-    if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 {
-        if asset.kind_age(a.blob.header.kind_version,known.oldest,known.version)>=.Too_Old {return asset.version_message(a,types,path,allocator=context.temp_allocator)}
-        notice^=asset.version_notice(a.blob.header.kind_version,known,context.temp_allocator)
+    // An asset this build does not read says how to make it again.
+    if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 && a.blob.header.kind_version!=known.version {
+        return asset.version_message(a,types,path,allocator=context.temp_allocator)
     }
     switch a.blob.header.kind {
     case asset.KIND_MESH:
@@ -400,13 +391,11 @@ asset_verify :: proc(args:[]string) -> int {
     asset.types_init(&types)
     bad:=0
     for path in args {
-        reason,notice:=verify(path,&types)
-        switch {
-        case reason!="":
+        if reason:=verify(path,&types);reason!="" {
             bad+=1
             fmt.printfln("FAIL %s: %s",path,reason)
-        case notice!="": fmt.printfln("ok %s: %s",path,notice)
-        case: fmt.printfln("ok %s",path)
+        } else {
+            fmt.printfln("ok %s",path)
         }
     }
     return bad==0?0:1
@@ -547,12 +536,11 @@ asset_merge :: proc(args:[]string) -> int {
     }
     // Rows of a kind may name rows of another table by position, which a merge of rows does not
     // follow: a merge that breaks what ours kept is not written.
-    if before,_:=verify(files[1],&types);before=="" {
+    if before:=verify(files[1],&types);before=="" {
         merged:asset.Asset
         if problem:=asset.asset_open(&merged,data);problem!=.None {failed("merge",files[1],"the result does not read: %s",error_text(problem));return 2}
         defer asset.asset_close(&merged)
-        notice:string
-        if reason:=verify_asset(&merged,out,&types,&notice);reason!="" {failed("merge",files[1],"the result is not valid: %s",reason);return 2}
+        if reason:=verify_asset(&merged,out,&types);reason!="" {failed("merge",files[1],"the result is not valid: %s",reason);return 2}
     }
     if serial.file_write_atomic(out,data)!=.None {failed("merge",out,"could not be written");return 2}
     w:serial.Writer;serial.writer_init(&w)

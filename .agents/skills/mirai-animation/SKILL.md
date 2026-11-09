@@ -1,16 +1,16 @@
 ---
 name: mirai-animation
-description: Mirai animation - the `animation` plugin (`plugins/animation/runtime` and `editor`),
-  the `animation_physics` bridge and `std/anim`, with `.anim` clips, skeletons, skinning,
-  locomotion by motion matching (`.match`, `match_goal`, `match_play`) with inertialization,
-  layered actions, composition graphs (`.agraph`), aim offsets and additives (`.blend`), root
-  motion, retarget, mirroring, rigs and IK, morph targets, motion profiles and warping, grounding,
-  budget, `Keyframe_Path` sequences, authoring by intent and by API, and the auto-rig of an
-  uploaded or generated character without a skeleton. Use when animating characters or objects,
-  building the locomotion or the actions of a character, porting a character's or a weapon's
-  motion and events from another engine's data, looking for a state machine or a
-  locomotion blend space (they do not exist; see the workflow), touching those packages or their
-  assets, or diagnosing a pose, a skinning or a clip.
+description: Mirai animation - the `animation` plugin (`plugins/animation/runtime` and
+  `plugins/animation/editor`) and the `animation_physics` bridge (its math library is in
+  `mirai-std`), with `.anim` clips, skeletons, skinning, locomotion by motion matching (`.match`,
+  `match_goal`, `match_play`) with inertialization, layered actions, composition graphs (`.agraph`),
+  aim offsets and additives (`.blend`), root motion, retarget, mirroring, rigs and IK, morph
+  targets, motion profiles and warping, grounding, budget, `Keyframe_Path` sequences, authoring by
+  intent and by API, and the auto-rig of an uploaded or generated character without a skeleton. Use
+  when animating characters or objects, building the locomotion or the actions of a character,
+  porting a character's or a weapon's motion and events from another engine's data, looking for a
+  state machine or a locomotion blend space (they do not exist; see the workflow), touching those
+  packages or their assets, or diagnosing a pose, a skinning or a clip.
 ---
 
 # Mirai animation
@@ -23,7 +23,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 ## Map
 
 - Animating an uploaded or generated character or animal that arrives without a rig (template rig at
-  import and Mesh2Motion clips): [auto-rig](references/animation-autorig.md).
+  import and Mesh2Motion clips):
+  [auto-rig](references/animation-autorig.md#animating-a-character-that-arrives-without-a-rig).
 - Building a character (locomotion, jumps, actions) or replacing what used to be a state machine:
   [workflow](#character-workflow) and
   [what replaces the FSM](references/animation.md#what-replaces-the-state-machine).
@@ -33,45 +34,83 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [anim-motion](../mirai-std/references/anim-motion.md#motion-matching-matchingodin).
 - Composition graphs, layers, masks, additives and aim offsets (`.agraph`, `.blend`):
   [composition](references/animation.md#composition-graphs-and-additive-spaces).
-- Components, shared data, playback, outputs and order, retarget and mirroring:
-  [animation.md](references/animation.md); why an entity does not animate (asset, clip, bone,
-  profile, request or memory): [problems](references/animation.md#problems).
-- Authoring by intent (body, character, requests, clip verbs, analysis, capture) and by API (clips,
-  skeletons, sockets, profiles, `.match`, graphs, control and per-instance preview):
-  [animation-authoring.md](references/animation-authoring.md).
+- Components and shared data: [components](references/animation.md#components-and-shared-data);
+  playback, outputs and order: [playback](references/animation.md#playback-outputs-and-order);
+  [retarget](references/animation.md#offline-and-live-retarget) and
+  [mirroring](references/animation.md#mirroring); why an entity does not animate (asset, clip,
+  bone, profile, request or memory): [problems](references/animation.md#problems).
+- Authoring by intent (body, character, requests, clip verbs, analysis, capture):
+  [intent first](references/animation-authoring.md#intent-first),
+  [files and history](references/animation-authoring.md#files-and-history),
+  [skeleton body](references/animation-authoring.md#skeleton-body),
+  [clip verbs and metrics](references/animation-authoring.md#clips-verbs-and-metrics),
+  [character](references/animation-authoring.md#character) and
+  [inspection](references/animation-authoring.md#inspection).
+- Authoring by API (clips, skeletons, sockets, profiles, `.match`, graphs, control and
+  per-instance preview): [clips and timeline](references/animation-authoring.md#clips-and-timeline),
+  [skeletons](references/animation-authoring.md#skeletons-sockets-and-profiles),
+  [graphs](references/animation-authoring.md#motion-matching-graphs-and-additive-spaces) and
+  [per-instance control](references/animation-authoring.md#per-instance-control-and-preview).
 - `animation.*`, `skeleton.*` and `pose.profile.*` methods and their common errors:
-  [animation-api.md](references/animation-api.md).
+  [methods](references/animation-api.md#animation-api-methods) and
+  [common errors](references/animation-api.md#common-errors).
 - Actions (layers, sections, windows, priority, cancellation):
-  [animation-actions.md](references/animation-actions.md); motion profiles and warping:
-  [animation-motion.md](references/animation-motion.md).
+  [profile and authoring](references/animation-actions.md#profile-and-authoring) and
+  [requests and lifecycle](references/animation-actions.md#requests-and-lifecycle); motion
+  profiles and warping: [definitions](references/animation-motion.md#definitions-and-state),
+  [requests and order](references/animation-motion.md#requests-and-order) and
+  [authoring and control API](references/animation-motion.md#authoring-and-control-api).
 - An action whose root motion moves its `Character` (a lunge, a slam: `body_move`, not game code):
   [root and movement](references/animation-actions.md#root-and-movement).
-- Rigs, spatial targets and chain modifiers: [animation-rigs.md](references/animation-rigs.md).
+- Rigs, spatial targets and chain modifiers:
+  [spatial targets](references/animation-rigs.md#spatial-targets),
+  [operations](references/animation-rigs.md#operations),
+  [order and state](references/animation-rigs.md#order-and-state),
+  [requests and diagnostics](references/animation-rigs.md#requests-and-diagnostics) and
+  [bake](references/animation-rigs.md#bake).
 - Morph targets, `Morph_Weights` and their deformation:
-  [animation-morphs.md](references/animation-morphs.md).
+  [weights](references/animation-morphs.md#weights),
+  [runtime](references/animation-morphs.md#runtime), [API](references/animation-morphs.md#api) and
+  [deformation](references/animation-morphs.md#deformation).
 - Faces: poses that curves weigh, drives from a face capture (ARKit), material values that curves
   move (flipbook faces) and the poses made from a clip:
   [curve poses](references/animation-rigs.md#curve-poses-and-drives); a head or another part
   of its own skeleton that follows the body:
   [following](references/animation.md#following-a-rig-of-another-skeleton).
 - Supports, clip adaptation and gait without clips (the ground is the `core.World_Query` of
-  physics): [animation-grounding.md](references/animation-grounding.md).
-- `Animation_Budget` and parallel execution: [animation-budget.md](references/animation-budget.md);
-  `Keyframe_Path` sequences: [animation-sequence.md](references/animation-sequence.md).
-- Math and storage of `std/anim`: [anim](../mirai-std/references/anim.md),
-  [body](../mirai-std/references/anim-body.md), [motion](../mirai-std/references/anim-motion.md),
-  [rigs](../mirai-std/references/anim-rigs.md) and
-  [storage](../mirai-std/references/anim-storage.md).
+  physics): [configuration](references/animation-grounding.md#configuration),
+  [clip adaptation](references/animation-grounding.md#clip-adaptation),
+  [gait without clips](references/animation-grounding.md#gait-without-clips) and
+  [execution and state](references/animation-grounding.md#execution-and-state).
+- `Animation_Budget` and parallel execution:
+  [budget](references/animation-budget.md#animation_budget) and
+  [parallel execution](references/animation-budget.md#parallel-execution); `Keyframe_Path`
+  sequences: [keyframe path](references/animation-sequence.md#keyframe_path) and
+  [runtime](references/animation-sequence.md#runtime).
+- Math and storage of `std/anim`:
+  [clips](../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
+  [pose](../mirai-std/references/anim.md#blending-poseodin),
+  [skeleton](../mirai-std/references/anim.md#skeletal-pose-skeletonodin),
+  [adaptation](../mirai-std/references/anim.md#adaptation-ikodin-retargetodin-followodin),
+  [body](../mirai-std/references/anim-body.md#body-map-bodyodin),
+  [inertialization](../mirai-std/references/anim-motion.md#inertialization),
+  [rigs](../mirai-std/references/anim-rigs.md#retarget-between-chains) and
+  [storage](../mirai-std/references/anim-storage.md#sampling).
 - The physics that writes the mode and the velocity (`Character`, `Walk`, `Swim`, `Fly`):
   [mirai-physics](../mirai-physics/SKILL.md).
 - Use from a game and tour of features:
-  [animation gallery](../mirai-gameplay/references/animation-gallery.md); demo scenes and
-  generated content: [demo](../mirai-gameplay/references/demo.md).
+  [animation gallery](../mirai-gameplay/references/animation-gallery.md#animation-gallery); demo
+  scenes and generated content:
+  [generated content](../mirai-gameplay/references/demo.md#generated-content).
 - An entity that animates at its own pace in slow motion (`core.Own_Pace`):
   [own pace](../mirai-core/references/core.md#core-storages).
-- Animation documents of the editor: [previews](../mirai-plugins/references/previews.md).
-- Importing skeletons and clips: [imports](../mirai-imports/references/imports.md); bringing a
-  character's motion and events from another engine's data: [porting](#porting-a-character-from-another-engine).
+- Animation documents of the editor:
+  [previews](../mirai-plugins/references/previews.md#animation-document).
+- Importing skeletons and clips:
+  [skinned meshes](../mirai-imports/references/imports.md#skinned-meshes),
+  [glTF clips](../mirai-imports/references/imports.md#gltf-clips) and
+  [FBX](../mirai-imports/references/imports.md#fbx); bringing a character's motion and events from
+  another engine's data: [porting](#porting-a-character-from-another-engine).
 
 ## Workflow
 

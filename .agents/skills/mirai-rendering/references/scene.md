@@ -110,7 +110,7 @@
   editor looks closer.
 - The G-buffer is drawn with one non-indexed indirect draw per phase, whose instance count is
   written by the culling: one instance per visible cluster, which the vertex shader reads from the
-  visible list ([culling](frame-graph.md#frame-graph)). No binds per material or per object.
+  visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime
@@ -126,7 +126,7 @@
   go in the block of each page: it is paged like any streamed mesh.
 - The registered geometry is immutable.
 
-### Partial scene changes
+## Partial scene changes
 
 `scene_set` rebuilds the instance table, their boxes, the software TLAS and the lights, and uploads
 the whole tables: it is used when what is drawn changes. For the rest:
@@ -188,7 +188,7 @@ the whole tables: it is used when what is drawn changes. For the rest:
   software, after a movement the tree nodes are uploaded, and the references only if it was
   built again; with hardware RT the tree is not uploaded.
 
-### Visual instances
+## Visual instances
 
 - An entity can contribute several instances. `Instance_Desc.copy_owner` and `copy_variant`
   separate their transform histories; at zero they identify the original. The GPU object ID is
@@ -202,7 +202,7 @@ the whole tables: it is used when what is drawn changes. For the rest:
   it does not change picking, colliders, scenes or undo; with `hidden=true` it also hides its
   source.
 
-### Instance batches
+## Instance batches
 
 `render/batch.odin`. A batch is many instances of a mesh with their materials, without a row of
 the instance table for each one: the same cull, the same G-buffer and the same rays as the scene
@@ -279,7 +279,7 @@ instances.
   (`batch_trace_test.odin`), which compares a batch with the same scene instances with each
   tracer.
 
-### Meshes and textures one at a time
+## Meshes and textures one at a time
 
 `render/scene_edit.odin`:
 
@@ -292,7 +292,7 @@ instances.
 - **`texture_remove`** removes a texture between frames without changing the other handles; the
   materials that named it are replaced with `materials_set` before the next frame.
 
-### Geometry publication
+## Geometry publication
 
 - `renderer_commit_geometry` publishes the pending ranges of vertices, indices, mesh rows, nodes
   and triangles, and builds the new native BLAS. In a frame it is recorded at the start of its
@@ -326,7 +326,7 @@ instances.
 - Adding or removing instances and growing buffers requires global work: there is no constant cost
   per chunk.
 
-### Geometry over several frames
+## Geometry over several frames
 
 `render/geometry_uploads.odin`. What does not fit in what a frame uploads goes through a fixed queue
 of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
@@ -371,7 +371,7 @@ of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
 - What a load takes this way `host` awaits
   ([load budget](../../mirai-core/references/host.md#loaded-assets)).
 
-### Program catalog
+## Program catalog
 
 `render/programs.odin`: `renderer_programs` reads the `catalog.json` of the shaders in use;
 `program_find` gives a program with its reflected parameters, `program_defaults` its default

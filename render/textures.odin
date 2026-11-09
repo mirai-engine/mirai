@@ -403,26 +403,6 @@ textures_clear :: proc(r: ^Renderer) {
 	state.residency.pending = 0
 }
 
-// Drops the textures added since the table had `count`: those a transaction
-// brought for itself, which no material names any longer. Between frames.
-textures_truncate :: proc(r: ^Renderer, count: int) {
-	state := &r.textures
-	for state.count > max(count, 0) {
-		index := state.count - 1
-		rhi.texture_table_set(r.device, texture_entry(index), 0)
-		rhi.texture_destroy(r.device, state.textures[index])
-		state.bytes -= state.stored[index]
-		if state.partial[index] {state.reduced -= 1}
-		state.textures[index] = 0
-		state.keys[index] = 0
-		state.sizes[index] = {}
-		state.stored[index] = 0
-		state.partial[index] = false
-		texture_stream_forget(state, index)
-		state.count -= 1
-	}
-}
-
 texture_count :: proc(r: ^Renderer) -> int {return r.textures.count}
 
 // Content/build identity shared by scene loads and preview transactions.

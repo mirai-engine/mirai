@@ -409,7 +409,7 @@ scene; an asset document has none.
 
 Details, its rows by reflection, copy and paste, collision and material are in
 [inspector](inspector.md); the section of a particle emitter belongs to the plugin
-[vfx](../../mirai-plugins/references/vfx-editor.md#particle_emitter-section).
+[vfx](../../mirai-world/references/vfx-editor.md#particle_emitter-section).
 
 ## Projects
 
@@ -806,7 +806,7 @@ type's description; that of a field appears on hovering the name of its column.
 
 The documents of animations, sounds and sound sets belong to the plugin
 [previews](../../mirai-plugins/references/previews.md), and those of particle effects, to the
-plugin [vfx](../../mirai-plugins/references/vfx-editor.md#particle-document).
+plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 
 ## Import
 

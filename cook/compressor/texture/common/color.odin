@@ -19,8 +19,6 @@ Vec3f :: [3]f32
 Unpacked_565 :: distinct u32
 
 color_dw :: #force_inline proc "contextless" (c:Color) -> u32 {return transmute(u32)c}
-color_from_dw :: #force_inline proc "contextless" (dw:u32) -> Color {return transmute(Color)dw}
-
 
 mul8bit :: #force_inline proc "contextless" (a,b:i32) -> i32 {
     t:=a*b+128
@@ -38,11 +36,6 @@ delta_sqr_rgba :: #force_inline proc "contextless" (c1,c2:Color) -> u32 {
     dr:=i32(c1[R])-i32(c2[R]); dg:=i32(c1[G])-i32(c2[G]); db:=i32(c1[B])-i32(c2[B])
     da:=i32(c1[A])-i32(c2[A])
     return u32(dr*dr+dg*dg+db*db+da*da)
-}
-
-delta_sad_rgba :: #force_inline proc "contextless" (c1,c2:Color) -> u32 {
-    return u32(abs(i32(c1[R])-i32(c2[R]))+abs(i32(c1[G])-i32(c2[G]))+
-        abs(i32(c1[B])-i32(c2[B]))+abs(i32(c1[A])-i32(c2[A])))
 }
 
 // The 8-bit BGRA color a packed 565 value decodes to, alpha 255.
@@ -80,27 +73,12 @@ unpacked_565_quantize :: #force_inline proc "contextless" (c:Color) -> Unpacked_
     return Unpacked_565(dw)
 }
 
-unpacked_565_dequantize :: #force_inline proc "contextless" (u:Unpacked_565) -> Color {
-    dw:=u32(u)
-    br:=(((dw&0x1f001f)*33)>>2)&0xff00ff
-    g:=((dw&0x3f00)<<2)|((dw&0x3000)>>4)
-    return color_from_dw(br|g|0xff000000)
-}
-
 color_to_vec3i :: #force_inline proc "contextless" (c:Color) -> Vec3i {
     return {i32(c[B]),i32(c[G]),i32(c[R])}
 }
 
-color_to_vec3f :: #force_inline proc "contextless" (c:Color) -> Vec3f {
-    return {f32(c[B]),f32(c[G]),f32(c[R])}
-}
-
 vec3i_to_color :: #force_inline proc "contextless" (v:Vec3i) -> Color {
     return {u8(v.x),u8(v.y),u8(v.z),255}
-}
-
-vec3f_to_color_clamp :: #force_inline proc "contextless" (v:Vec3f) -> Color {
-    return {clamp_u8(round_to_int(v.x)),clamp_u8(round_to_int(v.y)),clamp_u8(round_to_int(v.z)),255}
 }
 
 // Straight to packed 565 with one rounding.
@@ -111,16 +89,6 @@ vec3f_to_quantized_565_rn :: proc "contextless" (v:Vec3f) -> u16 {
     g:=u16(clamp(round_to_int(SCALE_G*v.y),0,63))
     r:=u16(clamp(round_to_int(SCALE_RB*v.z),0,31))
     return (r<<11)|(g<<5)|b
-}
-
-// Only the first product is in f64; the other two round to f32 before the sum.
-vec3f_dot :: #force_inline proc "contextless" (a,b:Vec3f) -> f64 {
-    return f64(a.x)*f64(b.x)+f64(a.y*b.y)+f64(a.z*b.z)
-}
-
-vec3f_delta_sqr :: #force_inline proc "contextless" (a,b:Vec3f) -> f64 {
-    d:=a-b
-    return f64(d.x)*f64(d.x)+f64(d.y)*f64(d.y)+f64(d.z)*f64(d.z)
 }
 
 vec3i_dot :: #force_inline proc "contextless" (a,b:Vec3i) -> i32 {return a.x*b.x+a.y*b.y+a.z*b.z}

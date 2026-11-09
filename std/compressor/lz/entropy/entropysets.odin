@@ -5,7 +5,6 @@ package entropy
 ENTROPYSET_CODELEN_ONE_BIT_SHIFT :: 8
 ENTROPYSET_CODELEN_ONE_BIT :: 1<<ENTROPYSET_CODELEN_ONE_BIT_SHIFT
 ENTROPYSET_SYM_INVALID_HIGH_CL :: 14<<ENTROPYSET_CODELEN_ONE_BIT_SHIFT
-ENTROPYSET_SYM_NOT_PRESENT_CL :: 11<<ENTROPYSET_CODELEN_ONE_BIT_SHIFT
 ENTROPYSET_SYM_PRESENT_MAX_CL :: 11<<ENTROPYSET_CODELEN_ONE_BIT_SHIFT
 ENTROPYSET_INVSUM_SHIFT :: 30
 @(private)
@@ -53,31 +52,6 @@ entropysets_cross_codelen :: proc "contextless" (histo:^Histo256,
     s:i32=0
     for i in 0..<256 {s+=i32(histo.counts[i])*i32(codelens.codelen[i])}
     return s
-}
-
-entropysets_codelen_of_small_array :: proc "contextless" (p:[]u8,
-    codelens:^Entropyset_Codelens) -> u32 #no_bounds_check {
-    s:u32=0
-    for b in p {s+=u32(codelens.codelen[b])}
-    return s
-}
-
-entropysets_codelen_of_array :: proc "contextless" (p:[]u8, histo:^Histo256,
-    histo_sum:int) -> i32 #no_bounds_check {
-    inv:=inv_sum_30(histo_sum)
-    cl_sum:i32=0
-    if len(p)<256 {
-        for b in p {cl_sum+=simple_codelen_30(histo.counts[b],inv)}
-    } else {
-        ah:Histo256
-        histo_count(&ah,p)
-        for s in 0..<256 {
-            n:=ah.counts[s]
-            if n==0 {continue}
-            cl_sum+=i32(n)*simple_codelen_30(histo.counts[s],inv)
-        }
-    }
-    return cl_sum
 }
 
 // Codelen of p under histo1 minus under histo2. Above 256 bytes each distinct symbol counts once,
