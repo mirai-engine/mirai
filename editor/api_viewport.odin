@@ -52,6 +52,7 @@ api_play_capture :: proc(s:^Session,call:^api.Call) {
     strip,ok:=api_filmstrip_read(s,call,r,own,p)
     if !ok {return}
     if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.capture requires a GPU; start without --no-gpu");return}
+    if !api_rays_ready(s,call,"play.capture") {return}
     path:=base.text_get(p.path[:])
     if path=="" {
         if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return}

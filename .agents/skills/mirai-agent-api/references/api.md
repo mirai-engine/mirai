@@ -69,9 +69,11 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
 `.mirai/session.log`.
 
 - `start` builds ([binaries](../../mirai-projects/references/projects.md#engine-binaries);
-  `--no-build` does not) and waits for the API, or closes the editor after `--timeout`. `restart`
-  closes the session and opens another with the mode and arguments of the last one, except those
-  passed; if the build fails, it stays closed.
+  `--no-build` does not) and waits for the API, or closes the editor after `--timeout`. The API
+  opens before the driver compiles the pipelines of rays traced by software: `capture`, `record`,
+  `play test`, `bench` and `render check` wait for them (`engine.status`, `ray_pipelines`).
+  `restart` closes the session and opens another with the mode and arguments of the last one,
+  except those passed; if the build fails, it stays closed.
 - With a live headless session, `start` and `capture` reuse it without building; if it runs
   binaries or a library older than the latest, they warn and continue with what it loaded until
   `restart`. An editor of the project with a window is not reused, trampled or closed (`start`,

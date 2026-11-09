@@ -87,6 +87,11 @@ its `exit_code` and `script_hold`.
   `app_png_write_start` compresses and writes RGBA8 in a job of `app.jobs` (`Png_Write`);
   `app_png_write_poll`/`app_png_write_wait` collect it and release the pixels: the frame does not
   wait for the compression.
+- With `App_Desc.rays_later` (the editor and the player), while the renderer makes the pipelines of
+  rays traced by software ([later](../../mirai-rendering/references/shaders.md#loading-in-host)),
+  `app_rays_pending` is above 0, the frames draw only the UI and `app_capture_world` draws nothing;
+  `app_rays_wait` waits for them, as the player and the editor do before the `--capture` of their
+  last frame.
 - `app_capture_world` draws offscreen a world that the window does not show and returns its pixels;
   `app_world_draw` draws it into a texture, frames that each advance one `dt`
   ([rendering](../../mirai-rendering/references/views.md#frame-and-views)).

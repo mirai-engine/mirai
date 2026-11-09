@@ -43,6 +43,7 @@ App_Desc :: struct {
     window:bool,                 // opens a window; implies gpu
     shown:bool,                  // without a window, its frames still reach someone: a surface another process shows (the player's --surface)
     gpu:bool,                    // creates the device and the renderer
+    rays_later:bool,             // it opens before the driver compiles the pipelines of rays traced by software, minutes on a cold cache: its frames draw only the UI until they are made (app_rays_pending). False: app_create makes them with the others
     window_desc:platform.Window_Desc,
     game_window:bool,            // the window is the game's, as the player opens it: what the player chose of it applies (Display_Settings of the render library)
     video_driver:string,

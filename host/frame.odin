@@ -134,6 +134,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         // A window or a surface shows each frame to someone, who would see one
         // wait for the driver; without them, what a frame draws does not depend on that time.
         pipeline_thread=desc.window || desc.shown,
+        rays_later=desc.rays_later,
     }) {
         log.errorf("renderer: %s",renderer.error)
         return .Renderer_Failed
@@ -759,7 +760,8 @@ app_capture :: proc(app:^App,path:string) -> bool {
 // Between frames.
 app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
     r:=app.renderer
-    if r==nil || world==nil || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
+    // Without the pipelines of its rays the frames draw no world (app_rays_pending).
+    if r==nil || world==nil || render.renderer_rays_pending(r)>0 || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
     ui_only:=app.ui_only
     app.ui_only=false
     defer app.ui_only=ui_only
@@ -893,6 +895,15 @@ app_png_write_wait :: proc(app:^App,w:^Png_Write) -> bool {
     _,written:=app_png_write_poll(app,w)
     return written
 }
+
+// The pipelines of rays traced by software the driver still compiles after
+// the app opened: until 0 the frames draw only the UI, and app_capture_world
+// draws nothing (render.renderer_rays_pending).
+app_rays_pending :: proc(app:^App) -> int {return render.renderer_rays_pending(app.renderer)}
+
+// Waits for them: the next frame draws the world. For what must capture it,
+// as --capture after its frames.
+app_rays_wait :: proc(app:^App) {render.renderer_rays_wait(app.renderer)}
 
 // The pixels of the last frame drawn; the caller frees them with the allocator.
 // generated: the image shown before that of the last frame, which frame generation drew.

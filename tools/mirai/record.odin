@@ -84,6 +84,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
         if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
     }
     defer if !reused {session_close(folder,file,true)}
+    if !editor_rays_wait(file.port,"record",folder) {return 1}
 
     call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {
         text,_:=json.marshal(params,allocator=context.temp_allocator)

@@ -63,6 +63,8 @@ app_recording_begin :: proc(app:^App,rec:^World_Recording,size:[2]i32,wide:rende
 app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32) -> bool {
     r:=app.renderer
     if r==nil || world==nil || rec.texture==0 {return false}
+    // A recording is of the world: its first frame waits for the pipelines of the rays it traces.
+    render.renderer_rays_wait(r)
     ui_only:=app.ui_only
     app.ui_only=false
     defer app.ui_only=ui_only
