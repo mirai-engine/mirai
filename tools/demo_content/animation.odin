@@ -12,11 +12,9 @@ import cam "mirai:engine/camera"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
-import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:ui"
 import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 
@@ -95,60 +93,6 @@ gallery_layer :: proc(s:^asset.Scene_Builder,root:base.Entity_Id,clip:string,lay
     value,found:=asset.scene_get(&s.scene,root,"Animation",anim.Animation)
     if !found || !anim.animation_play(&value,clip,fade,layer=layer,over=over,sync=sync,weight=weight) {s.failed=true;return}
     asset.builder_set(s,root,value)
-}
-
-@(private)
-gallery_label_asset :: proc(o:^Out) -> base.Asset_Id {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    id:=asset.content_id(PROJECT,"ui","animation_gallery_label")
-    data:=ui.Tree_Data{text=texts[:],
-        styles={{},{fill={17,24,35,235},radius=6},{text={size=17,color={255,255,255,255}}},{text={size=12,color={170,200,235,255}}}},
-        nodes={
-            ui.tree_node_record(&texts,-1,{kind=.Box,name="panel",style=1,layout={width=ui.fixed(330),height=ui.fixed(64),direction=.Column,padding=ui.padding_all(7),gap=5}}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="title",style=2,bind_text="Gallery_Label.title"}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="detail",style=3,bind_text="Gallery_Label.detail"}),
-        },
-    }
-    asset.content_check(&o.content,"assets/ui/animation_gallery_label.ui",host.ui_tree_save(path(o,"assets/ui/animation_gallery_label.ui"),&o.content.types,id,data))
-    return id
-}
-
-// The adjustable panel of a station: its rows and buttons are what Gallery_Panel holds, which the
-// game fills for the kind of its station; a slider moves its row between 0 and 1.
-@(private)
-gallery_panel_asset :: proc(o:^Out) -> base.Asset_Id {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    id:=asset.content_id(PROJECT,"ui","animation_gallery_panel")
-    control:=ui.Node_Style{text={size=14,color={255,255,255,255},align_x=.Center,align_y=.Center},fill={34,44,64,255},stroke={90,120,170,255},mark={110,170,255,255},track={52,60,80,255},knob={235,240,250,255},radius=6,stroke_width=1}
-    styles:=[]ui.Node_Style{
-        {},
-        {fill={14,19,29,238},stroke={80,105,150,255},stroke_width=1,radius=10},
-        {text={size=17,color={255,255,255,255}}},
-        {text={size=13,color={175,200,235,255}}},
-        control,
-        {text={size=12,color={130,150,180,255}}},
-    }
-    variants:=[]ui.Tree_Style_Variant{
-        ui.tree_variant_record(4,"",{.Hovered},{fields={.Stroke},values={stroke={160,195,255,255}}}),
-        ui.tree_variant_record(4,"",{.Pressed},{fields={.Fill},values={fill={70,100,170,255}}}),
-    }
-    data:=ui.Tree_Data{text=texts[:],styles=styles,variants=variants,
-        nodes={
-            ui.tree_node_record(&texts,-1,{kind=.Box,name="panel",style=1,layout={width=ui.fixed(300),direction=.Column,padding=ui.padding_all(12),gap=8}}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="title",style=2,bind_text="Gallery_Panel.title"}),
-            ui.tree_node_record(&texts,0,{kind=.List,name="rows",bind_items="Gallery_Panel.rows",bind_value="Gallery_Panel.row_count",layout={width=ui.GROW,direction=.Column,gap=6}}),
-            ui.tree_node_record(&texts,2,{kind=.Box,name="row",layout={width=ui.GROW,direction=.Column,gap=3}}),
-            ui.tree_node_record(&texts,3,{kind=.Box,name="heading",layout={width=ui.GROW,gap=6}}),
-            ui.tree_node_record(&texts,4,{kind=.Text,name="label",style=3,bind_text="label",layout={width=ui.GROW}}),
-            ui.tree_node_record(&texts,4,{kind=.Text,name="readout",style=3,bind_text="readout"}),
-            ui.tree_node_record(&texts,3,{kind=.Slider,name="value",style=4,bind_value="value",range={0,1,.01},layout={width=ui.GROW,height=ui.fixed(20)}}),
-            ui.tree_node_record(&texts,0,{kind=.List,name="buttons",bind_items="Gallery_Panel.buttons",bind_value="Gallery_Panel.button_count",layout={width=ui.GROW,direction=.Grid,columns=2,gap=6}}),
-            ui.tree_node_record(&texts,8,{kind=.Button,name="button",style=4,bind_text="label",layout={width=ui.fixed(132),height=ui.fixed(30)}}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="hint",style=5,bind_text="Gallery_Panel.hint"}),
-        },
-    }
-    asset.content_check(&o.content,"assets/ui/animation_gallery_panel.ui",host.ui_tree_save(path(o,"assets/ui/animation_gallery_panel.ui"),&o.content.types,id,data))
-    return id
 }
 
 // The station of an actor: what the game does with it, its plaque at the walkway and, if it can
@@ -371,7 +315,7 @@ write_animation_scene :: proc(o:^Out) {
     programs:=gallery_program_assets(o,&model,clip,stride_time)
     matching:=gallery_mirai_matching(o,locomotion)
     s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
-    g:=Gallery_Build{o=o,s=&s,model=&model,source=source,clip=clip,label=gallery_label_asset(o),panel=gallery_panel_asset(o)}
+    g:=Gallery_Build{o=o,s=&s,model=&model,source=source,clip=clip,label=ui_id("animation_gallery_label"),panel=ui_id("animation_gallery_panel")}
     gallery_environment(o,&s)
     shoulder:=rig_path(&model,"LeftShoulder")
 

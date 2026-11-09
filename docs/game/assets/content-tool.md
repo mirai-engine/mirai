@@ -3,7 +3,7 @@
 A content tool is a program of the project (`tools/content`, an `odin run` target) that writes
 the assets of a game from code, so the same bytes come out every run and the game can be rebuilt
 from source. Use it for what no art source holds: procedural textures, generated sounds, sets of
-sounds, interfaces, meshes made from code, prefabs and scenes. Art files go through
+sounds, meshes made from code, prefabs and scenes. Art files go through
 `mirai import` instead ([assets](../assets.md#import)). The command that runs a tool is at the top
 of the project's `tools/content/main.odin`; run it from the project folder.
 

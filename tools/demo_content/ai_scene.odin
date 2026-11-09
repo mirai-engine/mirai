@@ -64,7 +64,7 @@ write_ai_scene :: proc(o:^Out) {
     asset.builder_set(&s,sun_entity,sun)
     // Below the floors of the arenas, which stand 5 cm higher.
     gallery_cube(&s,"Ground",{-15,-0.55,-7.5},{210,1,200},{0.28,0.3,0.27,1},true)
-    label:=physics_gallery_label(o)
+    label:=ui_id("physics_gallery_label")
     sign :: proc(s:^asset.Scene_Builder,label:base.Asset_Id,name:string,position:mm.Vec3,title,detail:string) {
         e:=asset.builder_entity(s,name,{position=position})
         text:=game.Gallery_Label{}

@@ -10,11 +10,9 @@ import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
-import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:ui"
 import cache "plugins:physics_cache/runtime"
 import fields "plugins:physics_fields/runtime"
 import vfx "plugins:vfx/runtime"
@@ -103,22 +101,6 @@ physics_gallery_item :: proc(s:^asset.Scene_Builder,label:base.Asset_Id,station:
 }
 
 @(private)
-physics_gallery_label :: proc(o:^Out) -> base.Asset_Id {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    id:=asset.content_id(PROJECT,"ui","physics_gallery_label")
-    data:=ui.Tree_Data{text=texts[:],
-        styles={{},{fill={17,24,35,235},radius=6},{text={size=16,color={255,255,255,255},wrap=.Words}},{text={size=12,color={170,200,235,255},wrap=.Words}}},
-        nodes={
-            ui.tree_node_record(&texts,-1,{kind=.Box,name="panel",style=1,layout={width=ui.fixed(380),height=ui.fixed(88),direction=.Column,padding=ui.padding_all(7),gap=4}}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="title",style=2,bind_text="Gallery_Label.title",layout={width=ui.fixed(366)}}),
-            ui.tree_node_record(&texts,0,{kind=.Text,name="detail",style=3,bind_text="Gallery_Label.detail",layout={width=ui.fixed(366)}}),
-        },
-    }
-    asset.content_check(&o.content,"physics gallery labels",host.ui_tree_save(path(o,"assets/ui/physics_gallery_label.ui"),&o.content.types,id,data))
-    return id
-}
-
-@(private)
 physics_gallery_breakable :: proc(s:^asset.Scene_Builder,name:string,position:mm.Vec3,source,mesh:base.Asset_Id,anchored:=false,parent:base.Entity_Id=0) -> base.Entity_Id {
     e:=asset.builder_entity(s,name,{position=position},parent)
     config:=destruct.destructible(16,anchored);config.fracture,config.strength=source,60;config.impact_damage=false;config.debris_volume=0
@@ -157,7 +139,7 @@ write_physics_gallery :: proc(o:^Out) {
     asset.builder_set(&s,sun,sun_placed)
     asset.builder_set(&s,sun,render.Sun{color={1,.94,.85},illuminance=lux(u,3)})
     gallery_cube(&s,"Gallery floor",{0,-.25,-20},{36,.5,51},{.1,.14,.2,1},true)
-    label:=physics_gallery_label(o)
+    label:=ui_id("physics_gallery_label")
     titles:=[18]string{"Collision primitives","Size and debris","Convex generation","Convex hierarchy","Combined fractures","Mesh and point operations","Proximity graph","Interior materials","Collider friction and restitution","Removal","Fracture events and VFX","Internal / rest strain","Persistent fields","External strain","Field destruction","Moving parent and anchors","Destructible constraints","Baked cuts and destruction"}
     details:=[18]string{
         "Box, sphere and capsule. E: radial impulse with mass independent velocity change.",

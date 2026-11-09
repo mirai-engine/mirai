@@ -14,20 +14,19 @@ import spawn "plugins:spawn/runtime"
 import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
-import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
-import "mirai:ui"
 
 // Writes every generated asset of the demo project: the imports of
 // demo/source (sources.odin) and the showcase, which is the scene
-// demo/assets/scenes/showcase.scene and the assets it uses: a HUD and a sign
-// (.ui) with their two images (.tex), the clips of a lift (.anim) and the hum
-// of a speaker (.sound, imported from a WAV this also writes). Running it
-// again gives the same bytes. The other scenes, the prefabs of
-// demo/assets/prefabs and the materials of demo/assets/materials are authored.
+// demo/assets/scenes/showcase.scene and the assets it uses: the two images
+// (.tex) of its HUD, the clips of a lift (.anim) and the hum of a speaker
+// (.sound, imported from a WAV this also writes). Running it again gives the
+// same bytes. The other scenes, the prefabs of demo/assets/prefabs, the
+// materials of demo/assets/materials and the interfaces of demo/assets/ui are
+// authored: this names a .ui by its id and never writes one.
 //
 //   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -ignore-unknown-attributes -- [root of the repository]
 
@@ -47,6 +46,10 @@ Out :: struct {
 @(private)
 path :: proc(o:^Out,relative:string) -> string {return fmt.tprintf("%s/demo/%s",o.root,relative)}
 
+// The id of a .ui of the demo, which its file keeps.
+@(private)
+ui_id :: proc(name:string) -> base.Asset_Id {return asset.content_id(PROJECT,"ui",name)}
+
 // Writes a mesh of one level of a source and its indices (asset.mesh_build)
 // to file, a path relative to the demo.
 @(private)
@@ -60,8 +63,8 @@ mesh_write_built :: proc(o:^Out,what,file:string,desc:asset.Mesh_Desc,source:ass
 @(private)
 coverage :: proc(distance,radius:f32) -> f32 {return clamp(radius-distance+0.5,0,1)}
 
-// An orange disc with a white core, transparent around it.
-write_badge :: proc(o:^Out) -> base.Asset_Id {
+// An orange disc with a white core, transparent around it: the badge hud.ui shows.
+write_badge :: proc(o:^Out) {
     id:=asset.content_id(PROJECT,"texture","hud_badge")
     pixels:=make([]u8,BADGE_SIZE*BADGE_SIZE*4,context.temp_allocator)
     for y in 0..<BADGE_SIZE {
@@ -76,11 +79,10 @@ write_badge :: proc(o:^Out) -> base.Asset_Id {
     }
     asset.content_check(&o.content,"assets/textures/hud_badge.tex",asset.texture_save(path(o,"assets/textures/hud_badge.tex"),&o.content.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
-    return id
 }
 
 // A dark rounded panel with a light border: the nine slice of the HUD.
-write_panel :: proc(o:^Out) -> base.Asset_Id {
+write_panel :: proc(o:^Out) {
     id:=asset.content_id(PROJECT,"texture","hud_panel")
     pixels:=make([]u8,PANEL_SIZE*PANEL_SIZE*4,context.temp_allocator)
     RADIUS :: f32(8)
@@ -98,81 +100,6 @@ write_panel :: proc(o:^Out) -> base.Asset_Id {
     }
     asset.content_check(&o.content,"assets/textures/hud_panel.tex",asset.texture_save(path(o,"assets/textures/hud_panel.tex"),&o.content.types,
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
-    return id
-}
-
-WHITE :: ui.Color{255,255,255,255}
-
-// The HUD: a panel hung from the top right corner of the screen that slides
-// in, with a badge that never stops pulsing, the name and the bar of the
-// lift, its count of trips and a line that exists while it runs.
-write_hud :: proc(o:^Out,badge,panel:base.Asset_Id) -> base.Asset_Id {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    id:=asset.content_id(PROJECT,"ui","hud")
-    // Row 0 is the style of the nodes that name none: the rows of the layout, which draw nothing.
-    styles:=[]ui.Node_Style{
-        {},
-        {text={size=18,color=WHITE}},
-        {fill={255,170,40,255},track={40,48,66,255},radius=4},
-        {text={size=13,color={170,184,210,255}}},
-        {text={size=13,color=WHITE}},
-        {text={size=13,color={120,220,140,255}}},
-        {fill=WHITE},
-    }
-    images:=[]ui.Tree_Image{
-        {texture=panel,border={10,10,10,10},border_uv={10.0/PANEL_SIZE,10.0/PANEL_SIZE,10.0/PANEL_SIZE,10.0/PANEL_SIZE}},
-        {texture=badge},
-    }
-    keys:=[]ui.Keyframe{
-        {time=0,value={48,0,0,0}},{time=0.4,value={0,0,0,0},ease=.Out_Cubic},
-        {time=0,value={0,0,0,0}},{time=0.4,value={1,0,0,0},ease=.Linear},
-        {time=0,value={1,1,0,0}},{time=0.6,value={1.2,1.2,0,0},ease=.In_Out_Quad},
-        {time=0,value={-0.3,0,0,0}},{time=0.6,value={0.3,0,0,0},ease=.In_Out_Quad},
-    }
-    tracks:=[]ui.Tree_Track{{.Offset,0,2},{.Opacity,2,2},{.Scale,4,2},{.Rotation,6,2}}
-    anims:=[]ui.Tree_Anim{{kind=.Clip,loop=.Once,first=0,count=2},{kind=.Clip,loop=.Ping_Pong,first=2,count=2}}
-    anim_sets:=[]ui.Anim_Set{{shown=1},{shown=2}}
-    nodes:=[]ui.Tree_Node{
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="panel",style=6,image=1,anims=1,
-            float={to=.Safe,anchor=.Top_Right,pivot=.Top_Right,offset={-16,16}},
-            layout={width=ui.fixed(280),direction=.Column,padding=ui.padding_all(14),gap=8}}),
-        ui.tree_node_record(&texts,0,{kind=.Box,name="header",layout={gap=10,align_y=.Center}}),
-        ui.tree_node_record(&texts,1,{kind=.Image,name="badge",image=2,anims=2,layout={width=ui.fixed(40),height=ui.fixed(40)}}),
-        ui.tree_node_record(&texts,1,{kind=.Text,name="title",style=1,bind_text="Showcase.label"}),
-        ui.tree_node_record(&texts,0,{kind=.Progress,name="charge",style=2,bind_value="Showcase.charge",layout={width=ui.fixed(252),height=ui.fixed(14)}}),
-        ui.tree_node_record(&texts,0,{kind=.Box,name="count",layout={gap=6}}),
-        ui.tree_node_record(&texts,5,{kind=.Text,name="trips_label",style=3,text="Trips to the top:"}),
-        ui.tree_node_record(&texts,5,{kind=.Text,name="trips",style=4,bind_text="Showcase.trips"}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="state",style=5,text="Running",bind_visible="Showcase.running"}),
-    }
-    data:=ui.Tree_Data{text=texts[:],nodes=nodes,styles=styles,images=images,anims=anims,tracks=tracks,keys=keys,anim_sets=anim_sets}
-    asset.content_check(&o.content,"assets/ui/hud.ui",host.ui_tree_save(path(o,"assets/ui/hud.ui"),&o.content.types,id,data))
-    return id
-}
-
-// The sign above the lift: its name, its bar and a button.
-write_sign :: proc(o:^Out) -> base.Asset_Id {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    id:=asset.content_id(PROJECT,"ui","sign")
-    styles:=[]ui.Node_Style{
-        {},
-        {text={size=18,color=WHITE}},
-        {fill={255,170,40,255},track={40,48,66,255},radius=3},
-        {text={size=14,color=WHITE},fill={52,64,92,255},radius=5},
-        {fill={16,22,34,235},stroke={96,118,160,255},radius=8},
-    }
-    sign_variants:=[2]ui.Tree_Style_Variant{
-        ui.tree_variant_record(3,"",{.Hovered},{fields={.Fill},values={fill={76,94,134,255}}}),
-        ui.tree_variant_record(3,"",{.Pressed},{fields={.Fill},values={fill={30,38,56,255}}}),
-    }
-    nodes:=[]ui.Tree_Node{
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="sign",style=4,layout={width=ui.fixed(220),height=ui.fixed(100),direction=.Column,padding=ui.padding_all(10),gap=7}}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="name",style=1,bind_text="Showcase.label"}),
-        ui.tree_node_record(&texts,0,{kind=.Progress,name="charge",style=2,bind_value="Showcase.charge",layout={width=ui.fixed(200),height=ui.fixed(10)}}),
-        ui.tree_node_record(&texts,0,{kind=.Button,name="toggle",style=3,text="Stop / go",layout={width=ui.fixed(110),height=ui.fixed(28)}}),
-    }
-    asset.content_check(&o.content,"assets/ui/sign.ui",host.ui_tree_save(path(o,"assets/ui/sign.ui"),&o.content.types,id,{nodes=nodes,styles=styles,variants=sign_variants[:],text=texts[:]}))
-    return id
 }
 
 // The lift: its platform goes up and comes down in four seconds while its
@@ -337,7 +264,7 @@ main :: proc() {
     defer asset.content_destroy(&o.content)
     actions_load(&o)
     if o.content.failed {os.exit(1)}
-    for folder in ([]string{"assets/ui","assets/animations","assets/sounds","assets/textures","assets/scenes","assets/prefabs","assets/data"}) {os.make_directory_all(path(&o,folder))}
+    for folder in ([]string{"assets/animations","assets/sounds","assets/textures","assets/scenes","assets/prefabs","assets/data"}) {os.make_directory_all(path(&o,folder))}
     if len(os.args)>2 && os.args[2]=="--physics-only" {
         write_destruction_scene(&o)
         if o.content.failed {os.exit(1)}
@@ -415,11 +342,11 @@ main :: proc() {
         return
     }
     import_sources(&o)
-    badge,panel:=write_badge(&o),write_panel(&o)
-    hud,sign:=write_hud(&o,badge,panel),write_sign(&o)
+    write_badge(&o)
+    write_panel(&o)
     lift,hum:=write_lift(&o),write_hum(&o)
     write_prefabs(&o)
-    if !o.content.failed {write_scene(&o,hud,sign,lift,hum)}
+    if !o.content.failed {write_scene(&o,ui_id("hud"),ui_id("sign"),lift,hum)}
     if !o.content.failed {write_control_scene(&o)}
     if !o.content.failed {write_destruction_scene(&o)}
     if !o.content.failed {write_ai_scene(&o)}
