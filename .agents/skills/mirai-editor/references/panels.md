@@ -9,24 +9,28 @@
 
 ## Layout
 
-- The scene is drawn only below the two bars (`App.scene`), in Edit, Simulate and Play: what they
-  always cover consumes no GPU. The viewport (`Viewport.origin`, `size`) takes the pointer and
-  projects in that part; the bars' edges fall on whole pixels at any scale (`bars_snap`) so that
-  what is behind does not show between them.
-- During Play the game UI's safe area reserves the height of the bars: a HUD anchored to
+- The scene is drawn only below the top bar and beside the rail and the left panel (`App.scene`,
+  `dock_scene_left`), in Edit, Simulate and Play: what they always cover consumes no GPU. The left
+  panel never moves the image: the viewport (`Viewport.origin`, `size`, `dock_widths`) is the whole
+  view, also under the panel, and takes the pointer and projects there, and `App.scene_shift` keeps
+  the center of that view in the part drawn, without moving the camera. The bar's edge falls on
+  a whole pixel at any scale (`bars_snap`).
+- During Play the game UI's safe area reserves the height of the bar: a HUD anchored to
   `Float_To.Safe` stays below them.
 - `Shell_Rects` keeps the rectangles of the last frame; `free_region(g, size)` gives the part of
   the window free for the scene, discounting the plugin panels.
 
-**Bars.** The documents one (`ui.menu_bar`, drags the window) has File (with Build), Edit (with
-Create) and View (without the run actions, which are in the toolbar; at the end, Keyboard
-shortcuts) and the scene or prefab tabs and then those of assets ([tabs](document.md#tabs)).
-Outside macOS the window controls are attached to the top right corner, so a pointer taken to the
-corner lands on Close. The contextual toolbar, below:
+**Top bar** (one row of 44 points, drags the window between its controls). In order: the mark and
+the word Mirai as one button that opens what the File menu had, View (without the run actions; at
+the end, Keyboard shortcuts), the scene or prefab tabs and then those of assets
+([tabs](document.md#tabs)), which take the width left over and scroll, and the toolbar. Outside
+macOS the window controls are attached to the top right corner, so a pointer taken to the corner
+lands on Close. In a narrow window the bar drops its dividers and some labels (`BAR_WIDE`,
+`BAR_ROOMY`). The toolbar:
 
 - It carries save, undo and redo, Move/Rotate/Scale, the snap magnet, World/Local, camera speed and
-  the **Tools** menu on the left, and avatars, Find, inspection mode, Graphics, AI, Session and run
-  on the right; in Play avatars, Graphics and run remain.
+  the **Tools** menu, and avatars, Find, inspection mode, Graphics, Session and run at the end; in
+  Play avatars, Graphics and run remain.
 - **Tools** (`tools_menu_build`) gathers the plugins' tools and the
   [project panels](#project-panels), and does not appear without any. What is chosen takes
   the place of Details.
@@ -41,9 +45,14 @@ corner lands on Close. The contextual toolbar, below:
   the glyph and color of its [figure](editor.md#figures-of-whoever-works); a click opens its menu.
   While watching, the bar says "Watching", hides the edit tools and shows Stop.
 
-**Shared left panel:** tabs Editor, Content Browser (the startup one), World ([world](#world)) and
-AI. It folds like Tab in Edit; with the chat folded, the AI action of View shows it again, and in
-Play it stays minimized; the chat opens only in the pause ([Play](editor.md#play)). **Hierarchy**
+**Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Editor,
+Content Browser (the startup one), Hierarchy, World ([world](#world)), AI and Source control as
+icons. A click on the one shown folds the panel, on another shows that one. The panel is fixed at
+the side of the rail, the height of the window, 320 points wide and with its right corners rounded;
+the scene runs 16 points under it, so those corners show the scene (with the panel folded it starts
+at the rail). It folds like Tab in Edit; with the chat folded, the AI action of View shows it again,
+and in Play it stays minimized; the chat opens only in the pause, where the rail holds only it
+([Play](editor.md#play)). **Hierarchy**
 shows the outliner or, with an asset document in front, the hierarchy its plugin provides
 (`Asset_Document_Provider.hierarchy`). Each document type has its tabs (`DOCUMENT_LIBRARY_TABS`): a
 scene all, a prefab all but World, an asset document Content, AI and Git (and Hierarchy if its
@@ -56,36 +65,30 @@ active plugin tool or an open project panel take its place (`tool_panel_shown`),
 button; Escape closes the panel, or turns off the tool without a selection, and Details returns. A
 panel also closes on changing the selection.
 
-**Floating or Docked.** Each side panel floats over the scene (Floating, with margin and corners)
-or is docked (Docked) to its window edge, full height under the bars, and the scene is drawn only
-between the docked ones (`dock_widths`, `App.scene` and `Viewport.origin`): what they cover
-consumes no GPU.
+**Floating or Docked.** Details floats over the scene (Floating, 8 points from the right and under
+the bar, as high as its content) or is docked (Docked) to its window edge, full height under the
+bar, and the scene is drawn beside it (`dock_widths`, `App.scene` and `Viewport.origin`): what it
+covers consumes no GPU.
 
-- The mode is a machine preference (`Layout`), global per side and with the own choice of each
-  document type (Scene, Prefab, Assets) or Global; it is edited in the Editor category of
+- The mode is a machine preference (`Layout`), global and with the own choice of each document
+  type (Scene, Prefab) or Global; it is edited in the Editor category of
   [Settings](#project-settings). The global mode is Floating by default.
 - Docked, its inner edge is dragged to widen or narrow it, between `DOCK_MIN` and 40 % of the
-  window; the width is kept per side.
+  window; the width is kept.
 - A docked Details stays even without a selection, so the scene does not change size with it, and
   the tool or project panel that takes its place is also docked. An asset document draws its own
-  right side: there only the left one is docked.
+  right side.
 - In a Play and while a Details field waits for an entity to be chosen in the scene the panels are
   not there, and the scene takes the window.
 
 Other panels:
 
-- Tabs Editor, Content Browser (a folder icon), Hierarchy, [World](#world) (a layers icon), AI and
-  Git; on startup Content Browser is shown. Each is a chip fitted to its text, like the document
-  tabs: the shown one with `field_active` and light text, the others with `field` and `text_muted`.
-- Every tab has the same height (`LEFT_PANEL_HEIGHT`, fitted to the free space): the panel does
-  not change size when the tab changes.
+- On startup Content Browser is shown. Every tab has the height of the window under the bar: the
+  panel does not change size when the tab changes.
 - Cards: 32-point icons in 40 squares, four columns; with names, 10-point labels and rows of 62.
-- Editor and Content share the presentation gear; AI uses its own menu in that place. Both are
-  `ui` menus: a chosen item closes them.
-- At the end of the bar, in all tabs but AI, the icon of a panel with an arrow to the left folds
-  it, like Tab in Edit; folded, a button with the arrow reversed brings it back. With the chat
-  folded, the AI action (View) shows it again instead of closing it. In Play it stays minimized
-  ([Play](editor.md#play)).
+- Only the tabs with controls of their own have a slim row at the top of the panel: the
+  presentation gear of Editor and the chat buttons and settings of AI. Content Browser draws its
+  own in its search row. All are `ui` menus: a chosen item closes them.
 - **Hierarchy** (list icon, also Hierarchy in View) shows the scene's outliner; with an asset
   document in front, the hierarchy its plugin builds in `hierarchy_room`
   (`Asset_Document_Provider.hierarchy`), or that the document has none.
@@ -96,29 +99,55 @@ say whether it ends or passes over a rectangle; over the scene it places where t
 
 ## AI panel
 
-Logic in [chats and agents](ai-tasks.md); review in [change review](ai-review.md). A conversation
-is a **session**: those that work or await review have a row above the thread; the rest are in
-History.
+Logic in [chats and agents](ai-tasks.md); review in [change review](ai-review.md). The panel is the
+**main chat** of the project: one continuous thread, with no sessions to open or pick. What an
+agent does in parallel shows around it.
 
-- The panel bar carries History (a popup with the document's sessions that have no row), New
-  session (`+`, also while other agents work) and the gear of Connections and Show agents in
-  scene.
-- With no session open and none at work or awaiting review, only the composer waits, in the middle
-  of the panel under the mark of Mirai in gray (`ai_chat_empty_build`, `User_Icon.Mirai_Shape`).
-  The first message takes it down to its place in `AI_COMPOSER_DROP`, easing out. The thread keeps
-  `AI_THREAD_MARGIN` from the sides of the panel.
-- There is one row per session that works or awaits review, and the open one even if it finished:
-  it says what it expects from the user (`!` a permission, `?` a question, or how many changes
-  remain to review) or carries the dot while working. A finished one is closed with its tick, which
-  keeps what changed. Details of the open one gives its state, agent, model, reported
-  spend, context, process and each call with its result. The look (brand or glyph and a color of
-  [the figures](editor.md#figures-of-whoever-works)) is kept in the conversation.
+- **The bar of the editor** has, at its right, the avatars of the agents (`watch_bar_build`): the
+  main agent always, with the dot while it works, then each subagent that works or waits for an
+  answer, and each finished one with changes to accept or reject, with a badge (`!` a permission,
+  `?` a question, or how many changes wait). A click on the main one opens the chat and on a
+  subagent inspects it; a right click opens its menu
+  ([figures](editor.md#figures-of-whoever-works)).
+- **The bar of the panel** carries the clock, the expand button (four corners) and the gear.
+  - The clock opens a popup with a search over the main chat and, under **Finished agents**, the
+    subagents that ended, the latest first, each with how long ago it moved and how it ended; a
+    click inspects one. A hit of the search brings its line into sight, and one the thread no
+    longer holds opens read only with the messages around it.
+  - The gear has **Agents** (the model and effort of the main chat, and what subagents run with:
+    same, fixed or the agent picks, [subagents](ai-tasks.md#subagents)), **Memory** (the project's
+    index, its topics and the user's file, each with Edit in a dialog whose Save writes the file),
+    Connections and Show agents in scene.
+- With nothing sent yet only the composer waits, in the middle of the panel under the mark of
+  Mirai in gray (`ai_chat_empty_build`, `User_Icon.Mirai_Shape`). The first message takes it down
+  to its place in `AI_COMPOSER_DROP`, easing out. The thread keeps `AI_THREAD_MARGIN` from the
+  sides of the panel.
+- **The status line** under the bar of the panel says what the agents do in one line (`2 agents
+  working · 4 changes to review`) and appears only while something works or waits for review. It
+  unfolds into one row per unit: the color of its agent, its glyph, its title and what it waits
+  for (the badge) or the dot while it works; a click inspects it. The main chat is not a row.
+- **Report cards.** A subagent that ends a turn leaves a card in the thread: its title and how it
+  ended, its answer as answers are drawn and one row: **N changes** unfolding its review and, at
+  its end, **Reply**, which attaches that unit to the next message as a chip, then revert and
+  accept. Only the latest report of each subagent is a card; the earlier ones are a line. A click
+  on the title inspects it.
+- **Subagent view.** Inspecting one replaces the thread with its own: a way back to the main chat
+  with its model and effort, its title with its state, which opens its details, and its review
+  over a composer that writes to it (`Message <title>...`; no model selector, context window,
+  Annotate or image buttons). Everything else keeps being about the main chat.
+- **Expanded chat.** The corners button makes the chat the whole area below the bars, in a column
+  in the middle, with the rail still at the left and, at the right, a column of the units that
+  work (a click inspects) and those that wait for review, kept or put back from there; the
+  status line gives way to that column. Details, the docks and the bottom panel are not drawn, and
+  the pins of annotations are not shown. The clock and the gear stay at the top right.
 - Of the agent the last message of each turn is shown (the output after its last call), errors,
   cancellation and how the review ended (`Reviewed · N kept · M reverted`); not the intermediate
-  ACP messages. The steps of a finished turn (API calls and the agent's own tools, each with its
-  icon; `finish` is not a step) are folded under `Worked for 1m 05s · N steps`, with the time its
-  notes give. While it runs, a line says `Working for` with the turn's time and the tool in
-  progress, its last step or its last text.
+  ACP messages. A turn started by the editor to take deliveries has no line of the user. The
+  steps of a finished turn (API calls and the agent's own tools, each with its icon; `finish` is
+  not a step) are folded under `Worked for 1m 05s · N steps`, with the time its notes give. While
+  it runs, a line says `Working for` with the turn's time and the tool in progress, its last step
+  or its last text. A divider marks a new context of the chat (editor reopened) and a note a
+  compaction.
 - The consecutive lines of an answer, or of a user message, are a single message that measures and
   draws its first line; adding or growing a line measures the whole message again
   (`ai_transcript_touch`). Answers are Markdown (`ui.markdown`): a code block can occupy several
@@ -132,16 +161,36 @@ History.
   and if its session is not in view a toast warns. A `finish` question shows its options under the
   answer, always with `Other...`, and the choice is sent as the next message.
 - Each line of the thread is measured once per width and only the visible ones are built.
-- The session's review sits over the composer: folded, how many changes remain with **Revert all**
-  and **Accept all** (Finish); unfolded, one row per change
+- The review of the unit shown sits over the composer: folded, how many changes remain with
+  **Revert all** and **Accept all** (Finish); unfolded, one row per change
   ([review](ai-review.md#finish-revert-and-retry)). Accept all, like **Enter with an empty
-  composer**, confirms and opens a new session. A failed turn that left changes remains reviewable;
-  Build appears as a button when sources changed. These actions belong to the conversation's last
-  turn, and Retry is API-only.
-- In the composer, Enter sends and Shift+Enter adds a line; the selection goes in chips, and
-  removing one deselects the entity. The capture is taken on sending, without frame or
-  announcement. Choosing in the model button one of another agent starts a new session. Next to the
-  image button, the percentage of the context window the session used, if its agent reports it.
+  composer**, confirms and keeps the chat. A failed turn that left changes remains reviewable;
+  Build appears as a button when sources changed. These actions belong to the unit's last turn,
+  and Retry is API-only.
+- **Composer.** Enter sends and Shift+Enter adds a line. While the agent works Enter does not
+  interrupt: the message goes into the thread at once and joins the turn
+  ([steering](ai-tasks.md#chat-flow)); one that could not join is drawn with a dashed outline until
+  it reaches the agent. The button is Stop only with nothing written. The selection goes in chips,
+  and removing one deselects the entity. The capture is taken on sending, without frame or
+  announcement.
+  - The model selector is quiet: the monochrome mark of its agent, the model name in muted text and
+    the effort fainter, without a chevron, and the same menu. Choosing one of another agent changes
+    the main chat's agent with its next turn.
+  - A chip that can be pinned carries a thumbtack; a pinned one stays over the composer across
+    messages ([pins](ai-tasks.md#pins-annotations-and-provenance)).
+  - Beside the image button are the Annotate button and, if the agent reports it, the percentage of
+    the context window used: it opens a popup with the tokens used of the window, a bar and
+    **Compact now** ([compaction](ai-tasks.md#compaction-and-handoff)).
+- **Annotations.** The Annotate tool (the Tools menu and the composer's button) turns clicks on the
+  scene into numbered pins, each opening a note with an optional group and a remove button; a pin
+  left without a note goes away. The pins are drawn over the viewport while the chat is open or the
+  tool is on, in Edit, and a group goes with the next message as a chip. They live in the
+  database, never in the scene.
+- **Provenance.** Details of a single entity, and those of the asset documents that show them,
+  carry one faint row at the top naming the unit that last changed it and how long ago; a click
+  opens its view at that turn.
+- **Content Browser marks.** An asset that a unit changed and that waits for review carries a dot
+  in the color of its agent, and its tooltip adds the unit's title.
 
 Figures and outlines: [agents in scene](ai-tasks.md#agents-in-scene-and-review).
 
@@ -156,8 +205,8 @@ Play with its own camera uses its own.
   from it.
 - A right click that did not turn the camera (nor moved the mouse, nor flew, nor changed the flight
   speed) opens the menu of what is under the pointer (`play_here.odin`): with a selection, **Ask
-  agent** first (`ai_ask`: the chat with its composer focused and the selection as its chips, in a
-  new chat when the open one works or is of an agent outside the editor); **Play from here** and
+  agent** first (`ai_ask`: the main chat with its composer focused and the selection as its chips);
+  **Play from here** and
   **Play from camera** ([Play from a place](editor.md#play-from-a-place)), and below what its ray
   crosses (`pick_through`, which does not stop at the first body), nearest first and each entity
   once, to select it.
@@ -415,51 +464,66 @@ The Content Browser tab shows the registry of the assets of the project and its 
 
 **Search and filters:**
 
-- **Search** always in view, with the magnifier inside and its x. Choosing the tab gives it the
-  keyboard (`Content.focus_search`, from `library_select`), as AI gives it to the message, except
-  when Find in Content Browser opens it. Escape clears it. What is typed while a card has the
-  keyboard goes to the search and does not trigger shortcuts (`content_typing`, which
-  `content_build` and `editor_begin` look at): the focused card has the keyboard when the browser
-  was built in the previous frame (`Content.card_focus`). With the panel closed or another tab
-  chosen, or after a click in the scene or on what does not take the keyboard, letters are shortcuts
-  again. It is case-insensitive and matches by name, path or the name of a clip.
-- Next to the search, in this order, **the filter** and **Collapse all**. Collapse all closes the
-  folders, Favorites and the root shelf and folds clips and parts; Recent stays as it is. With
-  everything closed it is Expand all.
-- **Family chips** below, one click, in rows that fill the width: the families in singular (Prefab,
-  Model, Material, Texture, Animation, Scene, Sound, UI) and the plugin types the browser lists,
-  with the name the plugin gives them (Particle, with `vfx`; [types of a
-  plugin](extensions.md#asset-types-of-a-plugin)). Which have a chip is chosen by the filter's
-  menu, with a checkbox, the icon and color of each type and without counts; it is kept in
-  `Content_View` ([preferences](#preferences)) and by default they are Prefab, Model and Material.
-  Removing the chip of an active filter turns it off. Each chip is a rectangle with a bar on the
-  left that takes the color of its type while active. Model gathers meshes, fractures and physics
-  caches; Sound, sounds and sound sets. They combine; none active shows everything. A part of an
-  import appears in its folder when the filters leave out its owner (Model shows the meshes of an
-  imported prefab). Skeletons are not listed: the mesh that uses them represents them
-  (`content_listed`).
+- **Search** always in view, with the magnifier inside and its x, in one row with the toggle of the
+  selection of the viewport, the **+** and the gear. Choosing the tab gives it the keyboard
+  (`Content.focus_search`, from `library_select`), as AI gives it to the message, except when Find
+  in Content Browser opens it. Escape clears it. What is typed while a card has the keyboard goes to
+  the search and does not trigger shortcuts (`content_typing`, which `content_build` and
+  `editor_begin` look at): the focused card has the keyboard when the browser was built in the
+  previous frame (`Content.card_focus`). With the panel closed or another tab chosen, or after a
+  click in the scene or on what does not take the keyboard, letters are shortcuts again.
+- It is case-insensitive and matches each word by name, path or the name of a clip. Results of the
+  folder shown and what is under it are listed flat, best first (`content_score`), and Enter takes
+  the first for placement.
+- **Selection of the viewport**: its toggle shows only what the selected entities hold and what
+  that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
+  registry or the document change.
+- **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
+  only in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI) and lights up while
+  one of them is on, and a cross by it, there only while a filter is on, clears them and the
+  viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
+  and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a
+  plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
+  the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
+  listed: the mesh that uses them represents them (`content_listed`).
+- What a scene makes of itself (`Asset_Kind.scene_data`: foliage, terrain, navmesh bakes) shows only
+  with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
+  icon. The type of an asset is written nowhere but in a tooltip.
+- The zoom beside the strip (and Ctrl+wheel over the list, one notch per step) walks the counts of
+  columns and, past the most, the list; with few columns cells carry their names, with more a
+  floating preview names the asset under the pointer.
 
 **List** (`content_lines`, `ui.rows_begin`): lines of different heights, of which the visible ones
-are built; it is rebuilt when the registry, the filters, the marks or what is open change
+are built; it is rebuilt when the registry, the filters, the marks or the place change
 ([registry review](../../mirai-assets/references/formats.md#registry)).
 
-- **Recent** (what was placed, opened or assigned recently, `content_used`) and **Favorites** go
-  first, as shelves; they belong to each user and project (`Content_Marks`,
-  [preferences](#preferences)).
-- A single tree of folders that open in place. **Folders** indents what each folder has;
-  **Shelves** (the default) aligns the files with the name of their folder, shows the subfolders as
-  shelves with their cover and their count and gathers the root's files in an Assets shelf. The
-  cover is a `cover` texture of the folder, which is not listed (`content_cover`).
+- **The place** (`Content.at`) is a folder or a virtual folder, entered with `content_enter`;
+  nothing folds in place. Entering keeps a history (Back, the back button of the mouse,
+  `content_back`) and shows a row with the back arrow and a breadcrumb.
+- **Layouts** (`Content_Arrangement`, in the gear): **Names** is a continuous wall, with each
+  first-level folder's name sticky over what it holds, a thin name on subfolders of at least a full
+  row and the smaller ones flowing together, and at the root one row of each virtual folder. A
+  name enters its folder and its arrow folds it in place.
+  **Tabs** has chips of the first-level folders and rows of those of the chosen one over a grid of
+  what it holds and everything under it. **Cards** shows folders as cells of an asset, with Recent
+  open at the top of the root. No level is indented.
+- **Recent** (what was placed, opened or assigned recently, `content_used`) and **Favorites** belong
+  to each user and project (`Content_Marks`, [preferences](#preferences)). **Current scene** is what
+  the open scene references, read from the registry transitively and cached by its revision.
+- The cover of a folder is a `cover` texture in it, which is not listed (`content_cover`).
 - The gear also has **Only unused assets** (what no asset references; scenes never) and **Show
   parts of imports** (`Content_View.show_parts`).
+- **Alt+click** on an asset, or Uses / Used by in its menu, opens its relations: the sections of
+  what it uses and what uses it (`registry_dependencies`, `registry_dependents`), walked further
+  with Alt+click and back with the back row (`Content.trail`).
 
 **Create** (`asset_create.odin`): the **+**, the right click on an empty place or on a folder and
 the Create submenu of a card offer Folder, Scene, Material, Particle, Sound set and what a plugin
 creates ([extensions](extensions.md#an-asset-document)), in the clicked folder, the card's or
 that of the last thing clicked (`Content.place`). They are off outside Edit and while watching.
 
-- Choosing an entry empties search and filters and puts in the folder a line with a free name to
-  type over; an invalid or taken name warns and leaves the line.
+- Choosing an entry empties search and filters and puts at the top of the list a line with a free
+  name to type over; an invalid or taken name warns and leaves the line.
 - A folder and a scene are written immediately, like import. The rest is a step of the scene's
   history and stays in memory unsaved, like `material.set` with `path`; what belongs to a plugin
   is written by its plugin in the next frame. What was created opens in its document if its type
@@ -480,9 +544,9 @@ or Save, and rescan the registry. Identity is the id, so references, Recent, Fav
 documents follow the asset; the selection passes to it (`Content.reveal`).
 
 - A card: Rename (F2) puts in its folder the Create line with its name; Duplicate (Ctrl+D); Move to
-  lists the project's folders; dropping it on a folder's header moves it there. The shortcuts look
-  at `content_focused`, like Del. A folder: its right click adds Rename, Duplicate and Move to to
-  the Create menu.
+  lists the project's folders; dropping it on the name, chip or cell of a folder moves it there. The
+  shortcuts look at `content_focused`, like Del. A folder: its right click adds Rename, Duplicate
+  and Move to to the Create menu.
 - The Create line and what is dropped on a folder act after building the lines: their names are
   registry paths that the scan replaces.
 - **Parts and imports.** An asset moves with the parts it owns; each keeps its place relative to
@@ -507,37 +571,24 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
 - A square thumbnail as wide as its column, with the preview of materials, geometry, textures,
   prefabs, the types of the plugins that provide it (animations, particle effects) and the view of
   the open scenes ([thumbnails](#previews); the other types and never-opened scenes, their icon in
-  the color of their type), a faint neutral border and a 2-point line below with the color of its
-  type in Unreal 5.8 (`asset_color`; a mesh with a skeleton, that of Skeletal Mesh:
-  `asset_file_color`). Below, the name in up to two lines, with ellipsis if it does not fit, when
-  **Show asset names** is active; a row whose names all fit in one line keeps the space of one,
-  and a cut name is seen whole on leaving the pointer over the card. With the default size four
-  fit per row in the panel: the columns are those that leave the thumbnails closest to the size.
-- **Selected**, like an outliner row: the whole card, in its 4-point margin, takes `accent_soft`,
-  its thumbnail a 1-point violet border (`toggle_on_stroke`) and its name goes white and in
-  medium; in the list, the row only takes `accent_soft`. The light ring is keyboard-only: around
-  the card or row the keys reached.
+  the color of their type) and a 2-point line below with the color of its type in Unreal 5.8
+  (`asset_color`; a mesh with a skeleton, that of Skeletal Mesh: `asset_file_color`). A cell has no
+  padding; one point separates two cells. Below, the name in up to two lines, with ellipsis if it
+  does not fit, only while the cells are few: a row whose names all fit in one line keeps the space
+  of one, and a cut name is seen whole on leaving the pointer over the cell.
+- **Selected**: the cell takes `accent_soft`, its thumbnail a violet border (`toggle_on_stroke`) and
+  its name goes white and in medium. What placement carries has a light border, the first result of
+  a search a muted one; in the list, the row only takes `accent_soft`. The keyboard has its own ring
+  around the cell or row the keys reached.
 - **Selection**: a click selects a card; Ctrl or Shift+click adds or removes it, without dragging,
   placing or assigning (`Content.picked`; `Content.selected` is the last). A click where there is
   no card, row or folder empties the selection; with Ctrl or Shift it does not.
 - The star appears at the top left on hover, and stays on the favorites.
-- **Bottom bar**: how many assets are selected or, without a selection, how many it lists with the
-  search and filters, in open folders or not (`Content.results`); on the right, the size slider and
-  the grid and list pair.
-- **Size:** the slider and Ctrl+wheel over the list (one notch per step) walk through steps
-  (`content_level`): the **list** (28-point rows with a 20 thumbnail, name, type and star) and then
-  each number of columns of the first level at the panel's width, from the largest whose cards do
-  not go below `CONTENT_SIZE_MIN` to that of `CONTENT_SIZE_MAX`. Each grid step keeps in
-  `Content_View.size` the size that fills the width with its columns, so no step repeats the
-  layout. The grid returns to the size it had. Ctrl+wheel over Create gives the same steps at the
-  browser's default width (`CONTENT_WIDTH`).
-- The browser's tab, the filter, the + and the gear when on use the `Toggle` style: the dark violet
-  with its border.
 - An asset with unsaved changes carries the prototype's dot (`UNSAVED_COLOR`) at the top right
   ([unsaved assets](document.md#tabs)).
 - **Clips of a library:** the card of an `.anim` with clips carries an arrow on the right that
   shows its clips after it, each with the thumbnail of its pose and the play icon in the accent
-  while it does not have it (in the list, one level deeper). A search finds the library by its clips
+  while it does not have it. A search finds the library by its clips
   and shows those that match even if folded. The names come from `Content.clips`.
 - **Parts of an import** (`content_part`): an asset whose `owner` is another asset of the registry
   does not appear in its folder. What is a part is decided by the importer
@@ -553,19 +604,22 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   or draws as a thumbnail (`content_plugin_kinds`: `Asset_Document_Provider`,
   `Thumbnail_Provider`); the other plugin types are edited by the API or by their tool and do not
   appear.
-- Selection, filters, what is open and the scroll are kept on changing tabs; the folder, the chips
-  and what is open, also between runs ([preferences](#preferences)).
+- Selection, filters, the place and the scroll are kept on changing tabs; the folder, the filters
+  and the place, also between runs ([preferences](#preferences)).
 - **Find in Content Browser** (`content_reveal`, the magnifier of a Details field) empties search
-  and filters immediately; the next frame opens the asset's folders, selects it alone, gives the
-  keyboard to its card and centers it. For a hidden part of a prefab, it turns on Show parts of
-  imports and shows it in its folder; for that of another owner, it opens its owner.
+  and filters immediately; the next frame enters the asset's folder if the view does not show it,
+  selects it alone, gives the keyboard to its card and centers it. For a hidden part of a prefab, it
+  turns on Show parts of imports and shows it in its folder; for that of another owner, it opens its
+  owner.
 
 Gestures:
 
 - **Dragging a prefab**: places it linked ([prefabs](prefabs.md)).
 - **Dragging a mesh**: creates an entity with that mesh, resting on the surface.
 - **Dragging a material**: assigns it to the mesh under the pointer.
-- **Dropping a card on a folder's header**: moves it there.
+- **Dropping a card on the name, chip or cell of a folder**: moves it there.
+- **Click on a prefab or a mesh**: selects it and arms placement (`Editor_Ui.placement`): each click
+  on the scene places one, and Escape or the right button ends it.
 - **Click on a material**: assigns it to the selected meshes.
 - **Click on an asset of a plugin type**: what its `Asset_Kind_Provider.clicked` says (a particle
   effect is assigned to the selected emitters).
@@ -574,10 +628,11 @@ Gestures:
   tab of the front one if it is of the same type and clean
   ([replacement](document.md#asset-documents)).
 - With an asset document in front, clicks and drops on the scene do nothing.
-- A card's menu (`content_menu`) has Open, Apply to selection on a material, Update thumbnail on an
-  open scene ([thumbnails](#previews)), Play or Stop sound (`sound_hear`: outside every world, one
-  at a time), **Ask agent** (`ai_ask`, with the card and the others selected as attachments of the
-  message), favorites, Create, Rename, Duplicate, Move to and Delete.
+- A card's menu (`content_menu`) has Open, Uses / Used by, Show in folder, Apply to selection on a
+  material, Update thumbnail on an open scene ([thumbnails](#previews)), Play or Stop sound
+  (`sound_hear`: outside every world, one at a time), **Ask agent** (`ai_ask`, with the card and the
+  others selected as attachments of the message), favorites, Create, Rename, Duplicate, Move to and
+  Delete.
 
 ## Previews
 
@@ -677,9 +732,10 @@ the prototype; tabs, history, Save and closing in [document](document.md#asset-d
 - With a document in front, the active scene stays loaded underneath but is neither drawn nor
   handed to the renderer (`App.ui_only`, which also draws the previews' images of the panels); in
   its place goes the prototype's canvas color.
-- **Workspace** (`asset_workspace_rect`): from the left column to the window edge, below the bars
-  and above the bottom panel. A panel with 33-point headings (`asset_heading`, background
-  `ASSET_SUBSECTION`).
+- **Workspace** (`asset_workspace_rect`): from under the left panel, whose rounded corners show it,
+  to the edges of the window, below the bars; every other panel floats over it, and Details docked
+  takes its edge. A panel with 33-point headings (`asset_heading`, background `ASSET_SUBSECTION`);
+  what is read in it starts past the left panel (`asset_workspace_under`).
 - **Left column**: the shared panel takes the whole height. Details, the viewport tools, the gizmo,
   picking, placement, what is drawn over the scene and Play are not there; `tool_on` is false and
   `tool_set` does not turn on.
@@ -944,12 +1000,10 @@ projects and checkouts on the machine: `editor.mirai` in `project.machine_folder
   the editor starts with the code's values.
 - What of the content browser belongs to each user and project goes in `content.mirai`, in the
   project's `.mirai`, with the same rules: Recent and Favorites (`Content_Marks`) and where it was
-  left (`Content_Navigation`): the folder of the last thing clicked, the chips on, Only unused
-  assets and what is open in the tree. The search is not stored: it is what is being searched at
-  that moment. The first time it is built, the browser checks it against the registry: a folder
-  that is no longer there falls to the nearest one above that is, or to the root, and the open
-  folders that are no longer there and the filters whose chip is not seen are discarded without
-  notice.
+  left (`Content_Navigation`): the place, the folder of the last thing clicked, the filters on and
+  Only unused assets. The search is not stored: it is what is being searched at that moment. Each
+  time the registry changes, and the first time it is built, the browser checks them against it: a
+  folder that is no longer there falls to the nearest one above that is, or to the root.
 - API: `preferences.get` and `preferences.set`
   ([catalog](../../mirai-agent-api/references/methods.md#graphics-and-settings)); what of
   `content.mirai` does not enter.

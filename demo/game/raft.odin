@@ -14,7 +14,6 @@ import "mirai:ui"
 // it, and drowns when its breath runs out. The breath is a rule of this game
 // over how deep the physics says its head is.
 
-RAFT_SCENE :: "scenes/raft.scene"
 RAFT_DROWNED_SECONDS :: 3 // the message stays this long
 
 // Under the surface its oxygen runs out; with the head out it comes back. With

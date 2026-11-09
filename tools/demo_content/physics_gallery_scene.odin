@@ -24,16 +24,16 @@ Physics_Sources :: struct {bricks,wall,hierarchy,mixed,cache,bricks_mesh,wall_me
 @(private)
 physics_source_save :: proc(o:^Out,b:^asset.Fracture_Builder,name:string) -> (fracture,mesh:base.Asset_Id) {
     fracture,mesh=asset.content_id(PROJECT,"fracture",name),asset.content_id(PROJECT,"mesh",name)
-    asset.content_check(&o.content,fmt.tprintf("%s.fracture",name),asset.fracture_save(path(o,fmt.tprintf("assets/physics/%s.fracture",name)),&o.content.types,asset.fracture_builder_desc(b,fracture,mesh)))
+    asset.content_check(&o.content,fmt.tprintf("%s.fracture",name),asset.fracture_save(path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),&o.content.types,asset.fracture_builder_desc(b,fracture,mesh)))
     indices:=make([dynamic]u32,context.temp_allocator)
     for piece in b.pieces {for index in b.indices[piece.first_index:][:piece.index_count] {append(&indices,piece.first_vertex+index)}}
-    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics/%s.mesh",name),{id=mesh,slots={{id=0,material=game.material_asset("Bricks")},{id=1,material=game.material_asset("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
+    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics_gallery/%s.mesh",name),{id=mesh,slots={{id=0,material=game.material_asset("Bricks")},{id=1,material=game.material_asset("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
     return
 }
 
 @(private)
 physics_sources :: proc(o:^Out) -> Physics_Sources {
-    os.make_directory_all(path(o,"assets/physics"))
+    os.make_directory_all(path(o,"assets/physics_gallery"))
     result:Physics_Sources
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube)
     geom.cube_build(&cube)
@@ -75,16 +75,16 @@ physics_mixed_build :: proc(b:^asset.Fracture_Builder,cube:geom.Mesh) -> bool {
 
 @(private)
 physics_burst :: proc(o:^Out) {
-    os.make_directory_all(path(o,"assets/particles"))
+    os.make_directory_all(path(o,"assets/physics_gallery"))
     dust:=effect.PARTICLE_DEFAULTS;dust.duration=.05;dust.rate=0;dust.bursts[0]={count=50,cycles=1}
     dust.shape=.Sphere;dust.shape_size={.5,.5,.5};dust.lifetime={1.5,2};dust.speed={.7,1.4};dust.size={.15,.25};dust.gravity=.1
     dust.colors={{.9,.72,.42,.85},{1,.9,.65,.65}};dust.drag=1
     id:=asset.content_id(PROJECT,"particle","physics_dust")
-    asset.content_check(&o.content,"physics dust",effect.particle_save(path(o,"assets/particles/physics_dust.particle"),&o.content.types,{id=id,info=dust}))
+    asset.content_check(&o.content,"physics dust",effect.particle_save(path(o,"assets/physics_gallery/physics_dust.particle"),&o.content.types,{id=id,info=dust}))
     s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_PREFAB,PHYSICS_GALLERY_BURST_ID);defer asset.builder_destroy(&s)
     e:=asset.builder_entity(&s,"Fracture dust")
     asset.builder_set(&s,e,vfx.Particle_Emitter{particle=id,active=true,destroy_when_done=true})
-    asset.builder_save(&s,path(o,"assets/prefabs/physics_burst.prefab"))
+    asset.builder_save(&s,path(o,"assets/physics_gallery/physics_burst.prefab"))
 }
 
 @(private)

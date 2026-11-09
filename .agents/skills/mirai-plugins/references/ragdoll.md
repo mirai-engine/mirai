@@ -95,6 +95,6 @@ is detected in memory for the call and the `.skeleton` does not change.
 - `plugins/animation/runtime`:
   `final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_allocations` and
   `partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain`.
-- The ragdoll station of `scenes/physics.scene` alternates Animated, Driven and Simulated until
+- The ragdoll station of `physics_gallery/physics.scene` alternates Animated, Driven and Simulated until
   the first E, which then changes the mode; interaction and graphics validation in
   [the demo](../../mirai-gameplay/references/demo.md).

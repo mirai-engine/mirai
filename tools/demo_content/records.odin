@@ -24,12 +24,16 @@ Text_Out :: struct {
     en,es:string,
 }
 
+// What the ids of a table come from: its name, so they stay when its folder changes.
+@(private)
+records_name :: proc(file:string) -> string {return strings.trim_suffix(file[strings.last_index_byte(file,'/')+1:],".records")}
+
 // The ids of rows and texts are below 2^53, as the editor makes them.
 @(private)
-record_id_of :: proc(file,name:string) -> u64 {return base.name_hash(fmt.tprintf("%s\x1frecords\x1f%s",file,name))&(1<<53-1)}
+record_id_of :: proc(file,name:string) -> u64 {return base.name_hash(fmt.tprintf("%s\x1frecords\x1f%s",records_name(file),name))&(1<<53-1)}
 
 @(private)
-records_table_of :: proc(file:string) -> base.Asset_Id {return asset.content_id(PROJECT,"records",file)}
+records_table_of :: proc(file:string) -> base.Asset_Id {return asset.content_id(PROJECT,"records",records_name(file))}
 
 // The row name of the table of file, as a field that names it.
 record_ref :: proc($T:typeid,file,name:string) -> core.Record(T) {

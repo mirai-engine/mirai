@@ -29,7 +29,7 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
   },
   "animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
                            "loop": "Ping_Pong"}},
-  "use": ["ui/stat.ui"],
+  "use": ["hud/stat.ui"],
   "nodes": [
     {"name": "root", "kind": "Box", "style": "card",
      "float": {"to": "Safe", "anchor": "Center", "pivot": "Center"},
@@ -53,7 +53,7 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
 ```
 
 ```
-mirai rpc --project . ui.write asset=ui/stat.ui document=@stat.json save=true
+mirai rpc --project . ui.write asset=hud/stat.ui document=@stat.json save=true
 ```
 
 A document only sees its own `styles` and those of what it lists in `use`.
@@ -66,7 +66,7 @@ A document only sees its own `styles` and those of what it lists in `use`.
 - Keys of a node: `width`, `height` (`"grow"`, `"fit"`, `"50%"` or a number for fixed),
   `direction`, `gap`, `padding` (a number, `[x, y]` or four numbers), `align_x`, `align_y`,
   `float`, `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items`, `image`
-  (`{"texture": "textures/badge.tex"}`), `events`, `flags` and the other fields of `ui.Tree_Node`.
+  (`{"texture": "hud/badge.tex"}`), `events`, `flags` and the other fields of `ui.Tree_Node`.
   A style holds the common ones; a node only what differs: [styles.md](styles.md).
 - Paths in `bind_*` are the data of the game: [hud-panels.md](hud-panels.md#hud). `events` by
   trigger names the animation that plays: `shown`, `hidden`, `hovered`, `pressed`, `clicked`...

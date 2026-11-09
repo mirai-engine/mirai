@@ -17,6 +17,8 @@ Ai_Line_Kind :: enum u8 {
     Output, // printed by the agent
     Prompt, // what the task was asked
     Note,   // said by the editor: why it did not start, how it ended
+    Report, // a turn of a subagent of this chat ended; the text is the id of the subagent
+    Divider, // a new context of the chat began; the text says why (AI_REOPENED_NOTE)
 }
 
 Ai_Line :: struct {
@@ -33,6 +35,7 @@ Ai_Transcript :: struct {
     dropped:int, // lines that were forgotten: the first one kept has this index
     heights:[AI_TRANSCRIPT_LINES]f32, // of each line in the chat, at heights_width and heights_size; 0 until measured
     heights_width,heights_size:f32,
+    heights_held:int, // the first line of the user that had not reached the agent when they were measured
 }
 
 ai_transcript_line :: proc(t:^Ai_Transcript,index:int) -> (text:string,kind:Ai_Line_Kind) {

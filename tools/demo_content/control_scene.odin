@@ -100,5 +100,5 @@ write_control_scene :: proc(o:^Out) {
     asset.builder_set(&s,output,viewer)
     split:=inp.Local_Multiplayer{players=2}
     asset.builder_set(&s,asset.builder_entity(&s,"Local multiplayer"),split)
-    asset.builder_save(&s,path(o,"assets/scenes/control.scene"))
+    asset.builder_save(&s,path(o,"assets/control/control.scene"))
 }

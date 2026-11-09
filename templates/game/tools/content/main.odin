@@ -31,7 +31,7 @@ write_badge :: proc(c:^asset.Content) {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    asset.content_check(c,"assets/textures/badge.tex",asset.texture_save("assets/textures/badge.tex",&c.types,
+    asset.content_check(c,"assets/hud/badge.tex",asset.texture_save("assets/hud/badge.tex",&c.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
@@ -58,7 +58,7 @@ write_hum :: proc(c:^asset.Content) {
         c.failed=true
         return
     }
-    report,error:=importer.import_sound("source/sounds/hum.wav","assets/sounds",{},{root="."})
+    report,error:=importer.import_sound("source/sounds/hum.wav","assets/arena",{},{root="."})
     if error.code!=.None {
         fmt.eprintfln("content: %s",error.message)
         c.failed=true
@@ -72,7 +72,7 @@ main :: proc() {
     c:asset.Content
     asset.content_init(&c,PROJECT)
     defer asset.content_destroy(&c)
-    for folder in ([]string{"assets/sounds","assets/textures"}) {os.make_directory_all(folder)}
+    for folder in ([]string{"assets/arena","assets/hud"}) {os.make_directory_all(folder)}
     write_badge(&c)
     write_hum(&c)
     free_all(context.temp_allocator)

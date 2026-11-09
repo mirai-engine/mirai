@@ -1,12 +1,10 @@
 package editor
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
-import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -26,7 +24,7 @@ Api_Prefab_Inspect_Params :: struct {
 
 Api_Prefab_Create_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity,label=The root of the subtree that becomes the prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: prefabs/ and the name of the entity"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: beside the open scene with the name of the entity"`,
 }
 
 Api_Prefab_Instantiate_Params :: struct {
@@ -50,7 +48,7 @@ Api_Prefab_Apply_Params :: struct {
 
 Api_Prefab_Variant_Params :: struct {
     prefab:[API_PATH_BYTES]u8 `mirai:"text,label=The base: a path inside the assets folder or its asset id"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: prefabs/ and the name of the base with _variant"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: beside the base with its name and _variant"`,
 }
 
 Api_Prefab_Variant_Result :: struct {
@@ -295,24 +293,6 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(w,"]}")
 }
 
-// A file for a new prefab of this name that no asset takes.
-@(private)
-api_prefab_new_path :: proc(s:^Session,name:string) -> string {
-    clean:=strings.builder_make(context.temp_allocator)
-    for c in strings.trim_space(name) {
-        if strings.contains_rune(`<>:"/\|?*`,c) {strings.write_byte(&clean,'_')} else {strings.write_rune(&clean,c)}
-    }
-    stem:=strings.to_string(clean)
-    if stem=="" {stem="prefab"}
-    path:=fmt.tprintf("prefabs/%s.prefab",stem)
-    r:=&s.app.assets.registry
-    for i:=2;;i+=1 {
-        _,taken:=asset.registry_find_path(r,path)
-        if !taken && !os.exists(project.path(r.root,path,allocator=context.temp_allocator)) {return path}
-        path=fmt.tprintf("prefabs/%s_%d.prefab",stem,i)
-    }
-}
-
 @(private)
 api_prefab_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Create_Params)
@@ -320,7 +300,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
     e,found:=api_call_entity(call,edited_world(s),params.entity[:])
     if !found {return}
     path:=base.text_get(params.path[:])
-    if path=="" {path=api_prefab_new_path(s,entity_name(edited_world(s),e))}
+    if path=="" {path=prefab_name_free(s,prefab_folder(s),entity_name(edited_world(s),e))}
     id,error:=prefab_create(s,e,path)
     if error!=.None {
         api_prefab_fail(call,error)
@@ -391,7 +371,7 @@ api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     path:=base.text_get(params.path[:])
     if path=="" {
         file,_,_:=prefab_file(s,base_id)
-        path=api_prefab_new_path(s,fmt.tprintf("%s_variant",asset_name(file.path)))
+        path=prefab_name_free(s,content_folder_of(file.path),fmt.tprintf("%s_variant",asset_name(file.path)))
     }
     id,error:=prefab_variant_create(s,base_id,path)
     if error!=.None {

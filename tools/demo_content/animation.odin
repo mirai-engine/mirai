@@ -178,7 +178,7 @@ gallery_hand_ik :: proc(g:^Gallery_Build,root:base.Entity_Id,place:Gallery_Place
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.rig,look.bone=core.Entity(root),anim.bone_ref("Head");look.target=ik.target
     look.forward,look.max_angle=linalg.normalize0(mm.quat_forward(mm.quat_inverse(rig.rest_world[head].rotation))),.6
     limit:=anim.ROTATION_CONSTRAINT_DEFAULT;limit.rig,limit.bone=core.Entity(root),anim.bone_ref("Head");limit.max_swing,limit.min_twist,limit.max_twist=.35,-.6,.6
-    gallery_profile(o,s,root,"mirai_constraints",{ik={ik},look={look},limits={limit}})
+    gallery_profile(o,s,root,"characters/mirai","mirai_constraints",{ik={ik},look={look},limits={limit}})
     baton:=gallery_cube(s,"Socket baton",{},{1,1,1},{.2,1,.4,1})
     // The grip is on the palm, so the baton lies on it by half its thickness.
     socket:=anim.BONE_ATTACHMENT_DEFAULT;socket.rig=core.Entity(root);base.text_set(socket.socket[:],"grip_right")
@@ -245,7 +245,7 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
         adjusted:=make([]asset.Animation_Track_Desc,len(clip.tracks),context.temp_allocator)
         copy(adjusted,clip.tracks);adjusted[hip_track].keys=keys;clip.tracks=adjusted
     }
-    asset.content_check(&o.content,"assets/animations/mirai_locomotion.anim",asset.animation_save(path(o,"assets/animations/mirai_locomotion.anim"),&o.content.types,{id=id,clips=clips}))
+    asset.content_check(&o.content,"assets/characters/mirai/mirai_locomotion.anim",asset.animation_save(path(o,"assets/characters/mirai/mirai_locomotion.anim"),&o.content.types,{id=id,clips=clips}))
     return
 }
 
@@ -279,14 +279,14 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
 @(private)
 gallery_save :: proc(o:^Out,s:^asset.Scene_Builder,name:string) {
     s.scene.info.id_counter=max(s.scene.info.id_counter,u64(s.next))
-    file:=fmt.tprintf("assets/scenes/%s.scene",name)
+    file:=fmt.tprintf("assets/animation_gallery/%s.scene",name)
     asset.builder_save(s,path(o,file))
 }
 
 @(private)
-gallery_profile :: proc(o:^Out,s:^asset.Scene_Builder,root:base.Entity_Id,name:string,profile:anim.Pose_Profile) {
+gallery_profile :: proc(o:^Out,s:^asset.Scene_Builder,root:base.Entity_Id,folder,name:string,profile:anim.Pose_Profile) {
     id:=asset.content_id(PROJECT,"pose",name)
-    asset.content_check(&o.content,name,anim.pose_profile_save(path(o,fmt.tprintf("assets/animations/%s.pose",name)),&o.content.types,id,profile))
+    asset.content_check(&o.content,name,anim.pose_profile_save(path(o,fmt.tprintf("assets/%s/%s.pose",folder,name)),&o.content.types,id,profile))
     config:=anim.POSE_MODIFIERS_DEFAULT;config.profile=id
     asset.builder_set(s,root,config)
 }

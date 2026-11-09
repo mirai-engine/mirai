@@ -37,7 +37,7 @@ for the run, one `@(step="fixed")` that reads them. The HUD binds a storage fiel
 `tests/scenarios/run.mirai`, then `mirai play test . run`:
 
 ```json
-{"scene": "scenes/main.scene", "steps": [
+{"scene": "arena/main.scene", "steps": [
   {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
   {"name": "start playing", "method": "play.step", "params": {"segments": [
     {"for": 2, "keys": ["Enter"]}, {"for": 10}]}},

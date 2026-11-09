@@ -290,6 +290,7 @@ build_reload :: proc(s:^Session) {
     case .Restart:
         b.reload=false
         b.play={}
+        ai_resume_native_mark(s)
         // A call that waits for this build answers first.
         if st:=api_state(s);st!=nil && st.waiting>0 {st.restart=true} else {s.requests+={.Restart}}
     case .Reloaded:

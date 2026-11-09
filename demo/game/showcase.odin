@@ -4,7 +4,7 @@ import "mirai:core"
 import anim "plugins:animation/runtime"
 import "mirai:std/base"
 
-// The scene assets/scenes/showcase.scene: a lift that an Animation moves, a
+// The scene assets/showcase/showcase.scene: a lift that an Animation moves, a
 // HUD (UI_Screen) and a sign above the lift (World_Widget) that show this
 // component, and a speaker with a sound. tools/demo_content writes the scene
 // and every asset it uses.

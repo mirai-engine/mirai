@@ -55,5 +55,5 @@ write_destruction_scene :: proc(o:^Out) {
     lamp:=render.Point_Light{color={1,0.85,0.7},intensity=candela(LAMPLIT,12),range=14,radius=0.1}
     asset.builder_set(&s,asset.builder_entity(&s,"Lamp",{position={0,3.2,1.5}}),lamp)
     spawn_point(&s,{0,0,4})
-    asset.builder_save(&s,path(o,"assets/scenes/destruction.scene"))
+    asset.builder_save(&s,path(o,"assets/destruction/destruction.scene"))
 }

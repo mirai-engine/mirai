@@ -181,7 +181,9 @@ mesh_built :: proc(m:^Feature_Mesh,built:^geom.Mesh_Buffer,offset:[3]f32,color:u
 @(private)
 mesh_write :: proc(o:^Out,name:string,m:^Feature_Mesh) -> base.Asset_Id {
     id:=asset.content_id(PROJECT,"mesh",name)
-    file:=fmt.tprintf("assets/models/features/%s.mesh",name)
+    folder:="blockout"
+    switch name {case "blob","flag","hose","membrane","post","reed": folder="deform"}
+    file:=fmt.tprintf("assets/%s/%s.mesh",folder,name)
     if !asset.mesh_tangents(&m.vertices,m.indices[:]) {asset.content_check(&o.content,file,.Out_Of_Memory);return id}
     mesh_write_built(o,file,file,{id=id},{vertices=m.vertices[:],flags={.Has_Colors}},m.indices[:])
     return id
@@ -192,7 +194,8 @@ Feature_Meshes :: struct {flag,reed,tree,post,membrane,blob,column,hose:base.Ass
 
 @(private)
 write_feature_meshes :: proc(o:^Out) -> (meshes:Feature_Meshes) {
-    os.make_directory_all(path(o,"assets/models/features"))
+    os.make_directory_all(path(o,"assets/blockout"))
+    os.make_directory_all(path(o,"assets/deform"))
     scratch:=context.temp_allocator
     white:=rgb(1,1,1)
     {
@@ -253,6 +256,28 @@ write_feature_meshes :: proc(o:^Out) -> (meshes:Feature_Meshes) {
     return
 }
 
+// The folder under assets/ of a material by its name; "" for none known.
+@(private)
+material_folder :: proc(name:string) -> string {
+    switch name {
+    case "Bricks":                                                                       return "surfaces/bricks"
+    case "Cobblestone":                                                                  return "surfaces/cobblestone"
+    case "Glass","Stained glass":                                                        return "surfaces/glass"
+    case "Marble":                                                                       return "surfaces/marble"
+    case "Brushed steel","Cast metal","Chrome","Grate","Polished metal","Rough metal","Satin metal": return "surfaces/metal"
+    case "Neon sign":                                                                    return "surfaces/neon"
+    case "Glazed","Lacquer","Matte paint","Satin paint":                                 return "surfaces/paint"
+    case "Tiles":                                                                        return "surfaces/tiles"
+    case "Pool water":                                                                   return "surfaces/water"
+    case "Decking","Planks":                                                             return "surfaces/wood"
+    case "Stained glass window":                                                         return "church"
+    case "Dig grass","Dig ore","Dig soil":                                               return "dig"
+    case "Leaves":                                                                       return "gallery"
+    case "Ocean":                                                                        return "ocean"
+    }
+    return ""
+}
+
 // The metres a unit of UV has to cover for a material to show its image at
 // its true size: the metres of the image, by how many times the material
 // repeats it in a unit.
@@ -264,7 +289,13 @@ tile_of :: proc(o:^Out,material:string) -> [2]f32 {
     case "Planks","Decking": metres=1.6
     }
     file:asset.Asset
-    if asset.asset_load(&file,path(o,fmt.tprintf("assets/materials/%s.mat",material)),context.temp_allocator)!=.None {return {metres,metres}}
+    folder:=material_folder(material)
+    if folder=="" {
+        fmt.eprintfln("demo_content: the material %s has no folder",material)
+        o.content.failed=true
+        return {metres,metres}
+    }
+    if asset.asset_load(&file,path(o,fmt.tprintf("assets/%s/%s.mat",folder,material)),context.temp_allocator)!=.None {return {metres,metres}}
     view,error:=asset.material_view(&file,&o.content.types)
     if error!=.None || view.info.uv_scale.x<=0 || view.info.uv_scale.y<=0 {return {metres,metres}}
     return metres*view.info.uv_scale

@@ -8,7 +8,7 @@ time. The first step that fails ends it.
 ## Write one
 
 ```json
-{"scene": "scenes/main.scene", "start": {"players": 1}, "steps": [
+{"scene": "arena/main.scene", "start": {"players": 1}, "steps": [
   {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
   {"name": "walk forward", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
   {"name": "the player walked", "method": "play.check", "params": {"conditions": [

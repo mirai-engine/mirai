@@ -53,25 +53,61 @@ texture_options :: proc(o:^Out,file:string) -> importer.Import_Options {
     return options
 }
 
-// file: relative to source/textures. The texture is assets/textures/<file without extension>.tex.
+// The folder under assets/ of the texture of an image, from the start of its
+// name: the area or the surface it belongs to.
+@(private)
+TEXTURE_FOLDERS :: [?]struct{prefix,folder:string}{
+    {"bricks_","surfaces/bricks"},{"brushed_","surfaces/metal"},{"church_glass_","church"},{"cobblestone_","surfaces/cobblestone"},
+    {"grate_","surfaces/metal"},{"leaves_","gallery"},{"marble_","surfaces/marble"},{"neon_","surfaces/neon"},{"planks_","surfaces/wood"},
+    {"sky_","sky"},{"stained_glass_","surfaces/glass"},{"tiles_","surfaces/tiles"},{"vase_","gallery"},
+}
+
+// file: relative to source/textures. The texture goes to its folder of
+// TEXTURE_FOLDERS with the name of the file.
 import_texture :: proc(o:^Out,file:string) {
     source:=fmt.tprintf("source/textures/%s",file)
-    report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/textures/%s",filepath.dir(file))),texture_options(o,file))
+    folder:=""
+    for entry in TEXTURE_FOLDERS {
+        if strings.has_prefix(filepath.base(file),entry.prefix) {folder=entry.folder;break}
+    }
+    if folder=="" {
+        fmt.eprintfln("demo_content: %s: no folder for its texture",source)
+        o.content.failed=true
+        return
+    }
+    report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/%s",folder)),texture_options(o,file))
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s: %s",source,error.message)
         o.content.failed=true
         return
     }
     defer importer.report_destroy(&report)
-    fmt.printfln("wrote assets/textures/%s.tex",strings.trim_suffix(file,filepath.ext(file)))
+    fmt.printfln("wrote assets/%s/%s.tex",folder,strings.trim_suffix(filepath.base(file),filepath.ext(file)))
 }
 
-// file: relative to source/models. Its meshes, materials and prefab go to
-// assets/models/<file>/, as the editor imports a model. Its images of
-// source/textures are those import_texture writes.
+// The folder under assets/ of the output of each model of source/models.
+@(private)
+MODEL_FOLDERS :: [?]struct{file,folder:string}{
+    {"mirai/mirai.glb","characters/mirai"},{"morph-playground/jelly.gltf","characters/jelly/jelly.gltf"},
+    {"plant.gltf","gallery/plant.gltf"},{"skeletal-character/robot.glb","characters/robot/robot.glb"},
+    {"skeletal-character/robot.gltf","characters/robot/robot.gltf"},{"vase.obj","gallery/vase.obj"},
+}
+
+// file: relative to source/models. Its meshes, materials and prefab go to its
+// folder of MODEL_FOLDERS. Its images of source/textures are those
+// import_texture writes.
 import_model :: proc(o:^Out,file:string) {
     source:=fmt.tprintf("source/models/%s",file)
-    report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/models/%s",file)),{root=fmt.tprintf("%s/demo",o.root),texture_cache=texture_cache(o)})
+    folder:=""
+    for entry in MODEL_FOLDERS {
+        if entry.file==file {folder=entry.folder;break}
+    }
+    if folder=="" {
+        fmt.eprintfln("demo_content: %s: no folder for its import",source)
+        o.content.failed=true
+        return
+    }
+    report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/%s",folder)),{root=fmt.tprintf("%s/demo",o.root),texture_cache=texture_cache(o)})
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s: %s",source,error.message)
         o.content.failed=true
@@ -81,7 +117,7 @@ import_model :: proc(o:^Out,file:string) {
     for written in report.assets {
         switch {
         case written.kind==asset.KIND_MESH,written.kind==asset.KIND_MATERIAL: fmt.printfln("%s: %s",written.name,written.detail)
-        case written.kind==asset.KIND_PREFAB: fmt.printfln("wrote assets/models/%s/%s.prefab",file,written.name)
+        case written.kind==asset.KIND_PREFAB: fmt.printfln("wrote assets/%s/%s.prefab",folder,written.name)
         }
     }
     for warning in report.warnings {fmt.printfln("%s: %s",source,warning)}

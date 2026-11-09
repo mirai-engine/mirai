@@ -16,9 +16,9 @@ import "mirai:std/serial"
 
 @(private="file") ANIMATION_BENCH :: #config(ANIMATION_BENCH,false)
 @(private="file") ANIMATION_BENCH_FILES :: [?]string{
-    "animations/tall_mirai.anim","animations/mirai_gallery.anim","animations/mirai_locomotion.anim",
-    "models/mirai/mirai.anim","models/morph-playground/jelly.gltf/jelly.anim","animations/lift.anim",
-    "models/physics-ragdoll/wave.anim",
+    "characters/tall_mirai/tall_mirai.anim","characters/mirai/mirai_gallery.anim","characters/mirai/mirai_locomotion.anim",
+    "characters/mirai/mirai.anim","characters/jelly/jelly.gltf/jelly.anim","showcase/lift.anim",
+    "physics_gallery/ragdoll/wave.anim",
 }
 
 @(private="file")

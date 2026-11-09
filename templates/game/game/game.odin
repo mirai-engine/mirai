@@ -11,7 +11,7 @@ import mm "mirai:std/math"
 // A small game built only with the public API of the engine, to copy from.
 // The player is a physics character driven by the input actions move, look,
 // jump, hit (breaks the wall in front of it), save and load (the slot
-// "quick"), bound in code. assets/scenes/main.scene holds a floor, a
+// "quick"), bound in code. assets/arena/main.scene holds a floor, a
 // spawn point with the prefab of the player, a destructible wall, a speaker
 // that plays a sound, a HUD (UI_Screen) with a pulsing badge and a sign above
 // the speaker (World_Widget); both interfaces show the Status component of

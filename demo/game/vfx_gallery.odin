@@ -14,7 +14,7 @@ import vfx "plugins:vfx/runtime"
 
 VFX_GALLERY_STATIONS :: 5
 
-// A station of the VFX gallery (scenes/vfx.scene): what it shows, and where
+// A station of the VFX gallery (vfx_gallery/vfx.scene): what it shows, and where
 // the camera looks at it from.
 @(component)
 Vfx_Gallery :: struct {

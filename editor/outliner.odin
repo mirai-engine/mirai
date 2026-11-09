@@ -472,7 +472,7 @@ create_groups :: proc(s:^Session,groups:^[CARD_GROUP_CAPACITY]Create_Group) -> (
 }
 
 // The Create tab: the presets as the content browser shows assets, under the
-// headers of their groups and at the size and in the mode of its cards;
+// headers of their groups and at the zoom and in the mode of its cells;
 // dragged onto the scene or clicked to place one where the camera looks.
 @(private)
 create_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_WIDTH) {
@@ -482,26 +482,24 @@ create_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_WI
     groups:[CARD_GROUP_CAPACITY]Create_Group
     group_count:=create_groups(s,&groups)
     scroll:=ui.id(ctx,"create_scroll")
-    // Ctrl+wheel over Create changes the cards of the browser with them.
-    if notches:=ui.zoom(ctx,scroll);notches!=0 && s.content!=nil {content_zoom(&s.content.view,notches,width)}
+    // Ctrl+wheel over Create changes the cells of the browser with them.
+    if notches:=ui.zoom(ctx,scroll);notches!=0 && s.content!=nil {content_zoom(&s.content.view,notches)}
     view:=asset_cards_view(s)
-    columns,cell:=content_cells(view,width,0)
+    columns,cell:=content_cells(view,width)
     list:=view.mode==.List
-    if list {columns,cell=1,width}
+    named:=content_shows_names(view)
     ui.scroll_begin(ctx,scroll,&g.create_scroll,{height=ui.FIT,max_height=height})
     defer ui.scroll_end(ctx,scroll,&g.create_scroll)
     for &group,index in groups[:group_count] {
         open:=!g.layout.create_folded[index]
-        header:=Content_Line{kind=.Header,open=open,name=group.title,count=i32(group.count),group=base.hash_combine(0x637265617465,u64(index))}
-        if content_header(s,header,ui.id(ctx,"create_group",index+1),width).clicked {open=!open}
+        if create_header(s,ui.id(ctx,"create_group",index+1),group.title,open,width).clicked {open=!open}
         g.layout.create_folded[index]=!open
         if !open {continue}
         listed,count:=group.cards,group.count
         for start:=0;start<count;start+=columns {
-            top:=CONTENT_GRID_TOP if start==0 else CONTENT_ROW_GAP-CONTENT_PAD*2
-            bottom:=CONTENT_GRID_BOTTOM if start+columns>=count else 0
-            if list {top,bottom=0,0}
-            if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,padding={0 if list else CONTENT_INSET-CONTENT_PAD,top,0 if list else CONTENT_INSET-CONTENT_PAD,bottom},gap=CONTENT_CELL_GAP}) {
+            bottom:=CONTENT_GRID_BOTTOM if start+columns>=count else (CONTENT_NAMED_ROW_GAP if named else CONTENT_GAP)
+            if list {bottom=0}
+            if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,padding={0,0,0,bottom},gap=CONTENT_GAP}) {
                 for which in listed[start:min(start+columns,count)] {
                     card:=all[which]
                     carried:=g.drag.kind==.Preset && g.drag.card==which || g.placement.active && g.placement.kind==.Preset && g.placement.card==which
@@ -513,6 +511,27 @@ create_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_WI
             }
         }
     }
+}
+
+// The name of a group of Create, with the arrow that folds what it holds and
+// a line under it while it is open.
+@(private)
+create_header :: proc(s:^Session,id:ui.Id,name:string,open:bool,width:f32) -> ui.Interaction {
+    ctx:=s.gui.ctx
+    th:=&ctx.theme
+    it:=ui.interact(ctx,id,{.Focusable})
+    height:=CONTENT_HEADER+2
+    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(height),direction=.Column}) {
+        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(height-1 if open else height),padding={CONTENT_INSET,0,8,0},gap=7,align_y=.Center,fill=th.field if it.hot else th.panel,radius=3}) {
+            ui.icon(ctx,.Chevron_Down if open else .Chevron_Right,th.text_faint,10)
+            ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),th.text_faint,14)
+            ui.label(ctx,name,th.font,th.text if open else th.text_muted,0,font=ui.FONT_MEDIUM)
+        }
+        if open {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+        }
+    }
+    return it
 }
 
 // A preset as the browser shows an asset: a row of its list, or its icon on a
@@ -532,9 +551,10 @@ create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View
     }
     if ui.box(ctx,asset_card_box(ctx,id,view,cell,carried,keyboard)) {
         edge,stroke:=asset_frame_edge(th,it.hot,carried)
-        asset_frame(s,cell-2*CONTENT_PAD,card.color,edge,stroke,{},card.icon,card.color,0)
-        if view.show_names {content_name(ctx,card.label,carried,cell)}
-        if it.hot && (!view.show_names || content_name_cut(ctx,card.label,cell)) {ui.tooltip(ctx,card.label)}
+        asset_frame(s,cell,card.color,edge,stroke,{},card.icon,card.color,0)
+        names:=content_shows_names(view)
+        if names {content_name(ctx,card.label,carried,cell)}
+        if it.hot && (!names || content_name_cut(ctx,card.label,cell)) {ui.tooltip(ctx,card.label)}
     }
     return
 }

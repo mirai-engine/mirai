@@ -103,7 +103,7 @@ Spawner :: struct {
     problems:^core.Problems,
 }
 
-// Places a prefab of the assets, by its path ("prefabs/Dog.prefab") or its id,
+// Places a prefab of the assets, by its path ("pets/Dog.prefab") or its id,
 // and gives back its root, whose rows wait for the end of the function. NONE
 // when it did not spawn, which is the problem scene.spawn that says why.
 spawn :: proc{spawn_path,spawn_id}

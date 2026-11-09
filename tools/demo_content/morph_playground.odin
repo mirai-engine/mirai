@@ -127,7 +127,7 @@ gallery_morphs :: proc(g:^Gallery_Build,places:[3]Gallery_Place) {
     for &node,i in nodes {base.text_set(node.name[:],node_names[i])}
     base.text_set(nodes[0].clip[:],"JellyDance");base.text_set(nodes[1].clip[:],"Sleepy");nodes[2].kind=.Blend;nodes[2].left,nodes[2].right,nodes[2].weight_param=0,1,0
     parameter:=anim.Graph_Parameter{min=0,max=1};base.text_set(parameter.name[:],"Mood")
-    asset.content_check(&o.content,"jelly_moods.agraph",anim.graph_save(path(o,"assets/animations/jelly_moods.agraph"),&o.content.types,graph,{info={animation=animation,output=2},nodes=nodes[:],parameters={parameter}}))
+    asset.content_check(&o.content,"jelly_moods.agraph",anim.graph_save(path(o,"assets/characters/jelly/jelly_moods.agraph"),&o.content.types,graph,{info={animation=animation,output=2},nodes=nodes[:],parameters={parameter}}))
     actor_names:=[3]string{"Jelly mixer","Jelly bones","Jelly extremes"}
     titles:=[3]string{"5.2  Morph mix","5.3  Morphs under bones","5.4  Signed morph weights"}
     details:=[3]string{"morph clips + graph + additive layer","the same shapes, before skeletal skinning","weights past 1 and below 0, per instance"}

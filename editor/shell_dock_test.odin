@@ -6,7 +6,7 @@ import "mirai:core"
 import "mirai:ui"
 
 @(test)
-docked_panels_take_their_edges_by_type_of_document_and_the_scene_the_rest :: proc(t:^testing.T) {
+the_rail_and_a_docked_details_take_their_edges_and_the_left_panel_does_not_move_the_scene :: proc(t:^testing.T) {
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
     ui.frame_begin(&ctx,{size={1600,900},pointer_absent=true})
@@ -16,29 +16,64 @@ docked_panels_take_their_edges_by_type_of_document_and_the_scene_the_rest :: pro
     s:=Session{gui=&g,ai=m,has_project=true}
     l:=&g.layout
     left,right:=dock_widths(&s)
-    testing.expect(t,left==0 && right==0,"panels float over a scene by default")
-    l.left_mode,l.right_mode=.Docked,.Docked
-    left,right=dock_widths(&s)
-    testing.expect(t,left>0 && right==width_of(RIGHT_WIDTH,1600),"Docked as the global mode docks a scene")
+    testing.expect(t,left==RAIL_WIDTH && right==0,"the view is the same with the left panel, and Details floats over it")
+    testing.expect_value(t,dock_scene_left(&s),RAIL_WIDTH+LEFT_WIDTH.max-LEFT_UNDER)
+    l.right_mode=.Docked
+    _,right=dock_widths(&s)
+    testing.expect(t,right==width_of(RIGHT_WIDTH,1600),"Docked as the global mode docks a scene")
     l.right_modes[.Scene]=.Floating
     _,right=dock_widths(&s)
     testing.expect(t,right==0,"a type of document keeps its own choice over the global mode")
-    testing.expect_value(t,panel_mode(l,.Right,.Prefab),Panel_Mode.Docked)
+    testing.expect_value(t,panel_mode(l,.Prefab),Panel_Mode.Docked)
     // A dragged width holds between the narrowest and 40 % of the window.
-    l.left_width=60
-    left,_=dock_widths(&s)
-    testing.expect_value(t,left,DOCK_MIN)
-    l.left_width=5000
-    left,_=dock_widths(&s)
-    testing.expect_value(t,left,f32(640))
+    l.right_modes[.Scene]=.Docked
+    l.right_width=60
+    _,right=dock_widths(&s)
+    testing.expect_value(t,right,DOCK_MIN)
+    l.right_width=5000
+    _,right=dock_widths(&s)
+    testing.expect_value(t,right,f32(640))
     l.left_open=false
     left,_=dock_widths(&s)
-    testing.expect_value(t,left,f32(0))
-    // In a Play the panels are not there: the game takes the window.
+    testing.expect_value(t,left,RAIL_WIDTH)
+    testing.expect_value(t,dock_scene_left(&s),RAIL_WIDTH)
+    // In a Play only the rail stays: the game takes the rest.
     l.left_open=true
     s.mode=.Play
     left,right=dock_widths(&s)
-    testing.expect(t,left==0 && right==0)
+    testing.expect(t,left==RAIL_WIDTH && right==0)
+    testing.expect_value(t,dock_scene_left(&s),RAIL_WIDTH)
+}
+
+@(test)
+an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    ui.frame_begin(&ctx,{size={1600,900},pointer_absent=true})
+    defer ui.frame_end(&ctx)
+    g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
+    s:=Session{gui=&g}
+    bars:=ctx.theme.bar_height+toolbar_height(&g)
+    g.rects.left={RAIL_WIDTH,bars,LEFT_WIDTH.max,900-bars}
+    x0:=RAIL_WIDTH+LEFT_WIDTH.max-LEFT_UNDER
+    testing.expect_value(t,asset_workspace_rect(&g),ui.Rect{x0,bars,1600-x0,900-bars})
+    testing.expect_value(t,asset_workspace(&g).padding,[4]f32{LEFT_UNDER,0,0,0})
+    document,details,_:=asset_workspace_details(&s)
+    testing.expect(t,document.width.value==1600-x0 && document.backdrop,"Details floats over the document, under the left panel")
+    testing.expect_value(t,details.offset,[2]f32{-DETAILS_MARGIN,bars+DETAILS_MARGIN})
+    // What the bottom panel takes stays free of what the document shows.
+    g.rects.bottom={400,600,1000,292}
+    testing.expect_value(t,asset_workspace(&g).padding[3],f32(300))
+    g.rects.bottom={}
+    g.layout.right_mode=.Docked
+    document,details,_=asset_workspace_details(&s)
+    width:=dock_right_width(&s)
+    testing.expect_value(t,document.width.value,1600-x0-width)
+    testing.expect_value(t,details.offset,[2]f32{0,bars})
+    // With the panel folded only the rail is at the left, and nothing runs under it.
+    g.rects.left={0,bars,RAIL_WIDTH,900-bars}
+    testing.expect_value(t,asset_workspace_rect(&g).x,RAIL_WIDTH)
+    testing.expect_value(t,asset_workspace_under(&g),f32(0))
 }
 
 @(test)

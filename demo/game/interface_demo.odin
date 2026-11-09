@@ -7,13 +7,13 @@ import render "mirai:engine/render"
 import inp "mirai:engine/input"
 import "mirai:std/base"
 
-// The scene assets/scenes/interface.scene: a HUD whose style H changes
+// The scene assets/interface/interface.scene: a HUD whose style H changes
 // (variants of its styles), a menu M opens over it with the controls of a
 // game's options, an inventory I opens with a grid of items to drag, and a
-// conversation T starts. The four are .ui of assets/ui/interface on entities
+// conversation T starts. The four are .ui of assets/interface on entities
 // of their own that bind this component of another entity. tools/demo_content
 // writes them. What the items are and what the conversation says are rows of
-// the tables of assets/data, which the editor and the API edit.
+// the tables of assets/interface, which the editor and the API edit.
 
 INTERFACE_ITEMS :: 12
 INTERFACE_DEMO :: "Interface demo"         // the entity with Interface_Demo

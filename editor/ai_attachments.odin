@@ -1,7 +1,6 @@
 package editor
 
 import "core:fmt"
-import "core:math"
 import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
@@ -53,7 +52,7 @@ ai_attachment_rows :: proc(s:^Session,width:f32) -> int {
     ctx:=s.gui.ctx
     used:=f32(0);rows:=1
     for id in m.attachments[:m.attachment_count] {
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,ai_attachment_label(s,id),ctx.theme.font_small))+AI_CHIP_ROOM)
+        size:=ai_chip_width(ctx,ai_attachment_label(s,id),width)
         if used>0 && used+size>width {rows+=1;used=0}
         used+=size+5
     }
@@ -72,13 +71,14 @@ ai_attachments_build :: proc(s:^Session,width:f32,rows:int) {
         label:=ai_attachment_label(s,id)
         _,kind:=ai_attachment_file(s,id)
         icon,color:=asset_icon(s,kind)
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,label,th.font_small))+AI_CHIP_ROOM)
+        size:=ai_chip_width(ctx,label,width)
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
         if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
             ui.icon(ctx,icon,color,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40-AI_CHIP_PIN_ROOM)
+            if path,_:=ai_attachment_file(s,id);path!="" {ai_chip_pin(s,ui.id(ctx,"pin_attachment",i+1),AI_PIN_ASSET,path,label)}
             if ui.button(ctx,ui.id(ctx,"remove_attachment",i+1),{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
         }
         used+=size+5

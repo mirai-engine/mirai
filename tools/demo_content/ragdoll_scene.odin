@@ -16,7 +16,7 @@ import anim "plugins:animation/runtime"
 import rag "plugins:ragdoll/runtime"
 
 physics_ragdoll_station :: proc(o:^Out,s:^asset.Scene_Builder,origin:mm.Vec3) -> base.Entity_Id {
-    folder::"assets/models/physics-ragdoll";os.make_directory_all(path(o,folder))
+    folder::"assets/physics_gallery/ragdoll";os.make_directory_all(path(o,folder))
     skeleton_id,mesh_id,clip_id:=asset.content_id(PROJECT,"skeleton","physics-ragdoll"),asset.content_id(PROJECT,"mesh","physics-ragdoll"),asset.content_id(PROJECT,"animation","physics-ragdoll")
     names:=[7]string{"torso","head","arm.left","arm.right","hips","leg.left","leg.right"}
     parents:=[7]i32{-1,0,0,0,0,4,4}

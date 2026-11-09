@@ -12,10 +12,10 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // The scene of the game interfaces (game/interface_demo.odin), whose .ui are
-// the files of assets/ui/interface: a HUD with three styles, a menu of
+// the files of assets/interface: a HUD with three styles, a menu of
 // options, an inventory to drag items in, a conversation and a name tag over
 // a pillar. The items and the conversation are tables of game data in
-// assets/data.
+// assets/interface.
 
 ICON_SIZE :: 64
 
@@ -61,14 +61,14 @@ write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
             pixels[at+3]=u8(coverage*255)
         }
     }
-    file:=fmt.tprintf("assets/textures/item_%s.tex",names[shape])
+    file:=fmt.tprintf("assets/interface/item_%s.tex",names[shape])
     asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
     return id
 }
 
-ITEMS_FILE :: "assets/data/items.records"
-LINES_FILE :: "assets/data/merchant_lines.records"
-ANSWERS_FILE :: "assets/data/merchant_answers.records"
+ITEMS_FILE :: "assets/interface/items.records"
+LINES_FILE :: "assets/interface/merchant_lines.records"
+ANSWERS_FILE :: "assets/interface/merchant_answers.records"
 
 // The items of the inventory and what the merchant of the conversation says.
 @(private)
@@ -176,5 +176,5 @@ write_interface_scene :: proc(o:^Out) {
     screen(&s,game.INTERFACE_INVENTORY,inventory,holder,.Menu,10,true,true)
     screen(&s,game.INTERFACE_DIALOGUE,dialogue,holder,.Menu,15,true,true)
     screen(&s,game.INTERFACE_MENU,menu,holder,.Modal,20,true,true)
-    asset.builder_save(&s,path(o,"assets/scenes/interface.scene"))
+    asset.builder_save(&s,path(o,"assets/interface/interface.scene"))
 }

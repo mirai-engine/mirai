@@ -103,6 +103,7 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
         if task==nil {return nil}
         task.id=int(id)
         task.conversation.id=id
+        task.conversation.kind=.Archived
         task.conversation.created_at=time.time_to_unix_nano(time.now())/1_000_000
         title:=ai_external_title(agent[len(AI_EXTERNAL_PREFIX):])
         ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)

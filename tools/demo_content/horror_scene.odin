@@ -87,5 +87,5 @@ write_horror_scene :: proc(o: ^Out) {
     asset.builder_set(&s, flashlight, game.Flashlight{intensity = 600, on = true})
 
     spawn_point(&s, {1.5, 0, 2.2})
-    asset.builder_save(&s,path(o, "assets/scenes/horror.scene"))
+    asset.builder_save(&s,path(o, "assets/horror/horror.scene"))
 }

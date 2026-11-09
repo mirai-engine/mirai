@@ -24,6 +24,18 @@ the_strip_keeps_its_view_and_range_inside_the_duration :: proc(t:^testing.T) {
 }
 
 @(test)
+a_range_turned_on_starts_at_the_head :: proc(t:^testing.T) {
+    strip:Timeline
+    timeline_range_start(&strip,12,60)
+    testing.expect(t,strip.range_in==12 && strip.range_out==60)
+    strip.range_out=40
+    timeline_range_start(&strip,20,60)
+    testing.expect(t,strip.range_in==20 && strip.range_out==40,"It keeps an end after the head")
+    timeline_range_start(&strip,60,60)
+    testing.expect(t,strip.range_in==59 && strip.range_out==60,"At the last frame it still spans one")
+}
+
+@(test)
 an_end_of_the_range_set_at_a_frame_keeps_the_other_before_or_after_it :: proc(t:^testing.T) {
     Case :: struct {
         name:string,

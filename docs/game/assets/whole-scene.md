@@ -6,7 +6,7 @@ Terrain, foliage and sea go in one `--batch` file of JSON lines, one line per ca
 what it needs by name ([terrain-foliage](../world/terrain-foliage.md)):
 
 ```json
-{"method":"scene.open","params":{"path":"scenes/main.scene"}}
+{"method":"scene.open","params":{"path":"arena/main.scene"}}
 {"method":"terrain.create","params":{"name":"Island","samples":257,"spacing":1,"at":[0,0,0],"heightmap":"source/island.png","height_scale":40}}
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/sand.mat","tiling":6}}
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/grass.mat","automatic":true,"height":[2.6,40],"slope":[0,42],"softness":[6,1.2]}}

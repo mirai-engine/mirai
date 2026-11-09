@@ -1,5 +1,5 @@
 {
   "name": "Game",
-  "start_scene": "scenes/main.scene",
+  "start_scene": "arena/main.scene",
   "plugins": ["spawn", "physics", "destruct", "multiplayer", "playtest", "ui_inspector"]
 }

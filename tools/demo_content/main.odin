@@ -21,12 +21,12 @@ import "mirai:std/serial"
 
 // Writes every generated asset of the demo project: the imports of
 // demo/source (sources.odin) and the showcase, which is the scene
-// demo/assets/scenes/showcase.scene and the assets it uses: the two images
+// demo/assets/showcase/showcase.scene and the assets it uses: the two images
 // (.tex) of its HUD, the clips of a lift (.anim) and the hum of a speaker
 // (.sound, imported from a WAV this also writes). Running it again gives the
-// same bytes. The other scenes, the prefabs of demo/assets/prefabs, the
-// materials of demo/assets/materials and the interfaces of demo/assets/ui are
-// authored: this names a .ui by its id and never writes one.
+// same bytes. The other scenes and prefabs, the materials of
+// demo/assets/surfaces and the interfaces are authored: this names a .ui by
+// its id and never writes one.
 //
 //   odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins -ignore-unknown-attributes -- [root of the repository]
 
@@ -77,7 +77,7 @@ write_badge :: proc(o:^Out) {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    asset.content_check(&o.content,"assets/textures/hud_badge.tex",asset.texture_save(path(o,"assets/textures/hud_badge.tex"),&o.content.types,
+    asset.content_check(&o.content,"assets/showcase/hud_badge.tex",asset.texture_save(path(o,"assets/showcase/hud_badge.tex"),&o.content.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
@@ -98,7 +98,7 @@ write_panel :: proc(o:^Out) {
             pixels[at+3]=u8(235*coverage(distance,RADIUS))
         }
     }
-    asset.content_check(&o.content,"assets/textures/hud_panel.tex",asset.texture_save(path(o,"assets/textures/hud_panel.tex"),&o.content.types,
+    asset.content_check(&o.content,"assets/showcase/hud_panel.tex",asset.texture_save(path(o,"assets/showcase/hud_panel.tex"),&o.content.types,
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
@@ -120,7 +120,7 @@ write_lift :: proc(o:^Out) -> base.Asset_Id {
         {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{seconds/2,"top"}}},
         {name="parked",tracks={{target="Platform",property=.Position,keys=rise[:1]}}},
     }
-    asset.content_check(&o.content,"assets/animations/lift.anim",asset.animation_save(path(o,"assets/animations/lift.anim"),&o.content.types,{id=id,clips=clips}))
+    asset.content_check(&o.content,"assets/showcase/lift.anim",asset.animation_save(path(o,"assets/showcase/lift.anim"),&o.content.types,{id=id,clips=clips}))
     return id
 }
 
@@ -148,7 +148,7 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
         o.content.failed=true
         return {}
     }
-    report,error:=sources.import_source(source,path(o,"assets/sounds"),{root=fmt.tprintf("%s/demo",o.root)})
+    report,error:=sources.import_source(source,path(o,"assets/showcase"),{root=fmt.tprintf("%s/demo",o.root)})
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s",error.message)
         o.content.failed=true
@@ -252,7 +252,16 @@ write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
     source.sound,source.loop,source.spatial,source.volume,source.max_distance=hum,true,true,0.7,25
     asset.builder_set(&s,speaker,source)
 
-    asset.builder_save(&s,path(o,"assets/scenes/showcase.scene"))
+    asset.builder_save(&s,path(o,"assets/showcase/showcase.scene"))
+}
+
+@(private)
+AREAS :: [?]string{
+    "ai","animation_gallery/rig_playground","blockout","characters/jelly","characters/mirai","characters/player","characters/robot",
+    "characters/spider","characters/tall_mirai","church","control","decals","deform","destruction","dig","gallery","horror","interface",
+    "lights","monitors","ocean","physics_gallery/ragdoll","portals","raft","showcase","sky","surfaces/bricks","surfaces/cobblestone",
+    "surfaces/glass","surfaces/marble","surfaces/metal","surfaces/neon","surfaces/paint","surfaces/tiles","surfaces/water","surfaces/wood",
+    "vfx_gallery",
 }
 
 main :: proc() {
@@ -262,7 +271,7 @@ main :: proc() {
     defer asset.content_destroy(&o.content)
     actions_load(&o)
     if o.content.failed {os.exit(1)}
-    for folder in ([]string{"assets/animations","assets/sounds","assets/textures","assets/scenes","assets/prefabs","assets/data"}) {os.make_directory_all(path(&o,folder))}
+    for folder in AREAS {os.make_directory_all(path(&o,fmt.tprintf("assets/%s",folder)))}
     if len(os.args)>2 && os.args[2]=="--physics-only" {
         write_destruction_scene(&o)
         if o.content.failed {os.exit(1)}

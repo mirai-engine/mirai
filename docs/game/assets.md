@@ -22,9 +22,9 @@ has an id in its header: components and scenes name it by id; a prefab spawned f
 Put the file in `source/`; from the project folder, one `--out` folder per model (names clash):
 
 ```sh
-mirai import source/models/hero.glb --out assets/models/hero --root .
-mirai import source/textures/rock_n.png --out assets/textures --root .
-mirai import source/sounds/step.wav --out assets/sounds --root .
+mirai import source/models/hero.glb --out assets/player/hero --root .
+mirai import source/textures/rock_n.png --out assets/arena --root .
+mirai import source/sounds/step.wav --out assets/player --root .
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
@@ -42,16 +42,16 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
 - Importing again from the same path updates in place, keeping ids and material edits; after
   moving or renaming the source pass `--into <id>` of its prefab, texture or sound.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
-  wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what
-  exists.
+  wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font`
   `.strings` `.prompts` `.records` `.scene` `.prefab` `.fracture` `.physics_cache`.
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.agraph`, `.pose`,
   `.blend`, `.motion`, `.action`.
-- The editor imports into `models/<name>`, `textures`, `sounds`, `fonts`, `texts`, `prompts`.
-  Sound sets: [audio](audio.md); particles: [vfx](vfx.md).
+- Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
+  into the folder asked for, a model in one of its name inside. Sound sets: [audio](audio.md);
+  particles: [vfx](vfx.md).
 
 ## Reference
 
@@ -60,7 +60,7 @@ mirai import source/sounds/step.wav --out assets/sounds --root .
 - The API takes an asset by its path under `assets/`, with or without its extension, or its id. A
   constant in code is only for assets your own tool writes with `asset.content_id`.
 - Scenes, prefabs and `.records` ship. Other assets only code names need a root in `cook.mirai`:
-  `{"roots":["materials/Chrome.mat","sounds/"]}` (path under `assets/`, folder with `/`, or id).
+  `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with `/`, or id).
 - Texts: `host.strings_text(host.content_strings(app,id),base.name_hash("en"),
   base.name_hash(key))` gives `(text,found)`. `mirai texts export|import <file.csv>` moves the
   translations of `.ui` files through the open editor.

@@ -26,7 +26,7 @@ DOG_BEHIND :: [3]f32{-1.2,0,1.5} // m from its person, in the frame of the perso
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
 CAMERA_CYCLE :: [cam.Camera_Preset]cam.Camera_Preset{.Third_Person=.First_Person,.First_Person=.Isometric,.Isometric=.Top_Down,.Top_Down=.Side,.Side=.Third_Person,.Aim=.Third_Person}
 
-DOG_PREFAB :: "prefabs/Dog.prefab"
+DOG_PREFAB :: "control/Dog.prefab"
 
 // An AI that walks its body after the body of its leader while no seat drives it.
 @(component,description="An AI walks this body after the leader body while no player drives it.")

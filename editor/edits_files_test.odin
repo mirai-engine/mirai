@@ -5,9 +5,11 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 Files_Test_World :: struct {
     entities:core.Entities,
@@ -149,6 +151,91 @@ files_of_a_gesture_are_one_step_and_undo_keeps_what_changed_outside :: proc(t:^t
     testing.expect(t,file_write(s,created,transmute([]u8)string("made"),"Same"))
     files_test_commit(&f)
     testing.expect_value(t,len(f.edits.steps),steps)
+}
+
+@(private="file")
+provenance_task :: proc(t:^testing.T,f:^Files_Test) -> ^Ai_Task {
+    m:=f.ai
+    testing.expect_value(t,ai_store_open(&m.store,f.root),"")
+    task:=&m.tasks[0]
+    m.task_count=1
+    task.id,task.world=7,&f.world
+    c:=&task.conversation
+    c.id=7
+    base.text_set(task.name[:],"7-0")
+    base.text_set(task.title[:],"Wet rock")
+    ai_conversation_set_text(c.title[:],&c.title_len,"Wet rock")
+    ai_conversation_set_text(c.model[:],&c.model_len,"gpt-6")
+    ai_conversation_set_text(c.effort[:],&c.effort_len,"high")
+    ai_transcript_add(&task.transcript,"Make the rock wet",.Prompt)
+    ai_task_dirty(task)
+    testing.expect_value(t,ai_store_save(&m.store,c,&task.transcript,task.dirty_sequence),"")
+    return task
+}
+
+@(test)
+a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^testing.T) {
+    f:Files_Test
+    files_test_open(&f,"mirai-provenance")
+    defer files_test_close(&f)
+    m:=f.ai
+    task:=provenance_task(t,&f)
+    defer ai_store_close(&m.store)
+    before:=f.edits.serial
+    edits_begin(&f.edits,&f.selection,"Agent")
+    testing.expect(t,file_write(&f.s,project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator),transmute([]u8)string("wet"),"Write"))
+    testing.expect(t,file_write(&f.s,project.path(f.root,"shaders/rock.slang",allocator=context.temp_allocator),transmute([]u8)string("code"),"Write"))
+    e:=core.create(&f.world.entities)
+    core.add(&f.world.ids,e,core.Id{0x2a})
+    core.world_settle(edited_world(&f.s))
+    edits_end(&f.edits)
+    files_test_commit(&f)
+    ai_review_record(&f.s,task,before)
+    for ref in ([?][2]string{{AI_REF_ASSET,"rock.mat"},{AI_REF_ENTITY,"000000000000002a"}}) {
+        provenance,found,message:=ai_store_provenance_get(&m.store,ref[0],ref[1])
+        testing.expectf(t,message=="" && found && provenance.conversation==7 && provenance.sequence==0,"%s %s: %v",ref[0],ref[1],provenance)
+    }
+    _,source,_:=ai_store_provenance_get(&m.store,AI_REF_ASSET,"../shaders/rock.slang")
+    testing.expect(t,!source,"what is outside the assets is not an asset")
+    testing.expect_value(t,base.text_get(ai_provenance_view(m,.Asset,"rock.mat").title[:]),"Wet rock")
+    p:=new(Ai_Provenance_Params,context.temp_allocator)
+    p.entity=0x2a
+    w:=new(serial.Writer,context.temp_allocator)
+    serial.writer_init(w,0,context.temp_allocator)
+    method:=new(api.Method,context.temp_allocator)
+    method^={name="ai.provenance",params_id=Ai_Provenance_Params,result_id=Ai_Provenance_Result}
+    call:=api.Call{method=method,raw="{}",params=p,out=w,allocator=context.temp_allocator}
+    ai_method_provenance(&f.s,&call)
+    testing.expect(t,!call.failed,call.error.message)
+    text:=string(serial.writer_bytes(w))
+    testing.expect_value(t,api.result_mismatch(Ai_Provenance_Result,text),"")
+    for fragment in ([?]string{`"found":true`,`"conversation":7`,"Wet rock","Make the rock wet","gpt-6","high"}) {
+        testing.expectf(t,strings.contains(text,fragment),"%q is missing from %s",fragment,text)
+    }
+}
+
+@(test)
+the_browser_marks_are_the_assets_of_the_units_that_wait_for_review :: proc(t:^testing.T) {
+    f:Files_Test
+    files_test_open(&f,"mirai-browser-marks")
+    defer files_test_close(&f)
+    m:=f.ai
+    defer delete(m.asset_marks)
+    task:=provenance_task(t,&f)
+    defer ai_store_close(&m.store)
+    testing.expect(t,ai_asset_mark(&f.s,"rock.mat")==nil)
+    before:=f.edits.serial
+    testing.expect(t,file_write(&f.s,project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator),transmute([]u8)string("wet"),"Write"))
+    files_test_commit(&f)
+    ai_review_record(&f.s,task,before)
+    task.state=.Done
+    testing.expect(t,ai_asset_mark(&f.s,"rock.mat")==task,"it waits for review")
+    testing.expect(t,ai_asset_mark(&f.s,"other.mat")==nil)
+    task.review.pending=false
+    testing.expect(t,ai_asset_mark(&f.s,"rock.mat")==task,"the set is remade only when the review state moves")
+    task.review.pending=true
+    ai_review_file_accept(&f.s,m,task,"assets/rock.mat")
+    testing.expect(t,ai_asset_mark(&f.s,"rock.mat")==nil,"accepted, it no longer waits")
 }
 
 @(test)

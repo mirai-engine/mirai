@@ -565,7 +565,7 @@ they light everything within their reach, without shadow rays or a place in thos
 - `mirai test plugins/vfx/editor` (with `-collection:plugins=<root>/plugins`): the effects document
   (`document_test.odin`).
 - In the demo editor, without a window and with validation: the physics gallery launches
-  `prefabs/physics_burst.prefab` (station 11 with `trigger` 1 and `simulation.start`), and
+  `physics_gallery/physics_burst.prefab` (station 11 with `trigger` 1 and `simulation.start`), and
   `particle.*` creates, changes and controls effects
   ([methods](../../mirai-agent-api/references/methods.md#components-and-assets)); a `Surface` effect
   over a mesh and another bound to a sphere (`Particle_Bindings`) are seen in `capture`.

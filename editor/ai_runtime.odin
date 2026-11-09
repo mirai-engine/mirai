@@ -63,16 +63,43 @@ ai_initialize :: proc(s:^Session) {
     m.initialized=true
     ai_settings_initialize(s)
     if message:=ai_store_open(&m.store,s.project_root);message!="" {notify(s,message);return}
+    ai_memory_scan(s)
     ai_history_refresh(s)
-    for &conversation in m.history[:m.history_count] {
+    if saved:=ai_store_main(&m.store);saved!=nil {
+        conversation:=saved^
+        if task:=ai_conversation_restore(s,&conversation);task!=nil {
+            m.main,m.selected=task.id,task.id
+            m.stick=true
+            base.text_set(m.agent[:],base.text_get(task.agent[:]))
+            ai_held_count(s,task)
+            ai_main_reopen(s,m,task)
+        }
+    }
+    ai_agents_interrupted_restore(s,m)
+    // What still waits for review: the subagents, and the agents outside the editor.
+    waiting:[64]Ai_Conversation
+    count,_:=ai_store_list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
+    for &conversation in waiting[:count] {
         if m.task_count==AI_TASK_CAPACITY {break}
-        ai_conversation_restore(s,&conversation,only_pending=true)
+        if conversation.kind==.Archived && ai_external_client(string(conversation.provider[:conversation.provider_len]))=="" {continue}
+        if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(s,task)}
     }
 }
 
-// Lists a page of the saved conversations of the document whose titles have
-// needle or whose lines match it in the search index; one found by its lines
-// shows what matched in place of its last answer.
+// The messages a chat kept for its next turn when the editor closed.
+@(private)
+ai_held_count :: proc(s:^Session,task:^Ai_Task) {
+    deliveries,_:=ai_store_deliveries(&s.ai.store,task.conversation.id)
+    for &delivery in deliveries {
+        if delivery.kind!=AI_DELIVERY_STEER {continue}
+        task.held+=1
+        task.held_lines+=strings.count(delivery.text,"\n")+1
+    }
+}
+
+// Lists a page of the saved subagents whose titles have needle or whose lines
+// match it in the search index; one found by its lines shows what matched in
+// place of its last answer.
 ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
     m:=s.ai
     hits:[AI_HISTORY_HITS]Ai_Search_Hit
@@ -85,14 +112,28 @@ ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
             if !slice.contains(found[:found_count],hit.conversation) {hits[found_count]=hit;found[found_count]=hit.conversation;found_count+=1}
         }
     }
-    count,message:=ai_store_list(&m.store,m.history[:],document_path(s.document),offset,needle,found[:found_count])
+    count,message:=ai_store_list(&m.store,m.history[:],"",offset,needle,found[:found_count],kinds={.Agent},parent=u64(m.main))
     if message!="" {notify(s,message);return}
     m.history_count,m.history_offset=count,offset
     for &c in m.history[:count] {
+        if needle=="" {ai_history_outcome(m,&c)}
         if contains_fold(string(c.title[:c.title_len]),needle) {continue}
         if at,ok:=slice.linear_search(found[:found_count],c.id);ok {
             plain:[AI_LAST_BYTES*2]u8
             c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(hits[at].snippet,plain[:]),AI_LAST_BYTES))
+        }
+    }
+}
+
+// How the review of a finished agent ended, in place of its last answer.
+@(private)
+ai_history_outcome :: proc(m:^Ai,c:^Ai_Conversation) {
+    lines:[4]Ai_Stored_Line
+    count,_:=ai_store_page(&m.store,c.id,-1,lines[:])
+    #reverse for &line in lines[:count] {
+        if line.kind==.Note && strings.has_prefix(line.text,AI_REVIEWED_NOTE) {
+            c.last_len=copy(c.last[:],line.text)
+            return
         }
     }
 }
@@ -109,6 +150,7 @@ ai_conversation_restore :: proc(s:^Session,conversation:^Ai_Conversation,only_pe
     task:=ai_task_slot(m)
     if task==nil {return nil}
     task.id=int(conversation.id);task.state=.Done;task.conversation=conversation^
+    ai_context_restored(task)
     task.review_finished=true
     task.world=string(conversation.document[:conversation.document_len])==document_path(s.document)?s.edit_world:nil
     base.text_set(task.title[:],string(conversation.title[:conversation.title_len]))
@@ -157,7 +199,7 @@ ai_task_review_follow :: proc(s:^Session,task:^Ai_Task) {
 }
 
 ai_history_select :: proc(s:^Session,conversation:^Ai_Conversation) {
-    if task:=ai_conversation_restore(s,conversation);task!=nil {ai_task_select(s.ai,task)}
+    if task:=ai_conversation_restore(s,conversation);task!=nil {ai_chat_select(s,task)}
     else {notify(s,"Too many conversations are awaiting review")}
 }
 
@@ -222,6 +264,8 @@ ai_instructions_write :: proc(s:^Session,text:string) -> string {
     folder:=project.path(s.project_root,".mirai","ai",allocator=context.temp_allocator)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return "The instructions could not be saved"}
     if serial.file_write_atomic(path,transmute([]u8)text)!=.None {return "The instructions could not be saved"}
+    // They go with the stable block, which a context that has it would not get again.
+    if s.ai!=nil {for &task in s.ai.tasks[:s.ai.task_count] {task.stable_native={}}}
     return ""
 }
 
@@ -396,16 +440,50 @@ ai_open_task_session :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
 ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
     worker.call_count=0
     native:=acp.session_id(&worker.client)
-    ai_conversation_set_text(task.conversation.native_session[:],&task.conversation.native_session_len,native)
-    instructions,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_PROMPT),context.temp_allocator)
+    c:=&task.conversation
+    new_context:=string(c.native_session[:c.native_session_len])!=native
+    ai_conversation_set_text(c.native_session[:],&c.native_session_len,native)
+    turn,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_PROMPT),context.temp_allocator)
     if error!=nil {ai_task_fail(task,"The editor instructions could not be read");ai_task_end(s,s.ai,task,1);return}
     message,message_error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),context.temp_allocator)
     if message_error!=nil {ai_task_fail(task,"The message of the turn could not be read");ai_task_end(s,s.ai,task,1);return}
+    // What waited for this chat goes with its turn, whatever started it.
+    deliveries:[]Ai_Delivery
+    if s.ai.store.db!=nil {
+        problem:string
+        deliveries,problem=ai_store_deliveries(&s.ai.store,task.conversation.id)
+        if problem!="" {notify(s,problem)}
+    }
+    remind:=ai_context_filling(task) && base.text_get(task.notes_native[:])!=native
+    handoff:=new_context?ai_handoff_build(s,task,ai_task_turn_sequence(task)):""
+    delta:=ai_delta_build(s,task,string(turn),handoff,deliveries,remind)
+    // The stable block goes first and alone, so that it is the prefix the prompt cache keeps.
+    send_stable:=base.text_get(task.stable_native[:])!=native
+    stable:=send_stable?ai_prompt_stable(s,c.kind):""
     content:=make([dynamic]acp.Content,context.temp_allocator)
-    append(&content,acp.Content{kind=.Text,text=string(instructions)},acp.Content{kind=.Text,text=string(message)})
+    if send_stable {append(&content,acp.Content{kind=.Text,text=stable})}
+    append(&content,acp.Content{kind=.Text,text=delta})
+    if len(message)>0 {append(&content,acp.Content{kind=.Text,text=string(message)})}
     if task.references>0 && !worker.client.image {ai_task_fail(task,"This agent does not take images: send the message without its references");ai_task_end(s,s.ai,task,1);return}
     if problem,ok:=ai_references_content(s,task,&content);!ok {ai_task_fail(task,problem);ai_task_end(s,s.ai,task,1);return}
-    if error:=acp.prompt(&worker.client,content[:]);error!=.None {ai_task_fail(task,"The prompt could not be sent: %v",error);ai_task_end(s,s.ai,task,1)}
+    if error:=acp.prompt(&worker.client,content[:]);error!=.None {ai_task_fail(task,"The prompt could not be sent: %v",error);ai_task_end(s,s.ai,task,1);return}
+    if os.write_entire_file(ai_task_path(s,task,AI_FILE_PROMPT),strings.concatenate({stable,delta},context.temp_allocator))!=nil {notify(s,"The instructions of the turn could not be kept")}
+    base.text_set(task.stable_native[:],native)
+    if remind {base.text_set(task.notes_native[:],native)}
+    if c.kind==.Main && s.ai.store.db!=nil {
+        if new_context {
+            if problem:=ai_store_meta_set(&s.ai.store,AI_META_INTERRUPTED_AGENTS,"");problem!="" {notify(s,problem)}
+        }
+        now:=time.to_unix_nanoseconds(time.now())/1_000_000
+        if problem:=ai_store_meta_set(&s.ai.store,fmt.tprintf(AI_META_CONTEXT_SINCE,c.id),fmt.tprintf("%d",now));problem!="" {notify(s,problem)}
+    }
+    for &delivery in deliveries {
+        if problem:=ai_store_delivery_remove(&s.ai.store,delivery.id);problem!="" {notify(s,problem)}
+    }
+    if len(deliveries)>0 {
+        task.held,task.held_lines=0,0
+        for &steer in task.steers[:task.steer_count] {task.held_lines+=steer.lines}
+    }
     task.heard,task.silent=platform.clock_seconds(),false
     ai_task_dirty(task);ai_task_persist(s,task)
 }
@@ -553,6 +631,7 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
             if title:=acp.text(acp.at(update,"title"));title!="" {base.text_set(worker.tool[:],title)}
             ai_tool_call_receive(s,worker,task,update)
         case "plan":ai_plan_receive(task,update)
+        case "compaction_update":ai_compaction_receive(s,task,acp.text(acp.at(update,"status")))
         case:
         }
     case .Permission:
@@ -569,7 +648,7 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
                 u.cache_read,u.cache_write=i64(ai_json_number(acp.at(usage,"cachedReadTokens"))),i64(ai_json_number(acp.at(usage,"cachedWriteTokens")))
                 u.total=i64(ai_json_number(acp.at(usage,"totalTokens")))
             }
-            if !task.stop && !task.finish_called {ai_task_fail(task,"The agent completed without calling finish");ai_task_end(s,m,task,1)}
+            if task.compact==.None && !task.stop && !task.finish_called && !task.system_turn {ai_task_fail(task,"The agent completed without calling finish");ai_task_end(s,m,task,1)}
             else {ai_task_end(s,m,task,0)}
         }
     case .Error:
@@ -590,6 +669,7 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
             ai_task_end(s,m,task,1)
         }
     case .Notice:
+    case .Steer_Done:ai_steer_done(s,worker,event)
     }
 }
 
@@ -687,6 +767,7 @@ ai_workers_stop :: proc(s:^Session,provider:Ai_Provider,all:bool=false) {
 
 ai_worker_take :: proc(s:^Session,task:^Ai_Task,provider:Ai_Provider) -> ^Ai_Worker {
     m:=s.ai
+    if task.conversation.kind==.Agent && ai_subagent_workers(m)>=AI_WORKER_CAPACITY-1 {return nil}
     for &worker in m.workers {
         if worker.task==0 && worker.last_task==task.id && worker.provider==provider && (worker.client.process==0 || worker.client.phase==.Ready) {return &worker}
     }
@@ -703,10 +784,10 @@ ai_worker_take :: proc(s:^Session,task:^Ai_Task,provider:Ai_Provider) -> ^Ai_Wor
 
 ai_task_start :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     provider,ok:=ai_provider_find(m,base.text_get(task.agent[:]))
-    if !ok {ai_task_fail(task,"The agent of this chat is no longer in AI connections");ai_task_dirty(task);ai_task_persist(s,task);return}
+    if !ok {ai_task_fail(task,"The agent of this chat is no longer in AI connections");ai_task_dirty(task);ai_task_persist(s,task);ai_task_settle(s,m,task);return}
     connection:=&m.connections[provider]
-    if connection.agent==.Codex && !ai_codex_model_supported(string(task.conversation.model[:task.conversation.model_len])) {ai_task_fail(task,"Choose GPT-6 Luna, GPT-6.1 Sol or GPT-6 Astra");ai_task_dirty(task);ai_task_persist(s,task);return}
-    if !connection.configured {ai_task_fail(task,"Connect the agent in AI connections first");ai_task_dirty(task);ai_task_persist(s,task);return}
+    if connection.agent==.Codex && !ai_codex_model_supported(string(task.conversation.model[:task.conversation.model_len])) {ai_task_fail(task,"Choose GPT-6 Luna, GPT-6.1 Sol or GPT-6 Astra");ai_task_dirty(task);ai_task_persist(s,task);ai_task_settle(s,m,task);return}
+    if !connection.configured {ai_task_fail(task,"Connect the agent in AI connections first");ai_task_dirty(task);ai_task_persist(s,task);ai_task_settle(s,m,task);return}
     worker:=ai_worker_take(s,task,provider)
     if worker==nil {return}
     task.state=.Running;task.started=time.tick_now();task.state_before=edits_state(s.edits)
@@ -737,6 +818,7 @@ ai_task_end :: proc(s:^Session,m:^Ai,task:^Ai_Task,exit_code:int) {
         }
     }
     task.stream_open=false
+    if task.compact!=.None {ai_compact_end(s,m,task,exit_code);return}
     task.exit_code=exit_code;task.seconds=f32(time.duration_seconds(time.tick_since(task.started)))
     task.conversation.seconds+=task.seconds
     task.state_after=edits_state(s.edits)
@@ -748,6 +830,8 @@ ai_task_end :: proc(s:^Session,m:^Ai,task:^Ai_Task,exit_code:int) {
     task.files_changed=!ai_code_end(s,m,task)
     m.scene_serial+=1
     ai_task_dirty(task);ai_task_persist(s,task)
+    ai_memory_scan(s)
+    ai_task_settle(s,m,task)
 }
 
 ai_task_poll :: proc(s:^Session,m:^Ai) {
@@ -779,7 +863,7 @@ ai_queue_advance :: proc(s:^Session,m:^Ai) {
 ai_task_cancel :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {
     // An agent outside the editor is not stopped from here: its turn ends.
     if ai_task_external(task) {return ai_external_end(s,task)}
-    if task.state==.Queued {task.state=.Cancelled;ai_note(task,"Cancelled");m.scene_serial+=1;ai_task_dirty(task);ai_task_persist(s,task);return true}
+    if task.state==.Queued {task.state=.Cancelled;ai_note(task,"Cancelled");m.scene_serial+=1;ai_task_dirty(task);ai_task_persist(s,task);ai_task_settle(s,m,task);return true}
     if task.state!=.Running {return false}
     task.stop=true
     worker:=ai_task_worker(m,task.id)
@@ -814,7 +898,7 @@ ai_task_retry :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     if error!=nil || len(prompt)==0 {return "The original message is unavailable"}
     m.prompt_length=copy(m.prompt[:AI_MESSAGE_BYTES-1],prompt)
     ai_task_select(m,task)
-    if task.region.w<=0 || task.region.h<=0 {m.has_region=false}
+    m.region,m.has_region=task.region,task.region.w>0 && task.region.h>0
     base.text_set(m.pending_model[:],string(task.conversation.model[:task.conversation.model_len]))
     base.text_set(m.pending_effort[:],string(task.conversation.effort[:task.conversation.effort_len]))
     m.pending=true;m.submit_frame=s.frame;m.focus=true
@@ -823,6 +907,7 @@ ai_task_retry :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
 
 ai_destroy :: proc(s:^Session) {
     m:=s.ai
+    m.closing=true
     m.connection_pending={}
     if m.login_process!=0 {platform.process_release(s.app.platform,m.login_process);m.login_process=0;m.login=false}
     if m.installer!=0 {
@@ -840,9 +925,10 @@ ai_destroy :: proc(s:^Session) {
     until:=platform.clock_seconds()+4
     for ai_process_running(m) && platform.clock_seconds()<until {ai_task_poll(s,m);if ai_process_running(m) {time.sleep(10*time.Millisecond)}}
     for &worker in m.workers {if worker.created {acp.destroy(&worker.client,s.app.platform);worker.created=false};worker.task=0}
-    for &task in m.tasks[:m.task_count] {ai_review_free(&task.review)}
+    for &task in m.tasks[:m.task_count] {ai_review_free(&task.review);ai_steers_free(&task)}
     ai_code_free(m)
     delete(m.marks);m.marks=nil
+    delete(m.asset_marks);m.asset_marks=nil
     ai_store_close(&m.store)
     m.installer=0
 }

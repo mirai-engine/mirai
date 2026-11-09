@@ -33,7 +33,7 @@ main :: proc() {
 ```odin
 pixels:=make([]u8,64*64*4,context.temp_allocator) // RGBA8, rows from the top
 // fill pixels
-err:=asset.texture_save("assets/textures/badge.tex",&c.types,
+err:=asset.texture_save("assets/hud/badge.tex",&c.types,
     {id=asset.content_id(PROJECT,"texture","badge"),width=64,height=64,format=.RGBA8,
      flags={.Srgb},mips={pixels}})
 ```
@@ -46,7 +46,7 @@ err:=asset.texture_save("assets/textures/badge.tex",&c.types,
 Write the WAV into `source/sounds/` and import it, so the `.sound` is what `mirai import` makes:
 
 ```odin
-report,error:=importer.import_sound("source/sounds/hum.wav","assets/sounds",{},{root="."})
+report,error:=importer.import_sound("source/sounds/hum.wav","assets/arena",{},{root="."})
 if error.code!=.None {fmt.eprintln(error.message);return}
 defer importer.report_destroy(&report)
 hum:=report.assets[0].id // random the first time, kept after
@@ -61,7 +61,7 @@ hum:=report.assets[0].id // random the first time, kept after
 ```odin
 info:=asset.SOUND_SET_DEFAULTS
 info.sounds[0],info.sounds[1]={sound=step_a},{sound=step_b}
-err:=asset.sound_set_save("assets/sounds/steps.sound_set",&c.types,
+err:=asset.sound_set_save("assets/player/steps.sound_set",&c.types,
     {id=asset.content_id(PROJECT,"sound_set","steps"),info=info})
 ```
 
@@ -73,7 +73,7 @@ and a `weight` per sound. A set that is invalid returns `.Invalid`.
 A tool can import art too, with the function `mirai import` calls:
 
 ```odin
-report,error:=sources.import_source("source/models/crate.glb","assets/models/crate",{root="."})
+report,error:=sources.import_source("source/models/crate.glb","assets/arena/crate",{root="."})
 ```
 
 `sources` is `mirai:cook/import/sources`. It writes the settings beside the source unless

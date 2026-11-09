@@ -173,18 +173,18 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
     stage_toolbar(s,u)
     hierarchy_build(s,u,a)
     nodes_actions(s,u,a,d)
-    document,details,room:=editor.asset_workspace_details(g)
+    document,details,room:=editor.asset_workspace_details(s)
     id:=ui.id_derive(ctx,SCOPE,"document")
     if ui.panel(ctx,id,document) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        column_begin(ctx,ui.GROW,"Preview",stage_note(u))
-        switch {
-        case u.failed:          ui.label(ctx,"The file cannot be read",ctx.theme.font_small,ctx.theme.text_muted)
-        case !u.read:
-        case:                   preview_column(s,u,app)
+        if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {
+            switch {
+            case u.failed:          ui.label(ctx,"The file cannot be read",ctx.theme.font_small,ctx.theme.text_muted)
+            case !u.read:
+            case:                   preview_column(s,u,app)
+            }
         }
-        column_end(ctx)
     }
     // The properties, as Details shows an entity.
     properties_id:=ui.id_derive(ctx,SCOPE,"properties")
@@ -193,13 +193,14 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
             ui.id_push(ctx,properties_id)
             defer ui.id_pop(ctx)
             properties_head(s,u)
+            origin:=editor.ai_provenance_asset_row(s)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.SEARCH_BAR),padding={8,0,8,6},align_y=.Center}) {
                 if editor.search_field(s,ui.id(ctx,"search"),u.search[:],&u.search_length,"Search properties") {u.properties_scroll=0}
                 editor.scroll_shadow(s,u.properties_scroll.y>0)
             }
             // What another node shows has another length: kept, the offset could show nothing.
             if u.scrolled!=u.selected {u.properties_scroll,u.scrolled={},u.selected}
-            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
                 properties(s,u,a,details.width.value)
             }
         }
@@ -677,12 +678,3 @@ override_rename :: proc(a:^host.Assets,field:[]u8,widget,id:base.Asset_Id,from,t
     }
     return false
 }
-
-// A column of the document with a heading and a border on the side it meets the next.
-@(private)
-column_begin :: proc(ctx:^ui.Context,width:ui.Size,title:string,note:="") {
-    ui.box_begin(ctx,{width=width,height=ui.GROW,direction=.Column})
-    editor.asset_heading(ctx,title,note)
-}
-@(private)
-column_end :: proc(ctx:^ui.Context) {ui.box_end(ctx,{})}

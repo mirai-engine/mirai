@@ -117,7 +117,7 @@ watch_name :: proc(s:^Session) -> string {
 // The round glyph of an agent or an editor in the bar: under the pointer it
 // lights up with its color instead of showing the square of a button.
 @(private)
-presence_glyph :: proc(ctx:^ui.Context,id:ui.Id,color:ui.Color,lit:bool,icon:ui.Icon,initial,tip:string) -> ui.Interaction {
+presence_glyph :: proc(ctx:^ui.Context,id:ui.Id,color:ui.Color,lit:bool,icon:ui.Icon,initial,tip:string,ring:f32=1.5,working:=false) -> ui.Interaction {
     th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     if it.hot && tip!="" {ui.tooltip(ctx,tip)}
@@ -127,40 +127,78 @@ presence_glyph :: proc(ctx:^ui.Context,id:ui.Id,color:ui.Color,lit:bool,icon:ui.
     stroke:=color
     // Toward white, so the ring brightens.
     if it.hot {for &c,i in stroke[:3] {c=u8(f32(color[i])+(255-f32(color[i]))*0.45)}}
-    if ui.box(ctx,{id=id,width=ui.fixed(24),height=ui.fixed(24),align_x=.Center,align_y=.Center,fill=ui.color_alpha(color,alpha),stroke=stroke,stroke_width=1.5,radius=12}) {
-        if icon!=.None {ui.icon(ctx,icon,th.text,15)} else {ui.label(ctx,initial,th.font_small,th.text)}
+    if ui.box(ctx,{id=id,width=ui.fixed(24),height=ui.fixed(24),align_x=.Center,align_y=.Center,fill=ui.color_alpha(color,alpha),stroke=stroke,stroke_width=ring,radius=12}) {
+        switch {
+        case icon!=.None:  ui.icon(ctx,icon,th.text,ring>1.5?13:15)
+        case initial!="":  ui.label(ctx,initial,th.font_small,th.text)
+        case:              pulse_dot(ctx,color,working)
+        }
     }
     return it
 }
 
-// One avatar per agent at work or standing in the scene and per other editor
-// of the session. An agent that plays carries the mark of its run; an editor,
-// where it plays: a game of its own, the one it serves on the network or the
-// one of the host. A click on an agent opens
-// its chat and a right click its menu; a click on an editor opens its menu
+// Whether an agent has its avatar in the bar: a subagent while it works, waits
+// for an answer or has changes to review; another agent while it works or
+// stands in the scene.
+@(private)
+ai_task_on_bar :: proc(s:^Session,task:^Ai_Task) -> bool {
+    if !ai_task_current(s,task) {return false}
+    if !ai_task_finished(task) {return true}
+    if !ai_task_subagent(task) {return ai_scene_task_visible(s,shown_world(s),task)}
+    return task.question!=.None || ai_permission_of(s.ai,task)>=0 || ai_task_reviewable(task) && ai_review_count(task)>0
+}
+
+// The main agent first, once it exists, then one avatar per agent ai_task_on_bar
+// keeps and per other editor of the session. An agent that plays carries the
+// mark of its run; an editor, where it plays: a game of its own, the one it
+// serves on the network or the one of the host. A click on an agent opens its
+// chat and a right click its menu; a click on an editor opens its menu
 // (presence_menu.odin).
 watch_bar_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
     th:=&ctx.theme
     if s.ai!=nil {
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            if !ai_task_current(s,&task) || ai_task_finished(&task) && !ai_scene_task_visible(s,shown_world(s),&task) {continue}
-            color:=ai_agent_color(&task)
-            run:=run_find(s,task.id)
+        m:=s.ai
+        agent :: proc(s:^Session,g:^Editor_Ui,task:^Ai_Task) {
+            ctx:=g.ctx
+            th:=&ctx.theme
+            m:=s.ai
+            main:=task.id==m.main
+            subagent:=ai_task_subagent(task)
+            color:=main?th.accent:ai_agent_color(task)
             watched:=s.mode==.Watch && s.watch.task==task.id
             if ui.box(ctx,{width=ui.FIT,height=ui.fixed(26),gap=1,align_y=.Center}) {
                 id:=shell_id(g,"watch_agent",task.id)
                 title:=base.text_get(task.title[:])
                 open:=ui.popup_is_open(ctx,presence_menu_popup(g)) && g.presence_menu.kind==.Agent && g.presence_menu.task==task.id
-                it:=presence_glyph(ctx,id,color,watched || open,ai_agent_icon(&task),"",title)
-                if it.clicked {ai_chat_select(s,&task)}
+                it:ui.Interaction
+                working:=!ai_task_finished(task)
+                switch {
+                case main:     it=presence_glyph(ctx,id,color,watched || open,ui.icon_user(u8(User_Icon.Mirai_Shape)),"",title,2)
+                case subagent: it=presence_glyph(ctx,id,color,watched || open,.None,"",title,2,working)
+                case:          it=presence_glyph(ctx,id,color,watched || open,ai_agent_icon(task),"",title)
+                }
+                if it.clicked {ai_chat_select(s,task)}
                 if it.right {
                     anchor,_:=ui.widget_rect(ctx,id)
                     presence_menu_open(s,{kind=.Agent,task=task.id},anchor)
                 }
-                if run!=nil {ui.icon(ctx,.Play,color,9)}
+                if main && working {
+                    if ui.box(ctx,{width=ui.fixed(7),height=ui.fixed(7),float={to=.Parent,anchor=.Bottom_Right,pivot=.Bottom_Right}}) {pulse_dot(ctx,color,true)}
+                }
+                if subagent {
+                    buffer:[16]u8
+                    if badge:=ai_session_badge(m,task,buffer[:]);badge!="" {
+                        if ui.box(ctx,{width=ui.FIT,height=ui.FIT,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={6,-5}}}) {ai_session_badge_build(ctx,badge,color)}
+                    }
+                }
+                if run_find(s,task.id)!=nil {ui.icon(ctx,.Play,color,9)}
             }
+        }
+        if main:=ai_task_find(m,m.main);main!=nil {agent(s,g,main)}
+        for &task in m.tasks[:m.task_count] {
+            if task.id!=m.main && ai_task_on_bar(s,&task) {agent(s,g,&task)}
         }
     }
     st:=collab_state(s)

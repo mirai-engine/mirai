@@ -123,7 +123,7 @@ write_prefabs :: proc(o:^Out) {
     asset.builder_set(&s,eyes,audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,EYE_HEIGHT,0}}
     asset.builder_set(&s,eyes,first_person)
-    prefab_save(o,&s,"assets/prefabs/Player.prefab")
+    prefab_save(o,&s,"assets/characters/player/Player.prefab")
 
     // The person and the dog of the control scene, each with a camera behind it.
     person:asset.Scene_Builder
@@ -139,7 +139,7 @@ write_prefabs :: proc(o:^Out) {
     asset.builder_set(&person,1,inp.Drivable{camera=core.Entity(view)})
     control_visual(&person,1,false)
     aim_camera(&person,"Person aim camera",demo_action(o,.Aim))
-    prefab_save(o,&person,"assets/prefabs/Person.prefab")
+    prefab_save(o,&person,"assets/control/Person.prefab")
 
     dog:asset.Scene_Builder
     prefab_root(o,&dog,DOG_PREFAB_ID,"Dog")

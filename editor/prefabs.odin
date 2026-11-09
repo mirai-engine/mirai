@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -1427,7 +1428,7 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
 // A free path for a variant of a prefab: beside it, named after it.
 prefab_variant_path :: proc(s:^Session,base_id:base.Asset_Id) -> string {
     file,_,found:=prefab_file(s,base_id)
-    if !found {return "prefabs/Variant"}
+    if !found {return "Variant"}
     stem:=file.path[:len(file.path)-len(PREFAB_EXTENSION)] if strings.has_suffix(file.path,PREFAB_EXTENSION) else file.path
     for n in 1..<10000 {
         path:=n==1?fmt.tprintf("%s_variant",stem):fmt.tprintf("%s_variant_%d",stem,n)
@@ -2044,20 +2045,29 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
     return true
 }
 
-// A name for the prefab of an entity that no file of the assets has.
+// Where a new prefab goes: beside the scene it comes from, at the root for one outside the assets.
 @(private)
-prefab_name_free :: proc(s:^Session,e:core.Entity) -> string {
-    stem:=strings.trim_space(entity_name(edited_world(s),e))
+prefab_folder :: proc(s:^Session) -> string {
+    path:=scene_path(s,document_file(s.document))
+    if filepath.is_abs(path) {return ""}
+    return content_folder_of(path)
+}
+
+// A file of this name for a new prefab, in a folder of the assets, that no file has.
+@(private)
+prefab_name_free :: proc(s:^Session,folder,name:string) -> string {
+    prefix:=folder==""?"":fmt.tprintf("%s/",folder)
+    stem:=strings.trim_space(name)
     if stem=="" {stem="Prefab"}
     cleaned:=make([]u8,len(stem),context.temp_allocator)
     for c,i in transmute([]u8)stem {
         cleaned[i]=(c>='a' && c<='z' || c>='A' && c<='Z' || c>='0' && c<='9' || c=='_' || c=='-')?c:'_'
     }
     for n in 1..<10000 {
-        path:=n==1?fmt.tprintf("prefabs/%s",string(cleaned)):fmt.tprintf("prefabs/%s_%d",string(cleaned),n)
+        path:=n==1?fmt.tprintf("%s%s",prefix,string(cleaned)):fmt.tprintf("%s%s_%d",prefix,string(cleaned),n)
         if !os.exists(scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
     }
-    return "prefabs/Prefab"
+    return fmt.tprintf("%sPrefab",prefix)
 }
 
 @(private)
@@ -2067,7 +2077,7 @@ prefab_action_run :: proc(s:^Session,action:Action) {
     message:string
     #partial switch action {
     case .Prefab_Create:
-        path:=prefab_name_free(s,e)
+        path:=prefab_name_free(s,prefab_folder(s),entity_name(edited_world(s),e))
         _,error=prefab_create_entities(s,s.selection.entities[:],path)
         message=fmt.tprintf("Prefab %s created",path)
     case .Prefab_Apply:

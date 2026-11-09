@@ -494,7 +494,7 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
     if needle=="" || contains_fold("Plugins",needle) || contains_fold("Git",needle) || contains_fold("Catalog",needle) {settings_plugins_git(s)}
 }
 
-// How the side panels sit: the mode of every document, and under it each
+// How the right panel sits: the mode of every document, and under it each
 // type of document with the mode of its own or the global one. An asset
 // document draws its own right side.
 @(private)
@@ -505,28 +505,18 @@ settings_panels_card :: proc(s:^Session) {
     column:=f32(190)
     ui.id_push(ctx,ui.id(ctx,"panels"))
     defer ui.id_pop(ctx)
-    if ui.property(ctx,"Left panel") {
-        value:=int(l.left_mode)
-        if ui.tabs(ctx,ui.id(ctx,"left"),modes,&value,ui.fixed(column),th.control) {l.left_mode=Panel_Mode(value)}
-    }
     if ui.property(ctx,"Right panel") {
         value:=int(l.right_mode)
         if ui.tabs(ctx,ui.id(ctx,"right"),modes,&value,ui.fixed(column),th.control) {l.right_mode=Panel_Mode(value)}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.End}) {
         if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,"BY DOCUMENT",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
-        ui.label(ctx,"Left",th.font_caption,th.text_faint,column)
         ui.label(ctx,"Right",th.font_caption,th.text_faint,column)
     }
-    names:=[Document_Type]string{.Scene="Scene",.Prefab="Prefab",.Asset="Assets"}
+    names:=#partial [Document_Type]string{.Scene="Scene",.Prefab="Prefab"}
     for type in Document_Type {
+        if type==.Asset {continue}
         if ui.property(ctx,names[type]) {
-            left:=int(l.left_modes[type])
-            if ui.tabs(ctx,ui.id(ctx,"left_of",int(type)+1),choices,&left,ui.fixed(column),th.control) {l.left_modes[type]=Panel_Choice(left)}
-            if type==.Asset {
-                ui.spacer(ctx,column,1)
-                continue
-            }
             right:=int(l.right_modes[type])
             if ui.tabs(ctx,ui.id(ctx,"right_of",int(type)+1),choices,&right,ui.fixed(column),th.control) {l.right_modes[type]=Panel_Choice(right)}
         }

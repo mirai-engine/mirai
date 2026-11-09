@@ -50,7 +50,7 @@ Packages, all *engine-time*:
 - `version` is the version of what `read` returns for the same bytes: it goes up when that changes,
   and assets of another version are rebuilt when importing again.
 - `space` is the `Source_Space` of its files, unless `read` declares another.
-- `folder` says the `models/` folder a file's import goes to; without it, the file name.
+- `folder` says the folder of its own a file's import goes to; without it, the file name.
 - `sniff` looks at the first `SNIFF_BYTES`: `Content` if they are of the format, `No` if not,
   `Extension` if they say nothing (OBJ, or a JSON whose `asset` object comes later).
 
@@ -127,7 +127,7 @@ two providers of their editor part
 ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plugin)):
 
 - `Import_Format_Provider{format}` is one more `importer.Format`: it is imported like the engine's
-  (`sources.import_source` with the editor's list of formats) and goes to `models/<folder>/`, where
+  (`sources.import_source` with the editor's list of formats) and goes to `<folder>/`, where
   `Format.folder` says the folder. Its extensions are in the Models filter of the dialog. Its
   `prepare` gives, on the editor thread, the format's options for an import (`Format.data`), and
   `release` frees them when it ends.

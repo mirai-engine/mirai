@@ -1,6 +1,6 @@
 # Animation gallery
 
-`demo/assets/scenes/animation.scene` is the only animation scene of the demo: a hall that the
+`demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that the
 player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
 on each side of the walkway. `tools/demo_content --animation-only` writes it with its clips,
 programs and profiles ([generated content](demo.md#generated-content)).
@@ -54,7 +54,7 @@ programs and profiles ([generated content](demo.md#generated-content)).
 
 ## API walkthrough
 
-Open the editor with `--scene scenes/animation.scene`, query `engine.describe` for the schemas and
+Open the editor with `--scene animation_gallery/animation.scene`, query `engine.describe` for the schemas and
 `scene.inspect` for the ids of the stations, which are named after what they show. Start
 `play.start`, pause and advance with `play.step`.
 

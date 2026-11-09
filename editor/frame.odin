@@ -471,14 +471,18 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,wo
     g.named_count=0
     selection_prune(selection,world)
     // The scene is drawn only under the bars, which always cover what is
-    // above, and between the docked panels: what they take is not drawn.
+    // above, and between the left panel and a docked Details: what they take
+    // is not drawn. The camera keeps the center of the whole view, the part
+    // under the left panel too, so folding the panel moves nothing of the image.
     bars:=ctx.theme.bar_height+toolbar_height(g)
     density:=app.density if app.density>0 else 1
     left,right:=dock_widths(s)
     top:=min(i32(math.round(bars*density)),max(app.drawable.y-1,0))
-    x0:=min(i32(math.round(left*density)),max(app.drawable.x-1,0))
+    view_x0:=min(i32(math.round(left*density)),max(app.drawable.x-1,0))
+    x0:=min(i32(math.round(dock_scene_left(s)*density)),max(app.drawable.x-1,0))
     x1:=max(app.drawable.x-i32(math.round(right*density)),x0+1)
     app.scene={x0,top,x1-x0,max(app.drawable.y-top,1)}
+    app.scene_shift={f32(view_x0-x0)/f32(x1-x0),0}
     viewport_update(v,{left,bars},{max(ctx.size.x-left-right,1),max(ctx.size.y-bars,1)},ctx.size,frame,input.modifiers)
     v.hovered=frame.mouse_inside && !ctx.over && ctx.active==0 && popups==0 && !modal && s.mode!=.Play && !camera_previewing(s) && !player_processes_view(s) && g.drag.kind==.None && !scene_covered(s)
     drag_update(g,frame)
@@ -499,7 +503,10 @@ editor_shortcuts :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,keys:core.Keys,modi
 editor_tools :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,world:core.World_Ref) {
     started:=platform.clock_ns();defer api_timed(s,.Tools,started)
     if !g.begun {return}
-    if s.mode!=.Play && !scene_covered(s) {tools_update(s,world)}
+    if s.mode!=.Play && !scene_covered(s) {
+        tools_update(s,world)
+        ai_annotation_pointer(s,world)
+    }
     collab_follow(s)
     viewport_camera(v)
     view_write(s,world)

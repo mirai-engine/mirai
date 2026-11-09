@@ -18,8 +18,8 @@ import fields "plugins:physics_fields/runtime"
 import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
-PHYSICS_GALLERY_SCENE :: "scenes/physics.scene"
-PHYSICS_GALLERY_BURST :: "prefabs/physics_burst.prefab"
+PHYSICS_GALLERY_SCENE :: "physics_gallery/physics.scene"
+PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.prefab"
 
 @(component)
 Physics_Gallery :: struct {

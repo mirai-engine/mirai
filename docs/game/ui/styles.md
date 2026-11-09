@@ -3,7 +3,7 @@
 The look of a `.ui` is by name, in its document ([writing-ui.md](writing-ui.md)): tokens, styles
 that extend others, states inline, the layout nodes share, and named animations. Each resolves when
 the file is written and linked, never per frame. A reusable piece is a widget, a `.ui` of its own.
-The template's `assets/ui/theme.ui` is the example of tokens and styles, and `assets/ui/panel.ui`,
+The template's `assets/menu/theme.ui` is the example of tokens and styles, and its `panel.ui`,
 `select_row.ui`, `check_row.ui` and `button.ui` of widgets: read them with `ui.inspect`.
 
 ## Tokens and styles
@@ -45,17 +45,17 @@ The template's `assets/ui/theme.ui` is the example of tokens and styles, and `as
 
 ## Share across files
 
-A document that says `"use": ["ui/theme.ui"]` names the tokens and styles of that file. No file is
+A document that says `"use": ["menu/theme.ui"]` names the tokens and styles of that file. No file is
 special. A node that takes a style of it follows the changes of that file when it loads.
 
 ## Widgets
 
 A component is a widget: a `.ui` of its own, made and edited like any other, one root and what a
 use says by name. `use` it and name it by its file, without an extension. This is
-`assets/ui/select_row.ui`:
+`assets/menu/select_row.ui`:
 
 ```json
-{"use": ["ui/theme.ui"],
+{"use": ["menu/theme.ui"],
  "params": {"label": "label.text", "options": "control.text", "bind": "data"},
  "nodes": [{"name": "row", "kind": "Box", "style": "row", "children": [
    {"name": "label", "kind": "Text", "style": "row_label"},
@@ -65,7 +65,7 @@ use says by name. `use` it and name it by its file, without an extension. This i
 And a screen that uses it:
 
 ```json
-{"use": ["ui/theme.ui", "ui/select_row.ui"],
+{"use": ["menu/theme.ui", "menu/select_row.ui"],
  "nodes": [{"name": "sun", "kind": "select_row", "label": "Sun shadows",
             "options": "Off|On", "bind": "Graphics_Settings.sun_shadows"}]}
 ```

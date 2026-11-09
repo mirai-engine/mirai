@@ -468,9 +468,9 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app
     columns,cell:=editor.asset_cards(s,editor.tool_panel_inner(s.gui)-SCROLL_GUTTER)
     menu:=ui.id(ctx,"type_menu")
     toggle,extend:=.Primary in ctx.input.modifiers,.Shift in ctx.input.modifiers
-    if ui.box(ctx,{id=area,width=ui.GROW,height=ui.FIT,direction=.Column,gap=editor.CONTENT_CELL_GAP}) {
+    if ui.box(ctx,{id=area,width=ui.GROW,height=ui.FIT,direction=.Column,gap=editor.CONTENT_GAP}) {
         for first:=0;first<len(shown);first+=columns {
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=editor.CONTENT_CELL_GAP}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=editor.CONTENT_GAP}) {
                 for id in shown[first:min(first+columns,len(shown))] {
                     t,_:=foliage.source_type(source,id)
                     shown_asset,kind:=t.mesh,asset.KIND_MESH
@@ -645,7 +645,7 @@ FOLIAGE_THUMBNAILS_DEFAULT :: Foliage_Thumbnails{provider={kinds={0=foliage.KIND
 // A .foliage in the browser, with the color of Unreal's foliage types.
 @(storage)
 Foliage_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-FOLIAGE_KINDS_DEFAULT :: Foliage_Kinds{provider={kinds={0={kind=foliage.KIND,label="Foliage",color={12,173,12,255},extension=foliage.EXTENSION}},count=1}}
+FOLIAGE_KINDS_DEFAULT :: Foliage_Kinds{provider={kinds={0={kind=foliage.KIND,label="Foliage",color={12,173,12,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Agent_Leaf)),extension=foliage.EXTENSION,scene_data=true}},count=1}}
 
 // The menu of a mesh in the browser adds it as a type to the foliage the tool
 // edits, or makes a foliage of it when none is selected.

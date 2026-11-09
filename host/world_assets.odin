@@ -32,6 +32,17 @@ world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,owned:=fals
     }
 }
 
+// The asset ids the components of an entity hold, each once.
+entity_asset_ids :: proc(w:core.World_Ref,e:core.Entity,ids:^[dynamic]base.Asset_Id) {
+    seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
+    for &t in w.info.tables {
+        if t.place!=w.place {continue}
+        plan:=ids_plan(t.info,false,context.temp_allocator)
+        if ids_plan_empty(&plan) {continue}
+        if value:=core.raw_find(core.world_table_at(w,&t),t.info,e);value!=nil {ids_take(&plan,value,&seen,ids)}
+    }
+}
+
 // The value of a storage of a world: in it, or its own value of a by_world one.
 @(private="file")
 storage_value :: proc(w:core.World_Ref,s:^core.Storage_Info,shared:rawptr,id:core.World_Id) -> rawptr {

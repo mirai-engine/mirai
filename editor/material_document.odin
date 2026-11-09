@@ -594,8 +594,10 @@ material_document_build :: proc(s:^Session) {
     }
     material_document_read(s,w)
     material_document_context(s,w)
-    document,details,room:=asset_workspace_details(g)
-    if w.material=={} {document=asset_workspace(g)}
+    document:=asset_workspace(g)
+    details:ui.Panel_Float
+    room:f32
+    if w.material!={} {document,details,room=asset_workspace_details(s)}
     id:=shell_id(g,"material_document")
     if ui.panel(ctx,id,document) {
         ui.id_push(ctx,id)
@@ -611,6 +613,8 @@ material_document_build :: proc(s:^Session) {
         // The preview is what a message shows the agent of the material.
         if rect.w>0 && s.ai!=nil {s.ai.region,s.ai.has_region=rect,true}
         if w.variant_count>0 {
+            ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={asset_workspace_under(g),0,0,0}})
+            defer ui.box_end(ctx,{})
             // A click shows a variant in the preview; Apply sets it on the material, Save as new writes it apart.
             if ui.box(ctx,asset_heading_box(ctx)) {
                 ui.label(ctx,"Variants",th.font,th.text,font=ui.FONT_MEDIUM)
@@ -650,7 +654,8 @@ material_document_build :: proc(s:^Session) {
             if d:=asset_document_active(s);d!=nil {title=asset_document_title(s,d)}
             ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
         }
-        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+        origin:=ai_provenance_asset_row(s)
+        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
             material_document_parameters(s,w)
         }
     }

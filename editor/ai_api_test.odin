@@ -48,13 +48,13 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     testing.expect_value(t,ai_store_annotate(&m.store,1,0,"user","context","",`{"player":4}`),"")
     state:=new(Api_State);defer free(state)
     state.poll_temp=temporary
-    if !testing.expect_value(t,api.server_init(&state.server,{port=0,max_methods=32,max_connections=1,max_request=16*1024,max_response=256*1024,scratch=512*1024}),api.Init_Error.None) {return}
+    if !testing.expect_value(t,api.server_init(&state.server,{port=0,max_methods=64,max_connections=1,max_request=16*1024,max_response=256*1024,scratch=512*1024}),api.Init_Error.None) {return}
     defer api.server_destroy(&state.server)
     ai_api_register(&s,state)
     if !testing.expectf(t,state.refused==0,"%s",state.refusal) {return}
     out_buffer:=make([]u8,64*1024,context.temp_allocator)
     // ai.history answers a list of the conversations or of the messages of one.
-    for request in ([]struct{method,params,key:string}{{"ai.status",`{}`,""},{"ai.status",`{"id":7,"from":1}`,""},{"ai.cancel",`{"id":8}`,""},{"ai.connections",`{}`,""},{"ai.history",`{}`,"updated_at"},{"ai.history",`{"id":1}`,"sequence"}}) {
+    for request in ([]struct{method,params,key:string}{{"ai.status",`{}`,""},{"ai.status",`{"id":7,"from":1}`,""},{"ai.cancel",`{"id":8}`,""},{"ai.connections",`{}`,""},{"agent.list",`{}`,""},{"memory.search",`{"query":"wall"}`,""},{"annotation.list",`{}`,""},{"ai.provenance",`{"asset":"cube.mat"}`,""},{"ai.history",`{}`,"updated_at"},{"ai.history",`{"id":1}`,"sequence"}}) {
         method:=api.method_find(&state.server,request.method)
         if !testing.expect(t,method!=nil) {continue}
         w:serial.Writer

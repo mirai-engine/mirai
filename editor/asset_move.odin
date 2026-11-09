@@ -178,10 +178,7 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
     host.assets_scan(s.app.assets)
-    if c:=s.content;c!=nil {
-        content_place_set(c,path)
-        content_folder_open(c,path)
-    }
+    if c:=s.content;c!=nil {content_place_set(c,path)}
     return
 }
 
@@ -288,10 +285,7 @@ asset_folder_duplicate :: proc(s:^Session,from:string,folder:Maybe(string)=nil,n
         }
     }
     host.assets_scan(s.app.assets)
-    if c:=s.content;c!=nil {
-        content_place_set(c,path)
-        content_folder_open(c,path)
-    }
+    if c:=s.content;c!=nil {content_place_set(c,path)}
     return
 }
 

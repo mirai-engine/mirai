@@ -400,6 +400,25 @@ draw_polyline :: proc(ctx:^Context,points:[][2]f32,width:f32,color:Color,closed:
     if closed && len(points)>2 {draw_line(ctx,points[len(points)-1],points[0],width,color)}
 }
 
+// A smooth closed outline of many short segments. They share the sides at each point, so their faded
+// edges do not pile up as those of the separate lines of draw_polyline do.
+draw_outline :: proc(ctx:^Context,points:[][2]f32,width:f32,color:Color) {
+    if len(points)<3 || width<=0 {return}
+    across :: proc(points:[][2]f32,i:int) -> [2]f32 {
+        along:=points[(i+1)%len(points)]-points[(i+len(points)-1)%len(points)]
+        return [2]f32{-along.y,along.x}/max(math.sqrt(along.x*along.x+along.y*along.y),0.0001)
+    }
+    core:=max(width*0.5-0.5*ctx.draw.pixel,0);outer:=core+ctx.draw.pixel
+    clear:=color_alpha(color,0)
+    for i in 0..<len(points) {
+        j:=(i+1)%len(points)
+        a,b,na,nb:=points[i],points[j],across(points,i),across(points,j)
+        draw_quad_colors(ctx,{a+na*outer,b+nb*outer,b+nb*core,a+na*core},{clear,clear,color,color})
+        draw_quad_colors(ctx,{a+na*core,b+nb*core,b-nb*core,a-na*core},{color,color,color,color})
+        draw_quad_colors(ctx,{a-na*core,b-nb*core,b-nb*outer,a-na*outer},{color,color,clear,clear})
+    }
+}
+
 // Discs, ellipses and rings share the analytic ellipse evaluator.
 draw_circle :: proc(ctx:^Context,center:[2]f32,radius:f32,color:Color) {
     draw_ellipse(ctx,center,radius,radius,color)

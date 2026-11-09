@@ -1,12 +1,12 @@
 # Menus, pause and settings
 
-The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.ui` the look, a
+The shell of a new game: `game/shell.odin` holds the logic and `assets/menu/shell.ui` the look, a
 `Switcher` whose pages are named after the members of `Shell_Page`. Both are the source: an agent
 changes `shell.ui` with `ui.write` (or the visual editor edits it) and the game keeps its names.
 
 ## Restyle
 
-Read the look with `mirai rpc --project . ui.inspect asset=ui/theme.ui --select document`, change
+Read the look with `mirai rpc --project . ui.inspect asset=menu/theme.ui --select document`, change
 what you want and write it back with `ui.write` and `save=true`: tokens first (the colors and
 sizes), then the `button`, `control` and `panel` styles the widgets take; `button.ui`, `panel.ui`,
 `select_row.ui` and `check_row.ui` are the widgets the screens use ([styles.md](styles.md#widgets)).
@@ -25,7 +25,7 @@ sizes), then the `button`, `control` and `panel` styles the widgets take; `butto
 {"name": "menu_controls", "kind": "Button", "style": "button", "text": "Controls"}
 ```
 
-Write the page by writing its parent: `ui.write asset=ui/shell.ui node=pages document=@pages.json
+Write the page by writing its parent: `ui.write asset=menu/shell.ui node=pages document=@pages.json
 save=true`, whose `nodes` is that Switcher with its children, and only that node changes. The
 same for the menu that holds the new button.
 

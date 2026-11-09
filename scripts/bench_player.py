@@ -26,7 +26,7 @@ from pathlib import Path
 WINDOWS = sys.platform == "win32"
 EXE = ".exe" if WINDOWS else ""
 MB = 1024 * 1024
-SCENES = ("scenes/main.scene", "scenes/control.scene", "scenes/destruction.scene")
+SCENES = ("gallery/main.scene", "control/control.scene", "destruction/destruction.scene")
 
 if WINDOWS:
     import ctypes

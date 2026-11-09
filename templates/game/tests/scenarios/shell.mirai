@@ -1,5 +1,5 @@
 {
-  "scene": "scenes/main.scene",
+  "scene": "arena/main.scene",
   "steps": [
     {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
     {"name": "on the main menu", "method": "play.check", "params": {"conditions": [

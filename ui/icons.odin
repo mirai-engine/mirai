@@ -130,7 +130,7 @@ draw_icon :: proc(ctx:^Context,icon:Icon,r:Rect,color:Color) {
         draw_circle(ctx,m,1.5*u,color)
     case .Light:
         bulb:[13][2]f32
-        for &p,i in bulb {a:=math.to_radians(f32(135)-f32(270)*f32(i)/12);p=c+{0,-1.5*u}+[2]f32{math.cos(a),-math.sin(a)}*5*u}
+        for &p,i in bulb {a:=math.to_radians(f32(225)-f32(270)*f32(i)/12);p=c+{0,-1.5*u}+[2]f32{math.cos(a),-math.sin(a)}*5*u}
         draw_polyline(ctx,bulb[:],line,color)
         draw_line(ctx,bulb[0],c+{-2.5*u,4*u},line,color);draw_line(ctx,bulb[12],c+{2.5*u,4*u},line,color)
         draw_line(ctx,c+{-2.5*u,4.5*u},c+{2.5*u,4.5*u},line,color)

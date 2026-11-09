@@ -7,7 +7,7 @@
   "views": [
     {
       "name": "night",
-      "scene": "scenes/night.scene",
+      "scene": "lights/night.scene",
       "position": [-2, 7.5, 7],
       "target": [0.5, 0.8, -8],
       "luma": 0.028,
@@ -15,54 +15,54 @@
     },
     {
       "name": "night_wall",
-      "scene": "scenes/night.scene",
+      "scene": "lights/night.scene",
       "position": [-6, 2.5, 12],
       "target": [-4, 2, -15],
       "luma": 0.1
     },
     {
       "name": "night_lights",
-      "scene": "scenes/night.scene",
+      "scene": "lights/night.scene",
       "position": [2, 2, 4],
       "target": [13, 1.5, 11],
       "luma": 0.1
     },
     {
       "name": "control",
-      "scene": "scenes/control.scene",
+      "scene": "control/control.scene",
       "position": [0.5, 1.6, -2.2],
       "target": [-4.5, 1.3, -6]
     },
     {
       "name": "main_vitral",
-      "scene": "scenes/main.scene",
+      "scene": "gallery/main.scene",
       "position": [2.5, 2.4, -5.2],
       "target": [-0.5, 0.2, -10.5]
     },
     {
       "name": "main_wall",
-      "scene": "scenes/main.scene",
+      "scene": "gallery/main.scene",
       "position": [-6.2, 2.4, -0.27],
       "target": [-9.2, 0.2, -5.57],
       "fly": {"keys": ["D"], "frames": 15, "ev100": 5.6}
     },
     {
       "name": "church",
-      "scene": "scenes/church.scene",
+      "scene": "church/church.scene",
       "position": [-1.9, 1.5, 9.6],
       "target": [-1.5, 0.3, 2],
       "fly": {"keys": ["D"], "frames": 15, "ev100": 9.6}
     },
     {
       "name": "church_push",
-      "scene": "scenes/church.scene",
+      "scene": "church/church.scene",
       "position": [-1.9, 1.5, 9.6],
       "target": [-1.5, 0.3, 2],
       "push": {"entity": "0x000000000000004f", "from": [-1.7, 0.25, 3.6], "to": [-0.2, 0.25, 3.6], "frames": 30, "ev100": 9.6}
     },
     {
       "name": "portal_chamber",
-      "scene": "scenes/portal_chamber.scene",
+      "scene": "portals/portal_chamber.scene",
       "play": [
         {"for": 40},
         {"repeat": 10, "mouse_delta": [0, 2.5]},
@@ -82,58 +82,58 @@
     },
     {
       "name": "showcase",
-      "scene": "scenes/showcase.scene",
+      "scene": "showcase/showcase.scene",
       "position": [1.5, 2.2, 6.5],
       "target": [0, 0.9, -1]
     },
     {
       "name": "portal_lab",
-      "scene": "scenes/portal_lab.scene",
+      "scene": "portals/portal_lab.scene",
       "position": [-1, 1.7, 4.5],
       "target": [-0.5, 1.4, -5.5]
     },
     {
       "name": "sky_sunset",
-      "scene": "scenes/sky.scene",
+      "scene": "sky/sky.scene",
       "position": [0, 2, 8],
       "target": [3, 30, -100]
     },
     {
       "name": "sky_away",
-      "scene": "scenes/sky.scene",
+      "scene": "sky/sky.scene",
       "position": [0, 2, 8],
       "target": [20, 8, 100]
     },
     {
       "name": "sky_high",
-      "scene": "scenes/sky.scene",
+      "scene": "sky/sky.scene",
       "position": [0, 1500, 8],
       "target": [0, 600, -6000]
     },
     {
       "name": "raft_above",
-      "scene": "scenes/raft.scene",
+      "scene": "raft/raft.scene",
       "play": [{"for": 120}],
       "position": [9, 5, 14],
       "target": [0, 0, 0]
     },
     {
       "name": "raft_under",
-      "scene": "scenes/raft.scene",
+      "scene": "raft/raft.scene",
       "play": [{"for": 120}],
       "position": [3, -2.5, 9],
       "target": [0, -0.5, 0]
     },
     {
       "name": "raft_waterline",
-      "scene": "scenes/raft.scene",
+      "scene": "raft/raft.scene",
       "play": [{"for": 120}],
       "position": [7, -0.1, 9],
       "target": [0, 0.8, 0]
     },
     {
       "name": "raft_dry_room",
-      "scene": "scenes/raft.scene",
+      "scene": "raft/raft.scene",
       "play": [{"for": 120}],
       "position": [-10.5, 3.5, 14],
       "target": [-16, -0.5, 8]

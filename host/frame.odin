@@ -514,6 +514,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
     // The camera alone draws only where it is seen.
     if app.view_count==0 && app.scene.z>0 && app.scene.w>0 {
         app.views[0]={camera=app.camera,camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,rect=app.scene}
+        app.views[0].camera.shift+=app.scene_shift
         app.view_count=1
     }
     started:=time.tick_now()
@@ -699,7 +700,11 @@ split_rect :: proc "contextless" (size:[2]i32,count,index:int) -> [4]i32 {
 // pixels: the tile it was given, or its part of the drawable.
 app_player_rect :: proc "contextless" (app:^App,slot,count:int) -> [4]i32 {
     if slot>=0 && slot<app.player_tile_count {return app.player_tiles[slot]}
-    return split_rect(app.drawable,max(count,1),slot)
+    // What the editor keeps at the side of the view is no player's.
+    left:=max(app.scene.x,0)
+    rect:=split_rect({app.drawable.x-left,app.drawable.y},max(count,1),slot)
+    rect.x+=left
+    return rect
 }
 
 // The size in pixels of what the camera draws: its part of the drawable.

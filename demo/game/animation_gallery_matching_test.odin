@@ -27,7 +27,7 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo",root),capacity=512})) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids:[2]base.Asset_Id
-    for file,i in ([2]string{"assets/animations/mirai_gallery.match","assets/models/mirai/output_unwrapped.mesh"}) {
+    for file,i in ([2]string{"assets/characters/mirai/mirai_gallery.match","assets/characters/mirai/output_unwrapped.mesh"}) {
         record,present:=asset.registry_find_path(&f.assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id

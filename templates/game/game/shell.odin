@@ -7,7 +7,7 @@ import scene "mirai:engine/scene"
 import "mirai:host"
 
 // The shell of the game: main menu, pause and graphics settings, with mouse
-// and keyboard. assets/ui/shell.ui is one Modal screen with a page per
+// and keyboard. assets/menu/shell.ui is one Modal screen with a page per
 // Shell_Page; Shell.page says which shows, and
 // shell_frame is the only code that changes it. Add a screen by adding a
 // member of Shell_Page and a page named like it there. The engine does the
