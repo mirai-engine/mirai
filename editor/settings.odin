@@ -110,12 +110,14 @@ settings_open :: proc(s:^Session,name:string) {
     }
 }
 
-// The settings of the edited World and of the application as the code and the files of the layers leave them.
+// The settings of the edited World and of the application as the code and the files of the layers this process reads leave them.
 @(private)
 settings_load :: proc(s:^Session) {
     if !s.has_project {return}
     all:=settings_all(s)
-    if error,layer:=project.settings_load(all,s.project_root,s.engine_root);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    layers:=project.settings_layers_of_process()
+    if error,layer:=project.settings_load(all,s.project_root,s.engine_root,layers);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    if .Engine not_in layers {return}
     if misplaced:=project.settings_misplaced(all,s.project_root,s.engine_root);len(misplaced)>0 {
         notify(s,fmt.tprintf("%s: settings of the project, which %s does not read; move them to the settings of the project",strings.join(misplaced,", ",context.temp_allocator),project.settings_file(.Engine,s.project_root,s.engine_root,context.temp_allocator)))
     }
