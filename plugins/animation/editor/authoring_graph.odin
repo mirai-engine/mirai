@@ -111,7 +111,7 @@ graph_named_prepare :: proc(s:^editor.Session,call:^api.Call,p:^Graph_Write_Para
     if !graph_named_unique(call,p.nodes[:node_count],"nodes") || !graph_named_unique(call,p.parameters[:parameter_count],"parameters") || !graph_named_unique(call,p.masks[:mask_count],"masks") {return}
     for node,i in p.nodes[:node_count] {if node.mirror && node.kind!=.Clip && node.kind!=.Blend_Space {authoring_failure(call,fmt.tprintf("nodes[%d].mirror",i),"Unsupported_Policy","a Clip or Blend_Space node",fmt.tprintf("%v",node.kind),"Only source nodes mirror; mirror their sources instead");return}}
     for node,i in p.nodes[:node_count] {if (node.kind==.Clip || node.kind==.Blend_Space) && node.curves==.Additive {authoring_failure(call,fmt.tprintf("nodes[%d].curves",i),"Unsupported_Policy","Override or Ignore on a source node","Additive","Additive curves require a composed node with a reference source");return}}
-    if counts==nil {text,_:=authoring_json_field(call.raw,"nodes",call.allocator);for node,i in p.nodes[:node_count] {element,_:=authoring_json_element(text,i,call.allocator);if !graph_source_sync(call,node,element,fmt.tprintf("nodes[%d]",i)) {return}}}
+    if counts==nil {text:=api.json_member(call.raw,"nodes");for node,i in p.nodes[:node_count] {element,_:=authoring_json_element(text,i,call.allocator);if !graph_source_sync(call,node,element,fmt.tprintf("nodes[%d]",i)) {return}}}
     profile.info.animation=p.animation
     profile.nodes=make([]anim.Graph_Node,node_count,call.allocator)
     profile.parameters=make([]anim.Graph_Parameter,parameter_count,call.allocator)

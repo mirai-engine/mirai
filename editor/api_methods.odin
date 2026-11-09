@@ -441,7 +441,7 @@ functions_fill :: proc(s:^Session,st:^Api_State,r:^Api_Status) {
         }
         for slot,i in top {
             if slot.index<0 {break}
-            api_text_put(r.functions[i].name[:],s.info.steps[slot.index].name)
+            base.text_set(r.functions[i].name[:],s.info.steps[slot.index].name)
             r.functions[i].ms=f32(f64(slot.ns)/f64(frames)/1e6)
         }
     }
@@ -458,7 +458,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
     r.frame,r.mode=s.frame,s.mode
     r.entities,r.selected=status_value.entities,status_value.selected
     r.dirty,r.headless,r.manual,r.gpu_enabled,r.has_project=status_value.dirty,s.headless,st.manual,app.renderer!=nil,s.has_project
-    api_text_put(r.document[:],status_value.document)
+    base.text_set(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
     r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.stats.extras_dropped
@@ -494,18 +494,18 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.cpu.render_prepare_ms,r.cpu.render_begin_ms=stats.cpu_prepare_ms,stats.cpu_begin_ms
         r.cpu.render_record_ms,r.cpu.render_end_ms=stats.cpu_record_ms,stats.cpu_end_ms
         for timing,i in stats.timings[:min(len(stats.timings),API_TIMINGS)] {
-            api_text_put(r.gpu_timings[i].name[:],timing.name)
+            base.text_set(r.gpu_timings[i].name[:],timing.name)
             r.gpu_timings[i].ms=timing.ms
         }
         backend,_:=reflect.enum_name_from_value(stats.backend)
-        api_text_put(r.backend[:],backend)
-        api_text_put(r.device[:],stats.device_name)
+        base.text_set(r.backend[:],backend)
+        base.text_set(r.device[:],stats.device_name)
         if app.device!=nil {
             r.validation_errors=rhi.device_validation_errors(app.device)
             used,budget:=rhi.device_memory(app.device)
             r.gpu_memory={f32(f64(used)/(1<<20)),f32(f64(budget)/(1<<20))}
         }
-        api_text_put(r.renderer_problem[:],stats.problem)
+        base.text_set(r.renderer_problem[:],stats.problem)
     }
     if a:=app.assets;a!=nil {
         r.asset_errors=len(host.assets_errors(a))+len(a.registry.reassigned)+len(a.registry.duplicates)
@@ -514,8 +514,8 @@ api_status :: proc(s:^Session,call:^api.Call) {
     }
     r.ui_dropped=s.gui.dropped
     r.build,r.build_errors=s.build.phase,len(s.build.diagnostics)
-    if len(s.build.diagnostics)>0 {api_text_put(r.build_message[:],s.build.diagnostics[0].message)}
-    api_text_put(r.collab[:],collab_summary(s))
+    if len(s.build.diagnostics)>0 {base.text_set(r.build_message[:],s.build.diagnostics[0].message)}
+    base.text_set(r.collab[:],collab_summary(s))
     r.api_calls,r.api_errors=st.server.stats.calls,st.server.stats.errors
 }
 
@@ -662,11 +662,11 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     api.write_key(w,"selection");serial.write_u8(w,'[')
     for e,i in s.selection.entities {
         if i>0 {serial.write_u8(w,',')}
-        api_write_id(w,api_entity_id(world,e))
+        api.write_id(w,api_entity_id(world,e))
     }
     serial.write_u8(w,']')
     api.write_key(w,"active")
-    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api_write_id(w,active)} else {serial.text_write_raw(w,"null")}
+    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
     tool,_:=reflect.enum_name_from_value(v.tool)
     // A plugin tool that holds the scene is the tool; one that lent it to the gizmo is the plugin.
     api.write_key(w,"tool");serial.text_write_string(w,api_lower(tool))
@@ -1381,7 +1381,7 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     }
     values:[4]string
     api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
-    until:=params.until[:api_list_count(values[0])]
+    until:=params.until[:api.json_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
     drive:^Api_Drive
@@ -1429,21 +1429,6 @@ api_step_drive_ticks :: proc(s:^Session,call:^api.Call,params:^Api_Play_Step_Par
     }
     if values[1]=="" && values[2]=="" {params.ticks=clamp(int(f64(API_DRIVE_DEFAULT_SECONDS)/max(f64(s.app.tick_dt),1e-6)+0.5),1,API_STEP_LIMIT)}
     return true
-}
-
-// The elements of a JSON array as text; 0 for anything else.
-@(private)
-api_list_count :: proc(text:string) -> int {
-    if text=="" {return 0}
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    if !serial.text_accept(&r,'[') || serial.text_accept(&r,']') {return 0}
-    count:=0
-    for serial.text_skip(&r) {
-        count+=1
-        if !serial.text_accept(&r,',') {break}
-    }
-    return count
 }
 
 // The keys and the mouse go to the local seat of slot from the next tick on,
@@ -1558,8 +1543,8 @@ api_build_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Build_Result)
     result.building=s.build.phase==.Running || s.build.reload
     result.restarting=.Restart in s.requests
-    api_text_put(result.target[:],s.build.target==.Game?"game":"editor")
-    api_text_put(result.game[:],s.build.game)
+    base.text_set(result.target[:],s.build.target==.Game?"game":"editor")
+    base.text_set(result.game[:],s.build.game)
     result.phase=s.build.phase
     result.errors=len(s.build.diagnostics)
     result.seconds=s.build.seconds
@@ -1570,13 +1555,13 @@ api_build_result :: proc(s:^Session,call:^api.Call) {
             row:=&result.diagnostics[count]
             count+=1
             row.severity,row.line,row.column=d.severity,d.line,d.column
-            api_text_put(row.file[:],d.file)
-            api_text_put(row.message[:],d.message)
+            base.text_set(row.file[:],d.file)
+            base.text_set(row.message[:],d.message)
         }
     }
     has_error:=false
     for d in s.build.diagnostics {has_error||=d.severity==.Error}
-    if has_error || s.build.phase==.Failed {api_text_put(result.message[:],api_build_first_error(s))}
+    if has_error || s.build.phase==.Failed {base.text_set(result.message[:],api_build_first_error(s))}
 }
 
 @(private)
@@ -1641,7 +1626,7 @@ api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
     result:=api.call_result(call,Api_Build_Result)
     result.seconds=time.duration_seconds(time.tick_since(started))
     result.publishing=programs_publishing(s)
-    api_text_put(result.target[:],"shaders")
+    base.text_set(result.target[:],"shaders")
 }
 
 Api_Build_Check_Params :: struct {

@@ -68,20 +68,6 @@ spatial_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="scene.ground",summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=Api_Ground_Params,result=Api_Ground_Result,run=api_scene_ground})
 }
 
-// Whether the params name a key, whatever its value.
-@(private="file")
-spatial_given :: proc(call:^api.Call,key:string) -> bool {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    if !serial.text_accept(&a.r,'{') {return false}
-    object:Rpc_Object
-    for name in rpc_next(&a,&object) {
-        if name==key {return true}
-        if _,ok:=rpc_raw(&a);!ok {break}
-    }
-    return false
-}
-
 // The bodies of the scene with their places from the locals; with ghosts,
 // also what is hidden or turned off.
 @(private="file")
@@ -140,26 +126,17 @@ spatial_box :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,e:core.Entity
     return
 }
 
-@(private="file")
-spatial_finite :: proc "contextless" (values:[]f32) -> bool {
-    for v in values {
-        if v-v!=0 {return false}
-    }
-    return true
-}
-
 @(private)
 api_scene_raycast :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Raycast_Params)
     w:=edited_world(s)
     ignore,known:=api_call_entities(call,w,params.ignore[:],"ignore")
     if !known {return}
-    if !spatial_finite({params.reach}) || params.reach<=0 {
+    if !rpc_finite(params.reach) || params.reach<=0 {
         api.call_fail(call,api.INVALID_PARAMS,"reach must be a finite number of meters above 0")
         return
     }
-    by_point:=spatial_given(call,"point")
-    has_origin,has_direction:=spatial_given(call,"origin"),spatial_given(call,"direction")
+    by_point,has_origin,has_direction:=api.json_member(call.raw,"point")!="",api.json_member(call.raw,"origin")!="",api.json_member(call.raw,"direction")!=""
     ray:mm.Ray
     switch {
     case by_point && (has_origin || has_direction):
@@ -172,7 +149,7 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
             return
         }
         point:=params.point
-        if !spatial_finite(point[:]) || point.x<v.origin.x || point.y<v.origin.y || point.x>v.origin.x+v.size.x || point.y>v.origin.y+v.size.y {
+        if !rpc_finite(..point[:]) || point.x<v.origin.x || point.y<v.origin.y || point.x>v.origin.x+v.size.x || point.y>v.origin.y+v.size.y {
             api.call_failf(call,api.INVALID_PARAMS,"point [%g,%g] is not over the viewport: it spans window points [%g,%g] to [%g,%g]",point.x,point.y,v.origin.x,v.origin.y,v.origin.x+v.size.x,v.origin.y+v.size.y)
             return
         }
@@ -182,7 +159,7 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.INVALID_PARAMS,"give origin and direction of the ray in the world, or point over the viewport")
             return
         }
-        if !spatial_finite(params.origin[:]) || !spatial_finite(params.direction[:]) {
+        if !rpc_finite(..params.origin[:]) || !rpc_finite(..params.direction[:]) {
             api.call_fail(call,api.INVALID_PARAMS,"origin and direction must be finite numbers")
             return
         }
@@ -197,7 +174,7 @@ api_scene_raycast :: proc(s:^Session,call:^api.Call) {
     if hit.entity==core.NONE {return}
     result:=api.call_result(call,Api_Raycast_Result)
     result^={hit=true,id=api_entity_id(w,hit.entity),point=hit.position,normal=hit.normal,distance=hit.distance}
-    api_text_put(result.name[:],entity_name(w,hit.entity))
+    base.text_set(result.name[:],entity_name(w,hit.entity))
 }
 
 @(private)
@@ -264,7 +241,7 @@ spatial_ground_surface :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,e:
 @(private)
 api_scene_ground :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Ground_Params)
-    if !spatial_finite({params.offset}) {
+    if !rpc_finite(params.offset) {
         api.call_fail(call,api.INVALID_PARAMS,"offset must be a finite number of meters")
         return
     }

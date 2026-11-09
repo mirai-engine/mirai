@@ -575,7 +575,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
 api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,links:map[base.Entity_Id]Prefab_Link,scratch:[]u8,values:Api_Inspect_Values) {
     st:=api_state(s)
     id:=api_entity_id(w,e)
-    serial.text_write_raw(out,`{"id":`);api_write_id(out,id)
+    serial.text_write_raw(out,`{"id":`);api.write_id(out,id)
     api.write_key(out,"name");serial.text_write_string(out,entity_name(w,e))
     local:=entity_local(w,e)
     angles:=mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD

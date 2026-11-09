@@ -346,7 +346,7 @@ api_collision_get :: proc(s:^editor.Session,call:^api.Call) {
     info:=w.info
     value:=uintptr(core.raw_find(core.world_table_at(w,target.table),target.table.info,target.entity))
     out:=call.out
-    serial.text_write_raw(out,`{"id":`);editor.api_write_id(out,request.id)
+    serial.text_write_raw(out,`{"id":`);api.write_id(out,request.id)
     api.write_key(out,"playing");api.write_flag(out,editor.playing(s))
     api.write_key(out,"component");serial.text_write_string(out,base.text_get(request.component[:]))
     api.write_key(out,"prefix");serial.text_write_string(out,target.prefix)
@@ -374,7 +374,7 @@ api_collision_get :: proc(s:^editor.Session,call:^api.Call) {
         if target.group>=0 {
             group:=(cast(^core.Entity)(value+uintptr(target.group)))^
             api.write_key(out,"group")
-            if id:=editor.api_entity_id(w,group);group!=core.NONE && id!=0 {editor.api_write_id(out,id)} else {serial.text_write_raw(out,"null")}
+            if id:=editor.api_entity_id(w,group);group!=core.NONE && id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
         }
     case .Query:
         filter:=(cast(^phys.Query_Filter)(value+uintptr(target.query)))^

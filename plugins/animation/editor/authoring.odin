@@ -154,8 +154,7 @@ authoring_write :: proc(s:^editor.Session,call:^api.Call,path:string,bytes:[]u8)
 // Whether the params ask to validate without writing.
 @(private)
 authoring_dry_run :: proc(call:^api.Call) -> bool {
-    value,found:=authoring_json_field(call.raw,"dry_run",call.allocator)
-    return found && value=="true"
+    return api.json_member(call.raw,"dry_run")=="true"
 }
 
 @(private)
@@ -175,21 +174,6 @@ authoring_write_value :: proc(call:^api.Call,value:^$T,info:^runtime.Type_Info) 
     if !ok {authoring_failure(call,"result","Invalid_Schema","a registered result type","schema preparation failed","The value schema could not be prepared",api.INTERNAL_ERROR);return false}
     serial.text_write(call.out,&schema,index,mem.ptr_to_bytes(value),.Line)
     return call.out.overflow==0
-}
-
-@(private)
-authoring_json_field :: proc(text,name:string,allocator:=context.temp_allocator) -> (value:string,found:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,allocator);defer serial.text_reader_destroy(&r)
-    if !serial.text_accept(&r,'{') {return}
-    for !serial.text_accept(&r,'}') {
-        key,ok:=serial.text_string(&r);if !ok || !serial.text_expect(&r,':') {return}
-        start:=r.offset
-        if !serial.text_skip(&r) {return}
-        if key==name {return text[start:r.offset],true}
-        if !serial.text_accept(&r,',') {break}
-    }
-    return
 }
 
 @(private)

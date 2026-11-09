@@ -45,21 +45,8 @@ asset_detach :: proc(s:^Session,id:base.Asset_Id) -> (owner:base.Asset_Id,messag
 
 @(private)
 api_asset_detach :: proc(s:^Session,call:^api.Call) {
-    name:=base.text_get(api.call_params(call,Api_Detach_Params).asset[:])
-    r:=files_registry(s)
-    if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"The editor has no asset folder it can change")
-        return
-    }
-    id,is_id:=serial.text_parse_asset_id(name)
-    if !is_id {
-        file,found:=asset.registry_find_path(r,name)
-        if !found || file.state!=.Asset {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not an asset: give its path under the asset folder or its id, as asset.list lists them",name)
-            return
-        }
-        id=file.id
-    }
+    r,id,named:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Detach_Params).asset[:]))
+    if !named {return}
     owner,message:=asset_detach(s,id)
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)

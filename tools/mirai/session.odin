@@ -38,9 +38,9 @@ Session_Record :: api.Session_Record
 //   status   says whether one answers, and which editors of this checkout no
 //            port file names
 //   sync     brings only the files named from the project into a copy and
-//            restarts its session, or has it read the assets again
-//            (session_sync.odin)
-// The editor names its port in <proyecto>/.mirai/api.json (api.PORT_FILE). An
+//            restarts its session when code or the manifest changed; its
+//            editor reads assets again by itself (session_sync.odin)
+// The editor names its port in <project>/.mirai/api.json (api.PORT_FILE). An
 // editor with a window is never reused, replaced nor closed.
 cmd_session :: proc(root:string,args:[]string) -> int {
     if len(args)==0 {fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2}

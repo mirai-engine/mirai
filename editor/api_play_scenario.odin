@@ -120,7 +120,7 @@ scenario_parse :: proc(text:string,allocator:=context.allocator) -> (sc:Scenario
         if !strings.has_prefix(values[1],"{") {return {},"start: give the params of play.start as an object, as {\"players\": 1}"}
         sc.start=values[1]
     }
-    count:=api_list_count(values[2])
+    count:=api.json_count(values[2])
     if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"ticks": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
     if count>API_SCENARIO_STEPS {return {},fmt.aprintf("steps: %d steps, and a scenario takes %d at most: split it into several files",count,API_SCENARIO_STEPS,allocator=allocator)}
     items:=make([]string,count,allocator)

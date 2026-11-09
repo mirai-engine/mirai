@@ -47,25 +47,8 @@ json_valid :: proc(allocator:runtime.Allocator,text:string) -> bool {
 // How many elements the caller gave to an array of the params: the elements
 // it did not give keep their defaults, which may look like given ones.
 params_array_count :: proc(call:^Call,field:string) -> (count:int,found:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,call.allocator)
-    defer serial.text_reader_destroy(&r)
-    if !serial.text_accept(&r,'{') {return}
-    for !serial.text_accept(&r,'}') {
-        name,ok:=serial.text_string(&r);if !ok || !serial.text_expect(&r,':') {return}
-        if name==field {
-            if !serial.text_expect(&r,'[') {return}
-            for !serial.text_accept(&r,']') {
-                if !serial.text_skip(&r) {return}
-                count+=1
-                if !serial.text_accept(&r,',') {if !serial.text_expect(&r,']') {return};break}
-            }
-            return count,true
-        }
-        if !serial.text_skip(&r) {return}
-        if !serial.text_accept(&r,',') {break}
-    }
-    return
+    elements,is_array:=json_elements(json_member(call.raw,field))
+    return len(elements),is_array
 }
 
 @(private)
@@ -370,22 +353,14 @@ clamped_write :: proc(out:^serial.Writer,mark:int,clamped:string) {
 
 // The raw JSON text of the given keys of an object; "" for keys it does not have.
 object_values :: proc(allocator:runtime.Allocator,text:string,keys:[]string,values:[]string) -> bool {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,allocator)
-    if !serial.text_accept(&r,'{') {return false}
-    if serial.text_accept(&r,'}') {return true}
-    for {
-        key,ok:=serial.text_string(&r)
-        if !ok || !serial.text_expect(&r,':') {return false}
-        slot:=-1
-        for name,i in keys {if name==key {slot=i;break}}
-        serial.text_peek(&r)
-        start:=r.offset
-        if !serial.text_skip(&r) {return false}
-        if slot>=0 {values[slot]=r.text[start:r.offset]}
-        if serial.text_accept(&r,',') {continue}
-        return serial.text_expect(&r,'}')
+    walk:Object_Walk
+    if !object_walk_init(&walk,text,allocator) {return false}
+    for name,value in object_walk_next(&walk) {
+        for key,i in keys {
+            if key==name {values[i]=value;break}
+        }
     }
+    return !walk.failed
 }
 
 // The text of a JSON string.

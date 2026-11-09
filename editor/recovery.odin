@@ -588,8 +588,8 @@ api_recover :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Recovery_Result)
     result.entities,result.dirty=core.world_entities(edited_world(s)).alive,document_dirty(s)
     result.resolved,result.pending=resolved,s.recovery.pending
-    api_text_put(result.path[:],document_path(s.document))
-    api_text_put(result.reason[:],reason)
+    base.text_set(result.path[:],document_path(s.document))
+    base.text_set(result.reason[:],reason)
 }
 
 @(private)

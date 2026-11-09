@@ -133,7 +133,7 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     w:=run_ref(s,r)
     values:[2]string
     api.object_values(call.allocator,call.raw,{"actions","segments"},values[:])
-    count:=api_list_count(values[0])
+    count:=api.json_count(values[0])
     timeline:[]Api_Step_Input
     if values[1]!="" {
         ok:bool

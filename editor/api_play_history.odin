@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The past a run keeps (play_history.odin), to the API: going back to a tick
@@ -177,7 +178,7 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
     looks:=traced || p.verify
     info:Api_Play_History_Info
     if r==nil {
-        api_text_put(info.reason[:],"No game is playing")
+        base.text_set(info.reason[:],"No game is playing")
         api_play_history_write(s,call,&info,nil)
         return
     }
@@ -185,7 +186,7 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
     if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {info.tick=t.tick}
     if reason:=history_reason(s,r);reason!="" {
         if looks {api.call_fail(call,api.SERVER_ERROR,reason);return}
-        api_text_put(info.reason[:],reason)
+        base.text_set(info.reason[:],reason)
         api_play_history_write(s,call,&info,nil)
         return
     }
@@ -335,7 +336,7 @@ api_history_differs :: proc(s:^Session,recorded,replayed:core.World_Ref,out:^Api
                 if slice.equal(serial.writer_bytes(&a),serial.writer_bytes(&b)) {continue}
                 if !api_history_documents_differ(&a,&b,there_a,there_b,out) {continue}
                 out.entity=e
-                api_text_put(out.name[:],entity_name(there_a?recorded:replayed,e))
+                base.text_set(out.name[:],entity_name(there_a?recorded:replayed,e))
                 return true
             }
         }
@@ -353,7 +354,7 @@ api_history_differs :: proc(s:^Session,recorded,replayed:core.World_Ref,out:^Api
         }
         if slice.equal(serial.writer_bytes(&a),serial.writer_bytes(&b)) {continue}
         if !api_history_documents_differ(&a,&b,true,true,out) {continue}
-        api_text_put(out.storage[:],info.name)
+        base.text_set(out.storage[:],info.name)
         return true
     }
     return false
@@ -389,8 +390,8 @@ api_history_table_same :: proc(x,y:^core.Raw_Table,info:^core.Table_Info) -> boo
 @(private)
 api_history_documents_differ :: proc(a,b:^serial.Writer,there_a,there_b:bool,out:^Api_Play_Verify) -> bool {
     if there_a!=there_b {
-        api_text_put(out.recorded[:],there_a?"\"alive\"":"null")
-        api_text_put(out.replayed[:],there_b?"\"alive\"":"null")
+        base.text_set(out.recorded[:],there_a?"\"alive\"":"null")
+        base.text_set(out.replayed[:],there_b?"\"alive\"":"null")
         return true
     }
     x,x_error:=json.parse(serial.writer_bytes(a),allocator=context.temp_allocator)
@@ -399,10 +400,10 @@ api_history_documents_differ :: proc(a,b:^serial.Writer,there_a,there_b:bool,out
     path:=strings.builder_make(context.temp_allocator)
     if !api_json_differs(x,y,&path) {return false}
     at:=strings.to_string(path)
-    api_text_put(out.field[:],at)
+    base.text_set(out.field[:],at)
     for side in ([2]struct{value:json.Value,text:[]u8}{{x,out.recorded[:]},{y,out.replayed[:]}}) {
         leaf,missing:=api_json_select(side.value,at)
-        api_text_put(side.text,missing==""?api_json_text(leaf):"null")
+        base.text_set(side.text,missing==""?api_json_text(leaf):"null")
     }
     return true
 }

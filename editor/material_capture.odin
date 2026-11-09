@@ -89,9 +89,6 @@ view_value :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,pixe
     return
 }
 
-@(private)
-finite :: proc "contextless" (v:f32) -> bool {return v-v==0}
-
 // The color a view shows a pixel with: as the studio displays it, or its values made visible.
 @(private)
 view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,display:[]u8,pixel:int) -> [4]u8 {
@@ -102,7 +99,7 @@ view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,disp
         return u8(clamp(srgb*255+0.5,0,255))
     }
     v:=view_value(view,values,pixel)
-    for c in v {if !finite(c) {return {255,0,255,255}}}
+    for c in v {if !rpc_finite(c) {return {255,0,255,255}}}
     switch view {
     case .Lit:
         rgb:=display[pixel*4:][:3]
@@ -111,7 +108,7 @@ view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,disp
     case .Roughness,.Metallic: g:=encode(v.x);return {g,g,g,255}
     case .Normal:
         n:=values[.Normal][pixel].xyz
-        for c in n {if !finite(c) {return {255,0,255,255}}}
+        for c in n {if !rpc_finite(c) {return {255,0,255,255}}}
         length:=math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
         if length>0 {n/=length}
         return {u8(clamp((n.x*0.5+0.5)*255,0,255)),u8(clamp((n.y*0.5+0.5)*255,0,255)),u8(clamp((n.z*0.5+0.5)*255,0,255)),255}
@@ -167,7 +164,7 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
             if values[.Lit][pixel].w<0.5 {continue}
             v:=view_value(view,values,pixel)
             bad:=false
-            for c in 0..<st.components {bad||=!finite(v[c])}
+            for c in 0..<st.components {bad||=!rpc_finite(v[c])}
             if bad {st.nan_count+=1;continue}
             st.pixels+=1
             for c in 0..<st.components {

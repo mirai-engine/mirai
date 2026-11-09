@@ -1,6 +1,7 @@
 package editor
 
 import "mirai:editor/api"
+import "mirai:std/base"
 
 // The method of watching another run.
 
@@ -28,7 +29,7 @@ api_watch_result :: proc(s:^Session,call:^api.Call) {
     if s.mode!=.Watch {return}
     r.watching,r.task,r.host=true,s.watch.task,s.watch.host
     r.world=watch_world(s)!=nil
-    api_text_put(r.name[:],watch_name(s))
+    base.text_set(r.name[:],watch_name(s))
 }
 
 @(private)

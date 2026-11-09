@@ -154,7 +154,7 @@ asset_resolve :: proc(s:^Session,name,kinds:string) -> (id:base.Asset_Id,problem
     if a==nil {return {},"The editor has no assets"}
     host.assets_scan(a)
     r:=&a.registry
-    if file,found:=asset.registry_find_path(r,name);found && asset_kinds_take(file.path,kinds) {return file.id,""}
+    if file,found:=asset.registry_find_path(r,name);found && file.state==.Asset && asset_kinds_take(file.path,kinds) {return file.id,""}
     matches:=make([dynamic]^asset.Registry_File,context.temp_allocator)
     for &file in r.files {
         if file.state==.Asset && asset_path_stem(file.path)==name && asset_kinds_take(file.path,kinds) {append(&matches,&file)}

@@ -656,9 +656,9 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
     }
     out:=call.out
     serial.text_write_raw(out,`{"editing":`)
-    api_write_id(out,api_entity_id(w,e))
+    api.write_id(out,api_entity_id(w,e))
     serial.text_write_raw(out,`,"unsaved":`)
-    api_write_id(out,kept?api_entity_id(w,left):0)
+    api.write_id(out,kept?api_entity_id(w,left):0)
     serial.write_u8(out,'}')
 }
 

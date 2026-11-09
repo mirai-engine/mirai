@@ -65,7 +65,7 @@ motion_authoring_definition :: proc(call:^api.Call,p:^Motion_Write_Params) -> (p
     if window_count>anim.MOTION_WINDOWS || distance_count>anim.MOTION_WINDOWS {authoring_failure(call,"windows/distances","Capacity","at most 64 entries","too many entries","Motion capacity exceeded");return}
     pose:=p.pose
     spine,legs:=0,0
-    if text,present:=authoring_json_field(call.raw,"pose",call.allocator);present {nested:=api.Call{raw=text,allocator=call.allocator};spine,_=api.params_array_count(&nested,"spine");legs,_=api.params_array_count(&nested,"legs")}
+    if text:=api.json_member(call.raw,"pose");text!="" {nested:=api.Call{raw=text,allocator=call.allocator};spine,_=api.params_array_count(&nested,"spine");legs,_=api.params_array_count(&nested,"legs")}
     if spine>16 || legs>16 {authoring_failure(call,"pose","Capacity","at most 16 spine bones and legs","too many entries","Pose warping capacity exceeded");return}
     profile.info.pose={pelvis=pose.pelvis,spine=pose.spine,spine_count=u8(spine),legs=pose.legs,count=u8(legs),min_stride=pose.min_stride,max_stride=pose.max_stride,max_angle=pose.max_angle,weight=pose.weight,orientation=pose.orientation,stride=pose.stride}
     profile.windows=make([]anim.Motion_Window,window_count,call.allocator)
@@ -73,7 +73,7 @@ motion_authoring_definition :: proc(call:^api.Call,p:^Motion_Write_Params) -> (p
     profile.keys=make([]lib.Distance_Key,anim.MOTION_KEYS,call.allocator)
     if window_count>0 && profile.windows==nil || distance_count>0 && profile.distances==nil || profile.keys==nil {authoring_failure(call,"definition","Out_Of_Memory","memory for motion tables","allocation failed","The motion definition could not be allocated",api.SERVER_ERROR);return}
     for &window,i in p.windows[:window_count] {profile.windows[i]={clip=window.clip,name=window.name,start=window.start,end=window.end,translation=window.translation,rotation=window.rotation,axes=window.axes,weight=window.weight,animation=window.animation}}
-    tracks_text,_:=authoring_json_field(call.raw,"distances",call.allocator)
+    tracks_text:=api.json_member(call.raw,"distances")
     reader:serial.Text_Reader;serial.text_reader_init(&reader,tracks_text,call.allocator);defer serial.text_reader_destroy(&reader)
     if distance_count>0 && !serial.text_expect(&reader,'[') {return}
     key_count:=0

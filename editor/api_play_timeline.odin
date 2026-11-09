@@ -137,7 +137,7 @@ api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:
     for c in step.text {
         if c<' ' || c>'~' {api.call_failf(call,api.INVALID_PARAMS,"%stext takes printable ASCII from space to ~; %q has a character outside it",at,step.text);return}
     }
-    for pad in segment.gamepads[:api_list_count(values[1])] {
+    for pad in segment.gamepads[:api.json_count(values[1])] {
         g:=&step.gamepads[pad.slot]
         if g.connected {api.call_failf(call,api.INVALID_PARAMS,"%sgamepads: slot %d is given twice; give each gamepad once",at,pad.slot);return}
         if both:=pad.buttons&pad.tapped;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%sgamepads: slot %d holds and taps %v; a button is held or tapped",at,pad.slot,both);return}
@@ -453,7 +453,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     trace^={storage=-1,view=p.view,include_runtime=p.include_runtime}
     values:[1]string
     api.object_values(call.allocator,raw,{"fields"},values[:])
-    trace.field_count=api_list_count(values[0])
+    trace.field_count=api.json_count(values[0])
     if trace.field_count==0 {return `trace.fields is empty: give the paths to read, as ["world_position", "components.Motion.linear"]`}
     for &field,i in trace.fields[:trace.field_count] {
         field=base.text_get(p.fields[i][:])

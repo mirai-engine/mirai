@@ -93,10 +93,10 @@ api_save_slot_put :: proc(s:^Session,out:^Api_Save_Slot,slot:^save.Slot) {
     out.name=slot.name
     out.label=slot.label
     out.kind,out.scene=slot.kind,slot.scene
-    if slot.scene!={} {api_text_put(out.scene_path[:],asset_path(s,slot.scene))}
+    if slot.scene!={} {base.text_set(out.scene_path[:],asset_path(s,slot.scene))}
     out.tick,out.seconds,out.played,out.written=slot.tick,slot.seconds,slot.played,slot.written
     out.entities,out.thumbnail,out.size,out.version=slot.entities,slot.thumbnail,slot.size,slot.version
-    api_text_put(out.error[:],save.error_text(slot.error))
+    base.text_set(out.error[:],save.error_text(slot.error))
 }
 
 // The folder of the saves, or a failure that says why there is none.
@@ -115,7 +115,7 @@ api_save_list :: proc(s:^Session,call:^api.Call) {
     folder,ok:=api_save_folder(s,call,state)
     if !ok {return}
     r:=api.call_result(call,Api_Save_List)
-    api_text_put(r.folder[:],folder)
+    base.text_set(r.folder[:],folder)
     if name:=base.text_get(api.call_params(call,Api_Save_List_Params).slot[:]);name!="" {
         slot:=save.slot_info(state,s.app,name)
         if slot.error==.Not_Found || slot.error==.Invalid_Slot {api_save_fail(call,name,slot.error);return}
@@ -142,7 +142,7 @@ api_save_delete :: proc(s:^Session,call:^api.Call) {
         api_save_fail(call,name,error)
         return
     }
-    api_text_put(api.call_result(call,Api_Save_Deleted).slot[:],name)
+    base.text_set(api.call_result(call,Api_Save_Deleted).slot[:],name)
 }
 
 @(private)

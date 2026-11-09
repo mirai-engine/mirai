@@ -50,7 +50,7 @@ api_entity_path :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_a
 
 // The entity a text names; NONE when none does, and then several says why
 // when the text fits more than one, for whoever reads it as a miss.
-api_entity_find :: proc(w:core.World_Ref,text:string,game:=false,allocator:=context.temp_allocator) -> (e:core.Entity,several:string) {
+api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_allocator) -> (e:core.Entity,several:string) {
     if value,is_hex:=api_entity_hex(text);is_hex {
         if found:=api_entity(w,base.Entity_Id(value));found!=core.NONE {return found,""}
         if core.alive(core.world_entities(w),core.Entity(value)) {return core.Entity(value),""}
@@ -81,7 +81,7 @@ api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=conte
     lister:=game?"play.inspect":"scene.inspect"
     if text=="" {return core.NONE,fmt.aprintf("it must be the name of an entity, a path Parent/Child, an id or a handle; %s lists them",lister,allocator=allocator)}
     several:string
-    if e,several=api_entity_find(w,text,game,allocator);e!=core.NONE {return e,""}
+    if e,several=api_entity_find(w,text,allocator);e!=core.NONE {return e,""}
     if several!="" {return core.NONE,several}
     of:=game?"the game":"the scene"
     return core.NONE,fmt.aprintf("%q names no entity of %s; %s lists their names and ids",text,of,lister,allocator=allocator)

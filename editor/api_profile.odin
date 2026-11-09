@@ -972,7 +972,7 @@ api_profile_export :: proc(s:^Session,call:^api.Call) {
     if os.write_entire_file(path,transmute([]u8)text)!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
     r:=api.call_result(call,Api_Profile_Export)
     r.id,r.events,r.bytes=c.id,events,len(text)
-    api_text_put(r.path[:],path)
+    base.text_set(r.path[:],path)
 }
 
 // The capture in the Trace Event Format: a complete event per zone, a thread

@@ -99,17 +99,17 @@ Api_Prefab_Instance :: struct {
 }
 
 Api_Prefab_Inspect_Result :: struct {
-    id:base.Entity_Id `mirai:"optional,label=With id: the entity"`,
-    locked:bool `mirai:"optional,label=With id: whether it keeps the place its prefab gives it as a member of an instance that is not its root"`,
-    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With id: the instance placed in the document it belongs to and then each one that instance brought in"`,
-    overrides:[1]Api_Prefab_Override `mirai:"list,optional,label=With id: what it holds that its prefab does not; its placement left out"`,
-    asset:base.Asset_Id `mirai:"optional,label=With path or asset: the prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=With path or asset: the file of the prefab"`,
-    root:base.Entity_Id `mirai:"optional,label=With path or asset: the root of the prefab"`,
-    entities:[1]Api_Prefab_Entity `mirai:"list,optional,label=With path or asset: every entity of the prefab"`,
-    instances:int `mirai:"optional,label=With path or asset: the instances of other prefabs it places"`,
-    base:Api_Asset_Id `mirai:"optional,label=With path or asset: the prefab its root is an instance of when it is a variant; zero when it is not"`,
-    chain:[1]Api_Asset_Id `mirai:"list,optional,label=With path or asset: its base, the base of that one and so on"`,
+    id:base.Entity_Id `mirai:"optional,label=With entity: the entity"`,
+    locked:bool `mirai:"optional,label=With entity: whether it keeps the place its prefab gives it as a member of an instance that is not its root"`,
+    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With entity: the instance placed in the document it belongs to and then each one that instance brought in"`,
+    overrides:[1]Api_Prefab_Override `mirai:"list,optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
+    asset:base.Asset_Id `mirai:"optional,label=With asset: the prefab"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=With asset: the file of the prefab"`,
+    root:base.Entity_Id `mirai:"optional,label=With asset: the root of the prefab"`,
+    entities:[1]Api_Prefab_Entity `mirai:"list,optional,label=With asset: every entity of the prefab"`,
+    instances:int `mirai:"optional,label=With asset: the instances of other prefabs it places"`,
+    base:Api_Asset_Id `mirai:"optional,label=With asset: the prefab its root is an instance of when it is a variant; zero when it is not"`,
+    chain:[1]Api_Asset_Id `mirai:"list,optional,label=With asset: its base, the base of that one and so on"`,
 }
 // base.Asset_Id where a field is named base.
 Api_Asset_Id :: base.Asset_Id
@@ -189,7 +189,7 @@ api_prefab_list :: proc(s:^Session,call:^api.Call) {
         serial.text_write_raw(w,`{"instance":`);serial.text_write_uint(w,u64(state.instance))
         api.write_key(w,"asset");api_asset_write(w,state.asset)
         api.write_key(w,"path");serial.text_write_string(w,state.path)
-        api.write_key(w,"root");api_write_id(w,state.root)
+        api.write_key(w,"root");api.write_id(w,state.root)
         api.write_key(w,"outer");serial.text_write_uint(w,u64(state.outer))
         api.write_key(w,"members");serial.text_write_int(w,i64(state.members))
         api.write_key(w,"overrides");serial.text_write_int(w,i64(state.overrides))
@@ -214,7 +214,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
             return
         }
         previous:=s.document.previous
-        serial.text_write_raw(w,`{"id":`);api_write_id(w,params.entity)
+        serial.text_write_raw(w,`{"id":`);api.write_id(w,params.entity)
         api.write_key(w,"locked");api.write_flag(w,prefab_member_locked(s,world,e))
         api.write_key(w,"links");serial.write_u8(w,'[')
         overrides:=make([dynamic]asset.Override,call.allocator)
@@ -232,9 +232,9 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
                 serial.text_write_raw(w,`{"instance":`);serial.text_write_uint(w,u64(instance.id))
                 api.write_key(w,"asset");api_asset_write(w,instance.prefab)
                 api.write_key(w,"path");serial.text_write_string(w,file!=nil?file.path:"")
-                api.write_key(w,"root");api_write_id(w,instance.root)
+                api.write_key(w,"root");api.write_id(w,instance.root)
                 api.write_key(w,"outer");serial.text_write_uint(w,u64(instance.outer))
-                api.write_key(w,"source");api_write_id(w,member.source)
+                api.write_key(w,"source");api.write_id(w,member.source)
                 serial.write_u8(w,'}')
             }
             for override in previous.overrides {
@@ -277,14 +277,14 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     root,_:=asset.prefab_root(loaded)
     serial.text_write_raw(w,`{"asset":`);api_asset_write(w,id)
     api.write_key(w,"path");serial.text_write_string(w,file.path)
-    api.write_key(w,"root");api_write_id(w,root)
+    api.write_key(w,"root");api.write_id(w,root)
     api.write_key(w,"entities");serial.write_u8(w,'[')
     for row in 0..<asset.scene_entity_count(loaded) {
         record:=asset.scene_entity(loaded,row)
         if row>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"id":`);api_write_id(w,record.id)
+        serial.text_write_raw(w,`{"id":`);api.write_id(w,record.id)
         api.write_key(w,"parent")
-        if record.parent!=0 {api_write_id(w,record.parent)} else {serial.text_write_raw(w,"null")}
+        if record.parent!=0 {api.write_id(w,record.parent)} else {serial.text_write_raw(w,"null")}
         api.write_key(w,"name");serial.text_write_string(w,record.name)
         serial.write_u8(w,'}')
     }
@@ -343,7 +343,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
     }
     result:=api.call_result(call,Api_Prefab_Created_Result)
     result.id,result.asset=params.entity,id
-    if file,_,ok:=prefab_file(s,id);ok {api_text_put(result.path[:],file.path)}
+    if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
 }
 
 @(private)
@@ -372,7 +372,7 @@ api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     }
     result:=api.call_result(call,Api_Prefab_Created_Result)
     result.id,result.asset=root,id
-    if file,_,ok:=prefab_file(s,id);ok {api_text_put(result.path[:],file.path)}
+    if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
 }
 
 @(private)
@@ -421,7 +421,7 @@ api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     }
     result:=api.call_result(call,Api_Prefab_Variant_Result)
     result.asset=id
-    if file,_,ok:=prefab_file(s,id);ok {api_text_put(result.path[:],file.path)}
+    if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
 }
 
 @(private)

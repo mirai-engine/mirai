@@ -152,7 +152,7 @@ graph_sync_fields_belong_to_sources_and_inspection_matches_the_typed_result :: p
     asset_id:=authoring_test_id(f,"sync.agraph");revision:=authoring_test_revision(f,"sync.agraph")
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,authoring_test_id_text(asset_id)));if !testing.expect(t,result.code==0,result.message) {return}
     text:=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
-    nodes,_:=authoring_json_field(text,"nodes",context.temp_allocator);row,_:=authoring_json_element(nodes,2,context.temp_allocator);value,_:=authoring_json_field(row,"value",context.temp_allocator)
+    nodes:=api.json_member(text,"nodes");row,_:=authoring_json_element(nodes,2,context.temp_allocator);value:=api.json_member(row,"value")
     testing.expect(t,!strings.contains(value,"sync_mode") && !strings.contains(value,"sync_duration") && !strings.contains(value,"sync_group"))
     schema:=authoring_result_schema(Graph_Inspect_Result,type_info_of(Graph_Inspect_Result),context.temp_allocator)
     testing.expect(t,strings.contains(schema,`"required":["name","kind"]`))

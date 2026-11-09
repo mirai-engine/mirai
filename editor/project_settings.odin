@@ -228,8 +228,6 @@ Api_Project :: struct {
     file:[256]u8 `mirai:"text,label=The project.mirai it reads and writes"`,
     manifest:u8 `mirai:"any,label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
     plugins:[1]Api_Project_Plugin `mirai:"list,label=Every plugin the project can see"`,
-    building:bool `mirai:"label=A build of the project still runs: the plugins or the options of the build changed and its wait ran out"`,
-    build_error:[512]u8 `mirai:"text,label=Empty; or the first error of the build the change started and that failed: the editor stays on its last build and build.status lists them"`,
 }
 
 // What project.set writes.
@@ -257,10 +255,10 @@ project_api_register :: proc(s:^Session,st:^Api_State) {
 }
 
 @(private)
-api_project_get :: proc(s:^Session,call:^api.Call) {api_project_write(s,call,false,"")}
+api_project_get :: proc(s:^Session,call:^api.Call) {api_project_write(s,call)}
 
 @(private)
-api_project_write :: proc(s:^Session,call:^api.Call,building:bool,build_error:string) {
+api_project_write :: proc(s:^Session,call:^api.Call) {
     if !s.has_project {
         api.call_fail(call,api.SERVER_ERROR,"There is no project: open a folder with a project.mirai")
         return
@@ -296,9 +294,7 @@ api_project_write :: proc(s:^Session,call:^api.Call,building:bool,build_error:st
         serial.text_write_string(out,base.text_get(plugin.manifest.version[:]))
         serial.write_u8(out,'}')
     }
-    serial.text_write_raw(out,fmt.tprintf(`], "building": %v, "build_error": `,building))
-    serial.text_write_string(out,build_error)
-    serial.write_u8(out,'}')
+    serial.text_write_raw(out,"]}")
 }
 
 // The fields of project.mirai of the params, as an object of its own, and

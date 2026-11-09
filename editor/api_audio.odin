@@ -125,7 +125,7 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
     r.voices_played,r.voices_stolen,r.voices_rejected=stats.voices_played,stats.voices_stolen,stats.voices_rejected
     r.commands_dropped,r.underruns,r.streams_busy,r.feeds_busy=stats.commands_dropped,stats.underruns,stats.streams_busy,stats.feeds_busy
     name :: proc(s:^Session,bus:mixer.Bus,out:[]u8) {
-        if named,found:=core.name_of(s.info,eaudio.Audio_Bus,i64(bus));found {api_text_put(out,named)} else {api_text_put(out,fmt.tprintf("%d",int(bus)))}
+        if named,found:=core.name_of(s.info,eaudio.Audio_Bus,i64(bus));found {base.text_set(out,named)} else {base.text_set(out,fmt.tprintf("%d",int(bus)))}
     }
     for index in 0..<min(mixer.bus_count(m),len(r.buses)) {
         bus:=mixer.Bus(index)
@@ -138,7 +138,7 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
             entry.duck_amount=duck.amount
         }
     }
-    if sound_heard(s,s.heard_sound.sound) {api_text_put(r.heard[:],asset_path(s,s.heard_sound.sound))}
+    if sound_heard(s,s.heard_sound.sound) {base.text_set(r.heard[:],asset_path(s,s.heard_sound.sound))}
 }
 
 // A .sound or a .sound_set the params name: its path under the assets
@@ -176,7 +176,7 @@ api_audio_play :: proc(s:^Session,call:^api.Call) {
         return
     }
     r:=api.call_result(call,Api_Audio_Play_Result)
-    api_text_put(r.sound[:],asset_path(s,id))
+    base.text_set(r.sound[:],asset_path(s,id))
     r.seconds=sound_seconds_of(s,id)
 }
 
