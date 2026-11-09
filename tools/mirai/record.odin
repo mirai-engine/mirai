@@ -17,8 +17,8 @@ RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|e
 // exit 1 with validation errors.
 cmd_record :: proc(root:string,args:[]string) -> int {
     folder,out,scene:=".","",""
-    Params :: struct {path:string,format:string,fps:int,seconds:f64,width,height:int,audio:bool,sheet:int}
-    params:=Params{format="Png16",fps=30,seconds=2,width=1280,height=720,audio=true,sheet=16}
+    Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
+    params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
     mode:Build_Mode=.Keep
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
     for i:=0;i<len(args);i+=1 {
@@ -41,7 +41,8 @@ cmd_record :: proc(root:string,args:[]string) -> int {
         case "--seconds":
             text,ok=option_next(args,&i)
             number,valid:=strconv.parse_f64(text)
-            params.seconds,ok=number,ok && valid
+            _=number
+            params.duration,ok=fmt.aprintf("%ss",text),ok && valid
         case "--size":
             text,ok=option_next(args,&i)
             size,valid:=render_size_parse(text)

@@ -47,8 +47,7 @@ Api_Explore_Stop :: enum u8 {Ticks,Run_Ended,No_Body,No_Ui,Ui_Covered,No_Progres
 Api_Play_Explore_Params :: struct {
     mode:Api_Explore_Mode `mirai:"optional,label=World moves and jumps toward the least visited cells; Ui presses every visible button"`,
     seed:u64 `mirai:"optional,label=The same seed on the same game plays the same ticks"`,
-    seconds:f32 `mirai:"optional,min=0,unit=s,label=Game time it plays at most"`,
-    ticks:int `mirai:"optional,min=0,max=36000,label=Fixed ticks it plays at most in place of seconds"`,
+    duration:[api.DURATION_TEXT]u8 `mirai:"optional,text,name=for,label=How long it plays at most: a number is ticks and a text ending in s is seconds as 600 or 20s"`,
     cell:f32 `mirai:"optional,min=0.25,max=1000,unit=m,label=Side of the cells of the world coverage"`,
     move:[64]u8 `mirai:"optional,text,label=The Axis2 action that moves; empty: the first bound to keys or to the left stick"`,
     jump:[64]u8 `mirai:"optional,text,label=The Button action that jumps; empty: the one bound to Space or to the South button"`,
@@ -521,14 +520,11 @@ api_play_explore :: proc(s:^editor.Session,call:^api.Call) {
     r,own:=editor.api_play_own_run(s,call,0)
     if !own {return}
     if r.owner==0 && editor.simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-    values:[2]string
-    api.object_values(call.allocator,call.raw,{"seconds","ticks"},values[:])
-    if values[0]!="" && values[1]!="" {api.call_fail(call,api.INVALID_PARAMS,"seconds and ticks both say how long it plays: give one");return}
-    tick_dt:=f64(max(s.app.tick_dt,1e-6))
-    total:=int(f64(API_EXPLORE_DEFAULT_SECONDS)/tick_dt+0.5)
-    if values[0]!="" {total=int(f64(p.seconds)/tick_dt+0.5)}
-    if values[1]!="" {total=p.ticks}
-    if total<1 || total>API_EXPLORE_TICKS {api.call_failf(call,api.INVALID_PARAMS,"it plays from 1 to %d ticks: give ticks or seconds in that range",API_EXPLORE_TICKS);return}
+    total:=int(f64(API_EXPLORE_DEFAULT_SECONDS)/f64(max(s.app.tick_dt,1e-6))+0.5)
+    if p.duration[0]!=0 {
+        timed:bool
+        if total,timed=editor.api_call_duration(call,p.duration[:],"for",s.app.tick_dt,1,API_EXPLORE_TICKS);!timed {return}
+    }
     if q:=qa_of(s,r);q==nil || !q.armed {
         height,known:=qa_fall_default(s)
         if qa_arm(s,r,{stuck_seconds=3,fall_below=height,falls=known,non_finite=true,problems=true})==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}

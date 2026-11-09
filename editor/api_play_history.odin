@@ -20,8 +20,7 @@ import "mirai:std/serial"
 // again, paused.
 
 Api_Play_Seek_Params :: struct {
-    tick:u64 `mirai:"optional,label=The tick to go to; when no frame ended on it the newest before it"`,
-    seconds:f64 `mirai:"optional,min=0,unit=s,label=In place of tick: the game time to go to; the newest tick at or before it"`,
+    to:[api.DURATION_TEXT]u8 `mirai:"text,label=Where it goes: a number is a tick and a text ending in s is a game time as 240 or 3.2s; when no frame ended there the newest before it"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
@@ -35,10 +34,8 @@ Api_Play_Seek_Result :: struct {
 
 Api_Play_History_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
-    from:u64 `mirai:"optional,label=The first tick read or checked; the oldest kept when 0"`,
-    to:u64 `mirai:"optional,label=The last tick read or checked; the newest kept when 0 or past it"`,
-    from_seconds:f64 `mirai:"optional,min=0,unit=s,label=In place of from: the game time of the first tick read or checked"`,
-    to_seconds:f64 `mirai:"optional,min=0,unit=s,label=In place of to: the game time of the last tick read or checked"`,
+    from:[api.DURATION_TEXT]u8 `mirai:"optional,text,label=The first read or checked: a number is a tick and a text ending in s is a game time as 240 or 3.2s; the oldest kept when omitted"`,
+    to:[api.DURATION_TEXT]u8 `mirai:"optional,text,label=The last read or checked in the form of from; the newest kept when omitted or past it"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage as play.step traces them, at the ticks the run played from from to to every every ticks: the trace of the result"`,
     verify:bool `mirai:"optional,label=Plays the kept frames from from to to again and compares what they leave with what they left when they played: verify says where they first differ"`,
 }
@@ -99,11 +96,8 @@ api_play_seek :: proc(s:^Session,call:^api.Call) {
     if !own && stopped {api.call_fail(call,api.SERVER_ERROR,"A turn reads the last Play of the user with play.history; it opens again only from outside a turn");return}
     if !own {api_play_refused(call);return}
     if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return}
-    tick,given:=api_history_tick(call,r.history,p.tick,p.seconds,"tick","seconds")
-    if !given {
-        if !call.failed {api.call_fail(call,api.INVALID_PARAMS,"give tick, or seconds (a game time the history keeps): play.history says which")}
-        return
-    }
+    tick,given:=api_history_tick(call,r.history,p.to[:],"to")
+    if !given {return}
     serial:=history_frame_for(r.history,tick)
     if serial==0 {api_history_older(call,r.history,tick);return}
     if stopped {
@@ -134,16 +128,19 @@ api_history_run :: proc(s:^Session,call:^api.Call,player:int) -> (r:^Run,own,sto
 // newest tick the history keeps at or before it. given is false when it named
 // neither, and after failing the call when it gave both.
 @(private)
-api_history_tick :: proc(call:^api.Call,h:^Run_History,tick:u64,seconds:f64,tick_name,seconds_name:string) -> (found:u64,given:bool) {
-    if !tool_call_given(call,seconds_name) {return tick,tool_call_given(call,tick_name)}
-    if tool_call_given(call,tick_name) {
-        api.call_failf(call,api.INVALID_PARAMS,"%s and %s name the same tick: give one",tick_name,seconds_name)
+api_history_tick :: proc(call:^api.Call,h:^Run_History,field:[]u8,name:string) -> (found:u64,given:bool) {
+    text:=base.text_get(field)
+    if text=="" {return}
+    d,valid:=api.duration_parse(text)
+    if !valid {
+        api.call_failf(call,api.INVALID_PARAMS,"%s takes %s, not %q",name,api.DURATION_FORM,text)
         return
     }
+    if !d.in_seconds {return d.ticks,true}
     if h!=nil {
         for at in 0..<h.frame_count {
             f:=history_frame_at(h,at)
-            if f==nil || f.seconds>seconds {break}
+            if f==nil || f.seconds>d.seconds {break}
             found=f.tick
         }
     }
@@ -184,8 +181,8 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
     info.frames,info.keyframes,info.capacity,info.interval=h.frame_count,h.count,h.limit,h.interval
     info.megabytes=f32(f64(history_bytes(h)+i64(len(h.frames)*size_of(History_Frame)))/(1024*1024))
     if !looks {api_play_history_write(s,call,&info,nil);return}
-    from_tick,_:=api_history_tick(call,h,p.from,p.from_seconds,"from","from_seconds")
-    to_tick,_:=api_history_tick(call,h,p.to,p.to_seconds,"to","to_seconds")
+    from_tick,_:=api_history_tick(call,h,p.from[:],"from")
+    to_tick,_:=api_history_tick(call,h,p.to[:],"to")
     if call.failed {return}
     from:=from_tick!=0?from_tick:info.oldest
     to:=to_tick!=0?min(to_tick,info.newest):info.newest

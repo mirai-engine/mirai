@@ -114,12 +114,12 @@ positions misses both.
 1. Give devices, not actions, when the test is about how input plays: `segments` of `play.step`
    go through the path of real input, so taps, holds, double-press windows and thresholds of the
    actions see them. Each press has its own length: one tick and three ticks are different inputs.
-   - A click: `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 1}]`; on a button of the
+   - A click: `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 1}]`; on a button of the
      UI, by its name: `{"press": "start"}` in `play.step`.
    - A double click: two presses with a gap inside the game's window,
-     `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 5}, {"ticks": 3, "mouse_buttons":
-     ["Left"]}, {"ticks": 1}]`.
-   - A hold: `[{"seconds": 0.8, "keys": ["E"]}, {"ticks": 1}]`; a press shorter than a tick:
+     `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 5}, {"for": 3, "mouse_buttons":
+     ["Left"]}, {"for": 1}]`.
+   - A hold: `[{"for": "0.8s", "keys": ["E"]}, {"for": 1}]`; a press shorter than a tick:
      `tap_keys`; a chord: the keys in one segment, or the modifier one segment earlier.
    - A look or a turn of the stick: `mouse_delta` (spread over its segment) or `gamepads` with a
      stick, in a segment as long as the motion.

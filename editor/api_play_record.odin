@@ -22,11 +22,13 @@ Record_Format :: enum u8 {
     Exr,   // before the tonemap: the exposed linear image, half floats
 }
 
+API_RECORD_TICKS :: 36000
+
 Api_Play_Record_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=Folder of the sequence; its frames are frame_000000 and on and the sound audio.wav. Under .mirai/recordings when empty"`,
     format:Record_Format `mirai:"optional,label=Png16: after the tonemap as the window shows it; Exr: before it in linear light unclipped"`,
     fps:int `mirai:"optional,min=1,max=240,label=Frames per second of the sequence; each lasts 1/fps of the time of the game"`,
-    seconds:f32 `mirai:"optional,min=0.004,max=600,unit=s,label=Time of the game recorded"`,
+    duration:[api.DURATION_TEXT]u8 `mirai:"optional,text,name=for,label=Time of the game recorded: a number is ticks and a text ending in s is seconds as 120 or 1.5s"`,
     width:int `mirai:"optional,min=16,max=4096,label=Pixels of each frame"`,
     height:int `mirai:"optional,min=16,max=4096,label=Pixels of each frame"`,
     audio:bool `mirai:"optional,label=Mixes what the game makes heard into audio.wav as it plays"`,
@@ -53,7 +55,7 @@ Api_Play_Record_Result :: struct {
 
 @(private)
 api_play_record_register :: proc(s:^Session,st:^Api_State) {
-    record_default:=Api_Play_Record_Params{format=.Png16,fps=30,seconds=2,width=1280,height=720,audio=true,sheet=16}
+    record_default:=Api_Play_Record_Params{format=.Png16,fps=30,duration={0='2',1='s'},width=1280,height=720,audio=true,sheet=16}
     api_register(s,st,{name="play.record",summary="Records the game of the caller as a sequence of images and its sound, frame after frame at a fixed rate whatever the clock: it pauses the game, advances it 1/fps each frame and draws it alone through its camera. Ends paused.",params=Api_Play_Record_Params,result=Api_Play_Record_Result,defaults=&record_default,run=api_play_record})
 }
 
@@ -132,6 +134,9 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     if !own {api_play_refused(call);return}
     if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.record requires a GPU; start without --no-gpu");return}
+    recorded,timed:=api_call_duration(call,p.duration[:],"for",s.app.tick_dt,1,API_RECORD_TICKS)
+    if !timed {return}
+    game_seconds:=f64(recorded)*f64(s.app.tick_dt)
     owner,player:=r.owner,r.player
     folder:string
     if path:=strings.trim_space(base.text_get(p.path[:]));path!="" {
@@ -158,7 +163,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
     }
     for name in ([3]string{"audio.wav","sheet.png","manifest.json"}) {_=os.remove(project.path(folder,name,allocator=context.temp_allocator))}
     began:=time.tick_now()
-    frames:=max(int(f64(p.seconds)*f64(p.fps)+0.5),1)
+    frames:=max(int(game_seconds*f64(p.fps)+0.5),1)
     width,height:=p.width,p.height
     sheet:img.Sheet
     tiles:=min(p.sheet,frames)

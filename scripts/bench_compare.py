@@ -837,13 +837,13 @@ def scenario_simulation(b: Bench):
         rpc(b, "scene.add", {"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
             "Rigid_Body": {"type": "Dynamic", "mass": 1, "gravity_scale": 1}, **box}})
         rpc(b, "play.start", {"simulate": True})
-        rpc(b, "play.step", {"ticks": 90})
+        rpc(b, "play.step", {"for": 90})
         for phase in ("resting", "moving"):
             frames, game, gpu, record, wait, table = [], [], [], [], [], {}
             for i in range(1, 91):
                 if phase == "moving":
                     rpc(b, "simulation.move", {"id": wall["id"], "position": [-2 + i / 30, 1, 0]})
-                rpc(b, "play.step", {"ticks": 1})
+                rpc(b, "play.step", {"for": 1})
                 status = rpc(b, "engine.status")
                 frames.append(cpu_field(status, "app_ms"))
                 game.append(cpu_field(status, "game_ms"))

@@ -19,8 +19,7 @@ Api_Play_Input_Action :: struct {
     name:[64]u8 `mirai:"text,label=The action by its name as input.get lists it"`,
     value:f32 `mirai:"optional,label=Axis: where it is held; not 0"`,
     vector:[2]f32 `mirai:"optional,label=Axis2: where it is held with x right and y up (forward for a move); not both 0"`,
-    ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it is held from the next one on; 0: until it is released"`,
-    seconds:f32 `mirai:"optional,min=0,unit=s,label=Game time it is held in place of ticks: the nearest whole ticks and at least 1"`,
+    duration:[api.DURATION_TEXT]u8 `mirai:"optional,text,name=for,label=How long it is held from the next tick on: a number is ticks and a text ending in s is seconds as 120 or 1.5s; 0 or omitted: until it is released"`,
     release:bool `mirai:"optional,label=Lets go of it on the next tick"`,
 }
 
@@ -147,11 +146,10 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
         for &entry,i in p.actions[:count] {
             action,value,problem:=api_play_hold_of(s,m,&entry,i)
             if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-            ticks:=entry.ticks
-            if entry.seconds!=0 {
-                if entry.ticks!=0 {api.call_failf(call,api.INVALID_PARAMS,"actions.%d: ticks and seconds both say how long it is held: give one",i);return}
+            ticks:=0
+            if entry.duration[0]!=0 {
                 timed:bool
-                if ticks,timed=api_seconds_ticks(call,fmt.tprintf("actions.%d: ",i),f64(entry.seconds),s.app.tick_dt,API_HOLD_TICKS);!timed {return}
+                if ticks,timed=api_call_duration(call,entry.duration[:],fmt.tprintf("actions.%d.for",i),s.app.tick_dt,0,API_HOLD_TICKS);!timed {return}
             }
             holds[i]={seat=seat,action=action,value=value,ticks=u32(ticks)}
         }

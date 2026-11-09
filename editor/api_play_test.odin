@@ -506,7 +506,7 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
         testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
     }
     testing.expect_value(t,len(running.holds.queue.items),0)
-    error,text:=probe_call(f,"play.input",`{"actions":[{"name":"jump","ticks":1},{"name":"move","vector":[0,1]}]}`)
+    error,text:=probe_call(f,"play.input",`{"actions":[{"name":"jump","for":1},{"name":"move","vector":[0,1]}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,fmt.tprintf(`"0x%016x"`,u64(f.seat))) && strings.contains(text,`"queued": 2`),text)
     testing.expect(t,!input.seat_action(read,f.seat,PROBE_JUMP).down,"nothing acts before the next tick")
@@ -539,13 +539,13 @@ a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go :: 
     call(t,f,`{"keys":["Space"]}`)
     jump:=input.seat_action(read,f.seat,PROBE_JUMP)
     testing.expect(t,jump.pressed && jump.down,"the first call presses it")
-    call(t,f,`{"keys":["Space"],"ticks":3}`)
+    call(t,f,`{"keys":["Space"],"for":3}`)
     jump=input.seat_action(read,f.seat,PROBE_JUMP)
     testing.expect(t,jump.down && !jump.pressed && !jump.released && running.input.keys_released=={},"the next call goes on holding it")
     call(t,f,`{"keys":["Space"]}`)
     jump=input.seat_action(read,f.seat,PROBE_JUMP)
     testing.expect(t,jump.down && !jump.pressed && !jump.released,"also over a third call")
-    call(t,f,`{"ticks":1}`)
+    call(t,f,`{"for":1}`)
     jump=input.seat_action(read,f.seat,PROBE_JUMP)
     testing.expect(t,jump.released && !jump.down && .Space in running.input.keys_released,"a call that omits it lets go")
 }
@@ -562,18 +562,18 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     probe_drive(f)
     running:=cast(^Probe_World)run_find(&f.s,0).world
     place:=core.get(&running.transforms,f.hero)
-    error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"ticks":300}`)
+    error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"for":300}`)
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Step_Result)
     testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran":4`),text)
     testing.expect_value(t,place.position.x,5)
     // The limit of the step, and the conditions of the step stop it too.
     place.position={1,0,0}
-    error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"ticks":2}`)
+    error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"for":2}`)
     testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran":2`),text)
     place.position={1,0,0}
     points:=running.score.points+2
-    error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"ticks":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
+    error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"for":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
     testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met":true`),text)
     // Behind the wall at x 6: it jumps, sidesteps and stops getting closer, its ticks left over.
     place.position={1,0,0}
@@ -584,7 +584,7 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
         {`{"drive":{}}`,"name where it goes"},
         {`{"drive":{"entity":"Foe","position":[1,0,0]}}`,"give one"},
         {`{"drive":{"entity":"Nobody"}}`,"Nobody"},
-        {`{"drive":{"position":[0,0,0]},"segments":[{"ticks":1}]}`,"without segments or press"},
+        {`{"drive":{"position":[0,0,0]},"segments":[{"for":1}]}`,"without segments or press"},
         {`{"drive":{"position":[0,0,0],"move":"nothing"}}`,"is not a Axis2 action"},
         {`{"look_at":{}}`,"name what it looks at"},
         {`{"look_at":{"entity":"Foe"},"mouse_delta":[1,0]}`,"leave mouse_delta out"},
@@ -611,7 +611,7 @@ a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T)
     running:=cast(^Probe_World)run_find(&f.s,0).world
     place:=core.get(&running.transforms,f.hero)
     place.position={0,0,0}
-    error,text:=probe_call(f,"play.step",`{"drive":{"position":[-4,0,0],"move":"move"},"ticks":2}`)
+    error,text:=probe_call(f,"play.step",`{"drive":{"position":[-4,0,0],"move":"move"},"for":2}`)
     testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`),text)
     testing.expectf(t,place.position.x>0,"along the way, away from its target: %v",place.position)
 }
@@ -633,13 +633,13 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     running.climbing,running.climb.platform=true,platform
     place:=core.get(&running.transforms,f.hero)
     place.position={0,0,0}
-    error,text:=probe_call(f,"play.step",`{"drive":{"position":[10,0,0],"within":0.5,"move":"move"},"seconds":5}`)
+    error,text:=probe_call(f,"play.step",`{"drive":{"position":[10,0,0],"within":0.5,"move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
     error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Character_State.standing","compare":"Equal","number":1}]}`)
     testing.expect(t,error.code==0 && strings.contains(text,`"passed":true`),text)
-    error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"seconds":5}`)
+    error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expectf(t,place.position.y==2.9 && place.position.x>=12.5 && place.position.x<=14.5,"on its top: %v",place.position)
@@ -715,22 +715,23 @@ a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first :: 
     // A hold given in seconds is the nearest whole ticks, and at least one.
     call:=api.Call{allocator=context.temp_allocator}
     given:[API_STEP_SEGMENTS]Api_Play_Segment
-    given[0].seconds,given[1].seconds=0.8,0.001
-    held,read:=api_segments_read(&call,given[:],`[{"seconds":0.8},{"seconds":0.001}]`,1.0/60)
+    copy(given[0].duration[:],"0.8s");copy(given[1].duration[:],"0.001s")
+    held,read:=api_segments_read(&call,given[:],`[{"for":"0.8s"},{"for":"0.001s"}]`,1.0/60)
     testing.expect(t,read && len(held)==2 && held[0].ticks==48 && held[1].ticks==1,call.error.message)
     error:api.Error
     refused:=[?]struct{params,says:string}{
-        {`{"segments":[{"ticks":1}],"keys":["Space"]}`,"keys goes inside each of segments"},
-        {`{"segments":[{"ticks":3000},{"ticks":1000}]}`,"segments run 4000 ticks"},
+        {`{"segments":[{"for":1}],"keys":["Space"]}`,"keys goes inside each of segments"},
+        {`{"segments":[{"for":3000},{"for":1000}]}`,"segments run 4000 ticks"},
         {`{"segments":[]}`,"segments is empty"},
-        {`{"segments":[{"ticks":1,"text":"a\tb"}]}`,"segments[0].text"},
-        {`{"segments":[{"ticks":1,"seconds":0.5}]}`,"both say how long"},
-        {`{"segments":[{"seconds":0}]}`,"segments[0].seconds takes"},
+        {`{"segments":[{"for":1,"text":"a\tb"}]}`,"segments[0].text"},
+        {`{"segments":[{"for":"0s"}]}`,"segments[0].for"},
+        {`{"segments":[{"keys":["Space"]}]}`,"segments[0].for: give how long"},
         {`{"segments":[{"keys":["Space"]}]}`,"or seconds"},
-        {`{"segments":[{"ticks":1,"keys":["Space"],"tap_keys":["Space"]}]}`,"held or tapped"},
-        {`{"segments":[{"ticks":1,"gamepads":[{"slot":0,"buttons":["South"],"tapped":["South"]}]}]}`,"held or tapped"},
-        {`{"seconds":100}`,"seconds takes"},
-        {`{"ticks":2,"seconds":1}`,"both say how long"},
+        {`{"segments":[{"for":1,"keys":["Space"],"tap_keys":["Space"]}]}`,"held or tapped"},
+        {`{"segments":[{"for":1,"gamepads":[{"slot":0,"buttons":["South"],"tapped":["South"]}]}]}`,"held or tapped"},
+        {`{"for":"100s"}`,"outside 1 to 3600 ticks"},
+        {`{"for":"soon"}`,"for takes ticks as a number"},
+        {`{"for":1.5}`,"for takes ticks as a number"},
         {`{"press":"Start","keys":["Space"]}`,"press is a whole click"},
         {`{"press":"Start"}`,"no screen"},
     }
@@ -804,7 +805,7 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
         {`{"trace":{"storage":"Probe_Score","fields":["lives"]}}`,"it has"},
         {`{"trace":{"fields":["points"]}}`,"name what it reads"},
         {`{"trace":{"storage":"Probe_Score","fields":[]}}`,"trace.fields is empty"},
-        {`{"ticks":3600,"trace":{"storage":"Probe_Score","fields":["points"]}}`,"give every 15 or more"},
+        {`{"for":3600,"trace":{"storage":"Probe_Score","fields":["points"]}}`,"give every 15 or more"},
         {`{"trace":{"entity":"Hero","fields":["Nothing.x"]}}`,"Nothing"},
         {`{"trace":{"entity":"Hero","fields":["components.Probe_Health.points"]}}`,"named by itself"},
     }
@@ -821,10 +822,11 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     defer probe_close(f)
     r:=run_find(&f.s,0)
     running:=cast(^Probe_World)r.world
-    call:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":4,"segments":[{"ticks":2,"keys":["Space"]},{"ticks":7}],"follow":"Hero"}`}
-    p:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,every=3,count=4,size={64,32}}
-    p.segments[0]={ticks=2,keys={.Space}}
-    p.segments[1]={ticks=7}
+    call:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":4,"segments":[{"for":2,"keys":["Space"]},{"for":7}],"follow":"Hero"}`}
+    p:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,count=4,size={64,32}}
+    copy(p.every[:],"3")
+    p.segments[0]={keys={.Space}}
+    copy(p.segments[0].duration[:],"2");copy(p.segments[1].duration[:],"7")
     copy(p.follow[:],"Hero")
     strip,ok:=api_filmstrip_read(&f.s,&call,r,true,&p)
     testing.expect(t,ok && strip!=nil && strip.follow==f.hero,call.error.message)
@@ -880,15 +882,16 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     }
     for c in spread {testing.expectf(t,slice.equal(api_filmstrip_ticks(c.given,c.every,c.count,64,context.temp_allocator),c.ticks),"%v",c)}
     testing.expect_value(t,len(api_filmstrip_ticks(3600,1,0,64,context.temp_allocator)),64)
-    evenly:=api.Call{allocator=context.temp_allocator,raw=`{"count":3,"segments":[{"ticks":5}]}`}
+    evenly:=api.Call{allocator=context.temp_allocator,raw=`{"count":3,"segments":[{"for":5}]}`}
     even:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,count=3,size={64,32}}
-    even.segments[0]={ticks=5}
+    copy(even.segments[0].duration[:],"5")
     testing.expect(t,api_filmstrip_spread(&evenly,&even),"a count with segments is a filmstrip")
     from_count,given_count:=api_filmstrip_read(&f.s,&evenly,r,true,&even)
     testing.expect(t,given_count && from_count!=nil && slice.equal(from_count.ticks,[]int{0,3,5}),evenly.error.message)
-    long:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":2,"segments":[{"ticks":5}]}`}
-    longer:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,every=3,count=2,size={64,32}}
-    longer.segments[0]={ticks=5}
+    long:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":2,"segments":[{"for":5}]}`}
+    longer:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,count=2,size={64,32}}
+    copy(longer.every[:],"3")
+    copy(longer.segments[0].duration[:],"5")
     from_every,given_every:=api_filmstrip_read(&f.s,&long,r,true,&longer)
     testing.expect(t,given_every && from_every!=nil && api_timeline_ticks(from_every.run.timeline)==5 && slice.equal(from_every.ticks,[]int{0,3}),long.error.message)
     refused:=[?]struct{params,says:string}{
@@ -960,7 +963,7 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"rows":[{"tick":7,"values":[7]},{"tick":9,"values":[9]},{"tick":11,"values":[11]},{"tick":13,"values":[13]}]`),text)
     // Rewound to tick 5, the run steps the same ticks again.
-    error,_=probe_call(f,"play.seek",`{"tick":5}`)
+    error,_=probe_call(f,"play.seek",`{"to":5}`)
     testing.expect_value(t,error.code,0)
     again:Api_Trace
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&p,PROBE_HISTORY_TRACE,8,&again),"")
@@ -984,6 +987,7 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     testing.expect(t,strings.contains(text,`"diverged": false`),text)
     refused:=[?]struct{params,says:string}{
         {`{"from":9,"to":8,"trace":{"storage":"Probe_Score","fields":["points"]}}`,"from 9 is after to 8"},
+        {`{"from":"soon","trace":{"storage":"Probe_Score","fields":["points"]}}`,"from takes ticks as a number"},
         {`{"trace":{"storage":"Probe_Score","fields":["lives"]}}`,"it has"},
     }
     for c in refused {
@@ -1015,7 +1019,7 @@ the_last_play_keeps_its_history_after_stop_until_the_next_play :: proc(t:^testin
     edited:=cast(^Probe_World)f.data
     testing.expect(t,edited.time.tick==0 && !document_dirty(&f.s),"Edit is as it was")
     // play.seek opens it again, paused at that tick.
-    error,text=probe_call(f,"play.seek",`{"tick":6}`)
+    error,text=probe_call(f,"play.seek",`{"to":6}`)
     testing.expect_value(t,error.code,0)
     r:=run_find(&f.s,0)
     reopened:=r!=nil && r.id==id && f.s.mode==.Paused && (cast(^Probe_World)r.world).time.tick==6
@@ -1110,7 +1114,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     write(folder,"a_weakens.mirai",strings.concatenate({`{"steps":[`,
         `{"name":"weaken","method":"play.set","params":{"entity":"`,hero,`","components":{"Probe_Health":{"points":1}}}},`,
         `{"method":"play.check","params":{"conditions":[`,health("Equal",1),`]}},`,
-        `{"method":"play.step","params":{"ticks":5,"until":[`,health("Below",2),`]}},`,
+        `{"method":"play.step","params":{"for":5,"until":[`,health("Below",2),`]}},`,
         `{"method":"play.check","params":{"conditions":[{"storage":"Probe_Score","field":"points","compare":"Equal","number":0}]}}]}`},context.temp_allocator))
     write(folder,"b_misses.mirai",strings.concatenate({`{"steps":[`,
         `{"name":"fresh","method":"play.check","params":{"conditions":[`,health("Equal",3),`]}},`,
@@ -1139,7 +1143,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     // A step that fails, an until that runs out and files the methods would not take.
     cases:=[?]struct{text,says:string}{
         {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
-        {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"ticks":2}}]}`,"the drive did not arrive"},
+        {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"for":2}}]}`,"the drive did not arrive"},
         {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
         {`{"steps":[{"method":"scene.add","params":{}}]}`,"steps are play methods"},
         {`{"steps":[{"method":"play.start"}]}`,"leave it out"},
@@ -1245,7 +1249,7 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
         {"play.audio",`{}`},
         {"play.get",`{"entity":"Hero","field":"Transform.position"}`},
         {"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7}]}`},
-        {"play.step",`{"ticks":1}`},
+        {"play.step",`{"for":1}`},
         {"play.pause",`{}`},
         {"play.destroy",`{"entity":"Hero"}`},
     }

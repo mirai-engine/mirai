@@ -26,8 +26,7 @@ API_TRACE_ROWS :: 256
 API_PRESS_HELD :: 2 // ticks a press holds its button
 
 Api_Play_Segment :: struct {
-    ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it runs with this input; 1 or more; in place of seconds"`,
-    seconds:f32 `mirai:"optional,label=Game time it runs with this input in place of ticks: the nearest whole ticks and at least 1"`,
+    duration:[api.DURATION_TEXT]u8 `mirai:"optional,text,name=for,label=How long it runs with this input: a number is ticks and a text ending in s is seconds as 120 or 1.5s; 1 tick when a step gives none"`,
     keys:core.Keys `mirai:"optional,label=Keys held in every tick; they go to the local seat with the focus; a key named by consecutive calls or segments stays held with no release between them and one left out is released"`,
     mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick; held across calls and segments as keys are"`,
     tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
@@ -94,26 +93,23 @@ Api_Step_Input :: struct {
 // A segment of the params; raw is its JSON object, at names it in errors and
 // tick_dt is the seconds of a tick.
 @(private)
-api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:string,tick_dt:f32) -> (step:Api_Step_Input,ok:bool) {
-    values:[4]string
-    api.object_values(call.allocator,raw,{"mouse_position","gamepads","ticks","seconds"},values[:])
-    step={ticks=segment.ticks,keys=segment.keys,buttons=segment.mouse_buttons,tap_keys=segment.tap_keys,tap_buttons=segment.tap_buttons,mouse_position=segment.mouse_position,placed=values[0]!="",mouse_delta=segment.mouse_delta,wheel=segment.wheel}
-    if values[3]!="" {
-        if values[2]!="" {api.call_failf(call,api.INVALID_PARAMS,"%sticks and %sseconds both say how long it holds: give one",at,at);return}
-        span,timed:=api_seconds_ticks(call,at,f64(segment.seconds),tick_dt,API_STEP_LIMIT)
-        if !timed {return}
-        step.ticks=span
-    }
+api_segment_read :: proc(call:^api.Call,segment:^Api_Play_Segment,raw:string,at:string,tick_dt:f32,fallback:=0) -> (step:Api_Step_Input,ok:bool) {
+    values:[3]string
+    api.object_values(call.allocator,raw,{"mouse_position","gamepads","for"},values[:])
+    step={ticks=fallback,keys=segment.keys,buttons=segment.mouse_buttons,tap_keys=segment.tap_keys,tap_buttons=segment.tap_buttons,mouse_position=segment.mouse_position,placed=values[0]!="",mouse_delta=segment.mouse_delta,wheel=segment.wheel}
     step.press=base.text_get(segment.press[:])
+    if values[2]!="" {
+        step.ticks=api_call_duration(call,segment.duration[:],fmt.tprintf("%sfor",at),tick_dt,step.press!=""?0:1,API_STEP_LIMIT) or_return
+    }
     if step.press!="" {
         if step.keys!={} || step.buttons!={} || step.tap_keys!={} || step.tap_buttons!={} || step.placed || step.mouse_delta!={} || step.wheel!={} || segment.text[0]!=0 || values[1]!="" {
             api.call_failf(call,api.INVALID_PARAMS,"%spress is a whole click: give other input in another segment or step",at)
             return
         }
-        if values[2]=="" && values[3]=="" {step.ticks=0}
+        if values[2]=="" {step.ticks=0}
         return step,true
     }
-    if step.ticks<1 {api.call_failf(call,api.INVALID_PARAMS,"%sticks: give the ticks it holds its input (1 or more) or seconds",at);return}
+    if step.ticks<1 {api.call_failf(call,api.INVALID_PARAMS,"%sfor: give how long it holds its input, %s",at,api.DURATION_FORM);return}
     if both:=step.keys&step.tap_keys;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%stap_keys: %v are in keys too; a key is held or tapped",at,both);return}
     if both:=step.buttons&step.tap_buttons;both!={} {api.call_failf(call,api.INVALID_PARAMS,"%stap_buttons: %v are in mouse_buttons too; a button is held or tapped",at,both);return}
     if step.placed && (!rpc_finite(step.mouse_position.x) || !rpc_finite(step.mouse_position.y)) {
@@ -163,7 +159,7 @@ api_list_items :: proc(text:string,items:[]string) -> int {
 api_segments_read :: proc(call:^api.Call,segments:[]Api_Play_Segment,raw:string,tick_dt:f32) -> (timeline:[]Api_Step_Input,ok:bool) {
     items:=make([]string,len(segments),call.allocator)
     count:=api_list_items(raw,items)
-    if count==0 {api.call_fail(call,api.INVALID_PARAMS,`segments is empty: give them as [{"ticks": 2, "keys": ["Space"]}, {"seconds": 0.5}] or leave it out`);return}
+    if count==0 {api.call_fail(call,api.INVALID_PARAMS,`segments is empty: give them as [{"for": 2, "keys": ["Space"]}, {"for": "0.5s"}] or leave it out`);return}
     timeline=make([]Api_Step_Input,count,call.allocator)
     for &step,i in timeline {
         step=api_segment_read(call,&segments[i],items[i],fmt.tprintf("segments[%d].",i),tick_dt) or_return
@@ -176,22 +172,33 @@ api_segments_read :: proc(call:^api.Call,segments:[]Api_Play_Segment,raw:string,
     return timeline,true
 }
 
-// The whole ticks of a game time, the nearest and at least 1; ok is false
-// after failing the call. at names the entry in the error (with its separator)
-// and limit is the most ticks it may be.
-api_seconds_ticks :: proc(call:^api.Call,at:string,seconds:f64,tick_dt:f32,limit:int) -> (span:int,ok:bool) {
-    count:=seconds/f64(max(tick_dt,1e-6))
-    if !rpc_finite(f32(seconds)) || !(seconds>0) || count>f64(limit) {
-        api.call_failf(call,api.INVALID_PARAMS,"%sseconds takes a time above 0 and up to %d ticks of %g s",at,limit,tick_dt)
+// The whole ticks of a duration of the params, from least to limit: of seconds
+// the nearest and at least 1. problem names the param by what.
+api_duration_ticks :: proc(text,what:string,tick_dt:f32,least,limit:int) -> (ticks:int,problem:string) {
+    d,valid:=api.duration_parse(text)
+    if !valid {return 0,fmt.tprintf("%s takes %s, not %q",what,api.DURATION_FORM,text)}
+    count:=d.in_seconds?d.seconds/f64(max(tick_dt,1e-6)):f64(d.ticks)
+    if count>f64(limit) || count<f64(least) && !d.in_seconds || d.in_seconds && d.seconds==0 && least>0 {
+        return 0,fmt.tprintf("%s: %s is outside %d to %d ticks of %g s",what,text,least,limit,tick_dt)
+    }
+    if !d.in_seconds {return int(d.ticks),""}
+    return d.seconds>0?max(int(math.round(count)),1):0,""
+}
+
+// api_duration_ticks of a text of the params; false after failing the call.
+api_call_duration :: proc(call:^api.Call,field:[]u8,what:string,tick_dt:f32,least,limit:int) -> (ticks:int,ok:bool) {
+    problem:string
+    if ticks,problem=api_duration_ticks(base.text_get(field),what,tick_dt,least,limit);problem!="" {
+        api.call_fail(call,api.INVALID_PARAMS,problem)
         return
     }
-    return max(int(math.round(count)),1),true
+    return ticks,true
 }
 
 // The input of play.step along its ticks: its segments, or the input fields as one segment of ticks.
 @(private)
 api_step_timeline :: proc(call:^api.Call,params:^Api_Play_Step_Params,tick_dt:f32) -> (timeline:[]Api_Step_Input,ok:bool) {
-    keys:=[?]string{"segments","ticks","seconds","keys","mouse_buttons","tap_keys","tap_buttons","mouse_position","mouse_delta","wheel","text","gamepads","press"}
+    keys:=[?]string{"segments","for","keys","mouse_buttons","tap_keys","tap_buttons","mouse_position","mouse_delta","wheel","text","gamepads","press"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
     if values[0]!="" {
@@ -201,7 +208,7 @@ api_step_timeline :: proc(call:^api.Call,params:^Api_Play_Step_Params,tick_dt:f3
         return api_segments_read(call,params.segments[:],values[0],tick_dt)
     }
     timeline=make([]Api_Step_Input,1,call.allocator)
-    timeline[0]=api_segment_read(call,&params.input,call.raw,"",tick_dt) or_return
+    timeline[0]=api_segment_read(call,&params.input,call.raw,"",tick_dt,1) or_return
     timeline=api_timeline_presses(timeline,call.allocator)
     if total:=api_timeline_ticks(timeline);total>API_STEP_LIMIT {
         api.call_failf(call,api.INVALID_PARAMS,"it runs %d ticks and a step runs at most %d: split it into several calls",total,API_STEP_LIMIT)

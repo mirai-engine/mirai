@@ -134,21 +134,20 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     keys:=[?]string{"every","count","columns","segments","follow","size","region"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
-    if p.every_seconds!=0 {
-        if p.every!=0 {api.call_fail(call,api.INVALID_PARAMS,"every and every_seconds both say how far apart the cells are: give one");return}
-        timed:bool
-        if p.every,timed=api_seconds_ticks(call,"every_",f64(p.every_seconds),s.app.tick_dt,API_STEP_LIMIT);!timed {return}
+    every:=0
+    if p.every[0]!=0 {
+        every=api_call_duration(call,p.every[:],"every",s.app.tick_dt,0,API_STEP_LIMIT) or_return
     }
     spread:=values[3]!="" && p.count>0
-    if p.every==0 && !spread {
+    if every==0 && !spread {
         for value,i in values[1:len(keys)-1] {
             if value!="" {api.call_failf(call,api.INVALID_PARAMS,"%s is of a filmstrip: give it with every (the ticks between two cells) and count or segments, or leave it out",keys[i+1]);return}
         }
         return nil,true
     }
     if p.count==0 && values[3]=="" {api.call_fail(call,api.INVALID_PARAMS,"count: give the cells of the filmstrip with every, or segments to run; 1 to 64");return}
-    if values[3]=="" && p.every*(p.count-1)>API_STEP_LIMIT {
-        api.call_failf(call,api.INVALID_PARAMS,"the filmstrip runs every times count less one ticks (%d) and a call runs at most %d: lower every or count",p.every*(p.count-1),API_STEP_LIMIT)
+    if values[3]=="" && every*(p.count-1)>API_STEP_LIMIT {
+        api.call_failf(call,api.INVALID_PARAMS,"the filmstrip runs every times count less one ticks (%d) and a call runs at most %d: lower every or count",every*(p.count-1),API_STEP_LIMIT)
         return
     }
     if !own {api_play_refused(call);return}
@@ -181,9 +180,9 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     timeline:=steps
     if values[3]=="" {
         timeline=make([]Api_Step_Input,1,call.allocator)
-        timeline[0]={ticks=p.every*(p.count-1)}
+        timeline[0]={ticks=every*(p.count-1)}
     }
-    strip.ticks=api_filmstrip_ticks(values[3]!=""?api_timeline_ticks(steps):-1,p.every,p.count,API_FILMSTRIP_CELLS,call.allocator)
+    strip.ticks=api_filmstrip_ticks(values[3]!=""?api_timeline_ticks(steps):-1,every,p.count,API_FILMSTRIP_CELLS,call.allocator)
     if r.owner==0 && simulating(s) && api_timeline_input(timeline) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
     strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler=strip,every=1}
     strip.count=len(strip.ticks)

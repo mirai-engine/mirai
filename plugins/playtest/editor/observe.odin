@@ -90,7 +90,7 @@ Run_Observed :: struct {
 
 @(private)
 observe_api_register :: proc(s:^editor.Session) {
-    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={input={ticks=1},focus=-1,trace={every=1}}}
+    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={focus=-1,trace={every=1}}}
     editor.api_method_register(s,{name="play.observe",summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. With step it first runs those ticks as play.step does, so one call acts and observes.",params=Api_Play_Observe_Params,params_info=type_info_of(Api_Play_Observe_Params),result=Api_Play_Observe,result_info=type_info_of(Api_Play_Observe),writes_result=true,defaults=&defaults,run=api_play_observe})
 }
 

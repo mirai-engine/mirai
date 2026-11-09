@@ -569,7 +569,7 @@ repro_segment :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
     out:=&w.out
     i:=&e.given
     serial.write_u8(out,'{')
-    api.write_int(out,"ticks",i64(ticks),true)
+    api.write_int(out,"for",i64(ticks),true)
     repro_keys(out,"keys",i.keys)
     repro_buttons(out,"mouse_buttons",i.buttons)
     repro_keys(out,"tap_keys",i.tap_keys)
@@ -650,7 +650,7 @@ repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
                 case .Axis:  api.write_key(out,"value");api.write_number(out,e.hold.value.x)
                 case .Axis2: repro_pair(out,"vector",e.hold.value)
                 }
-                if e.hold.ticks>0 {api.write_int(out,"ticks",i64(e.hold.ticks))}
+                if e.hold.ticks>0 {api.write_int(out,"for",i64(e.hold.ticks))}
             }
             serial.write_u8(out,'}')
         }

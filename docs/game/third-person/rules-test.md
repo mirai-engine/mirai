@@ -38,15 +38,15 @@ for the run, one `@(step="fixed")` that reads them. The HUD binds a storage fiel
 
 ```json
 {"scene": "scenes/main.scene", "steps": [
-  {"name": "the game opens", "method": "play.step", "params": {"ticks": 30}},
+  {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
   {"name": "start playing", "method": "play.step", "params": {"segments": [
-    {"ticks": 2, "keys": ["Enter"]}, {"ticks": 10}]}},
-  {"name": "walk forward", "method": "play.step", "params": {"seconds": 1, "keys": ["W"]}},
+    {"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
+  {"name": "walk forward", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
   {"name": "it walked", "method": "play.check", "params": {"conditions": [
     {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}},
   {"name": "into the water", "method": "play.set",
    "params": {"entity": "Player", "position": [16, 2, 0]}},
-  {"name": "it falls and comes back", "method": "play.step", "params": {"ticks": 300, "until": [
+  {"name": "it falls and comes back", "method": "play.step", "params": {"for": 300, "until": [
     {"storage": "Run", "field": "deaths", "compare": "Equal", "number": 1}]}}
 ]}
 ```

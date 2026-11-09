@@ -405,7 +405,8 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
 // list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
-// of key=value pairs (min, max, step, precision, bits, label, unit).
+// of key=value pairs (min, max, step, precision, bits, label, unit, name: the
+// key of a param whose word is reserved in Odin).
 @(private)
 schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
@@ -430,6 +431,10 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "precision": precision,_:=strconv.parse_f64(value);field.precision=f32(precision)
         case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
         case "label":     field.label=strings.clone(value,s.allocator)
+        case "name":
+            if value=="" {continue} // a comma inside a label
+            delete(field.name,s.allocator)
+            field.name,field.name_hash=strings.clone(value,s.allocator),base.name_hash(value)
         case "unit":      field.unit=strings.clone(value,s.allocator)
         case "kind":      field.asset_kinds=strings.clone(value,s.allocator)
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}
