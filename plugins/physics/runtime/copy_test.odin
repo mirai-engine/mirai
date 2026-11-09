@@ -133,6 +133,22 @@ physics_kept_drop :: proc(w:^sim.World,count:int) {
 }
 
 @(test)
+what_a_copy_marks_on_its_source_stays_in_the_allocator_of_the_source :: proc(t:^testing.T) {
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
+    source,kept:Physics_State
+    if !testing.expect(t,sim.world_init(&source.world,sim.world_desc_default())) {return}
+    source.ready=true
+    defer state_destroy(&source);defer state_destroy(&kept)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        if !testing.expect(t,state_copy_kept(&kept,&source)) {return}
+    }
+    testing.expect(t,len(source.geometry)>0)
+    testing.expect(t,source.geometry.allocator.data!=rawptr(&tracker),"the source would be freed by an allocator that its copy took with it")
+}
+
+@(test)
 a_kept_copy_takes_what_the_simulation_uses_and_copies_back_to_the_same_steps :: proc(t:^testing.T) {
     whole_tracker,kept_tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&whole_tracker,context.allocator);defer mem.tracking_allocator_destroy(&whole_tracker)

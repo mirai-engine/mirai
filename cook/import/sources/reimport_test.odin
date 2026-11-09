@@ -486,3 +486,11 @@ importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(
     testing.expect_value(t,header_of(skeleton.path).id,skeleton.id)
     testing.expect_value(t,header_of(skeleton.path).kind_version,u16(asset.SKELETON_VERSION))
 }
+
+@(test)
+an_image_is_a_normal_map_only_when_n_is_a_word_of_its_name :: proc(t:^testing.T) {
+    Named :: struct {name:string,use:importer.Image_Use}
+    for named in ([?]Named{{"wall_n.png",.Normal},{"wall_n_2.png",.Normal},{"wall_normal.png",.Normal},{"wall_nm.png",.Normal},{"wall_nor_gl.png",.Normal},{"wall_norm.png",.Normal},{"hud_nmbr2.png",.Color},{"icon_new.png",.Color},{"north_wall.png",.Color},{"n_wall.png",.Color}}) {
+        testing.expectf(t,image_use(named.name)==named.use,"%s: %v",named.name,image_use(named.name))
+    }
+}

@@ -37,8 +37,16 @@ Source_Kind :: enum u8 {None,Model,Image,Sound,Font,Strings,Prompts}
 // occlusion, masks, heights) or else a color.
 image_use :: proc(path:string) -> importer.Image_Use {
     name:=strings.to_lower(filepath.stem(path),context.temp_allocator)
-    for part in ([?]string{"normal","nrm","_n"}) {
+    for part in ([?]string{"normal","nrm"}) {
         if strings.contains(name,part) {return .Normal}
+    }
+    // The short forms only as a word after the first: "wall_n_2" and "wall_nor_gl", not "panel_nmbr".
+    words:=name
+    _,_=strings.split_iterator(&words,"_")
+    for word in strings.split_iterator(&words,"_") {
+        switch word {
+        case "n","nm","nor","norm": return .Normal
+        }
     }
     for part in ([?]string{"rough","metal","orm","occlusion","_ao","height","displace","mask","specular","data"}) {
         if strings.contains(name,part) {return .Data}
