@@ -1,6 +1,7 @@
 package build
 
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:project"
 
@@ -30,4 +31,6 @@ a_new_project_gets_what_the_templates_share :: proc(t:^testing.T) {
     m,read_error:=project.manifest_read(join(folder,project.PROJECT_FILE))
     testing.expect_value(t,read_error.code,project.Error_Code.None)
     testing.expect_value(t,string(m.name[:4]),"Made")
+    attributes,_:=os.read_entire_file(join(folder,".gitattributes"),context.temp_allocator)
+    testing.expect(t,strings.contains(string(attributes),"*.scene merge="+GIT_DRIVER),"a new project says which of its files git merges through mirai")
 }

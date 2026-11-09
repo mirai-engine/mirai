@@ -55,6 +55,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         fmt.printfln("  info   no memory limit per build (%s=0)",build.COMPILER_MEMORY_ENV)
     }
     toolchain,has_c:=c_toolchain_find()
+    engine_clone:="" // the clone of a checkout of the engine, which a project inside it shares
     if installed {
         // The engine comes built; the code of a project is linked with the toolchain of the system.
         report(&errors,has_c,fmt.tprintf("C toolchain, which links the code of projects (%s)",toolchain),"install Visual Studio Build Tools with C++ on Windows, clang on Linux or the Xcode Command Line Tools on macOS")
@@ -65,6 +66,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         _,symlinks,_,_:=subprocess.exec({command={"git","-C",root,"config","--get","core.symlinks"}},context.temp_allocator)
         report(&errors,strings.trim_space(string(symlinks))=="true","git with core.symlinks","git config core.symlinks true (on Windows, with developer mode on) and then git checkout -- .claude/skills")
         report(&errors,link_to_folder(join(root,".claude","skills")),".claude/skills links to the folder .agents/skills","with core.symlinks on, delete .claude/skills and git checkout -- .claude/skills: a link git made before the folder existed stays a link to a file")
+        engine_clone=doctor_git(&errors,root,root)
     }
     for tool in shaders.Tool {
         path,present:=shaders.tool_find(root,tool)
@@ -140,6 +142,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         return 1
     }
     defer project.close(&p)
+    doctor_git(&errors,root,folder,engine_clone)
     out:=build.world_generate(&p,context.temp_allocator)
     for e in out.errors {report(&errors,false,e,"fix the attributes; mirai generate lists them")}
     if len(out.errors)==0 {report(&errors,true,"the world of the project generates","")}

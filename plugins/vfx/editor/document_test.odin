@@ -2,7 +2,10 @@ package vfx_editor
 
 import "base:runtime"
 import "core:mem"
+import "core:os"
+import "core:strings"
 import "core:testing"
+import "mirai:cook/build"
 import "mirai:editor"
 import "mirai:host"
 import gpu "mirai:render"
@@ -185,4 +188,15 @@ the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particle
     low,high:=effect_reach(nil,&info)
     testing.expect(t,high.y>0.3 && low.y<-6,"it goes up and falls")
     testing.expect(t,low.x<0 && high.x>0 && low.z<0 && high.z>0)
+}
+
+// The engine's own repository merges and diffs the kinds of this plugin as it declares them.
+@(test)
+the_git_attributes_of_the_engine_have_the_kinds_of_the_plugin :: proc(t:^testing.T) {
+    text,_:=os.read_entire_file(#directory+"../../../.gitattributes",context.temp_allocator)
+    provider:=VFX_KINDS_DEFAULT.provider
+    for kind in provider.kinds[:provider.count] {
+        line:=build.git_attributes_line({kind.extension,kind.merged},allocator=context.temp_allocator)
+        testing.expectf(t,strings.contains(string(text),strings.concatenate({line,"\n"},context.temp_allocator)),"the .gitattributes of the engine lacks the line %q",line)
+    }
 }

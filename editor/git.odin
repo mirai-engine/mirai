@@ -5,6 +5,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/build"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -15,8 +16,10 @@ import "mirai:std/base"
 // that run one after another as child processes without stopping a frame
 // (git_poll); what they leave is read back with status and log. A pull that
 // leaves files in conflict puts the editor in merge mode: the conflicts are
-// resolved in git_merge.odin. Assets merge with mirai asset merge, which the
-// editor sets as the merge driver of the repository.
+// resolved in git_merge.odin. The kinds of asset that are documents merge and
+// diff through mirai (cook/build/git.odin): the editor writes their lines of
+// .gitattributes on Initialize and keeps the drivers in the configuration of
+// the clone.
 
 GIT_PATH_BYTES :: 260
 GIT_MESSAGE_BYTES :: 1024
@@ -61,6 +64,7 @@ Git :: struct {
     message:[GIT_MESSAGE_BYTES]u8,message_length:int,
     remote_field:[GIT_PATH_BYTES]u8,remote_length:int,
     lfs:bool,              // Initialize sets up Git LFS for heavy binaries
+    settings_stale:u8,     // the settings of build.git_settings the last read found missing or with another value, a bit each
     operation:Git_Operation,
     step:int,
     process:platform.Process,
@@ -80,12 +84,13 @@ Git :: struct {
     panel_shown:bool,
 }
 
-// The value merge.mirai.driver has in a repository the editor set up: the
-// launcher of a checkout, which builds its tool when it is missing, or the
-// tool of an installed engine.
-git_driver :: proc(s:^Session,allocator:=context.temp_allocator) -> string {
-    tool:=project.engine_installed(s.engine_root)?project.tool_file(s.engine_root,context.temp_allocator):project.path(s.engine_root,"mirai",allocator=context.temp_allocator)
-    return strings.concatenate({"\"",tool,"\" asset merge %O %A %B"},allocator)
+// The kinds of asset the plugins declare, as build.git_attributes takes them.
+@(private)
+git_plugin_kinds :: proc(s:^Session) -> []build.Git_Kind {
+    declared:=asset_plugin_kinds(s)
+    kinds:=make([]build.Git_Kind,len(declared),context.temp_allocator)
+    for each,i in declared {kinds[i]={each.extension,each.merged}}
+    return kinds
 }
 
 // Whether an operation runs now.
@@ -146,8 +151,9 @@ git_init_later :: proc(s:^Session,remote:string,lfs:bool) {
 }
 
 // Makes the folder of the project a repository: a .gitignore without .mirai,
-// a .gitattributes that merges assets with Mirai and, with LFS, keeps heavy
-// binaries out of the history, and the remote when one is given.
+// the .gitattributes of the kinds of asset of the engine and of the plugins
+// of the project (build.git_attributes), which with LFS keeps heavy binaries
+// out of the history, and the remote when one is given.
 git_init :: proc(s:^Session) -> string {
     g:=s.git
     if git_working(g) {return "Wait for git to finish"}
@@ -156,26 +162,13 @@ git_init :: proc(s:^Session) -> string {
     ignore:=project.path(s.project_root,".gitignore",allocator=context.temp_allocator)
     if !os.exists(ignore) && os.write_entire_file(ignore,string(".mirai/\n"))!=nil {return "The .gitignore could not be written"}
     attributes:=project.path(s.project_root,".gitattributes",allocator=context.temp_allocator)
-    if !os.exists(attributes) {
-        text:=strings.builder_make(context.temp_allocator)
-        for extension in GIT_MERGED {strings.write_string(&text,"*.");strings.write_string(&text,extension);strings.write_string(&text," merge=mirai -text\n")}
-        for &declared in asset_plugin_kinds(s) {
-            if declared.merged && declared.extension!="" {strings.write_string(&text,"*");strings.write_string(&text,declared.extension);strings.write_string(&text," merge=mirai -text\n")}
-        }
-        if g.lfs {
-            for extension in GIT_LFS {strings.write_string(&text,"*.");strings.write_string(&text,extension);strings.write_string(&text," filter=lfs diff=lfs merge=lfs -text\n")}
-        }
-        if os.write_entire_file(attributes,strings.to_string(text))!=nil {return "The .gitattributes could not be written"}
+    existing,_:=os.read_entire_file(attributes,context.temp_allocator)
+    if text,changed:=build.git_attributes(git_plugin_kinds(s),g.lfs,string(existing),context.temp_allocator);changed {
+        if os.write_entire_file(attributes,text)!=nil {return "The .gitattributes could not be written"}
     }
     git_start(s,.Init)
     return ""
 }
-
-// The assets that merge entity by entity and field by field, with those of
-// the kinds of plugins that say so (Asset_Kind.merged).
-GIT_MERGED :: [?]string{"scene","prefab","mat","ui","anim","agraph","blend","pose","skeleton"}
-// What cannot merge and weighs: assets made by imports and their sources.
-GIT_LFS :: [?]string{"tex","mesh","sound","fracture","physics_cache","png","jpg","jpeg","tga","exr","hdr","psd","glb","fbx","wav","ogg","mp3"}
 
 // Commits the changes not left out with the message typed, and pushes them
 // after when push is set.
@@ -329,7 +322,11 @@ git_next :: proc(s:^Session) {
 
 // The most steps an operation has.
 @(private)
-GIT_STEPS :: 8
+GIT_STEPS :: 5+build.GIT_SETTINGS
+
+// The step of Initialize that sets up Git LFS, after the settings of the drivers.
+@(private)
+GIT_INIT_LFS :: 1+build.GIT_SETTINGS
 
 @(private)
 git_steps :: proc(g:^Git) -> int {return g.operation==.Load?3*len(g.merge.files):GIT_STEPS}
@@ -355,20 +352,21 @@ git_command :: proc(s:^Session,operation:Git_Operation,step:int) -> []string {
         case 1: return list("status","--porcelain=v2","--branch","-z","--untracked-files=all","--",scope)
         case 2: return list("log","-n","12","--format=%h%x1f%an%x1f%ar%x1f%s","--",scope)
         case 3: return list("remote","get-url","origin")
-        case 4: return list("config","--local","--get","merge.mirai.driver")
-        case 5:
-            // Set when the driver is not this engine's: a clone, another checkout.
-            if strings.trim_space(string(g.out[:]))==git_driver(s) {return nil}
-            return list("config","--local","merge.mirai.driver",git_driver(s))
-        case 6: return list("config","--local","merge.mirai.name","Mirai assets, entity by entity")
+        case 4: return list("config","--local","--get-regexp",build.GIT_SETTINGS_PATTERN)
+        case 5..<5+build.GIT_SETTINGS:
+            // A clone, or an engine that moved: what the last step found missing is set.
+            if g.settings_stale&(1<<uint(step-5))==0 {return nil}
+            setting:=build.git_settings(s.engine_root,base.text_get(g.root[:]),a)[step-5]
+            return list("config","--local",setting.key,setting.value)
         }
     case .Init:
         switch step {
         case 0: return list("init","-b","main")
-        case 1: return list("config","--local","merge.mirai.driver",git_driver(s))
-        case 2: return list("config","--local","merge.mirai.name","Mirai assets, entity by entity")
-        case 3: if g.lfs {return list("lfs","install","--local")}
-        case 4:
+        case 1..<GIT_INIT_LFS:
+            setting:=build.git_settings(s.engine_root,s.project_root,a)[step-1]
+            return list("config","--local",setting.key,setting.value)
+        case GIT_INIT_LFS: if g.lfs {return list("lfs","install","--local")}
+        case GIT_INIT_LFS+1:
             remote:=strings.trim_space(string(g.remote_field[:g.remote_length]))
             if remote!="" {return list("remote","add","origin",strings.clone(remote,a))}
         }
@@ -512,6 +510,9 @@ git_step_done :: proc(s:^Session,code:int) -> bool {
             if code==0 {git_log_read(g,out)}
         case 3:
             base.text_set(g.remote[:],code==0?strings.trim_space(out):"")
+        case 4:
+            unset,other:=build.git_settings_state(build.git_settings(s.engine_root,base.text_get(g.root[:]),context.temp_allocator),out)
+            g.settings_stale=unset|other
         }
         return true
     case .Pull:
@@ -525,7 +526,7 @@ git_step_done :: proc(s:^Session,code:int) -> bool {
             return true
         }
     case:
-        if code!=0 && !(g.operation==.Init && g.step==3) {
+        if code!=0 && !(g.operation==.Init && g.step==GIT_INIT_LFS) {
             message:="Git failed"
             #partial switch g.operation {
             case .Init: message="The repository could not be made"

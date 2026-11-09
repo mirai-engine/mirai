@@ -61,8 +61,9 @@ template_common_copy :: proc(template,root:string) -> bool {
 }
 
 // A new project: the tree of the template with every folder of the layout,
-// the files all the templates share, and name in its manifest. An empty name
-// is the name of the folder.
+// the files all the templates share, the .gitattributes of the kinds of asset
+// of the engine (git_attributes), and name in its manifest. An empty name is
+// the name of the folder.
 project_create :: proc(template,folder,name:string) -> Create_Error {
     if !os.is_file(project.path(template,project.PROJECT_FILE,allocator=context.temp_allocator)) {return .Template_Missing}
     root:=project.path_absolute(folder,context.temp_allocator)
@@ -78,6 +79,9 @@ project_create :: proc(template,folder,name:string) -> Create_Error {
         directory:=project.folder_path(root,layout,context.temp_allocator)
         if os.make_directory_all(directory)!=nil && !os.is_dir(directory) {return .Copy_Failed}
     }
+    attributes:=project.path(root,".gitattributes",allocator=context.temp_allocator)
+    existing,_:=os.read_entire_file(attributes,context.temp_allocator)
+    if text,changed:=git_attributes(existing=string(existing),allocator=context.temp_allocator);changed && os.write_entire_file(attributes,text)!=nil {return .Copy_Failed}
     file:=project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator)
     m,error:=project.manifest_read(file)
     if error.code!=.None {return .Manifest_Failed}

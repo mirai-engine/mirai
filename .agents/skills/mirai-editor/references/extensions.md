@@ -229,8 +229,8 @@ plugin's asset types that the content browser lists (`kinds`, up to `ASSET_KINDS
 - `extension`: that of its files; `asset.list` names the type with it without the dot, and the
   `kind=` tag of a field, with it whole ([inspector](inspector.md#rows-by-reflection)).
 - `field`: a word; an `Asset_Id` field whose name has it takes the type.
-- `merged`: git merges its files field by field (`merge=mirai` in the `.gitattributes` that Init
-  writes).
+- `merged`: a document kind, which [git merges and diffs](../../mirai-assets/references/cli.md#git)
+  through `mirai`.
 - `clicked` (of the provider): what a click on one's card does, outside Play and with the scene in
   front (assigning it to the selection).
 
