@@ -158,10 +158,15 @@ renderer_pipelines_pending :: proc(r: ^Renderer) -> bool {
 	return r != nil && r.pipeline_thread != nil && sync.atomic_load(&r.pipeline_thread.busy) > 0
 }
 
-// Counts the times pipelines of programs went in place: what drew a program
-// as its rows (an image of the editor) draws again when it changes.
+// Counts the times pipelines of programs, or of software rays
+// (ray_pipelines.odin), went in place: what drew a program as its rows, or
+// drew nothing while rays were missing (an image of the editor), draws again
+// when it changes.
 renderer_pipelines_made :: proc(r: ^Renderer) -> u64 {
-	return r.pipeline_thread.installed if r != nil && r.pipeline_thread != nil else 0
+	if r == nil {return 0}
+	made := r.pipeline_thread.installed if r.pipeline_thread != nil else 0
+	if r.rays != nil {made += u64(r.rays.installed)}
+	return made
 }
 
 // Waits for the pipelines asked for and puts them in place: the next frame

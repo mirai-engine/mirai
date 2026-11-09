@@ -31,6 +31,10 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - Classification of the validation messages:
     [rhi](../../mirai-rendering/references/rhi.md#device).
 - `engine.status`: state of the editor, the document and the frame.
+  - `ray_pipelines`: the pipelines of rays traced by software the driver still compiles after the
+    editor opened ([later](../../mirai-rendering/references/shaders.md#loading-in-host)). Until
+    `pending` is 0 the frames draw only the UI, and `editor.capture` and `play.capture` fail saying
+    so; the tools of `mirai` that capture wait for it.
   - `cpu`: milliseconds of each part of the frame: platform, asset watching, game, editor and its
     four steps, render preparation, wait, recording and closing.
   - `gpu_timings`: per pass, in frame order. `counters`: what the plugin passes counted on the GPU

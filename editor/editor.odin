@@ -207,6 +207,7 @@ Session :: struct {
     capture:string,      // a PNG of the last frame written when it ends
     view_cut:bool,       // the World shown changed: the history of the image goes
     studio_shown:bool,   // the renderer has the studio light in place of the sun and the sky of the world
+    rays_shown:bool,     // the bottom line says that the driver compiles the pipelines of rays (rays_notify)
     recording:[2]i32,    // pixels of the frames play.record draws while it records; zero: none
     play_strip:Timeline, // of the past of the Play of the user (play_history_bar)
     history_seek:u64,    // the tick the strip asked to go back to, plus one; 0: none
@@ -412,7 +413,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     windowed:=!options.headless
     app,app_error:=host.app_create({
         info=info,root=root,engine_root=engine,threads=jobs.THREADS_AUTO,
-        window=windowed,gpu=!options.no_gpu,gpu_validation=options.validation,
+        window=windowed,gpu=!options.no_gpu,gpu_validation=options.validation,rays_later=true,
         window_desc=window,vsync=windowed,fixed_dt=windowed?0:HEADLESS_DT,
         // Without a window the mixer plays to nowhere, in real time: what play.record mixes is there.
         audio=windowed || !options.no_gpu?.Device:.None,audio_driver=windowed?"":"dummy",
@@ -531,7 +532,10 @@ advance :: proc(s:^Session) -> bool {
     between_frames(s)
     gpu_failure_react(s)
     services_poll(s)
-    if s.frames>0 && int(s.frame)>=s.frames {s.quit=true}
+    if s.frames>0 && int(s.frame)>=s.frames {
+        // A capture is of the scene: once the rays it traces can be drawn, one more frame.
+        if s.capture!="" && host.app_rays_pending(app)>0 {host.app_rays_wait(app)} else {s.quit=true}
+    }
     return !s.quit
 }
 
@@ -719,6 +723,7 @@ between_frames :: proc(s:^Session) {
     git_poll(s)
     projects_poll(s)
     plugins_git_poll(s)
+    rays_notify(s)
     requests_run(s)
     play_history_seek(s)
     watch_update(s)

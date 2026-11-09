@@ -433,8 +433,19 @@ does not publish again
   one. If it matches, it publishes catalog and ownership without creating pipelines; if not, a
   thread makes the driver compile the pipelines while the frames continue with the resident ones
   ([rhi](rhi.md#pipelines-from-other-threads)).
-- **Pipelines.** `create_pipelines` (at renderer start and on each load) makes them on one thread
-  per core, those with the most code first, and only those the device supports.
+- **Pipelines.** `create_pipelines` (at renderer start and on each load) makes them those with the
+  most code first, and only those the device supports, on one thread per physical core while the
+  free memory holds what the driver takes for each (`pipeline_threads`): compiles past the free
+  memory page it out and each one takes longer than all of them in a row.
+- **Rays traced by software, later.** Their pipelines are most of what a cold start compiles, the
+  largest for minutes each. With `Renderer_Desc.rays_later`, which `host` passes from
+  `App_Desc.rays_later` (the editor and the player set it), the renderer starts without them and
+  makes them on its own threads (`render/ray_pipelines.odin`) only once its frames trace by
+  software: without ray queries, after a failed self-test or with `trace_mode = .Software`. A device
+  that traces by hardware never makes them. Until they are all in place every frame draws only its
+  UI (`Frame_Desc.ui_only`), `renderer_rays_pending` says how many are missing and
+  `renderer_rays_wait` waits for them. A reload makes every pipeline before it is published; without
+  `rays_later` (the tests) `renderer_init` makes them with the others.
 - `app_shaders_poll` publishes the ready loads in the requested order, replacing the pipelines
   whole, and discards those older than the published one; `app_shaders_drop` abandons one that
   another makes obsolete. A load that changes only preview or idle stages keeps the temporal

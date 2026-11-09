@@ -267,6 +267,8 @@ renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^boo
     candidate:=new(Renderer,r.allocator)
     candidate^=r^
     candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
+    // A reload makes every pipeline before it is published, as the first generation without rays_later.
+    candidate.rays,candidate.rays_later=nil,false
     candidate.reload_stop=stop
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
@@ -304,6 +306,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     }
     rhi.device_wait_idle(r.device)
     pipelines_drop(r)
+    ray_pipelines_stop(r)
     for p in r.pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
     for p in r.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
     for p in r.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}

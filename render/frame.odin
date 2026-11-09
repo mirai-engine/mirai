@@ -400,6 +400,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     texture_uploads_install(r)
     geometry_uploads_install(r)
     pipelines_install(r)
+    ray_pipelines_install(r)
+    // Without the pipelines of the rays it traces the scene is not drawn yet (ray_pipelines.odin).
+    frame:=frame
+    if renderer_rays_pending(r)>0 {frame.ui_only=true}
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -420,7 +424,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         renderer_origin_follow(r,eye)
     }
     textures_views_record(r,frame)
-    frame,framed:=origin_frame(r,frame)
+    framed:bool
+    frame,framed=origin_frame(r,frame)
     if !framed {return false}
     displaced_prepare(r)
     skins_bounds(r)

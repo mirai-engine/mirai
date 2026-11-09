@@ -260,7 +260,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     started:=time.tick_now()
     app,error:=app_create({
         info=info,root=root,engine_root=engine_root,options=app_user_folder(root,context.temp_allocator),threads=jobs.THREADS_AUTO,
-        window=windowed,shown=surfaced,gpu=gpu,gpu_validation=options.validation,
+        window=windowed,shown=surfaced,gpu=gpu,gpu_validation=options.validation,rays_later=true,
         window_desc=window,vsync=windowed,game_window=options.window.z<=0, // a window an editor places (--window) keeps its place
         fixed_dt=windowed || options.dedicated?0:1.0/60,
         audio=windowed || surfaced?.Device:.None,
@@ -338,7 +338,11 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
                 return PLAYER_USAGE
             }
         }
-        if options.frames>0 && frame>=options.frames {break}
+        if options.frames>0 && frame>=options.frames {
+            // A capture is of the world: once the rays it traces can be drawn, one more frame.
+            if options.capture!="" && app_rays_pending(app)>0 {app_rays_wait(app);continue}
+            break
+        }
     }
     if code==PLAYER_OK && options.capture!="" && !app_capture(app,options.capture) {
         fmt.eprintfln("mirai: could not write %s",options.capture)

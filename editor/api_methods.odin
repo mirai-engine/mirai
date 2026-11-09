@@ -101,9 +101,15 @@ Api_Status :: struct {
     collab:[32]u8 `mirai:"text"`,
     api_calls,api_errors:u64,
     gpu_memory:Api_Gpu_Memory `mirai:"label=What the editor holds of the memory of the GPU and what the system lets it hold before it pages some out; zeros when the driver does not say"`,
+    ray_pipelines:Api_Ray_Pipelines `mirai:"label=The pipelines of rays traced by software the driver still compiles after the editor opened: until pending is 0 the frames draw only the UI and editor.capture refuses; zeros on a GPU that traces rays by hardware"`,
 }
 
 Api_Gpu_Memory :: struct {used_mb,budget_mb:f32}
+Api_Ray_Pipelines :: struct {
+    pending,total:int,
+    failed:bool `mirai:"label=One could not be made: the scene is never drawn"`,
+    error:[256]u8 `mirai:"text,label=Why, when failed"`,
+}
 
 Api_Assets :: struct {meshes,textures,materials,scenes,unloads:int}
 
@@ -509,6 +515,11 @@ api_status :: proc(s:^Session,call:^api.Call) {
             r.gpu_memory={f32(f64(used)/(1<<20)),f32(f64(budget)/(1<<20))}
         }
         api_text_put(r.renderer_problem[:],stats.problem)
+        r.ray_pipelines.pending,r.ray_pipelines.total=gpu.renderer_rays_pending(renderer),gpu.renderer_rays_total(renderer)
+        if failed,pipeline:=gpu.renderer_rays_failed(renderer);failed {
+            r.ray_pipelines.failed=true
+            api_text_put(r.ray_pipelines.error[:],fmt.tprintf("%s could not be made: %s",pipeline,renderer.error))
+        }
     }
     if a:=app.assets;a!=nil {
         r.asset_errors=len(host.assets_errors(a))+len(a.registry.reassigned)+len(a.registry.duplicates)
@@ -1057,6 +1068,7 @@ api_editor_capture :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"editor.capture requires a GPU; start without --no-gpu")
         return
     }
+    if !api_rays_ready(s,call,"editor.capture") {return}
     // The frames drawn below free the temporary memory.
     file,writable:=api_output_file(s,call,base.text_get(params.path[:]),s.app.allocator)
     if !writable {return}
@@ -1676,4 +1688,19 @@ play_turn_runs :: proc(s:^Session,owner,players,online,ping:int) -> string {
     if online==0 {return ""}
     p:=providers(s)
     return p.play.turn(s,owner,players,online,ping)
+}
+
+// Fails call while the driver still compiles the pipelines of rays traced by
+// software: the frames draw only the UI until then (gpu.renderer_rays_pending).
+@(private)
+api_rays_ready :: proc(s:^Session,call:^api.Call,method:string) -> bool {
+    pending:=gpu.renderer_rays_pending(s.app.renderer)
+    if pending==0 {return true}
+    total:=gpu.renderer_rays_total(s.app.renderer)
+    if failed,pipeline:=gpu.renderer_rays_failed(s.app.renderer);failed {
+        api.call_failf(call,api.SERVER_ERROR,"%s: the pipeline of rays traced by software %s could not be made, so the scene is not drawn: %s",method,pipeline,s.app.renderer.error)
+        return false
+    }
+    api.call_failf(call,api.SERVER_ERROR,"%s: the driver still compiles %d of the %d pipelines of rays traced by software, minutes on a cold cache, and the frames draw only the UI until then; engine.status says when ray_pipelines.pending is 0",method,pending,total)
+    return false
 }

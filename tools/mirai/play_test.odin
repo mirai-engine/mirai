@@ -48,6 +48,7 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
         if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
     }
     defer if !reused {session_close(folder,file,true)}
+    if !editor_rays_wait(file.port,"play test",folder) {return 1}
 
     Step :: struct {method,name:string,passed:bool,tick:u64,result:json.Value,error:string}
     Report :: struct {path:string,passed:bool,failure:string,tick:u64,steps:int,ran:[]Step}

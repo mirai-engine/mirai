@@ -398,6 +398,11 @@ Renderer_Desc :: struct {
 	// rows until its pipelines are made (pipeline_thread.odin). False: they
 	// are made in the frame that first asks for them.
 	pipeline_thread:       bool,
+	// The pipelines of rays traced by software are made on threads of the
+	// renderer after it starts, and only when its frames trace by software;
+	// meanwhile every frame draws only its UI (ray_pipelines.odin). False:
+	// renderer_init makes them with the others.
+	rays_later:            bool,
 }
 
 // What one frame draws besides the scene.
@@ -583,6 +588,8 @@ Renderer :: struct {
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the pipelines of programs; nil: they are made where they are asked for
+	rays_later:           bool, // Renderer_Desc.rays_later
+	rays:                 ^Ray_Pipelines, // makes those of software rays after renderer_init; nil until it starts
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	ui_offscreen:    Ui_Offscreen_State,
 	using main:      View_State, // the view of a frame that has one
@@ -648,6 +655,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	scene_init(r)
 	r.scene.pages.jobs = desc.jobs
 	if desc.pipeline_thread {pipeline_thread_start(r)}
+	r.rays_later = desc.rays_later
 	textures_init(r)
 	if assets!=nil && assets.owned {
 		r.shader_assets=assets^;r.shader_codes=assets.codes;assets^={}
@@ -702,6 +710,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 		r.hardware_rt_note = string(r.note_buffer[:copy(r.note_buffer[:], note)])
 		if !r.hardware_rt_verified {r.hardware_rt = false}
 	}
+	ray_pipelines_start(r)
 	r.scene.tlas_off = r.hardware_rt
 	r.window_width = max(width, 1)
 	r.window_height = max(height, 1)
@@ -716,6 +725,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	d := r.device
 	if d == nil {return}
 	rhi.device_wait_idle(d)
+	ray_pipelines_stop(r)
 	pipeline_thread_destroy(r)
 	scene_destroy(r)
 	extension_buffers_destroy(r)
@@ -1022,6 +1032,16 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	overlay_pipelines_list(r, list)
 }
 
+// Bytes of the code of item, which the driver takes longer and more memory to
+// compile the more there are.
+@(private)
+pipeline_cost :: proc(r: ^Renderer, item: ^Pipeline_Make) {
+	item.cost = 0
+	for id in item.shaders[:2 if item.graphics else 1] {
+		item.cost += len(r.shader_codes[id].msl) when ODIN_OS == .Darwin else len(r.shader_codes[id].spirv)
+	}
+}
+
 @(private)
 pipeline_listed :: proc(list: ^Pipeline_List, item: Pipeline_Make) {
 	list.items[list.count] = item
@@ -1053,9 +1073,10 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 	return (item.rays != .Hardware || info.features.ray_query) && (!item.clip || info.features.clip_distance)
 }
 
-// Makes the pipelines of r that the device can, the costliest first, on a
-// thread a core (half the logical processors): the driver compiles each one
-// for up to seconds. Once r.reload_stop is set, from any thread, none more is
+// Makes the pipelines of r that the device can, the costliest first, on as
+// many threads as pipeline_threads allows: the driver compiles each one for
+// up to minutes. With r.rays_later, those of software rays are left to
+// ray_pipelines_start. Once r.reload_stop is set, from any thread, none more is
 // made. False when one the renderer needs is not there.
 @(private)
 create_pipelines :: proc(r: ^Renderer) -> bool {
@@ -1070,11 +1091,11 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 		next:  int, // atomic, into order
 	}
 	work := Work{r = r, list = &list}
+	costliest := 0
 	for &item, i in list.items[:list.count] {
-		if !pipeline_possible(info, item) {continue}
-		for id in item.shaders[:2 if item.graphics else 1] {
-			item.cost += len(r.shader_codes[id].msl) when ODIN_OS == .Darwin else len(r.shader_codes[id].spirv)
-		}
+		if !pipeline_possible(info, item) || (r.rays_later && item.rays == .Software) {continue}
+		pipeline_cost(r, &item)
+		costliest = max(costliest, item.cost)
 		at := work.count
 		for at > 0 && list.items[work.order[at - 1]].cost < item.cost {
 			work.order[at] = work.order[at - 1]
@@ -1098,7 +1119,7 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 		}
 	}
 	threads: [PIPELINE_THREADS_MAX]^thread.Thread
-	helpers := clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1
+	helpers := min(pipeline_threads(costliest), max(work.count, 1)) - 1
 	for &t in threads[:helpers] {
 		t = thread.create_and_start_with_poly_data(&work, proc(work: ^Work) {
 			defer free_all(context.temp_allocator)
@@ -1112,7 +1133,7 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 		thread.destroy(t)
 	}
 	for item in list.items[:list.count] {
-		if !item.required || !pipeline_possible(info, item) || item.target^ != 0 {continue}
+		if !item.required || !pipeline_possible(info, item) || item.target^ != 0 || (r.rays_later && item.rays == .Software) {continue}
 		set_error(r, "pipeline %s: %s", item.desc.name if item.graphics else r.shader_codes[item.shaders[0]].name, rhi.device_error(r.device))
 		return false
 	}
@@ -1334,6 +1355,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	r.hardware_rt = info.features.ray_query && r.hardware_rt_verified && settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	// The poses refit only the structures the rays use: those of the others are as old as the switch.
 	// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
+	ray_pipelines_start(r)
 	if r.hardware_rt != was_hardware {
 		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty = true}}
 		r.scene.batch.built = false

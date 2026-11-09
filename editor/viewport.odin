@@ -1175,3 +1175,23 @@ asset_name :: proc(path:string) -> string {
     if dot:=strings.last_index_byte(name,'.');dot>0 {name=name[:dot]}
     return name
 }
+
+// While the driver compiles the pipelines of rays traced by software the
+// viewport stays empty, minutes on a first start: the bottom line says so and
+// how many are left, and then that the scene is drawn.
+@(private)
+rays_notify :: proc(s:^Session) {
+    r:=s.app.renderer
+    pending:=gpu.renderer_rays_pending(r)
+    if pending>0 {
+        if failed,pipeline:=gpu.renderer_rays_failed(r);failed {
+            notify(s,fmt.tprintf("The ray tracing shader %s could not be compiled, so the scene is not drawn: %s",pipeline,r.error))
+        } else {
+            notify(s,fmt.tprintf("Compiling the ray tracing shaders, %d of %d left: the scene shows once they are ready (minutes on a first start)",pending,gpu.renderer_rays_total(r)))
+        }
+        s.rays_shown=true
+    } else if s.rays_shown {
+        notify(s,"Ray tracing shaders ready")
+        s.rays_shown=false
+    }
+}
