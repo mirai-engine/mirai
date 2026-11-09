@@ -195,31 +195,29 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
         return false
     }
     point,asked:=spawn_where(a,r) or_return
-    order:=scene.Spawn{path=r.path,transient=true}
-    if order.path[0]==0 {
-        if point!=core.NONE {order.prefab=core.at(a.points,core.row_of(a.points,point)).prefab}
-        if order.prefab=={} {order.prefab=a.settings.prefab}
-        if order.prefab=={} {
+    path:=r.path
+    prefab:base.Asset_Id
+    if path[0]==0 {
+        if point!=core.NONE {prefab=core.at(a.points,core.row_of(a.points,point)).prefab}
+        if prefab=={} {prefab=a.settings.prefab}
+        if prefab=={} {
             core.report(a.problems,point!=core.NONE?point:r.seat,"spawn.no_prefab","a body was asked without a prefab where no point has one; give the point a prefab, Spawn_Settings.prefab the body of the project, or spawn with one")
             return false
         }
     }
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE && !asked {placed=spawn_place(a,point) or_return}
-    order.transform=core.Transform{placed.position,placed.rotation,{1,1,1}}
-    report,error:=scene.spawn_prefab(a.commands,a.app,order)
-    if error!=.None {
-        name:[base.ASSET_ID_TEXT]u8
-        core.report(a.problems,point,"spawn.spawn_prefab","the prefab %s did not spawn at this Spawn_Point: %s; give it a .prefab of the assets that opens in the editor",scene.spawn_name(a.app,&order,&name),scene.error_text(error))
-        return false
-    }
-    if asked || point==core.NONE {core.push(&a.at_origin.queue,report.root)}
+    spawner:=scene.Spawner{a.commands,a.app,a.problems}
+    at:=core.Transform{placed.position,placed.rotation,{1,1,1}}
+    root:=path[0]==0?scene.spawn(spawner,prefab,at,transient=true):scene.spawn(spawner,base.text_get(path[:]),at,transient=true)
+    if root==core.NONE {return false}
+    if asked || point==core.NONE {core.push(&a.at_origin.queue,root)}
     if asked {a.spawning.asked_given=true}
     if r.seat!=core.NONE {
         a.given[a.given_count]=r.seat
         a.given_count+=1
-        input.drive(a.driving,r.seat,report.root)
-        core.add(a.bodies,report.root,Seat_Body{})
+        input.drive(a.driving,r.seat,root)
+        core.add(a.bodies,root,Seat_Body{})
     }
     return true
 }

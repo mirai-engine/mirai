@@ -88,8 +88,8 @@ the same attributes and no private paths. Declaration and parameter binding:
    sound, a message) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`,
    `multiplayer.send(&outbox, time, ...)`), which does nothing while a rollback replays the tick
    (`time.resimulating`); the game does not ask.
-7. Runtime prefab: `scene.request_spawn` (no root) or `scene.spawn(spawner, path, ...)` with
-   `core.Commands`; its rows wait until the end of the function and are finished with
+7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
+   until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
 8. Game code names a prefab or a scene by its path in the assets; data fields hold its

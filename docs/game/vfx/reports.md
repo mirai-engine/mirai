@@ -11,7 +11,7 @@ sparks_react :: proc(reports:core.Ref(vfx.Particle_Reports), spawns:^scene.Spawn
     for r in reports.reports {
         if r.kind != .Collision {continue}
         // r.entity (the emitter), r.position, r.velocity, r.normal of what it hit
-        scene.request_spawn(spawns, "prefabs/Scorch.prefab", {position=r.position}, transient=true)
+        scene.spawn(spawner, "prefabs/Scorch.prefab", {position=r.position}, transient=true)
     }
 }
 ```

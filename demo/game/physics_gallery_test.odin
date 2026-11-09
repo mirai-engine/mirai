@@ -7,6 +7,7 @@ import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
+import "mirai:host"
 import fr "plugins:destruct/runtime/fracture"
 import model "plugins:physics/runtime/sim"
 import "mirai:std/base"
@@ -46,16 +47,16 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
 gallery_removal_events_do_not_launch_fragments_count_fractures_or_spawn_dust :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     stations:core.Table(Physics_Gallery);defer core.table_destroy(&stations)
-    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;spawns:scene.Spawns;bodies:phys.Body_Requests
-    defer delete(events.fractured.items);defer delete(spawns.queue.items);defer delete(bodies.queue.items)
+    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    defer delete(events.fractured.items);defer delete(bodies.queue.items)
     e:=core.create(&entities)
     core.add(&stations,e,Physics_Gallery{station=10,target=e});core.table_settle(&stations,&entities)
     core.push(&events.fractured,destruct.Fracture{entity=e,kind=.Remove})
-    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
-    testing.expect_value(t,counts.counts[10],u32(0));testing.expect_value(t,len(spawns.queue.items),0);testing.expect_value(t,len(bodies.queue.items),0)
+    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
+    testing.expect_value(t,counts.counts[10],u32(0));testing.expect_value(t,spawned.count,0);testing.expect_value(t,len(bodies.queue.items),0)
     core.push(&events.fractured,destruct.Fracture{entity=e,kind=.Damage})
-    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
-    testing.expect_value(t,counts.counts[10],u32(1));testing.expect_value(t,len(spawns.queue.items),1);testing.expect_value(t,len(bodies.queue.items),1)
+    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
+    testing.expect_value(t,counts.counts[10],u32(1));testing.expect_value(t,spawned.count,1);testing.expect_value(t,len(bodies.queue.items),1)
 }
 
 @(test)
@@ -108,10 +109,10 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
             testing.expect_value(t,model.body_transform(&physics.world,root).p,dd.position)
         }
     }
-    events:destruct.Destruct_Events;spawns:scene.Spawns;counts:Physics_Gallery_Events
-    defer delete(events.fractured.items);defer delete(spawns.queue.items)
+    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    defer delete(events.fractured.items)
     core.push(&events.fractured,destruct.Fracture{entity=target,kind=.Damage})
-    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
+    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
     testing.expect_value(t,len(bodies.queue.items),0)
 }
 
@@ -149,10 +150,10 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     _,cut:=fr.destructible_slice(f,&physics.world,h,command.region.point,command.vector)
     testing.expect(t,cut);testing.expect(t,fr.destructible_revision(f,h)>0)
     testing.expect(t,abs(command.region.point.y-.3)<.001)
-    events:destruct.Destruct_Events;spawns:scene.Spawns;counts:Physics_Gallery_Events
-    defer delete(events.fractured.items);defer delete(spawns.queue.items)
+    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    defer delete(events.fractured.items)
     core.push(&events.fractured,destruct.Fracture{entity=target,kind=.Slice,point=command.region.point})
-    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
+    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
     testing.expect_value(t,counts.counts[2],u32(1));testing.expect_value(t,len(bodies.queue.items),1)
     launch:=bodies.queue.items[0]
     testing.expect_value(t,launch.kind,phys.Body_Request_Kind.Radial_Impulse)
@@ -166,25 +167,25 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)
     testing.expect(t,model.body_transform(&physics.world,live).p!=before.p)
     core.get(&stations,station).station=10
-    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
-    testing.expect_value(t,len(spawns.queue.items),1)
-    testing.expect(t,spawns.queue.items[0].transform.position.z>command.region.point.z+.7)
+    physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
+    testing.expect_value(t,spawned.count,1)
+    testing.expect(t,physics_gallery_burst_at(command.region.point).z>command.region.point.z+.7)
 }
 
 @(test)
 gallery_event_counts_restart_when_the_scene_is_loaded_again :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     stations:core.Table(Physics_Gallery);defer core.table_destroy(&stations)
-    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;spawns:scene.Spawns;bodies:phys.Body_Requests
-    defer delete(events.fractured.items);defer delete(spawns.queue.items);defer delete(bodies.queue.items)
+    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    defer delete(events.fractured.items);defer delete(bodies.queue.items)
     for _ in 0..<3 {
         e:=core.create(&entities)
         core.add(&stations,e,Physics_Gallery{station=10,target=e})
         core.table_settle(&stations,&entities)
-        physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
+        physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
         testing.expect_value(t,counts.counts[10],u32(0))
         core.push(&events.fractured,destruct.Fracture{entity=e})
-        physics_gallery_events(core.read(&stations),&counts,core.ref(&events),&spawns,&bodies)
+        physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
         testing.expect_value(t,counts.counts[10],u32(1))
         core.queue_clear(&events.fractured)
         core.entities_clear(&entities);core.table_clear(&stations)

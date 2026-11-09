@@ -33,8 +33,7 @@ of its owner and is taken by the function in parentheses:
   `^cinematics.Cinematic_Requests` (`cinematic_advance`, plugin `cinematics`).
 - **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in `^scene.Scene_Requests`
   (`scene_requests`); the result arrives in `scene.Scene_Results`.
-- **Instantiate a prefab**: `scene.request_spawn(spawns, path, at)` in `^scene.Spawns`
-  (`scene_spawns`), or `scene.spawn(spawner, path, at)` for the root.
+- **Instantiate a prefab**: `scene.spawn(spawner, path_or_id, at)`, which gives the root.
 - **Save or load**: `save.request_save(&r, "slot")`, `request_load`, `request_delete` in
   `^save.Save_Requests` (`saves_serve`).
 - **Send a network message**: `multiplayer.send(&outbox, time, value)` with a struct

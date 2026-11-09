@@ -243,7 +243,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:core.Read(inp.Move_Input),
-    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawns:^scene.Spawns,
+    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -267,7 +267,7 @@ game_use :: proc(
         if origin,aim,aimed:=inp.aim(drivables,worlds,e);aimed && inp.pressed(actions,e,.Throw) {
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
-            scene.request_spawn(spawns,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
+            scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
             core.at(players,row).thrown+=1
         }
     }
