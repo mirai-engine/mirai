@@ -105,3 +105,18 @@ a_finding_names_the_place_of_its_call :: proc(t:^testing.T) {
     testing.expect_value(t,findings[1].line,4)
     testing.expect_value(t,findings[1].column,25)
 }
+
+@(test)
+the_lint_applies_to_what_a_game_binary_contains :: proc(t:^testing.T) {
+    Case :: struct {folder:string,applies:bool}
+    for c in ([]Case{
+        {"C:/engine/core",true},{"C:/engine/std/geom",true},{"C:/engine/engine/scene",true},
+        {"C:/engine/plugins/physics/runtime",true},{"C:/engine/plugins/physics/runtime/sim",true},
+        {"C:/engine/demo/game",true},{"C:/engine/templates/game/game",true},
+        {"C:/engine/editor",false},{"C:/engine/cook/build",false},{"C:/engine/tools/mirai",false},
+        {"C:/engine/plugins/physics/editor",false},{"C:/engine/third_party/freetype",false},
+        {"C:/engine",false},{"C:/elsewhere/game",false},
+    }) {
+        testing.expectf(t,alloc_lint_applies("C:/engine",c.folder)==c.applies,"%s: %v",c.folder,!c.applies)
+    }
+}

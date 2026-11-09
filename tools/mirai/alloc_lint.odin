@@ -6,61 +6,26 @@ import "core:odin/parser"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "mirai:cook/build"
 import "mirai:project"
-
-// The runtime packages that already receive every allocation error, while
-// the rest are cleaned: mirai check runs the lint on these only. When every
-// runtime package is here the list goes away and alloc_lint_applies answers
-// by what a game binary contains.
-ALLOC_LINT_PACKAGES :: [?]string{"asset","engine/save","engine/scene",
-    "core",
-    "demo/game",
-    "host",
-    "net",
-    "platform",
-    "project",
-    "ui",
-    "std/ai",
-    "std/anim",
-    "std/base",
-    "std/geom",
-    "std/serial",
-    "engine/render",
-    "render",
-    "rhi",
-    "plugins/animation/runtime",
-    "plugins/behavior/runtime",
-    "plugins/destruct/runtime",
-    "plugins/destruct/runtime/fracture",
-    "plugins/destruct_multiplayer/runtime",
-    "plugins/foliage/runtime",
-    "plugins/foliage_terrain/runtime",
-    "plugins/multiplayer/runtime",
-    "plugins/navigation/runtime",
-    "plugins/physics/runtime",
-    "plugins/physics/runtime/sim",
-    "plugins/physics_cache/runtime",
-    "plugins/shapes/runtime",
-    "plugins/streaming/runtime",
-    "plugins/terrain/runtime",
-    "plugins/terrain_multiplayer/runtime",
-    "plugins/vfx/runtime",
-    "plugins/vfx/runtime/effect",
-    "plugins/vfx/runtime/gridfile",
-}
 
 Alloc_Finding :: struct {line,column:int,call:string}
 
-// Whether mirai check runs the lint on folder, a package of the engine at root.
+// Whether mirai check runs the lint on folder: a package a game binary
+// contains, of the engine at root. Those are its runtime packages, the runtime
+// part of its plugins and the game of its demo and of its templates.
 alloc_lint_applies :: proc(root,folder:string) -> bool {
     inside:=project.path_absolute(folder,context.temp_allocator)
     engine:=strings.trim_right(project.path_absolute(root,context.temp_allocator),"/")
-    if !path_inside(inside,engine) {return false}
-    packages:=ALLOC_LINT_PACKAGES
+    if !path_inside(inside,engine) || len(inside)<=len(engine) {return false}
+    relative:=inside[len(engine)+1:]
+    packages:=build.ENGINE_RUNTIME_PACKAGES
     for name in packages {
-        if path_same(inside[len(engine)+1:],name) {return true}
+        if !strings.has_prefix(name,"third_party/") && path_same(relative,name) {return true}
     }
-    return false
+    parts:=strings.split(relative,"/",context.temp_allocator)
+    if len(parts)>=3 && parts[0]=="plugins" && parts[2]=="runtime" {return true}
+    return len(parts)>=2 && parts[len(parts)-1]=="game" && (parts[0]=="demo" || parts[0]=="templates")
 }
 
 // Prints the allocations of the sources of a package, its tests aside, whose
