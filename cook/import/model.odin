@@ -186,6 +186,7 @@ Imported_Model :: struct {
     format:string,      // the name of the Format it was read with
     name:string,        // of its prefab and its animations (Reader.stem)
     version:u32,        // import_version of that format: what its assets record
+    facing:[3]f32,      // where its rig stood facing when it was turned to -Z; zero: as read
     meshes:[]Imported_Mesh,
     materials:[]Imported_Material,
     images:[]Imported_Image,

@@ -50,8 +50,8 @@ libraries.
   confidence of each part, those that are missing and a `fix`. Import already detects it. Without
   one stored, `animation.clip.edit`, `animation.analyze`, `animation.character.setup` and
   `ragdoll.setup` detect it in memory for the call and leave the `.skeleton` as it is.
-- `skeleton.body.set` sets parts and axes by hand: they stay `manual` and survive detection and
-  reimport. An unknown bone suggests those with a similar name.
+- `skeleton.body.set` sets parts by hand: they stay `manual` and survive detection and reimport.
+  A rig faces -Z: the import turns one whose body faces another axis, so the axes are not set. An unknown bone suggests those with a similar name.
 
 ## Clips: verbs and metrics
 

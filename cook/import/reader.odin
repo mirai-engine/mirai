@@ -26,6 +26,7 @@ Reader :: struct {
     file_name:string,
     stem:string,          // what the model is named (its prefab, its clips): the stem of the file unless the format names it otherwise
     space:Source_Space,   // of the source: Format.space unless the reader states another
+    facing:[3]f32,        // where a first read found the body of the rig facing: this read turns it to -Z (import_model)
     basis:Basis,          // of space
     meshes:[dynamic]Imported_Mesh,
     materials:[dynamic]Imported_Material,

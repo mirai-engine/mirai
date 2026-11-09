@@ -24,8 +24,8 @@ BODY_PART_NAMES :: [Body_Part]string{
 
 // Where the parts of a body are in a skeleton. bones holds the bone of each
 // part, -1 when it has none; the spine is the chain between the pelvis and the
-// neck. forward and up are where the body faces and its up at rest, in the
-// space of the roots. A confidence goes from 0 (a guess) to 1 (certain);
+// neck. forward and up are where the body stands at rest in the space of the
+// roots, -Z once imported (a rig faces it: cook/import). A confidence goes from 0 (a guess) to 1 (certain);
 // manual marks what a person set, which detection keeps.
 Body_Map :: struct {
     bones:[Body_Part]i32,
@@ -33,7 +33,6 @@ Body_Map :: struct {
     forward,up:math.Vec3,
     axes_confidence:f32,
     manual:Body_Parts,
-    manual_axes:bool,
 }
 
 // What a mask covers: each region is the branch of its first bone, the spine
@@ -616,7 +615,6 @@ body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Tran
         result.bones[part],result.confidence[part]=bone,previous.confidence[part]
         result.manual+={part}
     }
-    if previous.manual_axes {result.forward,result.up,result.axes_confidence,result.manual_axes=previous.forward,previous.up,previous.axes_confidence,true}
     if !body_map_valid(result,n) {return false}
     map_^=result
     return true

@@ -62,7 +62,6 @@ Asset_Inspect_Result :: struct {
     sockets:[1]aa.Skeleton_Socket `mirai:"list,optional,label=.skeleton: a page of the sockets; offsets are local"`,
     forward,up:mm.Vec3 `mirai:"optional,label=.skeleton section Body: where the body faces at rest"`,
     axes_confidence:f32 `mirai:"optional,label=0 to 1"`,
-    manual_axes:bool `mirai:"optional,label=Whether a person set the axes"`,
     parts:[1]Body_Part_Result `mirai:"list,optional,label=.skeleton section Body: each part found"`,
     missing:[1]lib.Body_Part `mirai:"list,optional,label=Parts without a bone"`,
     unassigned_total:u32 `mirai:"optional"`,

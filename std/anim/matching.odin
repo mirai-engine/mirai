@@ -104,7 +104,7 @@ Match_Database :: struct {
 }
 Match_Build_Error :: enum u8 {None,Invalid,Memory_Limit,Out_Of_Memory}
 // What the features read of a skeleton: bones of the feet and the hips, and
-// the body its clips are measured with, whose forward is in the space of the rig.
+// the body its clips are measured with. A rig faces -Z.
 Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32}
 
 // Where the body goes and went, raw, in the frame of its facing: its velocity now (m/s), where it
@@ -146,7 +146,6 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     n:=len(rig.skeleton.parents)
     if n==0 || len(clips)==0 || !anim_finite(rate) || rate<=0 || rate>FRAMES_MAX_RATE || !skeleton_validate(rig.skeleton) {return}
     for bone in ([3]i32{rig.left_foot,rig.right_foot,rig.hips}) {if bone<0 || int(bone)>=n {return}}
-    forward,unit:=anim_unit(math.Vec3{rig.body.forward.x,0,rig.body.forward.z});if !unit {return}
     for weight in weights {if !anim_finite(weight) || weight<0 {return}}
     MAX_FRAMES :: 1<<20
     total,longest,blend_tracks:=0,0,0
@@ -202,12 +201,12 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             // Along the push of its feet; feet that do not push (a jump) leave where its body faces.
             if ground.in_place {
                 direction,moving:=anim_unit(travel)
-                if !moving || speed<=MATCH_STILL {direction=match_motion_facing({frames=frames,world=world[:count*n],rest=rest_world,root=root,forward=forward},0)}
+                if !moving || speed<=MATCH_STILL {direction=match_motion_facing({frames=frames,world=world[:count*n],rest=rest_world,root=root},0)}
                 travel=direction*c.speed
             }
             speed=c.speed
         }
-        motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel,forward=forward}
+        motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel}
         ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,speed=speed,travel=travel,rates=c.rates}
         for frame in 0..<count {
             values:=&raw[row+frame]
@@ -748,7 +747,7 @@ match_yaw :: proc "contextless" (direction:math.Vec3) -> math.Quat {
 }
 
 @(private)
-Match_Motion :: struct {frames:Frames,world,rest:[]math.Transform,root:int,in_place:bool,travel,forward:math.Vec3}
+Match_Motion :: struct {frames:Frames,world,rest:[]math.Transform,root:int,in_place:bool,travel:math.Vec3}
 
 // A frame of the clip, out of its span: a loop goes on into its next passes, carrying what the body
 // moved in each one; a clip that does not loop holds its ends.
@@ -807,10 +806,10 @@ match_motion_body_velocity :: proc "contextless" (m:Match_Motion,frame:int) -> m
 }
 @(private)
 match_motion_facing :: proc "contextless" (m:Match_Motion,frame:f32) -> math.Vec3 {
-    if m.in_place {return m.forward}
+    if m.in_place {return math.FORWARD}
     index,_:=match_motion_frame(m,int(cmath.round(frame)))
     turn:=m.world[index*m.frames.bones+m.root].rotation*math.quat_inverse(m.rest[m.root].rotation)
-    facing:=math.quat_rotate(turn,m.forward)
+    facing:=math.quat_rotate(turn,math.FORWARD)
     if direction,ok:=anim_unit(math.Vec3{facing.x,0,facing.z});ok {return direction}
-    return m.forward
+    return math.FORWARD
 }
