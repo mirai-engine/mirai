@@ -77,7 +77,7 @@ texts and the paths in their own file, and the authoring API in `api_tree.odin`.
   on the node's first change.
 - **The file says which style the new nodes of each type take** (`Tree_Style_Info.defaults`, a type
   in one style at most, of its family): the **Default** row of the Style card, or `defaults` of
-  `ui.style.set`. Without one, the first node of a type brings the look of its type
+  a style in `ui.write`. Without one, the first node of a type brings the look of its type
   (`node_default_look`) and that look stays as that of the following ones; a box has no look and
   is left without style. Nothing is deduced from the neighboring nodes, and pasting into another
   file does not bring the `defaults` of the source.
@@ -199,11 +199,6 @@ changes nothing and says why.
     them in the Widget card and the widget's own in the Parameters card of its root (add, rename,
     remove, the node and field each drives, the slot); a parameter moved or removed follows in the
     files that use it (`widget_params_follow`).
-- `ui.node.*` changes a node and what the call does not name stays. `fields` does not accept what
-  has another key or its own method (parent, type, text, style, image, events): the error says
-  which to use. `children` of `ui.node.add` adds a whole subtree in the same call: each child
-  carries the keys of `ui.node.add` except `asset`, `parent` and `before`, and goes last inside its
-  own; an error says through which child it passes (`children[1]: children[0]: …`).
 - `ui.capture` draws a `.ui` alone, as the stage builds it (game samples, device prompts and
   language chosen) but in a context of its own at the size at which the game designs it, in a UI
   texture and in a frame without the scene, and writes a PNG with the pixels of that size times the
@@ -212,11 +207,10 @@ changes nothing and says why.
   show a node in states and choose the screen's variant; what the nodes touch when appearing runs
   `seconds` before. It is what an agent looks at after writing an interface: the document's stage
   shows it scaled to its place.
-- `ui.style.set`, `ui.variant.set` and `ui.anim.set` create or change a named style, a variant and
-  states rule, or an animation (the keys are sorted by time); what they do not name stays.
-- `ui.paths` lists what a node can take at a point of the path; `ui.bind` binds or removes and
-  rejects a path that does not work saying what it takes; `ui.check` returns the problems of all
-  the `.ui`s; `ui.path.rename` rewrites a path prefix in all of them, also in the templates.
+- `ui.paths` lists what a node can take at a point of the path; `ui.write` binds it with the keys
+  `bind_*`, `data` and `fields` of the node; `ui.check` returns the problems of all the `.ui`s, the
+  paths the game lacks included; `ui.path.rename` rewrites a path prefix in all of them, also in the
+  templates.
 - The per-language texts: `ui.texts`, `ui.text.set` and the CSV ones.
 
 ## Document bar

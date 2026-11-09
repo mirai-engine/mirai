@@ -75,8 +75,10 @@ A document only sees its own `styles` and those of what it lists in `use`.
 - The first control of a page takes the focus when it shows; a node that must have it instead has
   `"flags": ["Focus_First"]`.
 
-Changing a single piece: `ui.node.set`, `ui.style.set`, `ui.variant.set` (the same keys as the
-document), `ui.bind` for a path checked against the game's types, `ui.capture` to draw one alone.
+Changing a single piece: `ui.write` with `node=<name>` declares that node and what it holds, and
+nothing else of the file changes; a document with only `styles` or `animations` changes those it
+names. Paths: `ui.paths` lists what a binding of a node can take and `ui.check` says what the game
+lacks. `ui.capture` draws one alone.
 
 ## Controls
 

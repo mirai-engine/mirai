@@ -90,7 +90,8 @@ And a screen that uses it:
 
 A property (`offset`, `scale`, `rotation`, `opacity`, `color`, `width`, `height`, `value`, `frame`,
 `reveal`) goes from one value to another; nodes play it with `"events": {"shown": "pulse"}`. Keyed
-tracks, sequences and parallels are in `ui.anim.set`.
+tracks go in `tracks` (`[{"property": "Scale", "keys": [{"time": 0, "value": [1, 1, 0, 0]}]}]`) and
+a `"kind": "Sequence"` or `"Parallel"` names others in `parts`.
 
 ## Pitfalls that fail silently
 
