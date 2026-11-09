@@ -73,7 +73,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   says. The final message lists what was left unverified or approximate.
 - **If what is missing is structural** (another technique, a new system), stop and ask.
 - **No new pending items.** What was requested is finished in the task; what could not be finished
-  or a defect elsewhere is stated in the final report, not written to a pending file.
+  or a defect elsewhere is stated in the final report, not written to a pending file. A `PLAN_*.md`
+  of work in progress is not a file of pending items.
 
 ## Less code, simpler and faster
 
@@ -124,10 +125,7 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Common commands
 
-Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, in
-PowerShell `mirai.cmd` hands it to Git Bash, and from Python `subprocess` it is the absolute path
-of `mirai.cmd` (the file `mirai` is a script: `not a valid Win32 application`). The compiler, Slang and the tools come from `.deps`.
-The command table, the flow of a session and how to hand a command to the user:
+The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 - An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
@@ -166,22 +164,8 @@ Verify in steps and stop at the first one that is enough for what changed:
 | `render`, `shaders` or `rhi` | 1 to 4, with the GPU tests with validation; the render check, below |
 | A merge without code conflicts | `mirai check` of the packages it brings; no captures unless it touches `render/`, `shaders/` or assets |
 
-**Render check.** A global change of the image or its cost (GI, light, shadows, TAA, exposure,
-tonemap, demo materials, a pass that runs in every scene) is accepted only with
-`mirai render check demo`, once at the end, with no regressions against `main`
-([render check](.agents/skills/mirai-rendering/references/verification.md#render-check)).
-Which one depends on what the GPU receives and does:
-
-- **Nothing the GPU receives changes**: how assets are stored, compressed or loaded when they
-  decode to the same data, tools, editor UI. No render check; the captures of step 4 if the image
-  could differ.
-- **Only the image changes**: a constant, a value of a scene, an asset of the same size and
-  format, an encoding setting such as the RDO lambda. `--quality`, which measures no cost.
-- **The work can change**: a pass, a resource, a shader that does more or less work, a texture
-  format or resolution. The full one, which measures cost: only on a machine with no other load.
-  With a game or another GPU job running its times are not valid, so it waits for the machine.
-
-While working, `--views` and `--quality`.
+**Render check.** When a change needs it and which one, once at the end:
+[render check](.agents/skills/mirai-rendering/references/verification.md#render-check).
 
 The table is a guide: the agent decides how far to go according to the size of the change, and its
 report says what ran and what it left for integration. Full suites, reference captures of all

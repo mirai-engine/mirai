@@ -148,8 +148,10 @@ with a map from tasks to references.
 | Networking | [mirai-networking](.agents/skills/mirai-networking/SKILL.md) |
 | Physics and destruction | [mirai-physics](.agents/skills/mirai-physics/SKILL.md) |
 | Animation | [mirai-animation](.agents/skills/mirai-animation/SKILL.md) |
+| Abilities | [mirai-abilities](.agents/skills/mirai-abilities/SKILL.md) |
 | Gameplay | [mirai-gameplay](.agents/skills/mirai-gameplay/SKILL.md) |
 | Plugins | [mirai-plugins](.agents/skills/mirai-plugins/SKILL.md) |
+| World content (terrain, foliage, water, particles, navigation, AI) | [mirai-world](.agents/skills/mirai-world/SKILL.md) |
 | UI | [mirai-ui](.agents/skills/mirai-ui/SKILL.md) |
 | Assets | [mirai-assets](.agents/skills/mirai-assets/SKILL.md) |
 | Importing | [mirai-imports](.agents/skills/mirai-imports/SKILL.md) |

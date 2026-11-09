@@ -1,12 +1,13 @@
 ---
 name: mirai-projects
-description: Mirai projects and plugins - `project` (manifests, plugin discovery and order,
-  layout), `cook/build` (generated world, engine binaries, libraries and shipped game, project
-  shaders, fingerprint, cooking and engine-time exclusion), the installed engine (`mirai package
-  engine`, binary package and release workflow), the `tools/mirai` commands, the external scripts
-  and the templates. Use when changing a manifest, the layout or how a project or the engine is
-  generated, compiled or distributed, when investigating why something does not compile or what
-  went into the game, or when taking reference frames or sound from a YouTube or X video.
+description: Mirai projects and plugins - `project` (manifests, plugin discovery and order, layout),
+  `cook/build` (generated world, engine binaries, libraries and shipped game, project shaders,
+  fingerprint, cooking and engine-time exclusion), `cook/workspace` (worktrees, dependencies, shared
+  cache and locks), the installed engine (`mirai package engine`, binary package and release
+  workflow), the `tools/mirai` commands, the external scripts and the `templates`. Use when changing
+  a manifest, the layout or how a project or the engine is generated, compiled or distributed, when
+  investigating why something does not compile or what went into the game, or when taking reference
+  frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build
@@ -19,7 +20,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Plugin discovery and order: [package](references/projects.md#the-project-package); which folders
   go into each binary: [packages](references/projects.md#which-packages-go-in).
 - Targets, flags, jobs, outputs and [fingerprint](references/build.md#fingerprint) of `cook/build`:
-  [build](references/build.md); own shaders:
+  [targets](references/build.md#targets), [flags](references/build.md#flags-and-environment),
+  [jobs](references/build.md#jobs) and [outputs](references/build.md#outputs); own shaders:
   [project shaders](references/build.md#project-shaders).
 - Shipping and cooking: [shipped game](references/build.md#shipped-game),
   [dedicated server](references/build.md#dedicated-server) and
@@ -40,10 +42,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):
   [commands](references/projects.md#commands) and
-  [common commands](../../../AGENTS.md#common-commands).
+  [common commands](references/projects.md#common-commands).
 - Headless editor in the background, `rpc`, `mcp`, `capture`:
   [sessions](../mirai-agent-api/references/api.md#sessions); comparing captures:
-  [images](../mirai-agent-api/references/image.md).
+  [images](../mirai-agent-api/references/image.md#comparing-images-mirai-image).
 - `scripts/*.py`, and reference frames from a YouTube or X video:
   [external scripts](references/projects.md#external-scripts).
 - Templates: [demo and templates](../mirai-gameplay/references/demo.md#templates); attributes that

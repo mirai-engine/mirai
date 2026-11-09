@@ -120,8 +120,8 @@ their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [
 scenes and prefabs: [scenes.md](scenes.md). The plugins' types are declared and validated by their
 plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 ([animation](../../mirai-animation/references/animation.md)),
-[`.foliage`](../../mirai-plugins/references/foliage.md#format),
-[`.terrain`](../../mirai-plugins/references/terrain.md) and
+[`.foliage`](../../mirai-world/references/foliage.md#format),
+[`.terrain`](../../mirai-world/references/terrain.md) and
 [`.physics_cache`](../../mirai-plugins/references/physics-cache.md).
 
 - **`.mesh`** (`MESH`): `mesh` (`Mesh_Info`); `clusters` bulk (`Cluster`); `levels`
@@ -155,13 +155,13 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 - **`.records`** (`RCDS`): `records` (`Records_Info`), `rows` with `id`, `name` and `value` (the
   code's type, with the file's schema), `texts` (`Records_Text`) and `text` bulk
   ([records](kinds.md#records)).
-- **`.particle`** (`PART`, of the [`vfx`](../../mirai-plugins/references/vfx.md#format) plugin):
+- **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
 - **`.fracture`** (`FRAC`): `fracture` (`Fracture_Info`), `pieces`, `connections`, `clusters`,
   `vertices` (`Vertex`) and `indices` local to each piece.
 - **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
   and `overrides`; defined and validated by the
-  [foliage](../../mirai-plugins/references/foliage.md#format) plugin.
+  [foliage](../../mirai-world/references/foliage.md#format) plugin.
 - **`.physics_cache`** (`PCAC`): format of the
   [physics_cache](../../mirai-plugins/references/physics-cache.md) plugin (unique geometry, tracks,
   frames and poses).

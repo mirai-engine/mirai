@@ -1,9 +1,10 @@
 ---
 name: mirai-std
-description: Mirai standard library for games, with the packages std/base, jobs, math, anim (clips,
-  poses, motion matching, inertialization, IK), ai (minds, navigation, influence), input, geom,
-  spatial and subprocess. Use when changing, extending or consuming any of those packages, or when
-  deciding how an enemy or an NPC thinks.
+description: Mirai standard library for games, with the packages `std/base`, `std/jobs`, `std/math`,
+  `std/anim` (clips, poses, motion matching, inertialization, IK), `std/ai` (A*, tiled navmesh, flow
+  fields, steering, utility), `std/input`, `std/geom`, `std/spatial` and `std/subprocess`. Use when
+  changing, extending or consuming any of those packages; enemies and NPCs that decide are in
+  `mirai-world`.
 ---
 
 # Mirai standard library
@@ -11,20 +12,60 @@ description: Mirai standard library for games, with the packages std/base, jobs,
 ## Map
 
 - Budgeted allocators, handles, fixed-capacity containers, hashing, identities, radix sort and
-  profile zones: [std/base](references/base.md).
+  profile zones: [allocators](references/base.md#allocators-allocodin),
+  [handles](references/base.md#handles-handle_poolodin),
+  [containers](references/base.md#containers),
+  [hashing, identities and randomness](references/base.md#hashing-identities-and-randomness),
+  [radix sort](references/base.md#radix-sort-sortodin) and
+  [profile zones](references/base.md#profile-zones-profileodin).
 - Work-stealing scheduler, `parallel_for` and task graphs (`host` uses them to give threads to the
-  loop): [std/jobs](references/jobs.md).
+  loop): [workers](references/jobs.md#workers),
+  [tasks and counters](references/jobs.md#tasks-and-counters),
+  [parallel_for](references/jobs.md#parallel_for), [task graphs](references/jobs.md#task-graphs),
+  [temporary memory](references/jobs.md#temporary-memory) and
+  [without threads](references/jobs.md#without-threads).
 - Transforms and TRS composition, Euler, cameras, shapes and intersections, scalars, easing, curves,
-  random, noise, color and quantization: [std/math](references/math.md).
+  random, noise, color and quantization:
+  [transform](references/math.md#transform-and-trs-composition-transformodin-typesodin),
+  [cameras](references/math.md#cameras-cameraodin),
+  [shapes](references/math.md#shapes-and-queries-shapesodin-rayodin-overlapodin-closestodin-cullodin),
+  [scalars](references/math.md#scalars-scalarodin),
+  [deterministic functions](references/math.md#deterministic-functions-deterministicodin),
+  [easing and curves](references/math.md#easing-and-curves-easeodin-curveodin),
+  [random and noise](references/math.md#random-and-noise-randomodin-noiseodin) and
+  [color](references/math.md#color-and-quantization-colorodin-quantizeodin).
 - Tweens, clips, additive blend spaces, poses, blending, IK and retarget:
-  [std/anim](references/anim.md).
-  - Compressed and cooked clips: [anim-storage](references/anim-storage.md).
+  [tweens](references/anim.md#tweens-tweenodin-loopodin),
+  [clips](references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
+  [playback](references/anim.md#playback-and-events-playerodin),
+  [blending](references/anim.md#blending-poseodin),
+  [blend spaces](references/anim.md#blend-spaces-blend_spaceodin),
+  [skeleton](references/anim.md#skeletal-pose-skeletonodin),
+  [adaptation](references/anim.md#adaptation-ikodin-retargetodin-followodin) and
+  [procedural](references/anim.md#procedural-without-clips-proceduralodin-chain_ikodin).
+  - Compressed and cooked clips: [error](references/anim-storage.md#error),
+    [sampling](references/anim-storage.md#sampling), [stream](references/anim-storage.md#stream),
+    [bit rates](references/anim-storage.md#bit-rates) and
+    [access](references/anim-storage.md#access).
   - Motion matching, inertialization, warping and distance to time:
-    [anim-motion](references/anim-motion.md).
+    [matching](references/anim-motion.md#motion-matching-matchingodin),
+    [inertialization](references/anim-motion.md#inertialization),
+    [warping](references/anim-motion.md#orientation-and-stride-warping) and
+    [distance to time](references/anim-motion.md#distance-to-time).
   - Chains, Multi IK, springs, twist, reach with stretch, spline, aiming with an up axis and pose
-    samples: [anim-rigs](references/anim-rigs.md).
-  - Body map, clip metrics and editing verbs: [anim-body](references/anim-body.md).
-- A*, grids, flow fields, steering and utility: [std/ai](references/ai.md).
+    samples: [retarget](references/anim-rigs.md#retarget-between-chains),
+    [IK](references/anim-rigs.md#ik-with-several-targets),
+    [springs](references/anim-rigs.md#springs), [twist](references/anim-rigs.md#twist-distribution)
+    and [reach](references/anim-rigs.md#reach-spline-aiming-and-pose-samples-rig_shapesodin).
+  - Body map, clip metrics and editing verbs:
+    [body](references/anim-body.md#body-map-bodyodin),
+    [metrics](references/anim-body.md#metrics-metricsodin) and
+    [editing verbs](references/anim-body.md#editing-verbs-editodin-edit_bodyodin).
+- A*, grids, flow fields, steering and utility: [A*](references/ai.md#a-search-searchodin),
+  [grid](references/ai.md#grid-and-flow-fields-gridodin-flowfieldodin),
+  [flow fields](references/ai.md#flow-fields-flowfieldodin),
+  [steering](references/ai.md#steering-steeringodin) and
+  [utility](references/ai.md#utility-utilityodin).
   - Tiled navmesh, queries, corridor and jump and drop links:
     [navigation](references/ai.md#navigation); its construction from triangles:
     [tiles](references/ai.md#tile-building-nav_buildodin); the volume for what flies or
@@ -38,16 +79,33 @@ description: Mirai standard library for games, with the packages std/base, jobs,
     [influence maps](references/ai.md#influence-maps-influenceodin).
   - Perception memory and place queries:
     [perception](references/ai.md#perception-and-places-perceptionodin-placesodin).
-- Input actions and device types: [std/input](references/input.md). The rules of a game
+- Input actions and device types: [actions](references/input.md#actions-inputodin) and
+  [devices](references/input.md#devices-devicesodin). The rules of a game
   (inventories, dialogues, timers, statistics) are not in `std`.
 - Meshes, MikkTSpace tangents, convex hull, slicing, fracture, triangulation and convex partition
   of polygons, simplification (meshoptimizer port), clusters and their level DAG, and convex
-  decomposition: [std/geom](references/geom.md).
-- Uniform grid, spatial hash and octree: [std/spatial](references/spatial.md). The AABB tree and the
+  decomposition: [data and memory](references/geom.md#data-and-memory),
+  [determinism](references/geom.md#determinism-precision-and-tolerance),
+  [surface editing](references/geom.md#surface-editing-surface_editodin),
+  [booleans](references/geom.md#solid-booleans-booleanodin),
+  [isosurface](references/geom.md#scalar-field-surfaces-isosurfaceodin),
+  [hull](references/geom.md#convex-hull-hullodin),
+  [slicing](references/geom.md#plane-slicing-sliceodin),
+  [fracture](references/geom.md#voronoi-fracture-fractureodin),
+  [triangulation](references/geom.md#primitives-and-triangulation),
+  [simplification](references/geom.md#simplification-simplifyodin),
+  [clusters](references/geom.md#clusters-and-dag-clusterodin-partitionodin-cluster_dagodin),
+  [decomposition](references/geom.md#approximate-convex-decomposition-decomposeodin) and
+  [tangents](references/geom.md#tangents-tangentsodin).
+- Uniform grid, spatial hash and octree: [contract](references/spatial.md#common-contract),
+  [grid](references/spatial.md#grid-uniform-grid-and-spatial-hash),
+  [octree](references/spatial.md#octree-loose-octree) and
+  [which to use](references/spatial.md#which-to-use). The AABB tree and the
   BVH are in [physics](../mirai-physics/references/physics.md#stdspatial).
 - Streams, schemas, hashes, import and migration of values (`std/serial`):
-  [std/serial](../mirai-assets/references/serial.md).
-- Child processes without console windows: [std/subprocess](references/subprocess.md).
+  [std/serial](../mirai-assets/references/serial.md#stdserial).
+- Child processes without console windows: [API](references/subprocess.md#api) and
+  [Windows](references/subprocess.md#windows).
 
 ## Workflow
 

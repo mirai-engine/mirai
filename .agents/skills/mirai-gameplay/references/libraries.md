@@ -459,7 +459,7 @@ the reverb of the room where the listener is and what covers each source.
     sends all by default and `play_asset` none.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
-  ([water](../../mirai-plugins/references/water.md#sound)) before `audio_reverb` and
+  ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
   `audio_buses`, from where the listener is (`listener_position`); at zeros it is air.
   `audio_reverb` mixes its reverb by its weight over that of the room, with the same fade, and
   `audio_buses` gives the master the lower cutoff between that of `Audio_Settings` and that of the
@@ -776,9 +776,9 @@ its weight goes from 1 to 0.
   linear toward the center inside; with `radius` 0, the same at any distance. Without any,
   `GRAVITY_WORLD` applies. `gravity_of` is the value of a field at a point, the same for the bodies
   of [physics](../../mirai-physics/references/engine.md#gravity) and for the particles of
-  [vfx](../../mirai-plugins/references/vfx.md#game), which do not depend on physics.
+  [vfx](../../mirai-world/references/vfx.md#game), which do not depend on physics.
 
 ## `vfx`
 
-Particles are the [`vfx`](../../mirai-plugins/references/vfx.md#game) plugin: emitters, `.particle`
+Particles are the [`vfx`](../../mirai-world/references/vfx.md#game) plugin: emitters, `.particle`
 effects, instance values, world clocks and requests.

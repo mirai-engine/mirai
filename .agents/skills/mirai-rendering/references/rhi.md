@@ -5,7 +5,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 ## RHI contract
 
-### Resources and capacities
+## Resources and capacities
 
 - **Generational handles** (`Buffer`, `Texture`, `Sampler`, `Pipeline`, `Accel`), zero is
   invalid. A destroyed handle returns `nil`; destruction is deferred until the GPU has finished
@@ -19,7 +19,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   for the GPU and frees them; within a frame the list grows and is counted in
   `deletion_overflows`.
 
-### Device
+## Device
 
 - **Selection.** Discrete, integrated, virtual GPU and finally CPU. `Device_Desc.preferred_device`
   selects by part of the name; `MIRAI_GPU=<text>` overrides it. Without a GPU, Linux can use
@@ -41,7 +41,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   `device_validation_messages` reads the last ones (`VALIDATION_HISTORY`). On Metal both counts
   are 0.
 
-### Device loss
+## Device loss
 
 - **A single path.** Every point where the API reports a loss (submit, present, acquiring an
   image, waits, fences, queries, maps) passes its result through `device_fail`
@@ -66,7 +66,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   (`provoked by device_lose`). What the application does afterwards:
   [host](../../mirai-core/references/host.md#gpu-that-stops-working).
 
-### Frames and presentation
+## Frames and presentation
 
 - Two frames in flight (`MAX_FRAMES_IN_FLIGHT`); the CPU does not wait for the GPU on every
   frame. Each frame has an upload ring for constants and dynamic data, which a GPU copy
@@ -79,7 +79,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 - **Vulkan swapchain.** Without `VK_EXT_swapchain_maintenance1`: the presentation semaphores are
   recycled after `vkDeviceWaitIdle`.
 
-### Paced presentation
+## Paced presentation
 
 For a renderer that generates frames (`rhi/present.odin`):
 
@@ -105,7 +105,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   with its GPU work finished. Without the thread, the GPU is assumed to start each frame when it
   is submitted and when the previous one finishes.
 
-### Bindings and texture table
+## Bindings and texture table
 
 - **Bindings by slot.** Binding N of a shader is binding N of set 0 on Vulkan (push
   descriptors) and index N of buffer, texture or sampler on Metal. Parameters go in uniform
@@ -142,7 +142,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - **3D textures** (`Texture_Desc.depth` greater than 1): only shaders write them (usage
   `Storage`); they are not targets, do not receive `texture_upload` and do not enter the table.
 
-### Synchronization and commands
+## Synchronization and commands
 
 - **Hazards.** Each resource keeps its last access; barriers are derived from the bindings before
   each dispatch and `cmd_barrier_*` emits only the necessary ones. Inside a render pass there are
@@ -153,7 +153,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect
   dispatches copy the renderer's `dispatch_start`).
 
-### Textures shared between processes
+## Textures shared between processes
 
 - `texture_create_shared` creates a one-level texture of 4 bytes per texel that another process
   of the same machine and GPU opens with `texture_open_shared`; `device_shares_textures` says
@@ -167,7 +167,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - No shared semaphores: whoever draws waits for the GPU before announcing which texture is ready
   and leaves it in shader-read layout.
 
-### Hardware ray tracing
+## Hardware ray tracing
 
 - Vulkan: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`; Metal: `MTLAccelerationStructure`
   instanced with user IDs.
@@ -192,7 +192,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   `Stats.problem`, which `engine.status` (`renderer_problem`) and `engine.diagnostics`
   (`renderer`) show.
 
-### Pipeline cache
+## Pipeline cache
 
 - Vulkan saves the `VkPipelineCache` in `Device_Desc.pipeline_cache_path` when destroying the
   device, replacing the whole file: several processes share it. `host` uses `pipelines.bin` in the
@@ -200,7 +200,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - Metal shares library and function between identical sources; the caller may free `Shader_Code`
   after creating the pipeline.
 
-### Pipelines from other threads
+## Pipelines from other threads
 
 - The device is used from the thread that records the frames, except `pipeline_create_compute`
   and `pipeline_create_graphics`, which run on other threads, several at a time, while that one
@@ -211,7 +211,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   reads only the slot of its handle, so a new pipeline does not touch the ones the frame uses.
   Destroying stays on the frame thread.
 
-### Limits
+## Limits
 
 - Metal compiles MSL with fast math, which can cancel the NaN protections: NaN sources are
   eliminated without relying on them.

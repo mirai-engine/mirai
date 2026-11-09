@@ -48,7 +48,7 @@ mode.
 - In common PBR, mask coverage reads only opacity and base color.
 - The scene caches the opaque instances that require their own F0/F90; G-buffer and lighting use
   stored reflectance only while some of their boxes is in the frustum of the view or of a nested
-  view ([G-buffer](frame-graph.md#frame-graph)), and the target is allocated the first time it is
+  view ([G-buffer](frame-graph.md#passes)), and the target is allocated the first time it is
   needed.
 
 ## BRDF
@@ -420,7 +420,7 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   coverage, normal and depth. What is not covered is extended by `impostor_dilate`, on any thread,
   like the levels (`texture_build`, which `texture_add_built` uploads afterwards). The grid and the
   axes of each frame are `impostor_direction` and `impostor_axes`; a shader that draws an impostor
-  repeats them ([foliage](../../mirai-plugins/references/foliage.md#far-impostor-and-crown)).
+  repeats them ([foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown)).
 
 ## Traced reflections
 

@@ -64,7 +64,7 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
 - **`Frame_Desc.effect_views`**: an `Effect_View` draws in its texture what the extensions draw in
   the [`Effect`](views.md#extension-stages) stage seen by its camera, over nothing, after the
   frame's simulation and before the UI that shows it: the particles of a `Particles` node
-  ([vfx](../../mirai-plugins/references/vfx.md#ui-effects)). Its light, with exposure 1,
+  ([vfx](../../mirai-world/references/vfx.md#ui-effects)). Its light, with exposure 1,
   goes through the display transform (`ui_particles.frag`) and the part of the pixel they cover
   is the alpha.
 - **`Frame_Desc.probes`**: a `Depth_Probe` asks for the linear depth of the opaque scene in a patch

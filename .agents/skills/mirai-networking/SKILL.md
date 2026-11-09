@@ -2,12 +2,12 @@
 name: mirai-networking
 description: Mirai networking - the `net` package (UDP and in-memory transport, connections,
   channels, delta replication, composite types made of fragments, scope and priority, messages,
-  authority, clock, inputs, rollback), the `std/serial` bitstream, the `multiplayer` plugin that
-  connects it with the data world (session, the player's `--server`/`--connect` arguments,
-  connection seats) and the `destruct_multiplayer` and `terrain_multiplayer` bridges (networked
-  terrain edits). Use when changing `net/` or `std/serial/bitstream.odin`, when declaring
-  replicated entities or `@(net_message)` messages in a game, or when changing how the client
-  predicts and corrects.
+  authority, clock, inputs, rollback and the bitstream), the `multiplayer` plugin that connects it
+  with the data world (session, the player's `--server`/`--connect` arguments, connection seats) and
+  the `destruct_multiplayer`, `terrain_multiplayer` and `foliage_multiplayer` bridges (networked
+  fractures, terrain edits and removed foliage). Use when changing `net`, when declaring replicated
+  entities or `@(net_message)` messages in a game, or when changing how the client predicts and
+  corrects.
 ---
 
 # Mirai networking
@@ -28,12 +28,29 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 ## Map
 
 - Bitstream, transport, host, connections and security, channels, protocol and types, replication,
-  events, authority, clock, rollback → [networking.md](references/networking.md)
+  events, authority, clock, rollback →
+  [bitstream](references/networking.md#bitstream-stdserialbitstreamodin),
+  [transport](references/networking.md#transport), [host](references/networking.md#host-two-halves),
+  [connections](references/networking.md#connections),
+  [channels](references/networking.md#channels),
+  [protocol](references/networking.md#protocol-and-descriptors),
+  [replication](references/networking.md#replication), [events](references/networking.md#events),
+  [authority](references/networking.md#authority),
+  [clock and inputs](references/networking.md#time-and-inputs),
+  [rollback](references/networking.md#prediction-rollbackodin) and
+  [known limits](references/networking.md#known-limits)
 - Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
-  PCP, NAT-PMP, UPnP) → [port-mapping.md](references/port-mapping.md)
+  PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
+  [protocols](references/port-mapping.md#protocols) and
+  [scope and limits](references/port-mapping.md#scope-and-limits)
 - Replicated entities, game messages and collections, session, tick, prediction and correction,
-  lent simulation, connection events → [multiplayer.md](references/multiplayer.md); what the
-  network could not do → [problems](references/multiplayer.md#problems)
+  lent simulation, connection events →
+  [what the game declares](references/multiplayer.md#what-the-game-declares),
+  [networked play](references/multiplayer.md#networked-play),
+  [the tick](references/multiplayer.md#the-tick),
+  [delegated authority](references/multiplayer.md#delegated-authority) and
+  [connection events](references/multiplayer.md#connection-events); what the network could not
+  do → [problems](references/multiplayer.md#problems)
 - Lag compensation (`Rewind`, `rewind_tick`, `rewind_pose`, `rewind_tolerance`) and the absolute
   look in the input → [lag compensation](references/multiplayer.md#lag-compensation)
 - Replicated bodies, `core.Pose_Target` and `core.Motion` →
@@ -53,7 +70,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 - Replicated fractures →
   [engine-destruct.md#red](../mirai-physics/references/engine-destruct.md#network)
 - Networked terrain edits (`terrain_multiplayer`: brush, check and pages, client prediction, base
-  on join) → [terrain.md#red](../mirai-plugins/references/terrain.md#network)
+  on join) → [terrain.md#red](../mirai-world/references/terrain.md#network)
 
 ## Files
 
