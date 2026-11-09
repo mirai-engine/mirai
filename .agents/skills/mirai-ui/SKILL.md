@@ -104,6 +104,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **A component is a widget: a `.ui` of its own**, one root, with its `params` and its `slot`, used
   by `use` and named by its file. A local form does not exist; `component_nodes` and `first,count`
   are only what `tree_link` expands uses into, and no file holds them.
+- **One component row per file a `.ui` uses**, whether nodes are uses of it or styles and tokens
+  come from it; a file stays in `use` until someone removes it, also after its last use is removed.
+- **The override of a style by a node is an unnamed style with `extends`**: it says what differs
+  and follows later changes of the style in the rest.
 - **The first control of each page takes the focus** when it shows (a flag set the first time a
   tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
   `Focus_First`.

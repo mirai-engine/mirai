@@ -48,7 +48,7 @@ Tree_Document_Node :: struct {
     kind:u8 `mirai:"any,optional,label=A ui.Node_Kind, or the name of the file of a widget it uses"`,
     text:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=In the language interfaces are written in"`,
     style:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=The named style it takes; empty: none, where its kind would take one; absent: the one its kind takes"`,
-    look:u8 `mirai:"any,optional,label=Its own look, as a style without family; with style, all that the node has instead of that style until it is saved there"`,
+    look:u8 `mirai:"any,optional,label=Its own look, instead of style: a style without family; with extends it says what it changes of that style, which it follows otherwise"`,
     image:ui.Tree_Image `mirai:"optional"`,
     events:u8 `mirai:"any,optional,label=By trigger (shown, hovered, clicked, ...): the animation it plays"`,
     slot:bool `mirai:"optional,label=Whether it takes what a use of this widget holds"`,

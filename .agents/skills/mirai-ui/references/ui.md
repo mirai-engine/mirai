@@ -489,8 +489,8 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 ### Widgets
 
 - A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
-  `Tree_Component.widget` names the file and its name is the name of the file. `library` is a file
-  that only lends its styles and tokens (`use` without a use); a style row with `from` is a named
+  `Tree_Component.widget` names the file and its name is the name of the file. A file that no node
+  uses only lends its styles and tokens (`use` without a use); a style row with `from` is a named
   style of that file, copied into the row at link.
 - `tree_link` expands each use into `component_nodes` (with the styles, variants, images, fonts
   and animations of the file, once per file) and `tree_load` into the flat arrays: the frame

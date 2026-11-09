@@ -311,9 +311,17 @@ an_override_saves_into_its_style_and_goes :: proc(t:^testing.T) {
     // The title overrides it, with its variant.
     changed:=r.styles[shared]
     changed.radius=9
-    override:=records_style_add(&r,changed,records_style_variants(&r,shared),{base=u16(shared+1)})
+    info:ui.Tree_Style_Info
+    ui.tree_text_set(info.extends[:],"Label")
+    override:=records_style_add(&r,changed,records_style_variants(&r,shared),info)
     r.nodes[1].style=u16(override)
     testing.expect_value(t,records_style_base(&r,override),shared)
+    // It says what differs, and follows the style in the rest.
+    records_override_own(&r,override)
+    testing.expect(t,r.style_infos[override].sets=={.Radius} && len(records_style_variants(&r,override))==0)
+    r.styles[shared].stroke_width=2
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    testing.expect(t,r.styles[override].stroke_width==2 && r.styles[override].radius==9)
     testing.expect_value(t,len(records_style_variants(&r,override)),1)
     if !testing.expect(t,records_load_as_tree(&r)) {return}
     // Saving writes it into the shared style, which both use again.
@@ -356,7 +364,8 @@ rows_nothing_uses_go_when_the_records_are_written :: proc(t:^testing.T) {
     testing.expect_value(t,records_style_name(&r,1),"Kept")
     testing.expect_value(t,len(r.images),1)
     testing.expect_value(t,r.images[r.nodes[3].image-1].texture,base.Asset_Id{3,3})
-    testing.expect_value(t,len(r.components),0)
+    testing.expect_value(t,len(r.components),1)
+    testing.expect(t,records_use_remove(&r,0))
     testing.expect(t,records_load_as_tree(&r))
     // A named style no node uses goes when asked.
     testing.expect(t,records_style_delete(&r,1))

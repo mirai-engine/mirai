@@ -11,7 +11,7 @@ import "mirai:std/serial"
 // in it ("slot/icon"). A widget gives its root to the instance and keeps the
 // bindings it declares: they read the fields of what the tree binds. A style
 // a row of the tree names by Tree_Style_Info.from is that style of the file,
-// with its variants; a file that a component names library lends only those.
+// with its variants; a file no node uses lends only those.
 
 // imports: by row of components, the records of the file of each widget,
 // linked already; nothing for the components of the tree itself. Returns the
@@ -104,12 +104,15 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         _,error:=append(joined,at);ok&=error==nil
         return
     }
+    used,used_error:=make([]bool,len(components),allocator)
+    if used_error!=nil {return {},false}
+    for &node in data.nodes {if node.kind==.Component && node.component>0 && int(node.component)<=len(used) {used[node.component-1]=true}}
     for &component,row in components {
         if component.widget=={} {continue}
         widget:=imports[row]
         at,joined_ok:=join(&widget,component.widget,&joined,&styles,&variants,&images,&fonts,&anims,&tracks,&keys,&parts,&anim_sets,&translations,&grid_tracks,&text)
         if !joined_ok {return {},false}
-        if component.library {
+        if !used[row] {
             component.widget={}
             continue
         }

@@ -637,11 +637,16 @@ style_edit_begin :: proc(p:^Pane,n:^ui.Tree_Node) {
 @(private)
 style_edit_end :: proc(p:^Pane,n:^ui.Tree_Node) {
     if p.style.label=="" || p.readonly {return}
+    r:=&p.u.records
+    row:=p.style.row
     if p.style.draft {
-        row:=records_style_add(&p.u.records,p.style.values,p.style.variants[:],{} if p.style.own else {base=u16(p.style.row+1)})
+        info:=ui.Tree_Style_Info{family=style_family(n.kind)}
+        if !p.style.own {ui.tree_text_set(info.extends[:],records_style_name(r,row))}
+        row=records_style_add(r,p.style.values,p.style.variants[:],info)
         if row<0 {return}
         n.style=u16(row)
     }
+    records_override_own(r,row)
     changed(p.u,p.style.label)
 }
 
@@ -698,7 +703,7 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ctx.edit.id!=field {ui.edit_request(ctx,field)}
             result:=ui.text_field(ctx,field,u.style_name[:len(u.style_name)-1],&u.style_name_length,{width=ui.GROW})
             if result.committed && u.style_name_length>0 {
-                ui.tree_text_set(r.style_infos[current].name[:],string(u.style_name[:u.style_name_length]))
+                records_style_rename(r,current,string(u.style_name[:u.style_name_length]))
                 changed(u,"Rename style")
             }
             if result.committed || result.cancelled {u.style_rename=false}
@@ -706,7 +711,11 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
             old:=int(n.style)
             to:=rows[selected]
             // None keeps the look the node has, as its own.
-            if to<0 {to=records_style_add(r,r.styles[old],records_style_variants(r,old),{})}
+            if to<0 {
+                rules:=records_style_variants(r,old)
+                records_rules_own(rules)
+                to=records_style_add(r,r.styles[old],rules,{})
+            }
             if to>=0 {
                 n.style=u16(to)
                 if !records_style_named(r,old) {n.style=u16(records_style_remove(r,old,to))}
@@ -716,9 +725,11 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
         if icon(ctx,"style_new",.Plus,"New style with this look") {
             at:=int(n.style)
             if base>=0 {
-                r.style_infos[at].base=0
+                records_style_detach(r,at)
             } else if named || at==0 || records_style_users(r,at)>1 {
-                at=records_style_add(r,r.styles[at],records_style_variants(r,at),{})
+                rules:=records_style_variants(r,at)
+                records_rules_own(rules)
+                at=records_style_add(r,r.styles[at],rules,{})
             }
             if at>=0 {
                 ui.tree_text_set(r.style_infos[at].name[:],records_style_name_unique(r))

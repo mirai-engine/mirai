@@ -226,6 +226,17 @@ widget_records :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> ^Reco
     return &last.records if last.ok else nil
 }
 
+// Whether a .ui has the one root a use of it needs: a file lent for its styles
+// may have none.
+@(private)
+widget_one_root :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> bool {
+    r:=widget_records(u,a,id)
+    if r==nil {return false}
+    roots:=0
+    for &n in r.nodes {roots+=int(n.parent<0)}
+    return roots==1
+}
+
 // The widget a node of the tree is an instance of; none for another node.
 @(private)
 node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {

@@ -135,6 +135,7 @@ a_document_says_where_it_cannot_be_written :: proc(t:^testing.T) {
         {"",`{"items":[]}`,"document has no 'items'"},
         {"",`{"styles":{"card":{"family":"Box","rules":[{"states":["Hovered"],"colour":1}]}}}`,"styles.card: rules[0]: a state has no 'colour'"},
         {"",`{"styles":{"card":null}}`,"styles.card: nodes still take it"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","style":"card","look":{"radius":1}}]}`,"nodes[0]: look: a node has a style or a look"},
     }
     for c in cases {
         r:Records
@@ -190,6 +191,43 @@ a_document_with_names_comes_back_the_same_and_changes_nothing_when_written :: pr
     testing.expect(t,made==0 && removed==0,"writing what it gave makes and takes nothing")
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     testing.expect_value(t,document_text(&types,&r,-1),first)
+    testing.expect(t,records_load_as_tree(&r))
+}
+
+@(test)
+a_look_that_extends_a_style_follows_it_and_comes_back_the_same :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    r:Records
+    if !document_of(t,&types,&r,`{"styles":{"label":{"size":12,"color":"#112233","hover":{"color":"#ffffff"}}},"nodes":[
+        {"name":"a","kind":"Text","style":"label"},
+        {"name":"b","kind":"Text","look":{"extends":"label","radius":9,"hover":{"scale":1.1}}}]}`) {return}
+    b:=int(r.nodes[document_row_of(&r,"b")].style)
+    testing.expect_value(t,records_style_base(&r,b),tree_style_row(&r,"label"))
+    testing.expect_value(t,r.styles[b].text.color,ui.Color{0x11,0x22,0x33,255})
+    testing.expect_value(t,r.styles[b].radius,[4]f32{9,9,9,9})
+    first:=document_text(&types,&r,-1)
+    for expected in ([]string{`"look":{"extends":"label","radius":9`,`"hover":{"scale":1.1`}) {
+        testing.expectf(t,strings.contains(first,expected),"the document says %s: %s",expected,first)
+    }
+    testing.expect(t,!strings.contains(first,`"radius":9,"hover":{"color"`),"it does not copy the style's own")
+    call:api.Call
+    args:=call_args(&call,&types,"{}")
+    _,_,ok:=document_apply(&args,&r,-1,first)
+    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    testing.expect_value(t,document_text(&types,&r,-1),first)
+    // A later change of the style reaches the look.
+    args=call_args(&call,&types,"{}")
+    _,_,ok=document_apply(&args,&r,-1,`{"styles":{"label":{"size":20,"color":"#445566","hover":{"color":"#000000"}}}}`)
+    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    b=int(r.nodes[document_row_of(&r,"b")].style)
+    testing.expect_value(t,r.styles[b].text.size,f32(20))
+    testing.expect_value(t,r.styles[b].text.color,ui.Color{0x44,0x55,0x66,255})
+    testing.expect_value(t,r.styles[b].radius,[4]f32{9,9,9,9})
+    hover:^ui.Tree_Style_Variant
+    for &v in r.variants {if int(v.style)==b && v.states=={.Hovered} {hover=&v}}
+    testing.expect(t,hover!=nil && hover.patch.values.text.color==ui.Color{0,0,0,255} && hover.patch.values.scale==1.1)
     testing.expect(t,records_load_as_tree(&r))
 }
 
