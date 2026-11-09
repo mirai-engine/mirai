@@ -143,25 +143,24 @@ one scene-linear unit) or `TUNED_EXPOSURE`, with which the light limits were set
 
 ## Display transform
 
-The tonemap takes the exposed image (scene-linear Rec.709) to the display with a read of the
-**display LUT** (`display_encode`) and then the dither. The debug views show sRGB in [0, 1].
+The tonemap takes the exposed image (scene-linear Rec.709) to the display with `display_encode`
+and then the dither. The debug views show sRGB in [0, 1].
 
 - **Choice.** `Display_Transform_Settings.transform` (`render` library), a setting of the project
   (`settings.set`, `settings.mirai`), never of the machine. The world step
   `display_transform_apply` brings the renderer to it when it changes.
 - **Neutral** (default): Khronos PBR Neutral (`pbr_neutral`), which leaves the colors of a material
-  as authored up to their highlights: what most games want.
+  as authored up to their highlights: what most games want. The pass computes it
+  (`FRAME_FLAG_NEUTRAL`): its curve bends over the gray axis, and a LUT shows that in rings.
 - **ACES_2**: the ACES 2.0 Output Transform (`aces.slang`, adapted from OpenColorIO:
   [license](../../../../THIRD_PARTY_NOTICES.md#adapted-code)) for a `Display_Desc` (`DISPLAY_SDR`:
   Rec.709, D65, 100 nits, sRGB): tone scale on the J of its CAM16 model, with the mid gray at 10
   nits, and chroma and gamut compression that preserves hue. A gray stays gray and a very bright
-  color goes toward white: for filmic images and strong emissive light. `demo` selects it, so the
-  render check compares like with like.
-- **Baking.** `display_build`, on the GPU (`display_tables.comp` for ACES 2.0, `display_lut.comp`)
-  into `Renderer.display_lut`, which the tonemap and the UI particles read: when the renderer
-  starts, with ACES 2.0, and when a project chooses another (`renderer_set_display_transform`,
-  which waits for the frames in flight). The frame reads the LUT and does no other work. Its axes
-  are log2 around the mid gray (`display_shaper`); outside its range it is clipped.
+  color goes toward white: for filmic images and strong emissive light.
+- **Baking.** `display_build` bakes ACES 2.0 on the GPU (`display_tables.comp`, `display_lut.comp`)
+  into `Renderer.display_lut` once, when the renderer starts; the tonemap and the UI particles
+  read it when the project chooses ACES 2.0. Its axes are log2 around the mid gray
+  (`display_shaper`); outside its range it is clipped.
 - **Grading.** A grading LUT would go in the shaper space, before the display LUT; none exists.
 - **HDR.** The swapchain is SDR sRGB; PQ or scRGB are pending (issue #53). Another display is
   another `Display_Desc` and another bake.
