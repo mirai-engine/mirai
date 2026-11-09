@@ -342,7 +342,14 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 		delete(taken, d.allocator)
 		return false
 	}
-	resize(&d.table_textures, capacity)
+	before := len(d.table_textures)
+	if resize(&d.table_textures, capacity) != nil || !table_changes_reset(&d.table_changes, capacity) {
+		base.truncate(&d.table_textures, before)
+		d.dvk.DestroyDescriptorPool(d.handle, pool, nil)
+		delete(taken, d.allocator)
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
 	for &image, index in images {
 		shown := d.table_textures[index] if index < len(d.table_textures) && d.table_textures[index] != 0 else d.table_default
 		image = {imageView = pool_get(&d.textures, base.Handle(shown)).view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
@@ -359,7 +366,6 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 	d.table_pool, d.table_sets = pool, sets
 	delete(d.table_taken, d.allocator)
 	d.table_taken = taken
-	table_changes_reset(&d.table_changes, capacity)
 	return true
 }
 
@@ -448,8 +454,9 @@ vk_shader_module :: proc(d: ^Device, code: ^Shader_Code) -> vk.ShaderModule {
 	aligned: []u32
 	defer delete(aligned, d.allocator)
 	if uintptr(words) % align_of(u32) != 0 {
-		aligned = make([]u32, len(code.spirv) / 4, d.allocator)
-		if aligned == nil {set_error(d, "shader %s: out of memory", code.name); return 0}
+		aligned_error: mem.Allocator_Error
+		aligned, aligned_error = make([]u32, len(code.spirv) / 4, d.allocator)
+		if aligned_error != nil {set_error(d, "shader %s: out of memory", code.name); return 0}
 		mem.copy(raw_data(aligned), raw_data(code.spirv), len(code.spirv))
 		words = raw_data(aligned)
 	}

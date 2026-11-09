@@ -11,11 +11,14 @@ COMPACT_SLOTS :: 4096
 // What a compacted copy has to save of a structure to be made.
 COMPACT_SAVING :: 0.9
 
-// A slot of the table of compacted sizes + 1; 0 when they are all waiting.
+// A slot of the table of compacted sizes + 1; 0 when they are all waiting or
+// there is no memory for the list of the free ones.
 @(private)
 compact_slot_take :: proc(d: ^Device) -> i32 {
 	if d.compact_free == nil {
-		d.compact_free = make([dynamic]u32, 0, COMPACT_SLOTS, d.allocator)
+		free, error := make([dynamic]u32, 0, COMPACT_SLOTS, d.allocator)
+		if error != nil {return 0}
+		d.compact_free = free
 		for i := COMPACT_SLOTS - 1; i >= 0; i -= 1 {append(&d.compact_free, u32(i))}
 	}
 	if len(d.compact_free) == 0 {return 0}
