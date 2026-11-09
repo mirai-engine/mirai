@@ -217,6 +217,7 @@ Device :: struct {
 	pipeline_cache:    vk.PipelineCache,
 	cache_path:        [512]u8,
 	cache_path_len:    int,
+	cache_unsaved_ns:  i64, // time spent making pipelines since the cache was last saved (atomic)
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:      [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names of timings, kept until the next ones
 	timing_count:      int,
@@ -851,6 +852,25 @@ device_destroy :: proc(d: ^Device) {
 	pool_destroy(&d.pipelines, d.allocator)
 	pool_destroy(&d.accels, d.allocator)
 	free(d, d.allocator)
+}
+
+// Compile time that the file of the cache lacks past which it is saved while
+// the device lives. Pipelines read from the cache take far less, so a warm
+// start saves nothing; a cold one keeps what it made even when it is cut short.
+@(private)
+PIPELINE_CACHE_SAVE_AFTER :: 10 * time.Second
+
+// Counts the time a pipeline took to make and saves the cache once enough of
+// it is not in its file. Any thread.
+@(private)
+vk_pipeline_made :: proc(d: ^Device, took: time.Duration) {
+	if d.cache_path_len == 0 || d.pipeline_cache == 0 {return}
+	if sync.atomic_add(&d.cache_unsaved_ns, i64(took)) + i64(took) < i64(PIPELINE_CACHE_SAVE_AFTER) {return}
+	// The lock of the pool of pipelines: one save at a time, and the allocator of the device is not used from two threads.
+	sync.guard(&d.pipeline_lock)
+	if sync.atomic_load(&d.cache_unsaved_ns) < i64(PIPELINE_CACHE_SAVE_AFTER) {return}
+	sync.atomic_store(&d.cache_unsaved_ns, 0)
+	vk_save_pipeline_cache(d)
 }
 
 @(private)

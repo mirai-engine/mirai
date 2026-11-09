@@ -273,7 +273,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     }
     // Left open, it would run out of reach, holding the binaries of the engine.
     process_kill_pid(process.pid)
-    fmt.eprintfln("mirai session: the API did not answer in %d s and the editor was closed (pid %d); its log:",timeout,process.pid)
+    fmt.eprintfln("mirai session: the API did not answer in %d s and the editor was closed (pid %d); a first start with a cold pipeline cache can take longer, and each try keeps what it compiled: run it again, or wait more with --timeout S; its log:",timeout,process.pid)
     session_log_tail(log)
     return {},1
 }
