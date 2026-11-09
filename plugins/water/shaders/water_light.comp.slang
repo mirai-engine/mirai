@@ -29,6 +29,24 @@ float pattern_at(float2 texel) {
     return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
 }
 
+// What keeps the repeats of the pattern from lining up: a second reading of it
+// turned by the angle of a 3-4-5 triangle, which shares its grid every
+// WATER_CAUSTIC_TURNS repeats so that origin_wrap stays exact, chosen against
+// the first in patches narrower than a repeat. The patches have their own
+// period, far beyond what a view takes in.
+static const float WATER_CAUSTIC_TURNS = 5.0;
+static const float WATER_CAUSTIC_PATCHES = 280.0;
+
+float pattern_varied(float2 crossed) {
+    float2 place = crossed + origin_wrap(frame.origin.xyz, float3(WATER_DETAIL_SIZE * WATER_CAUSTIC_TURNS)).xz;
+    float2 texel = place / WATER_DETAIL_SIZE * float(water.texels);
+    float a = pattern_at(texel);
+    float b = pattern_at(float2(0.6 * texel.x - 0.8 * texel.y, 0.8 * texel.x + 0.6 * texel.y));
+    float2 far = (crossed + origin_wrap(frame.origin.xyz, float3(WATER_CAUSTIC_PATCHES)).xz) * (6.2831853 / WATER_CAUSTIC_PATCHES);
+    float patches = sin(21.0 * far.x + 9.0 * far.y) + sin(-8.0 * far.x + 20.0 * far.y);
+    return lerp(a, b, smoothstep(-0.6, 0.6, patches));
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
@@ -51,7 +69,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         under = max(water_surface_at(b, crossed) - position.y, 0.0);
         crossed = position.xz - down.xz * (under / max(-down.y, 0.2));
     }
-    float gathered = pattern_at(water_detail_place(crossed, frame.origin.xyz) / WATER_DETAIL_SIZE * float(water.texels));
+    float gathered = pattern_varied(crossed);
     // Sharp a little under the surface, softer deep down.
     float strength = b.look.x * saturate(under / 0.5) * exp(-under / 12.0);
     float4 color = image[p];

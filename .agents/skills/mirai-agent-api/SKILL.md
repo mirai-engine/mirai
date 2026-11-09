@@ -32,8 +32,8 @@ difference with the catalog, it rules.
   [`mirai record`](references/api.md#mirai-record).
 - Checking a motion in one or two calls (an input timeline, a table of values per tick, one
   image of cells around an entity): [`play.step`](references/methods.md#play) and [`capture`](references/methods.md#editor-and-viewport).
-- Walking the player to a place, with no bot: `play.step` with `drive`
-  ([drive](../../../docs/game/testing/scenario.md#drive)).
+- Walking the player to a place, with no bot, and turning the view at something: `play.step` with
+  `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
 - Letting a cheap model play with few tokens, finding bugs with monitors or a bot with no model,
@@ -246,6 +246,7 @@ positions misses both.
   play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
   a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go
   a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped
+  a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform
   play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:
   `mirai test editor
   a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails

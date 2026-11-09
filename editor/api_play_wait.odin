@@ -117,7 +117,7 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
             if value!=nil {
                 scratch:=make([]u8,max(t.info.size,1),allocator)
                 api_value_out(w,t.info,value,scratch,handles=true)
-                serial.text_write(&out,&st.schema,st.types[api_table_index(s,t)],scratch[:t.info.size],.Line)
+                serial.text_write(&out,&st.schema,st.types[api_table_index(s,t)],scratch[:t.info.size],.Line,omit_fields={})
                 found=true
             }
         } else if e!=core.NONE {

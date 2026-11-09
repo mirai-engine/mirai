@@ -48,6 +48,7 @@ Player_Options :: struct {
     arguments:[dynamic]string, // what it does not read itself, for the libraries
     headless,no_gpu,validation,attached:bool,
     dedicated:bool, // a server nobody plays on; the flag also stays in arguments, for the plugin of the network
+    show_window:bool, // a window also for a run that --frames, --input or --capture would have run without one
 }
 
 @(private) PLAYER_SCRIPT_CAPACITY :: 256
@@ -71,21 +72,23 @@ Player_Script :: struct {
 
 @(private)
 PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--no-gpu] [--dedicated] [--frames <n>] [--capture <png>]
-     [--validation] [--input <script>] [--players <n>] [--window <x>,<y>,<width>,<height>] [--surface <width>,<height>,<density>]
-     [--attached] [--library play|editor] [arguments of the project's plugins]
+     [--validation] [--input <script>] [--players <n>] [--show-window] [--window <x>,<y>,<width>,<height>]
+     [--surface <width>,<height>,<density>] [--attached] [--library play|editor] [arguments of the project's plugins]
   --scene       start scene, relative to the project's assets folder, or the absolute path of a .scene file
-  --headless    no window: draws offscreen with 1/60 s steps
+  --headless    no window: draws offscreen with 1/60 s steps; what --frames, --input and --capture imply
   --no-gpu      no window or renderer: only simulates
   --dedicated   a server nobody plays on: no window, renderer, audio or local players, at the pace of its
                 ticks and without the phases ui and render; the plugin of the network serves the game
-  --frames      exits after n frames
-  --capture     writes the last frame as a PNG on exit
+  --frames      exits after n frames, saying the effective graphics quality and the mean frame time; no window
+  --capture     writes the last frame as a PNG on exit; no window
   --validation  enables graphics API validation; exits with code 6 if there are errors
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
                 buttons (mouse:Left), mouse movement per frame (look:dx,dy) and the position of the
-                pointer in window points (pointer:x,y), which stays there until another line moves it
+                pointer in window points (pointer:x,y), which stays there until another line moves it; no window
   --players     local split-screen players, from 1 to 4; if omitted, as many as the scene says
-  --window      window position and size, frame included, in screen coordinates
+  --show-window  a window also with --frames, --input or --capture
+  --window      window position and size, frame included, in screen coordinates; with --frames, --input
+                or --capture also give --show-window
   --surface     no window: draws into shared textures shown by the process that opened it,
                 which sends it input through stdin (used by the editor)
   --attached    exits when its stdin closes: when the process that opened it is gone (used by the editor)
@@ -110,6 +113,7 @@ player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
             if options.frames<=0 {return options,false}
         case "--headless":   options.headless=true
         case "--no-gpu":     options.no_gpu=true
+        case "--show-window": options.show_window=true
         case "--dedicated":
             options.dedicated=true
             append(&options.arguments,args[i])
@@ -137,6 +141,26 @@ player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
         }
     }
     return options,true
+}
+
+// Says the options that do not go together, and otherwise what they imply: a
+// run --frames, --input or --capture automate has no window unless asked for.
+// "" or why it cannot run.
+@(private)
+player_options_settle :: proc(options:^Player_Options) -> string {
+    if options.dedicated && (options.headless || options.capture!="" || options.validation || options.input!="" || options.players>0 || options.window.z>0 || options.surface[0]>0 || options.show_window) {
+        return "--dedicated is a server nobody plays on, without a window, a renderer or local players: it does not go with --headless, --capture, --validation, --input, --players, --window, --show-window or --surface"
+    }
+    automated:=options.frames>0 || options.input!="" || options.capture!=""
+    switch {
+    case options.show_window && (options.headless || options.no_gpu || options.surface[0]>0):
+        return "--show-window opens a window, and --headless, --no-gpu and --surface run without one: leave one of them out"
+    case automated && options.window.z>0 && !options.show_window:
+        return "--window places a window, and --frames, --input and --capture run without one: add --show-window to see it, or leave --window out"
+    case automated && !options.show_window && !options.dedicated:
+        options.headless=true
+    }
+    return ""
 }
 
 // Reads a script. On failure, line is the number of the line it does not understand.
@@ -263,6 +287,29 @@ player_capture_problem :: proc(app:^App,path:string) -> string {
     return "the renderer had no frame to read, or the PNG could not be encoded"
 }
 
+// What a run with --frames says at its exit: the quality it drew at, with the
+// file of the player's options when one applied, so that a run those options
+// changed shows at once, and how long a frame took.
+@(private)
+player_run_summary :: proc(app:^App,frames:int,seconds:f64,allocator:=context.temp_allocator) -> string {
+    quality:="unknown"
+    size:[2]f32
+    if app.world!=nil {
+        ref:=app_world_ref(app,app.world)
+        if view:=core.world_storage_of(ref,core.View);view!=nil {size=view.size}
+        for s in app.info.storages {
+            if s.name!="Graphics_Settings" || s.place!=ref.place {continue}
+            if field:=reflect.struct_field_by_name(s.type,"quality");field.type!=nil {
+                quality=fmt.tprint(any{rawptr(uintptr(app.world)+s.offset+field.offset),field.type.id})
+            }
+        }
+    }
+    file:=project.settings_file(.Player,app.root,app.engine_root,context.temp_allocator,player=app.options)
+    applied:=file!="" && os.exists(file)?fmt.tprintf(", player options %s",file):", no player options"
+    mean:=frames>0?1000*seconds/f64(frames):0
+    return fmt.aprintf("mirai: %d frames, graphics quality %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied,allocator=allocator)
+}
+
 // The icon of the window: a PNG, read as 8 bits per channel with alpha.
 @(private)
 player_icon_set :: proc(app:^App,file:string) -> bool {
@@ -283,6 +330,10 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         fmt.eprintln(PLAYER_USAGE_TEXT)
         return PLAYER_USAGE
     }
+    if problem:=player_options_settle(&options);problem!="" {
+        fmt.eprintfln("mirai: %s",problem)
+        return PLAYER_USAGE
+    }
     script:=new(Player_Script)
     defer free(script)
     if options.input!="" {
@@ -297,10 +348,6 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
             fmt.eprintfln("mirai: %s, line %d: expected \"<first frame> <last frame> <keys, mouse:Button, look:dx,dy or pointer:x,y>...\"",path,line)
             return PLAYER_USAGE
         }
-    }
-    if options.dedicated && (options.headless || options.capture!="" || options.validation || options.input!="" || options.players>0 || options.window.z>0 || options.surface[0]>0) {
-        fmt.eprintln("mirai: --dedicated is a server nobody plays on, without a window, a renderer or local players: it does not go with --headless, --capture, --validation, --input, --players, --window or --surface")
-        return PLAYER_USAGE
     }
     root:=options.project!=""?options.project:(project_root!=""?project_root:".")
     assets,_:=filepath.join({root,PLAYER_ASSETS},context.allocator)
@@ -387,6 +434,9 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
 
     code:=PLAYER_OK
     scripted:=0
+    // Timed from the end of the first frame, which pays the load of the scene.
+    timed_from:=time.tick_now()
+    timed:=0
     for frame:=1;;frame+=1 {
         played:=script.count>0 && !app.script_hold
         pointer:[2]f32
@@ -419,9 +469,11 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
                 fmt.eprintln(PLAYER_USAGE_TEXT)
                 return PLAYER_USAGE
             }
-        }
+            timed_from=time.tick_now()
+        } else {timed+=1}
         if options.frames>0 && frame>=options.frames {break}
     }
+    if options.frames>0 {fmt.println(player_run_summary(app,timed,time.duration_seconds(time.tick_since(timed_from))))}
     if code==PLAYER_OK && options.capture!="" {
         path:=project.path_absolute(options.capture,context.temp_allocator)
         if !app_capture(app,path) {

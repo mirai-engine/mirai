@@ -377,6 +377,7 @@ Api_Step_Run :: struct {
     until:[]Api_Play_Condition, // checked by the caller
     sampler:Api_Step_Sampler,   // the sample before the first tick is the caller's
     drive:^Api_Drive,           // nil: none; it steers before each tick
+    look:^Api_Look,             // nil: none; it turns the view before each tick
 }
 
 // Runs the ticks of a timeline, its segments one after the other, until its
@@ -398,6 +399,9 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
     scripted:=!api_timeline_input(run.timeline)
     for ran<total {
         if len(run.until)>0 && met {break}
+        if run.look!=nil {
+            if problem=api_look_steer(s,target,run.look);problem!="" {return}
+        }
         if run.drive!=nil && !api_drive_steer(s,target,run.drive) {break}
         for at>=run.timeline[segment].ticks {segment+=1;at=0}
         if at==0 && run.timeline[segment].press!="" {
@@ -599,6 +603,7 @@ api_drive_write :: proc(out:^serial.Writer,drive:Api_Play_Drive_Result) {
     api.write_text(out,"stopped",fmt.tprint(drive.stopped),true)
     api.write_key(out,"position");api.write_list(out,drive.position[:])
     api.write_key(out,"distance");api.write_number(out,drive.distance)
+    api.write_key(out,"height");api.write_number(out,drive.height)
     serial.write_u8(out,'}')
 }
 

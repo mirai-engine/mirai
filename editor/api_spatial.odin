@@ -113,10 +113,11 @@ spatial_ray :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,ray:mm.Ray,re
     return
 }
 
-// Whether a mesh lies down from origin within reach, not counting body and what hangs from it.
-spatial_ground_below :: proc(s:^Session,w:core.World_Ref,origin:[3]f32,reach:f32,body:core.Entity) -> bool {
+// The height of the mesh that lies down from origin within reach, not counting body and what hangs from it.
+spatial_ground_below :: proc(s:^Session,w:core.World_Ref,origin:[3]f32,reach:f32,body:core.Entity) -> (height:f32,found:bool) {
     ignore:=[1]core.Entity{body}
-    return spatial_ray(s,w,spatial_items(s,w,false),{origin,{0,-1,0}},reach,ignore[:]).entity!=core.NONE
+    hit:=spatial_ray(s,w,spatial_items(s,w,false),{origin,{0,-1,0}},reach,ignore[:])
+    return hit.position.y,hit.entity!=core.NONE
 }
 
 // The world box of the meshes of an entity and of what hangs from it, moved
@@ -219,6 +220,11 @@ api_scene_bounds :: proc(s:^Session,call:^api.Call) {
         result.meshes||=meshes
     }
     result.min,result.max,result.center,result.size=all.min,all.max,(all.min+all.max)*0.5,all.max-all.min
+}
+
+// The box in the world of the meshes of an entity and what hangs from it; without meshes, its point.
+api_entity_box :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (box:mm.Aabb,meshes:bool) {
+    return spatial_box(s,w,spatial_items(s,w,false),e)
 }
 
 // The box around some entities of a world, with what hangs from them.

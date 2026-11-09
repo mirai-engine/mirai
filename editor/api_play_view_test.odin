@@ -87,6 +87,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     core.add(&w.lenses,camera,erender.Camera{fov=60*math.RAD_PER_DEG})
     follow:=ecamera.CAMERA_FOLLOW_DEFAULT
     follow.state.ready,follow.state.pivot.position=true,{0,2,-1}
+    follow.looking={0.5,-0.25}
     core.add(&w.follows,camera,follow)
     core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
     core.table_settle(&w.bodies,&w.entities);core.table_settle(&w.seats,&w.entities)
@@ -112,6 +113,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     followed,_:=v["follow"].(json.Object)
     testing.expect_value(t,followed["name"].(json.String) or_else "","Hero")
     testing.expect(t,abs(view_number(followed["distance"])-10)<1e-4 && abs(view_number(followed["pivot_distance"])-7)<1e-4,"the body its camera follows without a target, and its pivot")
+    testing.expect(t,abs(view_number(followed["yaw_deg"])-0.5*math.DEG_PER_RAD)<1e-3 && abs(view_number(followed["pitch_deg"])+0.25*math.DEG_PER_RAD)<1e-3,"where it looks now, not where it started")
     points,_:=v["points"].(json.Array)
     if !testing.expect_value(t,len(points),3) {return}
     ahead,_:=points[0].(json.Object)

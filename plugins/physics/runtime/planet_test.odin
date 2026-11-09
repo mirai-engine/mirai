@@ -255,3 +255,20 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     testing.expect(t,found.standing)
 
 }
+
+// What a character leaves in its Character_State says how fast it goes, the vertical
+// speed a game tells a stomp by.
+@(test)
+a_character_says_its_vertical_speed_in_its_state :: proc(t:^testing.T) {
+    f:Physics_Test
+    physics_test_init(&f)
+    defer physics_test_destroy(&f)
+    faller:=core.create(&f.entities)
+    core.add(&f.transforms,faller,core.Transform{{0,50,0},1,{1,1,1}})
+    core.add(&f.colliders,faller,collider_character())
+    core.add(&f.characters,faller,character_default())
+    core.add(&f.moves,faller,Character_Move{value={launch={0,3,0}}})
+    for _ in 0..<3 {physics_test_step(&f)}
+    found,_:=core.get(core.read(&f.character_states),faller)
+    testing.expectf(t,found.velocity.y>2,"goes up at %v",found.velocity)
+}
