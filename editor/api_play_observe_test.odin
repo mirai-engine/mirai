@@ -173,6 +173,15 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
         testing.expect(t,top.buttons[1].disabled)
     }
 
+    // A press goes to the middle of the button it names, by the names shown.
+    center,problem:=api_press_center(&top,"Left/Action")
+    testing.expect_value(t,problem,"")
+    testing.expect(t,top.buttons[0].rect[0]<center.x && center.y==top.buttons[0].rect[1]+top.buttons[0].rect[3]*0.5)
+    _,problem=api_press_center(&top,"right/action")
+    testing.expect(t,strings.contains(problem,"disabled"),problem)
+    _,problem=api_press_center(&top,"nothing")
+    testing.expect(t,strings.contains(problem,"left/action"),problem)
+
     // all lists the screen the frame did not build too, without nodes.
     view.all=true
     serial.writer_init(&w,0,context.temp_allocator)

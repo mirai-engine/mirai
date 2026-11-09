@@ -4,7 +4,7 @@
   "identifier": "",
   "icon": "",
   "start_scene": "",
-  "plugins": ["sample"],
+  "plugins": ["sample", "playtest"],
   "window": {
     "title": "",
     "mode": "Maximized",

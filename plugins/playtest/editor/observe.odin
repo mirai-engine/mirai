@@ -1,12 +1,12 @@
-package editor
+package playtest_editor
 
 import "core:math"
 import "core:math/linalg"
 import "core:mem/virtual"
 import "core:slice"
 import "mirai:core"
+import "mirai:editor"
 import "mirai:editor/api"
-import egui "mirai:engine/gui"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
@@ -14,9 +14,9 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// What an agent needs for one decision, in one small answer: play.observe
-// reads it between two ticks, and play.step with observe answers it after
-// its ticks. It costs an agent little to read and the game nothing.
+// What an agent needs for one decision, in one small answer, read between two
+// ticks; with step it runs those ticks first, so that one call acts and
+// observes. It costs an agent little to read and the game nothing.
 
 API_OBSERVE_TARGETS :: 8
 @(private) API_OBSERVE_PROBLEMS :: 5
@@ -28,12 +28,12 @@ API_OBSERVE_TARGETS :: 8
 Api_Play_Observe_Params :: struct {
     targets:[API_OBSERVE_TARGETS][64]u8 `mirai:"optional,text,label=Names of components or of entities (* stands for any run of characters) to find around the player"`,
     nearest:int `mirai:"optional,min=1,max=16,label=How many of the matches of targets to return"`,
-    path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write a small image of the game to"`,
+    path:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG file to write a small image of the game to"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
+    step:editor.Api_Play_Step_Params `mirai:"optional,label=Ticks to run first with the params of play.step: the answer adds its ran and met and trace"`,
 }
 
 Api_Play_Observe :: struct {
-    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     tick:u64,
     seconds:f64 `mirai:"label=The time of the game"`,
     frame_ms:f32 `mirai:"label=The whole last frame of the application"`,
@@ -43,8 +43,11 @@ Api_Play_Observe :: struct {
     problems:[1]Api_Play_Observe_Problem `mirai:"list,optional,label=core.report problems since the last observe"`,
     problems_more:int `mirai:"optional,label=New problems that did not fit"`,
     targets:[1]Api_Play_Observe_Target `mirai:"list,optional,label=The nearest matches of targets"`,
-    capture:Api_Capture_Result `mirai:"optional,label=The image written to path"`,
+    capture:editor.Api_Capture_Result `mirai:"optional,label=The image written to path"`,
     capture_error:[256]u8 `mirai:"optional,text,label=Why the image of path could not be written"`,
+    ran:int `mirai:"optional,label=With step: the ticks it ran"`,
+    met:bool `mirai:"optional,label=With step and until: whether they held when it stopped"`,
+    trace:editor.Api_Play_Trace_Table `mirai:"optional,label=With step and trace: the values it read"`,
 }
 Api_Play_Observe_Player :: struct {
     position:[3]f32,
@@ -53,7 +56,7 @@ Api_Play_Observe_Player :: struct {
     facing:[3]f32 `mirai:"label=Where it looks: a unit vector"`,
 }
 Api_Play_Observe_Ui :: struct {
-    screen:[API_PATH_BYTES]u8 `mirai:"text,label=The .ui that takes the input"`,
+    screen:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The .ui that takes the input"`,
     modal:bool `mirai:"optional"`,
     focused:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The node with the focus"`,
     buttons:[1]Api_Play_Observe_Button `mirai:"list,label=What can be pressed, in window points play.step takes"`,
@@ -88,9 +91,9 @@ Run_Observed :: struct {
 }
 
 @(private)
-play_agent_api_register :: proc(s:^Session,st:^Api_State) {
-    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST}
-    api_register(s,st,{name="play.observe",flags={.Core,.Read_Only},summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. play.step with observe answers the same after its ticks.",params=Api_Play_Observe_Params,result=Api_Play_Observe,writes_result=true,defaults=&defaults,run=api_play_observe})
+observe_api_register :: proc(s:^editor.Session) {
+    defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={ticks=1,focus=-1,trace={every=1}}}
+    editor.api_method_register(s,{name="play.observe",summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. With step it first runs those ticks as play.step does, so one call acts and observes.",params=Api_Play_Observe_Params,params_info=type_info_of(Api_Play_Observe_Params),result=Api_Play_Observe,result_info=type_info_of(Api_Play_Observe),writes_result=true,defaults=&defaults,run=api_play_observe})
 }
 
 @(private)
@@ -106,92 +109,6 @@ observe_vector_write :: proc(out:^serial.Writer,key:string,value:[]f32,decimals:
     serial.write_u8(out,']')
 }
 
-// The names of targets given as JSON in raw.
-@(private)
-observe_targets_read :: proc(call:^api.Call,targets:[][64]u8,raw:string,allocator:=context.temp_allocator) -> []string {
-    count:=api_list_count(raw)
-    names:=make([]string,count,allocator)
-    for &name,i in names {name=base.text_get(targets[i][:])}
-    return names
-}
-
-// Whether something can be pressed: what the pointer of a button activates.
-@(private)
-play_ui_pressable :: proc "contextless" (kind:ui.Node_Kind) -> bool {
-    #partial switch kind {
-    case .Button,.Checkbox,.Radio,.Dropdown,.Selector: return true
-    }
-    return false
-}
-
-@(private)
-Play_Ui_Button :: struct {
-    row:int,
-    name,text:string,
-    rect:[4]f32,
-    laid,shown,disabled:bool,
-}
-
-@(private)
-Play_Ui_Top :: struct {
-    screen:string,
-    entity:core.Entity,
-    modal:bool,
-    focused:string,
-    buttons:[]Play_Ui_Button,
-}
-
-// The screen that takes the input of a player and what can be pressed on it;
-// with hidden also what is not showing, whose nodes have no rect.
-@(private)
-play_ui_top :: proc(v:^Play_Ui_View,player:int,hidden:bool) -> (top:Play_Ui_Top,found:bool) {
-    g:=v.gui
-    if g==nil {return}
-    s:=v.session
-    for &entry in g.plan {
-        if !entry.top || entry.world || entry.player!=player {continue}
-        at:=play_ui_instance_of(g,entry.entity,entry.world,entry.player)
-        if at<0 {continue}
-        instance:=&g.instances[at]
-        tree:=play_ui_tree(instance,entry.content)
-        if tree==nil || !instance.shown {continue}
-        top.screen,top.entity,top.modal=asset_path(s,instance.asset),instance.entity,instance.modal
-        names:=play_ui_names(v,instance.asset,tree)
-        ctx:=g.surfaces[entry.player].ctx if entry.player>=0 && entry.player<len(g.surfaces) else nil
-        shown:=make([]bool,tree.node_count,v.allocator)
-        disabled:=make([]bool,tree.node_count,v.allocator)
-        buttons:=make([dynamic]Play_Ui_Button,v.allocator)
-        for row in 0..<tree.node_count {
-            state,_:=ui.tree_node_state(tree,&instance.instance,row)
-            parent:=int(tree.nodes[row].parent)
-            shown[row]=state.shown && (parent<0 || shown[parent])
-            disabled[row]=state.disabled || parent>=0 && disabled[parent]
-            name:=row<len(names)?names[row]:""
-            if shown[row] && state.focused {top.focused=name}
-            if !play_ui_pressable(tree.nodes[row].kind) || !shown[row] && !hidden {continue}
-            button:=Play_Ui_Button{row=row,name=name,text=state.text,shown=shown[row],disabled=disabled[row]}
-            if shown[row] && ctx!=nil {
-                if r,laid:=egui.screen_node_rect(ctx,tree,instance.entity,row);laid {button.rect,button.laid={r.x,r.y,r.w,r.h},true}
-            }
-            append(&buttons,button)
-        }
-        top.buttons=buttons[:]
-        return top,true
-    }
-    return
-}
-
-// The context of the screen of the focused local player: 0 is the window, n
-// the part of the player of slot n-1 when they share the screen.
-@(private)
-play_ui_focused_context :: proc(w:core.World_Ref,g:^egui.Gui) -> int {
-    state:=core.world_storage_of(w,input.Seats)
-    if state==nil || g==nil {return 0}
-    split:=state.focus+1
-    if split<len(g.surfaces) && g.surfaces[split].ctx!=nil && g.surfaces[split].shown {return split}
-    return 0
-}
-
 @(private)
 Observe_Found :: struct {
     entity:core.Entity,
@@ -202,10 +119,10 @@ Observe_Found :: struct {
 // The entities targets name: those with a component or those whose name
 // matches, without the body itself; the nearest to the camera first.
 @(private)
-observe_targets_find :: proc(s:^Session,w:core.World_Ref,names:[]string,body:core.Entity,nearest:int,allocator:=context.temp_allocator) -> []Observe_Found {
+observe_targets_find :: proc(s:^editor.Session,w:core.World_Ref,names:[]string,body:core.Entity,nearest:int,allocator:=context.temp_allocator) -> []Observe_Found {
     view:=core.world_storage_of(w,core.View)
     if view==nil || len(names)==0 {return nil}
-    entities:=api_entities_ordered(w,allocator)
+    entities:=editor.api_entities_ordered(w,allocator)
     found:=make([dynamic]Observe_Found,allocator)
     forward:=core.view_forward(view^)
     right:=mm.quat_rotate(view.rotation,[3]f32{1,0,0})
@@ -214,12 +131,12 @@ observe_targets_find :: proc(s:^Session,w:core.World_Ref,names:[]string,body:cor
         if e==body {continue}
         matched:=false
         for name in names {
-            table:=component_table(s,name)
-            matched=table!=nil?core.raw_find(core.world_table_at(w,table),table.info,e)!=nil:api_name_match(name,entity_name(w,e))
+            table:=editor.component_table(s,name)
+            matched=table!=nil?core.raw_find(core.world_table_at(w,table),table.info,e)!=nil:editor.api_name_match(name,editor.entity_name(w,e))
             if matched {break}
         }
         if !matched {continue}
-        point:=api_entity_middle(w,e)
+        point:=editor.api_entity_middle(w,e)
         relative:=point-view.position
         distance:=linalg.length(relative)
         entry:=Observe_Found{entity=e,distance=distance}
@@ -251,30 +168,32 @@ observe_facing :: proc(w:core.World_Ref,body:core.Entity) -> [3]f32 {
 
 // A stand or a walk on nothing: the bool of the physics that a game may not have.
 @(private)
-observe_grounded :: proc(s:^Session,w:core.World_Ref,body:core.Entity,allocator:=context.temp_allocator) -> (grounded,known:bool) {
-    table:=component_table(s,"Character_State")
+observe_grounded :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,allocator:=context.temp_allocator) -> (grounded,known:bool) {
+    table:=editor.component_table(s,"Character_State")
     if table==nil || core.raw_find(core.world_table_at(w,table),table.info,body)==nil {return}
-    value,problem:=api_entity_field(s,w,body,"Character_State.standing",allocator)
+    value,problem:=editor.api_entity_field(s,w,body,"Character_State.standing",allocator)
     if problem!="" {return}
     return value=="true",true
 }
 
 // Writes the answer of play.observe for a run: one JSON object.
 @(private)
-play_observe_write :: proc(s:^Session,out:^serial.Writer,r:^Run,names:[]string,nearest:int,allocator:=context.temp_allocator) {
-    w:=run_ref(s,r)
+play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,names:[]string,nearest:int,allocator:=context.temp_allocator) {
+    w:=editor.run_ref(s,r)
     tick,seconds:=u64(0),f64(0)
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick,seconds=t.tick,t.seconds}
     _,body:=play_focused(w)
     moved:[3]f32
-    if body!=core.NONE {moved=entity_world(w,body).position}
+    if body!=core.NONE {moved=editor.entity_world(w,body).position}
     // The tracker: a body is stuck that asked to move and stayed where it was.
-    o:=&r.observed
+    slot:=playtest_run(s,r)
+    if slot==nil {return}
+    o:=&slot.observed
     if body==core.NONE || !play_moving(w,body) || !o.anchored || linalg.length(moved-o.anchor)>=QA_STUCK_DISTANCE {
         o.anchor,o.anchor_seconds,o.anchored=moved,seconds,true
     }
     stuck:=seconds-o.anchor_seconds>=API_OBSERVE_STUCK_SECONDS
-    if q:=r.qa;q!=nil && q.limits.stuck_seconds>0 {stuck=q.stuck}
+    if q:=slot.qa;q!=nil && q.limits.stuck_seconds>0 {stuck=q.stuck}
     serial.write_u8(out,'{')
     api.write_uint(out,"tick",tick,true)
     api.write_key(out,"seconds");api.write_number(out,observe_round(f32(seconds)))
@@ -293,14 +212,14 @@ play_observe_write :: proc(s:^Session,out:^serial.Writer,r:^Run,names:[]string,n
         observe_vector_write(out,"facing",facing[:],1000)
         serial.write_u8(out,'}')
     }
-    observe_ui_write(s,out,r,w)
-    observe_problems_write(s,out,r,w)
+    observe_ui_write(s,out,r)
+    observe_problems_write(s,out,r,o,w)
     if found:=observe_targets_find(s,w,names,body,max(nearest,1),allocator);len(names)>0 {
         api.write_key(out,"targets");serial.write_u8(out,'[')
         for &f,i in found {
             if i>0 {serial.write_u8(out,',')}
             serial.write_u8(out,'{')
-            api.write_text(out,"name",entity_name(w,f.entity),true)
+            api.write_text(out,"name",editor.entity_name(w,f.entity),true)
             api.write_key(out,"entity")
             serial.write_u8(out,'"');serial.text_write_hex(out,u64(f.entity),16,false);serial.write_u8(out,'"')
             api.write_key(out,"distance");api.write_number(out,observe_round(f.distance,10))
@@ -315,14 +234,11 @@ play_observe_write :: proc(s:^Session,out:^serial.Writer,r:^Run,names:[]string,n
 }
 
 @(private)
-observe_ui_write :: proc(s:^Session,out:^serial.Writer,r:^Run,w:core.World_Ref) {
-    g:=host.app_world_storage(s.app,r.world,egui.Gui)
-    if g==nil {return}
+observe_ui_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run) {
     arena:virtual.Arena
     if virtual.arena_init_growing(&arena)!=nil {return}
     defer virtual.arena_destroy(&arena)
-    view:=Play_Ui_View{session=s,gui=g,world=w,allocator=virtual.arena_allocator(&arena)}
-    top,found:=play_ui_top(&view,play_ui_focused_context(w,g),false)
+    top,found:=editor.play_ui_screen(s,r,false,virtual.arena_allocator(&arena))
     if !found {return}
     api.write_key(out,"ui");serial.write_u8(out,'{')
     api.write_text(out,"screen",top.screen,true)
@@ -345,11 +261,11 @@ observe_ui_write :: proc(s:^Session,out:^serial.Writer,r:^Run,w:core.World_Ref) 
 
 // The problems reported since the last observe, the oldest first.
 @(private)
-observe_problems_write :: proc(s:^Session,out:^serial.Writer,r:^Run,w:core.World_Ref) {
+observe_problems_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,o:^Run_Observed,w:core.World_Ref) {
     problems:=host.app_world_storage(s.app,r.world,core.Problems)
-    if problems==nil || problems.serial==r.observed.serial {return}
-    since:=r.observed.serial
-    r.observed.serial=problems.serial
+    if problems==nil || problems.serial==o.serial {return}
+    since:=o.serial
+    o.serial=problems.serial
     fresh:=make([dynamic]core.Problem,context.temp_allocator)
     for &p in core.problems_list(problems) {
         if p.last>since {append(&fresh,p)}
@@ -362,7 +278,7 @@ observe_problems_write :: proc(s:^Session,out:^serial.Writer,r:^Run,w:core.World
         serial.write_u8(out,'{')
         api.write_text(out,"code",core.problem_code(&p),true)
         api.write_text(out,"text",core.problem_text(&p))
-        if p.entity!=core.NONE {api.write_text(out,"entity",entity_name(w,p.entity))}
+        if p.entity!=core.NONE {api.write_text(out,"entity",editor.entity_name(w,p.entity))}
         serial.write_u8(out,'}')
     }
     serial.write_u8(out,']')
@@ -372,7 +288,7 @@ observe_problems_write :: proc(s:^Session,out:^serial.Writer,r:^Run,w:core.World
 // A small capture of the game at path, by the method of the images: what it
 // answered goes in capture, or why it could not in capture_error.
 @(private)
-observe_capture_write :: proc(s:^Session,call:^api.Call,out:^serial.Writer,path:string) {
+observe_capture_write :: proc(s:^editor.Session,call:^api.Call,out:^serial.Writer,path:string) {
     server:=call.server
     params:serial.Writer
     serial.writer_init(&params,0,call.allocator)
@@ -380,7 +296,7 @@ observe_capture_write :: proc(s:^Session,call:^api.Call,out:^serial.Writer,path:
     serial.text_write_raw(&params,`,"of":"Game","frames":1,"width":`);serial.text_write_int(&params,API_OBSERVE_CAPTURE_WIDTH)
     serial.write_u8(&params,'}')
     answer:=make([]u8,4096,call.allocator)
-    text,error,ok:=api_scenario_call(server,"capture",string(serial.writer_bytes(&params)),answer)
+    text,error,ok:=editor.api_scenario_call(server,"capture",string(serial.writer_bytes(&params)),answer)
     if !ok {
         api.write_text(out,"capture_error",error.message)
         return
@@ -389,18 +305,46 @@ observe_capture_write :: proc(s:^Session,call:^api.Call,out:^serial.Writer,path:
 }
 
 @(private)
-api_play_observe :: proc(s:^Session,call:^api.Call) {
+api_play_observe :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Observe_Params)
-    r,_:=api_play_run(s,call,p.player)
-    if r==nil {api_play_none(call,`{"tick":0,"seconds":0,"frame_ms":0,"stuck":false}`);return}
-    values:[1]string
-    api.object_values(call.allocator,call.raw,{"targets"},values[:])
-    names:=observe_targets_read(call,p.targets[:],values[0],call.allocator)
+    stepped:[3]string
+    if !observe_step(call,&stepped) {return}
+    r,_:=editor.api_play_run(s,call,p.player)
+    if r==nil {
+        if stepped[0]!="" {api.call_failf(call,api.SERVER_ERROR,"The game ended during the step, after %s ticks",stepped[0]);return}
+        api.call_fail(call,api.SERVER_ERROR,editor.API_NO_GAME)
+        return
+    }
+    count,_:=api.params_array_count(call,"targets")
+    names:=make([]string,count,call.allocator)
+    for &name,i in names {name=base.text_get(p.targets[i][:])}
     out:=call.out
     play_observe_write(s,out,r,names,p.nearest,call.allocator)
-    path:=base.text_get(p.path[:])
-    if path=="" {return}
     out.count-=1
-    observe_capture_write(s,call,out,path)
+    if path:=base.text_get(p.path[:]);path!="" {observe_capture_write(s,call,out,path)}
+    for key,i in OBSERVE_STEP_KEYS {
+        if stepped[i]!="" {api.write_key(out,key);serial.text_write_raw(out,stepped[i])}
+    }
     serial.write_u8(out,'}')
+}
+
+@(private) OBSERVE_STEP_KEYS :: [3]string{"ran","met","trace"}
+@(private) OBSERVE_STEP_ANSWER :: 1<<20
+
+// Runs the step the params give, if any, by the method of play.step; what it
+// answered of OBSERVE_STEP_KEYS as JSON, or false after failing the call.
+@(private)
+observe_step :: proc(call:^api.Call,answer:^[3]string) -> bool {
+    given:[1]string
+    api.object_values(call.allocator,call.raw,{"step"},given[:])
+    if given[0]=="" {return true}
+    buffer:=make([]u8,OBSERVE_STEP_ANSWER,call.allocator)
+    text,error,ok:=editor.api_scenario_call(call.server,"play.step",given[0],buffer)
+    if !ok {
+        api.call_fail(call,error.code,error.message)
+        return false
+    }
+    keys:=OBSERVE_STEP_KEYS
+    api.object_values(call.allocator,text,keys[:],answer[:])
+    return true
 }

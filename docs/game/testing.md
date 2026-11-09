@@ -35,7 +35,7 @@ mirai rpc --project . play.explore '{"mode":"World","seconds":30}' --select stop
 mirai rpc --project . play.stop
 ```
 ```bash
-mirai rpc --project . play.qa.start '{"fall_below":-5,"stuck_seconds":3,"non_finite":true}'
+mirai rpc --project . play.qa.start '{"stuck_seconds":3,"non_finite":true}'
 mirai rpc --project . play.qa.report '{"violation":0,"repro":true}'   # 3: writes bug_<tick>.mirai
 ```
 
@@ -49,7 +49,7 @@ mirai rpc --project . play.get '{"entity": "Player","field":"world_position"}' -
 ## Look
 
 - `play.observe`: tick, the body's place and facing, `stuck`, `problems`, the buttons of the top
-  screen and the nearest `targets`; `play.step` with `observe:true` runs ticks and answers it.
+  screen and the nearest `targets`; with `step` it runs those ticks first.
 - `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
 - `--select a,b.c,d[0]` prints only those fields: always use it on a large answer.
 - An image: `capture` with `path`; it answers where the file is and its size, so open

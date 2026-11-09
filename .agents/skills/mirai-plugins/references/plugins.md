@@ -217,6 +217,11 @@ demo enables. How an `editor/` adds steps, panels and tools:
     `mirai import plugins/prompts_kenney/source/kenney.prompts.json --out
     plugins/prompts_kenney/assets --root plugins/prompts_kenney`
     ([prompts](../../mirai-imports/references/imports.md#prompts)).
+- **`playtest`** (`Editor`, development): `play.observe`, the monitors of `play.qa.*` with their
+  repros and the bot of `play.explore`, over the ticks the API runs
+  ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The game
+  template enables it; none of its tools are listed by MCP by default, which the playtester
+  agent reaches through `call`.
 - **`profiler`** (`Editor`, development) and **`tracy`** (`Runtime`, development): captures panel
   of `profile.*` and Tracy GUI client. See [profiling](profiling.md).
 - **`vfx`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`, whose gravity its particles

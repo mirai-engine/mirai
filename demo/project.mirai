@@ -4,7 +4,7 @@
   "identifier": "",
   "icon": "",
   "start_scene": "scenes/control.scene",
-  "plugins": ["spawn", "cinematics", "physics", "destruct", "multiplayer", "paint", "terrain", "terrain_debris", "animation", "previews", "physics_placement", "ragdoll", "physics_fields", "physics_cache", "navigation", "behavior", "abilities", "ui_inspector", "prompts_kenney", "decals", "deform", "monitors", "portals", "mirror", "fog", "vfx", "water", "fsr", "streaming", "profiler", "tracy"],
+  "plugins": ["playtest", "spawn", "cinematics", "physics", "destruct", "multiplayer", "paint", "terrain", "terrain_debris", "animation", "previews", "physics_placement", "ragdoll", "physics_fields", "physics_cache", "navigation", "behavior", "abilities", "ui_inspector", "prompts_kenney", "decals", "deform", "monitors", "portals", "mirror", "fog", "vfx", "water", "fsr", "streaming", "profiler", "tracy"],
   "window": {
     "title": "Mirai Demo",
     "mode": "Maximized",

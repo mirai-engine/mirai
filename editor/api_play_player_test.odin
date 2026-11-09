@@ -95,5 +95,5 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     testing.expect(t,!value.available && value.tick==9)
     session.runs[0]={}
     api_play_player(&session,&call)
-    testing.expect(t,!call.failed && strings.contains(string(serial.writer_bytes(&out)),`"playing":false`))
+    testing.expect(t,call.failed)
 }

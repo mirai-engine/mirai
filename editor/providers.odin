@@ -52,6 +52,17 @@ Play_Provider :: struct {
     scene_arrived:proc(s:^Session,game:u32), // a guest: the copy of the scene of the game of the host arrived
 }
 
+// What a plugin is told of the runs the API drives tick by tick (play.step, a
+// scenario, a filmstrip, play_tick): what each tick receives and what it left.
+// A nil procedure is a point it does not take.
+Run_Provider :: struct {
+    input:proc(s:^Session,r:^Run,step:^Api_Step_Input,at:int), // before a tick; at: that tick of its segment
+    ticked:proc(s:^Session,r:^Run),
+    call:proc(s:^Session,r:^Run,method,params:string),         // a method changed the run between two ticks; params is its JSON
+    focus:proc(s:^Session,r:^Run,slot:int),                    // the keys and the mouse go to that local seat from the next tick
+    ended:proc(s:^Session,r:^Run),                             // the run goes away, or stays only as the past of the last Play
+}
+
 // An area of the preferences of the editor a plugin keeps: the editor reads
 // it from the file and writes it there as its own.
 Preferences_Provider :: struct {
@@ -104,6 +115,8 @@ Providers :: struct {
     kind_count:int,
     menus:[PROVIDER_CAPACITY]Asset_Menu_Provider,
     menu_count:int,
+    runs:[PROVIDER_CAPACITY]Run_Provider,
+    run_count:int,
 }
 
 // The providers of the plugins of the library in use, looked for again when it changes.
@@ -117,6 +130,7 @@ providers :: proc(s:^Session) -> ^Providers {
     p.inspector_count=provided_all(s,p.inspectors[:])
     p.component_count=provided_all(s,p.components[:])
     p.menu_count=provided_all(s,p.menus[:])
+    p.run_count=provided_all(s,p.runs[:])
     kinds:[PROVIDER_CAPACITY]Asset_Kind_Provider
     for &provider in kinds[:provided_all(s,kinds[:])] {
         for kind in provider.kinds[:clamp(provider.count,0,len(provider.kinds))] {
@@ -125,6 +139,36 @@ providers :: proc(s:^Session) -> ^Providers {
         }
     }
     return p
+}
+
+@(private)
+run_tell_input :: proc(s:^Session,r:^Run,step:^Api_Step_Input,at:int) {
+    p:=providers(s)
+    for &each in p.runs[:p.run_count] {if each.input!=nil {each.input(s,r,step,at)}}
+}
+
+@(private)
+run_tell_ticked :: proc(s:^Session,r:^Run) {
+    p:=providers(s)
+    for &each in p.runs[:p.run_count] {if each.ticked!=nil {each.ticked(s,r)}}
+}
+
+@(private)
+run_tell_call :: proc(s:^Session,r:^Run,method,params:string) {
+    p:=providers(s)
+    for &each in p.runs[:p.run_count] {if each.call!=nil {each.call(s,r,method,params)}}
+}
+
+@(private)
+run_tell_focus :: proc(s:^Session,r:^Run,slot:int) {
+    p:=providers(s)
+    for &each in p.runs[:p.run_count] {if each.focus!=nil {each.focus(s,r,slot)}}
+}
+
+@(private)
+run_tell_ended :: proc(s:^Session,r:^Run) {
+    p:=providers(s)
+    for &each in p.runs[:p.run_count] {if each.ended!=nil {each.ended(s,r)}}
 }
 
 // The kinds of asset the plugins declare (Asset_Kind_Provider).

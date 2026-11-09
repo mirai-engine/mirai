@@ -28,6 +28,7 @@ import "mirai:ui"
 // Build. The scene has its own file (api_scene.odin).
 
 API_STEP_LIMIT :: 3600
+API_NO_GAME :: "No game is playing; play.start first"
 API_FILMSTRIP_CELLS :: 64
 API_DT_MAX :: f32(0.25)
 API_INPUT_EVENTS :: 256
@@ -228,14 +229,13 @@ Api_Play_Step_Params :: struct {
     mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks"`,
     wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
     text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
+    press:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The button of the screen on top to press by its name: the pointer goes over it and Left is held as a click takes; ticks or seconds run after the click; no other input with it"`,
     gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick; gamepad i is that of the local seat of slot i when the game has several"`,
     focus:int `mirai:"optional,min=-1,max=3,label=The local seat (by slot) that gets the keys and the mouse from this step on; -1 keeps it"`,
     until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; ticks (or those of segments) is the most it runs and none run when they hold already"`,
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
-    observe:bool `mirai:"optional,label=The answer is what play.observe says after the ticks in place of the state of the game"`,
-    targets:[API_OBSERVE_TARGETS][64]u8 `mirai:"optional,text,label=With observe: the targets of play.observe"`,
 }
 
 Api_Build_Params :: struct {
@@ -352,10 +352,10 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
-    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene, or answers the state of the game the caller already plays without restarting it: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
+    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: a game the caller already plays goes on and answers its state while the document is as it was when it started, and starts again when it changed. Outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
     api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
-    api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
+    api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks, press clicks a button of its UI by name and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
     api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Read_Only},run=api_play_status})
     api_register(s,st,{name="build.start",flags={.Core},summary="Builds the editor of the project, whose new code loads into the running editor when it succeeds, the game to ship, which leaves the editor as it is, or its shaders; answers when it ends, with each error and its file and line.",params=Api_Build_Params,result=Api_Build_Result,defaults=&build_default,run=api_build_start})
     api_register(s,st,{name="build.status",summary="State of the build and what the compiler said, with file and line.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
@@ -365,9 +365,6 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
-    play_agent_api_register(s,st)
-    qa_api_register(s,st)
-    play_explore_api_register(s,st)
     api_scene_register(s,st)
     api_names_register(s,st)
     api_simulation_register(s,st)
@@ -1082,7 +1079,6 @@ api_capture_file :: proc(s:^Session,call:^api.Call,path,name:string,allocator:=c
 // as Windows or Git Bash (/c/...) writes it, or relative to root, the folder
 // of the project, or to the working folder without one. problem says what
 // is wrong with path.
-@(private)
 api_output_path :: proc(root,path:string,allocator:=context.allocator) -> (file,problem:string) {
     inside:=root!=""?fmt.tprintf("the folder of the project, %s",root):"the working folder"
     if path=="" {return "",fmt.tprintf("path is required: a file absolute or relative to %s",inside)}
@@ -1105,7 +1101,6 @@ api_output_file :: proc(s:^Session,call:^api.Call,path:string,allocator:=context
 
 // Makes the folder of file, absolute, and opens it to write without
 // changing it; problem says why it cannot be written, with the code of the error.
-@(private)
 api_output_prepare :: proc(file:string) -> (problem:string,code:int) {
     if os.is_dir(file) {return fmt.tprintf("%s is a folder: name the file inside it",file),api.INVALID_PARAMS}
     if folder:=os.dir(file);!os.is_dir(folder) {
@@ -1169,19 +1164,6 @@ api_play_run :: proc(s:^Session,call:^api.Call,player:=0) -> (r:^Run,own:bool) {
     return r,r!=nil && r.owner==owner
 }
 
-// What a method that only reads the game answers when no game plays: its
-// empty result as JSON (body), marked playing false.
-@(private)
-api_play_none :: proc(call:^api.Call,body:string) {
-    serial.text_write_raw(call.out,`{"playing":false`)
-    if len(body)>2 {
-        serial.write_u8(call.out,',')
-        serial.text_write_raw(call.out,body[1:])
-    } else {
-        serial.write_u8(call.out,'}')
-    }
-}
-
 api_play_refused :: proc(call:^api.Call) {
     api.call_fail(call,api.SERVER_ERROR,"The user is playing this game; a turn changes only a run of its own, which play.start opens")
 }
@@ -1212,8 +1194,9 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
 @(private)
 api_play_start :: proc(s:^Session,call:^api.Call) {
     owner:=ai_task_of_call(s,call)
-    if r:=run_find(s,owner);r!=nil {
-        api_play_result(s,call,r)
+    running:=run_find(s,owner)
+    if running!=nil && running.document==edits_scene_state(s.edits) {
+        api_play_result(s,call,running)
         return
     }
     params:=api.call_params(call,Api_Play_Start_Params)
@@ -1221,25 +1204,31 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"from places player 1 of the Play of the editor: leave it out in a turn or with simulate")
         return
     }
-    if params.simulate {
-        // Simulate takes over the view of the user; a turn runs its own copy
-        // and steps it without input instead.
-        if owner!=0 {api.call_fail(call,api.SERVER_ERROR,"A turn simulates on its own copy: play.start, then play.step without keys");return}
-        if params.players>0 || params.online>0 {api.call_fail(call,api.INVALID_PARAMS,"A simulation has no players: leave out players and online");return}
-        if !simulation_start(s) {
-            if simulating(s) {play_stop(s,true)}
-            api.call_fail(call,api.SERVER_ERROR,"The simulation could not start")
-            return
-        }
-        api_play_result(s,call,run_find(s,0))
-        return
-    }
+    // Simulate takes over the view of the user; a turn runs its own copy
+    // and steps it without input instead.
+    if params.simulate && owner!=0 {api.call_fail(call,api.SERVER_ERROR,"A turn simulates on its own copy: play.start, then play.step without keys");return}
+    if params.simulate && (params.players>0 || params.online>0) {api.call_fail(call,api.INVALID_PARAMS,"A simulation has no players: leave out players and online");return}
     if plugin:=providers(s);params.online>0 && (!plugin.plays || plugin.play.start==nil || plugin.play.turn==nil) {
         api.call_fail(call,api.INVALID_PARAMS,"Online players need a plugin that plays games on the network: add multiplayer to the plugins of project.mirai")
         return
     }
     if params.players+params.online>PLAYER_PROCESSES {
         api.call_fail(call,api.INVALID_PARAMS,"players and online are 4 at most")
+        return
+    }
+    if running!=nil {
+        if owner==0 {
+            play_stop(s,true)
+            play_plugin_stop(s)
+        } else {run_stop(s,owner)}
+    }
+    if params.simulate {
+        if !simulation_start(s) {
+            if simulating(s) {play_stop(s,true)}
+            api.call_fail(call,api.SERVER_ERROR,"The simulation could not start")
+            return
+        }
+        api_play_result(s,call,run_find(s,0))
         return
     }
     switch params.from {
@@ -1356,7 +1345,7 @@ api_play_status :: proc(s:^Session,call:^api.Call) {
 api_play_pause :: proc(s:^Session,call:^api.Call) {
     r,own:=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
+    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
     case !own: api_play_refused(call)
     case r.owner!=0: api.call_fail(call,api.SERVER_ERROR,"This run advances only with play.step")
     case:
@@ -1370,10 +1359,7 @@ api_play_pause :: proc(s:^Session,call:^api.Call) {
 api_play_step :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Step_Params)
     r,own:=api_play_run(s,call)
-    if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
-        return
-    }
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     if !own {api_play_refused(call);return}
     owner:=r.owner
     timeline,ok:=api_step_timeline(call,params,s.app.tick_dt)
@@ -1394,10 +1380,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     api.object_values(call.allocator,call.raw,{"until","trace"},values[:])
     until:=params.until[:api_list_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    observe_raw:[1]string
-    api.object_values(call.allocator,call.raw,{"targets"},observe_raw[:])
-    targets:=observe_targets_read(call,params.targets[:],observe_raw[0],call.allocator)
-    if len(targets)>0 && !params.observe {api.call_fail(call,api.INVALID_PARAMS,"targets are of observe: give observe true, or leave them out");return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
     trace:Api_Trace
     traced:=values[1]!=""
@@ -1411,10 +1393,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    if params.observe {
-        api_play_step_observe_write(s,call,run_find(s,owner),ran,len(until)>0 && met,targets,traced?&trace:nil)
-        return
-    }
     api_play_step_write(s,call,run_find(s,owner),ran,len(until)>0 && met,traced?&trace:nil)
 }
 
@@ -1448,7 +1426,7 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
         return false
     }
     input.focus(requests,slot)
-    qa_log_focus(s,r,slot)
+    run_tell_focus(s,r,slot)
     return true
 }
 
@@ -1468,7 +1446,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
             scripted,at=run_script_take(run_script(s,&other))
             step=&scripted
         }
-        qa_log_tick(s,&other,step,at)
+        run_tell_input(s,&other,step,at)
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}
         given:core.Input

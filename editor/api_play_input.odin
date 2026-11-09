@@ -47,7 +47,7 @@ Api_Play_Input_Result :: struct {
 @(private)
 api_play_input_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Play_Input_Params{slot=-1}
-    api_register(s,st,{name="play.input",flags={.Core},summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released, or schedules the keys, buttons, mouse and gamepads a person presses along the next ticks (a click, a double click, a hold of some seconds, a look) through the path of real input. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
+    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released, or schedules the keys, buttons, mouse and gamepads a person presses along the next ticks (a click, a double click, a hold of some seconds, a look) through the path of real input. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
 }
 
 // The local seat of slot (-1: the focused one) of a run; false after failing
@@ -80,16 +80,16 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:
     return seat,true
 }
 
-// One fixed tick of the game of the owner of r, as play.step without devices
-// runs it: the Play of the user pauses first, every run of a game on the
-// network advances and the script of play.input plays on. False when the run
-// ended.
-play_tick :: proc(s:^Session,r:^Run) -> bool {
+// One fixed tick of the game of the owner of r, as play.step runs it: the Play
+// of the user pauses first and every run of a game on the network advances.
+// With step, that input; without, the script of play.input plays on. False
+// when the run ended.
+play_tick :: proc(s:^Session,r:^Run,step:^Api_Step_Input=nil) -> bool {
     owner:=r.owner
     if owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
-    api_step_tick(s,owner,0,nil,0)
+    api_step_tick(s,owner,0,step,0)
     if !api_step_frame(s) || run_find(s,owner)==nil {return false}
-    qa_tick(s,r)
+    run_tell_ticked(s,r)
     return true
 }
 
@@ -138,6 +138,9 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     if values[1]!="" {
         ok:bool
         if timeline,ok=api_segments_read(call,p.segments[:],values[1],s.app.tick_dt);!ok {return}
+        for step in timeline {
+            if step.press!="" {api.call_fail(call,api.INVALID_PARAMS,"press finds its button as the tick comes, which only play.step can answer: give it there");return}
+        }
     }
     if count==0 && !p.release_all && timeline==nil {
         api.call_fail(call,api.INVALID_PARAMS,`give actions, as [{"name": "jump", "ticks": 1}], segments, as [{"ticks": 3, "mouse_buttons": ["Left"]}], or release_all`)

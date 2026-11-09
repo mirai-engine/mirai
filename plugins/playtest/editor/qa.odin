@@ -1,11 +1,11 @@
-package editor
+package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
 import "core:os"
-import img "mirai:cook/image"
 import "mirai:core"
+import "mirai:editor"
 import "mirai:editor/api"
 import input "mirai:engine/input"
 import "mirai:host"
@@ -17,8 +17,7 @@ import "mirai:std/serial"
 // play.qa.report, for the ticks the API runs (play.step, a scenario,
 // play.explore, a filmstrip, play.walk). The first thing the API does to a run
 // reserves its log of what the run received, from which a repro plays the same
-// ticks again whenever the monitors started; a tick writes into that, and a
-// run the API never touched only tests a pointer.
+// ticks again whenever the monitors started; a tick writes into that.
 
 QA_VIOLATIONS :: 64
 QA_LOG_ENTRIES :: 8192
@@ -26,9 +25,7 @@ QA_LOG_TEXT :: 256*1024
 @(private) QA_MOVE_HELD :: f32(0.05)      // length of a Move_Input that asks for movement
 @(private) QA_STUCK_DISTANCE :: f32(0.1)  // meters that count as having moved
 @(private) QA_MEMORY_EVERY :: 30          // ticks between two readings of the memory
-@(private) QA_FILMSTRIP_AROUND :: u64(60) // ticks a filmstrip shows on each side of a violation
-@(private) QA_FILMSTRIP_CELLS :: 9
-@(private) QA_FILMSTRIP_FRAMES :: 2       // frames drawn per cell of the past
+@(private) QA_FALL_MARGIN :: f32(5)       // meters under the lowest of the scene where falling starts
 
 Api_Qa_Kind :: enum u8 {Frame_Time,Memory,Stuck,Fell,Non_Finite,Problem}
 Api_Qa_Severity :: enum u8 {Warning,Error}
@@ -37,7 +34,8 @@ Api_Play_Qa_Start_Params :: struct {
     frame_ms:f32 `mirai:"optional,min=0,unit=ms,label=Longest whole frame of the application; 0: off"`,
     memory_mb:f32 `mirai:"optional,min=0,label=Megabytes the process may grow since this call; 0: off"`,
     stuck_seconds:f32 `mirai:"optional,min=0,unit=s,label=Game time the body may ask to move without moving; 0: off"`,
-    fall_below:f32 `mirai:"optional,unit=m,label=World height the body must stay above; absent: off"`,
+    fall_below:f32 `mirai:"optional,unit=m,label=World height the body must stay above; absent: a little under the lowest of the scene"`,
+    falls:bool `mirai:"optional,label=Falling below fall_below is a violation"`,
     non_finite:bool `mirai:"optional,label=A NaN or infinite Transform is a violation"`,
     problems:bool `mirai:"optional,label=A core.report problem is a violation"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
@@ -51,18 +49,17 @@ Api_Play_Qa_Start_Result :: struct {
 Api_Play_Qa_Report_Params :: struct {
     violation:int `mirai:"optional,min=-1,max=63,label=The index of the violation repro and filmstrip are of; -1: none"`,
     repro:bool `mirai:"optional,label=Writes tests/scenarios/bug_<tick>.mirai under the project: the inputs from tick 0 to that violation ending in a play.check"`,
-    filmstrip:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG of the ticks around that violation from the past of the run; the run stays where it is"`,
+    filmstrip:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG of the ticks around that violation from the past of the run; the run stays where it is"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
 Api_Play_Qa_Report :: struct {
-    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     passed:bool `mirai:"label=No violation"`,
     tick:u64 `mirai:"label=The tick of the game now"`,
     violations:[1]Api_Play_Qa_Violation `mirai:"list"`,
     dropped:int `mirai:"optional,label=Violations that did not fit"`,
-    repro:[API_PATH_BYTES]u8 `mirai:"optional,text,label=The scenario written"`,
-    filmstrip:Api_Capture_Result `mirai:"optional,label=The filmstrip written"`,
+    repro:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=The scenario written"`,
+    filmstrip:editor.Api_Capture_Result `mirai:"optional,label=The filmstrip written"`,
 }
 Api_Play_Qa_Violation :: struct {
     index:int,
@@ -105,7 +102,7 @@ Qa_Entry_Kind :: enum u8 {Input,Hold,Call,Focus,Monitors}
 @(private)
 Qa_Entry :: struct {
     kind:Qa_Entry_Kind,
-    given:Api_Step_Input, // Input: its text is in the text of the log
+    given:editor.Api_Step_Input, // Input: its text is in the text of the log
     total:int,            // Input: ticks of the segment it came from
     at:int,               // Input: of the last tick it took in that segment
     hold:input.Hold_Request,
@@ -140,11 +137,11 @@ Run_Qa :: struct {
 }
 
 @(private)
-qa_api_register :: proc(s:^Session,st:^Api_State) {
-    defaults:=Api_Play_Qa_Start_Params{stuck_seconds=3,non_finite=true,problems=true}
+qa_api_register :: proc(s:^editor.Session) {
+    defaults:=Api_Play_Qa_Start_Params{stuck_seconds=3,falls=true,non_finite=true,problems=true}
     report:=Api_Play_Qa_Report_Params{violation=-1}
-    api_register(s,st,{name="play.qa.start",flags={.Core},summary="Starts monitors on the game of the caller, for the ticks the API runs: frame time, memory, stuck, falling, non-finite transforms and core.report problems. A violation can write a repro whenever they start, as long as the API drove the game from its first tick.",params=Api_Play_Qa_Start_Params,result=Api_Play_Qa_Start_Result,defaults=&defaults,run=api_play_qa_start})
-    api_register(s,st,{name="play.qa.report",flags={.Core},summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",params=Api_Play_Qa_Report_Params,result=Api_Play_Qa_Report,writes_result=true,defaults=&report,run=api_play_qa_report})
+    editor.api_method_register(s,{name="play.qa.start",summary="Starts monitors on the game of the caller, for the ticks the API runs: frame time, memory, stuck, falling, non-finite transforms and core.report problems. A violation can write a repro whenever they start, as long as the API drove the game from its first tick.",params=Api_Play_Qa_Start_Params,params_info=type_info_of(Api_Play_Qa_Start_Params),result=Api_Play_Qa_Start_Result,result_info=type_info_of(Api_Play_Qa_Start_Result),defaults=&defaults,run=api_play_qa_start})
+    editor.api_method_register(s,{name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",params=Api_Play_Qa_Report_Params,params_info=type_info_of(Api_Play_Qa_Report_Params),result=Api_Play_Qa_Report,result_info=type_info_of(Api_Play_Qa_Report),writes_result=true,defaults=&report,run=api_play_qa_report})
 }
 
 // The seat with the focus and the body it drives; NONE where there is none.
@@ -169,8 +166,10 @@ play_moving :: proc(w:core.World_Ref,body:core.Entity) -> bool {
 // What the first call of the API on a run reserves: the log of its inputs.
 // Nil without memory, and the run then plays without one.
 @(private)
-qa_reserve :: proc(s:^Session,r:^Run) -> ^Run_Qa {
-    if r.qa!=nil {return r.qa}
+qa_reserve :: proc(s:^editor.Session,r:^editor.Run) -> ^Run_Qa {
+    slot:=playtest_run(s,r)
+    if slot==nil {return nil}
+    if slot.qa!=nil {return slot.qa}
     allocator:=s.app.allocator
     q:=new(Run_Qa,allocator)
     if q==nil {return nil}
@@ -183,19 +182,19 @@ qa_reserve :: proc(s:^Session,r:^Run) -> ^Run_Qa {
         return nil
     }
     tick:u64
-    if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {tick=t.tick}
+    if t:=core.world_storage_of(editor.run_ref(s,r),core.Time);t!=nil {tick=t.tick}
     q.started,q.tick,q.from_zero=tick,tick,tick==0
-    r.qa=q
+    slot.qa=q
     return q
 }
 
 // Starts the monitors of a run, or takes new limits and starts counting again,
 // keeping its log. The log says where, so that a repro starts them there.
 @(private)
-qa_arm :: proc(s:^Session,r:^Run,limits:Qa_Limits) -> ^Run_Qa {
+qa_arm :: proc(s:^editor.Session,r:^editor.Run,limits:Qa_Limits) -> ^Run_Qa {
     q:=qa_reserve(s,r)
     if q==nil {return nil}
-    w:=run_ref(s,r)
+    w:=editor.run_ref(s,r)
     seconds:f64
     if t:=core.world_storage_of(w,core.Time);t!=nil {seconds=t.seconds}
     q.armed=true
@@ -205,7 +204,7 @@ qa_arm :: proc(s:^Session,r:^Run,limits:Qa_Limits) -> ^Run_Qa {
     q.stuck,q.fell=false,false
     q.anchor_seconds=seconds
     _,body:=play_focused(w)
-    if body!=core.NONE {q.anchor=entity_world(w,body).position}
+    if body!=core.NONE {q.anchor=editor.entity_world(w,body).position}
     if problems:=host.app_world_storage(s.app,w.data,core.Problems);problems!=nil {q.serial=problems.serial}
     q.memory_base=platform.process_memory_bytes()
     q.memory_next=q.ran+QA_MEMORY_EVERY
@@ -249,17 +248,17 @@ qa_entry_next :: proc(q:^Run_Qa) -> ^Qa_Entry {
 
 // Whether a tick of a segment gives input only by what it holds.
 @(private)
-qa_input_held_only :: proc(step:^Api_Step_Input) -> bool {
+qa_input_held_only :: proc(step:^editor.Api_Step_Input) -> bool {
     return step.tap_keys=={} && step.tap_buttons=={} && !step.placed && step.wheel=={} && step.mouse_delta=={} && step.text=="" && step.pad_taps=={}
 }
 
 // The input one tick receives, before it runs: at is that tick of its
 // segment. The holds waiting for it come first, as play.input asks them.
 @(private)
-qa_log_tick :: proc(s:^Session,r:^Run,step:^Api_Step_Input,at:int) {
+qa_log_tick :: proc(s:^editor.Session,r:^editor.Run,step:^editor.Api_Step_Input,at:int) {
     q:=qa_reserve(s,r)
     if q==nil {return}
-    w:=run_ref(s,r)
+    w:=editor.run_ref(s,r)
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
     if q.broken=="" && tick!=q.tick {q.broken="the game ran ticks no step gave it, or went back with play.seek"}
@@ -306,7 +305,7 @@ qa_log_tick :: proc(s:^Session,r:^Run,step:^Api_Step_Input,at:int) {
 
 // A call that changed the run between two ticks, as a scenario makes it again.
 @(private)
-qa_log_call :: proc(s:^Session,r:^Run,method,params:string) {
+qa_log_call :: proc(s:^editor.Session,r:^editor.Run,method,params:string) {
     q:=qa_reserve(s,r)
     if q==nil || q.broken!="" {return}
     e:=qa_entry_next(q)
@@ -320,7 +319,7 @@ qa_log_call :: proc(s:^Session,r:^Run,method,params:string) {
 }
 
 @(private)
-qa_log_focus :: proc(s:^Session,r:^Run,slot:int) {
+qa_log_focus :: proc(s:^editor.Session,r:^editor.Run,slot:int) {
     q:=qa_reserve(s,r)
     if q==nil || q.broken!="" {return}
     if e:=qa_entry_next(q);e!=nil {e.kind,e.slot=.Focus,slot}
@@ -349,16 +348,16 @@ qa_violation_add :: proc(q:^Run_Qa,v:Qa_Violation,repeats:bool) {
 
 @(private)
 qa_finite :: proc "contextless" (values:[]f32) -> bool {
-    for v in values {if !rpc_finite(v) {return false}}
+    for v in values {if v-v!=0 {return false}}
     return true
 }
 
 // The monitors after one tick the API ran.
 @(private)
-qa_tick :: proc(s:^Session,r:^Run) {
-    q:=r.qa
+qa_tick :: proc(s:^editor.Session,r:^editor.Run) {
+    q:=qa_of(s,r)
     if q==nil {return}
-    w:=run_ref(s,r)
+    w:=editor.run_ref(s,r)
     tick,seconds:=u64(0),f64(0)
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick,seconds=t.tick,t.seconds}
     q.tick=tick
@@ -366,7 +365,7 @@ qa_tick :: proc(s:^Session,r:^Run) {
     limits:=&q.limits
     _,body:=play_focused(w)
     at:[3]f32
-    if body!=core.NONE {at=entity_world(w,body).position}
+    if body!=core.NONE {at=editor.entity_world(w,body).position}
     if limits.problems {
         if problems:=host.app_world_storage(s.app,w.data,core.Problems);problems!=nil && problems.serial!=q.serial {
             for &p in core.problems_list(problems) {
@@ -411,18 +410,30 @@ qa_tick :: proc(s:^Session,r:^Run) {
 }
 
 @(private)
-qa_limits_read :: proc(call:^api.Call,p:^Api_Play_Qa_Start_Params) -> Qa_Limits {
+qa_limits_read :: proc(s:^editor.Session,call:^api.Call,p:^Api_Play_Qa_Start_Params) -> Qa_Limits {
     values:[1]string
     api.object_values(call.allocator,call.raw,{"fall_below"},values[:])
-    return {frame_ms=p.frame_ms,memory_mb=p.memory_mb,stuck_seconds=p.stuck_seconds,fall_below=p.fall_below,falls=values[0]!="",non_finite=p.non_finite,problems=p.problems}
+    limits:=Qa_Limits{frame_ms=p.frame_ms,memory_mb=p.memory_mb,stuck_seconds=p.stuck_seconds,fall_below=p.fall_below,falls=p.falls,non_finite=p.non_finite,problems=p.problems}
+    if values[0]=="" && p.falls {limits.fall_below,limits.falls=qa_fall_default(s)}
+    return limits
+}
+
+// A little under the lowest of the document: what no body stands on. No height
+// when the scene is empty.
+@(private)
+qa_fall_default :: proc(s:^editor.Session) -> (height:f32,known:bool) {
+    w:=editor.edited_world(s)
+    entities:=editor.api_entities_ordered(w)
+    if len(entities)==0 {return}
+    return editor.api_entities_box(s,w,entities).min.y-QA_FALL_MARGIN,true
 }
 
 @(private)
-api_play_qa_start :: proc(s:^Session,call:^api.Call) {
+api_play_qa_start :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Qa_Start_Params)
-    r,own:=api_play_own_run(s,call,p.player)
+    r,own:=editor.api_play_own_run(s,call,p.player)
     if !own {return}
-    q:=qa_arm(s,r,qa_limits_read(call,p))
+    q:=qa_arm(s,r,qa_limits_read(s,call,p))
     if q==nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the monitors");return}
     result:=api.call_result(call,Api_Play_Qa_Start_Result)
     result.tick,result.repro=q.tick,q.from_zero && q.broken==""
@@ -430,7 +441,7 @@ api_play_qa_start :: proc(s:^Session,call:^api.Call) {
 
 // The violations, with the index of each.
 @(private)
-qa_violations_write :: proc(s:^Session,out:^serial.Writer,q:^Run_Qa) {
+qa_violations_write :: proc(s:^editor.Session,out:^serial.Writer,q:^Run_Qa) {
     w:=q.violations[:q.violation_count]
     api.write_key(out,"violations");serial.write_u8(out,'[')
     for &v,i in w {
@@ -461,11 +472,11 @@ qa_violations_write :: proc(s:^Session,out:^serial.Writer,q:^Run_Qa) {
 }
 
 @(private)
-api_play_qa_report :: proc(s:^Session,call:^api.Call) {
+api_play_qa_report :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Qa_Report_Params)
-    r,_:=api_play_run(s,call,p.player)
-    if r==nil {api_play_none(call,`{"passed":false,"tick":0,"violations":[]}`);return}
-    q:=r.qa
+    r,_:=editor.api_play_run(s,call,p.player)
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,editor.API_NO_GAME);return}
+    q:=qa_of(s,r)
     if q==nil || !q.armed {api.call_fail(call,api.INVALID_PARAMS,"No monitors on this game: play.qa.start first");return}
     strip_path:=base.text_get(p.filmstrip[:])
     if (p.repro || strip_path!="") && (p.violation<0 || p.violation>=q.violation_count) {
@@ -479,7 +490,7 @@ api_play_qa_report :: proc(s:^Session,call:^api.Call) {
         repro=file
     }
     if strip_path!="" {
-        strip=qa_filmstrip(s,call,r,&q.violations[p.violation],strip_path)
+        strip=editor.api_filmstrip_around(s,call,r,q.violations[p.violation].tick,strip_path)
         if strip=="" {return}
     }
     out:=call.out
@@ -493,26 +504,17 @@ api_play_qa_report :: proc(s:^Session,call:^api.Call) {
     serial.write_u8(out,'}')
 }
 
-// How many violations of each kind, as the conditions with qa read them.
-@(private)
-qa_counts_write :: proc(out:^serial.Writer,q:^Run_Qa) {
-    serial.write_u8(out,'{')
-    for count,kind in q.counts {
-        api.write_int(out,fmt.tprint(kind),i64(count),kind==Api_Qa_Kind(0))
-    }
-    serial.write_u8(out,'}')
-}
-
 // ---------------------------------------------------------------- repro
 
 @(private)
 Repro_Writer :: struct {
-    s:^Session,
+    s:^editor.Session,
+    r:^editor.Run,
     q:^Run_Qa,
     out:serial.Writer,
     steps:int,
-    segments:[API_STEP_SEGMENTS]^Qa_Entry,
-    segment_ticks:[API_STEP_SEGMENTS]int,
+    segments:[editor.API_STEP_SEGMENTS]^Qa_Entry,
+    segment_ticks:[editor.API_STEP_SEGMENTS]int,
     segment_count,tick_sum:int,
     focus:int, // of the next play.step; -1: none
 }
@@ -620,8 +622,8 @@ repro_flush :: proc(w:^Repro_Writer) {
 repro_input :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
     ticks:=ticks
     for ticks>0 {
-        if w.segment_count==API_STEP_SEGMENTS || w.tick_sum==API_STEP_LIMIT {repro_flush(w)}
-        take:=min(ticks,API_STEP_LIMIT-w.tick_sum)
+        if w.segment_count==editor.API_STEP_SEGMENTS || w.tick_sum==editor.API_STEP_LIMIT {repro_flush(w)}
+        take:=min(ticks,editor.API_STEP_LIMIT-w.tick_sum)
         w.segments[w.segment_count],w.segment_ticks[w.segment_count]=e,take
         w.segment_count+=1
         w.tick_sum+=take
@@ -632,7 +634,7 @@ repro_input :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
 // Holds that came together, as one play.input per seat.
 @(private)
 repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
-    m:=core.world_storage_of(run_ref(w.s,run_of_qa(w.s,w.q)),input.Input_Map)
+    m:=core.world_storage_of(editor.run_ref(w.s,w.r),input.Input_Map)
     out:=&w.out
     start:=0
     for start<len(entries) {
@@ -662,12 +664,6 @@ repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
     }
 }
 
-@(private)
-run_of_qa :: proc(s:^Session,q:^Run_Qa) -> ^Run {
-    for &r in s.runs {if r.qa==q {return &r}}
-    return nil
-}
-
 // What must hold for the violation not to happen: a violation fails the
 // scenario, so the file reports the bug while it exists and passes once
 // it is fixed.
@@ -677,6 +673,7 @@ repro_monitor :: proc(out:^serial.Writer,q:^Run_Qa,v:^Qa_Violation) {
     serial.write_u8(out,'{')
     api.write_bool(out,"non_finite",v.kind==.Non_Finite,true)
     api.write_bool(out,"problems",v.kind==.Problem)
+    api.write_bool(out,"falls",v.kind==.Fell)
     api.write_key(out,"stuck_seconds");api.write_number(out,v.kind==.Stuck?l.stuck_seconds:0)
     if v.kind==.Frame_Time {api.write_key(out,"frame_ms");api.write_number(out,l.frame_ms)}
     if v.kind==.Memory {api.write_key(out,"memory_mb");api.write_number(out,l.memory_mb)}
@@ -686,17 +683,17 @@ repro_monitor :: proc(out:^serial.Writer,q:^Run_Qa,v:^Qa_Violation) {
 
 // The text of the scenario that plays a run from tick 0 to a violation.
 @(private)
-qa_repro_text :: proc(s:^Session,r:^Run,q:^Run_Qa,v:^Qa_Violation,allocator:=context.allocator) -> (text,problem:string) {
+qa_repro_text :: proc(s:^editor.Session,r:^editor.Run,q:^Run_Qa,v:^Qa_Violation,allocator:=context.allocator) -> (text,problem:string) {
     if !q.from_zero {return "",fmt.tprintf("No repro: a repro plays from tick 0 and the game ran %d ticks by itself before the API drove it; give the game its ticks with play.step from the first one",q.started)}
     if q.broken!="" {return "",fmt.tprintf("No repro: %s",q.broken)}
-    w:core.World_Ref=run_ref(s,r)
+    w:core.World_Ref=editor.run_ref(s,r)
     if network:=core.world_storage_of(w,core.Network);network!=nil && network.role!=.Standalone {return "","No repro: a game on the network does not play the same ticks again"}
     repro:Repro_Writer
-    repro.s,repro.q,repro.focus=s,q,-1
+    repro.s,repro.r,repro.q,repro.focus=s,r,q,-1
     serial.writer_init(&repro.out,8192,allocator)
     out:=&repro.out
     serial.write_u8(out,'{')
-    path:=document_path(s.document)
+    path:=editor.document_path(s.document)
     if path!="" {api.write_text(out,"scene",path,true)}
     api.write_key(out,"start",path=="");serial.write_u8(out,'{')
     if seats:=core.world_storage_of(w,input.Seats);seats!=nil && seats.local_count>0 {api.write_int(out,"players",i64(seats.local_count),true)}
@@ -735,82 +732,23 @@ qa_repro_text :: proc(s:^Session,r:^Run,q:^Run_Qa,v:^Qa_Violation,allocator:=con
         if left==0 {break entries}
     }
     repro_flush(&repro)
-    repro_step_begin(&repro,"play.check")
-    serial.text_write_raw(out,`{"conditions":[{"qa":true,"field":`)
-    serial.text_write_string(out,fmt.tprint(v.kind))
-    serial.text_write_raw(out,`,"compare":"Equal","number":0}]}}`)
-    serial.text_write_raw(out,"]}")
+    repro_step_begin(&repro,"play.qa.report")
+    serial.text_write_raw(out,"{}}]}")
     bytes:=serial.writer_bytes(out)
-    if len(bytes)>API_SCENARIO_FILE_BYTES {return "",fmt.tprintf("No repro: its scenario takes %d bytes and a scenario file %d",len(bytes),API_SCENARIO_FILE_BYTES)}
-    if repro.steps>API_SCENARIO_STEPS {return "",fmt.tprintf("No repro: its scenario takes %d steps and a scenario file %d",repro.steps,API_SCENARIO_STEPS)}
+    if len(bytes)>editor.API_SCENARIO_FILE_BYTES {return "",fmt.tprintf("No repro: its scenario takes %d bytes and a scenario file %d",len(bytes),editor.API_SCENARIO_FILE_BYTES)}
+    if repro.steps>editor.API_SCENARIO_STEPS {return "",fmt.tprintf("No repro: its scenario takes %d steps and a scenario file %d",repro.steps,editor.API_SCENARIO_STEPS)}
     return string(bytes),""
 }
 
 // Writes tests/scenarios/bug_<tick>.mirai of a violation; its file, or why not.
 @(private)
-qa_repro_write :: proc(s:^Session,call:^api.Call,r:^Run,v:^Qa_Violation,allocator:=context.allocator) -> (file,problem:string) {
-    text,wrong:=qa_repro_text(s,r,r.qa,v,allocator)
+qa_repro_write :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,v:^Qa_Violation,allocator:=context.allocator) -> (file,problem:string) {
+    text,wrong:=qa_repro_text(s,r,qa_of(s,r),v,allocator)
     if wrong!="" {return "",wrong}
-    path:=fmt.tprintf("%s/bug_%d%s",SCENARIO_FOLDER,v.tick,SCENARIO_EXTENSION)
-    target,bad:=api_output_path(s.project_root,path,context.temp_allocator)
+    path:=fmt.tprintf("%s/bug_%d%s",editor.SCENARIO_FOLDER,v.tick,editor.SCENARIO_EXTENSION)
+    target,bad:=editor.api_output_path(s.project_root,path,context.temp_allocator)
     if bad!="" {return "",bad}
-    if why,_:=api_output_prepare(target);why!="" {return "",why}
+    if why,_:=editor.api_output_prepare(target);why!="" {return "",why}
     if error:=os.write_entire_file(target,transmute([]u8)text);error!=nil {return "",fmt.tprintf("%s could not be written: %s",target,os.error_string(error))}
     return path,""
-}
-
-// ---------------------------------------------------------------- filmstrip
-
-// A filmstrip of the ticks the run keeps around a violation, played again on
-// the World of the run, which is put back after; what it answers, or "" after failing the call.
-@(private)
-qa_filmstrip :: proc(s:^Session,call:^api.Call,r:^Run,v:^Qa_Violation,path:string) -> string {
-    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return ""}
-    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return ""}
-    h:=r.history
-    oldest,newest,_,_,_:=history_span(h)
-    from:=v.tick>oldest+QA_FILMSTRIP_AROUND?v.tick-QA_FILMSTRIP_AROUND:oldest
-    to:=min(v.tick+QA_FILMSTRIP_AROUND,newest)
-    first:=history_frame_for(h,from)
-    if first==0 {api_history_older(call,h,from);return ""}
-    file,writable:=api_output_file(s,call,path,call.allocator)
-    if !writable {return ""}
-    span:=to>from?to-from:0
-    every:=max(span/(QA_FILMSTRIP_CELLS-1),1)
-    strip:=new(Api_Filmstrip,call.allocator)
-    strip^={frames=QA_FILMSTRIP_FRAMES,count=int(span/every)+1}
-    strip.run={owner=r.owner,player=r.player}
-    strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
-    defer img.sheet_destroy(&strip.sheet)
-    saved,copied:=history_save(s,r)
-    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return ""}
-    problem:string
-    {
-        kept:=extras_mark(s.app)
-        defer extras_drop(s.app,kept)
-        problem=qa_filmstrip_cells(s,r,strip,first,to,every)
-    }
-    history_restore(s,r,&saved)
-    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
-    sheet:=strip.sheet
-    strip.sheet={}
-    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
-    return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator,strip.counted)
-}
-
-@(private)
-qa_filmstrip_cells :: proc(s:^Session,r:^Run,strip:^Api_Filmstrip,first,to,every:u64) -> string {
-    h:=r.history
-    if !history_seek(s,r,first).ok {return "No memory to go back to the tick of the violation"}
-    if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
-    last:=history_frame_of(h,first).tick
-    for serial:=first+1;serial<=h.serial;serial+=1 {
-        f:=history_frame_of(h,serial)
-        if f==nil || f.tick>to {break}
-        if !history_seek(s,r,serial).ok {return "No memory to play the past again"}
-        if f.tick<last+every {continue}
-        if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {return problem}
-        last=f.tick
-    }
-    return ""
 }

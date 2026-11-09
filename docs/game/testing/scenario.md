@@ -71,8 +71,8 @@ none run when they hold already. If they never hold, the step and the scenario f
 ```
 
 - Ten quiet ticks after a key let a menu change page before the next check.
-- Click a button: a segment with `mouse_position` at the center of its `rect` (from
-  `play.observe`), then `{"ticks": 2, "mouse_buttons": ["Left"]}`.
+- Click a button of the screen on top by its name: `{"press": "start", "ticks": 10}`; it holds
+  the pointer and the button as a click takes, and `ticks` run after it.
 - Hold a game action by name for some ticks: `play.input`; teleport or change an entity:
   `play.set`; place a prefab: `play.spawn`. Params: `mirai rpc --project . describe <method>`.
 
@@ -88,14 +88,8 @@ every step with its tick and result.
 
 ## Monitors
 
-`play.scenario.run` takes `qa` with the params of `play.qa.start`; a violation fails the scenario:
-
-```bash
-mirai rpc --project . play.scenario.run '{"qa":{"fall_below":-5,"non_finite":true,"problems":true}}'
-```
-
-A condition `{"qa": true, "field": "Fell", "compare": "Equal", "number": 0}` tests it inside a
-file, which is how a repro ends ([explore-qa.md](explore-qa.md#qa)).
+A step `play.qa.start` arms the monitors and a step `play.qa.report`, the last, fails the scenario
+on any violation, which is how a repro ends ([explore-qa.md](explore-qa.md#qa)).
 
 ## Pitfalls that fail silently
 

@@ -82,6 +82,8 @@ project world. Layout, manifests and build:
 - `ragdoll` (components and `ragdoll.setup`): [ragdoll.md](references/ragdoll.md)
 - `ui_inspector` (`.ui` document, paths and the `ui.*` API):
   [ui-inspector.md](references/ui-inspector.md)
+- `playtest` (what an agent or a bot plays with: `play.observe`, the monitors of `play.qa.*` and
+  `play.explore`): [plugins.md](references/plugins.md#first-party-plugins)
 - `profiler` and `tracy` (development: captures panel and Tracy client in Odin):
   [profiling.md](references/profiling.md)
 - `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr`, `lens` and plugins that

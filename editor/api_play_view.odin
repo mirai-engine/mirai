@@ -32,7 +32,6 @@ Api_Play_View_Params :: struct {
 }
 
 Api_Play_View :: struct {
-    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     tick:u64,
     seconds:f64 `mirai:"label=The time of the game"`,
     game_camera:bool `mirai:"label=The view is of a camera of the game; false: of the editor or the default one"`,
@@ -217,12 +216,7 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
 api_play_view :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_View_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {
-        bytes,error:=json.marshal(Play_View{points=make([]Play_View_Shown,0,call.allocator)},{},call.allocator)
-        if error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"the empty view could not be serialized");return}
-        api_play_none(call,string(bytes))
-        return
-    }
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     w:=run_ref(s,r)
     values:[1]string
     api.object_values(call.allocator,call.raw,{"points"},values[:])
