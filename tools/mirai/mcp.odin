@@ -12,14 +12,13 @@ import "mirai:std/serial"
 MCP_MAX_LINE :: 16<<20
 MCP_USAGE :: "mcp [--project P|--port N] [--timeout S] [--plugins A,B|*] [--client NAME]"
 MCP_PROJECT_POLL :: 1 // seconds between readings of the port file of --project
-MCP_NO_EDITOR_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"additionalProperties":true}`
 
 // stdout is written by the messages and by the watcher of the editor.
 Mcp_Bridge :: struct {
     root:string,
     connection:Connection,
     lock:sync.Mutex,
-    unlisted:bool, // the client holds an empty list of tools
+    unlisted:bool, // the client holds a list without the tools of the editor
     plugins:string, // whose tools the client is given besides those of the editor: names separated by commas, or *
     client:string,  // X-Mirai-Client: --client, the name its initialize gives, or that of the shell it runs in
     named:bool,     // by --client
@@ -75,29 +74,23 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     method,_:=api.json_string(api.json_member(text,"method"))
     called:=method=="tools/call"?mcp_tool_method(text):""
     reply:string
-    answer,unlisted:bool
+    answer:bool
+    failed:api.Error
     editor:Connection_Editor
     if method=="tools/call" {reply,answer=mcp_docs_call(bridge.root,text)}
     for retried:=false;!answer;retried=true {
-        ready:api.Error
-        editor,ready=connection_ready(c,called)
-        if c.project!="" && editor.port==0 {
-            reply,answer=mcp_no_editor(ready.message,text)
-            if answer {break}
+        editor,failed=connection_ready(c,called)
+        if c.project=="" || editor.port!=0 {
+            watch:=connection_watch(c,editor,fmt.tprintf("mirai mcp %s",method))
+            reply,answer,failed=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch)
+            if !retried && connection_ended(c,called,failed) {continue}
+            if answer && c.project!="" && method=="initialize" {reply=mcp_lists_changes(reply)}
         }
-        watch:=connection_watch(c,editor,fmt.tprintf("mirai mcp %s",method))
-        failed:api.Error
-        reply,answer,unlisted,failed=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch)
-        if !retried && connection_ended(c,called,failed) {answer=false;continue}
-        if unlisted && c.project!="" {reply,_=mcp_no_editor(no_editor_text(c.project),text)}
-        if c.project!="" && method=="initialize" {reply=mcp_lists_changes(reply)}
+        if failed.code!=0 {reply,answer=api.bridge_absent(text,mcp_absent(bridge.root,c,editor,failed),context.temp_allocator)}
         break
     }
     if !answer {return}
-    switch method {
-    case "initialize": reply=mcp_docs_instructions(bridge.root,reply)
-    case "tools/list": reply=mcp_docs_listed(reply,text)
-    }
+    unlisted:=failed.code!=0 && method=="tools/list"
     sync.guard(&bridge.lock)
     if unlisted {bridge.unlisted=true}
     if method=="tools/list" {bridge.asked,bridge.listed=true,unlisted?Connection_Editor{}:editor}
@@ -134,53 +127,21 @@ mcp_docs_call :: proc(root,message:string) -> (reply:string,answered:bool) {
     return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":%s}}`,id,string(serial.writer_bytes(&w))),true
 }
 
-// The answer to a tools/list with the docs tool first, on the first page,
-// unless the editor that answered already gives it.
-mcp_docs_listed :: proc(reply,message:string) -> string {
-    if api.json_member(api.json_member(message,"params"),"cursor")!="" {return reply}
-    if strings.contains(reply,`"name":"docs"`) {return reply}
-    KEY :: `"tools":[`
-    at:=strings.index(reply,KEY)+len(KEY)
-    if at<len(KEY) || at>=len(reply) {return reply}
-    return strings.concatenate({reply[:at],api.MCP_DOCS_ENTRY,reply[at]==']'?"":",",reply[at:]},context.temp_allocator)
-}
-
-// The answer to an initialize with the index of the documentation after what
-// it says of the editor.
-mcp_docs_instructions :: proc(root,reply:string) -> string {
-    quoted:=api.json_member(api.json_member(reply,"result"),"instructions")
-    compact:=api.docs_compact(root)
-    if quoted=="" || compact=="" || strings.contains(reply,api.DOCS_INSTRUCTION) {return reply}
-    instructions,_:=api.json_string(quoted)
-    KEY :: `"instructions":`
-    added:=serial.text_quote(strings.trim_space(fmt.tprintf("%s\n\n%s",instructions,compact)))
-    changed,_:=strings.replace(reply,strings.concatenate({KEY,quoted},context.temp_allocator),strings.concatenate({KEY,added},context.temp_allocator),1,context.temp_allocator)
-    return changed
-}
-
-// What mirai mcp --project answers itself while its project has no editor:
-// one tool, so that a client has something to call, and, for a call that
-// could not open the session, hint as its error. answered is false for what
-// api.bridge_handle answers the same with or without a project.
-mcp_no_editor :: proc(hint,message:string) -> (reply:string,answered:bool) {
-    id:=api.json_member(message,"id")
-    if id=="" {return}
-    method,_:=api.json_string(api.json_member(message,"method"))
-    switch method {
-    case "initialize":
-        requested,_:=api.json_string(api.json_member(api.json_member(message,"params"),"protocolVersion"))
-        w:serial.Writer
-        serial.writer_init(&w,512,context.temp_allocator)
-        api.mcp_initialize_write(&w,requested,"mirai","1",fmt.tprintf("%s. The tools are listed when it runs.",hint),true)
-        return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":%s}}`,id,string(serial.writer_bytes(&w))),true
-    case "tools/list":
+// What is answered while no editor does: why and the docs tool, which needs
+// none. With --project also one tool whose call starts the session of the
+// project, so that a client has something to call; a port that stopped
+// answering says how to start it.
+mcp_absent :: proc(root:string,c:Connection,editor:Connection_Editor,failed:api.Error) -> api.Bridge_Absent {
+    instructions:=fmt.tprintf("%s. Open the editor; the tools are listed when it runs.",failed.message)
+    tools:=api.MCP_DOCS_ENTRY
+    if c.project!="" {
+        hint:=editor.port==0?failed.message:no_editor_text(c.project)
+        instructions=fmt.tprintf("%s. The tools are listed when it runs.",hint)
         description:=serial.text_quote(fmt.tprintf("%s. Calling a method through this starts it; the tools of the editor are listed when it runs.",hint))
-        return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":{{"tools":[{{"name":"%s","description":%s,"inputSchema":%s}}]}}}}`,id,api.MCP_CALL_TOOL,description,MCP_NO_EDITOR_SCHEMA),true
-    case "tools/call":
-        text:=serial.text_quote(api.error_text({api.UNREACHABLE,hint,""},context.temp_allocator))
-        return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":{{"content":[{{"type":"text","text":%s}}],"isError":true}}}}`,id,text),true
+        tools=fmt.tprintf(`%s,{{"name":"%s","description":%s,"inputSchema":%s}}`,tools,api.MCP_CALL_TOOL,description,api.MCP_CALL_SCHEMA)
     }
-    return
+    if compact:=api.docs_compact(root);compact!="" {instructions=fmt.tprintf("%s\n\n%s",instructions,compact)}
+    return {instructions,tools,failed}
 }
 
 // While the client holds an empty list, tries the editor every

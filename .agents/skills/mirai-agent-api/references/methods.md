@@ -152,7 +152,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     waits without advancing frames.
 - `view.viewport`: the snapshot saved when the message of the caller's turn was sent (`request`
   names another of its folder under `.mirai/ai`, and outside a turn it is required), without
-  advancing frames or recapturing; fails if it does not exist or exceeds the response limit.
+  advancing frames or recapturing; fails if it does not exist.
 - `editor.view_mode.list` and `editor.view_mode.set`: the core
   [inspection modes](../../mirai-editor/references/panels.md#inspection-mode),
   `collision` and `collision.<layer>` per object layer, and those the plugins declare in that frame
@@ -1109,7 +1109,7 @@ file's.
   name or domain.
 - `material.program.inspect`: the
   [graph](../../mirai-rendering/references/materials.md#derived-graph) is read-only.
-- `material.preview.capture` (MCP content): measures only the pixels the sphere covers. A program
+- `material.preview.capture`: measures only the pixels the sphere covers. A program
   gives its values as it writes them, before the renderer limits them; a NaN is magenta in the
   image and counts in `nan_count`. If publishing fails or the renderer rejects the stages of the
   previews, the error says so. Two captures are compared with `mirai image diff`.

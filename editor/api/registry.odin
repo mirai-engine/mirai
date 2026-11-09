@@ -128,7 +128,7 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     if s.method_count>=len(s.methods) {s.stats.methods_refused+=1;return .Full}
     if method_find(s,desc.name)!=nil || tool_find(s,desc.name)!=nil {return .Duplicate}
     if desc.writes_result && desc.result==nil {return .Invalid_Type}
-    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,mcp_content=desc.mcp_content,writes_result=desc.writes_result}
+    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
     ok:bool
     method.params,ok=schema_register(s,desc.params,desc.params_info)
     if !ok {return .Invalid_Type}

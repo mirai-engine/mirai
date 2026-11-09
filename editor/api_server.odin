@@ -475,7 +475,6 @@ Api_Method :: struct {
     run:Api_Handler,
     flags:api.Method_Flags,
     params_schema,result_schema:string,
-    mcp_content:bool,
     writes_result:bool, // the handler writes the result into call.out; result only gives its schema
 }
 
@@ -528,7 +527,7 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
         params_info=m.params_info,result_info=m.result_info,
-        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,mcp_content=m.mcp_content,writes_result=m.writes_result,
+        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)

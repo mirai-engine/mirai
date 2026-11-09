@@ -1,6 +1,5 @@
 package previews_editor
 
-import "core:encoding/base64"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -50,14 +49,20 @@ Animation_Capture_Params :: struct {
 Previews_Api :: struct {provider:editor.Api_Provider}
 PREVIEWS_API_DEFAULT :: Previews_Api{provider={register=previews_register}}
 
-@(private)
-CAPTURE_RESULT :: `{"type":"object","properties":{"content":{"type":"array"},"structuredContent":{"type":"object"},"isError":{"const":false}},"required":["content","isError"]}`
+Animation_Capture_Result :: struct {
+    id:base.Entity_Id,
+    image:[1024]u8 `mirai:"text,label=The PNG written; MCP also returns the image"`,
+    size:int `mirai:"label=Pixels of a side of a frame"`,
+    short:bool `mirai:"label=The copy of the character shows only part of what the entity does"`,
+    frames:[1]f32 `mirai:"list,unit=s,label=The time of each frame of the strip"`,
+    views:[1][16]u8 `mirai:"text,list,label=The view of each row"`,
+}
 
 @(private)
 previews_register :: proc(s:^editor.Session) {
     defaults:=Animation_Capture_Params{frames=6,seconds=1,size=256,views={.Three_Quarter}}
     aed.request_rows_defaults(&defaults)
-    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=Animation_Capture_Params,params_info=type_info_of(Animation_Capture_Params),result_schema=CAPTURE_RESULT,defaults=&defaults,flags={.Read_Only},mcp_content=true,run=capture})
+    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=Animation_Capture_Params,params_info=type_info_of(Animation_Capture_Params),result=Animation_Capture_Result,result_info=type_info_of(Animation_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only},run=capture})
 }
 
 @(private)
@@ -217,26 +222,14 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     write:host.Png_Write
     host.app_png_write_start(app,&write,path,image,width,height)
     if error:=host.app_png_write_wait(app,&write);error!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written: %s",path,os.error_string(error));return}
-    report:serial.Writer;serial.writer_init(&report,0,context.temp_allocator)
-    serial.write_u8(&report,'{');api.write_key(&report,"id",true);api.write_id(&report,p.entity);api.write_text(&report,"image",path)
-    api.write_int(&report,"size",i64(side));api.write_bool(&report,"short",st.sub.short)
-    api.write_key(&report,"frames");serial.write_u8(&report,'[')
-    for frame in 0..<frames {if frame>0 {serial.write_u8(&report,',')};api.write_number(&report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}
-    serial.write_u8(&report,']')
-    api.write_key(&report,"views");serial.write_u8(&report,'[')
-    for view,v in views {if v>0 {serial.write_u8(&report,',')};serial.write_u8(&report,'"');serial.text_write_raw(&report,fmt.tprintf("%v",view));serial.write_u8(&report,'"')}
-    serial.text_write_raw(&report,"]}")
-    data,error:=os.read_entire_file(path,context.temp_allocator)
-    if error!=nil {api.call_fail(call,api.SERVER_ERROR,"The capture could not be read");return}
-    encoded,encode_error:=base64.encode(data,allocator=context.temp_allocator)
-    if encode_error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The capture could not be encoded");return}
-    text:=string(serial.writer_bytes(&report))
-    if len(encoded)+2*len(text)+256>call.server.max_response {api.call_fail(call,api.SERVER_ERROR,"The capture exceeds the response limit: ask for fewer frames, views or a smaller size");return}
-    serial.text_write_raw(call.out,`{"content":[{"type":"image","data":"`)
-    serial.text_write_raw(call.out,encoded)
-    serial.text_write_raw(call.out,`","mimeType":"image/png"},{"type":"text","text":`)
-    serial.text_write_string(call.out,text)
-    serial.text_write_raw(call.out,`}],"structuredContent":`)
-    serial.text_write_raw(call.out,text)
-    serial.text_write_raw(call.out,`,"isError":false}`)
+    report:=call.out
+    serial.write_u8(report,'{');api.write_key(report,"id",true);api.write_id(report,p.entity);api.write_text(report,"image",path)
+    api.write_int(report,"size",i64(side));api.write_bool(report,"short",st.sub.short)
+    api.write_key(report,"frames");serial.write_u8(report,'[')
+    for frame in 0..<frames {if frame>0 {serial.write_u8(report,',')};api.write_number(report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}
+    serial.write_u8(report,']')
+    api.write_key(report,"views");serial.write_u8(report,'[')
+    for view,v in views {if v>0 {serial.write_u8(report,',')};serial.write_u8(report,'"');serial.text_write_raw(report,fmt.tprintf("%v",view));serial.write_u8(report,'"')}
+    serial.text_write_raw(report,"]}")
+    api.call_image(call,path)
 }

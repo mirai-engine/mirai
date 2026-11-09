@@ -30,7 +30,6 @@ TOOLS_RESERVE :: 512
 MCP_CALL_TOOL :: "call"
 @(private)
 MCP_CALL_DESCRIPTION :: "Runs any method of the editor or of a plugin by its name (such as animation.request or panel.save) with its params. engine_describe is a short index of the methods; with methods (a list of names) it gives the JSON Schema of their params and result, and with plugin or prefix the summaries and guides of an area. Every method also takes _select (fields of its result to keep, such as a.b,c[0].d) and _wait_until (a condition such as phase=Built, which it is called again until)."
-@(private)
 MCP_CALL_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string","description":"The name of the method, such as terrain.sculpt"},"params":{"type":"object","description":"Its params, as engine_describe gives their schema"}},"required":["method"],"additionalProperties":false}`
 
 @(private)
@@ -193,10 +192,6 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         serial.writer_reset(&s.stage)
         s.stats.errors+=1
         raw(&s.stage,`{"error":`);write_error_object(base.arena_allocator(&s.scratch),&s.stage,err);raw(&s.stage,"}")
-    }
-    if ok && method.mcp_content {
-        raw(w,string(serial.writer_bytes(&s.stage)))
-        return {},true
     }
     raw(w,`{"content":[{"type":"text","text":`)
     serial.text_write_string(w,ok && selected!=""?selected:string(serial.writer_bytes(&s.stage)))

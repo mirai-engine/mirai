@@ -23,9 +23,8 @@ tool_text :: proc(t:^testing.T,reply:json.Value) -> json.Value {
 
 @(private)
 mcp_image_handler :: proc(call:^Call) {
-    raw(call.out,`{"content":[{"type":"image","data":"`)
-    raw(call.out,call.user!=nil?(^string)(call.user)^:"c2F2ZWQ=")
-    raw(call.out,`","mimeType":"image/png"}],"isError":false}`)
+    raw(call.out,`{"shown":true}`)
+    call_image(call,(^string)(call.user)^)
 }
 
 @(test)
@@ -35,7 +34,13 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     defer server_destroy(&server)
     payload:=strings.repeat("AQID",230*1024,context.allocator)
     defer delete(payload)
-    testing.expect_value(t,method_register(&server,{name="view.viewport",handler=mcp_image_handler,mcp_content=true,user=&payload}),Register_Error.None)
+    folder,_:=os.make_directory_temp("","mirai-image-*",context.allocator)
+    defer {os.remove_all(folder);delete(folder)}
+    file:=fmt.tprintf("%s/large.png",folder)
+    bytes:=make([]u8,230*1024*3,context.temp_allocator)
+    for i in 0..<len(bytes) {bytes[i]=u8(i%3+1)}
+    testing.expect(t,os.write_entire_file(file,bytes)==nil)
+    testing.expect_value(t,method_register(&server,{name="view.viewport",handler=mcp_image_handler,user=&file}),Register_Error.None)
     // The receiver window must be negotiated before the TCP handshake.
     receiver,listen_error:=net.listen_tcp({address=net.IP4_Loopback,port=0},1)
     if !testing.expect(t,listen_error==nil) {return}
@@ -43,12 +48,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     testing.expect(t,net.set_option(receiver,.Receive_Buffer_Size,8192)==nil)
     endpoint,endpoint_error:=net.bound_endpoint(receiver)
     if !testing.expect(t,endpoint_error==nil) {return}
-    paths:=[2]string{"/rpc","/mcp"}
-    requests:=[2]string{
-        `{"jsonrpc":"2.0","id":1,"method":"view.viewport"}`,
-        `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`,
-    }
-    for path,index in paths {
+    for _ in 0..<2 {
         writer,dial_error:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,endpoint.port)
         if !testing.expect(t,dial_error==nil) {return}
         socket,_,accept_error:=net.accept_tcp(receiver)
@@ -58,7 +58,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         testing.expect(t,net.set_blocking(writer,false)==nil)
         conn:=&server.conns[0]
         conn^={socket=writer,state=.Reading,buffer=conn.buffer,started=time.tick_now()}
-        request:=http_request(path,requests[index])
+        request:=http_request("/mcp",`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`)
         _,send_error:=net.send_tcp(socket,transmute([]u8)request)
         testing.expect(t,send_error==nil)
         testing.expect(t,net.set_blocking(socket,false)==nil)
@@ -94,31 +94,13 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         if !testing.expect(t,!strings.contains(body,"HTTP/1.1"),"a partial send never repeats the HTTP header") {return}
         reply,parse_error:=json.parse(transmute([]u8)body,parse_integers=true,allocator=context.temp_allocator)
         if !testing.expect_value(t,parse_error,json.Error.None) {return}
-        testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"image")
-        received:=string_of(at(reply,"result","content",0,"data"))
+        testing.expect_value(t,string_of(at(reply,"result","content",1,"type")),"image")
+        received:=string_of(at(reply,"result","content",1,"data"))
         testing.expect_value(t,len(received),len(payload))
         testing.expect(t,received==payload,"the complete image data matches")
-        testing.expect_value(t,string_of(at(reply,"result","content",0,"mimeType")),"image/png")
+        testing.expect_value(t,string_of(at(reply,"result","content",1,"mimeType")),"image/png")
         testing.expect(t,is_bool(at(reply,"result","isError"),false))
     }
-}
-
-@(test)
-mcp_image_results_remain_content_and_failures_remain_tool_errors :: proc(t:^testing.T) {
-    f:Fixture;if !fixture_start(&f,t) {return}
-    defer fixture_finish(&f)
-    testing.expect_value(t,method_register(&f.server,{name="view.viewport",handler=mcp_image_handler,mcp_content=true}),Register_Error.None)
-    testing.expect_value(t,method_register(&f.server,{name="view.error",params=Fail_Params,handler=fail_handler,mcp_content=true}),Register_Error.None)
-    reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`)
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"image")
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"data")),"c2F2ZWQ=")
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"mimeType")),"image/png")
-    testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    direct:=rpc(t,&f,`{"jsonrpc":"2.0","id":2,"method":"view.viewport"}`)
-    testing.expect_value(t,string_of(at(direct,"result","content",0,"type")),"image")
-    failed:=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"view_error","arguments":{}}}`)
-    testing.expect(t,is_bool(at(failed,"result","isError"),true))
-    testing.expect_value(t,integer(at(tool_text(t,failed),"error","code")),SERVER_ERROR)
 }
 
 Image_Params :: struct {path:[256]u8 `mirai:"text"`}
@@ -147,6 +129,9 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     testing.expect_value(t,string_of(at(reply,"result","content",1,"type")),"image")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"data")),"AQIDBA==")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"mimeType")),"image/png")
+    selected:=mcp(t,&f,fmt.tprintf(`{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"shot_take","arguments":{{"path":%q,"_select":"sum"}}}}}}`,small))
+    testing.expect_value(t,integer(at(tool_text(t,selected),"sum")),7)
+    testing.expect_value(t,string_of(at(selected,"result","content",1,"type")),"image")
     direct:=rpc(t,&f,fmt.tprintf(`{{"jsonrpc":"2.0","id":2,"method":"shot.take","params":{{"path":%q}}}}`,small))
     testing.expect_value(t,integer(at(direct,"result","sum")),7)
     // One that does not fit says where it is, and the result stays.

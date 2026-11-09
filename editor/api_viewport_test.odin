@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/base64"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math/linalg"
@@ -31,7 +30,7 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         testing.expect(t,os.write_entire_file(project.path(folder,AI_FILE_IMAGE,allocator=context.temp_allocator),saved[index])==nil)
     }
     s:=Session{project_root=root}
-    server:=api.Server{max_response=1024}
+    server:=api.Server{}
     method:=api.Method{params_id=Api_Viewport_Params}
     params:Api_Viewport_Params
     buffer:[1024]u8
@@ -42,16 +41,12 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
         testing.expect(t,!call.failed && w.overflow==0)
-        value:json.Value
+        value:Api_Viewport_Result_Text
         testing.expect(t,json.unmarshal(serial.writer_bytes(&w),&value,allocator=context.temp_allocator)==nil)
-        result:=value.(json.Object)
-        contents:=result["content"].(json.Array)
-        image:=contents[0].(json.Object)
-        testing.expect_value(t,image["type"].(string),"image")
-        testing.expect_value(t,image["mimeType"].(string),"image/png")
-        decoded,error:=base64.decode(image["data"].(string),allocator=context.temp_allocator)
-        testing.expect(t,error==nil)
-        testing.expect_value(t,string(decoded),saved[index])
+        testing.expect_value(t,call.image,value.path)
+        shown,read:=os.read_entire_file(call.image,context.temp_allocator)
+        testing.expect(t,read==nil)
+        testing.expect_value(t,string(shown),saved[index])
     }
     for request in ([]string{"../12-0","12-0/../../secret","12--2","0-0","12-3"}) {
         base.text_set(params.request[:],request)
@@ -75,15 +70,10 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
     turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
     api_view_viewport(&s,&turn)
     testing.expect(t,!turn.failed && w.count>0,turn.error.message)
-    s.ai=nil
-    server.max_response=512
-    base.text_set(params.request[:],requests[0])
-    serial.writer_init_fixed(&w,buffer[:])
-    bounded:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
-    api_view_viewport(&s,&bounded)
-    testing.expect(t,bounded.failed && bounded.error.code==api.SERVER_ERROR)
-    testing.expect_value(t,w.count,0)
 }
+
+@(private="file")
+Api_Viewport_Result_Text :: struct {path:string}
 
 @(private="file")
 Camera_World :: struct {

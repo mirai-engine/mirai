@@ -133,22 +133,17 @@ the_docs_tool_is_answered_by_the_bridge :: proc(t:^testing.T) {
     _,other:=mcp_docs_call(root,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scene_inspect"}}`)
     testing.expect(t,!other,"another tool goes on to the editor")
 
-    list,_:=mcp_no_editor(no_editor_text("C:/games/mine"),`{"jsonrpc":"2.0","id":"l","method":"tools/list"}`)
-    tools,_:=api.json_elements(api.json_member(api.json_member(mcp_docs_listed(list,`{"id":"l"}`),"result"),"tools"))
+    absent:=mcp_absent(root,Connection{project="C:/games/mine"},{},{api.UNREACHABLE,no_editor_text("C:/games/mine"),""})
+    list,_:=api.bridge_absent(`{"jsonrpc":"2.0","id":"l","method":"tools/list"}`,absent,context.allocator)
+    tools,_:=api.json_elements(api.json_member(api.json_member(list,"result"),"tools"))
     if testing.expect_value(t,len(tools),2) {
         name,_:=api.json_string(api.json_member(tools[0],"name"))
         testing.expect_value(t,name,api.MCP_DOCS_TOOL)
         testing.expect(t,api.json_valid(context.allocator,tools[0]))
     }
-    none,_:=api.json_elements(api.json_member(api.json_member(mcp_docs_listed(`{"id":1,"result":{"tools":[]}}`,`{"id":1}`),"result"),"tools"))
-    testing.expect_value(t,len(none),1)
-    later:=`{"id":1,"result":{"tools":[]}}`
-    testing.expect_value(t,mcp_docs_listed(later,`{"id":1,"params":{"cursor":"9"}}`),later)
-    served:=`{"id":1,"result":{"tools":[{"name":"docs"}]}}`
-    testing.expect_value(t,mcp_docs_listed(served,`{"id":1}`),served)
 
-    reply,_:=mcp_no_editor(no_editor_text("C:/games/mine"),`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-    instructions,_:=api.json_string(api.json_member(api.json_member(mcp_docs_instructions(root,reply),"result"),"instructions"))
+    reply,_:=api.bridge_absent(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,absent,context.allocator)
+    instructions,_:=api.json_string(api.json_member(api.json_member(reply,"result"),"instructions"))
     testing.expect(t,strings.contains(instructions,"mirai session start"),instructions)
     testing.expect(t,strings.contains(instructions,api.DOCS_INSTRUCTION),instructions)
     testing.expect(t,strings.contains(instructions,"- core: Core of a game\n  - core prefabs: Prefabs and spawning\n- ship: Ship a game."),instructions)

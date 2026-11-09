@@ -270,10 +270,9 @@ batch, without sessions or server events.
   guides. It paginates with `nextCursor`. Tools declare no `outputSchema`: `engine.describe` gives
   the shape of a result.
 - `tools/call`: the result as JSON text in `content`, the only copy, since clients give models
-  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. With
-  `mcp_content:true` it is an MCP content envelope (`view.viewport`). A handler
-  with a typed result attaches a PNG with `api.call_image` (`capture`): MCP gives it as an
-  image after the text and JSON-RPC returns only the result; if it does not fit in the response or
+  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. A handler
+  attaches a PNG with `api.call_image` (`capture`, `view.viewport`): MCP gives it as an image
+  after the text and JSON-RPC returns only the result; if it does not fit in the response or
   cannot be read, a text with its path goes instead. A malformed JSON, or a non-object despite
   announcing an object, is `-32603`; an envelope that does not fit, `-32000`.
 
