@@ -173,17 +173,27 @@ entities or persistent data.
 - `app.scene` is the part of the drawable in which the camera alone draws (zero: all of it): what is
   always covered, like the editor bars, is not drawn.
 
-**Profiling (`profile.odin`).** `profile_start(app, frames)` records the following frames: zones of
-the main thread, one per loop function in the ring of the worker that runs it, the tasks of each
-worker and what the renderer measures. The first `profile_start` reserves the memory: recording does
-not allocate, without recording a zone costs one branch and what does not fit is counted in `lost`.
-Whoever reads the zones as they happen (a profiling plugin) calls `profile_request` in every frame
-and reads them with its own cursor; without a recording or a request, the device writes no
-per-pass timestamps. The GPU times of a frame come back `MAX_FRAMES_IN_FLIGHT` frames later with
-the `rhi.frame_number` they measured, and go to the recorded frame that submitted it, each pass
-with its interval on the clock of the zones; a recording runs up to `PROFILE_GPU_LATE` frames past
-its last one, keeping none of their zones, so that its last frames get theirs. A frame whose times
-did not come back (`profile_stop` first, a device that does not measure) has `gpu` false. The editor exposes it with
+**Profiling (`profile*.odin`).** `profile_start(app, frames, tracks)` records the following frames
+in three tracks that share the frames, one file each:
+
+- **Cpu** (`profile.odin`), always: zones of the main thread, one per loop function in the ring of
+  the worker that runs it, the tasks of each worker, and the waits and parts of the renderer. Its
+  frame zone delimits the frames of every track.
+- **Gpu** (`profile_gpu.odin`): the passes of what each frame submitted. The GPU times of a frame
+  come back `MAX_FRAMES_IN_FLIGHT` frames later with the `rhi.frame_number` they measured and go
+  to the recorded frame that submitted it, each pass with its interval on the clock of the zones;
+  a recording runs up to `PROFILE_GPU_LATE` frames past its last one, keeping none of their zones,
+  so that its last frames get theirs. A frame whose times did not come back (`profile_stop` first,
+  a device that does not measure) is not `measured`.
+- **Memory** (`profile_memory.odin`): at the end of each frame, what the process holds
+  (`platform.process_memory`), the GPU memory and budget of the device and the pools of the
+  renderer. A sample asks the system and the driver and allocates nothing.
+
+The first `profile_start` reserves the memory of every track: recording does not allocate, without
+recording a zone costs one branch and what does not fit is counted in `lost`. Whoever reads the
+zones as they happen (a profiling plugin) calls `profile_request` in every frame and reads them with
+its own cursor; without a request or a recording with the Gpu track, the device writes no per-pass
+timestamps. The editor exposes it with
 [`profile.*`](../../mirai-agent-api/references/methods.md#profiling).
 
 **Loads (`load_profile.odin`).** `app.load_profile` keeps the last load of each kind (scene, Play,

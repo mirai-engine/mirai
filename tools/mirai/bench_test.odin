@@ -13,7 +13,7 @@ near :: proc(a,b:f64) -> bool {return abs(a-b)<1e-9}
 // A summary as profile.capture answers it, with what the comparison reads.
 @(private="file")
 summary_of :: proc(frame,cpu,gpu,game,shadows:f64,zones:string) -> (s:Bench_Summary) {
-    text:=fmt.tprintf(`{{"id":1,"frame":{{"count":240,"p50_ms":%f,"p95_ms":%f,"cpu_ms":%f,"gpu_ms":%f}},"parts":[{{"name":"game","mean_ms":%f,"p95_ms":1}},{{"name":"audio","mean_ms":0.0001}}],"gpu":[{{"name":"shadows","mean_ms":%f}}],"zones":[%s],"notes":["Headless"]}}`,frame,frame+2,cpu,gpu,game,shadows,zones)
+    text:=fmt.tprintf(`{{"id":1,"frame":{{"count":240,"p50_ms":%f,"p95_ms":%f}},"cpu":{{"ms":%f,"parts":[{{"name":"game","mean_ms":%f,"p95_ms":1}},{{"name":"audio","mean_ms":0.0001}}],"zones":[%s]}},"gpu":{{"recorded":true,"mean_ms":%f,"passes":[{{"name":"shadows","mean_ms":%f}}]}},"notes":["Headless"]}}`,frame,frame+2,cpu,game,zones,gpu,shadows)
     _=json.unmarshal_string(text,&s,allocator=context.temp_allocator)
     return
 }

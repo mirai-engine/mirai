@@ -15,9 +15,11 @@ import "mirai:rhi"
 import "mirai:std/jobs"
 
 // Captures of frames that the profile.* methods record and answer about. A
-// capture keeps, in its own arena, every frame with its zones and the times of
-// the renderer and the GPU, and the conditions it was measured in: two
-// captures only compare when those are the same.
+// capture keeps, in its own arena, every frame with what each track recorded
+// of it (host.Profile_Track): the zones and the waits of the Cpu track, the
+// passes of the Gpu track and the samples of the Memory track; and the
+// conditions it was measured in: two captures only compare when those are the
+// same.
 
 PROFILE_CAPTURES :: 8
 PROFILE_DEPTH_MAX :: 64
@@ -62,8 +64,6 @@ Profile_Frame_Record :: struct {
     between_ns:i64,     // from its end to the start of the next one: what runs between frames
     pacing_ns:i64,
     wait_ms:f32,        // the wait for a frame slot
-    gpu:bool,           // the GPU times of what it submitted came back
-    gpu_ms:f32,         // of what it submitted, once gpu
     render_prepare_ms,render_record_ms,render_end_ms:f32,
     drawn:bool,
     generated:bool,     // it drew an image shown before its own
@@ -71,7 +71,6 @@ Profile_Frame_Record :: struct {
     interval_total_ms,interval_square:f64, // their sum and the sum of their squares
     latency_ms:f32,
     zone_first,zone_count:int, // its zones of the main thread, by start
-    pass_first,pass_count:int, // its GPU passes, in the order they ran
     worker_ns:i64,      // time of the other threads in jobs
     jobs:int,
 }
@@ -81,8 +80,28 @@ Profile_Zone_Record :: struct {
     start_ns,ns,self_ns:i64,
 }
 
+Profile_Cpu_Capture :: struct {
+    zones:[]Profile_Zone_Record, // the main thread frame by frame, then the other threads
+    names:[]string,
+    threads:int,
+    lost:u64,
+}
+
 // A pass of the GPU on the clock of the zones: start_ns since the first frame began.
 Profile_Pass_Record :: struct {name:int,start_ns,ns:i64}
+
+Profile_Gpu_Frame_Record :: struct {
+    measured:bool, // the GPU times of what it submitted came back
+    ms:f32,        // of what it submitted, once measured
+    pass_first,pass_count:int, // its passes, in the order they ran
+}
+
+// With the frames of the capture, index by index, when it recorded the Gpu track.
+Profile_Gpu_Capture :: struct {
+    frames:[]Profile_Gpu_Frame_Record,
+    passes:[]Profile_Pass_Record,
+    pass_names:[]string,
+}
 
 Profile_Capture :: struct {
     arena:vmem.Arena,
@@ -91,13 +110,11 @@ Profile_Capture :: struct {
     state:Profile_State,
     requested:int,
     conditions:Profile_Conditions,
+    tracks:host.Profile_Tracks,
     frames:[]Profile_Frame_Record,
-    zones:[]Profile_Zone_Record, // the main thread frame by frame, then the other threads
-    names:[]string,
-    passes:[]Profile_Pass_Record,
-    pass_names:[]string,
-    threads:int,
-    lost:u64,
+    cpu:Profile_Cpu_Capture,
+    gpu:Profile_Gpu_Capture,
+    memory:[]host.Profile_Memory_Frame, // with the frames, index by index, when it recorded the Memory track
     warmup:int,      // frames run before recording until they stopped getting faster
     unsettled:bool,  // they were still getting faster after PROFILE_SETTLE_MAX
 }
@@ -136,7 +153,7 @@ profile_find :: proc(s:^Session,id:int) -> ^Profile_Capture {
 
 // Starts recording frames into a new capture, which replaces the oldest when
 // all are taken. Fails while another records.
-profile_begin :: proc(s:^Session,frames:int,label:string) -> (c:^Profile_Capture,error:string) {
+profile_begin :: proc(s:^Session,frames:int,label:string,tracks:=host.PROFILE_TRACKS_ALL) -> (c:^Profile_Capture,error:string) {
     profile_collect(s)
     ps:=&s.profiles
     if ps.recording!=0 {return nil,fmt.tprintf("Capture %d is still recording; profile.stop ends it",ps.recording)}
@@ -152,7 +169,7 @@ profile_begin :: proc(s:^Session,frames:int,label:string) -> (c:^Profile_Capture
     context.allocator=vmem.arena_allocator(&c.arena)
     c.label=strings.clone(label)
     c.conditions=profile_conditions(s)
-    if !host.profile_start(s.app,frames) {
+    if !host.profile_start(s.app,frames,tracks) {
         profile_capture_free(c)
         return nil,"The recorder could not reserve its memory"
     }
@@ -208,22 +225,25 @@ profile_conditions :: proc(s:^Session) -> (c:Profile_Conditions) {
 // What a recording left, ordered and with the time of every zone without its children.
 @(private)
 profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^host.App) {
-    c.threads,c.lost=recording.threads,recording.lost
+    c.tracks=recording.tracks
+    c.cpu.threads,c.cpu.lost=recording.cpu.threads,recording.cpu.lost
+    zones_in:=recording.cpu.zones
     numbers:=make(map[u32]int,len(recording.frames),context.temp_allocator)
     for frame,i in recording.frames {numbers[frame.number]=i}
     c.frames=make([]Profile_Frame_Record,len(recording.frames))
     epoch:=i64(max(i64))
-    for zone in recording.zones {
+    for zone in zones_in {
         if zone.thread==0 && zone.depth==0 && zone.name=="frame" {epoch=min(epoch,zone.start)}
     }
     if epoch==max(i64) {
-        for zone in recording.zones {epoch=min(epoch,zone.start)}
+        for zone in zones_in {epoch=min(epoch,zone.start)}
     }
+    if epoch==max(i64) {epoch=0}
 
     // Zones end inner first, so what the children of a zone took is known when it ends.
-    selfs:=make([]i64,len(recording.zones),context.temp_allocator)
-    children:=make([][PROFILE_DEPTH_MAX]i64,max(c.threads,1),context.temp_allocator)
-    for zone,i in recording.zones {
+    selfs:=make([]i64,len(zones_in),context.temp_allocator)
+    children:=make([][PROFILE_DEPTH_MAX]i64,max(c.cpu.threads,1),context.temp_allocator)
+    for zone,i in zones_in {
         if int(zone.thread)>=len(children) {continue}
         depth:=min(int(zone.depth),PROFILE_DEPTH_MAX-2)
         sums:=&children[zone.thread]
@@ -242,9 +262,9 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
         ids[copied]=index
         return index
     }
-    main:=make([dynamic]Profile_Zone_Record,0,len(recording.zones),context.temp_allocator)
-    workers:=make([dynamic]Profile_Zone_Record,0,len(recording.zones),context.temp_allocator)
-    for zone,i in recording.zones {
+    main:=make([dynamic]Profile_Zone_Record,0,len(zones_in),context.temp_allocator)
+    workers:=make([dynamic]Profile_Zone_Record,0,len(zones_in),context.temp_allocator)
+    for zone,i in zones_in {
         frame,found:=numbers[zone.frame]
         if !found || zone.duration<0 {continue}
         if zone.thread==0 && zone.depth==0 && zone.name=="frame" {
@@ -265,39 +285,25 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
         if a.start_ns!=b.start_ns {return a.start_ns<b.start_ns}
         return a.depth<b.depth
     })
-    c.zones=make([]Profile_Zone_Record,len(main)+len(workers))
-    copy(c.zones,main[:])
-    copy(c.zones[len(main):],workers[:])
-    c.names=names[:]
+    c.cpu.zones=make([]Profile_Zone_Record,len(main)+len(workers))
+    copy(c.cpu.zones,main[:])
+    copy(c.cpu.zones[len(main):],workers[:])
+    c.cpu.names=names[:]
     for zone,i in main {
         frame:=&c.frames[zone.frame]
         if frame.zone_count==0 {frame.zone_first=i}
         frame.zone_count+=1
     }
 
-    pass_ids:=make(map[int]int,64,context.temp_allocator)
-    pass_names:=make([dynamic]string)
-    c.passes=make([]Profile_Pass_Record,len(recording.passes))
-    for pass,i in recording.passes {
-        index,found:=pass_ids[pass.name]
-        if !found {
-            index=len(pass_names)
-            append(&pass_names,strings.clone(host.profile_pass_name(app,pass.name)))
-            pass_ids[pass.name]=index
-        }
-        c.passes[i]={index,pass.start_ns-epoch,max(pass.end_ns-pass.start_ns,0)}
-    }
-    c.pass_names=pass_names[:]
     for frame,i in recording.frames {
         // The size the scene was drawn at is known once a frame drew.
         if c.conditions.render=={} && frame.render_width>0 {c.conditions.render={int(frame.render_width),int(frame.render_height)}}
         record:=&c.frames[i]
-        record.wait_ms,record.gpu,record.gpu_ms=frame.render_wait_ms,frame.gpu,frame.gpu_ms
+        record.wait_ms=frame.render_wait_ms
         record.render_prepare_ms,record.render_record_ms,record.render_end_ms=frame.render_prepare_ms,frame.render_record_ms,frame.render_end_ms
         record.drawn=frame.drawn
         record.generated,record.presented,record.intervals=frame.generated,int(frame.presented),int(frame.intervals)
         record.interval_total_ms,record.interval_square,record.latency_ms=frame.interval_total_ms,frame.interval_square,frame.latency_ms
-        record.pass_first,record.pass_count=frame.pass_first,frame.pass_count
     }
     // A manual editor waits for the next request between frames: that is not part of a frame.
     if !c.conditions.manual {
@@ -306,6 +312,25 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
             record.between_ns=max(c.frames[i+1].start_ns-(record.start_ns+record.ns),0)
         }
     }
+
+    if .Gpu in c.tracks && len(recording.gpu.frames)==len(recording.frames) {
+        pass_ids:=make(map[int]int,64,context.temp_allocator)
+        pass_names:=make([dynamic]string)
+        c.gpu.passes=make([]Profile_Pass_Record,len(recording.gpu.passes))
+        for pass,i in recording.gpu.passes {
+            index,found:=pass_ids[pass.name]
+            if !found {
+                index=len(pass_names)
+                append(&pass_names,strings.clone(host.profile_pass_name(app,pass.name)))
+                pass_ids[pass.name]=index
+            }
+            c.gpu.passes[i]={index,pass.start_ns-epoch,max(pass.end_ns-pass.start_ns,0)}
+        }
+        c.gpu.pass_names=pass_names[:]
+        c.gpu.frames=make([]Profile_Gpu_Frame_Record,len(recording.frames))
+        for frame,i in recording.gpu.frames {c.gpu.frames[i]={frame.measured,frame.ms,frame.pass_first,frame.pass_count}}
+    }
+    if .Memory in c.tracks && len(recording.memory)==len(recording.frames) {c.memory=slice.clone(recording.memory)}
 }
 
 // ---------------------------------------------------------------- settling
@@ -419,9 +444,9 @@ Profile_Aggregate :: struct {
 
 profile_aggregate :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> []Profile_Aggregate {
     context.allocator=allocator
-    index:=make(map[int]int,len(c.names)*2)
+    index:=make(map[int]int,len(c.cpu.names)*2)
     list:=make([dynamic]Profile_Aggregate)
-    for zone in c.zones {
+    for zone in c.cpu.zones {
         key:=zone.name*2+(zone.thread!=0?1:0)
         at,found:=index[key]
         if !found {
@@ -450,18 +475,69 @@ profile_drawn :: proc(c:^Profile_Capture) -> (drawn:int) {
     return
 }
 
+// The GPU time of each frame whose GPU times came back.
+profile_gpu_ms :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> []f64 {
+    values:=make([dynamic]f64,0,len(c.gpu.frames),allocator)
+    for f in c.gpu.frames {if f.measured {append(&values,f64(f.ms))}}
+    return values[:]
+}
+
 // The time of each pass of the GPU in each frame whose GPU times came back.
 profile_passes_by_name :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> [][]f64 {
     context.allocator=allocator
     measured:=0
-    for f in c.frames {if f.gpu {measured+=1}}
-    values:=make([][]f64,len(c.pass_names))
+    for f in c.gpu.frames {if f.measured {measured+=1}}
+    values:=make([][]f64,len(c.gpu.pass_names))
     for &v in values {v=make([]f64,measured)}
     i:=0
-    for frame in c.frames {
-        if !frame.gpu {continue}
-        for pass in c.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ns)/1e6}
+    for frame in c.gpu.frames {
+        if !frame.measured {continue}
+        for pass in c.gpu.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ns)/1e6}
         i+=1
     }
     return values
+}
+
+// The counters of the Memory track.
+Profile_Memory_Counter :: enum u8 {Process_Resident,Process_Private,Gpu_Used,Textures,Geometry,Rays}
+PROFILE_MEMORY_NAMES :: [Profile_Memory_Counter]string{
+    .Process_Resident="process_resident",.Process_Private="process_private",.Gpu_Used="gpu_used",
+    .Textures="textures",.Geometry="geometry",.Rays="rays",
+}
+
+profile_memory_value :: proc(m:host.Profile_Memory_Frame,counter:Profile_Memory_Counter) -> u64 {
+    switch counter {
+    case .Process_Resident: return m.process.resident
+    case .Process_Private: return m.process.private
+    case .Gpu_Used: return m.gpu_used
+    case .Textures: return m.textures
+    case .Geometry: return m.geometry
+    case .Rays: return m.rays
+    }
+    return 0
+}
+
+// A counter over the frames of a capture: where it started and ended, its
+// extremes, and the frames in which it went up, with how much.
+Profile_Memory_Series :: struct {
+    first,last,low,high:u64,
+    high_frame:int,
+    rises:int,      // frames that ended above the one before
+    risen:u64,      // the sum of those rises
+}
+
+profile_memory_series :: proc(c:^Profile_Capture,counter:Profile_Memory_Counter) -> (s:Profile_Memory_Series) {
+    if len(c.memory)==0 {return}
+    s.first=profile_memory_value(c.memory[0],counter)
+    s.low,s.high=s.first,s.first
+    previous:=s.first
+    for m,i in c.memory {
+        v:=profile_memory_value(m,counter)
+        if v<s.low {s.low=v}
+        if v>s.high {s.high,s.high_frame=v,i}
+        if i>0 && v>previous {s.rises+=1;s.risen+=v-previous}
+        previous=v
+    }
+    s.last=previous
+    return
 }

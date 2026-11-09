@@ -973,18 +973,20 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
         profile["advance"]=true
         profile["label"]=view.name
         profile["top"]=json.Integer(64)
+        profile["memory"]=false // a cost measure samples no memory
         text,profiled:=render_call(e,"profile.capture",profile)
         if !profiled {m.failure="profile.capture failed";return}
         Summary :: struct {
-            frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
-            gpu:[]struct {name:string,mean_ms:f64},
+            frame:struct {p50_ms,p95_ms:f64},
+            cpu:struct {ms:f64},
+            gpu:struct {mean_ms:f64,passes:[]struct {name:string,mean_ms:f64}},
             conditions:json.Value,
         }
         summary:Summary
         if json.unmarshal_string(text,&summary)!=nil {m.failure="profile.capture gave no summary";return}
-        m.frame_ms,m.frame_p95_ms,m.gpu_ms,m.cpu_ms=summary.frame.p50_ms,summary.frame.p95_ms,summary.frame.gpu_ms,summary.frame.cpu_ms
-        passes:=make([]Render_Pass,len(summary.gpu))
-        for pass,i in summary.gpu {passes[i]={pass.name,pass.mean_ms}}
+        m.frame_ms,m.frame_p95_ms,m.gpu_ms,m.cpu_ms=summary.frame.p50_ms,summary.frame.p95_ms,summary.gpu.mean_ms,summary.cpu.ms
+        passes:=make([]Render_Pass,len(summary.gpu.passes))
+        for pass,i in summary.gpu.passes {passes[i]={pass.name,pass.mean_ms}}
         m.passes=passes
         if e.run.conditions==nil {e.run.conditions=summary.conditions}
     }

@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Pattern, current maximum and what to use instead.
 RULES = [
-    (re.compile(r"(?<!:: )ui\.Color\{\d"), 4,
+    (re.compile(r"(?<!:: )ui\.Color\{\d"), 2,
      "a color of ui.Theme, or a named constant of the palette of the domain"),
     (re.compile(r"use_appearance=true"), 14,
      "a Button_Style (Ghost, Field, Accent, Tab, Well)"),

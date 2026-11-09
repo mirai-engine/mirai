@@ -52,10 +52,16 @@ BENCH_TITLES :: [Bench_Section]string{
 
 // What the editor answers to profile.capture that the comparison reads.
 Bench_Summary :: struct {
-    frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
-    parts:[]struct {name:string,mean_ms:f64},
-    gpu:[]struct {name:string,mean_ms:f64},
-    zones:[]struct {name,thread:string,self_ms:f64},
+    frame:struct {p50_ms,p95_ms:f64},
+    cpu:struct {
+        ms:f64,
+        parts:[]struct {name:string,mean_ms:f64},
+        zones:[]struct {name,thread:string,self_ms:f64},
+    },
+    gpu:struct {
+        mean_ms:f64,
+        passes:[]struct {name:string,mean_ms:f64},
+    },
 }
 
 // One measure across the captures: of head and of base, one per pair; NaN
@@ -258,7 +264,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         append(&report.captures,Bench_Capture{name,pair,value})
         append(&summaries[run],summary)
         if object,is_object:=value.(json.Object);is_object && conditions[run]==nil {conditions[run]=object["conditions"]}
-        fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.frame.cpu_ms,summary.frame.gpu_ms)
+        fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.cpu.ms,summary.gpu.mean_ms)
     }
     for &e in editors {headless_close(&e)}
     render_load(&load,0,"at the end",true)
@@ -314,6 +320,7 @@ bench_capture :: proc(e:^Headless_Editor,o:Bench_Options,label:string) -> (text:
     params["advance"]=true
     params["label"]=label
     params["top"]=json.Integer(64)
+    params["memory"]=false // a cost measure samples no memory
     return bench_call(e,"profile.capture",params)
 }
 
@@ -368,11 +375,11 @@ bench_rows :: proc(head,base:[]Bench_Summary) -> []Bench_Row {
         for s,pair in summaries {
             put(&rows,&index,pairs,.Frame,"frame p50","",run,pair,s.frame.p50_ms)
             put(&rows,&index,pairs,.Frame,"frame p95","",run,pair,s.frame.p95_ms)
-            put(&rows,&index,pairs,.Frame,"CPU of the main thread","",run,pair,s.frame.cpu_ms)
-            put(&rows,&index,pairs,.Frame,"GPU","",run,pair,s.frame.gpu_ms)
-            for part in s.parts {put(&rows,&index,pairs,.Parts,part.name,"",run,pair,part.mean_ms)}
-            for pass in s.gpu {put(&rows,&index,pairs,.Passes,pass.name,"",run,pair,pass.mean_ms)}
-            for zone in s.zones {put(&rows,&index,pairs,.Zones,zone.name,zone.thread,run,pair,zone.self_ms)}
+            put(&rows,&index,pairs,.Frame,"CPU of the main thread","",run,pair,s.cpu.ms)
+            put(&rows,&index,pairs,.Frame,"GPU","",run,pair,s.gpu.mean_ms)
+            for part in s.cpu.parts {put(&rows,&index,pairs,.Parts,part.name,"",run,pair,part.mean_ms)}
+            for pass in s.gpu.passes {put(&rows,&index,pairs,.Passes,pass.name,"",run,pair,pass.mean_ms)}
+            for zone in s.cpu.zones {put(&rows,&index,pairs,.Zones,zone.name,zone.thread,run,pair,zone.self_ms)}
         }
     }
     return rows[:]
