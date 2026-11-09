@@ -297,7 +297,10 @@ It is used by [water](water.md): the medium under a surface and its dry boxes.
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a
   medium that scatters, it lights it with the light of the engine's media
   (`shaders/include/media.slang`, the same as the volumes of [`vfx`](vfx.md#volumes)):
-  - the sun, `sun_light` of the place, with a shadow ray (`trace_transmission`);
+  - the sun, `sun_light` of the place, at four places of the cell, each by the
+    [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
+    view where one holds it (the glass on the way still colors it) and with a shadow ray
+    elsewhere (`media_sun`);
   - a local light chosen from the light tree according to what it gives the point, divided by the
     probability of choosing it, with another ray: two rays per froxel with any number of lights;
   - the ambient: the mean of what the probe volume gives to an upward-facing surface and a

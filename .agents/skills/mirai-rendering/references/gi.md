@@ -79,8 +79,8 @@ Each technique states its status; what is listed as prepared is not implemented.
 ### Temporal and denoising
 
 - **No on-screen history of the indirect.** The volume lives in the world and contact occlusion
-  is computed from the world; what is temporal in the image is TAA, the history of the
-  [direct light](lights.md#direct-light-of-a-view) and the frames of contact occlusion.
+  is computed from the world; what is temporal in the image is TAA and the history of the
+  [reflections](materials.md#traced-reflections).
 - **Marked changes.** The scene marks where the light changed (`Scene_State.changes`: spheres of
   lights that change, objects that move, change brightness or show a material that changed what
   the light sees; everything on a general change). The probes it reaches are traced at once and
@@ -96,9 +96,8 @@ other and do not see the corner of a table or the floor under a wardrobe.
 
 - Points (the first pixel of each 2×2, or each pixel, by the scale) trace short rays of the
   hemisphere of their normal in the world, which also see what is off screen or behind something
-  nearer to the eye; the nearest occludes more, so that the edge fades. Over frames, like the
-  [direct light](lights.md#direct-light-of-a-view): a frame traces the points of its squares and
-  takes the others from the frame before where their surface was.
+  nearer to the eye; the nearest occludes more, so that the edge fades. Every frame traces every
+  point.
 - The directions of a point rotate through a fixed pattern of 4×4 points that
   `contact_pixels.comp` averages around each pixel, on its surface. Nothing changes from one frame
   to the next if the scene does not change.

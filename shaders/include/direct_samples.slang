@@ -2,9 +2,10 @@
 // (render/frame.odin pass_direct): what direct_rays.comp, direct_samples.comp
 // and direct_filter.comp share.
 //
-// Each pixel weighs the lights of its cell of the grid and the sun at its
-// point (direct_grid.slang) and spreads its samples over them by those
-// weights, one at each m-th of their sum from the place of the pixel in a 3x3
+// Each pixel weighs the lights of its cell of the grid at its point
+// (direct_grid.slang), and the sun where no map of the view holds the point
+// (sun_map_of: where one does, it tells how much of the sun gets there and the
+// sun takes no samples), and spreads its samples over them by those weights, one at each m-th of their sum from the place of the pixel in a 3x3
 // pattern on: a light with a k-th of the weight takes about m/k samples and
 // none is drawn by chance. The cost of a pixel is that of its samples and of
 // the lights it weighs, DIRECT_FEW at most, whatever the number of lights.
@@ -28,21 +29,19 @@ float direct_start(uint place) { return (float(place) + 0.5) / 9.0; }
 // first of each `scale` x `scale` of them; what follows counts in points.
 int2 direct_points(int scale) { return (int2(frame.resolution) + scale - 1) / scale; }
 
-// The frames the samples of a view are taken over: each takes those of the
-// squares of 2x2 pixels one of each `frames` along a row, a square on in the
-// next row and in the next frame, so that a window of 3x3 pixels holds a
-// square of each frame; direct_history.comp moves the rest from the frame
-// before. The c-th square of row y of the squares a frame takes, or with
-// `shift` of those the frame `shift` on takes.
-uint2 direct_square(uint c, uint y, uint frames, uint shift) {
-    return uint2(frames * c + (frame.frame_index + shift + frames - y % frames) % frames, y);
+// The pixel of thread t of a group of 4x4 squares of 2x2 pixels, the threads
+// of a square together.
+int2 direct_group_pixel(uint2 group, uint t) {
+    uint2 square = uint2(group.x * 4u + ((t >> 2u) & 3u), group.y * 4u + (t >> 4u));
+    return int2(square * 2u + uint2(t & 1u, (t >> 1u) & 1u));
 }
 
-// The pixel of thread t of a group of 4x4 of those squares, from 4 x frames of
-// them across and 4 down.
-int2 direct_group_pixel(uint2 group, uint t, uint frames, uint shift) {
-    uint2 square = direct_square(group.x * 4u + ((t >> 2u) & 3u), group.y * 4u + (t >> 4u), frames, shift);
-    return int2(square * 2u + uint2(t & 1u, (t >> 1u) & 1u));
+// Whether a point at `point`, with that normal, lies on the surface of a
+// center at `center` with its normal and the width of a point there (w),
+// `apart` points away.
+bool direct_surface(float3 center, float4 normal, float3 point, float3 point_normal, float apart) {
+    if (dot(normal.xyz, point_normal) < 0.9) return false;
+    return abs(dot(point - center, normal.xyz)) <= 2.0 * normal.w * apart + 1e-4;
 }
 
 // The most points a penumbra spreads the part of the light that got there to
@@ -67,10 +66,10 @@ bool direct_traces(int2 p) { return ((p.x | p.y) & 1) == 0; }
 // of a group spread over all m in the order their squares stand in it, so
 // that they go to every light that takes samples and find what the samples
 // of the group meet; INVALID for a pixel that traces none.
-uint direct_traced(int2 p, uint m, uint frames) {
+uint direct_traced(int2 p, uint m) {
     if (!direct_traces(p)) return INVALID;
     uint2 square = uint2(p) >> 1u;
-    uint at = (square.x % (4u * frames)) / frames + 4u * (square.y & 3u);
+    uint at = (square.x & 3u) + 4u * (square.y & 3u);
     return (at * m) / 16u % m;
 }
 

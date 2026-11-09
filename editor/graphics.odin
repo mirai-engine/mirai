@@ -25,15 +25,15 @@ GRAPHICS_WIDTH :: f32(420)
 GRAPHICS_LABEL_WIDTH :: f32(108)
 GRAPHICS_ROW :: f32(25)
 
-Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Light,Probes,Reflections,Lights,Light_Samples,Light_Resolution,Light_Frames,Glass_Shadows,Glass_Layers,Textures,Detail,Frame_Limit,Vsync,Fps}
+Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Light,Probes,Reflections,Light_Samples,Light_Resolution,Glass_Shadows,Glass_Layers,Textures,Detail,Frame_Limit,Vsync,Fps}
 // The choice each option is at; -1 when its values are none of the choices.
 Graphics_Choices :: [Graphics_Option]i8
 
-GRAPHICS_QUALITY :: bit_set[Graphics_Option]{.Resolution,.Frame_Generation,.Indirect_Light,.Probes,.Reflections,.Lights,.Light_Samples,.Light_Resolution,.Light_Frames,.Glass_Shadows,.Glass_Layers,.Textures,.Detail}
+GRAPHICS_QUALITY :: bit_set[Graphics_Option]{.Resolution,.Frame_Generation,.Indirect_Light,.Probes,.Reflections,.Light_Samples,.Light_Resolution,.Glass_Shadows,.Glass_Layers,.Textures,.Detail}
 
 GRAPHICS_OPTION_LABELS :: [Graphics_Option]string{
     .Resolution="Resolution",.Antialiasing="Antialiasing",.Frame_Generation="Frame generation",.Indirect_Light="Indirect light",.Probes="Light probes",.Reflections="Reflections",
-    .Lights="Shadowed lights",.Light_Samples="Light samples",.Light_Resolution="Light resolution",.Light_Frames="Light frames",.Glass_Shadows="Glass shadows",.Glass_Layers="Glass layers",.Textures="Textures",.Detail="Detail",.Frame_Limit="Frame limit",.Vsync="VSync",.Fps="Show FPS",
+    .Light_Samples="Light samples",.Light_Resolution="Light resolution",.Glass_Shadows="Glass shadows",.Glass_Layers="Glass layers",.Textures="Textures",.Detail="Detail",.Frame_Limit="Frame limit",.Vsync="VSync",.Fps="Show FPS",
 }
 GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Resolution={"720p","900p","1080p","1440p","Native"},
@@ -42,10 +42,8 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Indirect_Light={"Off","Probes"},
     .Probes={"Low","Medium","High"},
     .Reflections={"Off","Traced","Detailed"},
-    .Lights={"2","4","8","16"},
     .Light_Samples={"1 to 127"},
     .Light_Resolution={"Full","Half"},
-    .Light_Frames={"1","2","3"},
     .Glass_Shadows={"Off","Colored"},
     .Glass_Layers={"1","2"},
     .Textures={"1K","2K","4K","8K"},
@@ -56,7 +54,6 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
 }
 // Megapixels of a 16:9 image of each height; 0: one per point of the window.
 GRAPHICS_RESOLUTIONS :: [?]f32{0.9216,1.44,2.0736,3.6864,0}
-GRAPHICS_LIGHTS :: [?]u32{2,4,8,16}
 GRAPHICS_LIGHT_SAMPLES_MAX :: 127
 GRAPHICS_FRAME_LIMITS :: [?]u32{30,60,120,144,240,0}
 GRAPHICS_PRESET_LABELS :: [erender.Graphics_Preset]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra"}
@@ -69,7 +66,7 @@ Graphics :: struct {
 // offered: the techniques of antialiasing plugins offer. One the settings name
 // that none offers is the TAA, which draws then.
 graphics_choices :: proc(g:erender.Graphics_Settings,offered:[]erender.Antialiasing_Desc=nil) -> (c:Graphics_Choices) {
-    resolutions,lights_table,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_LIGHTS,GRAPHICS_FRAME_LIMITS
+    resolutions,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_FRAME_LIMITS
     for &choice in c {choice=-1}
     for megapixels,i in resolutions {
         if g.render_megapixels==megapixels {c[.Resolution]=i8(i)}
@@ -84,13 +81,9 @@ graphics_choices :: proc(g:erender.Graphics_Settings,offered:[]erender.Antialias
     c[.Indirect_Light]=i8(g.indirect_light)
     c[.Probes]=i8(g.light_probes)
     c[.Reflections]=i8(g.reflections)
-    for lights,i in lights_table {
-        if g.shadowed_lights==lights {c[.Lights]=i8(i)}
-    }
     // The number itself: any from 1 to GRAPHICS_LIGHT_SAMPLES_MAX.
     c[.Light_Samples]=i8(clamp(g.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX))
     c[.Light_Resolution]=i8(g.light_half_resolution)
-    if g.light_frames>=1 && g.light_frames<=3 {c[.Light_Frames]=i8(g.light_frames)-1}
     c[.Glass_Shadows]=i8(g.glass_shadows)
     if g.glass_layers>=1 && g.glass_layers<=2 {c[.Glass_Layers]=i8(g.glass_layers)-1}
     c[.Textures]=i8(g.textures)
@@ -115,7 +108,7 @@ graphics_labels :: proc(option:Graphics_Option,offered:[]erender.Antialiasing_De
 
 // Sets what a choice of an option stands for; false when the option has no such choice.
 graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choice:int,offered:[]erender.Antialiasing_Desc=nil) -> bool {
-    resolutions,lights,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_LIGHTS,GRAPHICS_FRAME_LIMITS
+    resolutions,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_FRAME_LIMITS
     if option==.Light_Samples {
         if choice<1 || choice>GRAPHICS_LIGHT_SAMPLES_MAX {return false}
         g.light_samples=u32(choice)
@@ -135,10 +128,8 @@ graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choi
     case .Indirect_Light: g.indirect_light=erender.Indirect_Light(choice)
     case .Probes:         g.light_probes=erender.Light_Probes(choice)
     case .Reflections:    g.reflections=erender.Reflections(choice)
-    case .Lights:         g.shadowed_lights=lights[choice]
     case .Light_Samples:
     case .Light_Resolution: g.light_half_resolution=choice==1
-    case .Light_Frames:   g.light_frames=u32(choice)+1
     case .Glass_Shadows:  g.glass_shadows=choice==1
     case .Glass_Layers:   g.glass_layers=u32(choice)+1
     case .Textures:       g.textures=erender.Textures(choice)

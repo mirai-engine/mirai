@@ -83,7 +83,7 @@ debug_views_pass :: proc(p: ^Pass) {
 	available, _ := debug_view_status(r, p.plan, mode)
 	source := r.dummy_texture
 	#partial switch mode {
-	case .Shadows:             source = texture_or_dummy(r, t.direct_samples[p.current])
+	case .Shadows:             source = texture_or_dummy(r, t.direct_points)
 	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflect_history[p.current])}
 	case .Reflections_Raw:     if p.use_reflections {source = texture_or_dummy(r, t.reflect_raw)}
 	}

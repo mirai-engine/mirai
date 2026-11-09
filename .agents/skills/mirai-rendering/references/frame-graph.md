@@ -72,12 +72,12 @@ or interleave its own passes.
    - The light of a pixel comes from `direct_samples` samples spread over the lights of its cell
      of the [grid](lights.md#direct-light-of-a-view), in this order: the grid when the lights
      change, the shadow maps of the lights that cover much of the view and of the sun,
-     `direct_rays` (one pixel of each 2×2 traces a sample), `direct_samples`, `direct_history`
-     (with `direct_frames` greater than 1), and `direct_filter` and `direct_spread`, which filter
-     the points, take them to the pixels and add the lights that cast no shadows
+     `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
+     `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
+     the sun gives its light, and add the lights that cast no shadows
      ([GPU lights](lights.md#gpu-lights)).
    - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
-     `reference_lights` is the same passes with many samples, without maps, frames or half
+     `reference_lights` is the same passes with many samples, without maps or half
      resolution.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters in space and time; it is omitted while no material of the table can go

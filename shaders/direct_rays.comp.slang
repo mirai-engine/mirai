@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
 // The first pass of the direct light of a view (direct_samples.slang), a
-// thread for each square of 2x2 pixels the frame takes (direct_square): its
+// thread for each square of 2x2 pixels: its
 // first pixel (direct_traces) traces through the whole scene the one of its
 // samples its place in its group says, leaving what stopped it for the samples
 // of the group and of the groups around to meet; the other three, nothing.
@@ -10,15 +10,15 @@
 #include "gbuffer.slang"
 #include "pixel.slang"
 #include "direct_samples.slang"
+#include "shadow_maps.slang"
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-// frames: those the samples are taken over (direct_square); samples: those of
-// a pixel; sun_radius: angular radius of the sun, radians;
+// samples: those of a pixel; sun_radius: angular radius of the sun, radians;
 // hard: the shadow rays of a point that traces its own (direct_lighting); the
 // grid of the lights (render.Light_Grid) and its cells.
-struct Params_Block { uint frames; uint samples; float sun_radius; uint scale; uint hard; uint mode; uint pad3; uint pad4; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells; };
+struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint mode; uint pad3; uint pad4; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // What stopped the ray of each pixel (DIRECT_NONE, DIRECT_CHANGED).
@@ -29,9 +29,8 @@ struct Params_Block { uint frames; uint samples; float sun_radius; uint scale; u
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
-    uint frames = max(params.frames, 1u);
     int scale = int(max(params.scale, 1u));
-    int2 p = int2(direct_square(dispatch_id.x, dispatch_id.y, frames, 0u) * 2u);
+    int2 p = int2(dispatch_id.xy * 2u);
     int2 source = p * scale;
     int2 size = direct_points(scale);
     if (any(p >= size)) return;
@@ -48,8 +47,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(source);
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    // The weights of the items and of the sun, the sun last.
+    // The weights of the items and of the sun, the sun last; none where a map tells of it.
     float sun = direct_sun_weight(pixel.position, normal);
+    Shadow_Map held;
+    if (sun > 0.0 && sun_map_of(pixel.position, held)) sun = 0.0;
     float total = sun;
     for (uint i = 0u; i < count; i++) {
         total += direct_item_weight(row, direct_item(row, i), pixel.position, normal);
@@ -59,7 +60,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         out_blockers[p] = DIRECT_NONE;
         return;
     }
-    uint traced = direct_traced(p, m, frames);
+    uint traced = direct_traced(p, m);
     uint place = direct_place(p);
     // The item of the traced sample, by the walk of direct_samples.comp, step for step.
     float step = total / float(m);

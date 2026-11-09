@@ -136,33 +136,46 @@ float shadow_hard_seen(Texture2D<float4> atlas, Shadow_Map m, float2 texel, floa
     return lerp(lerp(past.w, past.z, f.x), lerp(past.x, past.y, f.x), f.y);
 }
 
+// The map of the sun of the view that holds a point with room for the taps
+// around it, the nearest cascade first (Frame.sun_maps); false where none
+// does, or the view drew none.
+bool sun_map_of(float3 position, out Shadow_Map m) {
+    uint count = min(frame.sun_maps.x, uint(SUN_MAP_ROWS) / SHADOW_MAP_ROWS);
+    for (uint k = 0u; k < count; k++) {
+        uint row = k * SHADOW_MAP_ROWS;
+        m = shadow_map_from(frame.sun_map_rows[row], frame.sun_map_rows[row + 1u], frame.sun_map_rows[row + 2u],
+                            frame.sun_map_rows[row + 3u], frame.sun_map_rows[row + 4u], frame.sun_map_rows[row + 5u]);
+        float3 local = shadow_map_local(m, position);
+        if (all(abs(shadow_map_unit(m, local)) < 0.9) && local.z < m.far) return true;
+    }
+    m = (Shadow_Map)0;
+    return false;
+}
+
 #ifdef SUN_SHADOW_SLOT
 // The atlas of the maps of the view (render.Surface_Source.Shadow_Atlas), for
 // a pass that takes the shadow of the sun from its cascades and not from a ray.
 [[vk::binding(SUN_SHADOW_SLOT, 0)]] Texture2D<float4> sun_shadow_atlas : register(MIRAI_REGISTER(t, SUN_SHADOW_SLOT), space0);
 
-// How much of the sun reaches a point past what the maps of the view hold,
-// blended between the texels around it; -1 where no cascade holds the point,
-// or the view drew none: a ray tells. n: the normal of its surface, zero for
-// a point of a medium.
-float sun_shadow_seen(float3 position, float3 n) {
-    uint count = min(frame.sun_maps.x, uint(SUN_MAP_ROWS) / SHADOW_MAP_ROWS);
+// How much of the sun reaches a point past what the maps of the view hold;
+// -1 where no cascade holds the point, or the view drew none: a ray tells.
+// n: the normal of its surface, zero for a point of a medium. blended:
+// between the texels around the point, the border of a shadow as fine as the
+// map; else by the texel it falls in alone, as the samples of the direct light
+// tell a point lit (shadow_map_seen of direct_samples.comp).
+float sun_shadow_seen(float3 position, float3 n, bool blended = true) {
+    Shadow_Map m;
+    if (!sun_map_of(position, m)) return -1.0;
     float c = dot(n, frame.sun_direction.xyz);
     float lean = c > 0.0 ? min(sqrt(max(1.0 - c * c, 0.0)) / max(c, 1e-3), 8.0) : 0.0;
-    for (uint k = 0u; k < count; k++) {
-        uint row = k * SHADOW_MAP_ROWS;
-        Shadow_Map m = shadow_map_from(frame.sun_map_rows[row], frame.sun_map_rows[row + 1u], frame.sun_map_rows[row + 2u],
-                                       frame.sun_map_rows[row + 3u], frame.sun_map_rows[row + 4u], frame.sun_map_rows[row + 5u]);
-        float step = shadow_map_texel(m, 0.0);
-        // A texel and a half off the surface, so that it does not hide itself.
-        float3 local = shadow_map_local(m, position + n * (1.5 * step));
-        float2 unit = shadow_map_unit(m, local);
-        float side = float(m.rect.z);
-        if (any(abs(unit) > 1.0 - 2.0 / side) || local.z >= m.far) continue;
-        float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side;
-        return shadow_hard_seen(sun_shadow_atlas, m, texel, local.z, step * (1.0 + lean) + 0.001 * local.z, m.near);
-    }
-    return -1.0;
+    float step = shadow_map_texel(m, 0.0);
+    // A texel and a half off the surface, so that it does not hide itself.
+    float3 local = shadow_map_local(m, position + n * (1.5 * step));
+    float2 unit = shadow_map_unit(m, local);
+    float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
+    float bias = step * (1.0 + lean) + 0.001 * local.z;
+    if (blended) return shadow_hard_seen(sun_shadow_atlas, m, texel, local.z, bias, m.near);
+    return shadow_past(m, sun_shadow_atlas.Load(int3(int2(m.rect.xy) + int2(floor(texel)), 0)).r, m.near, local.z - bias);
 }
 #endif
 

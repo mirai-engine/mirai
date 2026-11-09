@@ -93,7 +93,7 @@ Graphics_Status :: struct {
 
 Graphics_Params :: struct {
     preset:[16]u8 `mirai:"optional,text,label=Low Medium High or Ultra"`,
-    option:[16]u8 `mirai:"optional,text,label=Resolution; Antialiasing; Frame generation; Indirect light; Light probes; Reflections; Shadowed lights; Light samples; Light resolution; Light frames; Glass shadows; Glass layers; Textures; Detail; Frame limit; VSync or Show FPS"`,
+    option:[16]u8 `mirai:"optional,text,label=Resolution; Antialiasing; Frame generation; Indirect light; Light probes; Reflections; Light samples; Light resolution; Glass shadows; Glass layers; Textures; Detail; Frame limit; VSync or Show FPS"`,
     choice:int `mirai:"optional,min=0,max=127,label=The choice of the option from its first; of Light samples, the number of samples"`,
 }
 

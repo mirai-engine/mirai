@@ -1236,9 +1236,10 @@ PROBE_LIGHT_BUDGET :: u32(4)
 
 // The direct light of each pixel, the sun and the local lights with their
 // shadows, from its samples (direct_samples.slang): the grid of the lights in
-// the frame one changed, the ray of one pixel of each square of 2x2 the frame
-// takes, their samples, the other squares from the frame before, and the
-// filter that adds the rest.
+// the frame one changed, the maps of the shadows, the ray of one point of each
+// square of 2x2, the samples of each point, the window and the spread that
+// filter them, and the pass that takes them to the pixels, where the sun
+// gives its light.
 @(private)
 pass_direct :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -1252,15 +1253,15 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		s.light_grid_dirty = false
 	}
 	reference := settings.reference_lights
-	Params :: struct {frames, samples: u32, sun_radius: f32, scale, hard, mode, glass, pad: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, pad1, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
-	frames := clamp(settings.direct_frames, 1, DIRECT_FRAMES_MAX) if t.direct_valid && p.view.has_previous && !reference else 1
 	params := Params{
-		frames      = frames,
 		scale       = scale,
 		samples     = DIRECT_REFERENCE_SAMPLES if reference else clamp(settings.direct_samples, 1, DIRECT_SAMPLES_MAX),
 		sun_radius  = settings.sun_radius,
 		hard        = clamp(settings.light_budget, 1, LIGHT_CUT_MAX),
+		// The glass the light of the samples crosses colors it (direct_glass).
+		glass       = 1 if shadows_colored(r) else 0,
 		grid_origin = s.light_grid.origin,
 		grid_cell   = s.light_grid.cell,
 		grid_size   = s.light_grid.size,
@@ -1269,14 +1270,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	params.shadow = {sun = max(u32)}
 	if !reference {params.shadow = shadow_maps_pass(p)}
-	// The glass the light of the samples crosses colors it (direct_glass).
-	glass := rhi.Transient{buffer = r.dummy_buffer}
-	if shadows_colored(r) {
-		list, made := rhi.frame_alloc_typed(r.device, u32, len(s.translucent))
-		if list == nil {set_error(r, "transient ring exhausted listing %d instances with glass", len(s.translucent)); return false}
-		for entry, i in s.translucent {list[i] = entry.instance}
-		glass, params.glass = made, u32(len(list))
-	}
+	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
 	grid := or_dummy(r, s.light_grid_buffer)
 	hw := r.hardware_rt
 	rhi.cmd_timestamp(cmd, "direct rays")
@@ -1286,10 +1280,10 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
-	// A thread for each square of 2x2 pixels the frame takes, and a group of
-	// the samples for each 4x4 of them (direct_group_pixel).
+	// A thread for each square of 2x2 points, and a group of the samples for
+	// each 4x4 of them (direct_group_pixel).
 	squares := (points.x + 1) / 2
-	rhi.cmd_dispatch(cmd, groups((squares + frames - 1) / frames, 8), groups((points.y + 1) / 2, 8))
+	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
 	rhi.cmd_timestamp(cmd, "direct samples")
 	samples: Pipeline_Id
 	switch {
@@ -1302,51 +1296,27 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples[p.current])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_blockers)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth[p.current])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
-	if params.shadow.on != 0 {
-		rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.shadow_atlas)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, t.shadow_buffers.table)
-	} else {
-		rhi.cmd_bind_texture(cmd, SLOT_PASS8, r.dummy_texture)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, r.dummy_buffer)
-	}
-	if params.glass > 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS7, glass.buffer, glass.offset, u64(params.glass * size_of(u32)))} else {rhi.cmd_bind_buffer(cmd, SLOT_PASS7, r.dummy_buffer)}
-	rhi.cmd_dispatch(cmd, groups(squares, 4 * frames), groups(points.y, 8))
-	if frames > 1 {
-		rhi.cmd_timestamp(cmd, "direct history")
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_History])
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples[p.current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth[p.current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_samples[p.previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_depth[p.previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.motion)
-		// The squares of the other frames, one of them along z each.
-		rhi.cmd_dispatch(cmd, groups(squares, 4 * frames), groups(points.y, 8), frames - 1)
-	}
-	rhi.cmd_timestamp(cmd, "direct filter")
-	filter: Pipeline_Id = (.Direct_Filter_Hw if hw else .Direct_Filter) if p.layered else (.Direct_Filter_Hw_Unlayered if hw else .Direct_Filter_Unlayered)
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[filter])
-	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer)
+	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
+	// What the window of the pattern gives each point.
+	rhi.cmd_timestamp(cmd, "direct points")
+	Window :: struct {scale, samples, pad0, pad1: u32}
+	window := Window{scale = scale, samples = params.samples}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Points])
+	set_params(cmd, &window)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples[p.current])
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
-	// The first run leaves what each point takes, the spread passes its part
-	// over its penumbra, and the second run takes it to the pixels. What a run
-	// does not use is bound to targets of the same kind it leaves as they are.
-	params.mode = DIRECT_FILTER_POINTS
-	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_points)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun_points)
 	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	rhi.cmd_timestamp(cmd, "direct spread")
 	Spread :: struct {axis, scale, samples, even: u32}
@@ -1358,7 +1328,8 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_spread)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.direct_points)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_depth[p.current])
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_depth)
 		// A group for each run of 64 points along the axis.
 		if axis == 0 {
 			rhi.cmd_dispatch(cmd, groups(points.x, 64), points.y)
@@ -1367,19 +1338,19 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		}
 	}
 	rhi.cmd_timestamp(cmd, "direct pixels")
+	filter: Pipeline_Id = (.Direct_Filter_Hw if hw else .Direct_Filter) if p.layered else (.Direct_Filter_Hw_Unlayered if hw else .Direct_Filter_Unlayered)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[filter])
-	params.mode = DIRECT_FILTER_PIXELS
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples[p.current])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_samples[p.previous])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
-	t.direct_valid = true
 	return true
 }
 
@@ -1449,7 +1420,6 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 // reference in place of the volume.
 @(private)
 pass_indirect :: proc(p: ^Pass) -> bool {
-	if !p.use_gi || p.r.settings.reference_gi {p.t.contact_valid = false}
 	if !p.use_gi {
 		p.gi = p.r.dummy_texture
 		return true
@@ -1474,31 +1444,21 @@ pass_contact :: proc(p: ^Pass) -> bool {
 	}
 	t.contact_scale = scale
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
-	ok := true
+	ok := target(r, cmd, &t.contact_rays, points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact rays")
 	for i in 0 ..< 2 {
-		ok &&= target(r, cmd, &t.contact_history[i], points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact history")
 		ok &&= target(r, cmd, &t.contact_points[i], points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact light")
 	}
 	ok &&= target(r, cmd, &t.contact, t.width, t.height, .RG32_Float, {.Sampled, .Storage}, "contact")
 	if !ok {return false}
-	// The rays of the squares of 2x2 points the frame takes (direct_square), then the others.
-	frames := clamp(r.settings.direct_frames, 1, DIRECT_FRAMES_MAX) if t.contact_valid && p.view.has_previous else 1
-	squares := (points.x + 1) / 2
-	Params :: struct {scale, frames, mode, pad0: u32}
-	params := Params{scale = scale, frames = frames}
+	Params :: struct {scale, pad0, pad1, pad2: u32}
+	params := Params{scale = scale}
 	rhi.cmd_timestamp(cmd, "contact")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Hw] if r.hardware_rt else r.pipelines[.Contact])
-	for mode in u32(0) ..< (2 if frames > 1 else 1) {
-		params.mode = mode
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact_history[p.current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.contact_history[p.previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.motion)
-		rhi.cmd_dispatch(cmd, groups(squares, 4 * frames), groups(points.y, 8), 1 if mode == 0 else frames - 1)
-	}
-	params.mode = 0
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact_rays)
+	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	rhi.cmd_timestamp(cmd, "contact light")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Light])
 	set_params(cmd, &params)
@@ -1512,13 +1472,12 @@ pass_contact :: proc(p: ^Pass) -> bool {
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.contact_history[p.current])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.contact_rays)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.contact_points[0])
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.contact_points[1])
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	p.gi, p.gathered = t.contact, true
-	t.contact_valid = true
 	return true
 }
 
@@ -1855,16 +1814,15 @@ update_stats :: proc(r: ^Renderer) {
 		scale := max(scale, 1)
 		return u64((t.width + scale - 1) / scale) * u64((t.height + scale - 1) / scale)
 	}
-	// A point traces its samples, and a square of 2x2 points a ray, in the frames that take them.
+	// A point traces its samples, and a square of 2x2 points a ray.
 	reference := r.settings.reference_lights
-	frames := u64(1 if reference else clamp(r.settings.direct_frames, 1, DIRECT_FRAMES_MAX))
 	samples := u64(DIRECT_REFERENCE_SAMPLES if reference else clamp(r.settings.direct_samples, 1, DIRECT_SAMPLES_MAX))
-	rays := points(t, t.direct_scale) * (4 * samples + 1) / (4 * frames)
+	rays := points(t, t.direct_scale) * (4 * samples + 1) / 4
 	if r.settings.gi_enabled {
 		// A probe ray traces the sun and the lights of its cut where it hits.
 		rays += u64(s.probes_traced) * u64(r.ddgi.rays_per_probe) * u64(2 + min(s.lights, PROBE_LIGHT_BUDGET))
-		// The contact occlusion: CONTACT_RAYS short rays of each point, in the frames that take them.
-		rays += points(t, t.contact_scale) * CONTACT_RAYS / frames
+		// The contact occlusion: CONTACT_RAYS short rays of each point.
+		rays += points(t, t.contact_scale) * CONTACT_RAYS
 	}
 	if r.settings.reflections && r.scene.smoothest < r.settings.reflection_roughness {
 		// A pixel traces its own ray or takes its turn for its block, never both.

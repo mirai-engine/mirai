@@ -922,8 +922,8 @@ instance" are `-32602`; the rest, `-32000`
   offered by the plugins.
 - `graphics.set`: a `preset`, or `option` and `choice` (index from the first choice). `option` is
   compared case-insensitively with the popup names: `Resolution`, `Antialiasing`, `Indirect light`,
-  `Light probes`, `Reflections`, `Shadowed lights`, `Light samples` (its choice is the number of
-  samples, 1 to 127), `Light resolution` (Full, Half), `Light frames` (1 to 3), `Glass shadows`,
+  `Light probes`, `Reflections`, `Light samples` (its choice is the number of
+  samples, 1 to 127), `Light resolution` (Full, Half), `Glass shadows`,
   `Glass layers`, `Textures`, `Detail`, `Frame limit`, `VSync`, `Show FPS`. A choice that does not
   exist fails with the list of those that do. It applies instantly and is saved in the engine layer
   ([graphics](../../mirai-editor/references/panels.md#graphics)).

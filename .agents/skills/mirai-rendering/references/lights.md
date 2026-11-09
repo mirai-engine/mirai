@@ -140,27 +140,33 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
   The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
   point.
-- **Spread.** A point weighs the lights of its cell and the sun and spreads its samples over them
-  by weight, systematically (one at each m-th of the sum of weights, from the place of the pixel
-  in a 3x3 pattern): a light that gives much takes many samples and none depends on chance. A
-  light that took samples gives its exact light with nothing in the way, with the material, once,
-  times the part of its samples that got there.
+- **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
+  systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
+  pattern): a light that gives much takes many samples and none depends on chance. A light that
+  took samples gives its exact light with nothing in the way, with the material, once, times the
+  part of its samples that got there.
+- **Sun.** The points keep of the sun only how much of it gets there, and the pixels take its
+  light themselves, each with its own normal and material: at half resolution the shape of the
+  sun's light is still that of the pixels, and a light that few samples would reach gives no
+  noise. Where a map of the view holds a point, the map tells that part and the sun takes no
+  samples; elsewhere it takes them as one more light, for that alone. A pixel with no point of
+  its surface around it asks the map itself.
 - **Rays** (`direct_rays`, `direct_samples`). One pixel of each 2x2 traces one sample through the
   whole scene and leaves what stopped it. The other samples meet only what stopped the rays of
   their group and of the groups around (with hardware ray tracing, each is a ray query), and those
   of a light only what lies in the cone from the point to it: the cost does not grow with the
   scene.
-- **Points and frames.** With `direct_half_resolution` the points are one pixel of each 2x2. With
-  `direct_frames` greater than 1 a frame takes the squares of 2x2 points whose turn it is, and
-  `direct_history` moves the others from the frame before where depth and normal agree; a still
-  view gives the image of one frame.
-- **Filter** (`direct_filter`, `direct_spread`). The light with nothing in the way is filtered
-  over a 3x3 window of the pattern on the surface of the point; the part that got there, over the
-  points of that window within the noise of the samples, and then spread over the penumbra radius
-  that what hid the samples gives. The pixels take it from the points around them of their
-  surface. The filter also adds the [lights that cast no shadows](#gpu-lights) as they are, the
-  lights of [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the
-  other side of a surface that lets light through (`direct_lighting`).
+- **Points.** With `direct_half_resolution` the points are one pixel of each 2x2. Every frame
+  takes every point: the direct light keeps nothing from the frame before, so nothing trails
+  behind what moves.
+- **Filter** (`direct_points`, `direct_spread`, `direct_filter`). The light of the local lights
+  with nothing in the way is taken over a 3x3 window of the pattern on the surface of the point;
+  the part of it that got there, and the part of the sun that did, over the points of that window
+  within the noise of the samples, and then each spread over the penumbra radius that what hid it
+  gives. The pixels take them from the points around them of their surface. The last pass also
+  adds the [lights that cast no shadows](#gpu-lights) as they are, the lights of
+  [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
+  of a surface that lets light through (`direct_lighting`).
 - **Shadow maps** (`render/shadow_maps.odin`, `Settings.shadow_maps`; the Graphics settings always
   turn it on). Every frame, from the camera and the lights alone, the lights whose sphere covers a
   share of the view, and the sun in cascades, get depth maps in one atlas, so the cost does not
@@ -168,7 +174,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
   `direct_spread` averages that evenly over the points of its surface within the penumbra width
   the blockers give. Lights without maps (small on the screen) trace their samples: raster for
-  near and large lights, rays for far ones.
+  near and large lights, rays for far ones. The constants of the view carry the cascades of the
+  sun it drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of
+  the sun from them and traces only where none holds the point (`sun_shadow_seen`; an extension
+  binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.
@@ -181,7 +190,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   `colored_shadows`, those of the hits cross the glass with its
   [medium filter](materials.md#medium-filter).
 - **Reference.** `Settings.reference_lights` is the same system with many samples and without
-  maps, frames or half resolution: its average over a few frames is the exact image.
+  maps or half resolution: its average over a few frames is the exact image.
 - **What changed.** The scene lists what casts shadows and changed since the last frame that drew
   it (`Scene_State.occluders`, `Gpu_Frame.moved`): each instance that moved, took another pose or
   shape, arrived or left, with the box it covers in both frames, the lights that moved or changed
