@@ -66,6 +66,10 @@ destruct_step :: proc(
     core.queue_clear(&events.grouped)
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     if !fracture_state_make(fractures,settings.ptr,&state.world,problems) {return}
+    if !cache_make(cache,&fractures.fracture) {
+        core.report(problems,core.NONE,"destruct.memory","out of memory for the %d pieces of Destruct_Settings and the %d bodies of Physics_Settings; nothing breaks until there is: lower them, or free memory",fractures.fracture.desc.pieces,fractures.fracture.desc.bodies)
+        return
+    }
     fr.fracture_update(&fractures.fracture,&state.world)
     pending:=core.take(&requests.queue)
     waiting:=core.take(&requests.waiting)
@@ -75,7 +79,6 @@ destruct_step :: proc(
         cache_reset(app,cache)
         cache.epoch=state.epoch
     }
-    cache_make(cache,&fractures.fracture)
     cache.pass+=1
     c:=Ctx{
         state=state,w=&state.world,f=&fractures.fracture,cache=cache,events=events,app=app,time=time,es=commands.entities,commands=commands,
