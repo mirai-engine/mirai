@@ -233,6 +233,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
         {text={size=15,color={200,210,230,255},align_y=.Center}},
         control,
         {fill={0,0,0,235},radius=6,text={size=13,color=WHITE}},
+        {text={size=13,color=WHITE}},
     }
     components:=[]ui.Tree_Component{{widget=button}}
     ui.tree_text_set(components[0].name[:],"button")
@@ -247,7 +248,7 @@ write_interface_menu :: proc(o:^Out,button:base.Asset_Id,button_data:ui.Tree_Dat
     append(&nodes,label(&texts,volume,"menu.volume"))
     append(&nodes,ui.tree_node_record(&texts,volume,{kind=.Slider,name="volume",style=4,bind_value="Audio_Volumes.master",range={0,1,0.05},flags={.Focus_First},layout={width=ui.fixed(240),height=ui.fixed(22)}}))
     tip:=i32(len(nodes));append(&nodes,ui.tree_node_record(&texts,volume,{kind=.Tooltip,name="volume_tip",style=5,layout={padding=ui.padding_all(8)}}))
-    append(&nodes,ui.tree_node_record(&texts,tip,{kind=.Text,style=5,text="menu.volume_tip",flags={.Localized}}))
+    append(&nodes,ui.tree_node_record(&texts,tip,{kind=.Text,style=6,text="menu.volume_tip",flags={.Localized}}))
     quality:=i32(len(nodes));append(&nodes,row(&texts,"quality_row"))
     append(&nodes,label(&texts,quality,"menu.quality"))
     append(&nodes,ui.tree_node_record(&texts,quality,{kind=.Selector,name="quality",style=4,bind_value="Interface_Demo.quality",text="quality.low|quality.medium|quality.high|quality.ultra",flags={.Localized},layout={width=ui.fixed(240),height=ui.fixed(32)}}))
