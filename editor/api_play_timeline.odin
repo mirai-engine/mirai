@@ -336,6 +336,8 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
     segment,at:=0,0
     for ran<total {
         if len(run.until)>0 && met {break}
+        if api_stop_asked(s) {return}
+        if st:=api_state(s);st!=nil && api.server_progress_due(&st.server) {api.server_progress(&st.server,fmt.tprintf("ran %d of %d ticks",ran,total),ran,total)}
         if run.look!=nil {
             if problem=api_look_steer(s,target,run.look);problem!="" {return}
         }

@@ -243,6 +243,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         for _ in 0..<parts {
             r.step,r.frame_dt=true,dt/f64(parts)
             if api_frames(s,1,0)==0 {failure="the editor was asked to end";break}
+            if api_stop_asked(s) {failure="cancelled";break}
             if r=run_player(s,owner,player);r==nil {failure="the game ended";break}
         }
         if failure!="" {break}

@@ -6,9 +6,10 @@ import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// The Model Context Protocol over streamable HTTP, without sessions and
-// without server-sent events: every POST /mcp carries one JSON-RPC message (or
-// a batch) and gets one JSON answer, or 202 when it is a notification. Each
+// The Model Context Protocol over streamable HTTP, without sessions: every POST
+// /mcp carries one JSON-RPC message (or a batch) and gets one JSON answer, or 202
+// when it is a notification; a tools/call that asks for progress answers as a
+// stream of events (progress.odin). Each
 // method is a tool named like it with dots as underscores; its input schema
 // is the JSON Schema of its params. A result is its JSON as text, what models
 // read; a failed call is a tool error carrying {"error":{code,message,data}}.
@@ -52,13 +53,24 @@ mcp_version :: proc(requested:string) -> string {
 }
 
 // list_changed: the client is told when the tools change.
-mcp_initialize_write :: proc(w:^serial.Writer,requested,name,version,instructions:string,list_changed:=false) {
+mcp_initialize_write :: proc(w:^serial.Writer,requested,name,version,instructions:string,list_changed:=false,instance:=Instance{}) {
     raw(w,`{"protocolVersion":`);serial.text_write_string(w,mcp_version(requested))
     raw(w,`,"capabilities":{"tools":{"listChanged":`);raw(w,list_changed?"true":"false")
     raw(w,`}},"serverInfo":{"name":`);serial.text_write_string(w,name)
     raw(w,`,"version":`);serial.text_write_string(w,version)
     raw(w,`},"instructions":`);serial.text_write_string(w,instructions)
-    raw(w,"}")
+    raw(w,`,"_meta":{"engine_version":`);serial.text_write_string(w,instance.engine)
+    if instance.process!=0 {raw(w,`,"process_id":`);serial.text_write_int(w,i64(instance.process))}
+    raw(w,`,"project":`);serial.text_write_string(w,instance.project)
+    raw(w,`,"project_folder":`);serial.text_write_string(w,instance.folder)
+    raw(w,"}}")
+}
+
+// Which editor answers an initialize, for an agent with several: what the
+// bridge knows when none does yet.
+Instance :: struct {
+    process:int, // 0: no editor answers
+    engine,project,folder:string,
 }
 
 @(private)
@@ -72,7 +84,7 @@ mcp_initialize :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     if s.docs_root!="" {
         if compact:=docs_compact(s.docs_root);compact!="" {instructions=format_text(base.arena_allocator(&s.scratch),"%s\n\n%s",instructions,compact)}
     }
-    mcp_initialize_write(w,requested,s.name,s.version,instructions)
+    mcp_initialize_write(w,requested,s.name,s.version,instructions,instance=s.instance)
     return {},true
 }
 
@@ -168,7 +180,9 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     method:=tool_find(s,name)
     if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q%s; engine_describe lists the methods",shorten(name),methods_similar(s,tool_as_method(name))),""},false}
     serial.writer_reset(&s.stage)
+    running_begin(s,req)
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
+    if s.running.stopped {err,ok={CANCELLED,"the client cancelled the call: it stopped at a safe point and what it did before stands",""},false}
     if ok && s.stage.overflow>0 {
         s.stats.oversized+=1
         err,ok={SERVER_ERROR,"the result does not fit in the response buffer",""},false

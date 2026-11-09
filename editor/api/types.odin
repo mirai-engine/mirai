@@ -66,6 +66,7 @@ METHOD_NOT_FOUND  :: -32601
 INVALID_PARAMS    :: -32602
 INTERNAL_ERROR    :: -32603
 SERVER_ERROR      :: -32000 // a handler failed without a code of its own
+CANCELLED         :: -32094 // the client cancelled the call; it stopped at a safe point
 HUNG              :: -32095 // client side: the process of the editor is alive and has used no CPU for a while: it will not answer
 CLOSED            :: -32096 // the editor closed the connection without a byte of answer, or is ending during a _wait_until: it ended or restarted, perhaps after running the call
 TIMEOUT           :: -32097 // client side: no answer in time
@@ -198,6 +199,7 @@ Conn :: struct {
     started:time.Tick,
     drained:int,
     keep:bool, // Connection: keep-alive: a request after another on the same connection
+    stream:bool, // Accept: text/event-stream: its tools/call may answer as a stream
     client_tag:[64]u8,
     client_name:[CLIENT_NAME_BYTES]u8,
     plugins:[512]u8, // X-Mirai-Plugins: the plugins whose tools tools/list adds to those of the editor
@@ -230,6 +232,8 @@ Server :: struct {
     client_name:string,
     client_plugins:string, // of the request that runs
     image:string,          // Call.image of the call that ran last; in its scratch
+    running:Running,       // the tools/call that holds the server
+    instance:Instance,     // which editor this is
     clamped:string,        // what the params read last asked past a maximum, as members of _clamped; in its scratch
     plugins:[]Plugin,
     guides:[]Guide,

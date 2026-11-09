@@ -422,6 +422,7 @@ explore_ui_play :: proc(x:^Explore_Run) {
     idle:=0
     if !explore_idle(x,min(EXPLORE_WARM_TICKS/4,x.total)) {return}
     for x.ran<x.total {
+        if editor.api_stop_asked(x.s) {break}
         going,done:=explore_ui_step(x,&previous,&previous_node)
         if !going {return}
         if done {
@@ -466,6 +467,7 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     still,next:=0,0
     ui_previous,ui_node:=-1,-1
     for x.ran<x.total {
+        if editor.api_stop_asked(x.s) {break}
         w=editor.run_ref(s,x.r)
         requests=core.world_storage_of(w,input.Hold_Requests)
         seat,body=editor.play_focused(w)

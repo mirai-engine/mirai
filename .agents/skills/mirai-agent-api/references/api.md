@@ -250,7 +250,18 @@ methods). Which plugins exist is told by `engine.describe`.
 
 `/mcp` implements [MCP](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) in
 the revisions of `MCP_VERSIONS` (the first if another is requested): one `POST` per message or
-batch, without sessions or server events.
+batch, without sessions.
+
+- A `tools/call` with `_meta.progressToken` and an `Accept` of `text/event-stream` answers as a
+  stream: `notifications/progress` while it works, its answer last. Without both it is one JSON.
+  `mirai mcp` asks for the stream when a call brings a token and writes each notification to
+  stdout as it comes.
+- `notifications/cancelled` ends the wait of the call it names (`build.start`, a blocking
+  `play.start`, `play.step`, `play.scenario.run`, what goes through `api_wait`) at a safe point,
+  which answers code `-32094`. A `play.start` that waited for a build does not start its game
+  later; a build or an import it waited for goes on. `mirai mcp` forwards it while the call runs.
+- `initialize` gives `_meta` with `engine_version`, `process_id`, `project` and `project_folder`;
+  `mirai mcp` with no editor gives what it knows.
 
 - `tools/list`: `docs` (the game documentation of `docs/game`, as `mirai docs` reads it, and the
   same in `mirai mcp` without an editor; its index goes in the instructions), one tool per editor

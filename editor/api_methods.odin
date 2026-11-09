@@ -1241,7 +1241,9 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
     build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
-    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits) {
+    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits,"building to play") {
+        // Cancelled, the game does not start by itself when the build ends.
+        if api_stop_asked(s) {s.build.play.pending=false;s.play_asked={};return}
         api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
         return
     }
@@ -1393,9 +1395,9 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     }
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)
-    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     ended:=run_find(s,owner)
     if drive!=nil {api_drive_finish(s,ended,drive,len(until)>0 && met)}
+    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     api_play_step_write(s,call,ended,ran,len(until)>0 && met,traced?&trace:nil,drive)
 }
 
@@ -1575,7 +1577,7 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
-    api_wait(s,f64(params.seconds),nil,build_running)
+    api_wait(s,f64(params.seconds),nil,build_running,"building")
     api_build_result(s,call)
 }
 

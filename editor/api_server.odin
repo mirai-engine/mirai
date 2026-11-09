@@ -239,6 +239,7 @@ api_poll :: proc(s:^Session) {
         if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
         st.library_generation=s.library_generation
     }
+    st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
     api.server_poll(&st.server)
 }
 
@@ -279,7 +280,7 @@ api_jobs :: proc(s:^Session) {
 // left loads meanwhile: the handler holds nothing of the worlds, and no text
 // of the temporary allocator, across this. False when the time ran out or the
 // editor is ending.
-api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool) -> bool {
+api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,what:="working") -> bool {
     st:=api_state(s)
     if st==nil {return !pending(s,user)}
     started:=time.tick_now()
@@ -292,7 +293,8 @@ api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user
         }
     }
     for pending(s,user) {
-        if s.quit || time.duration_seconds(time.tick_since(started))>seconds {return false}
+        if s.quit || time.duration_seconds(time.tick_since(started))>seconds || api.server_cancelled(&st.server) {return false}
+        if api.server_progress_due(&st.server) {api.server_progress(&st.server,fmt.tprintf("%s: %.0f s",what,time.duration_seconds(time.tick_since(started))))}
         if st.manual {
             temp:=runtime.default_temp_allocator_temp_begin()
             build_poll(s)
@@ -304,6 +306,13 @@ api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user
         }
     }
     return true
+}
+
+// Whether the client cancelled the call that runs: the loops of a handler that
+// goes on for long end at their next safe point.
+api_stop_asked :: proc(s:^Session) -> bool {
+    st:=api_state(s)
+    return st!=nil && api.server_cancelled(&st.server)
 }
 
 // Advances whole frames from inside a handler until pending says false or

@@ -112,7 +112,7 @@ git_api_register :: proc(s:^Session,st:^Api_State) {
 api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     running :: proc(s:^Session,user:rawptr) -> bool {return git_busy(s.git)}
-    if !api_wait(s,API_GIT_SECONDS,nil,running) {
+    if !api_wait(s,API_GIT_SECONDS,nil,running,"git") {
         api.call_failf(call,api.SERVER_ERROR,"git still runs after %d s; git.status says when it ends",API_GIT_SECONDS)
         return
     }

@@ -63,7 +63,7 @@ client_error :: proc(allocator:runtime.Allocator,code:int,format:string,args:..a
 // X-Mirai-Client. timeout_ms bounds the whole wait for the answer; with a
 // watch an editor that ended or hung fails it at once. status is 0 when no
 // answer arrived.
-client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil) -> (status:int,response:[]u8,error:Error) {
+client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil,events:=Client_Events{}) -> (status:int,response:[]u8,error:Error) {
     socket:net.TCP_Socket
     if connection!=nil && connection.open && connection.port==port {
         socket=connection.socket
@@ -85,7 +85,8 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
     turn:=fmt.aprintf("X-Mirai-Ai-Task: %s\r\n",task,allocator=allocator) if task!="" else ""
     named:=fmt.aprintf("X-Mirai-Plugins: %s\r\n",plugins,allocator=allocator) if plugins!="" else ""
     caller:=fmt.aprintf("X-Mirai-Client: %s\r\n",client,allocator=allocator) if client!="" && task=="" else ""
-    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%sContent-Length: %d\r\nConnection: %s\r\n\r\n%s",path,port,turn,named,caller,len(body),connection!=nil?"keep-alive":"close",body,allocator=allocator)
+    accept:="Accept: application/json, text/event-stream\r\n" if events.handle!=nil else ""
+    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%s%sContent-Length: %d\r\nConnection: %s\r\n\r\n%s",path,port,accept,turn,named,caller,len(body),connection!=nil?"keep-alive":"close",body,allocator=allocator)
     for sent:=0;sent<len(request); {
         n,err:=net.send_tcp(socket,transmute([]u8)request[sent:])
         if timed_out(err) {return 0,nil,client_error(allocator,TIMEOUT,"the Mirai editor at 127.0.0.1:%d did not take the request in %d ms",port,timeout_ms)}
@@ -96,6 +97,8 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
     data.allocator=allocator
     chunk:[16384]u8
     head_end,length:=-1,-1
+    consumed:=0
+    final:string
     waiting:=Client_Waiting{started=time.tick_now()}
     for {
         if wait_error:=client_wait(socket,port,timeout_ms,watch,&waiting,allocator);wait_error.code!=0 {return 0,nil,wait_error}
@@ -113,6 +116,9 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
                 if closes && connection!=nil {connection.open=false}
             }
         }
+        if events.handle!=nil && head_end>=0 && length<0 {
+            consumed=stream_events(string(data[head_end:]),consumed,events,&final,allocator)
+        }
         if head_end>=0 && length>=0 && len(data)>=head_end+length {break}
     }
     if len(data)==0 {
@@ -120,6 +126,10 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
         return 0,nil,client_error(allocator,CLOSED,"the Mirai editor at 127.0.0.1:%d closed the connection without answering",port)
     }
     if head_end<0 {return 0,nil,client_error(allocator,BAD_RESPONSE,"the Mirai editor at 127.0.0.1:%d closed the connection in the middle of its answer",port)}
+    if events.handle!=nil && length<0 {
+        if final=="" {return 0,nil,client_error(allocator,CLOSED,"the Mirai editor at 127.0.0.1:%d ended the stream of a call without its answer",port)}
+        return status,transmute([]u8)final,{}
+    }
     available:=len(data)-head_end
     if length>=0 && available<length {return 0,nil,client_error(allocator,BAD_RESPONSE,"the answer was cut short")}
     count:=length>=0?length:available
@@ -127,6 +137,29 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
     copy(response,data[head_end:][:count])
     delete(data)
     return
+}
+
+// What a stream of events gives a client: each notification as it comes.
+Client_Events :: struct {
+    user:rawptr,
+    handle:proc(user:rawptr,line:string),
+}
+
+// Reads the whole events past consumed: a notification goes to events, the
+// answer into final; what was read is returned.
+@(private)
+stream_events :: proc(text:string,consumed:int,events:Client_Events,final:^string,allocator:runtime.Allocator) -> int {
+    consumed:=consumed
+    for {
+        end:=strings.index(text[consumed:],"\n\n")
+        if end<0 {return consumed}
+        event:=text[consumed:][:end]
+        consumed+=end+2
+        at:=strings.index(event,"data: ")
+        if at<0 {continue}
+        line:=strings.trim_right(event[at+len("data: "):],"\r")
+        if json_member(line,"method")!="" {events.handle(events.user,line)} else {final^=strings.clone(line,allocator)}
+    }
 }
 
 // Blocks until the socket has something to read, for as long as the editor is

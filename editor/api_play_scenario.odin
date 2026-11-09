@@ -332,6 +332,8 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Wr
     if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0}
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
     for &step,i in sc.steps {
+        if api_stop_asked(s) {return fmt.bprintf(buffer,"cancelled"),0}
+        api.server_progress(server,fmt.tprintf("step %d of %d: %s",i+1,len(sc.steps),step.name!=""?step.name:step.method),i,len(sc.steps))
         method:=api.method_find(server,step.method)
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')

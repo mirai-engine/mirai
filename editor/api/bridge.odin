@@ -16,13 +16,15 @@ BRIDGE_LIST_CHANGED :: `{"jsonrpc":"2.0","method":"notifications/tools/list_chan
 // plugins: the plugins whose tools are listed besides those of the editor.
 // client: the name of the MCP client, sent as X-Mirai-Client. failed: why the
 // message did not reach the editor.
-bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{}) -> (reply:string,ok:bool,failed:Error) {
+bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},events:=Client_Events{}) -> (reply:string,ok:bool,failed:Error) {
     values:[3]string
     object:=object_values(allocator,message,{"id","method","params"},values[:])
     if !object && !json_valid(allocator,message) {
         return bridge_error(allocator,"",{PARSE_ERROR,"parse error",""}),true,{}
     }
-    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch)
+    // A call with a token takes its progress as a stream.
+    wants:=events.handle!=nil && json_member(json_member(values[2],"_meta"),"progressToken")!=""
+    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch,nil,wants?events:{})
     if post_error.code!=0 {return "",false,post_error}
     if status==202 {return "",false,{}}
     if status==200 {return json_single_line(string(body),allocator),true,{}}
@@ -36,6 +38,7 @@ Bridge_Absent :: struct {
     instructions:string, // of initialize: why, and how the tools come
     tools:string,        // the entries of tools/list: JSON objects separated by commas
     error:Error,         // what a tool call fails with
+    instance:Instance,   // what is known with no editor: its engine and project
 }
 
 // The line to write to stdout for a message no editor could answer; ok is
@@ -53,7 +56,7 @@ bridge_absent :: proc(message:string,absent:Bridge_Absent,allocator:runtime.Allo
     case "initialize":
         requested:string
         if params:[1]string;object_values(allocator,values[2],{"protocolVersion"},params[:]) && params[0]!="" {requested,_=string_value(allocator,params[0])}
-        mcp_initialize_write(&w,requested,"mirai","1",absent.instructions,true)
+        mcp_initialize_write(&w,requested,"mirai","1",absent.instructions,true,absent.instance)
     case "ping":
         raw(&w,"{}")
     case "tools/list":
