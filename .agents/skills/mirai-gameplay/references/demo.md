@@ -17,7 +17,8 @@ Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP 
 ([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)), and
 the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
 
-The assets of `templates/game` are written by its `tools/content`, from the project folder. It does
+The assets of `templates/game` but its `.ui` (written with `ui.write` and kept in the repository)
+are written by its `tools/content`, from the project folder. It does
 not go into the game: only `game/`, `editor/` and the plugins are compiled.
 
 ```sh

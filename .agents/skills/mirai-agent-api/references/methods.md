@@ -237,7 +237,8 @@ single undo, which also replaces the ragdoll the rig had. Parts, shapes and join
 The `ui.*` methods of the `ui_inspector` plugin edit the `.ui` files of the project like the
 document: each write is a step of the file history, which waits for Save, and one that would leave
 a tree that does not load changes nothing and says why. A new `.ui` is created with
-`asset.create {kind:"ui"}` and written whole, or a part of it, with `ui.write`; `ui.capture` shows
+`ui.write` with a path that does not exist yet (or `asset.create {kind:"ui"}`) and written whole,
+or a part of it, with `ui.write` (`document=@file`, `save=true`); `ui.capture` shows
 it alone, at its size, as a PNG.
 Contract: [the inspector](../../mirai-plugins/references/ui-inspector.md#api).
 

@@ -6,13 +6,12 @@ description: HUD, main menu, pause, settings screens, world panels and keyboard 
 
 # Game UI
 
-Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:engine/save"`,
-`"mirai:ui"` (only in the content tool).
+Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:engine/save"`.
 
 **A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings,
-Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`, from
-`tools/content`; `theme.ui` holds the shared look and `tests/scenarios/shell.mirai` drives it.
-Restyle and extend them; do not write another menu system.
+Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`; `theme.ui`
+holds the shared look and `tests/scenarios/shell.mirai` drives it. The `.ui` are the source:
+restyle and extend them with [ui.write](ui/writing-ui.md); do not write another menu system.
 
 ## Map
 
@@ -20,8 +19,8 @@ Restyle and extend them; do not write another menu system.
   [menus-settings.md](ui/menus-settings.md).
 - A HUD, a counter or bar, a sign in the world, a panel on a mesh:
   [hud-panels.md](ui/hud-panels.md).
-- Named styles, tokens, states and shared components: [styles.md](ui/styles.md).
-- Write or change a `.ui` from code or the API: [writing-ui.md](ui/writing-ui.md).
+- Named styles, tokens, states, components and animations: [styles.md](ui/styles.md).
+- Write or change a `.ui` (one document, ui.write): [writing-ui.md](ui/writing-ui.md).
 - Check a screen without playing it by hand: [testing](testing.md#ui-and-menus).
 - [Screens](#screens), [Events](#events), [Focus](#focus).
 
@@ -58,7 +57,8 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), volumes:^audio.Au
 ```
 
 - Names are `base.name_hash` of the node name. Controls never write their bound value: the game
-  writes it on `Changed`, or the control goes back to what the field holds.
+  writes it on `Changed`, or the control goes back to what the field holds. Asking for a name the
+  screen does not have is a problem `gui.names` once at run time, with what it has.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
   `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
   fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.
@@ -67,14 +67,14 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), volumes:^audio.Au
 
 ## Focus
 
-Keyboard and gamepad move a ring over the controls. Mark the first control of each page
-`flags={.Focus_First}`, so Enter works without the mouse. `Wrap_Y` on a column wraps the focus.
+Keyboard and gamepad move a ring over the controls. The first control of each page takes the
+focus when the page shows (not inside a `List`), so Enter works without the mouse; a node with
+`Focus_First` in its `flags` takes it instead. `Wrap_Y` on a column wraps the focus.
 `gui.focus(requests,entity,"node")` (a `gui.UI_Requests` storage) moves it from code.
 
 ## Pitfalls that fail silently
 
 - A path that names a component or field the game lacks hides the whole screen; the reason is a
   problem `gui.bind` in `engine.diagnostics`. A `.ui` that does not load is `gui.asset`.
-- A screen with no `Focus_First` can be clicked but not driven by keys.
 - More screens than fit leave out the lowest `order` (`gui.screens`): hide the unused ones.
 - An open editor picks up rewritten `.ui` files at its next call.

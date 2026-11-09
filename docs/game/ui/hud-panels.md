@@ -15,15 +15,20 @@ base.text_set(status.message[:],"Hit the wall")
 status.hits+=1
 ```
 
-```odin
-// content tool: nodes of hud.ui bind by path; the entity of the screen carries Status
-ui.sheet_node(&s,panel,"chip_value",{kind=.Text,name="message",bind_text="Status.message"})
-ui.sheet_node(&s,panel,"chip_label",{kind=.Text,name="hits",bind_text="Status.hits"})
-ui.sheet_node(&s,panel,"bar",{kind=.Progress,name="health",bind_value="Status.health"}) // 0 to 1
+The nodes of `hud.ui` bind by path; the entity of the screen carries `Status`:
+
+```json
+{"name": "panel", "kind": "Box", "style": "chip",
+ "float": {"to": "Safe", "anchor": "Top_Left", "pivot": "Top_Left", "offset": [16, 16]},
+ "children": [
+   {"name": "message", "kind": "Text", "style": "chip_value", "bind_text": "Status.message"},
+   {"name": "hits", "kind": "Text", "style": "chip_label", "bind_text": "Status.hits"},
+   {"name": "health", "kind": "Progress", "style": "bar", "bind_value": "Status.health"}]}
 ```
 
+Write it with [ui.write](writing-ui.md). In the scene, the screen and its data on one entity:
+
 ```odin
-// scene, in the content tool: screen and data on one entity
 hud:=asset.builder_entity(&b,"Hud")
 asset.builder_set(&b,hud,gui.UI_Screen{asset=hud_id})           // Passive by default
 asset.builder_set(&b,hud,status)
@@ -32,8 +37,9 @@ asset.builder_set(&b,hud,status)
 - A path starts at a component of the entity of the screen (`UI_Screen.entity` names another
   one) or at a storage of the world, then follows fields: `Hotbar.slots.2.count`. A field of
   type `Entity` leads to the component the next name gives: `Hero.target.Health.value`.
-- Hang a box from the window with `float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,
-  offset={16,16}}`: `Safe` keeps it clear of notches. `to=.Surface` is the whole window.
+- Hang a box from the window with `"float": {"to": "Safe", "anchor": "Top_Left", "pivot":
+  "Top_Left", "offset": [16, 16]}`: `Safe` keeps it clear of notches. `Surface` is the whole
+  window.
 - Repeat a node per element of an array with a `List` and `bind_items`.
 - Several local players: `UI_Screen.player` is `0` for the window and `n` for the part of
   player `n`.

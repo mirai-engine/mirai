@@ -1,99 +1,94 @@
 # Styles, tokens and shared components
 
-A content tool writes a `.ui` through a `ui.Sheet`: tokens and styles by name, nodes that name
-their style, states inline. It compiles to the same records as a `.ui` written by hand, so the
-frame costs the same. The template's `write_theme` is the example to copy: every screen of a new
-game names the styles and components of `assets/ui/theme.ui`.
+The look of a `.ui` is by name, in its document ([writing-ui.md](writing-ui.md)): tokens, styles
+that extend others, states inline, the layout nodes share, components with parameters and named
+animations. Each resolves when the file is written and linked, never per frame. The template's
+`assets/ui/theme.ui` is the example: read it with `ui.inspect asset=ui/theme.ui`.
 
 ## Tokens and styles
 
-```odin
-theme:=ui.sheet_make("theme")
-ui.sheet_tokens(&theme,{
-    {"ink","#3a1d4f"},  // colors: "#rrggbb", "#rrggbbaa", or a ui.Color
-    {"sun","#ffb238"},
-    {"round",20},       // sizes: a number
-})
-ui.sheet_styles(&theme,{
-    {name="base",stroke="ink",border=4,radius="round",size=24,color="ink",font=ui.FONT_SEMIBOLD},
-    {name="button",extends={"base"},fill="#ff8fa9",fill2="#f0467f",   // fill2: vertical gradient
-        shadow={color="ink",y=7},transition=0.09,                     // no blur: a hard edge
-        hover={fill="sun",move_y=-3,shadow={y=10}},
-        focus={stroke="#46dfc4",border=6},
-        pressed={move_y=5,shadow={y=2},scale=0.98},
-        disabled={fill="#b5acc4",color="#ece6f4"}},
-    {name="dim",fill="#2c163f8c",blur=6},                             // blurs the world behind it
-})
+```json
+{
+  "tokens": {"ink": "#3a1d4f", "sun": "#ffb238", "round": 20},
+  "styles": {
+    "base": {"stroke": "ink", "border": 4, "radius": "round", "size": 24, "color": "ink",
+      "font": "semibold"},
+    "button": {"extends": "base", "fill": "#ff8fa9", "fill2": "#f0467f",
+      "shadow": {"color": "ink", "y": 7}, "transition": 0.09, "width": 300, "height": 60,
+      "text_x": "center", "text_y": "center",
+      "hover": {"fill": "sun", "move_y": -3, "shadow": {"y": 10}},
+      "focus": {"extends": "hover", "stroke": "#46dfc4", "border": 6},
+      "pressed": {"move_y": 5, "shadow": {"y": 2}, "scale": 0.98},
+      "disabled": {"fill": "#b5acc4", "color": "#ece6f4"}},
+    "dim": {"fill": "#2c163f8c", "blur": 6}
+  }
+}
 ```
 
-- A style lists only what it sets. `extends` takes others, in order, each over the last; then the
-  style itself. A value is a token name, or written out.
-- States: `hover`, `focus`, `pressed`, `disabled`, `selected`, `over`. Each lists what differs and
-  the rest stays; a shadow, an outline or a text shadow changes only the parts it names. `focus`
-  is the ring of keys and gamepad: give it a look that is not `hover`.
+- A style says only what it sets; `extends` names another one, here or in a file it uses, and takes
+  the rest. Changing a token or a style reaches everything that names it.
+- Values: a color is `#rrggbb` or `#rrggbbaa`, a size a number; the name of a token instead of
+  either. `shadow` and `text_shadow` are `{color, blur, x, y}` and a state lists only the parts it
+  changes. A hard shadow has no blur: it is an edge of the shape.
+- States: `hover`, `focus`, `pressed`, `disabled`, `selected`, `over`. Each lists what differs;
+  `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
+  ring of keys and gamepad: give it a look that is not `hover`.
 - `move_x`, `move_y` and `scale` draw the node somewhere else without moving the layout or the
-  pointer; with `transition` they animate.
-- `blur` makes a node blur what is behind it, for a pause screen.
-- `variants={{name="gold",fill="#ffd700"}}` is a look a node picks with `variant` or
+  pointer; with `transition` they animate. `blur` blurs what is behind the node, for a pause
+  screen.
+- Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
+  `align_y`. A node takes it and states only what differs; a change of the style reaches every node
+  that uses it.
+- `variants`: `"variants": {"gold": {"fill": "#ffd700"}}` is a look a node picks with `variant` or
   `bind_variant`.
-
-## Nodes
-
-```odin
-s:=ui.sheet_make("hud")
-panel:=ui.sheet_node(&s,-1,"chip",{kind=.Box,name="panel",layout={gap=12}}) // the style by name
-ui.sheet_node(&s,panel,"chip_value",{kind=.Text,bind_text="Status.message"})
-host.ui_sheet_save(c,"assets/ui/hud.ui",hud_id,&s)
-```
-
-`sheet_node` returns what its children name as `parent`. `host.ui_sheet_save` prints what is wrong
-(a style or a token that does not exist, a text with no size or color) and fails the content tool.
 
 ## Share across files
 
-Any `.ui` written from a sheet lends its styles and tokens; no file is special. `sheet_take` makes
-them, and its components, names here too:
-
-```odin
-ui.sheet_take(&s,theme_id,&theme) // theme: the Sheet written to the file theme_id
-```
-
-A node that names a style of `theme` takes it from `assets/ui/theme.ui` when the file loads, states
-included, so rewriting that file restyles every screen that takes it. A local style can extend one
-of them, and the tokens of `theme` name values here at write time.
+A document that says `"use": ["ui/theme.ui"]` names the tokens, styles and components of that file;
+no file is special. A node that takes a style of it follows the changes of that file when it loads.
 
 ## Components
 
-A template the same way a screen is written, its root with parent `-1`:
+A component is a piece a screen uses by name, declared with what it takes and where each goes:
 
-```odin
-if ui.sheet_component(&theme,"button") {
-    ui.sheet_node(&theme,-1,"button",{kind=.Button,layout={width=ui.fixed(300),height=ui.fixed(60)}})
-}
-if ui.sheet_component(&theme,"panel") {
-    root:=ui.sheet_node(&theme,-1,"panel",{kind=.Box,flags={.Slot,.Wrap_Y},layout={direction=.Column}})
-    ui.sheet_node(&theme,root,"heading",{kind=.Text,name="heading"})
+```json
+"components": {
+  "panel": {"params": {"heading": "heading.text"}, "kind": "Box", "style": "panel", "slot": true,
+    "children": [{"name": "heading", "kind": "Text", "style": "heading"}]},
+  "select_row": {"params": {"label": "label.text", "options": "control.text", "bind": "data"},
+    "kind": "Box", "style": "row",
+    "children": [{"name": "label", "kind": "Text", "style": "row_label"},
+                 {"name": "control", "kind": "Selector", "style": "selector", "bind_value": "@"}]}
 }
 ```
 
-```odin
-panel:=ui.sheet_use(&s,page,"panel",{},{{"heading",{text="Paused"},""}})
-ui.sheet_use(&s,panel,"button",{name="pause_resume",text="Resume",flags={.Focus_First}})
+```json
+{"name": "pause", "kind": "panel", "heading": "Paused", "width": 470, "children": [
+  {"name": "resume", "kind": "Button", "style": "button", "text": "Resume"}]}
+{"name": "quality", "kind": "select_row", "label": "Quality", "options": "Low|High",
+ "bind": "Graphics_Settings.quality"}
 ```
 
-- The second argument of a use names the component; `name` is the instance's name, and what its
-  events carry. A template's root may be a `Button`, a `Box` or any other node.
-- What `desc` sets replaces the root of the template, the rest stays as it is there.
-- The third argument changes inner nodes by their name; `""` keeps their style, a name replaces it.
-- A node flagged `.Slot`, the last of the template, holds what the instance holds:
-  `sheet_use` returns its `parent`.
-- A control in a template binds `@` (or `@field`); the instance's `data` says what that is, as
-  `data="Graphics_Settings.quality"` in the template's `select_row`.
+- A use says the parameters by name, the keys of a node for its root, and `children` for what it
+  holds. A parameter goes to `node.field` (`text`, `style`, `bind_text`, `bind_value`, `data`...) or
+  to `field` of the root. A node with `"slot": true`, the last of the template, holds what a use
+  holds.
+- `data` gives what paths in `@` read in the template: a path of the game. The visual editor shows
+  the parameters of a use in its Widget card.
+
+## Animations
+
+```json
+"animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
+                         "loop": "Ping_Pong"}}
+```
+
+A property (`offset`, `scale`, `rotation`, `opacity`, `color`, `width`, `height`, `value`, `frame`,
+`reveal`) goes from one value to another; nodes play it with `"events": {"shown": "pulse"}`. Keyed
+tracks, sequences and parallels are in `ui.anim.set`.
 
 ## Pitfalls that fail silently
 
-- A token, a style or a component is a plain name: read `sheet_problem`, or let
-  `host.ui_sheet_save` print it. A typo is a failed content tool, never an empty style.
-- Rename a style in the theme and the screens that name it fail on the next content run: both
-  live in the same tool.
-- A `.ui` that takes a style by name needs that file at runtime: keep it in `assets/`.
+- A name that resolves to nothing fails `ui.write` with what to fix, and `ui.check` says it for
+  every `.ui` of the project (a style renamed in the theme after a screen named it).
+- A `.ui` that uses another needs that file at runtime: keep it in `assets/`.

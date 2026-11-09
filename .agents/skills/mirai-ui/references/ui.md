@@ -476,10 +476,13 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   does not lose it.
 - A shadow without blur and with an offset is a solid copy of its shape; without blur or offset, the
   theme's default shadow.
-- `Sheet` (`sheet.odin`) writes those tables by name: tokens, styles that extend others and states
-  that list only what changes. It builds `Node_Style`, `Tree_Style_Variant` and `Tree_Style_Info`
-  at write time and nothing of it exists in the frame. Game documentation:
-  `docs/game/ui/styles.md`.
+- `tree_settle` (`tree_names.odin`) is where the names of a `.ui` resolve: what a token gives, what
+  a style with `extends` takes (`Tree_Style_Info.sets` says what it sets itself), what a state with
+  `extends` starts from, and the layout a node takes from its style (`Tree_Node.layout_own` says
+  what is its own) at load. The file keeps the names in `Tree_Style_Info`, `Tree_Token_Use`,
+  `Tree_Token` and `Tree_Param`; the frame reads the flat tables, and each name resolves when the
+  file is written or links another (`tree_link`), so changing a token or a style reaches what names
+  it without touching the frame. Game documentation: `docs/game/ui/styles.md`.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 

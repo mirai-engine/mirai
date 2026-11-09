@@ -172,20 +172,29 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`api_document.odin`): the nodes nested by `children`, each with what
-  differs from a new node of its type, the named style it takes or its own look (`look`, with its
-  rules), and the styles and animations they take; beside it, the widgets and fonts.
-- `ui.write` makes the file, or `node`, say what the document declares, in one step:
+  `ui.write` takes back (`api_document.odin`): tokens, the files it `use`s, named styles with
+  `extends` and their states, layouts, components with `params`, named animations, and the nodes
+  nested by `children`, each with what differs from a new node of its type and what its style does
+  not give. Reading back names: what is written and read back is the same, and what the visual
+  editor changed reads back by name too.
+- `ui.write` makes the file, or `node`, say what the document declares, in one step; a path that
+  does not exist yet makes the `.ui` and `save=true` writes the file (what an agent passes; a
+  person saves with Save). On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
     them to the file (translations by `text_id`, the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
     ([styles](#styles)), and an empty `style` is none.
-  - The styles and animations it names become what it says, `null` removes them (a style that some
-    node takes is not removed) and those it does not name stay. Without `nodes`, no node changes.
-  - A name of the part cannot be outside it; an error says where
-    (`nodes[0].children[2].fields.layout: …`) and changes nothing.
+  - The tokens, styles, components and animations it names become what it says, `null` removes them
+    (a style that some node takes is not removed) and those it does not name stay. Without
+    `nodes`, no node changes.
+  - A name of the part cannot be outside it, and a name that resolves to nothing (style, token,
+    component, parameter) fails: an error says where (`nodes[0].children[2]: …`) and changes
+    nothing. `ui.check` says the same for every `.ui` of the project.
+  - A use says a component's parameters by name (`Tree_Param`): one that goes to a node of it is
+    an override of that node, one that goes to its root is the instance's; a use that does not say
+    one takes it away. The visual editor shows them in the Widget card.
 - `ui.node.*` changes a node and what the call does not name stays. `fields` does not accept what
   has another key or its own method (parent, type, text, style, image, events): the error says
   which to use. `children` of `ui.node.add` adds a whole subtree in the same call: each child

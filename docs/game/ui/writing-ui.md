@@ -1,31 +1,69 @@
 # Writing a .ui
 
-A `.ui` is a flat list of nodes in preorder with its styles beside it. A game writes it from its
-content tool, so the same bytes come out every run; the editor and the API edit the same file.
-The template's `tools/content` writes `hud.ui`, `sign.ui` and `shell.ui`: copy the nearest one.
+A `.ui` is the source of an interface and it has one route: you write a document, nested and by
+name, and the editor keeps it in the file. `ui.inspect` gives back the same document, and the
+visual editor edits the same `.ui`; nothing regenerates over what either did. Names stay named:
+`ui.write(ui.inspect(x))` changes nothing. Add `ui_inspector` to the `plugins` of `project.mirai`
+for this (a new game has it).
 
-## Content tool
+## A working document
 
-```odin
-s:=ui.sheet_make("hud")
-ui.sheet_styles(&s,{{name="value",size=18,color="#ffffff"}})
-panel:=ui.sheet_node(&s,-1,"",{kind=.Box,name="panel",
-    float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,offset={16,16}},
-    layout={width=ui.fixed(260),gap=12,padding=ui.padding_all(12)}})
-ui.sheet_node(&s,panel,"value",{kind=.Text,name="message",bind_text="Status.message"})
-host.ui_sheet_save(c,"assets/ui/hud.ui",id_of("ui","hud"),&s) // c: ^asset.Content, as the template
+Save this as `screen.json` and write it (`save=true` writes the file: a path that does not exist
+yet makes the `.ui`):
+
+```
+mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=true
 ```
 
-- Styles, tokens, states and shared components: [styles.md](styles.md). A node names its style by
-  name; `sheet_node` returns what its children name as `parent`.
-- `id_of` (the template's helper over `base.asset_id_named`) gives the same id every run; the
-  scene's `UI_Screen.asset` or `World_Widget.asset` takes it. Write the `.ui` before the scene.
-- Sizes are `ui.fixed(n)`, `ui.grow()`; `layout.direction` is `.Row` or `.Column`, `gap` and
-  `padding` are layout units, `align_x` and `align_y` center content.
-- A `Text` with a `fill`, `radius` or `stroke` in its style draws them behind the text as a `Box`,
-  with the `padding` of its `layout` around the text: a pill needs no parent `Box`.
-- `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items` take paths:
-  [hud-panels.md](hud-panels.md#hud). The kinds are the members of `ui.Node_Kind`.
+```json
+{
+  "tokens": {"ink": "#3a1d4f", "cream": "#fff6e9", "round": 16},
+  "styles": {
+    "card": {"fill": "cream", "stroke": "ink", "border": 3, "radius": "round",
+      "direction": "column", "gap": 10, "padding": 18},
+    "title": {"size": 28, "color": "ink", "font": "semibold", "text_x": "center"},
+    "start": {"extends": "title", "fill": "ink", "color": "cream", "radius": "round",
+      "width": 200, "height": 48, "text_y": "center",
+      "hover": {"fill": "#6b4a7a"},
+      "focus": {"extends": "hover", "stroke": "cream", "border": 3}}
+  },
+  "animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
+                           "loop": "Ping_Pong"}},
+  "components": {
+    "stat": {"params": {"label": "name.text", "value": "amount.bind_text"}, "kind": "Box", "gap": 6,
+      "children": [{"name": "name", "kind": "Text", "style": "title"},
+                   {"name": "amount", "kind": "Text", "style": "title"}]}
+  },
+  "nodes": [
+    {"name": "root", "kind": "Box", "style": "card",
+     "float": {"to": "Safe", "anchor": "Center", "pivot": "Center"},
+     "children": [
+       {"name": "start_game", "kind": "Button", "style": "start", "text": "Start",
+        "events": {"shown": "pulse"}},
+       {"name": "hits", "kind": "stat", "label": "Hits", "value": "Status.hits"}
+     ]}
+  ]
+}
+```
+
+- Read it back with `mirai rpc --project . ui.inspect asset=ui/screen.ui --select document`, change
+  what you want and write it again. `ui.check` says what does not resolve.
+- A node is `{name, kind, text, style, children}` plus what it sets by the name of its keys. `kind`
+  is a `ui.Node_Kind` (`Box`, `Text`, `Button`, `Image`, `Selector`...) or the name of a component.
+- Keys of a node: `width`, `height` (`"grow"`, `"fit"`, `"50%"` or a number for fixed),
+  `direction`, `gap`, `padding` (a number, `[x, y]` or four numbers), `align_x`, `align_y`,
+  `float`, `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items`, `image`
+  (`{"texture": "textures/badge.tex"}`), `events`, `flags` and the other fields of `ui.Tree_Node`.
+  A style holds the common ones; a node only what differs: [styles.md](styles.md).
+- Paths in `bind_*` are the data of the game: [hud-panels.md](hud-panels.md#hud). `events` by
+  trigger names the animation that plays: `shown`, `hidden`, `hovered`, `pressed`, `clicked`...
+- A `Text` with a `fill`, `radius` or `stroke` in its style draws them behind the text, with its
+  `padding` around the text: a pill needs no parent `Box`.
+- The first control of a page takes the focus when it shows; a node that must have it instead has
+  `"flags": ["Focus_First"]`.
+
+Changing a single piece: `ui.node.set`, `ui.style.set`, `ui.variant.set` (the same keys as the
+document), `ui.bind` for a path checked against the game's types, `ui.capture` to draw one alone.
 
 ## Controls
 
@@ -33,14 +71,6 @@ host.ui_sheet_save(c,"assets/ui/hud.ui",id_of("ui","hud"),&s) // c: ^asset.Conte
 `Field` report `Changed`; `Field` also `Submitted`. A `Selector` takes its options in `text`
 separated by `|`; what each one writes: [add an option](menus-settings.md#add-an-option). The game
 answers on each event: [events](../ui.md#events).
-
-## API
-
-With `ui_inspector` in the `plugins` of `project.mirai`, an open editor edits a `.ui`:
-`ui.inspect` reads it as a document, `ui.write` replaces it from one, and `ui.node.add`,
-`ui.node.set`, `ui.style.set` and `ui.variant.set` change a piece. `ui.bind` binds a node to a path
-checked against the game's types, `ui.check` loads every `.ui` against this build and says which
-paths are wrong, and `ui.capture` draws one alone to a PNG. Changes wait for `asset.save`.
 
 ## Texts
 
@@ -50,6 +80,7 @@ A `Localized` node keeps its translations in the `.ui`. `mirai texts export|impo
 ## Pitfalls that fail silently
 
 - A `.ui` that does not load shows nothing: `engine.diagnostics` has `gui.asset`.
-- Controls need distinct `name`s: events carry only the hash of the name.
-- Random ids break every scene that names the `.ui`: use `base.asset_id_named`.
-- Running the content tool again overwrites the file; API edits to a `.ui` it writes are lost.
+- Controls need distinct `name`s: events carry only the hash of the name, and asking for a name the
+  screen does not have is a problem `gui.names` once at run time.
+- `ui.write` without `save=true` waits for Save (the changes are one step of history); agents pass
+  `save=true`.

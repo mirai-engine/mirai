@@ -1,21 +1,34 @@
 # Menus, pause and settings
 
 The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.ui` the look, a
-`Switcher` whose pages are named after the members of `Shell_Page`, written by `write_shell` of
-`tools/content`. Change both and run the content tool.
+`Switcher` whose pages are named after the members of `Shell_Page`. Both are the source: an agent
+changes `shell.ui` with `ui.write` (or the visual editor edits it) and the game keeps its names.
 
 ## Restyle
 
-The look of every screen is `write_theme` of `tools/content`: tokens first (the colors and sizes
-to change), then the styles and the `button`, `panel` and setting rows the screens use
-([styles.md](styles.md)). `write_shell` only names them; keep its node names, since `shell_events`
-matches them.
+Read the look with `mirai rpc --project . ui.inspect asset=ui/theme.ui --select document`, change
+what you want and write it back with `ui.write` and `save=true`: tokens first (the colors and
+sizes), then the `button`, `control` and `panel` styles and the `select_row`, `check_row` and
+`panel` components the screens use ([styles.md](styles.md)). `shell.ui` only names them; keep its
+node names, since `shell_events` matches them.
 
 ## Add a page
 
 1. A member of `Shell_Page` before `Playing`, in the order of the pages of `shell.ui`.
-2. A `panel(&s,pages,.Controls,"Controls",560)` call in `write_shell`, in the same order, with its
-   controls; `button(&s,menu,"menu_controls","Controls")` on the page that opens it.
+2. A page under the `Switcher` of `shell.ui` named after the member, in the same order, with its
+   controls, and a button on the page that opens it:
+
+```json
+{"name": "Controls", "kind": "Box", "style": "dim", "children": [
+  {"name": "controls", "kind": "panel", "heading": "Controls", "width": 560, "children": [
+    {"name": "controls_back", "kind": "Button", "style": "button", "text": "Back"}]}]}
+{"name": "menu_controls", "kind": "Button", "style": "button", "text": "Controls"}
+```
+
+Write the page by writing its parent: `ui.write asset=ui/shell.ui node=pages document=@pages.json
+save=true`, whose `nodes` is that Switcher with its children, and only that node changes. The
+same for the menu that holds the new button.
+
 3. A line in `shell_events` that sets `shell.page`, and one in the `gui.menu_pressed` switch of
    `shell_frame` if the page should go back.
 
@@ -24,19 +37,21 @@ if gui.clicked(events,screen,"menu_controls") {shell.page=.Controls}
 if gui.clicked(events,screen,"controls_back") {shell.page=.Menu}
 ```
 
-The first control of a page is `button(...,true)`, which sets `.Focus_First`: keys work at once.
+The first control of a page takes the focus when it shows, so keys work at once.
 
 ## Add an option
 
-One line of the content tool, no game code: a selector bound to a field of a setting
+One row of the document, no game code: a selector bound to a field of a setting
 (`Graphics_Settings`, `Display_Settings`, `Audio_Volumes`, `UI_Preferences` or your own
 `@(storage,setting)`) writes it, and the engine keeps it for the next run.
 
-```odin
-// label, node name, the field, options
-select(&s,settings,"Rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|High=16")
-select(&s,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
-check(&s,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
+```json
+{"name": "settings_rays", "kind": "select_row", "label": "Rays", "options": "Low=4|High=16",
+ "bind": "Graphics_Settings.shadowed_lights"}
+{"name": "settings_aa", "kind": "select_row", "label": "Anti-aliasing",
+ "options": "Off=off|TAA=taa", "bind": "Graphics_Settings.antialiasing"}
+{"name": "settings_vsync", "kind": "check_row", "label": "VSync",
+ "bind": "Graphics_Settings.vsync"}
 ```
 
 `Label=Value` names what the option writes: a number, the name of a member of an enum, or text for
