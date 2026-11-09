@@ -126,7 +126,9 @@ write_scene :: proc(c:^asset.Content,hud,sign,hum,shell:base.Asset_Id) {
     asset.builder_set(&b,asset.builder_entity(&b,"Sky"),render.SKY_DEFAULT)
     // It shines toward its -Z, from where the sun of the editor's preset is.
     sun:=asset.builder_entity(&b,"Sun",{rotation=linalg.quaternion_between_two_vector3([3]f32{0,0,1},linalg.normalize(render.SUN_DIRECTION))})
-    asset.builder_set(&b,sun,render.Sun{color={1,0.96,0.9},illuminance=100000})
+    light:=render.SUN_DEFAULT
+    light.disc=false
+    asset.builder_set(&b,sun,light)
 
     floor:=asset.builder_entity(&b,"Floor",{position={0,-0.05,0},scale={20,0.1,20}})
     block(&b,floor,{0.35,0.38,0.42})
@@ -171,7 +173,7 @@ main :: proc() {
     c:asset.Content
     asset.content_init(&c,PROJECT)
     defer asset.content_destroy(&c)
-    for folder in ([]string{"assets/ui","assets/sounds","assets/textures","assets/scenes","assets/prefabs"}) {os.make_directory_all(folder)}
+    for folder in ([]string{"assets/sounds","assets/textures","assets/scenes","assets/prefabs"}) {os.make_directory_all(folder)}
     write_badge(&c)
     hum:=write_hum(&c)
     write_player(&c)
