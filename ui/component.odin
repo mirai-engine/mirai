@@ -21,6 +21,8 @@ Tree_Component :: struct {
     // records join these when the tree is linked (tree_link); first and
     // count are then the range they took.
     widget:base.Asset_Id,
+    named:bool,   // widget: it is the component of the file called as this one, not the tree of the file
+    library:bool, // its file only lends its styles (Tree_Style_Info.from): no instance of it
 }
 Tree_Override :: struct {
     instance:u32, // row in nodes, whose kind is Component
@@ -120,7 +122,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
     defer delete(depths,e.allocator)
     for &source,at in nodes {
         if source.parent<-1 || int(source.parent)>=at {return -1,false}
-        if source.parent>=0 && (!node_kind_holds(nodes[source.parent].kind) || int(source.parent+subtree[source.parent])+1!=at) {return -1,false}
+        if source.parent>=0 && (!node_kind_holds(nodes[source.parent].kind) && nodes[source.parent].kind!=.Component || int(source.parent+subtree[source.parent])+1!=at) {return -1,false}
         for ancestor:=source.parent;ancestor>=0;ancestor=nodes[ancestor].parent {subtree[ancestor]+=1}
         source:=source
         for field in tree_node_texts(&source) {if len(serial.text_field(field))>=len(field) {return -1,false}}
@@ -136,7 +138,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
         local,local_ok:=tree_path(local_buffer[:],local_prefix,name)
         if !path_ok || !local_ok {return -1,false}
         if source.kind==.Component {
-            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH {return -1,false}
+            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH || e.data.components[source.component-1].library {return -1,false}
             for active in e.components[:component_depth] {if active==source.component {return -1,false}}
             e.components[component_depth]=source.component
             component:=e.data.components[source.component-1]
@@ -150,6 +152,14 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
             root,expanded:=tree_expand_range(e,e.data.component_nodes[component.first:][:component.count],destination_parent,path,next_local,top,component_depth+1,&source,next_variant,depth,inner)
             if !expanded {return -1,false}
             maps[at]=root
+            // What the instance holds goes in the Slot of its template, a node
+            // left without one holds what no node can be.
+            if e.output!=nil && at+1<len(nodes) && nodes[at+1].parent==i32(at) {
+                slot:=-1
+                for i in int(root)..<e.count {if .Slot in e.output[i].flags {slot=i}}
+                if slot<0 {return -1,false}
+                maps[at]=i32(slot)
+            }
             continue
         }
         if source.component!=0 {return -1,false}
@@ -182,16 +192,18 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
 
 // The nodes of linked records (tree_link) with their components expanded, as
 // tree_load builds them: row i is node i of the Widget_Tree, named by its path.
-tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree_Node,ok:bool) {
+// part>=0: those of that component, row as in components, named from its root.
+tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator,part:int=-1) -> (nodes:[]Tree_Node,ok:bool) {
     if len(data.components)>=int(max(u16)) || len(data.nodes)>TREE_EXPANDED_NODES {return nil,false}
     for &component,i in data.components {
         // A widget names a file the records must be linked with first.
-        if component.widget!={} || component.count==0 || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
+        if component.widget!={} || component.count==0 && !component.library || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
         name:=serial.text_field(component.name[:])
         if name=="" || len(name)>=len(component.name) {return nil,false}
         for &earlier in data.components[:i] {if serial.text_field(earlier.name[:])==name {return nil,false}}
+        if component.library {continue}
         range:=data.component_nodes[component.first:][:component.count]
-        if range[0].kind!=.Box || range[0].parent!=-1 {return nil,false}
+        if range[0].kind==.Component || range[0].parent!=-1 {return nil,false}
         for node,at in range {if at>0 && node.parent<0 {return nil,false}}
     }
     for &override in data.overrides {
@@ -205,18 +217,26 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree
     e:=Tree_Expansion{data=data,matched=matched,allocator=allocator}
     // Unused templates are validated too, including recursion cycles.
     for &component,i in data.components {
+        if component.library {continue}
         e.count=0;e.components[0]=u16(i+1)
         _,valid:=tree_expand_range(&e,data.component_nodes[component.first:][:component.count],-1,"","",-2,1)
         if !valid {return nil,false}
     }
+    run:=data.nodes
+    instance,depth:=i32(-1),0
+    if part>=0 {
+        if part>=len(data.components) || data.components[part].library {return nil,false}
+        run,instance,depth=data.component_nodes[data.components[part].first:][:data.components[part].count],-2,1
+        e.components[0]=u16(part+1)
+    }
     e.count=0
-    _,valid:=tree_expand_range(&e,data.nodes,-1,"","",-1,0)
+    _,valid:=tree_expand_range(&e,run,-1,"","",instance,depth)
     if !valid {return nil,false}
-    for found in matched {if !found {return nil,false}}
+    if part<0 {for found in matched {if !found {return nil,false}}}
     nodes,error=make([]Tree_Node,e.count,allocator)
     if error!=nil {return nil,false}
     e.output,e.count=nodes,0
-    _,valid=tree_expand_range(&e,data.nodes,-1,"","",-1,0)
+    _,valid=tree_expand_range(&e,run,-1,"","",instance,depth)
     if !valid {delete(nodes,allocator);return nil,false}
     return nodes,true
 }

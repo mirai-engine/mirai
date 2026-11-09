@@ -25,7 +25,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
     game gives the interface).
   - Data tree: `tree.odin` (instance and construction), `tree_widgets.odin` (each node type),
     `tree_bind.odin` (paths, copy plan and templates), `tree_data.odin` (records and loading),
-    `component.odin` (component expansion), `tree_link.odin` (widgets from another `.ui`).
+    `component.odin` (component expansion), `tree_link.odin` (what comes from another `.ui`),
+    `sheet.odin` (the named way to write one).
 - How a game shows `.ui` interfaces (`UI_Screen`, `World_Widget`) and draws its own:
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
@@ -94,6 +95,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   atlas grows only between frames. An added font or face is not removed.
 - **The editor theme is not changed for a game**: a game passes its own `Theme` or uses the widgets
   with their own style (`text`, `image`, `skin_button`, game controls, tree nodes).
+- **A game writes a `.ui` by names**, through a `Sheet`: its tokens and styles compile into the rows
+  of `Tree_Data`. Positional records stay what the editor and the file use.
 
 ## Verification
 
@@ -110,7 +113,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - Layout and scroll: `layout_flow_test.odin` (wrap, stack, own alignment, aspect, weights, tracks
   and span, floats inside the surface) and `scroll_axes_test.odin`.
 - Game interfaces: `tree_kinds_test.odin`, `tree_containers_test.odin`, `tree_game_test.odin`,
-  `tree_controls_test.odin`, `game_controls_test.odin` and `retain_test.odin`. Paths:
+  `tree_controls_test.odin`, `game_controls_test.odin`, `sheet_test.odin` (names, tokens, shared
+  files, slots) and `retain_test.odin`. Paths:
   `paths_reach_components_through_entities_and_copy_only_what_is_read`,
   `a_widget_reads_with_at_the_data_its_instance_gives_it` and, in `engine/gui`,
   `paths_read_the_components_and_storages_of_the_world_by_name`.

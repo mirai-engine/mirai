@@ -226,7 +226,8 @@ table per record (`UI_TABLE_*`); contracts and precedence, in the
   text. Images and fonts go by their asset's id, so they are dependencies.
 - A component with `widget` takes its template from another `.ui`, which is also a dependency:
   `host.ui_tree_imports` reads those files (and theirs, without cycles) and `ui.tree_link` joins
-  them to the records before loading.
+  them to the records before loading. A row of `style_infos` with `from` takes the style of that
+  name from the file of that component, at the same moment.
 - `asset/ui.odin` declares the fourcc, the version, the tables and their structural check, because
   `asset` does not import `ui`. Whoever links the two packages writes and reads it:
   `host.ui_tree_document`, `ui_tree_save` and `ui_tree_view`; `ui_tree_document` returns `.Invalid`

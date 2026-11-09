@@ -17,9 +17,9 @@ status.hits+=1
 
 ```odin
 // content tool: nodes of hud.ui bind by path; the entity of the screen carries Status
-{kind=.Text,name="message",style=2,bind_text="Status.message"}
-{kind=.Text,name="hits",style=3,bind_text="Status.hits"}
-{kind=.Progress,name="health",bind_value="Status.health"}       // a f32 field, 0 to 1
+ui.sheet_node(&s,panel,"chip_value",{kind=.Text,name="message",bind_text="Status.message"})
+ui.sheet_node(&s,panel,"chip_label",{kind=.Text,name="hits",bind_text="Status.hits"})
+ui.sheet_node(&s,panel,"bar",{kind=.Progress,name="health",bind_value="Status.health"}) // 0 to 1
 ```
 
 ```odin

@@ -10,9 +10,9 @@ Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:
 `"mirai:ui"` (only in the content tool).
 
 **A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings,
-Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`, which
-`tools/content` writes. It also has `hud.ui` and `sign.ui`. Restyle and extend them; do not write
-another menu system. `tests/scenarios/shell.mirai` drives it with keys.
+Escape, frozen clock, mouse capture, options saved) drawn by `assets/ui/shell.ui`, from
+`tools/content`; `theme.ui` holds the shared look and `tests/scenarios/shell.mirai` drives it.
+Restyle and extend them; do not write another menu system.
 
 ## Map
 
@@ -20,6 +20,7 @@ another menu system. `tests/scenarios/shell.mirai` drives it with keys.
   [menus-settings.md](ui/menus-settings.md).
 - A HUD, a counter or bar, a sign in the world, a panel on a mesh:
   [hud-panels.md](ui/hud-panels.md).
+- Named styles, tokens, states and shared components: [styles.md](ui/styles.md).
 - Write or change a `.ui` from code or the API: [writing-ui.md](ui/writing-ui.md).
 - Check a screen without playing it by hand: [testing](testing.md#ui-and-menus).
 - [Screens](#screens), [Events](#events), [Focus](#focus).

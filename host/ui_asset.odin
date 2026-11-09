@@ -1,5 +1,6 @@
 package host
 
+import "core:fmt"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:ui"
@@ -53,6 +54,23 @@ ui_tree_bytes :: proc(types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,impo
     ui_tree_document(&doc,types,id,data,imports,allocator) or_return
     defer asset.document_destroy(&doc)
     return asset.document_bytes(&doc,allocator)
+}
+
+// Writes a sheet to its file: what is wrong with the sheet is printed and
+// counted in content, as content_check does with the other assets.
+ui_sheet_save :: proc(c:^asset.Content,path:string,id:base.Asset_Id,sheet:^ui.Sheet) {
+    if problem:=ui.sheet_problem(sheet);problem!="" {
+        fmt.eprintfln("content: %s: %s",path,problem)
+        c.failed=true
+        return
+    }
+    data,imports:=ui.sheet_data(sheet)
+    if problem:=ui.sheet_problem(sheet);problem!="" {
+        fmt.eprintfln("content: %s: %s",path,problem)
+        c.failed=true
+        return
+    }
+    asset.content_check(c,path,ui_tree_save(path,&c.types,id,data,imports))
 }
 
 ui_tree_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,imports:[]ui.Tree_Data={},allocator:=context.allocator) -> asset.Error {
@@ -112,6 +130,12 @@ ui_tree_imports_of :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_S
     for component,row in data.components {
         id:=component.widget
         if id=={} {continue}
+        // Several components of a file read it once.
+        seen:=false
+        for earlier,i in data.components[:row] {
+            if earlier.widget==id {imports[row]=imports[i];seen=true;break}
+        }
+        if seen {continue}
         for open in stack[:depth] {if open==id {return nil,false}}
         record,found:=asset.registry_find(&a.registry,id)
         if !found || record.kind!=asset.KIND_UI {return nil,false}

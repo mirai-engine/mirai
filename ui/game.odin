@@ -308,7 +308,8 @@ game_checkbox :: proc(ctx:^Context,id:Id,value:^bool,c:Game_Control={}) -> (chan
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
     if it.clicked {value^=!value^;changed=true}
     w,h,side:=game_side(ctx,id,c,style)
-    paint:=paint_add(ctx,{kind=.Box,fill=style.fill,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,center=true,
+    paint:=paint_add(ctx,{kind=.Box,fill=style.fill,fill2=style.fill2,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,center=true,
+        shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,
         icon=.Check if value^ else .None,icon_color=style.mark,icon_size=side*0.75})
     element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
     return

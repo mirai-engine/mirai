@@ -188,7 +188,12 @@ paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
     if p.shadow {
         color:=p.shadow_color if p.shadow_color[3]>0 else ctx.theme.shadow
         radius:=max(radii[0],radii[1],radii[2],radii[3])
-        if p.shadow_blur>0 {draw_blurred_shadow(ctx,r,radius,p.shadow_blur,p.shadow_offset,color)} else {draw_shadow(ctx,r,radius,color)}
+        // Without blur an offset is a hard edge of its shape, a default shadow without one.
+        switch {
+        case p.shadow_blur>0:     draw_blurred_shadow(ctx,r,radius,p.shadow_blur,p.shadow_offset,color)
+        case p.shadow_offset!={}: draw_shape(ctx,{r.x+p.shadow_offset.x,r.y+p.shadow_offset.y,r.w,r.h},{fill=color,radii=radii})
+        case:                     draw_shadow(ctx,r,radius,color)
+        }
     }
     if p.program!=0 {
         draw_program(ctx,r,p.program,p.program_values,p.fill,radii)
