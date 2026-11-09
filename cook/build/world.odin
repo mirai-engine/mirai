@@ -1648,7 +1648,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
-            if _,found:=default_value(t);found {fmt.sbprintf(w,"    w.%s.default=default_%s\n",t.field,t.field)}
         }
         for t in g.types {
             if t.place!=place || t.kind!=.Storage || t.by_world || !included(t,editor) {continue}

@@ -110,7 +110,7 @@ simulation_reset :: proc(s:^Simulation) {}
     clear=clear[:strings.index(clear,"\n}\n")]
     testing.expect(t,strings.contains(clear,"p_core.value_free(&w.cache,type_info_of(p_core.Cache))\n    w.cache={}"),clear)
     testing.expect(t,strings.contains(clear,"p_core.tally_free(&w.tally)\n    w.tally=p_core.TALLY_DEFAULT"),clear)
-    testing.expect(t,strings.contains(text,"w.paced.default=default_paced"),"a table starts its rows at the default of its component")
+    testing.expect(t,strings.contains(text,"default_paced :: proc") && strings.contains(text,",default_paced,"),"a table starts its rows at the default of its component")
     testing.expect(t,strings.contains(clear,"p_core.simulation_reset(&w.simulation)"),clear)
     testing.expect(t,strings.contains(clear,"w.requests={}"),clear)
     testing.expect(t,strings.contains(text,"type_info_of(p_core.Progress),offset_of(World,progress),.World,.None,nil,false,nil,true,true,\"\",false}"),text)

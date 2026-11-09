@@ -48,7 +48,6 @@ Table :: struct($T:typeid) {
     owners:[dynamic]Row_Owner, // shared tables: by index, the generation and lock that own the row
     locks:[]Lock,             // rows of other tables a row on of this one owns
     name:string,
-    default:proc(dst:rawptr), // writes the value a new row starts with; nil: zero
 }
 
 Pending :: struct {
@@ -200,18 +199,6 @@ add :: proc(t:^Table($T),e:Entity,value:T) {
     append(&t.added,value)
     append(&t.pending,Pending{e,i32(len(t.added)-1)})
 }
-
-// What a new row of this table starts as: the default the generator found
-// for the component (<NAME>_DEFAULT or <name>_default() of its package), or zero.
-table_default :: proc(t:^Table($T)) -> (value:T) {
-    if t.default!=nil {t.default(&value)}
-    return
-}
-read_default :: proc(r:Read($T)) -> T {return table_default(r.table)}
-default :: proc{table_default,read_default,commands_default}
-
-// Gives the entity the component at its default, as add does.
-add_default :: proc(t:^Table($T),e:Entity) {add(t,e,table_default(t))}
 
 // Takes the component from the entity at the end of the function.
 remove :: proc(t:^Table($T),e:Entity) {
@@ -735,7 +722,6 @@ Raw_Table :: struct {
     owners:[dynamic]Row_Owner,
     locks:[]Lock,
     name:string,
-    default:proc(dst:rawptr),
 }
 #assert(size_of(Raw_Table)==size_of(Table(u8)))
 #assert(offset_of(Raw_Table,stamps)==offset_of(Table(u8),stamps))
@@ -743,7 +729,6 @@ Raw_Table :: struct {
 #assert(offset_of(Raw_Table,gone)==offset_of(Table(u8),gone))
 #assert(offset_of(Raw_Table,on)==offset_of(Table(u8),on))
 #assert(offset_of(Raw_Table,name)==offset_of(Table(u8),name))
-#assert(offset_of(Raw_Table,default)==offset_of(Table(u8),default))
 
 raw :: #force_inline proc "contextless" (t:^Table($T)) -> ^Raw_Table {return cast(^Raw_Table)t}
 
