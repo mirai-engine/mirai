@@ -15,7 +15,7 @@ import "mirai:ui"
 
 // A tree with what the structure of a .ui links: a use of a widget, a List, a grid, clips of
 // several tracks, a sequence and a parallel, a track no clip plays, sets,
-// styles with a variant, style infos with a base, a font and a translation.
+// styles with a variant, style infos, a font and a translation.
 @(private="file")
 ui_check_base :: proc() -> (d:ui.Tree_Data) {
     a:=context.temp_allocator
@@ -38,7 +38,7 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
     d.variants=slice.clone([]ui.Tree_Style_Variant{ui.tree_variant_record(1,"hot",{},{values={text={font=ui.FONT_TREE}}})},a)
     d.style_infos=make([]ui.Tree_Style_Info,3,a)
     ui.tree_text_set(d.style_infos[0].name[:],"base");ui.tree_text_set(d.style_infos[1].name[:],"accent")
-    ui.tree_text_set(d.style_infos[2].name[:],"accent2");d.style_infos[2].base=2
+    ui.tree_text_set(d.style_infos[2].name[:],"accent2")
     d.fonts=slice.clone([]ui.Tree_Font{{font={0xf0,2}}},a)
     d.images=slice.clone([]ui.Tree_Image{{texture={0x7e,2}}},a)
     d.keys=slice.clone([]ui.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
@@ -96,7 +96,6 @@ ui_check_links :: proc(d:^ui.Tree_Data,out:^[dynamic]Ui_Link) {
     }
     for &s,i in d.styles {add(out,s.text.font,"styles[%d].text.font",i)}
     for &v,i in d.variants {add(out,v.style,"variants[%d].style",i);add(out,v.patch.values.text.font,"variants[%d].patch.values.text.font",i)}
-    for &s,i in d.style_infos {add(out,s.base,"style_infos[%d].base",i)}
     for &f,i in d.fonts {add(out,f.font,"fonts[%d].font",i)}
     for &an,i in d.anims {add(out,an.kind,"anims[%d].kind",i);add(out,an.first,"anims[%d].first",i);add(out,an.count,"anims[%d].count",i)}
     for &tr,i in d.tracks {add(out,tr.first_key,"tracks[%d].first_key",i);add(out,tr.key_count,"tracks[%d].key_count",i)}

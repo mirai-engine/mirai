@@ -85,8 +85,7 @@ Style_Family :: enum u8 {Box, Text, Control}
 // to when a tree is written and linked (tree_settle). Only its layout and
 // blur reach the nodes, at load.
 Tree_Style_Info :: struct {
-    name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // empty: no style, the own look of the node that has it
-    base:u16, // row plus one of the style a node overrides with this one until it saves it there; 0: none
+    name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // empty: no style, the own look of the node that has it, or the override of the style it extends
     family:Style_Family,
     defaults:Node_Kinds, // the kinds whose new nodes take this style; a kind is in one style of a file at most
     from:u16, // row plus one of the component whose file has the style of this name: this row is that style once linked; 0: its own
@@ -259,9 +258,9 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
     if !tree_rows_named(data.variants) || !tree_rows_named(data.components) || !tree_rows_named(data.component_nodes) || !tree_rows_named(data.overrides) {return false}
     if !tree_rows_named(data.tracks) || !tree_rows_named(data.keys) || !tree_rows_named(data.anim_sets) || !tree_rows_named(data.style_infos) {return false}
     for font in data.fonts {if font.font=={} {return false}}
-    // An info is that of a style and names as its base another style.
+    // An info is that of a style, of this tree: what files lend is linked by then.
     if len(data.style_infos)>len(data.styles) {return false}
-    for info,row in data.style_infos {if int(info.base)>len(data.styles) || int(info.base)==row+1 || info.from!=0 {return false}}
+    for info in data.style_infos {if info.from!=0 {return false}}
     expanded,ok:=tree_expand(data,allocator)
     if !ok {return false}
     defer delete(expanded,allocator)

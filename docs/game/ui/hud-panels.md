@@ -58,8 +58,8 @@ asset.builder_set(&b,board,status)                   // what its paths read
 ```
 
 - `facing`: `Billboard` (parallel to the screen), `Billboard_Upright` (turns about up) or `Fixed`
-  (the rotation of the entity, with its face toward +Z: a panel that must read from in front of a
-  body is a child turned half a turn about Y).
+  (the rotation of the entity: its face shows toward the forward of the entity, -Z, as anything
+  else does, so a panel on a body reads from in front of it with no turn of its own).
   `sizing=.Screen` keeps a constant size on screen at any distance.
 - `depth_test` hides it behind the scene; `passive` lets the pointer through.
 - A player sees the nearest panels only: use few, and hide the far ones.

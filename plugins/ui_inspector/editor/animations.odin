@@ -193,11 +193,11 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     r:=&u.records
-    // The widgets it can be a use of; a file used only for its styles makes no use.
+    // The widgets it can be a use of: a file it uses for its styles has no one root.
     names:=make([dynamic]string,context.temp_allocator)
     rows:=make([dynamic]int,context.temp_allocator)
     for &component,i in r.components {
-        if component.library {continue}
+        if !widget_one_root(u,a,component.widget) {continue}
         append(&names,editor.asset_name_of(a,component.widget,"missing"));append(&rows,i)
     }
     picked:=-1

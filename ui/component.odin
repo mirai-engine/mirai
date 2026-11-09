@@ -18,7 +18,6 @@ Tree_Component :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     first,count:u32, // the range of component_nodes tree_link expanded it into; 0 in a file
     widget:base.Asset_Id, // the .ui whose one root is the widget; empty only once linked
-    library:bool, // its file only lends its styles and tokens (Tree_Style_Info.from): no instance of it
 }
 Tree_Override :: struct {
     instance:u32, // row in nodes, whose kind is Component
@@ -150,7 +149,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
         local,local_ok:=tree_path(local_buffer[:],local_prefix,name)
         if !path_ok || !local_ok {return -1,false}
         if source.kind==.Component {
-            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH || e.data.components[source.component-1].library {return -1,false}
+            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH || e.data.components[source.component-1].count==0 {return -1,false}
             for active in e.components[:component_depth] {if active==source.component {return -1,false}}
             e.components[component_depth]=source.component
             component:=e.data.components[source.component-1]
@@ -208,11 +207,11 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree
     if len(data.components)>=int(max(u16)) || len(data.nodes)>TREE_EXPANDED_NODES {return nil,false}
     for &component,i in data.components {
         // A widget names a file the records must be linked with first.
-        if component.widget!={} || component.count==0 && !component.library || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
+        if component.widget!={} || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
         name:=serial.text_field(component.name[:])
         if name=="" || len(name)>=len(component.name) {return nil,false}
         for &earlier in data.components[:i] {if serial.text_field(earlier.name[:])==name {return nil,false}}
-        if component.library {continue}
+        if component.count==0 {continue}
         range:=data.component_nodes[component.first:][:component.count]
         if range[0].kind==.Component || range[0].parent!=-1 {return nil,false}
         for node,at in range {if at>0 && node.parent<0 {return nil,false}}
@@ -228,7 +227,7 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree
     e:=Tree_Expansion{data=data,matched=matched,allocator=allocator}
     // Unused templates are validated too, including recursion cycles.
     for &component,i in data.components {
-        if component.library {continue}
+        if component.count==0 {continue}
         e.count=0;e.components[0]=u16(i+1)
         _,valid:=tree_expand_range(&e,data.component_nodes[component.first:][:component.count],-1,"","",-2,1)
         if !valid {return nil,false}

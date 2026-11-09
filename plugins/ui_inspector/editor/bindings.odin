@@ -999,9 +999,9 @@ node_bound :: proc(n:^ui.Tree_Node) -> bool {
 // ---------------------------------------------------------------- the API
 
 // Agents bind as a person does: ui.paths lists what a binding of a node takes
-// from a prefix, ui.bind sets it, ui.check says what the project's interfaces
-// bind that the game does not have, and ui.path.rename follows a field the
-// code renamed in every .ui.
+// from a prefix, ui.write sets it by the keys bind_*, data and fields of a
+// node, ui.check says what the project's interfaces bind that the game does
+// not have, and ui.path.rename follows a field the code renamed in every .ui.
 @(storage)
 Ui_Bind_Api :: struct {provider:editor.Api_Provider}
 ui_bind_api_default :: proc() -> Ui_Bind_Api {return {provider={register=bind_api_register}}}
@@ -1011,13 +1011,6 @@ Ui_Paths_Params :: struct {
     node:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,label=Its name; the paths of a node inside a List start at its element"`,
     binding:[16]u8 `mirai:"text,label=Text; Value; Visible; Selected; Disabled; Items; Image; Tint; Variant; or Data: what a widget instance gives its @ paths"`,
     prefix:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=The path walked so far. Empty: the sources (the components of the entity the interface is for and the storages); past a struct its fields; past a field of type Entity the components of that entity"`,
-}
-Ui_Bind_Params :: struct {
-    asset:base.Asset_Id,
-    node:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,label=Its name"`,
-    binding:[16]u8 `mirai:"text,label=Text; Value; Visible; Selected; Disabled; Items; Image; Tint; Variant; or Data: what a widget instance gives its @ paths"`,
-    path:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=Of the data of the game as Player_Stats.health or Player_Stats.target.Nameplate_Data.health. Inside a List it starts at its element; in a widget @ starts at the data its instances give it (ui.paths lists @ first). Empty: unbinds"`,
-    field:[ui.TREE_FIELD_NAME_CAPACITY]u8 `mirai:"text,label=With binding Text: a name in braces of its text that shows the path"`,
 }
 Ui_Rename_Params :: struct {
     from:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=Each path that is it or starts with it and a dot starts with to instead"`,
@@ -1031,16 +1024,11 @@ Ui_Paths_Result :: struct {
 }
 Ui_Path_Entry :: struct {
     name:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=@ is the data an instance of the widget gives it"`,
-    path:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What prefix and ui.bind take"`,
+    path:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What prefix takes, and a bind_ key of ui.write"`,
     type:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=Its type in the game; @ has none"`,
     fits:bool `mirai:"label=Whether the binding takes it"`,
     navigable:bool `mirai:"label=Whether it is a prefix that goes on"`,
     storage:bool `mirai:"optional,label=A storage; absent: a component or a field"`,
-}
-Ui_Bind_Result :: struct {
-    node:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text"`,
-    binding:[16]u8 `mirai:"text"`,
-    path:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=Empty: unbound"`,
 }
 Ui_Check_Result :: struct {
     problems:[1]Ui_Check_Problem `mirai:"list,label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
@@ -1060,7 +1048,6 @@ Ui_Rename_Result :: struct {
 @(private)
 bind_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",params=Ui_Paths_Params,params_info=type_info_of(Ui_Paths_Params),result=Ui_Paths_Result,result_info=type_info_of(Ui_Paths_Result),writes_result=true,flags={.Read_Only},run=api_paths})
-    editor.api_method_register(s,{name="ui.bind",summary="Binds a property of a node of a .ui to a path of the data of the game, checked against its types, or unbinds it. One step of history; the file waits for Save.",params=Ui_Bind_Params,params_info=type_info_of(Ui_Bind_Params),result=Ui_Bind_Result,result_info=type_info_of(Ui_Bind_Result),run=api_bind})
     editor.api_method_register(s,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",params=Ui_Empty_Params,params_info=type_info_of(Ui_Empty_Params),result=Ui_Check_Result,result_info=type_info_of(Ui_Check_Result),writes_result=true,flags={.Read_Only},run=api_check})
     editor.api_method_register(s,{name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",params=Ui_Rename_Params,params_info=type_info_of(Ui_Rename_Params),result=Ui_Rename_Result,result_info=type_info_of(Ui_Rename_Result),writes_result=true,run=api_rename})
     texts_api_register(s)
@@ -1133,48 +1120,6 @@ api_paths :: proc(s:^editor.Session,call:^api.Call) {
         serial.write_u8(out,'}')
     }
     serial.text_write_raw(out,"]}")
-}
-
-@(private)
-api_bind :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Ui_Bind_Params)
-    binding,data,known:=api_binding(serial.text_field(p.binding[:]))
-    if !known {api.call_fail(call,api.INVALID_PARAMS,"binding is one of Text, Value, Visible, Selected, Disabled, Items, Image, Tint, Variant or Data");return}
-    records:Records
-    row,ok:=api_node(s,call,p.asset,serial.text_field(p.node[:]),&records)
-    if !ok {return}
-    n:=&records.nodes[row]
-    info:=s.app.info
-    path:=serial.text_field(p.path[:])
-    if path!="" {
-        kind:=Bind_Kind.Data if data else bind_kind(binding,n.kind)
-        widget:=widget_scope_of(s.app.assets,info,p.asset)
-        root,rooted:=node_scope(info,records.nodes[:],row,widget)
-        _,leaf,walked:=path_walk(info,root,path,widget)
-        if !rooted || !walked || !type_fits(leaf,kind) {
-            takes:=BIND_KIND_TAKES
-            api.call_failf(call,api.INVALID_PARAMS,"the game has no '%s' that fits this node: this binding takes %s; list what fits with ui.paths",path,takes[kind])
-            return
-        }
-    }
-    field:=serial.text_field(p.field[:])
-    switch {
-    case data:
-        if n.kind!=.Component {api.call_fail(call,api.INVALID_PARAMS,"Data is what a widget instance gives its @ paths: the node is not one");return}
-        ui.tree_text_set(n.data[:],path)
-    case field!="":
-        if binding!=.Text || !slice_has(text_field_names(records_text(&records,n.text)),field) {api.call_failf(call,api.INVALID_PARAMS,"field names a name in braces of the text of the node, with binding Text: its text has no {%s}",field);return}
-        at:=text_field_of(&records,n,field,true)
-        if at<0 {api.call_failf(call,api.INVALID_PARAMS,"a text shows at most %d names in braces",ui.TREE_TEXT_FIELDS);return}
-        ui.tree_text_set(n.fields[at].path[:],path)
-    case:
-        fields:=[ui.Binding][]u8{.Text=n.bind_text[:],.Value=n.bind_value[:],.Visible=n.bind_visible[:],.Selected=n.bind_selected[:],.Disabled=n.bind_disabled[:],
-            .Items=n.bind_items[:],.Image=n.bind_image[:],.Tint=n.bind_tint[:],.Variant=n.bind_variant[:]}
-        if path=="" {node_unbind(n,fields[binding])} else {ui.tree_text_set(fields[binding],path)}
-    }
-    message,written:=records_write(s,p.asset,&records,fmt.tprintf("Bind %v",binding))
-    if !written {api.call_fail(call,api.INVALID_PARAMS,message);return}
-    api.call_result(call,Ui_Bind_Result)^={node=p.node,binding=p.binding,path=p.path}
 }
 
 // Writes records as a step of the history of the document of their .ui. A

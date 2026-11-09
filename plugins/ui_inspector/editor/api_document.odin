@@ -316,23 +316,13 @@ doc_style_row :: proc(args:^Tree_Args,r:^Records,name:string) -> int {
     for &lib in args.libs {
         for &info in lib.records.style_infos {
             if serial.text_field(info.name[:])!=name {continue}
-            row:=records_style_add(r,{},{},{from=records_library(r,lib.id)})
+            row:=records_style_add(r,{},{},{from=u16(records_use_row(r,lib.id,doc_use_name(args.assets,lib.id,"widget"))+1)})
             if row<0 {return -1}
             ui.tree_text_set(r.style_infos[row].name[:],name)
             return row
         }
     }
     return -1
-}
-
-// The row of a component that names a file, to take its styles: one made the
-// first time lends them and makes no use.
-records_library :: proc(r:^Records,id:base.Asset_Id) -> u16 {
-    for &c,i in r.components {if c.widget==id {return u16(i+1)}}
-    component:=ui.Tree_Component{widget=id,library=true}
-    ui.tree_text_set(component.name[:],records_component_name(r,fmt.tprintf("use:%x",id[1])))
-    append(&r.components,component)
-    return u16(len(r.components))
 }
 
 // A value of a style names a token: the one for that key, replaced. An empty
@@ -413,7 +403,7 @@ document_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,root:int
     styles:=make([]bool,len(r.styles),context.temp_allocator)
     anims:=make([]bool,len(r.anims),context.temp_allocator)
     if root<0 {
-        for &s,i in styles {s=records_style_named(r,i) && records_style_base(r,i)<0}
+        for &s,i in styles {s=records_style_named(r,i)}
         for &a in anims {a=true}
     } else {
         for &n in r.nodes[first:last] {
@@ -435,15 +425,14 @@ document_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,root:int
     comma:=false
     key :: proc(out:^serial.Writer,name:string,comma:^bool) {api.write_key(out,name,!comma^);comma^=true}
     if root<0 {
-        written:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        for &template in r.components {
-            c:=&template
-            if c.widget=={} || slice.contains(written[:],c.widget) {continue}
-            if len(written)==0 {key(out,"use",&comma);serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
-            append(&written,c.widget)
-            serial.text_write_string(out,doc_path(a,c.widget))
+        if len(r.components)>0 {
+            key(out,"use",&comma);serial.write_u8(out,'[')
+            for &c,i in r.components {
+                if i>0 {serial.write_u8(out,',')}
+                serial.text_write_string(out,doc_path(a,c.widget))
+            }
+            serial.write_u8(out,']')
         }
-        if len(written)>0 {serial.write_u8(out,']')}
         if len(r.params)>0 {
             key(out,"params",&comma);serial.write_u8(out,'{')
             fields:=DOC_PARAM_FIELDS
@@ -863,11 +852,7 @@ document_node_body_write :: proc(w:^Doc_Write,row:int) {
         // None, where a node without a style would take the one of its kind.
         if _,has:=node_default_look(n.kind);has || records_kind_style(r,n.kind)>=0 {api.write_text(out,"style","")}
     } else if style<len(r.styles) {
-        base:=records_style_base(r,style)
-        if base>=0 {
-            api.write_text(out,"style",records_style_name(r,base))
-            api.write_key(out,"look");document_style_write(out,w.types,r,style,false,w.assets)
-        } else if records_style_named(r,style) {
+        if records_style_named(r,style) {
             api.write_text(out,"style",records_style_name(r,style))
         } else if !doc_is_kind_look(r,style,n.kind) {
             api.write_key(out,"look");document_style_write(out,w.types,r,style,false,w.assets)
@@ -975,7 +960,7 @@ doc_param_value :: proc(w:^Doc_Write,row:int,p:^ui.Tree_Param) -> (value:string,
 @(private)
 doc_is_kind_look :: proc(r:^Records,row:int,kind:ui.Node_Kind) -> bool {
     look,has:=node_default_look(kind)
-    if !has || row>=len(r.styles) || r.styles[row]!=look {return false}
+    if !has || row>=len(r.styles) || r.styles[row]!=look || row<len(r.style_infos) && r.style_infos[row].extends[0]!=0 {return false}
     for &v in r.variants {if int(v.style)==row {return false}}
     return true
 }
@@ -1151,7 +1136,7 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
                 if other!=id && doc_use_name(args.assets,other,"")==name {api.call_failf(call,api.INVALID_PARAMS,"use[%d]: '%s' goes by the name of use[%d]; a use names a widget by its file: give one another name",i,path,j);return}
             }
             append(&used,id)
-            records_library(r,id)
+            records_use_row(r,id,name)
         }
     }
     libs:=doc_libs(args,r,used[:])
@@ -1215,6 +1200,18 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
         if row>=0 && !records_style_delete(r,row) {
             api.call_failf(call,api.INVALID_PARAMS,"styles.%s: nodes still take it or change it; give them another style in the same document",name)
             return
+        }
+    }
+    // A file the whole document no longer uses goes; while a node or a style
+    // takes from it, that says so.
+    if root<0 && use!="" {
+        for i:=len(r.components)-1;i>=0;i-=1 {
+            id:=r.components[i].widget
+            if slice.contains(used[:],id) {continue}
+            if !records_use_remove(r,i) {
+                api.call_failf(call,api.INVALID_PARAMS,"use: '%s' is not listed, but a node is a use of it or a style takes from it; change them in the same document",doc_path(args.assets,id))
+                return
+            }
         }
     }
     // A named style a node of the file takes is of the family of that node.
@@ -1293,6 +1290,12 @@ document_style_apply :: proc(args:^Tree_Args,r:^Records,row:int,named:bool) -> b
     }
     if ext:=serial.text_field(info.extends[:]);ext!="" {
         if doc_style_known(args,r,ext)<0 {api.call_failf(call,api.INVALID_PARAMS,"extends: '%s' is no style of this file or of a file it uses",ext);return false}
+        // A look is the override of a style of the file: one another file
+        // lends has a row here too, made the first time.
+        if !named {
+            if doc_style_row(args,r,ext)<0 {api.call_failf(call,api.SERVER_ERROR,"the .ui holds no more styles");return false}
+            info=&r.style_infos[row]
+        }
     }
     if text,found:=tree_arg(args,"defaults");found {
         kinds,read:=tree_kinds_read(call,text,info.family)
@@ -1961,8 +1964,8 @@ document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node)
     node_args.keys,node_args.values=d.keys,d.values
     _,has_style:=tree_arg(&node_args,"style")
     if look,found:=tree_arg(&node_args,"look");found {
+        if has_style {return doc_failed(call,"look: a node has a style or a look; a look that changes a style names it in extends")}
         info:=ui.Tree_Style_Info{family=style_family(n.kind)}
-        if n.style!=0 {info.base=n.style+1}
         style:=records_style_add(r,{},{},info)
         if style<0 {api.call_fail(call,api.SERVER_ERROR,"the .ui holds no more styles");return false}
         look_args:=args^
@@ -2037,6 +2040,7 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d
         }
         if is_instance {n.component_fields+={.Style}}
     }
+    if _,has_look:=tree_arg(&n_args,"look");has_look && is_instance {n.component_fields+={.Style}}
     if image,found:=tree_arg(&n_args,"image");found && !is_instance || found {
         if strings.trim_space(image)=="null" {
             n.image=0

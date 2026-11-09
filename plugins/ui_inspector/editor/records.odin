@@ -318,14 +318,33 @@ records_widget :: proc(r:^Records,parent:int,widget:base.Asset_Id,name,file:stri
     return at
 }
 
-// The row of the component of the uses of a widget: the one that is not a
-// library, made the first time.
+// The row of the component that names a file, made the first time and called
+// as it: one per file, whether nodes are uses of it or styles and tokens come
+// from it. A file stays until someone takes it away (records_use_remove).
 records_use_row :: proc(r:^Records,widget:base.Asset_Id,file:string) -> int {
-    for &c,i in r.components {if c.widget==widget && !c.library {return i}}
+    for &c,i in r.components {if c.widget==widget {return i}}
     component:=ui.Tree_Component{widget=widget}
     ui.tree_text_set(component.name[:],records_component_name(r,file))
     append(&r.components,component)
     return len(r.components)-1
+}
+
+// Takes away the component at row: no node may be a use of it and no style
+// of the file may take from it, and a style it lent that nothing takes goes
+// with it. False when one does.
+records_use_remove :: proc(r:^Records,row:int) -> bool {
+    for &n in r.nodes {if n.kind==.Component && int(n.component)==row+1 {return false}}
+    for i:=len(r.style_infos)-1;i>0;i-=1 {
+        if int(r.style_infos[i].from)!=row+1 {continue}
+        if records_style_users(r,i)>0 {return false}
+        name:=serial.text_field(r.style_infos[i].name[:])
+        for &other,j in r.style_infos {if j!=i && serial.text_field(other.extends[:])==name {return false}}
+        records_style_remove(r,i,0)
+    }
+    ordered_remove(&r.components,row)
+    for &n in r.nodes {if int(n.component)>row+1 {n.component-=1}}
+    for &info in r.style_infos {if int(info.from)>row+1 {info.from-=1}}
+    return true
 }
 
 // A name for a component no other has.
@@ -565,8 +584,9 @@ records_changed_row :: proc(before,after:^Records,chosen:int) -> int {
 
 // ---------------------------------------------------------------- styles
 
-// A style is named, or overrides a style for the node that uses it until it
-// is saved there; the other styles show as their rows.
+// A style is named, or is the override of a named style for the node that
+// uses it until it is saved there (no name, with extends); the other styles
+// show as their rows.
 
 // A style at the end of the styles, with the variants given (theirs is set
 // to it) and its info; its row.
@@ -612,11 +632,68 @@ style_family :: proc(kind:ui.Node_Kind) -> ui.Style_Family {
     return .Box
 }
 
-// The row of the style a style overrides; -1 when it overrides none.
+// The row of the style a style overrides: the named one it extends without
+// being named; -1 when it overrides none.
 records_style_base :: proc(r:^Records,row:int) -> int {
-    if row<0 || row>=len(r.style_infos) {return -1}
-    base:=int(r.style_infos[row].base)-1
-    return base if base>=0 && base<len(r.styles) && base!=row else -1
+    if row<0 || row>=len(r.style_infos) || records_style_named(r,row) || r.style_infos[row].extends[0]==0 {return -1}
+    base:=tree_style_row(r,serial.text_field(r.style_infos[row].extends[:]))
+    return base if base>=0 && base!=row else -1
+}
+
+// What an override says after its row was edited: what differs from the
+// style it extends and only that, so the rest follows that style. Its layout
+// and blur are for the document to say. A rule equal to the style's goes: the
+// style gives it.
+records_override_own :: proc(r:^Records,row:int) {
+    base:=records_style_base(r,row)
+    if base<0 {return}
+    info:=&r.style_infos[row]
+    for key in ui.Style_Key {
+        if key in ui.LAYOUT_KEYS || key==.Blur {continue}
+        if ui.style_key_differs(&r.styles[row],&r.styles[base],key) {
+            info.sets+={key}
+        } else if key in info.sets {
+            info.sets-={key}
+            records_token_use(r,row,"",{},key,"")
+        }
+    }
+    for i:=len(r.variants)-1;i>=0;i-=1 {
+        v:=&r.variants[i]
+        if int(v.style)!=row {continue}
+        from:^ui.Tree_Style_Variant
+        for &other in r.variants {if int(other.style)==base && other.states==v.states && other.variant==v.variant {from=&other;break}}
+        keys:=ui.style_fields_keys(v.patch.fields)
+        own:ui.Style_Keys=keys
+        if from!=nil {
+            own={}
+            given:=ui.style_fields_keys(from.patch.fields)
+            for key in keys {if key not_in given || ui.style_key_differs(&v.patch.values,&from.patch.values,key) {own+={key}}}
+            if own=={} {ordered_remove(&r.variants,i);continue}
+        }
+        v.own,v.inherited,v.extends=own,false,{}
+    }
+}
+
+// Rules of a copy that stand on their own: nothing inherited, nothing that
+// starts from another rule, every value they have.
+records_rules_own :: proc(rules:[]ui.Tree_Style_Variant) {
+    for &v in rules {v.own,v.inherited,v.extends={},false,{}}
+}
+
+// The override at row becomes a style that stands on its own: it gives what
+// the style it extended gave it.
+records_style_detach :: proc(r:^Records,row:int) {
+    info:=&r.style_infos[row]
+    info.extends={}
+    info.sets=info.layout_keys&ui.LAYOUT_KEYS+info.sets&{.Blur}
+    for &v in r.variants {if int(v.style)==row {v.own,v.inherited,v.extends={},false,{}}}
+}
+
+// Renames a style and what extends it by that name.
+records_style_rename :: proc(r:^Records,row:int,name:string) {
+    from:=strings.clone(serial.text_field(r.style_infos[row].name[:]),context.temp_allocator)
+    for &info,i in r.style_infos {if i!=row && serial.text_field(info.extends[:])==from {ui.tree_text_set(info.extends[:],name)}}
+    ui.tree_text_set(r.style_infos[row].name[:],name)
 }
 
 // How many nodes of the file and overrides of instances use a style.
@@ -642,15 +719,23 @@ records_style_name_unique :: proc(r:^Records) -> string {
 records_style_save :: proc(r:^Records,row:int) -> int {
     base:=records_style_base(r,row)
     if base<0 {return -1}
+    // The row has what it does not set from the style, with its rules.
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     // What the override changes is the style's own, and no token gives it any more.
     if base<len(r.style_infos) {
-        info:=&r.style_infos[base]
+        info,over:=&r.style_infos[base],r.style_infos[row]
         had:=ui.style_own_keys(info)
         for key in ui.Style_Key {
             if key in ui.LAYOUT_KEYS || key==.Blur || !ui.style_key_differs(&r.styles[base],&r.styles[row],key) {continue}
             info.sets+={key}
             if key not_in had || info.extends[0]==0 {records_token_use(r,base,"",{},key,"")}
         }
+        // Its layout and blur, which only a document gives an override.
+        for key in over.sets&ui.LAYOUT_KEYS {
+            ui.layout_key_copy(&info.layout,&over.layout,key)
+            info.sets+={key}
+        }
+        if .Blur in over.sets {info.blur=over.blur;info.sets+={.Blur}}
     }
     r.styles[base]=r.styles[row]
     for i:=len(r.variants)-1;i>=0;i-=1 {
@@ -693,9 +778,6 @@ records_style_remove :: proc(r:^Records,row,keep:int) -> int {
     for i:=len(r.token_uses)-1;i>=0;i-=1 {
         if int(r.token_uses[i].style)==row {ordered_remove(&r.token_uses,i)} else {shift(&r.token_uses[i].style,row)}
     }
-    for &info in r.style_infos {
-        if int(info.base)==row+1 {info.base=0} else if int(info.base)>row+1 {info.base-=1}
-    }
     return keep-1 if keep>row else keep
 }
 
@@ -703,7 +785,7 @@ records_style_remove :: proc(r:^Records,row,keep:int) -> int {
 // node uses it or changes it (an override of it).
 records_style_delete :: proc(r:^Records,row:int) -> bool {
     if row<=0 || row>=len(r.styles) || !records_style_named(r,row) || records_style_users(r,row)>0 {return false}
-    for &info in r.style_infos {if int(info.base)==row+1 {return false}}
+    for i in 0..<len(r.style_infos) {if records_style_base(r,i)==row {return false}}
     records_style_remove(r,row,0)
     return true
 }
@@ -1214,8 +1296,9 @@ merge_style :: proc(m:^Merge,row:int) -> u16 {
     for &v in variants {v.patch.values.text.font=merge_font(m,v.patch.values.text.font)}
     info:=src.style_infos[row] if row<len(src.style_infos) else {}
     info.defaults={} // which styles its new nodes take is said by the file pasted into
+    // The style an override extends comes with it, under its name.
     base:=records_style_base(src,row)
-    info.base=merge_style(m,base)+1 if base>=0 else 0
+    if base>=0 {merge_style(m,base)}
     named:=records_style_named(src,row)
     to:=-1
     // An override is of its node alone; a named style is the one of that name, an own look one alike.
@@ -1311,11 +1394,7 @@ merge_component :: proc(m:^Merge,component:u16) -> u16 {
     if m.components[row]>0 {return u16(m.components[row])}
     if len(dst.components)>=int(max(u16))-1 {m.failed=true;return 0}
     c:=&src.components[row]
-    if c.library {
-        m.components[row]=int(records_library(dst,c.widget))
-    } else {
-        m.components[row]=records_use_row(dst,c.widget,serial.text_field(c.name[:]))+1
-    }
+    m.components[row]=records_use_row(dst,c.widget,serial.text_field(c.name[:]))+1
     return u16(m.components[row])
 }
 
@@ -1332,7 +1411,7 @@ merge_grid :: proc(m:^Merge,tracks:u16) -> u16 {
 // ---------------------------------------------------------------- garbage
 
 @(private="file")
-Collect :: struct {styles,images,sets,grids,components:[]int} // by row: kept, then its new row plus one; 0: it goes
+Collect :: struct {styles,images,sets,grids:[]int} // by row: kept, then its new row plus one; 0: it goes
 
 @(private="file")
 collect_mark :: proc(c:^Collect,n:^ui.Tree_Node,fields:ui.Node_Fields) {
@@ -1341,7 +1420,6 @@ collect_mark :: proc(c:^Collect,n:^ui.Tree_Node,fields:ui.Node_Fields) {
     if .Image in fields {mark(c.images,int(n.image)-1)}
     if .Animations in fields {mark(c.sets,int(n.anims)-1)}
     if .Layout in fields {mark(c.grids,int(n.layout.tracks)-1)}
-    if n.kind==.Component {mark(c.components,int(n.component)-1)}
 }
 
 @(private="file")
@@ -1351,7 +1429,6 @@ collect_move :: proc(c:^Collect,n:^ui.Tree_Node) {
     n.image=u16(at(c.images,int(n.image)-1))
     n.anims=u16(at(c.sets,int(n.anims)-1))
     n.layout.tracks=u16(at(c.grids,int(n.layout.tracks)-1))
-    if n.component!=0 {n.component=u16(at(c.components,int(n.component)-1))}
 }
 
 // The rows kept, numbered; the others go.
@@ -1369,19 +1446,15 @@ collect_compact :: proc(list:^[dynamic]$T,keep:[]int) {
 
 // Takes away the rows nothing uses, and what refers to the rows after them
 // follows: own looks and overrides of styles no node or override takes (named styles and row 0 stay), images (one with a name stays, for
-// <img=...>), sets of animations and tracks of grids, and the widgets no
-// instance is of.
+// <img=...>), sets of animations and tracks of grids.
 records_collect :: proc(r:^Records) {
     c:=Collect{styles=make([]int,len(r.styles),context.temp_allocator),images=make([]int,len(r.images),context.temp_allocator),sets=make([]int,len(r.anim_sets),context.temp_allocator),
-        grids=make([]int,len(r.grid_tracks),context.temp_allocator),components=make([]int,len(r.components),context.temp_allocator)}
+        grids=make([]int,len(r.grid_tracks),context.temp_allocator)}
     every:=~ui.Node_Fields{}
     for &n in r.nodes {collect_mark(&c,&n,every)}
-    for &component,i in r.components {if component.library {c.components[i]=1}}
-    for &info in r.style_infos {if int(info.from)>0 && int(info.from)<=len(c.components) {c.components[info.from-1]=1}}
     for &o in r.overrides {collect_mark(&c,&o.values,o.fields)}
     if len(c.styles)>0 {c.styles[0]=1}
     for i in 0..<len(r.styles) {if records_style_named(r,i) {c.styles[i]=1}}
-    for i in 0..<len(r.styles) {if base:=records_style_base(r,i);c.styles[i]>0 && base>=0 {c.styles[base]=1}}
     for &image,i in r.images {if image.name[0]!=0 {c.images[i]=1}}
     for i:=len(r.variants)-1;i>=0;i-=1 {
         if int(r.variants[i].style)>=len(c.styles) || c.styles[r.variants[i].style]==0 {ordered_remove(&r.variants,i)}
@@ -1394,13 +1467,8 @@ records_collect :: proc(r:^Records) {
     collect_compact(&r.images,c.images)
     collect_compact(&r.anim_sets,c.sets)
     collect_compact(&r.grid_tracks,c.grids)
-    collect_compact(&r.components,c.components)
     for &v in r.variants {v.style=u16(c.styles[v.style]-1)}
     for &u in r.token_uses {u.style=u16(c.styles[u.style]-1)}
-    for &info in r.style_infos {
-        if info.base>0 && int(info.base)<=len(c.styles) {info.base=u16(c.styles[info.base-1])} else {info.base=0}
-        if int(info.from)>0 && int(info.from)<=len(c.components) {info.from=u16(c.components[info.from-1])} else {info.from=0}
-    }
     for &n in r.nodes {collect_move(&c,&n)}
     for &o in r.overrides {collect_move(&c,&o.values)}
 }

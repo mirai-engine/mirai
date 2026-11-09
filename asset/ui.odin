@@ -21,9 +21,9 @@ import "mirai:std/serial"
 //   params       the parameters of the widget this file is, and where each goes
 //   text        bulk u8: the texts of nodes and translations, UTF-8, by offset and length
 //
-// A component names another .ui: a use of the widget that file is, or a file
-// that lends styles and tokens (library). What a use expands into joins the
-// records when they are loaded; no file holds it.
+// A component names another .ui, once: nodes are uses of the widget that file
+// is, and a style or a token can come from it. What a use expands into joins
+// the records when they are loaded; no file holds it.
 //
 // The rows are the records of ui.Tree_Data: the ui package declares and
 // loads them, and this one stores them as it does any typed table. A program
@@ -63,14 +63,14 @@ UI_CLIP_TRACKS :: 16
 @(private="file") Ui_Layout_Links :: struct {tracks:u16}
 @(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links,flags:u16}
 @(private="file") Ui_Translation_Links :: struct {text:Ui_String_Links}
-@(private="file") Ui_Component_Links :: struct {name:[64]u8 `mirai:"text"`,widget:base.Asset_Id,library:bool}
+@(private="file") Ui_Component_Links :: struct {name:[64]u8 `mirai:"text"`,widget:base.Asset_Id}
 @(private="file") Ui_Override_Links :: struct {instance:u32,node:[64]u8 `mirai:"text"`,fields:u32,values:Ui_Node_Links}
 @(private="file") Ui_Font_Links :: struct {font:u8}
 @(private="file") Ui_Font_Row :: struct {font:base.Asset_Id}
 @(private="file") Ui_Style_Links :: struct {text:Ui_Font_Links}
 @(private="file") Ui_Patch_Links :: struct {values:Ui_Style_Links}
 @(private="file") Ui_Variant_Links :: struct {style:u16,patch:Ui_Patch_Links}
-@(private="file") Ui_Style_Info_Links :: struct {base,from:u16}
+@(private="file") Ui_Style_Info_Links :: struct {from:u16}
 
 // As ui.FONT_TREE and ui.FONT_CAPACITY: a style font from UI_FONT_TREE on is a
 // row of fonts; below UI_FONT_CAPACITY, a font of the context.
@@ -130,9 +130,8 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
     font_ok :: proc "contextless" (font:u8,fonts:int) -> bool {return font<UI_FONT_CAPACITY || font>=UI_FONT_TREE && int(font-UI_FONT_TREE)<fonts}
     for variant in variants {if int(variant.style)>=max(styles,1) || !font_ok(variant.patch.values.text.font,fonts) {return false}}
     for style in styled {if !font_ok(style.text.font,fonts) {return false}}
-    // A style overrides another style, not itself.
     if len(infos)>styles {return false}
-    for info,row in infos {if int(info.base)>styles || int(info.base)==row+1 || int(info.from)>len(components) {return false}}
+    for info in infos {if int(info.from)>len(components) {return false}}
     if !ui_components_check(nodes,components,overrides,styles,images,len(sets),text,grids) {return false}
     if len(anims)>=int(max(u16)) {return false}
     clip_tracks,clip_keys,group_parts:=0,0,0
@@ -203,7 +202,7 @@ ui_components_check :: proc(nodes:[]Ui_Node_Links,components:[]Ui_Component_Link
         if len(name)>=len(source.name) {return false}
         if source.kind==UI_KIND_COMPONENT {
             // Its nodes, what overrides them and the Slot that takes what it holds are checked when the two load together.
-            if source.component==0 || int(source.component)>len(components) || name=="" || components[source.component-1].library {return false}
+            if source.component==0 || int(source.component)>len(components) || name=="" {return false}
             continue
         }
         if source.component!=0 || int(source.style)>=max(styles,1) || int(source.image)>images || int(source.anims)>sets {return false}

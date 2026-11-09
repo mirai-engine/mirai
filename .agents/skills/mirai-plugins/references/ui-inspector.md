@@ -77,12 +77,13 @@ texts and the paths in their own file, and the authoring API in `api_tree.odin`.
   on the node's first change.
 - **The file says which style the new nodes of each type take** (`Tree_Style_Info.defaults`, a type
   in one style at most, of its family): the **Default** row of the Style card, or `defaults` of
-  `ui.style.set`. Without one, the first node of a type brings the look of its type
+  a style in `ui.write`. Without one, the first node of a type brings the look of its type
   (`node_default_look`) and that look stays as that of the following ones; a box has no look and
   is left without style. Nothing is deduced from the neighboring nodes, and pasting into another
   file does not bring the `defaults` of the source.
-- A named style does not change from a node: the first change makes the node an override (a row
-  with `base`, marked with `*`). **Apply to style** writes it into the style, with its variants,
+- A named style does not change from a node: the first change makes the node an override (an
+  unnamed style that `extends` it, marked with `*`), which says only what differs and follows later
+  changes of the style in the rest. **Apply to style** writes it into the style, with its variants,
   and its nodes return to it (`records_style_save`); **Revert** discards it. Save only writes the
   file.
 - Choosing a sound in Events on a node whose style is shared asks whether it goes to the node (an
@@ -186,10 +187,14 @@ changes nothing and says why.
     them to the file (translations by `text_id`, the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
-    ([styles](#styles)), and an empty `style` is none.
+    ([styles](#styles)), and an empty `style` is none. A `look` is a style without family; with
+    `extends` it is the override of that style, and the node says it instead of `style`.
   - The tokens, styles and animations it names become what it says, `null` removes them
     (a style that some node takes is not removed) and those it does not name stay. Without
     `nodes`, no node changes.
+  - `use` lists the files a whole document takes names from: a file it no longer lists goes, what
+    it lent that nothing takes with it, and it fails while a node or a style still takes from it.
+    Without `use`, none goes; a file stays in `use` after its last use goes.
   - A name of the part cannot be outside it, and a name that resolves to nothing (style, token,
     component, parameter) fails: an error says where (`nodes[0].children[2]: …`) and changes
     nothing. `ui.check` says the same for every `.ui` of the project.
@@ -199,11 +204,6 @@ changes nothing and says why.
     them in the Widget card and the widget's own in the Parameters card of its root (add, rename,
     remove, the node and field each drives, the slot); a parameter moved or removed follows in the
     files that use it (`widget_params_follow`).
-- `ui.node.*` changes a node and what the call does not name stays. `fields` does not accept what
-  has another key or its own method (parent, type, text, style, image, events): the error says
-  which to use. `children` of `ui.node.add` adds a whole subtree in the same call: each child
-  carries the keys of `ui.node.add` except `asset`, `parent` and `before`, and goes last inside its
-  own; an error says through which child it passes (`children[1]: children[0]: …`).
 - `ui.capture` draws a `.ui` alone, as the stage builds it (game samples, device prompts and
   language chosen) but in a context of its own at the size at which the game designs it, in a UI
   texture and in a frame without the scene, and writes a PNG with the pixels of that size times the
@@ -212,11 +212,10 @@ changes nothing and says why.
   show a node in states and choose the screen's variant; what the nodes touch when appearing runs
   `seconds` before. It is what an agent looks at after writing an interface: the document's stage
   shows it scaled to its place.
-- `ui.style.set`, `ui.variant.set` and `ui.anim.set` create or change a named style, a variant and
-  states rule, or an animation (the keys are sorted by time); what they do not name stays.
-- `ui.paths` lists what a node can take at a point of the path; `ui.bind` binds or removes and
-  rejects a path that does not work saying what it takes; `ui.check` returns the problems of all
-  the `.ui`s; `ui.path.rename` rewrites a path prefix in all of them, also in the templates.
+- `ui.paths` lists what a node can take at a point of the path; `ui.write` binds it with the keys
+  `bind_*`, `data` and `fields` of the node; `ui.check` returns the problems of all the `.ui`s, the
+  paths the game lacks included; `ui.path.rename` rewrites a path prefix in all of them, also in the
+  templates.
 - The per-language texts: `ui.texts`, `ui.text.set` and the CSV ones.
 
 ## Document bar

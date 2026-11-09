@@ -81,7 +81,7 @@ World_Widget :: struct {
     size:[2]f32 `mirai:"min=0"`, // of its surface, in layout units
     sizing:ui.World_Sizing,      // Meters: scale is meters per layout unit. Screen: window points per layout unit at any distance, times the scale of the screens (UI_Settings.reference)
     scale:f32 `mirai:"min=0"`,   // 0: a centimeter, or a point
-    facing:ui.World_Facing,      // Fixed follows the rotation of the entity and shows its face toward its +Z
+    facing:ui.World_Facing,      // Fixed follows the rotation of the entity and shows its face toward its forward (-Z)
     pivot:ui.Anchor,             // the point of the panel that sits at the entity
     depth_test:bool,             // the scene in front of it hides it, and the ray does not reach it through the scene
     passive:bool,                // the pointer goes through it

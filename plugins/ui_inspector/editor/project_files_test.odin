@@ -445,6 +445,50 @@ widgets_project :: proc(t:^testing.T,p:^Project,name:string) -> (screen:Records,
 }
 
 @(test)
+a_file_has_one_row_and_stays_in_use_until_a_document_takes_it_away :: proc(t:^testing.T) {
+    p:Project
+    _,ok:=widgets_project(t,&p,"widget-use")
+    if !ok {return}
+    defer project_destroy(&p)
+    // A file a use names and a style comes from is one row, called as the file.
+    page:=base.Asset_Id{0xc4,1}
+    r,made:=project_doc(t,&p,"ui/page.ui",page,`{"use":["ui/select_row.ui"],"nodes":[{"name":"root","kind":"Box","style":"row","children":[{"name":"use","kind":"select_row"}]}]}`)
+    if !made {return}
+    if !testing.expect_value(t,len(r.components),1) {return}
+    testing.expect_value(t,serial.text_field(r.components[0].name[:]),"select_row")
+    apply :: proc(t:^testing.T,p:^Project,r:^Records,id:base.Asset_Id,text:string) -> (ok:bool,message:string) {
+        call:api.Call
+        args:=call_args(&call,&p.assets.types,"{}")
+        args.assets,args.asset=&p.assets,id
+        _,_,ok=document_apply(&args,r,-1,text)
+        return ok,call.error.message
+    }
+    // Its last use goes and it stays, in the document too.
+    applied,why:=apply(t,&p,&r,page,`{"nodes":[{"name":"root","kind":"Box"}]}`)
+    if !testing.expectf(t,applied,"%s",why) {return}
+    records_tidy(&r)
+    testing.expect_value(t,len(r.components),1)
+    testing.expect(t,strings.contains(doc_text(&p,&r),`"use":["ui/select_row.ui"]`),doc_text(&p,&r))
+    imports,imported:=host.ui_tree_imports(&p.assets,records_data(&r))
+    testing.expect(t,imported)
+    linked,linked_ok:=ui.tree_link(records_data(&r),imports)
+    testing.expect(t,linked_ok)
+    _,expanded:=ui.tree_expand(linked,context.temp_allocator)
+    testing.expect(t,expanded,"a use no node makes still links")
+    // Taken away while a node still is a use of it, it says so.
+    applied,_=apply(t,&p,&r,page,`{"nodes":[{"name":"root","kind":"Box","children":[{"name":"use","kind":"select_row"}]}]}`)
+    if !testing.expect(t,applied) {return}
+    applied,why=apply(t,&p,&r,page,`{"use":[]}`)
+    testing.expect(t,!applied && strings.contains(why,"is not listed"),why)
+    // Listed no more, with what it lent that nothing takes.
+    applied,why=apply(t,&p,&r,page,`{"use":[],"nodes":[{"name":"root","kind":"Box"}]}`)
+    if !testing.expectf(t,applied,"%s",why) {return}
+    testing.expect_value(t,len(r.components),0)
+    testing.expect(t,tree_style_row(&r,"row")<0,"the style it lent goes with it")
+    testing.expect(t,records_load_as_tree(&r))
+}
+
+@(test)
 a_widget_is_a_file_and_its_document_comes_back_the_same :: proc(t:^testing.T) {
     p:Project
     screen,ok:=widgets_project(t,&p,"widget-doc")
