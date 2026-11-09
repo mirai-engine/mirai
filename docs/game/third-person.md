@@ -7,8 +7,8 @@ description: A worked third-person game from plugins to a test - plugins, settin
 # A third-person game
 
 `mirai new <folder> --template game` plays already: floor, spawn point, sky and sun, main menu,
-pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/rules-test.md) (rules, the test).
-Links are only for what a step does not cover.
+pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/rules-test.md)
+(rules, the test). Links are only for what a step does not cover.
 
 ## 1. Plugins and settings
 
