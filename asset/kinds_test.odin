@@ -564,33 +564,6 @@ material_parameters_follow_their_source_and_keep_what_was_changed :: proc(t:^tes
 }
 
 @(test)
-material_written_before_a_field_existed_reads_its_default :: proc(t:^testing.T) {
-    Old_Map :: struct {texture:base.Asset_Id,scale:[2]f32}
-    Old_Maps :: struct {base_color,normal:Old_Map}
-    Old_Material :: struct {base_color:[3]f64,roughness:f32,alpha_mode:enum u8 {Opaque,Blend,Mask},maps:Old_Maps,legacy_tint:u32}
-    types:Types;types_init(&types);defer types_destroy(&types)
-    // The same version: a field added with a default does not change it.
-    doc:Document;document_init(&doc,KIND_MATERIAL,{4,4});defer document_destroy(&doc)
-    doc.kind_version=MATERIAL_VERSION
-    old:=Old_Material{base_color={0.5,0.25,1},roughness=0.2,alpha_mode=.Mask,maps={base_color={{1,1},{3,3}},normal={{2,2},{1,1}}},legacy_tint=7}
-    document_put_row(&doc,&types,"material",&old)
-    w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
-    testing.expect_value(t,document_write(&doc,&w),Error.None)
-    a:Asset
-    testing.expect_value(t,asset_open(&a,serial.writer_bytes(&w)),Error.None)
-    defer asset_close(&a)
-    view,error:=material_view(&a,&types)
-    testing.expect_value(t,error,Error.None)
-    expected:=MATERIAL_DEFAULTS
-    expected.base_color,expected.roughness,expected.alpha_mode={0.5,0.25,1},0.2,.Mask
-    expected.maps.base_color.texture,expected.maps.base_color.scale={1,1},{3,3}
-    expected.maps.normal.texture={2,2}
-    testing.expect(t,view.info^==expected)
-    testing.expect(t,len(view.parameters)==0 && len(view.overlays)==0 && view.source==nil)
-    testing.expect(t,!inside(&a,view.info))
-}
-
-@(test)
 kinds_are_found_by_extension :: proc(t:^testing.T) {
     kind,found:=kind_of_extension("levels/intro.scene")
     testing.expect(t,found && kind==KIND_SCENE)

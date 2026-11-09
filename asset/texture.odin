@@ -255,7 +255,7 @@ texture_view :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
 // texture_decode reads.
 texture_open :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
     kind_check(a,KIND_TEXTURE,TEXTURE_VERSION) or_return
-    view.info=asset_row(a,types,"texture",Texture_Info) or_return
+    view.info=asset_row(a,types,"texture",Texture_Info,whole=true) or_return
     view.mips=asset_rows(a,types,"mips","",Texture_Mip) or_return
     view.source=import_info(a,types) or_return
     if !texture_levels_check(view.info,view.mips) {return {},.Corrupt}

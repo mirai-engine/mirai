@@ -76,8 +76,10 @@ kind_info :: proc(kind:Fourcc) -> (info:Kind_Info,found:bool) {
 //   - A kind reads only the version it writes: a file of another version,
 //     older or newer, fails with Version and version_message says how to make
 //     it again.
-//   - A change of what a kind stores (a table, a column, what a value means)
-//     raises its version, and every file of the kind is made again.
+//   - A change of what a kind stores (a table, a column, a field of a row,
+//     what a value means) raises its version, and every file of the kind is
+//     made again. A row that does not store a field of its kind fails with
+//     Version too (asset_row with whole).
 //   - Rows are read by the schema the file carries, by the names of their
 //     fields: a game changes its types (a component, a record) while its
 //     files stay.
@@ -90,7 +92,8 @@ kind_check :: proc "contextless" (a:^Asset,kind:Fourcc,version:u16) -> Error {
 }
 
 // What to tell of an asset that failed with Version: which file it is, its
-// kind and version, the version this build reads, and how to make it again:
+// kind and version, the version this build reads or the field a row of it
+// does not store, and how to make it again:
 // for an imported one the command that imports its source again into its
 // folder, for one newer than the build a newer engine. path: the file of the
 // asset; current: the version its kind reads, that of KINDS for a kind of the
@@ -118,7 +121,9 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
     if current!=0 {
         if version>current {return fmt.aprintf("%s is a %s of version %d, newer than this build, which reads version %d: open it with a newer engine",slashed(path),kind,version,current,allocator=allocator)}
         stale=fmt.tprintf("%s is a %s of version %d, older than this build reads (version %d)",slashed(path),kind,version,current)
+        if version==current {stale=fmt.tprintf("%s is a %s of version %d that does not store every field of that version",slashed(path),kind,version)}
     }
+    if a.lacking[1]!="" {stale=fmt.tprintf("%s is a %s whose table %s does not store the field %s of version %d",slashed(path),kind,a.lacking[0],a.lacking[1],version)}
     info,_:=import_info(a,types)
     if info==nil {return fmt.aprintf("%s; it was not imported: make it again",stale,allocator=allocator)}
     source:=serial.text_field(info.source[:])

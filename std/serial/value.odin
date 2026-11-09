@@ -153,6 +153,7 @@ Migration :: struct {
     ops:[dynamic]Op,
     pairs:[dynamic]Pair,
     added:int,        // destination fields without a source field
+    lacking:string,   // the first of them, named by the destination schema
     removed:int,      // source fields without a destination field
     incompatible:int, // fields of both whose types cannot be converted
 }
@@ -288,7 +289,11 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
                     if candidate.name_hash==field.name_hash {at=i;break}
                 }
             }
-            if at<0 || .Transient in src_fields[at].flags {m.added+=1;continue}
+            if at<0 || .Transient in src_fields[at].flags {
+                if m.added==0 {m.lacking=field.name}
+                m.added+=1
+                continue
+            }
             matched+=1
             if .Text in field.flags && type_is_bytes(b.dst,field.type) && type_is_bytes(b.src,src_fields[at].type) {
                 // A text keeps the bytes that fit; what follows them is zero, not the default.

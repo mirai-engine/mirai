@@ -1181,15 +1181,6 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
     if nodes!="" {
         made,removed=document_nodes_apply(args,r,root,nodes) or_return
     }
-    // An animation without a name nothing plays is of a file written before names: it goes.
-    if root<0 {
-        for i:=len(r.anims)-1;i>=0;i-=1 {
-            if r.anims[i].name[0]!=0 {continue}
-            used:=false
-            for &set in r.anim_sets {for played in (^[len(DOCUMENT_EVENTS)]ui.Anim)(&set)^ {used||=int(played)==i+1}}
-            if !used {records_anim_remove(r,i)}
-        }
-    }
     for name in gone_anims {
         row:=-1
         for &a,i in r.anims {if serial.text_field(a.name[:])==name {row=i;break}}
