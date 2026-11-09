@@ -101,7 +101,7 @@ describe_fields :: proc(b:^strings.Builder,schema,prefix:string,result:bool,dept
         }
         if description,_:=json_string(json_member(property.value,"description"));description!="" && !brief {fmt.sbprintf(b,". %s",description)}
         strings.write_byte(b,'\n')
-        if depth>=4 {continue}
+        if brief || depth>=4 {continue}
         if json_member(property.value,"properties")!="" {
             describe_fields(b,property.value,path,result,depth+1,brief)
         } else if items:=json_member(property.value,"items");json_member(items,"properties")!="" {

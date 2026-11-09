@@ -26,7 +26,7 @@ API_TRACE_ROWS :: 256
 API_PRESS_HELD :: 2 // ticks a press holds its button
 
 Api_Play_Segment :: struct {
-    ticks:int `mirai:"optional,max=3600,label=Fixed ticks it holds this input; 1 or more; in place of seconds"`,
+    ticks:int `mirai:"optional,min=0,max=3600,label=Fixed ticks it holds this input; 1 or more; in place of seconds"`,
     seconds:f32 `mirai:"optional,label=Game time it holds this input in place of ticks: the nearest whole ticks and at least 1"`,
     keys:core.Keys `mirai:"optional,label=Keys held in every tick of the segment; they go to the local seat with the focus"`,
     mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick of the segment"`,
