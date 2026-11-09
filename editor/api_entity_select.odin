@@ -95,15 +95,13 @@ api_entity_select :: proc(w:core.World_Ref,text:string,what:="entity",game:=fals
 }
 
 // What the reader of params does with a text where a base.Entity_Id goes: the
-// id of the entity of the shown world it names, so every handler gets an id
-// and needs no code of its own.
+// id of the entity of the document it names, also while a game plays, so every
+// handler gets an id and needs no code of its own.
 api_entity_text_resolve :: proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string) {
-    s:=(^Session)(user)
-    w:=shown_world(s)
+    w:=edited_world((^Session)(user))
     e:core.Entity
-    if e,problem=api_entity_named(w,text,s.mode!=.Edit);problem!="" {return}
-    if id=api_entity_id(w,e);id==0 {problem=fmt.tprintf("%q is an entity the game made, which has no id: this method takes those of the scene",text)}
-    return
+    if e,problem=api_entity_named(w,text,false);problem!="" {return}
+    return api_entity_id(w,e),""
 }
 
 // api_entity_select of a text of the params; false after failing the call.
