@@ -13,6 +13,7 @@ import "mirai:std/serial"
 RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION [--every S]] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> [--project P|--port N] [--timeout S] [--wait S] [--client NAME]"
 
 // How often --wait-until calls again without --every, in milliseconds.
+RPC_ENDING_WAIT :: 3*time.Second
 RPC_EVERY_MS :: 1000
 RPC_WAIT_UNTIL_MS :: 30000 // how long --wait-until repeats its call without --timeout
 RPC_ECHO_BYTES :: 240 // of a result an error repeats
@@ -192,8 +193,24 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     }
     if request.waits {return rpc_wait(connection,request,params)}
     result,err,called:=rpc_call_waiting(connection,request.method,params,1)
+    if !called && request.method!="engine.shutdown" && rpc_editor_ended(connection,err) {
+        if code:=rpc_session_open(root,connection);code!=0 {return code}
+        result,err,called=rpc_call_waiting(connection,request.method,params,1)
+    }
     if !called {return rpc_fail(rpc_hint(connection,request.method,err))}
     return rpc_print(result,request.select[:])
+}
+
+// Whether nobody listened because the editor of --project is ending: a killed
+// process still counts as alive for a moment after it closed its port.
+rpc_editor_ended :: proc(connection:Connection,err:api.Error) -> bool {
+    if !connection.named || err.code!=api.UNREACHABLE {return false}
+    start:=time.tick_now()
+    for connection_editor(connection).port!=0 {
+        if time.tick_since(start)>=RPC_ENDING_WAIT {return false}
+        time.sleep(100*time.Millisecond)
+    }
+    return true
 }
 
 // Opens the headless session of the project --project names when it has no
