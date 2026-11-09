@@ -73,6 +73,7 @@ Field :: struct {
     asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
+    any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -376,7 +377,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim) and
+// list of flags (transient, local, readonly, hidden, color, angle, text, trim, any) and
 // of key=value pairs (min, max, step, precision, bits, label, unit).
 @(private)
 schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
@@ -395,6 +396,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
+        case "any":       field.any_value=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
         case "max":       field.max,field.has_max=strconv.parse_f64(value)
         case "step":      field.step,_=strconv.parse_f64(value)

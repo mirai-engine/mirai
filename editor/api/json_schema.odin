@@ -204,7 +204,11 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
 // The schema of the params or result of a method; free-form JSON when there is no type.
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
     start:=w.count
-    defer if !result {reserved_params_write(w,start)}
+    defer if !result {
+        properties_add(w,start,RESERVED_SCHEMA)
+    } else if method.clamps {
+        properties_add(w,start,CLAMPED_SCHEMA)
+    }
     index:=result?method.result:method.params
     if index==serial.TYPE_NONE {
         written:=result?method.result_schema:method.params_schema
@@ -214,10 +218,13 @@ method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:boo
     schema_write(w,s,index,nil,result?nil:method.defaults)
 }
 
-// Adds the params every method takes to the properties of the object schema
-// written from start. One without properties takes anything already.
+// The key of a result that says which params took their maximum.
+@(private) CLAMPED_SCHEMA :: `"_clamped":{"type":"object","description":"The params past their maximum by name: what was asked and what was used"}`
+
+// Adds members to the properties of the object schema written from start. One
+// without properties takes anything already.
 @(private)
-reserved_params_write :: proc(w:^serial.Writer,start:int) {
+properties_add :: proc(w:^serial.Writer,start:int,members:string) {
     if w.overflow>0 {return}
     r:serial.Text_Reader
     serial.text_reader_init(&r,string(w.data[start:w.count]),context.temp_allocator)
@@ -235,7 +242,7 @@ reserved_params_write :: proc(w:^serial.Writer,start:int) {
     if at<0 {return}
     end:=w.count
     empty:=w.data[at]=='}'
-    raw(w,RESERVED_SCHEMA)
+    raw(w,members)
     if !empty {raw(w,",")}
     if w.overflow>0 {return}
     slice.rotate_left(w.data[at:w.count],end-at)

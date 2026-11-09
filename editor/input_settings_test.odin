@@ -179,19 +179,21 @@ input_set_errors_name_what_is_valid :: proc(t:^testing.T) {
     f:=new(Input_Fixture,context.temp_allocator)
     if !input_fixture(t,f) {return}
     defer input_fixture_destroy(f)
-    _,error:=input_call(f,"input.set",`{"action":"jump","bindings":[{"key":"K"}]}`)
+    _,error:=input_call(f,"input.set",`{"action":"jump","kind":"button","bindings":[{"key":"left shift"}]}`)
+    testing.expect_value(t,error.code,0)
+    _,error=input_call(f,"input.set",`{"action":"jump","bindings":[{"key":"K"}]}`)
     testing.expect_value(t,error.code,0)
     before,_:=input_file(f)
 
     cases:=[]struct{params:string,wants:[]string}{
         {`{"action":"fire","bindings":[]}`,{`"fire" is not an input action`,"move, jump, hit",`names.create {"type": "Action", "name": "fire"} declares`}},
-        {`{"action":"jump","bindings":[{"key":"Spce"}]}`,{`bindings[0].key: "Spce" is not a key; the names are A, B,`,"Space"}},
+        {`{"action":"jump","bindings":[{"key":"Spce"}]}`,{`bindings[0].key: "Spce" is not a key; the nearest are Space`,"Space"}},
         {`{"action":"move","bindings":[{"keys":["A","D","S","Wx"]}]}`,{`"Wx" is not a key`}},
         {`{"action":"move","bindings":[{"keys":["A","D","S"]}]}`,{"has 3 keys","four (left, right, down, up)"}},
         {`{"action":"jump","bindings":[{"keys":["A","D"]}]}`,{`bindings[0] does not suit the Button action "jump"`,"a Button takes"}},
         {`{"action":"move","bindings":[{"gamepad_button":"South"}]}`,{"Axis2 action","gamepad_stick"}},
-        {`{"action":"jump","bindings":[{"gamepad_stick":"Middle"}]}`,{`"Middle" is not a gamepad stick`,"Left, Right"}},
-        {`{"action":"jump","kind":"Trigger","bindings":[]}`,{`kind "Trigger" is not a kind`,"Button, Axis or Axis2"}},
+        {`{"action":"jump","bindings":[{"gamepad_stick":"Middle"}]}`,{`"Middle" is not a gamepad stick`,"Right, Left"}},
+        {`{"action":"jump","kind":"Trigger","bindings":[]}`,{`kind "Trigger" is not one of its names`,"Axis2, Button"}},
         {`{"action":"jump","bindings":[{"scale":2}]}`,{"names no input","gamepad_button"}},
         {`{"action":"jump","bindings":[{"key":"J","gamepad":7}]}`,{"a gamepad is 0 to 3"}},
         {`{"action":"jump","kind":"Axis"}`,{"give the bindings"}},

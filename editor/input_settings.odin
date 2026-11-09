@@ -912,6 +912,7 @@ input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
     for item,i in list {
         o,is_binding:=item.(json.Object)
         if !is_binding {return fmt.tprintf(`bindings[%d] is not an object: {"key": "Space"}`,i)}
+        input_binding_names_fit(o)
         binding,error,field:=input.input_binding_parse(o)
         if error!=.None {return input_binding_problem(i,o,error,field)}
         if !input.binding_suits(kind,binding) {
@@ -939,10 +940,31 @@ input_kind_takes :: proc(kind:input.Action_Kind) -> string {
     return ""
 }
 
-// What is wrong with one binding of the params, with the names it takes.
+// Writes the names of a binding an agent gave as their enums have them, as
+// base.name_find takes them.
+@(private)
+input_binding_names_fit :: proc(o:json.Object) {
+    fit :: proc(value:^json.Value,names:[]string) {
+        if name,is_text:=value.(json.String);is_text {
+            if index,_:=base.name_find(name,names);index>=0 {value^=json.String(names[index])}
+        }
+    }
+    each :: proc(o:json.Object,field:string,names:[]string) {
+        if value,has:=&o[field];has {fit(value,names)}
+    }
+    each(o,"key",reflect.enum_field_names(core.Key))
+    if keys,has:=o["keys"].(json.Array);has {
+        for &key in keys {fit(&key,reflect.enum_field_names(core.Key))}
+    }
+    each(o,"mouse_button",reflect.enum_field_names(core.Mouse_Button))
+    each(o,"gamepad_button",reflect.enum_field_names(core.Gamepad_Button))
+    each(o,"gamepad_axis",reflect.enum_field_names(core.Gamepad_Axis))
+    each(o,"gamepad_stick",reflect.enum_field_names(input.Gamepad_Stick))
+}
+
+// What is wrong with one binding of the params, with the nearest names it takes.
 @(private)
 input_binding_problem :: proc(index:int,o:json.Object,error:input.Input_Map_Error,field:string) -> string {
-    names :: proc($E:typeid) -> string {return strings.join(reflect.enum_field_names(E),", ",context.temp_allocator)}
     switch {
     case field=="":
         return fmt.tprintf("bindings[%d] names no input: give it one of key, keys, mouse_button, mouse, gamepad_button, gamepad_axis or gamepad_stick",index)
@@ -960,15 +982,15 @@ input_binding_problem :: proc(index:int,o:json.Object,error:input.Input_Map_Erro
             if _,known:=reflect.enum_from_name(core.Key,name);!known {wrong=string(name);break}
         }
     }
-    valid:string
+    valid:[]string
     switch field {
-    case "key","keys":     valid=names(core.Key)
-    case "mouse_button":   valid=names(core.Mouse_Button)
-    case "mouse":          valid=fmt.tprintf("%s, Delta, Wheel",names(input.Mouse_Axis))
-    case "gamepad_button": valid=names(core.Gamepad_Button)
-    case "gamepad_axis":   valid=names(core.Gamepad_Axis)
-    case "gamepad_stick":  valid=names(input.Gamepad_Stick)
+    case "key","keys":     valid=reflect.enum_field_names(core.Key)
+    case "mouse_button":   valid=reflect.enum_field_names(core.Mouse_Button)
+    case "mouse":          valid=slice.concatenate([][]string{reflect.enum_field_names(input.Mouse_Axis),{"Delta","Wheel"}},context.temp_allocator)
+    case "gamepad_button": valid=reflect.enum_field_names(core.Gamepad_Button)
+    case "gamepad_axis":   valid=reflect.enum_field_names(core.Gamepad_Axis)
+    case "gamepad_stick":  valid=reflect.enum_field_names(input.Gamepad_Stick)
     }
     what,_:=strings.replace_all(field=="keys"?"key":field,"_"," ",context.temp_allocator)
-    return fmt.tprintf("bindings[%d].%s: %q is not a %s; the names are %s",index,field,wrong,what,valid)
+    return fmt.tprintf("bindings[%d].%s: %s",index,field,base.name_problem(wrong,fmt.tprintf("a %s",what),valid))
 }

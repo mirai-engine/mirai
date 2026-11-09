@@ -286,7 +286,7 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         if d.preset=="" {continue}
         found:bool
         if d.card,found=card_named(s,d.preset);!found {
-            api.call_failf(call,api.INVALID_PARAMS,"%s.preset: unknown preset %q; it takes the presets and the cards of plugins scene.add takes",d.path,d.preset)
+            api.call_failf(call,api.INVALID_PARAMS,"%s.preset: %s",d.path,cards_problem(s,d.preset))
             return
         }
         if d.card not_in parts {parts[d.card]=api_card_parts(s,w,d.card,call.allocator)}
@@ -432,8 +432,8 @@ api_write_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,d:^Api_Write
         for name in rpc_next(&a,&object) {
             given:=string(key[:copy(key[:],name)])
             path:=fmt.aprintf("%s.components.%s",d.path,given,allocator=call.allocator)
-            t:=component_table(s,given)
-            if t==nil || t.place!=.World {return rpc_fail(&a,"%s: %s is not a registered component; component.list lists them",path,given)}
+            t,problem:=api_component_named(shown_world(s),given)
+            if t==nil || t.place!=.World {return rpc_fail(&a,"%s: %s; component.list lists them",path,problem)}
             if !api_component_listed(s,t) {return rpc_fail(&a,"%s: %s is not written as a component: Transform, Name, Parent, Hidden and Disabled have their own keys (position, name, children, visible, enabled)",path,given)}
             if serial.text_keyword(&a.r,"null") {return rpc_fail(&a,"%s: the document declares the components the entity has; leave %s out to take it away",path,given)}
             if !api_write_component(s,&a,w,e,t,parts,path) {return false}
@@ -548,6 +548,8 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     }
     root,known:=api_call_entity(call,w,params.root[:],"root")
     if !known {return}
+    values,read:=api_inspect_values(s,call,w,false)
+    if !read {return}
     if text:=section_lock_text(s,w,root,true);text!="" {api.call_failf(call,api.SERVER_ERROR,"root: %s",text);return}
     part:=api_part(s,w,root,call.allocator)
     if len(part)>params.limit {
@@ -564,7 +566,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     api.write_key(out,"total");serial.text_write_int(out,i64(core.world_entities(w).alive))
     api.write_key(out,"offset");serial.write_u8(out,'0')
     api.write_key(out,"entities");serial.write_u8(out,'[')
-    api_tree_entity_write(s,w,out,root,prefab_links(s,call.allocator),scratch,params.components)
+    api_tree_entity_write(s,w,out,root,prefab_links(s,call.allocator),scratch,values)
     serial.write_u8(out,']')
     api.write_key(out,"shown");serial.text_write_int(out,i64(len(part)))
     api.write_key(out,"matched");serial.text_write_int(out,i64(len(part)))
@@ -573,7 +575,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
 }
 
 @(private)
-api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,links:map[base.Entity_Id]Prefab_Link,scratch:[]u8,components:bool) {
+api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,links:map[base.Entity_Id]Prefab_Link,scratch:[]u8,values:Api_Inspect_Values) {
     st:=api_state(s)
     id:=api_entity_id(w,e)
     serial.text_write_raw(out,`{"id":`);api_write_id(out,id)
@@ -593,7 +595,7 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
     value,start:=scratch[:len(scratch)/2],scratch[len(scratch)/2:]
     first,off_first:=true,true
     for &t,i in s.info.tables {
-        if !components || !api_component_listed(s,&t) {continue}
+        if !api_inspect_wants(values,&t) || !api_component_listed(s,&t) {continue}
         table:=core.world_table_at(w,&t)
         current:=core.raw_find(table,t.info,e)
         if current==nil {continue}
@@ -607,7 +609,7 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
     }
     if !first {serial.write_u8(out,'}')}
     for &t in s.info.tables {
-        if !components || !api_component_listed(s,&t) {continue}
+        if !api_inspect_wants(values,&t) || !api_component_listed(s,&t) {continue}
         if _,turned_off,_:=core.raw_state(core.world_table_at(w,&t),e);!turned_off {continue}
         if off_first {api.write_key(out,"off");serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
         off_first=false
@@ -619,7 +621,7 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
         if !api_part_kept(s,w,child) {continue}
         if !children {api.write_key(out,"children");serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
         children=true
-        api_tree_entity_write(s,w,out,child,links,scratch,components)
+        api_tree_entity_write(s,w,out,child,links,scratch,values)
     }
     if children {serial.write_u8(out,']')}
     serial.write_u8(out,'}')

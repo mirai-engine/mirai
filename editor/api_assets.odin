@@ -3,6 +3,7 @@ package editor
 import "core:reflect"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
@@ -45,7 +46,7 @@ Api_Asset_Params :: struct {
     kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin); empty or all: every kind"`,
     folder:[256]u8 `mirai:"text,optional,label=Only the assets under this folder"`,
     offset:int `mirai:"optional,min=0,max=1000000"`,
-    limit:int `mirai:"optional,min=1,max=1024"`,
+    limit:int `mirai:"optional,min=1,max=1024,clamp"`,
 }
 
 Api_Asset_List :: struct {
@@ -162,10 +163,12 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
     name:=base.text_get(params.name[:])
     st:=api_state(s)
     w:=call.out
+    named:^core.Table_Info
     if name!="" {
-        named:=component_table(s,name)
+        problem:string
+        named,problem=api_component_named(shown_world(s),name)
         if named==nil {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not a component of the world",name)
+            api.call_failf(call,api.INVALID_PARAMS,"%s; component.list without a name lists them",problem)
             return
         }
         if type:=st.types[api_table_index(s,named)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
@@ -176,7 +179,7 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(w,`{"components":[`)
     first:=true
     for &t,i in s.info.tables {
-        if t.place!=.World || name!="" && !strings.equal_fold(t.name,name) {continue}
+        if t.place!=.World || name!="" && &t!=named {continue}
         type:=st.types[i]
         // A derived component is not added nor written: play.inspect reads it.
         if !params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {continue}

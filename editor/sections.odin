@@ -651,7 +651,7 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
     kept:=left!=core.NONE && left!=e && section_unsaved(s,w,left)
     section_edit_set(s,e)
     if section_editing(s)!=e {
-        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.load it again to edit another",SECTIONS_EDITED)
+        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.open it again to edit another",SECTIONS_EDITED)
         return
     }
     out:=call.out

@@ -119,8 +119,8 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
             serial.text_write_raw(&out,text)
             found=true
         } else if component!="" {
-            t:=component_table(s,component)
-            if t==nil || t.place!=.World || st.types[api_table_index(s,t)]==serial.TYPE_NONE {return {},fmt.tprintf("component %q is not a component of the game; component.list lists them",component)}
+            t,problem:=api_component_named(shown_world(s),component)
+            if t==nil || t.place!=.World || st.types[api_table_index(s,t)]==serial.TYPE_NONE {return {},fmt.tprintf("component: %s; component.list lists them",problem!=""?problem:component)}
             value:=e!=core.NONE?core.raw_find(core.world_table_at(w,t),t.info,e):nil
             if value!=nil {
                 scratch:=make([]u8,max(t.info.size,1),allocator)

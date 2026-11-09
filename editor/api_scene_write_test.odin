@@ -41,12 +41,12 @@ write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,fa
 // The document scene.inspect gives of root, and the entities in it as text.
 @(private="file")
 write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components:=true) -> (tree:json.Object,entities:string) {
-    params:=Api_Inspect_Params{components=components,limit=API_INSPECT_DEFAULT}
+    params:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
     copy(params.root[:],fmt.tprintf("0x%016x",u64(root)))
     method:=api.Method{params_id=Api_Inspect_Params}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,raw=components?"{}":`{"components":false}`,params=&params,out=&out,allocator=context.temp_allocator}
     api_scene_inspect(&f.s,&call)
     if !testing.expect(t,!call.failed,call.error.message) {return}
     text:=string(serial.writer_bytes(&out))
@@ -211,7 +211,7 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     alive,steps:=core.world_entities(w).alive,len(f.edits.steps)
     at:=fmt.tprintf(`"root":"0x%016x"`,u64(root_id))
     cases:=[?]struct{document,says:string}{
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),"entities[0].children[2].components.Light: Light is not a registered component"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component of the world`},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{"components":{{"Prefab_Test_Lamp":{{"intensty":1}}}}}}]}}]}}`,at),"entities[0].children[1].components.Prefab_Test_Lamp"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"components":{{"Prefab_Test_Lamp":null}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Test_Lamp: the document declares the components"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","off":["Prefab_Test_Lamp"]}}]}}]}}`,at),"entities[0].children[0].off: Prefab_Test_Lamp is not among the components it declares"},
@@ -280,6 +280,6 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     testing.expect(t,ok && plain==erender.POINT_LIGHT_DEFAULT,failure)
 
     _,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"children":[{{"name":"X","preset":"nope"}}]}}]}}`,u64(root_id)))
-    testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: unknown preset"),failure)
+    testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: "),failure)
     testing.expect_value(t,core.world_entities(w).alive,4)
 }

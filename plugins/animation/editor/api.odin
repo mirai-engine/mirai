@@ -25,7 +25,7 @@ Describe_Params :: struct {
     mesh:base.Asset_Id `mirai:"optional"`,
     skeleton:base.Asset_Id `mirai:"optional"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=1024"`,
+    limit:u32 `mirai:"optional,min=1,max=1024,clamp"`,
 }
 
 @(private="file")
@@ -62,7 +62,7 @@ Preview_Params :: struct {
     ticks:u32 `mirai:"optional,min=0,max=3600,label=Ticks of dt the copy runs; plays and actions go at their tick"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=1024"`,
+    limit:u32 `mirai:"optional,min=1,max=1024,clamp"`,
     parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
     controls:[64]Preview_Control `mirai:"optional"`,
     goals:[64]Preview_Goal `mirai:"optional"`,

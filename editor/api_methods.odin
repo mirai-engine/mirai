@@ -629,7 +629,7 @@ api_editor_action :: proc(s:^Session,call:^api.Call) {
     }
     #partial switch action {
     case .Open,.Save_As,.Quit,.Shortcuts,.Import:
-        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.load, scene.save or engine.shutdown",name)
+        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.open, scene.save or engine.shutdown",name)
         return
     }
     prefabs_sync(s,prefabs_of(s))
@@ -763,10 +763,9 @@ Api_Input_Step :: struct {
 
 @(private)
 api_key_from_name :: proc(name:string) -> (key:platform.Key,ok:bool) {
-    for candidate,index in reflect.enum_field_names(platform.Key) {
-        if strings.equal_fold(candidate,name) {return platform.Key(index),true}
-    }
-    return
+    index,_:=base.name_find(name,reflect.enum_field_names(platform.Key))
+    if index<0 {return}
+    return platform.Key(index),true
 }
 
 @(private)
@@ -777,7 +776,7 @@ api_keys :: proc(a:^Rpc_Args,what:string) -> (keys:platform.Keys,ok:bool) {
         name,read:=serial.text_string(&a.r)
         if !read {return {},rpc_fail(a,"%s must be an array of key names",what)}
         key,known:=api_key_from_name(name)
-        if !known {return {},rpc_fail(a,"%s: unknown key %q; keys go by their platform.Key name, such as A, F5, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,name)}
+        if !known {return {},rpc_fail(a,"%s: %s; keys go by their platform.Key name, such as A, F5, Enter, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,base.name_problem(name,"a key",reflect.enum_field_names(platform.Key)))}
         keys+={key}
         if serial.text_accept(&a.r,',') {continue}
         if !serial.text_accept(&a.r,']') {return {},rpc_fail(a,"%s must be an array of key names",what)}

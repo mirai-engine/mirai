@@ -442,206 +442,20 @@ rpc_describe_text :: proc(result,name:string) -> string {
         strings.write_byte(&b,'\n')
         if summary,_:=api.json_string(api.json_member(method,"summary"));summary!="" {fmt.sbprintf(&b,"  %s\n",summary)}
         params:=api.json_member(method,"params")
-        properties:=api.json_member(params,"properties")
-        switch {
-        case properties=="": strings.write_string(&b,"  params: no schema; the summary says which it reads, if any\n")
-        case !rpc_params_own(properties): strings.write_string(&b,"  params: none\n")
-        case:
-            strings.write_string(&b,"  params:\n")
-            rpc_describe_fields(&b,params,"",false,0)
-        }
-        example:=strings.builder_make(context.temp_allocator)
-        rpc_schema_example(&example,params,0)
-        fmt.sbprintf(&b,"  example: mirai rpc %s '%s'\n",method_name,strings.to_string(example))
+        api.describe_params(&b,params)
+        api.describe_example(&b,method_name,params)
         result_schema:=api.json_member(method,"result")
         switch {
         case api.json_compact(api.json_member(result_schema,"properties"))!="" && api.json_compact(api.json_member(result_schema,"properties"))!="{}":
             strings.write_string(&b,"  result:\n")
-            rpc_describe_fields(&b,result_schema,"",true,0)
+            api.describe_fields(&b,result_schema,"",true,0)
         case api.json_compact(result_schema)=="{}" || result_schema=="":
             strings.write_string(&b,"  result: no schema; the catalog of the mirai-agent-api skill gives its shape\n")
         case:
-            fmt.sbprintf(&b,"  result: %s\n",rpc_schema_type(result_schema))
+            fmt.sbprintf(&b,"  result: %s\n",api.describe_type(result_schema))
         }
     }
     return strings.to_string(b)
-}
-
-// Whether the properties of a schema of params have some besides those every method takes.
-@(private="file")
-rpc_params_own :: proc(properties:string) -> bool {
-    members,_:=api.json_members(properties)
-    for member in members {
-        if !api.param_reserved(member.name) {return true}
-    }
-    return false
-}
-
-// A line per field of an object schema, after it those of an object inside,
-// with their path (a.b, or a[].b for the objects of an array).
-@(private="file")
-rpc_describe_fields :: proc(b:^strings.Builder,schema,prefix:string,result:bool,depth:int) {
-    properties,_:=api.json_members(api.json_member(schema,"properties"))
-    required,_:=api.json_elements(api.json_member(schema,"required"))
-    for property in properties {
-        if !result && api.param_reserved(property.name) {continue}
-        path:=prefix==""?property.name:fmt.tprintf("%s.%s",prefix,property.name)
-        fmt.sbprintf(b,"    %s: %s",path,rpc_schema_type(property.value))
-        if !result {
-            needed:=false
-            for field in required {
-                if text,_:=api.json_string(field);text==property.name {needed=true}
-            }
-            if needed {
-                strings.write_string(b,", required")
-            } else if default:=api.json_member(property.value,"default");default!="" {
-                fmt.sbprintf(b,", default %s",api.json_compact(default))
-            } else if each:=api.json_member(api.json_member(property.value,"items"),"default");each!="" {
-                fmt.sbprintf(b,", default %s each",api.json_compact(each))
-            }
-        }
-        if description,_:=api.json_string(api.json_member(property.value,"description"));description!="" {fmt.sbprintf(b,". %s",description)}
-        strings.write_byte(b,'\n')
-        if depth>=4 {continue}
-        if api.json_member(property.value,"properties")!="" {
-            rpc_describe_fields(b,property.value,path,result,depth+1)
-        } else if items:=api.json_member(property.value,"items");api.json_member(items,"properties")!="" {
-            rpc_describe_fields(b,items,fmt.tprintf("%s[]",path),result,depth+1)
-        }
-    }
-}
-
-// The type of a JSON Schema in a few words, with its unit: integer 0..3600,
-// number[3] m, string up to 64, list of A|B, entity id.
-rpc_schema_type :: proc(schema:string) -> string {
-    text:=rpc_schema_words(schema)
-    unit,_:=api.json_string(api.json_member(schema,"x-unit"))
-    return unit==""?text:fmt.tprintf("%s %s",text,unit)
-}
-
-@(private="file")
-rpc_schema_words :: proc(schema:string) -> string {
-    if names,_:=api.json_elements(api.json_member(schema,"enum"));len(names)>0 {return rpc_names(names[:])}
-    if constant:=api.json_member(schema,"const");constant!="" {return api.json_compact(constant)}
-    type:=api.json_member(schema,"type")
-    kind,_:=api.json_string(type)
-    switch kind {
-    case "integer","number":
-        lo,hi:=api.json_member(schema,"minimum"),api.json_member(schema,"maximum")
-        switch {
-        case kind=="integer" && rpc_integer_natural(lo,hi): return kind
-        case lo!="" && hi!="": return fmt.tprintf("%s %s..%s",kind,lo,hi)
-        case lo!="": return fmt.tprintf("%s >= %s",kind,lo)
-        case hi!="": return fmt.tprintf("%s <= %s",kind,hi)
-        }
-        return kind
-    case "string":
-        if asset,is_asset:=api.json_string(api.json_member(schema,"x-asset"));is_asset {
-            return asset=="any"?"asset path or id":fmt.tprintf("asset path or id (%s)",asset)
-        }
-        pattern,_:=api.json_string(api.json_member(schema,"pattern"))
-        switch pattern {
-        case "^(0x)?[0-9a-fA-F]{1,16}$": return "entity id (up to 16 hex)"
-        case "^0x[0-9a-fA-F]{32}$":      return "128-bit integer (0x and 32 hex)"
-        }
-        if size:=api.json_member(schema,"maxLength");size!="" {return fmt.tprintf("string up to %s",size)}
-        return "string"
-    case "boolean","null":
-        return kind
-    case "object":
-        return "object"
-    case "array":
-        items:=api.json_member(schema,"items")
-        item:=items!=""?rpc_schema_type(items):"JSON"
-        lo,hi:=api.json_member(schema,"minItems"),api.json_member(schema,"maxItems")
-        switch {
-        case lo!="" && lo==hi: return strings.contains(item," ")?fmt.tprintf("(%s)[%s]",item,lo):fmt.tprintf("%s[%s]",item,lo)
-        case hi!="": return fmt.tprintf("list of %s, up to %s",item,hi)
-        }
-        return fmt.tprintf("list of %s",item)
-    }
-    if kinds,is_list:=api.json_elements(type);is_list && len(kinds)>0 {return rpc_names(kinds[:])}
-    return "JSON"
-}
-
-// Names of an enum or of the types of a schema as A|B|C; past 16, how many there are.
-@(private="file")
-rpc_names :: proc(values:[]string) -> string {
-    names:=make([dynamic]string,context.temp_allocator)
-    for value in values[:min(len(values),16)] {
-        text,is_text:=api.json_string(value)
-        append(&names,is_text?text:api.json_compact(value))
-    }
-    joined:=strings.join(names[:],"|",context.temp_allocator)
-    return len(values)>16?fmt.tprintf("%s|... (%d in all)",joined,len(values)):joined
-}
-
-// Whether lo..hi is the whole range of an integer type, which says nothing.
-@(private="file")
-rpc_integer_natural :: proc(lo,hi:string) -> bool {
-    ranges:=[?][2]string{
-        {"-128","127"},{"0","255"},{"-32768","32767"},{"0","65535"},
-        {"-2147483648","2147483647"},{"0","4294967295"},
-        {"-9223372036854775808","9223372036854775807"},{"0","18446744073709551615"},
-    }
-    for range in ranges {
-        if range[0]==lo && range[1]==hi {return true}
-    }
-    return false
-}
-
-// Valid JSON for a schema: its default, its first name, or the least value
-// of its type its bounds allow; for an object, its required fields.
-rpc_schema_example :: proc(b:^strings.Builder,schema:string,depth:int) {
-    if default:=api.json_member(schema,"default");default!="" {strings.write_string(b,api.json_compact(default));return}
-    if names,_:=api.json_elements(api.json_member(schema,"enum"));len(names)>0 {strings.write_string(b,api.json_compact(names[0]));return}
-    if constant:=api.json_member(schema,"const");constant!="" {strings.write_string(b,api.json_compact(constant));return}
-    kind,_:=api.json_string(api.json_member(schema,"type"))
-    switch kind {
-    case "boolean": strings.write_string(b,"false")
-    case "null":    strings.write_string(b,"null")
-    case "integer","number":
-        lo,hi:=api.json_member(schema,"minimum"),api.json_member(schema,"maximum")
-        value:="0"
-        if low,valid:=strconv.parse_f64(lo);valid && low>0 {
-            value=lo
-        } else if high,high_valid:=strconv.parse_f64(hi);high_valid && high<0 {
-            value=hi
-        }
-        strings.write_string(b,value)
-    case "string":
-        pattern,_:=api.json_string(api.json_member(schema,"pattern"))
-        switch pattern {
-        case "^(0x)?[0-9a-fA-F]{1,16}$": strings.write_string(b,`"0000000000000001"`)
-        case "^0x[0-9a-fA-F]{32}$":      strings.write_string(b,`"0x00000000000000000000000000000000"`)
-        case:                            strings.write_string(b,`"x"`)
-        }
-    case "array":
-        count,_:=strconv.parse_int(api.json_member(schema,"minItems"),10)
-        strings.write_byte(b,'[')
-        for i in 0..<count {
-            if i>0 {strings.write_byte(b,',')}
-            rpc_schema_example(b,api.json_member(schema,"items"),depth+1)
-        }
-        strings.write_byte(b,']')
-    case:
-        strings.write_byte(b,'{')
-        properties,_:=api.json_members(api.json_member(schema,"properties"))
-        required,_:=api.json_elements(api.json_member(schema,"required"))
-        first:=true
-        for field in required {
-            if depth>=8 {break}
-            name,_:=api.json_string(field)
-            for property in properties {
-                if property.name!=name {continue}
-                if !first {strings.write_byte(b,',')}
-                first=false
-                fmt.sbprintf(b,"%s:",serial.text_quote(name))
-                rpc_schema_example(b,property.value,depth+1)
-            }
-        }
-        strings.write_byte(b,'}')
-    }
 }
 
 // mirai rpc --batch <file>: one call per line, {"method": "...", "params": {...}},
@@ -704,10 +518,10 @@ rpc_fail :: proc(err:api.Error) -> int {
 }
 
 // An error as it is shown: data that echoes a large result becomes its first
-// bytes and the size of the rest.
+// bytes and the size of the rest. What a method takes is shown whole.
 rpc_error_short :: proc(err:api.Error) -> api.Error {
     prefix,omitted:=api.text_cut(err.data,RPC_ECHO_BYTES)
-    if omitted==0 {return err}
+    if omitted==0 || api.json_member(err.data,"usage")!="" {return err}
     short:=err
     short.data=fmt.tprintf(`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix),omitted)
     return short

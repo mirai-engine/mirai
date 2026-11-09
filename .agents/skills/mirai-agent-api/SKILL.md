@@ -143,6 +143,7 @@ positions misses both.
    [plugin provider](../mirai-editor/references/extensions.md#api-methods), with flat structs
    for params and result ([conventions](references/api.md#method-conventions)). The `summary` is
    one sentence about what it is for; what each field is goes in its `label=`, without commas.
+   A field that only bounds how much it answers takes the `clamp` tag.
 2. If the handler writes the result by hand, declare its shape with `result=R` and
    `writes_result=true` (`list`, `any` and `key=` in the tags) and test what is written with
    `api.result_mismatch`; `params_schema` for params read by hand and `result_schema` written by
@@ -157,6 +158,9 @@ positions misses both.
 - The caller names things as a person does: an entity by the text `entity` (name, path, id or
   handle) and an asset by its path. The engine resolves them and a name that fits several is an
   error, never the first match.
+- What is written for the API is taken as it can only be meant, in one place, never per method
+  ([conventions](references/api.md#method-conventions)); saved assets and binary data are read
+  exactly.
 - All handlers run in the main thread between frames, one at a time. One that advances frames
   (`engine.step`, `capture`, `editor.input`, `ai.task`, `play.step`, `profile.capture`) or waits
   for a job (`build.start`, `play.start`, `asset.import`) holds the server meanwhile; the editor
@@ -188,6 +192,13 @@ positions misses both.
 
 - `mirai check editor/api` and `mirai check editor`; `mirai test editor/api` covers server, HTTP,
   JSON-RPC, batches, limits, schemas, MCP and the CLI against test methods, not the editor's.
+- What is written for the API as it can only be meant: `mirai test editor/api
+  params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one
+  a_limit_past_its_maximum_takes_it_and_the_answer_says_so
+  an_invalid_params_error_says_what_the_method_takes_and_only_it_does`; names of a registry:
+  `mirai test std/base`, `mirai test std/serial
+  a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does` and
+  `mirai test editor a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest`.
 - Declared results: `mirai test editor/api
   a_result_the_handler_writes_is_described_by_its_type
   the_description_of_the_methods_has_the_shape_it_declares`; those of an editor method, with

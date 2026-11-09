@@ -3,6 +3,7 @@ package editor
 import "core:reflect"
 import "core:strings"
 import "mirai:core"
+import "mirai:std/base"
 import erender "mirai:engine/render"
 import "mirai:ui"
 
@@ -87,33 +88,28 @@ card_of_table :: proc(s:^Session,t:^core.Table_Info) -> (card:^Card,found:bool) 
     return
 }
 
-// The names card_named takes, for what an error says it takes: the presets,
-// then the cards of plugins, in the temporary allocator.
-cards_named_text :: proc(s:^Session) -> string {
-    names:=make([dynamic]string,context.temp_allocator)
-    for name in reflect.enum_field_names(Preset) {append(&names,strings.to_lower(name,context.temp_allocator))}
-    for card in cards(s)[len(Preset):] {append(&names,card.label)}
-    return strings.join(names[:],", ",context.temp_allocator)
+// The labels of the cards of plugins, in the temporary allocator.
+@(private)
+cards_plugin_names :: proc(s:^Session) -> []string {
+    labels:=cards(s)[len(Preset):]
+    names:=make([]string,len(labels),context.temp_allocator)
+    for card,i in labels {names[i]=card.label}
+    return names
 }
 
-// The card a name of the API means: a preset of the editor by its name in
-// snake case, or a card of a plugin by its label, without minding case and
-// with spaces or underscores.
+// What is wrong with a name card_named does not take, with the nearest ones.
+cards_problem :: proc(s:^Session,name:string) -> string {
+    names:=make([dynamic]string,context.temp_allocator)
+    for each in reflect.enum_field_names(Preset) {append(&names,strings.to_lower(each,context.temp_allocator))}
+    append(&names,..cards_plugin_names(s))
+    return base.name_problem(name,"a preset or the card of a plugin",names[:])
+}
+
+// The card a name of the API means, as base.name_find takes it: a preset of
+// the editor, or a card of a plugin by its label.
 @(private)
 card_named :: proc(s:^Session,name:string) -> (index:int,found:bool) {
-    if preset,is_preset:=api_preset_find(name);is_preset {return int(preset),true}
-    for card,at in cards(s)[len(Preset):] {
-        if len(card.label)!=len(name) {continue}
-        same:=true
-        for i in 0..<len(name) {
-            a,b:=card.label[i],name[i]
-            if a>='A' && a<='Z' {a+=32}
-            if b>='A' && b<='Z' {b+=32}
-            if a==' ' {a='_'}
-            if b==' ' {b='_'}
-            if a!=b {same=false;break}
-        }
-        if same {return len(Preset)+at,true}
-    }
-    return
+    if preset,_:=base.name_find(name,reflect.enum_field_names(Preset));preset>=0 {return preset,true}
+    at,_:=base.name_find(name,cards_plugin_names(s))
+    return len(Preset)+at,at>=0
 }

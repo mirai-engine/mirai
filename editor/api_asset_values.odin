@@ -2,7 +2,6 @@ package editor
 
 import "core:fmt"
 import "core:mem"
-import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
@@ -129,25 +128,19 @@ asset_path_stem :: proc(path:string) -> string {
     return dot>slash?path[:dot]:path
 }
 
-ASSET_NEAREST :: 5
-
 // The paths nearest to a name among the assets of the kinds, as a list.
 @(private="file")
 asset_nearest :: proc(r:^asset.Registry,name,kinds:string) -> string {
-    Near :: struct {path:string,distance:int}
-    wanted:=strings.to_lower(asset_path_stem(name),context.temp_allocator)
-    near:=make([dynamic]Near,context.temp_allocator)
+    paths,stems:=make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)
     for &file in r.files {
         if file.state!=.Asset || !asset.registry_listed(&file) || !asset_kinds_take(file.path,kinds) {continue}
-        stem:=strings.to_lower(asset_path_stem(file.path),context.temp_allocator)
-        slash:=strings.last_index_byte(stem,'/')
-        distance:=strings.levenshtein_distance(wanted,stem[slash+1:],context.temp_allocator)
-        if strings.contains(stem,wanted) {distance=0}
-        append(&near,Near{file.path,distance})
+        append(&paths,file.path)
+        append(&stems,asset_path_stem(file.path))
     }
-    slice.sort_by(near[:],proc(a,b:Near) -> bool {return a.distance<b.distance})
+    nearest:[base.NAME_NEAREST]int
+    count:=base.names_nearest(asset_path_stem(name),stems[:],nearest[:])
     b:=strings.builder_make(context.temp_allocator)
-    for each,i in near[:min(len(near),ASSET_NEAREST)] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",each.path)}
+    for at,i in nearest[:count] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",paths[at])}
     return strings.to_string(b)
 }
 

@@ -92,7 +92,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
         return response,called
     }
     if scene!="" {
-        if _,ok:=call(file.port,"scene.load",struct{path:string}{scene});!ok {return 1}
+        if _,ok:=call(file.port,"scene.open",struct{path:string}{scene});!ok {return 1}
     }
     Status :: struct {playing:bool}
     status:Status

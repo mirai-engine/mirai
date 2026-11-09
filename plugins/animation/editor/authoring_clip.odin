@@ -41,7 +41,7 @@ Clip_Inspect_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text,optional,label=Clip name; empty selects the first clip"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
 }
 Clip_Create_Params :: struct {
     path:[1024]u8 `mirai:"text,label=An .anim: the clip goes after those of what is there"`,
@@ -62,7 +62,7 @@ Track_Inspect_Params :: struct {
     property:lib.Property,
     slot:u8 `mirai:"optional"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=512"`,
+    limit:u32 `mirai:"optional,min=1,max=512,clamp"`,
 }
 Track_Set_Params :: struct {
     asset:base.Asset_Id,

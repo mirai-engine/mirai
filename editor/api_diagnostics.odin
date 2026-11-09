@@ -23,7 +23,7 @@ API_DIAGNOSTICS_BUILD_TEXT :: 4096
 Api_Diagnostics_Params :: struct {
     since:u64 `mirai:"optional,label=Lists the console entries written after this serial; 0: from the oldest"`,
     min_level:Console_Level `mirai:"optional,label=Lowest level of the console entries listed"`,
-    limit:int `mirai:"optional,min=1,max=500,label=Most console entries listed: the newest ones"`,
+    limit:int `mirai:"optional,min=1,max=500,clamp,label=Most console entries listed: the newest ones"`,
 }
 
 @(private) API_DIAGNOSTICS_RESULT :: `{"type":"object","properties":{` +

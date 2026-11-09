@@ -30,10 +30,10 @@ Api_Inspect_Params :: struct {
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     summary:bool `mirai:"optional,label=Only the id and name and parent of each entity and the names of its components; no values"`,
-    components:bool `mirai:"optional,label=Include the values of the components"`,
+    components:u8 `mirai:"any,optional,label=true (the default): the values of every component; false: none; a list of names: only those"`,
     include_runtime:bool `mirai:"optional,label=Include hidden fields and transient component state for inspection"`,
     offset:int `mirai:"optional,min=0"`,
-    limit:int `mirai:"optional,min=1,max=4096"`,
+    limit:int `mirai:"optional,min=1,max=4096,clamp"`,
     player:int `mirai:"optional,min=0,max=3,label=play.inspect: the run of that player of a game a turn plays on the network"`,
     storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: in play.inspect the score or the state of a match"`,
     storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages"`,
@@ -121,7 +121,7 @@ Api_Batch_Entry :: struct {
 
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
-    inspect:=Api_Inspect_Params{components=true,limit=API_INSPECT_DEFAULT}
+    inspect:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
     api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their transforms, prefab links and component values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_scene_inspect})
     api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_play_inspect})
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
@@ -132,7 +132,7 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
     api_scene_write_register(s,st)
     api_register(s,st,{name="scene.batch",flags={.Core},params_schema=API_BATCH_SCHEMA,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
     api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
-    api_register(s,st,{name="scene.load",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_load})
+    api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_open})
 }
 
 // ---------------------------------------------------------------- scene.inspect
@@ -158,10 +158,48 @@ api_value_out :: proc(w:core.World_Ref,type:^runtime.Type_Info,value:rawptr,byte
     }
 }
 
-// summary leaves out the place, the prefab link and the values: the
-// components are the list of their names.
+// Which components of an entity an inspect gives the values of.
 @(private)
-api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,components:bool,scratch:[]u8,play:bool,include_runtime:=false,summary:=false) {
+Api_Inspect_Values :: struct {
+    every:bool,
+    only:[]^core.Table_Info,
+}
+
+// What the param components of an inspect asks: true or left out, every
+// component; false, none; a list of names, or one name, those. false after
+// failing the call.
+@(private)
+api_inspect_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,include_runtime:bool) -> (values:Api_Inspect_Values,ok:bool) {
+    given:[1]string
+    if !api.object_values(call.allocator,call.raw,{"components"},given[:]) || given[0]=="" || given[0]=="true" {return {every=true},true}
+    if given[0]=="false" {return {},true}
+    names,is_list:=api.json_elements(given[0],call.allocator)
+    if !is_list {
+        names=make([dynamic]string,call.allocator)
+        append(&names,given[0])
+    }
+    only:=make([dynamic]^core.Table_Info,call.allocator)
+    for each in names {
+        name,is_text:=api.json_string(each)
+        if !is_text {api.call_fail(call,api.INVALID_PARAMS,"components must be true, false or a list of names of components");return}
+        t,problem:=api_component_named(w,name)
+        if t==nil {api.call_failf(call,api.INVALID_PARAMS,"components: %s; component.list lists them",problem);return}
+        if !api_component_listed(s,t,include_runtime) {api.call_failf(call,api.INVALID_PARAMS,"components: %s has no values an inspect gives: Transform, Name, Parent, Hidden and Disabled have their own fields, and include_runtime gives the state of a game",name);return}
+        append(&only,t)
+    }
+    return {only=only[:]},true
+}
+
+@(private)
+api_inspect_wants :: proc(values:Api_Inspect_Values,t:^core.Table_Info) -> bool {
+    return values.every || slice.contains(values.only,t)
+}
+
+// summary leaves out the place, the prefab link and the values: the
+// components are the list of their names. only: with components, those of
+// these tables and no others.
+@(private)
+api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,components:bool,scratch:[]u8,play:bool,include_runtime:=false,summary:=false,only:[]^core.Table_Info=nil) {
     st:=api_state(s)
     id:=api_entity_id(w,e)
     serial.text_write_raw(out,`{"id":`)
@@ -220,7 +258,7 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
         api.write_key(out,"components");serial.write_u8(out,'{')
         first:=true
         for &t,i in s.info.tables {
-            if !api_component_listed(s,&t,include_runtime) {continue}
+            if !api_component_listed(s,&t,include_runtime) || only!=nil && !slice.contains(only,&t) {continue}
             table:=core.world_table_at(w,&t)
             value:=core.raw_find(table,t.info,e)
             if value==nil {continue}
@@ -274,11 +312,14 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     pattern:=base.text_get(params.name[:])
     component:^core.Table_Info
     if name:=base.text_get(params.component[:]);name!="" {
-        if _,component=core.world_table_named(w,name);component==nil {
-            api.call_failf(call,api.INVALID_PARAMS,"component %q is not a component of the world; component.list lists them",name)
+        problem:string
+        if component,problem=api_component_named(w,name);component==nil {
+            api.call_failf(call,api.INVALID_PARAMS,"component: %s; component.list lists them",problem)
             return
         }
     }
+    values,read:=api_inspect_values(s,call,w,params.include_runtime)
+    if !read {return}
     storages:=base.text_get(params.storage[:])
     if storages!="" && !api_storage_named(s,storages) {
         api.call_failf(call,api.INVALID_PARAMS,"storage %q names no storage of the world the API shows; leave it out with storages true to list them all",storages)
@@ -300,7 +341,7 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
         matched+=1
         if matched<=offset || shown>=params.limit {continue}
         if shown>0 {serial.write_u8(out,',')}
-        api_entity_write(s,w,out,e,params.components,scratch,play,params.include_runtime,params.summary)
+        api_entity_write(s,w,out,e,values.every || values.only!=nil,scratch,play,params.include_runtime,params.summary,values.only)
         shown+=1
     }
     serial.write_u8(out,']')
@@ -386,8 +427,8 @@ api_play_inspect :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_component_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity,name:string) -> bool {
     st:=api_state(s)
-    t:=component_table(s,name)
-    if t==nil || t.place!=.World {return rpc_fail(a,"components: %q is not a registered component",name)}
+    t,problem:=api_component_named(shown_world(s),name)
+    if t==nil || t.place!=.World {return rpc_fail(a,"components: %s; component.list lists them",problem)}
     if !api_component_listed(s,t) {return rpc_fail(a,"components: %s is not edited as a component: Transform, Name, Parent, Hidden and Disabled have their own fields (position, name, parent, visible, enabled)",name)}
     at:=api_table_index(s,t)
     type:=st.types[at]
@@ -516,8 +557,8 @@ api_off_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity) -> 
         count:=copy(name[:],key)
         given:=string(name[:count])
         off:=rpc_bool(a,"off") or_return
-        t:=component_table(s,given)
-        if t==nil || t.place!=.World {return rpc_fail(a,"off: %q is not a registered component",given)}
+        t,problem:=api_component_named(shown_world(s),given)
+        if t==nil || t.place!=.World {return rpc_fail(a,"off: %s; component.list lists them",problem)}
         table:=core.world_table_at(w,t)
         if table.base {return rpc_fail(a,"off: %s is the base of every entity and does not turn off; enabled:false turns the whole entity off",given)}
         if core.raw_row(table,e)<0 {return rpc_fail(a,"off: the entity has no %s; add it with components first",given)}
@@ -615,14 +656,6 @@ api_common_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity,e
     return true
 }
 
-@(private)
-api_preset_find :: proc(name:string) -> (preset:Preset,found:bool) {
-    for candidate,index in reflect.enum_field_names(Preset) {
-        if strings.equal_fold(candidate,name) {return Preset(index),true}
-    }
-    return
-}
-
 // One scene.add inside the open transaction, from the params at the reader.
 @(private)
 api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entity_Id,ok:bool) {
@@ -647,7 +680,7 @@ api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
             given:=rpc_text(a,key,text[:]) or_return
             found:bool
             card,found=card_named(s,given)
-            if !found {return 0,rpc_fail(a,"unknown preset %q; it takes %s",given,cards_named_text(s))}
+            if !found {return 0,rpc_fail(a,"preset: %s",cards_problem(s,given))}
         case "parent":
             parent=rpc_entity(a,w,key) or_return
         case:
@@ -832,6 +865,14 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
         }
     }
     if a.failed {return}
+    for &operation,i in operations[:count] {
+        if call.server==nil {break}
+        method:=api.method_find(call.server,operation.method)
+        if method==nil {continue}
+        shaped,problem:=api.params_shape(call.server,api.params_schema_text(call.server,method),operation.params)
+        if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"operations[%d].params: %s",i,problem);return}
+        operation.params=shaped
+    }
     if count==0 {
         api.call_failf(call,api.INVALID_PARAMS,"operations must have 1 to %d entries",API_BATCH_LIMIT)
         return
@@ -930,7 +971,7 @@ api_scene_save :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_scene_load :: proc(s:^Session,call:^api.Call) {
+api_scene_open :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
     params:=api.call_params(call,Api_Path_Params)
     if s.recovery.pending {

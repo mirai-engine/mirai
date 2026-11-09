@@ -21,7 +21,7 @@ Profile_Inspect_Params :: struct {
     asset:base.Asset_Id,
     table:Profile_Table,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
 }
 Profile_Set_Params :: struct {
     asset:base.Asset_Id,

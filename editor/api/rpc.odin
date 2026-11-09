@@ -245,34 +245,61 @@ rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     return err,ok
 }
 
+// Reads the text of params into bytes as the params of method, over its defaults.
+@(private="file")
+params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial.Text_Reader) -> bool {
+    mem.zero_slice(bytes)
+    if method.defaults!=nil {copy(bytes,method.defaults)}
+    serial.text_reader_init(r,params,base.arena_allocator(&s.scratch))
+    r.assets=s.assets
+    r.loose_names=true
+    return serial.text_read(r,&s.schema,method.params,bytes) && serial.text_end(r)
+}
+
 // Reads params as the params of method into the scratch of the server, with
 // its defaults, and checks them against its schema: nil for a method that
-// reads its params by hand. What method_execute does before the handler runs.
-params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,err:Error,ok:bool) {
-    if method.params==serial.TYPE_NONE {return nil,{},true}
+// reads its params by hand. shaped is the text it read (params_shape), which
+// the handler gets. What method_execute does before the handler runs.
+params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shaped:string,err:Error,ok:bool) {
+    shaped=params
+    s.clamped=""
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed
+    if method.params==serial.TYPE_NONE {
+        problem:string
+        shaped,problem=params_shape(s,method.params_schema,params)
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,""},false}
+        return nil,shaped,{},true
+    }
     sc:=&s.schema
     type:=sc.types[method.params]
     bytes=base.arena_alloc(&s.scratch,max(int(type.size),1),max(int(type.align),16))
-    if bytes==nil {return nil,scratch_error(s),false}
-    if method.defaults!=nil {copy(bytes,method.defaults)}
+    if bytes==nil {return nil,params,scratch_error(s),false}
     r:serial.Text_Reader
-    serial.text_reader_init(&r,params,allocator)
-    r.assets=s.assets
-    if !serial.text_read(&r,sc,method.params,bytes) || !serial.text_end(&r) {
-        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
-        return nil,text_error(s,"invalid params",params,&r),false
+    if !params_parse(s,method,params,bytes,&r) {
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        first:=text_error(s,"invalid params",params,&r)
+        problem:string
+        shaped,problem=params_shape(s,params_schema_text(s,method),params,names=false)
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,""},false}
+        if shaped==params {return nil,params,first,false}
+        if !params_parse(s,method,shaped,bytes,&r) {
+            if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+            return nil,params,text_error(s,"invalid params",shaped,&r),false
+        }
     }
-    if s.scratch.failed!=failed {return nil,scratch_error(s),false}
+    if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
     checker:=Checker{server=s,schema=sc,allocator=allocator}
     again:serial.Text_Reader
-    serial.text_reader_init(&again,params,allocator)
+    serial.text_reader_init(&again,shaped,allocator)
     if !check_required(&checker,&again,method.params) || !check_value(&checker,method.params,bytes[:type.size],nil) {
-        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
-        return nil,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
     }
-    return bytes,{},true
+    s.clamped=checker.clamped
+    return bytes,shaped,{},true
 }
 
 @(private="file")
@@ -281,15 +308,24 @@ scratch_error :: proc(s:^Server) -> Error {
     return {INTERNAL_ERROR,"the request needs more scratch memory than the server has",""}
 }
 
-// Reads the params of the method, runs its handler and writes its result to out.
+// Reads the params of the method, runs its handler and writes its result to
+// out. A failure for its params says in its data what the method takes.
 method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool) {
+    err,ok=method_run(s,method,params,out)
+    if !ok && err.code==INVALID_PARAMS && err.data=="" {err.data=params_usage(s,method)}
+    return
+}
+
+@(private="file")
+method_run :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool) {
     s.stats.calls+=1
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed
     sc:=&s.schema
-    call:=Call{server=s,method=method,user=method.user,raw=params,client_tag=s.client_tag,client_name=s.client_name,allocator=allocator}
-    params_bytes,read_error,read:=params_read(s,method,params)
+    params_bytes,shaped,read_error,read:=params_read(s,method,params)
     if !read {return read_error,false}
+    clamped:=s.clamped
+    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,allocator=allocator}
     if params_bytes!=nil {call.params=raw_data(params_bytes)}
     typed:=method.result!=serial.TYPE_NONE && !method.writes_result
     if typed {
@@ -311,8 +347,18 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     } else if out.count==mark {
         raw(out,"null")
     }
+    clamped_write(out,mark,clamped)
     s.stats.peak_scratch=max(s.stats.peak_scratch,base.arena_stats(&s.scratch).peak)
     return {},true
+}
+
+// Says in a result that is an object, written from mark, which params took their maximum.
+@(private="file")
+clamped_write :: proc(out:^serial.Writer,mark:int,clamped:string) {
+    if clamped=="" || out.overflow>0 || out.count<=mark || out.data[out.count-1]!='}' || out.data[mark]!='{' {return}
+    out.count-=1
+    if out.count-1>mark {raw(out,",")}
+    raw(out,`"_clamped":{`);raw(out,clamped);raw(out,"}}")
 }
 
 // The raw JSON text of the given keys of an object; "" for keys it does not have.

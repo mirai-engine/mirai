@@ -113,7 +113,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     result=authoring_test_execute(f,"edit",fmt.tprintf(`{{%s,"edits":[{{"verb":"Offset","part":"Head"}}]}}`,ids))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"edits[0].direction"`) && strings.contains(result.data,`"fix":`))
     result=authoring_test_execute(f,"edit",fmt.tprintf(`{{%s,"edits":[{{"verb":"Wiggle"}}]}}`,ids))
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"Retime") && strings.contains(result.message,"Lock_Feet"))
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"is not one of its names") && strings.contains(result.data,"Lock_Feet"))
     result=authoring_test_execute(f,"edit",fmt.tprintf(`{{%s,"edits":[{{"verb":"Retime","factor":2,"duration":1}}]}}`,ids))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"edits[0]"`))
     result=authoring_test_execute(f,"edit",request)

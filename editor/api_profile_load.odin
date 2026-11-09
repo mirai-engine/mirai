@@ -13,7 +13,7 @@ Profile_Load_Kind :: enum u8 {All,Scene,Play,Section}
 
 Api_Profile_Load_Params :: struct {
     kind:Profile_Load_Kind `mirai:"optional,label=Which load; All: the last of each kind there was"`,
-    top:int `mirai:"optional,min=1,max=16,label=Slowest assets and loop functions of each load"`,
+    top:int `mirai:"optional,min=1,max=16,clamp,label=Slowest assets and loop functions of each load"`,
 }
 
 Profile_Load_Phase_Out :: struct {name:string,ms:f64,count:i64,summed:bool}
@@ -112,7 +112,7 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
     }
     if len(loads)==0 {
         what:=p.kind==.All?"":fmt.tprintf("%v ",p.kind)
-        api.call_failf(call,api.SERVER_ERROR,"No %sload yet: scene.load, play.start or a section that loads makes one",what)
+        api.call_failf(call,api.SERVER_ERROR,"No %sload yet: scene.open, play.start or a section that loads makes one",what)
         return
     }
     api_profile_write(call,Profile_Loads_Out{loads[:]})

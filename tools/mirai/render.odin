@@ -934,9 +934,9 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
     m.view,m.size,m.luma_target=view.name,size,view.luma
     params:=make(json.Object,context.temp_allocator)
     params["path"]=view.scene
-    if _,ok:=render_call(e,"scene.load",params);!ok {
+    if _,ok:=render_call(e,"scene.open",params);!ok {
         m.scene_missing=!os.is_file(project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator))
-        m.failure=m.scene_missing?fmt.aprintf("this build has no scene %s",view.scene):"scene.load failed"
+        m.failure=m.scene_missing?fmt.aprintf("this build has no scene %s",view.scene):"scene.open failed"
         return
     }
     playing:=false
