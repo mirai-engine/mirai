@@ -60,6 +60,8 @@ difference with the catalog, it rules.
 - Profiling an open editor, and where the seconds of a load or a Play start went:
   [profiling](references/methods.md#profiling).
 - Opening the editor and its arguments: [editor](../mirai-editor/references/editor.md#arguments).
+- Detecting regressions in how well a cold agent uses the API (the tasks of `tests/agent_tasks/`,
+  a table per task and model): [`scripts/agent_tasks.py`](../../../scripts/agent_tasks.py).
 
 ## Workflow
 
