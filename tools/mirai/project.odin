@@ -148,7 +148,6 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
     defer project.close(&p)
     out,ok:=build.world_write_files(&p)
     for e in out.errors {fmt.eprintln(e)}
-    for w in out.warnings {fmt.eprintfln("%s(%d:%d) Warning: %s",w.file,w.line,w.column,w.message)}
     if !ok {
         if len(out.errors)==0 {fmt.eprintfln("mirai generate: could not write to %s",build.generated_root(p.root))}
         return 1

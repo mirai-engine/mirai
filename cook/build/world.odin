@@ -214,7 +214,6 @@ Generator :: struct {
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
     errors:[dynamic]string,
-    warnings:[dynamic]Diagnostic,
     engine_root,root:string,
 }
 
@@ -225,7 +224,6 @@ Generator :: struct {
 Generated :: struct {
     game_world,editor_world,shipped_world,editor_main,play_main,game_main:string,
     errors:[]string,
-    warnings:[]Diagnostic, // what builds and runs and most likely does not do what it was written for
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
 }
 
@@ -249,7 +247,6 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {steps_read(&g,pkg)}
     rules_check(&g)
     out.errors=g.errors[:]
-    out.warnings=g.warnings[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
     out.editor_world=world_write(&g,true)

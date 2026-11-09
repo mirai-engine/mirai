@@ -144,7 +144,6 @@ Job :: struct {
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
     plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
-    warnings:[]Diagnostic,       // of the generator: join the diagnostics when the job ends
     shipped:Shipped_Engine,      // Game with Desc.incremental (shipped.odin)
     masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
     link_file:string,            // the record of the last compile of the target
@@ -222,11 +221,6 @@ job_start :: proc(desc:Desc) -> ^Job {
             return job_fail(job,.Generate)
         }
         return job_fail(job,.Write_Failed)
-    }
-    job.warnings=make([]Diagnostic,len(generated.warnings),a)
-    for warning,i in generated.warnings {
-        job.warnings[i]=warning
-        job.warnings[i].file,job.warnings[i].message=strings.clone(warning.file,a),strings.clone(warning.message,a)
     }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && path_equal(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
@@ -887,13 +881,6 @@ job_run :: proc(desc:Desc) -> ^Job {
 @(private)
 job_done :: proc(job:^Job) -> ^Job {
     job.result.seconds=time.duration_seconds(time.tick_since(job.tick))
-    if len(job.warnings)>0 {
-        joined:=make([]Diagnostic,len(job.result.diagnostics)+len(job.warnings),virtual.arena_allocator(&job.arena))
-        copy(joined,job.result.diagnostics)
-        copy(joined[len(job.result.diagnostics):],job.warnings)
-        job.result.diagnostics=joined
-        job.warnings=nil
-    }
     return job
 }
 

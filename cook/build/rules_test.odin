@@ -177,19 +177,3 @@ import inp "mirai:engine/input"
     }
     testing.expect_value(t,len(output.errors),len(refused))
 }
-
-// A job gives the warnings of the generator with what the compiler said.
-@(test)
-a_job_joins_the_warnings_of_the_generator_to_the_diagnostics :: proc(t:^testing.T) {
-    job:Job
-    _=virtual.arena_init_growing(&job.arena)
-    defer virtual.arena_destroy(&job.arena)
-    warnings:=[]Diagnostic{{severity=.Warning,message="the generator"}}
-    job.warnings=warnings
-    compiled:=[]Diagnostic{{severity=.Error,message="the compiler"}}
-    job.result.diagnostics=compiled
-    job_done(&job)
-    testing.expect_value(t,len(job.result.diagnostics),2)
-    testing.expect_value(t,job.result.diagnostics[0].message,"the compiler")
-    testing.expect_value(t,job.result.diagnostics[1].message,"the generator")
-}
