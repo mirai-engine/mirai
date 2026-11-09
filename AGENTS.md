@@ -125,9 +125,20 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Common commands
 
-The shell, the command table, the `--dev` rule, sessions against an editor, handing a command to
-the user and search:
+The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
+
+- An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
+  is `--dev` by itself. **`--release` only when the task cannot do without it or the user asks for
+  it**: figures of the CPU (`mirai bench compare`, a benchmark test) or a budget in absolute numbers.
+  If the user's editor holds the `--dev` build of the checkout, work in a worktree.
+- Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
+  `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
+  output of `rpc` with scripts: `--select` and `--wait-until` instead of `json.load` and `sleep`.
+- **Search** with the Grep tool or `rg`, which skip `.worktrees`, `.deps` and `bin`; never
+  `grep -r` or `find | xargs grep` from the root. `rg` always takes a folder (`rg pattern .`):
+  without one it reads standard input and hangs. A file list built with `$(...)` may come out
+  empty: close it with `/dev/null` (`rg pattern $(...) /dev/null`) or go through `xargs -r rg`.
 
 ## Verification
 
