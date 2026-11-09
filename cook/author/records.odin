@@ -1,4 +1,4 @@
-package ui_inspector_editor
+package author
 
 import "base:runtime"
 import "core:fmt"
@@ -187,7 +187,6 @@ records_depth :: proc(nodes:[]ui.Tree_Node,row:int) -> int {
 
 // The rows the instances of the overrides follow when rows from at move by
 // count (count negative: they went away).
-@(private)
 records_shift :: proc(r:^Records,at,count:int) {
     for i:=len(r.overrides)-1;i>=0;i-=1 {
         o:=&r.overrides[i]
@@ -200,7 +199,6 @@ records_shift :: proc(r:^Records,at,count:int) {
 
 // Inserts copies of nodes (a subtree, parents relative to it, the first a
 // root) at row at inside parent, and fixes the rows after them.
-@(private)
 records_put :: proc(r:^Records,at,parent:int,subtree:[]ui.Tree_Node) -> bool {
     if len(subtree)==0 {return false}
     if _,error:=inject_at(&r.nodes,at,..subtree);error!=nil {return false}
@@ -350,7 +348,6 @@ records_use_remove :: proc(r:^Records,row:int) -> bool {
 }
 
 // A name for a component no other has.
-@(private)
 records_component_name :: proc(r:^Records,name:string) -> string {
     for n in 1..=len(r.components)+1 {
         candidate:=name if n==1 else fmt.tprintf("%s%d",name,n)
@@ -362,7 +359,6 @@ records_component_name :: proc(r:^Records,name:string) -> string {
 }
 
 // Takes a node and what it holds out of the rows of its scope.
-@(private)
 records_remove :: proc(r:^Records,row:int) {
     if row<0 || row>=len(r.nodes) {return}
     count:=records_subtree(r.nodes[:],row)+1
@@ -409,7 +405,6 @@ records_duplicate :: proc(r:^Records,row:int) -> int {
 
 // Gives a node rows of its own of the image and of the animations it shares
 // with the node it was copied from: a copy edits only itself.
-@(private)
 records_rows_own :: proc(r:^Records,n:^ui.Tree_Node,fields:ui.Node_Fields) {
     if .Image in fields && n.image!=0 && int(n.image)<=len(r.images) && len(r.images)<int(max(u16)) {
         image:=r.images[n.image-1]
@@ -474,7 +469,6 @@ KIND_NAMES :: [ui.Node_Kind]string{.Box="box",.Text="text",.Image="image",.Progr
     .Context_Menu="context_menu",.Radial="radial",.Particles="particles"}
 
 // Names a node after base_name and the first number no other node of its scope uses.
-@(private)
 records_name_unique :: proc(r:^Records,row:int,base_name:string) {
     list:=&r.nodes
     buffer:[ui.TREE_NAME_CAPACITY]u8
@@ -485,7 +479,6 @@ records_name_unique :: proc(r:^Records,row:int,base_name:string) {
 }
 
 // Whether a node other than row has name.
-@(private)
 records_name_taken :: proc(nodes:[]ui.Tree_Node,row:int,name:string) -> bool {
     for &other,i in nodes {if i!=row && serial.text_field(other.name[:])==name {return true}}
     return false
@@ -493,13 +486,11 @@ records_name_taken :: proc(nodes:[]ui.Tree_Node,row:int,name:string) -> bool {
 
 // Keeps the name of a node when no other node of its scope has it; gives it a
 // number otherwise.
-@(private)
 records_name_free :: proc(r:^Records,row:int) {
     list:=&r.nodes
     if name:=serial.text_field(list[row].name[:]);name!="" && records_name_taken(list[:],row,name) {records_name_unique(r,row,name)}
 }
 
-@(private)
 serial_name :: proc(buffer:[]u8,base_name:string,n:int) -> string {
     at:=copy(buffer,base_name)
     // The digits a name ends in are replaced by the number.
@@ -808,7 +799,6 @@ records_variant_rename :: proc(r:^Records,style:int,from,to:string) {
 
 // How many nodes and overrides that set it take an image
 // (field .Image) or a set of animations (.Animations), by row plus one.
-@(private)
 records_row_users :: proc(r:^Records,field:ui.Node_Field,row:u16) -> (users:int) {
     takes :: proc(n:^ui.Tree_Node,field:ui.Node_Field,row:u16) -> bool {return (n.image if field==.Image else n.anims)==row}
     for &n in r.nodes {users+=int(takes(&n,field,row))}
@@ -917,7 +907,6 @@ records_key_remove :: proc(r:^Records,track,key:int) {
     t.key_count-=1
 }
 
-@(private)
 records_keys_remove :: proc(r:^Records,at,count:int) {
     remove_range(&r.keys,at,at+count)
     for &other in r.tracks {
@@ -963,7 +952,7 @@ records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,style
 
 // records_param_set with a style by its name, of the file or of a file it
 // uses. False when that name does not resolve.
-records_param_give :: proc(a:^host.Assets,r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,node:ui.Tree_Node) -> bool {
+records_param_give :: proc(a:Assets,r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,node:ui.Tree_Node) -> bool {
     style:=0
     if p.field==.Style {
         args:=Tree_Args{assets=a}
@@ -1046,14 +1035,12 @@ records_override_field :: proc(r:^Records,override:int,field:ui.Node_Field,on:bo
 
 // A node and what it holds, copied: parents relative to the first, the
 // overrides of its instances relative to it too, with the rows of r.
-@(private)
 Block :: struct {
     nodes:[dynamic]ui.Tree_Node,
     overrides:[dynamic]ui.Tree_Override,
 }
 
 // The subtree of a row of a scope, with the overrides of its instances.
-@(private)
 records_block :: proc(r:^Records,row:int) -> (block:Block) {
     list:=&r.nodes
     block.nodes=make([dynamic]ui.Tree_Node,context.temp_allocator)
@@ -1074,7 +1061,6 @@ records_block :: proc(r:^Records,row:int) -> (block:Block) {
 }
 
 // Puts a block at row at of a scope inside parent, with its overrides.
-@(private)
 records_block_put :: proc(r:^Records,block:Block,at,parent:int) -> bool {
     if !records_put(r,at,parent,block.nodes[:]) {return false}
     for o in block.overrides {
@@ -1086,7 +1072,6 @@ records_block_put :: proc(r:^Records,block:Block,at,parent:int) -> bool {
 }
 
 // Whether parent (-1: the root) may take one more node.
-@(private)
 records_takes :: proc(nodes:[]ui.Tree_Node,parent:int) -> bool {
     if parent<0 || nodes[parent].kind==.Component {return true}
     if !ui.node_kind_holds(nodes[parent].kind) {return false}
@@ -1157,7 +1142,6 @@ records_widget_data :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Al
 }
 
 // A node of the tree and what it holds as records of their own.
-@(private)
 records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Allocator,renew:bool) -> bool {
     style:=[1]ui.Node_Style{r.styles[0]}
     if !records_load(out,{styles=style[:]},allocator) {return false}
@@ -1177,7 +1161,6 @@ records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Alloca
 // style, an animation by its name, a font and a widget by their assets are
 // those dst has when it has them, an own look one just like it; images and
 // sets of animations are copied for each node, as nodes edit them in place.
-@(private)
 Merge :: struct {
     dst,src:^Records,
     styles,anims,fonts,components:[]int,
@@ -1187,7 +1170,6 @@ Merge :: struct {
     failed:bool, // a table of dst is full
 }
 
-@(private)
 merge_begin :: proc(dst,src:^Records,renew:bool) -> Merge {
     return {dst=dst,src=src,renew=renew,styles=make([]int,len(src.styles),context.temp_allocator),anims=make([]int,len(src.anims),context.temp_allocator),
         fonts=make([]int,len(src.fonts),context.temp_allocator),components=make([]int,len(src.components),context.temp_allocator)}
@@ -1196,7 +1178,6 @@ merge_begin :: proc(dst,src:^Records,renew:bool) -> Merge {
 // Puts copies of nodes of src (a subtree: parents relative to it, the first
 // a root) and the overrides of their instances (relative to it too) at row
 // at of the tree of dst inside parent. Returns at; -1 when dst is full.
-@(private)
 merge_put :: proc(m:^Merge,nodes:[]ui.Tree_Node,overrides:[]ui.Tree_Override,at,parent:int) -> int {
     copied:=make([]ui.Tree_Node,len(nodes),context.temp_allocator)
     for n,i in nodes {
@@ -1213,7 +1194,6 @@ merge_put :: proc(m:^Merge,nodes:[]ui.Tree_Node,overrides:[]ui.Tree_Override,at,
     return at
 }
 
-@(private)
 merge_node :: proc(m:^Merge,n:^ui.Tree_Node) {
     n.text=merge_text(m,n.text)
     merge_translations(m,n)
@@ -1235,7 +1215,6 @@ merge_node :: proc(m:^Merge,n:^ui.Tree_Node) {
 
 // The values of an override, those of the fields it sets: the rows of the
 // others name nothing.
-@(private)
 merge_override :: proc(m:^Merge,o:^ui.Tree_Override) {
     v:=&o.values
     if .Text in o.fields {
@@ -1249,11 +1228,9 @@ merge_override :: proc(m:^Merge,o:^ui.Tree_Override) {
     v.component=0
 }
 
-@(private)
 merge_text :: proc(m:^Merge,s:ui.Tree_String) -> ui.Tree_String {return ui.tree_string_add(&m.dst.text,records_text(m.src,s))}
 
 // The translations of a localized node go with it, under an id of its own when renew.
-@(private)
 merge_translations :: proc(m:^Merge,n:^ui.Tree_Node) {
     if n.text_id==0 {return}
     old:=n.text_id
@@ -1269,7 +1246,6 @@ merge_translations :: proc(m:^Merge,n:^ui.Tree_Node) {
     }
 }
 
-@(private)
 merge_font :: proc(m:^Merge,font:u8) -> u8 {
     if int(font)<ui.FONT_TREE {return font}
     row:=int(font)-ui.FONT_TREE
@@ -1288,7 +1264,6 @@ merge_font :: proc(m:^Merge,font:u8) -> u8 {
     return u8(at)
 }
 
-@(private)
 merge_style :: proc(m:^Merge,row:int) -> u16 {
     src,dst:=m.src,m.dst
     if row<0 || row>=len(src.styles) {return 0}
@@ -1320,7 +1295,6 @@ merge_style :: proc(m:^Merge,row:int) -> u16 {
 }
 
 // Whether two styles have the same rules.
-@(private)
 variants_same :: proc(a,b:[]ui.Tree_Style_Variant) -> bool {
     if len(a)!=len(b) {return false}
     for i in 0..<len(a) {
@@ -1331,7 +1305,6 @@ variants_same :: proc(a,b:[]ui.Tree_Style_Variant) -> bool {
     return true
 }
 
-@(private)
 merge_image :: proc(m:^Merge,image:u16) -> u16 {
     if image==0 || int(image)>len(m.src.images) {return 0}
     if len(m.dst.images)>=int(max(u16)) {m.failed=true;return 0}
@@ -1339,7 +1312,6 @@ merge_image :: proc(m:^Merge,image:u16) -> u16 {
     return u16(len(m.dst.images))
 }
 
-@(private)
 merge_set :: proc(m:^Merge,anims:u16) -> u16 {
     if anims==0 || int(anims)>len(m.src.anim_sets) {return 0}
     if len(m.dst.anim_sets)>=int(max(u16)) {m.failed=true;return 0}
@@ -1349,7 +1321,6 @@ merge_set :: proc(m:^Merge,anims:u16) -> u16 {
     return u16(len(m.dst.anim_sets))
 }
 
-@(private)
 merge_anim :: proc(m:^Merge,played:ui.Anim) -> ui.Anim {
     src,dst:=m.src,m.dst
     row:=int(played)-1
@@ -1389,7 +1360,6 @@ merge_anim :: proc(m:^Merge,played:ui.Anim) -> ui.Anim {
     return ui.Anim(to+1)
 }
 
-@(private)
 merge_component :: proc(m:^Merge,component:u16) -> u16 {
     src,dst:=m.src,m.dst
     row:=int(component)-1
@@ -1401,7 +1371,6 @@ merge_component :: proc(m:^Merge,component:u16) -> u16 {
     return u16(m.components[row])
 }
 
-@(private)
 merge_grid :: proc(m:^Merge,tracks:u16) -> u16 {
     if tracks==0 || int(tracks)>len(m.src.grid_tracks) {return 0}
     grid:=m.src.grid_tracks[tracks-1]
