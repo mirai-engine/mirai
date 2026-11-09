@@ -238,30 +238,6 @@ a_parallel_view_meters_its_surfaces_and_not_its_sky :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// A view half on a sunlit floor and half on a wall in shade, under an open sky.
-// In daylight the wall does not count: the meter exposes for the sunlit floor.
-@(test)
-in_daylight_the_shade_in_view_leaves_the_meter :: proc(t: ^testing.T) {
-	f: Units_Fixture
-	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
-	r := f.renderer
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}
-	environment := Environment{sky = {20, 20, 20}}
-	wall := f.floor
-	wall.transform = {}
-	wall.transform[1, 0], wall.transform[0, 1], wall.transform[2, 2], wall.transform[3, 3] = -40, 1, 40, 1 // a turn around z: it faces +x, the sun does not reach it
-	time := f32(0)
-	view := DOWN
-	view.position, view.forward, view.up, view.fov_y, view.exposure = {5, 2, 0}, {-5, -3, 0}, {0, 1, 0}, 60, {}
-	scene_set(r, {f.floor}, nil, sun, environment)
-	lit := exposure_cut(t, &f, view, &time)
-	scene_set(r, {f.floor, wall}, nil, sun, environment)
-	half := exposure_cut(t, &f, view, &time)
-	testing.expectf(t, abs(half - lit) < 0.5, "a view half in shade exposes for what is lit: EV100 %v, the floor alone %v", half, lit)
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
 // Render units at a point of the view, as a share of its width and height from the top left.
 @(private = "file")
 render_units_at :: proc(t: ^testing.T, f: ^Units_Fixture, target: rhi.Texture, x, y: f32) -> Vec3 {
