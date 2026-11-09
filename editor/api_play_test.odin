@@ -560,20 +560,20 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"ticks":300}`)
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Step_Result)
-    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran": 4`),text)
+    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran":4`),text)
     testing.expect_value(t,place.position.x,5)
     // The limit of the step, and the conditions of the step stop it too.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"ticks":2}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran": 2`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran":2`),text)
     place.position={1,0,0}
     points:=running.score.points+2
     error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"ticks":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met": true`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met":true`),text)
     // Behind the wall at x 6: it jumps, sidesteps and stops getting closer, its ticks left over.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[9,0,0],"move":"move"}}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran": 1800`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran":1800`),text)
     testing.expect(t,place.position.x==6 && place.position.y<0,"it reached the wall and jumped")
     refused:=[?]struct{params,says:string}{
         {`{"drive":{}}`,"name where it goes"},

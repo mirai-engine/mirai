@@ -60,6 +60,10 @@ Api_Play_Verify :: struct {
 
 // What play.history writes: Api_Play_History_Info and its trace.
 Api_Play_History_Result :: struct {
+    info:Api_Play_History_Info `mirai:"inline"`,
+    trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
+}
+Api_Play_History_Info :: struct {
     playing:bool `mirai:"label=A game of the caller plays; false with stopped its last Play, and without both the rest is empty"`,
     on:bool `mirai:"label=The run keeps its past"`,
     stopped:bool `mirai:"label=It is the last Play of the user, kept after it stopped until the next Play: play.seek opens it again, paused"`,
@@ -74,22 +78,6 @@ Api_Play_History_Result :: struct {
     reason:[160]u8 `mirai:"text,label=Why it keeps none, when it does not"`,
     next:u64 `mirai:"label=With a trace that filled its rows before to: the from that goes on; 0 when it reached to"`,
     verify:Api_Play_Verify `mirai:"label=With verify: where playing the past again first differs"`,
-    trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
-}
-@(private)
-Api_Play_History_Info :: struct {
-    playing:bool,
-    on:bool,
-    stopped:bool,
-    tick:u64,
-    oldest,newest:u64,
-    oldest_seconds,newest_seconds:f64,
-    frames,keyframes,capacity:int,
-    interval:u64,
-    megabytes:f32,
-    reason:[160]u8 `mirai:"text"`,
-    next:u64,
-    verify:Api_Play_Verify,
 }
 
 @(private)

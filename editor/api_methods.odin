@@ -195,8 +195,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    ran:int `mirai:"label=play.step: the ticks it ran"`,
-    met:bool `mirai:"label=play.step with until: whether they held when it stopped"`,
     scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
 }
 
@@ -219,18 +217,7 @@ Api_Pause_Params :: struct {
 }
 
 Api_Play_Step_Params :: struct {
-    ticks:int `mirai:"optional,min=1,max=3600,label=Fixed ticks it runs"`,
-    seconds:f32 `mirai:"optional,label=Game time it runs in place of ticks: the nearest whole ticks and at least 1"`,
-    keys:core.Keys `mirai:"optional,label=Keys held in every tick; they go to the local seat with the focus; a key named by consecutive calls stays held with no release between them and one a call omits is released"`,
-    mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick; held across calls as keys are"`,
-    tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
-    tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside the first tick"`,
-    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of capture over the density): the UI of the game takes it and its clicks; it stays for the next steps"`,
-    mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks"`,
-    wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
-    text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
-    press:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The button of the screen on top to press by its name: the pointer goes over it and Left is held as a click takes; ticks or seconds run after the click; no other input with it"`,
-    gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick; gamepad i is that of the local seat of slot i when the game has several"`,
+    using input:Api_Play_Segment `mirai:"inline"`,
     focus:int `mirai:"optional,min=-1,max=3,label=The local seat (by slot) that gets the keys and the mouse from this step on; -1 keeps it"`,
     until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; ticks (or those of segments) is the most it runs and none run when they hold already"`,
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
@@ -334,7 +321,7 @@ Api_Editor_Action :: struct {
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
-    play_step_default:=Api_Play_Step_Params{ticks=1,focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
+    play_step_default:=Api_Play_Step_Params{input={ticks=1},focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
     build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
