@@ -16,7 +16,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 9
+IMPORTER_VERSION :: 10
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -186,7 +186,6 @@ Imported_Model :: struct {
     format:string,      // the name of the Format it was read with
     name:string,        // of its prefab and its animations (Reader.stem)
     version:u32,        // import_version of that format: what its assets record
-    facing:[3]f32,      // where its rig stood facing when it was turned to -Z; zero: as read
     meshes:[]Imported_Mesh,
     materials:[]Imported_Material,
     images:[]Imported_Image,

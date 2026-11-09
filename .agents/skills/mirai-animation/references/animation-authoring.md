@@ -45,13 +45,16 @@ libraries.
 
 ## Skeleton body
 
-- `skeleton.body.detect` stores in the `.skeleton` the parts and the axes of the body
+- `skeleton.body.detect` stores in the `.skeleton` the parts and the up of the body
   ([detection](../../mirai-std/references/anim-body.md#body-map-bodyodin)) and returns the
   confidence of each part, those that are missing and a `fix`. Import already detects it. Without
   one stored, `animation.clip.edit`, `animation.analyze`, `animation.character.setup` and
   `ragdoll.setup` detect it in memory for the call and leave the `.skeleton` as it is.
 - `skeleton.body.set` sets parts by hand: they stay `manual` and survive detection and reimport.
-  A rig faces -Z: the import turns one whose body faces another axis, so the axes are not set. An unknown bone suggests those with a similar name.
+  A rig faces -Z and the `.skeleton` stores no forward: the import turns a rig whose body faces
+  another axis, and `front` of `asset.import` states it for one the import does not turn
+  ([front](../../mirai-imports/references/imports.md#front)). An unknown bone suggests those with
+  a similar name.
 
 ## Clips: verbs and metrics
 

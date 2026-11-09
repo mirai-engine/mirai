@@ -245,7 +245,7 @@ frames_sweep :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transform
         feet_counted+=1
     }
     if feet_counted==0 {return {}}
-    if back==0 {back=-linalg.dot(axis,rig.body.forward)}
+    if back==0 {back=-linalg.dot(axis,math.FORWARD)}
     speed:=path/f32(feet_counted)/frames_duration(f)
     return -axis*speed if back>0 else axis*speed
 }
@@ -451,7 +451,7 @@ clip_metrics :: proc "contextless" (rig:Body_Rig,f:Frames,request:Metric_Request
                 axis,valid:=anim_unit(a-h)
                 d:=k-h
                 if valid {d-=axis*linalg.dot(d,axis)}
-                facing:=math.quat_rotate(pose[foot].rotation*conj(rest[foot].rotation),rig.body.forward)
+                facing:=math.quat_rotate(pose[foot].rotation*conj(rest[foot].rotation),math.FORWARD)
                 if valid {facing-=axis*linalg.dot(facing,axis)}
                 if valid && linalg.length(d)>1e-3*ground.height && linalg.dot(d,facing)<0 {
                     violate(&metrics.limits[.Knee_L if side==0 else .Knee_R],cmath.PI-anim_angle(h-k,a-k))

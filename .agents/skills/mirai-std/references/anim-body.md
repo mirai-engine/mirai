@@ -9,9 +9,10 @@ API; the format that stores the map is the
 
 ## Body map (`body.odin`)
 
-- `Body_Map` gives the bone of each `Body_Part` (-1 without a bone), its confidence, the body axes
-  at rest and what a person set (`manual`), which detection keeps. The spine is not stored:
-  `body_spine` gives it between pelvis and neck.
+- `Body_Map` gives the bone of each `Body_Part` (-1 without a bone), its confidence, the up of the
+  body at rest and what a person set (`manual`), which detection keeps. It stores no forward: a
+  body faces `math.FORWARD`, and its left and right come from that and its up. The spine is not
+  stored: `body_spine` gives it between pelvis and neck.
 - `body_detect` reads the names by words with the side attached or loose (Unreal `thigh_l`, Mixamo
   `LeftUpLeg`, Biped `Bip01 L Calf`, Rigify `upper_arm.L`, capture `lfemur`) and discards twist, IK,
   fingers, ends and helpers (`BODY_EXCLUDED`).

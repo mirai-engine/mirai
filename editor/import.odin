@@ -142,8 +142,9 @@ import_place :: proc(s:^Session) -> string {
 // image, when given, is the use of an image that replaces its settings the same
 // way; without it, its settings say, else its name (sources.image_use).
 // skeleton, when not zero, is the skeleton of the project the clips of a model
-// play on (Import_Settings.skeleton), kept the same way.
-import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={}) -> bool {
+// play on (Import_Settings.skeleton), kept the same way; so is front, when
+// given, where a model stands facing (Import_Settings.front).
+import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -171,7 +172,9 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     switch kind {
     case .None:
     case .Model:
-        if _,given:=rig.?;given || skeleton!={} {
+        _,rigged:=rig.?
+        _,faced:=front.?
+        if rigged || faced || skeleton!={} {
             stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
@@ -180,6 +183,7 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
             options.settings,options.ignore_stored=stored,true
             if wanted,rigged:=rig.?;rigged {options.rig,options.rig_crotch,options.rig_neck=wanted.rig,wanted.rig_crotch,wanted.rig_neck}
             if skeleton!={} {options.skeleton=skeleton}
+            if stated,given:=front.?;given {options.front=stated}
         }
     case .Image:
         options.image=sources.image_use(source)
@@ -213,6 +217,11 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     if skeleton!={} && kind!=.Model {
         import_job_free(job)
         import_say(s,"%s is not a model: only the clips of a model go on a skeleton",name)
+        return false
+    }
+    if _,given:=front.?;given && kind!=.Model {
+        import_job_free(job)
+        import_say(s,"%s is not a model: only a model has a front",name)
         return false
     }
     if _,given:=image.?;given && kind!=.Image {

@@ -212,7 +212,7 @@ plan :: proc(bones:[]aa.Skeleton_Bone,body_map:lib.Body_Map,rig:mm.Transform,tot
     parents:=make([]i32,n,allocator);rest:=make([]mm.Transform,n,allocator);world:=make([]mm.Transform,n,allocator)
     for &bone,i in bones {parents[i]=bone.parent;rest[i]={bone.translation,bone.rotation,bone.scale}}
     if n==0 || !lib.pose_world(parents,rest,world,rig) {fail={"skeleton","Invalid_Skeleton","a rest pose that composes","no pose","The rest pose of the skeleton does not compose","Check its bones with animation.asset.inspect section=bones"};return}
-    up:=linalg.normalize(mm.quat_rotate(rig.rotation,body_map.up));forward:=linalg.normalize(mm.quat_rotate(rig.rotation,body_map.forward))
+    up:=linalg.normalize(mm.quat_rotate(rig.rotation,body_map.up));forward:=linalg.normalize(mm.quat_rotate(rig.rotation,mm.FORWARD))
     left:=linalg.cross(up,forward)
     low,high:=max(f32),-max(f32)
     for t in world {h:=linalg.dot(t.position,up);low,high=min(low,h),max(high,h)}

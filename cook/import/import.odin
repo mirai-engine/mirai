@@ -1,5 +1,6 @@
 package importer
 
+import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
@@ -13,40 +14,14 @@ import "mirai:std/base"
 // memory that is gone when the procedure returns, so the size of a source
 // never reaches the temp allocator of the caller.
 //
-// A rig faces -Z at run time: when a skeleton's body stands facing another
-// axis (+Z, or a side), the source is read again with its axes turned.
+// Every model faces -Z: what the settings or the body of a rig say faces
+// elsewhere is turned once read (model_front).
 import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allocator:=context.allocator) -> (model:Imported_Model,error:Error) {
-    facing:[3]f32
-    model,facing,error=import_read(path,formats,options,{},allocator)
-    if error.code==.None && facing!={} {
-        model_destroy(&model)
-        model,_,error=import_read(path,formats,options,facing,allocator)
-    }
-    return
-}
-
-// How sure the import must be of the axes of a body to turn it to -Z.
-@(private="file")
-BODY_FACING_CONFIDENCE :: f32(.5)
-
-// Where the first skeleton with a body stands facing, when an axis other than -Z.
-@(private="file")
-body_facing :: proc(skeletons:[]Imported_Skeleton) -> [3]f32 {
-    for skeleton in skeletons {
-        body,found:=asset.skeleton_body_detect(skeleton.bones,anim.body_map_empty())
-        if !found || body.axes_confidence<BODY_FACING_CONFIDENCE {continue}
-        if body_turnable(body.forward) {return body.forward}
-    }
-    return {}
-}
-
-@(private="file")
-import_read :: proc(path:string,formats:[]Format,options:Import_Options,turn:[3]f32,allocator:=context.allocator) -> (model:Imported_Model,facing:[3]f32,error:Error) {
     caller:=context.temp_allocator
     settings,stored:=options.settings,false
     if !options.ignore_stored {
         kept,found,settings_error:=settings_load(path)
-        if settings_error.code!=.None {return {},{},settings_error}
+        if settings_error.code!=.None {return {},settings_error}
         if found {settings,stored=kept,true}
     }
     arena:=new(mem.Dynamic_Arena,allocator)
@@ -56,7 +31,7 @@ import_read :: proc(path:string,formats:[]Format,options:Import_Options,turn:[3]
     defer mem.dynamic_arena_destroy(&scratch)
     context.temp_allocator=base.dynamic_arena_allocator(&scratch)
 
-    r:=Reader{out=base.dynamic_arena_allocator(arena),options=options,facing=turn}
+    r:=Reader{out=base.dynamic_arena_allocator(arena),options=options}
     r.options.settings=settings
     mem.dynamic_arena_init(&r.polygon_arena,allocator,allocator,block_size=64<<10,out_band_size=64<<10)
     defer mem.dynamic_arena_destroy(&r.polygon_arena)
@@ -71,24 +46,72 @@ import_read :: proc(path:string,formats:[]Format,options:Import_Options,turn:[3]
     r.file_name=filepath.base(r.path)
     r.stem=filepath.stem(r.path)
     ok:=read_model(&r,formats,&model)
-    if ok && turn=={} {facing=body_facing(r.skeletons[:])}
+    if ok {model_front(&r)}
     if ok {ok=model_finish(&r,&model)}
     if !ok {
         mem.dynamic_arena_destroy(arena)
         free(arena,allocator)
-        return {},{},error_make(r.code if r.code!=.None else .Malformed,"%s",r.message,allocator=caller)
+        return {},error_make(r.code if r.code!=.None else .Malformed,"%s",r.message,allocator=caller)
     }
     model.arena=arena
-    model.settings,model.stored,model.facing=settings,stored,turn
+    model.settings,model.stored=settings,stored
     model.allocator=allocator
     if settings.rig!=.Source {
         zone(options,"import.rig")
         if rig_error:=model_rig(&model,settings,caller);rig_error.code!=.None {
             model_destroy(&model)
-            return {},{},rig_error
+            return {},rig_error
         }
     }
-    return model,facing,{}
+    return model,{}
+}
+
+// How sure the import must be of how a body stands to turn its file by it.
+@(private="file")
+BODY_FACING_CONFIDENCE :: f32(.5)
+
+// Turns the model so that it faces -Z. Settings that state its front turn it
+// from there. Without them, a file that is a rig, all it draws being skinned,
+// is turned from where the body of its first skeleton with one is found
+// facing; a level that holds a character among its meshes is not turned with
+// it. A body left facing elsewhere is warned of, since everything reads it
+// as facing -Z.
+@(private="file")
+model_front :: proc(r:^Reader) {
+    zone(r.options,"import.front")
+    if stated:=r.options.settings.front;stated!=.Auto {
+        space_turn(r,stated)
+        return
+    }
+    Stand :: struct {facing:[3]f32,found:bool}
+    stands:=make([]Stand,len(r.skeletons),context.temp_allocator)
+    for skeleton,i in r.skeletons {
+        body,found:=asset.skeleton_body_detect(skeleton.bones,anim.body_map_empty(),facing=&stands[i].facing)
+        stands[i].found=found && body.axes_confidence>=BODY_FACING_CONFIDENCE
+    }
+    rig:=true
+    for mesh in r.meshes {rig&&=mesh.skeleton>=0}
+    // The turn is that of the first body found, which a file that is not a rig does not have.
+    by:=-1
+    for stand,i in stands {
+        if rig && stand.found {by=i;break}
+    }
+    front:=Front.Negative_Z
+    if by>=0 {
+        if faced,axis:=front_of(stands[by].facing);axis {front=faced}
+    }
+    space_turn(r,front)
+    for stand,i in stands {
+        faced,axis:=front_of(stand.facing)
+        if !stand.found || axis && faced==front {continue}
+        fix:string
+        switch {
+        case !axis:  fix="it stands between two axes and the import turns by quarter turns: turn it in the source"
+        case by<0:   fix=fmt.tprintf("the file also draws meshes outside a rig, so it was not turned: set front to %v in the import settings of the source to turn all of it, or export the rig on its own",faced)
+        case:        fix=fmt.tprintf("the file turns by skeleton %s, which faces another way: export them facing the same way",r.skeletons[by].name)
+        }
+        warn(r,"skeleton %s: its body faces %v as read, and it is read as facing -Z; %s",r.skeletons[i].name,stand.facing,fix)
+    }
 }
 
 @(private="file")
@@ -109,7 +132,6 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
     model.version=import_version(format.version)
     r.data=format.data
     space:=format.space
-    space.axes=space_faced(space.axes,r.facing)
     basis,valid:=space_basis(space)
     if !valid {return fail(r,.Malformed,"the format %s declares a space without positive units and three distinct axes",format.name)}
     r.space,r.basis=space,basis
@@ -118,7 +140,7 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
         if !format.read(r,bytes) {return false}
     }
     zone(r.options,"import.space")
-    space_bake(r)
+    space_bake(r,r.basis)
     return true
 }
 
