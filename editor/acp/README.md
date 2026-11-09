@@ -18,6 +18,17 @@ Codex ACP delivers names through `session_info_update.title`; they are history m
 
 `prompt` accepts several blocks: editor instructions and the user message in `Text` blocks, base64 images when they are announced, embedded resources when they are announced, and resource links. `Update` delivers the complete agent events, messages and tools included. `Prompt_Done` leaves the client in `Ready`, keeping the process and the session ID. The consumer decides when to shut it down for inactivity and saves the ID in the project history.
 
+`initialize` announces `session.compaction`, so the adapters report compaction through `Update`.
+`steer` adds blocks to the turn in flight with `_session/steering`, and only if `initialize`
+announced `_meta.steering.supported` in `steering`. It leaves the phase and the pending prompt
+alone. Each accepted steer gets exactly one `Steer_Done`, whose `steer_id` is the `Client.steer_id`
+read right after that `steer`, whose `text` is the outcome and that never ends the turn nor emits
+`Error`. `promptRequired` means no turn took the input and it was not consumed; `failed` covers an
+RPC error, an unknown answer and an agent that exits before answering.
+
+`compact_command` says whether the latest `available_commands_update` of the session listed
+`compact`; asking for a session clears it. `Update` still delivers that message.
+
 ## Permissions and errors
 
 `Permission` delivers the official options and the request ID as JSON. The consumer shows the options to the user, keeps that ID and answers with `permission`; the package never picks one by itself. `cancel` sends the ACP notification and waits for the answer of the generation to end the turn; as the protocol asks, the consumer answers what is still pending with `permission(..., cancelled=true)`.

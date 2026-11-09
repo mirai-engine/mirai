@@ -23,17 +23,28 @@ Ai_Add_Agent_Params :: struct {
     arguments:[1024]u8 `mirai:"optional,text,label=Separated by spaces; passed without a shell"`,
 }
 Ai_Configure_Params :: struct {
-    provider:[32]u8 `mirai:"text,label=Id of a connection of ai.connections"`,
+    provider:[32]u8 `mirai:"optional,text,label=Id of a connection of ai.connections, for model and effort; only the fields of the subagents go without it"`,
     model:[128]u8 `mirai:"optional,text"`,
     effort:[32]u8 `mirai:"optional,text"`,
     instructions:[AI_MESSAGE_BYTES]u8 `mirai:"optional,text,label=What the editor tells the agents of the project; empty clears it"`,
+    subagent_mode:[8]u8 `mirai:"optional,text,label=What a subagent runs with: same (as the main chat); fixed (subagent_connection; subagent_model and subagent_effort) or pick (the agent chooses)"`,
+    subagent_connection:[32]u8 `mirai:"optional,text,label=Of fixed: the id of a connection of ai.connections"`,
+    subagent_model:[128]u8 `mirai:"optional,text,label=Of fixed; empty: the one of its connection"`,
+    subagent_effort:[32]u8 `mirai:"optional,text,label=Of fixed; empty: the one of its connection"`,
 }
 
 Ai_Connections_Result :: struct {
     runtime:[16]u8 `mirai:"text,label=The default one: automatic; bun; node; pnpm or bundled"`,
     instructions:[AI_MESSAGE_BYTES]u8 `mirai:"text,label=What the editor tells the agents of the project"`,
     connections:[AI_CONNECTION_CAPACITY]Ai_Connection_Result,
+    subagent:Ai_Subagent_Result `mirai:"label=What a subagent runs with unless agent.spawn says otherwise"`,
     operation:Ai_Connections_Operation `mirai:"label=The state of the installation or sign-in"`,
+}
+Ai_Subagent_Result :: struct {
+    mode:[8]u8 `mirai:"text,label=same; fixed or pick"`,
+    connection:[32]u8 `mirai:"text"`,
+    model:[128]u8 `mirai:"text"`,
+    effort:[32]u8 `mirai:"text"`,
 }
 Ai_Connection_Result :: struct {
     provider:[32]u8 `mirai:"text,label=Its id"`,
@@ -119,6 +130,13 @@ ai_connections_write :: proc(s:^Session,w:^serial.Writer) {
         serial.write_u8(w,'}')
     }
     serial.write_u8(w,']')
+    modes:=AI_SUBAGENT_MODES
+    api.write_key(w,"subagent");serial.write_u8(w,'{')
+    api.write_text(w,"mode",modes[m.subagent.mode],true)
+    api.write_text(w,"connection",base.text_get(m.subagent.connection[:]))
+    api.write_text(w,"model",base.text_get(m.subagent.model[:]))
+    api.write_text(w,"effort",base.text_get(m.subagent.effort[:]))
+    serial.write_u8(w,'}')
     api.write_key(w,"operation");serial.write_u8(w,'{')
     api.write_bool(w,"busy",m.connection_ui.busy,true)
     api.write_text(w,"status",base.text_get(m.connection_ui.status[:]))
@@ -201,8 +219,17 @@ ai_api_install :: proc(s:^Session,call:^api.Call) {
 ai_api_configure :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
     p:=api.call_params(call,Ai_Configure_Params)
+    subagent:=base.text_get(p.subagent_mode[:])!="" || base.text_get(p.subagent_connection[:])!="" || base.text_get(p.subagent_model[:])!="" || base.text_get(p.subagent_effort[:])!=""
+    if base.text_get(p.provider[:])=="" && subagent {
+        if message:=ai_subagent_configure(s,p);message!="" {api.call_fail(call,api.INVALID_PARAMS,message);return}
+        ai_connections_write(s,call.out)
+        return
+    }
     provider,ok:=ai_api_provider(s,call,base.text_get(p.provider[:]))
     if !ok {return}
+    if subagent {
+        if message:=ai_subagent_configure(s,p);message!="" {api.call_fail(call,api.INVALID_PARAMS,message);return}
+    }
     instructions:=false
     value,error:=json.parse_string(call.raw,allocator=call.allocator)
     if error==.None {
@@ -213,4 +240,33 @@ ai_api_configure :: proc(s:^Session,call:^api.Call) {
         if message:=ai_instructions_write(s,base.text_get(p.instructions[:]));message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     }
     ai_connections_write(s,call.out)
+}
+
+// Omitted fields are kept. Whether the connection is configured is checked
+// when a subagent starts: it may be connected by then.
+@(private)
+ai_subagent_configure :: proc(s:^Session,p:^Ai_Configure_Params) -> string {
+    m:=s.ai
+    next:=m.subagent
+    if name:=base.text_get(p.subagent_mode[:]);name!="" {
+        modes:=AI_SUBAGENT_MODES
+        found:=false
+        for value,mode in modes {if value==name {next.mode=mode;found=true}}
+        if !found {return "subagent_mode must be same, fixed or pick"}
+    }
+    if text:=base.text_get(p.subagent_connection[:]);text!="" {base.text_set(next.connection[:],text)}
+    if text:=base.text_get(p.subagent_model[:]);text!="" {base.text_set(next.model[:],text)}
+    if text:=base.text_get(p.subagent_effort[:]);text!="" {base.text_set(next.effort[:],text)}
+    if next.mode==.Fixed {
+        provider,known:=ai_provider_find(m,base.text_get(next.connection[:]))
+        if !known {return "fixed needs subagent_connection, the id of a connection that ai.connections lists"}
+        model:=base.text_get(next.model[:])
+        if m.connections[provider].agent==.Codex && model!="" && !ai_codex_model_supported(model) {return "Unsupported Codex model"}
+    }
+    effort:=base.text_get(next.effort[:])
+    if effort!="" && effort!="low" && effort!="medium" && effort!="high" {return "subagent_effort must be low, medium or high"}
+    previous:=m.subagent
+    m.subagent=next
+    if !ai_settings_save(s) {m.subagent=previous;return "The connection settings could not be saved"}
+    return ""
 }

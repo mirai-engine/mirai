@@ -45,6 +45,7 @@ CONTENT_NAMED_ROW_GAP :: f32(6) // from a name to the thumbnails of the next row
 CONTENT_GRID_BOTTOM :: f32(8)   // under a grid with names, a section or a shelf of Recent
 CONTENT_DENSE_BOTTOM :: f32(2)  // under a grid without names
 CONTENT_RECENT_BOTTOM :: f32(10) // under Recent in Cards
+CONTENT_REVIEW_BADGE :: f32(9)   // side of the mark of an asset that waits for review
 CONTENT_BAR :: f32(2)         // the line of the color of its type under a thumbnail
 CONTENT_RING_WIDTH :: f32(1.5) // the ring of the keyboard
 CONTENT_FRAME :: ui.Color{34,37,45,255}      // under a thumbnail
@@ -1911,7 +1912,14 @@ content_item_tip :: proc(s:^Session,card:Content_Card,file:^asset.Registry_File)
         owner,_:=asset.registry_find(registry,file.owner)
         return fmt.tprintf("%s, in %s",asset_kind_label(s,file.kind),asset_name(owner.path))
     }
+    if agent:=ai_asset_mark(s,file.path);agent!=nil {return fmt.tprintf("%s · %s",asset_kind_label(s,file.kind),ai_chat_title(base.text_get(agent.title[:])))}
     return asset_kind_label(s,file.kind)
+}
+
+// The mark of an asset a unit changed and that waits for review, in the color of its agent.
+@(private)
+content_review_badge :: proc(ctx:^ui.Context,agent:^Ai_Task,float:ui.Float) {
+    if ui.box(ctx,{width=ui.fixed(CONTENT_REVIEW_BADGE),height=ui.fixed(CONTENT_REVIEW_BADGE),fill=ai_agent_color(agent),stroke=CONTENT_FRAME,stroke_width=1,radius=CONTENT_REVIEW_BADGE*0.5,float=float}) {}
 }
 
 // A cell of the grid or a row of the list, with its star, the arrow of a
@@ -1934,6 +1942,7 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
     favorite:=card.clip==0 && content_favorite(&c.marks,file.id)
     starred:=card.clip==0 && (favorite || it.hot || ctx.hot==star)
     unsaved:=card.clip==0 && asset_unsaved(s,file.id)
+    reviewed:=ai_asset_mark(s,file.path) if card.clip==0 else nil
     shown:=content_shows_names(c.view)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,selected,it.hot,content_keyboard(ctx,it))) {
@@ -1942,6 +1951,7 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
             if unsaved {
                 if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5}) {}
             }
+            if reviewed!=nil {content_review_badge(ctx,reviewed,{})}
             if card.holds {content_expander(s,card,key,{})}
             if starred {content_star(s,star,file.id,favorite)} else {ui.spacer(ctx,18,18)}
         }
@@ -1957,8 +1967,9 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
         if unsaved && whole {
             if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-inset-2,inset+2}}}) {}
         }
+        if reviewed!=nil && whole {content_review_badge(ctx,reviewed,{to=.Parent,anchor=.Top_Left,pivot=.Bottom_Left,offset={inset,cell-inset-CONTENT_BAR}})}
     }
-    if it.hot && shown {
+    if it.hot && (shown || reviewed!=nil) {
         tip:=content_item_tip(s,card,file)
         if content_name_cut(ctx,card.name,cell,names) {tip=fmt.tprintf("%s: %s",card.name,tip)}
         ui.tooltip(ctx,tip)

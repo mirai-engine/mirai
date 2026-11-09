@@ -11,7 +11,7 @@ Ai_Task_Params :: struct {
     agent:[32]u8 `mirai:"optional,text,label=Id of a connection of ai.connections; empty uses the selected one"`,
     model:[128]u8 `mirai:"optional,text"`,
     effort:[32]u8 `mirai:"optional,text"`,
-    conversation:int `mirai:"optional,min=0,label=Continue a saved conversation"`,
+    conversation:int `mirai:"optional,min=0,label=The id of a subagent to send it to; zero sends it to the main chat"`,
 }
 Ai_Status_Params :: struct {
     id:int `mirai:"optional,min=0,label=Only this task with its transcript"`,
@@ -19,6 +19,9 @@ Ai_Status_Params :: struct {
 }
 Ai_Id_Params :: struct {
     id:int `mirai:"min=1"`,
+}
+Ai_Compact_Params :: struct {
+    id:int `mirai:"optional,min=0,label=The chat; zero compacts the main chat"`,
 }
 Ai_History_Params :: struct {
     id:int `mirai:"optional,min=0,label=Conversation whose messages to read (up to 128); zero lists 64 conversations of the project"`,
@@ -46,7 +49,10 @@ Ai_Task_Files :: struct {
 
 Ai_Task_Result :: struct {
     id:int `mirai:"label=The conversation; ai.task continues it with conversation"`,
-    state:[16]u8 `mirai:"text,label=queued; running; done; failed or cancelled"`,
+    kind:[8]u8 `mirai:"text,label=main; agent (a subagent of the main chat) or archived"`,
+    parent:int `mirai:"label=Of a subagent: its main chat"`,
+    held:int `mirai:"label=Messages written to it that have not reached its agent"`,
+    state:[16]u8 `mirai:"text,label=queued; running; done; failed; cancelled or interrupted"`,
     prompt:[96]u8 `mirai:"text,label=The start of the message"`,
     agent:[32]u8 `mirai:"text,label=The connection that runs it; until it starts the one asked for"`,
     model:[128]u8 `mirai:"text"`,
@@ -80,7 +86,7 @@ Ai_Task_Result :: struct {
     transcript:[1]Ai_Task_Line `mirai:"list,optional,label=Of a task asked by id: its lines from first"`,
 }
 Ai_Task_Line :: struct {
-    kind:[8]u8 `mirai:"text,label=prompt (what it was asked); output (printed by the agent) or note (said by the editor)"`,
+    kind:[8]u8 `mirai:"text,label=prompt (what it was asked); output (printed by the agent); note (said by the editor); report (a subagent with this id ended a turn) or divider (a new context of the chat began)"`,
     text:[AI_LINE_BYTES]u8 `mirai:"text"`,
 }
 
@@ -108,28 +114,35 @@ Ai_Status_Chat :: struct {
     rect:[4]f32 `mirai:"label=Of the chat in window points; zero when closed"`,
     region:[4]f32 `mirai:"label=In window points; zero without one"`,
     selected:int `mirai:"label=The task the chat shows"`,
+    main:int `mirai:"label=The task of the main chat; 0 until its first message"`,
 }
 
 Ai_Permission_Result :: struct {ok:bool}
 
+AI_LINE_NAMES :: [Ai_Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note",.Report="report",.Divider="divider"}
+
 @(private) AI_HISTORY_RESULT :: `{"type":"array","description":"Without id: the conversations of the project; the last updated first. With id: its messages; the oldest first.","items":{"anyOf":[` +
     `{"type":"object","properties":{"id":{"type":"integer","description":"What id takes"},"title":{"type":"string"},"document":{"type":"string","description":"The document it worked on"},"provider":{"type":"string","description":"The id of its connection"},"model":{"type":"string"},"effort":{"type":"string"},"updated_at":{"type":"integer","description":"Unix time in milliseconds"}},"required":["id","title","document","provider","model","effort","updated_at"],"additionalProperties":false},` +
-    `{"type":"object","properties":{"sequence":{"type":"integer","description":"What before takes"},"kind":{"enum":["prompt","output","note"]},"text":{"type":"string"},"role":{"type":"string"},"event_type":{"type":"string"},"tool":{"type":"string"},"context":{"type":"string","description":"JSON as text"}},"required":["sequence","kind","text","role","event_type","tool","context"],"additionalProperties":false}` +
+    `{"type":"object","properties":{"sequence":{"type":"integer","description":"What before takes"},"kind":{"enum":["prompt","output","note","report","divider"]},"text":{"type":"string"},"role":{"type":"string"},"event_type":{"type":"string"},"tool":{"type":"string"},"context":{"type":"string","description":"JSON as text"}},"required":["sequence","kind","text","role","event_type","tool","context"],"additionalProperties":false}` +
     `]}}`
 
 @(private) AI_HISTORY_SEARCH_RESULT :: `{"type":"array","description":"The matching lines of the saved conversations, the best first.","items":{"type":"object","properties":{` +
     `"conversation":{"type":"integer","description":"What ai.history takes as id"},"title":{"type":"string"},` +
     `"sequence":{"type":"integer","description":"ai.history with before set to sequence+1 returns the messages up to it"},` +
-    `"kind":{"enum":["prompt","output","note"],"description":"A note is said by the editor, as a step of a turn: Tool: method target"},` +
+    `"kind":{"enum":["prompt","output","note","report","divider"],"description":"A note is said by the editor, as a step of a turn: Tool: method target"},` +
     `"snippet":{"type":"string","description":"Words around the matches, which go between **"},"updated_at":{"type":"integer","description":"Of the conversation, Unix time in milliseconds"}},` +
     `"required":["conversation","title","sequence","kind","snippet","updated_at"],"additionalProperties":false}}`
 
 @(private)
 ai_api_register :: proc(s:^Session,st:^Api_State) {
     ai_connections_api_register(s,st)
+    ai_subagents_api_register(s,st)
+    ai_memory_api_register(s,st)
+    ai_annotations_api_register(s,st)
+    ai_provenance_api_register(s,st)
     api_viewport_register(s,st)
     api_ai_finish_register(s,st)
-    api_register(s,st,{name="ai.task",summary="Sends a message to an agent over ACP with the skills of the project and Mirai MCP, starting the agent when needed. Up to three conversations run at once; poll ai.status until it ends.",params=Ai_Task_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_task})
+    api_register(s,st,{name="ai.task",summary="Sends a message to the main chat of the project, or to a subagent, over ACP with the skills of the project and Mirai MCP, starting the agent when needed; poll ai.status until it ends.",params=Ai_Task_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_task})
     api_register(s,st,{name="ai.status",summary="The tasks of the agents of this editor, with the permissions they wait for and the state of the chat.",params=Ai_Status_Params,result=Ai_Status_Result,writes_result=true,flags={.Read_Only},run=ai_method_status})
     api_register(s,st,{name="ai.cancel",summary="Stops the agent of a task, or takes a queued one out of the queue.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Idempotent},run=ai_method_cancel})
     api_register(s,st,{name="ai.revert",summary="Reverts the scene fields and project files a task changed through the API, keeping what users or agents wrote afterwards. Files the agent wrote with its own tools stay.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Destructive},run=ai_method_revert})
@@ -139,6 +152,7 @@ ai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="ai.history",summary="The saved conversations of the project, or a page of the saved messages of one.",params=Ai_History_Params,result_schema=AI_HISTORY_RESULT,flags={.Read_Only},run=ai_method_history})
     api_register(s,st,{name="ai.history.search",summary="Full-text search of the saved conversations of the project: what was asked, answered and done in earlier chats, by words, an entity id or an asset path, ranked by BM25. Each hit is short; ai.history with its conversation and before pages the messages around it.",params=Ai_History_Search_Params,result_schema=AI_HISTORY_SEARCH_RESULT,flags={.Read_Only},run=ai_method_history_search})
     api_register(s,st,{name="ai.turn_end",summary="Ends the turn of the agent outside the editor that calls (the client of mirai mcp, or mirai rpc --client NAME): its changes wait for the review of the user, and its next call opens the turn again until they are resolved. The turns of the agents of the editor and a turn already ended stay as they are. The Stop hook of Claude Code in a project calls it.",result=Ai_Turn_End_Result,flags={.Idempotent},run=ai_method_turn_end})
+    api_register(s,st,{name="ai.compact",summary="Summarizes the context of a chat that is not working, with the command of its agent or else with a new native session; the chat goes on.",params=Ai_Compact_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_compact})
     api_register(s,st,{name="ai.permission",summary="Answers a permission an agent waits for with one of its options, or cancels it.",params=Ai_Permission_Params,result=Ai_Permission_Result,run=ai_method_permission})
 }
 
@@ -171,10 +185,14 @@ ai_put_rect :: proc(w:^serial.Writer,name:string,rect:ui.Rect,first:=false) {
 @(private)
 ai_task_write :: proc(s:^Session,task:^Ai_Task,w:^serial.Writer,transcript:bool,from:int) {
     names:=AI_STATE_NAMES
-    kinds:=[Ai_Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note"}
+    kinds:=AI_LINE_NAMES
+    conversation_kinds:=[Ai_Conversation_Kind]string{.Main="main",.Agent="agent",.Archived="archived"}
     t:=&task.transcript
     serial.write_u8(w,'{')
     api.write_int(w,"id",i64(task.id),true)
+    api.write_text(w,"kind",conversation_kinds[task.conversation.kind])
+    api.write_int(w,"parent",i64(task.conversation.parent))
+    api.write_int(w,"held",i64(ai_task_held(task)))
     api.write_text(w,"state",names[task.state])
     api.write_text(w,"prompt",base.text_get(task.title[:]))
     api.write_text(w,"agent",base.text_get(task.agent[:]))
@@ -238,24 +256,18 @@ ai_method_task :: proc(s:^Session,call:^api.Call) {
     region:=ui.Rect{params.region[0],params.region[1],params.region[2],params.region[3]}
     prompt:=base.text_get(params.prompt[:])
     api_frames(s,1,HEADLESS_DT)
+    ai_initialize(s)
     if params.conversation!=0 && ai_task_find(m,params.conversation)==nil {
-        conversations:[64]Ai_Conversation
-        offset:=0
-        for {
-            count,message:=ai_store_list(&m.store,conversations[:],"",offset)
-            if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-            for &c in conversations[:count] {if c.id==u64(params.conversation) {ai_history_select(s,&c);break}}
-            if ai_task_find(m,params.conversation)!=nil {break}
-            if count<len(conversations) {api.call_fail(call,api.INVALID_PARAMS,"The conversation does not exist");return}
-            offset+=count
-        }
+        saved:=ai_store_find(&m.store,u64(params.conversation))
+        if saved==nil {api.call_fail(call,api.INVALID_PARAMS,"The conversation does not exist");return}
+        conversation:=saved^
+        if ai_conversation_restore(s,&conversation)==nil {api.call_fail(call,api.SERVER_ERROR,"Too many conversations are awaiting review");return}
     }
-    task,message:=ai_task_create(s,m,region,prompt,base.text_get(params.agent[:]),params.conversation,base.text_get(params.model[:]),base.text_get(params.effort[:]))
+    task,message:=ai_task_create(s,m,region,prompt,base.text_get(params.agent[:]),params.conversation,base.text_get(params.model[:]),base.text_get(params.effort[:]),{detached=params.conversation!=0 && params.conversation!=m.main})
     if task==nil {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    ai_task_select(m,task)
     ai_task_write(s,task,call.out,true,0)
 }
 
@@ -293,6 +305,7 @@ ai_method_status :: proc(s:^Session,call:^api.Call) {
     ai_put_rect(w,"rect",m.chat_open?m.chat_rect:{})
     ai_put_rect(w,"region",m.has_region?m.region:{})
     api.write_int(w,"selected",i64(m.selected))
+    api.write_int(w,"main",i64(m.main))
     serial.write_u8(w,'}')
     api.write_key(w,"tasks");serial.write_u8(w,'[')
     first:=true
@@ -318,6 +331,17 @@ ai_method_cancel :: proc(s:^Session,call:^api.Call) {
     task:=ai_task_of(s,call)
     if task==nil {return}
     ai_task_cancel(s,s.ai,task)
+    ai_task_write(s,task,call.out,false,0)
+}
+
+@(private)
+ai_method_compact :: proc(s:^Session,call:^api.Call) {
+    ai_initialize(s)
+    id:=api.call_params(call,Ai_Compact_Params).id
+    if id==0 {id=s.ai.main}
+    task:=ai_task_find(s.ai,id)
+    if task==nil {api.call_failf(call,api.INVALID_PARAMS,"there is no chat %d: ai.status lists them",id);return}
+    if message:=ai_chat_compact(s,task);message!="" {api.call_fail(call,api.INVALID_PARAMS,message);return}
     ai_task_write(s,task,call.out,false,0)
 }
 
@@ -363,7 +387,7 @@ ai_method_history_search :: proc(s:^Session,call:^api.Call) {
     limit:=p.limit if p.limit>0 else 10
     count,message:=ai_store_search(&s.ai.store,query,hits[:min(limit,len(hits))],u64(p.conversation),marks={"**","**"},allocator=call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    kinds:=[Ai_Line_Kind]string{.Prompt="prompt",.Output="output",.Note="note"}
+    kinds:=AI_LINE_NAMES
     serial.write_u8(w,'[')
     written:=0
     for &hit in hits[:count] {
@@ -405,7 +429,7 @@ ai_method_history :: proc(s:^Session,call:^api.Call) {
     count,message:=ai_store_page(&s.ai.store,u64(p.id),p.before==0?-1:i64(p.before),lines[:],call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     serial.write_u8(w,'[')
-    kinds:=[Ai_Line_Kind]string{.Prompt="prompt",.Output="output",.Note="note"}
+    kinds:=AI_LINE_NAMES
     for &line,index in lines[:count] {
         if index>0 {serial.write_u8(w,',')}
         serial.write_u8(w,'{');api.write_int(w,"sequence",i64(line.sequence),true);api.write_text(w,"kind",kinds[line.kind]);api.write_text(w,"text",line.text)

@@ -22,7 +22,6 @@ Ai_Context_Test_World :: struct {
 
 Ai_Context_Test_Editor :: struct {api:Api}
 
-@(private="file")
 ai_context_test_world_init :: proc(w:^Ai_Context_Test_World) {
     core.entities_init(&w.entities)
     core.table_init(&w.ids,"Id")
@@ -31,7 +30,6 @@ ai_context_test_world_init :: proc(w:^Ai_Context_Test_World) {
     core.table_init(&w.parents,"Parent")
 }
 
-@(private="file")
 ai_context_test_world_close :: proc(w:^Ai_Context_Test_World) {
     core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
     core.entities_destroy(&w.entities)
@@ -101,23 +99,24 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     prompt_file,read_error:=os.read_entire_file(ai_task_path(&s,first,AI_FILE_PROMPT),context.temp_allocator)
     testing.expect(t,read_error==nil)
     prompt:=string(prompt_file)
-    testing.expect(t,!strings.contains(prompt,"USER_REQUEST_SENT_SEPARATELY"))
-    testing.expect(t,strings.contains(prompt,"Explain the player's current state precisely."))
+    stable:=ai_prompt_stable(&s,.Main)
+    testing.expect(t,!strings.contains(prompt,"USER_REQUEST_SENT_SEPARATELY") && !strings.contains(stable,"USER_REQUEST_SENT_SEPARATELY"))
+    testing.expect(t,strings.contains(stable,"Explain the player's current state precisely."))
     // The agent works on the game: of the engine it gets the gameplay skill only, and it keeps the memory of the project.
-    testing.expect(t,strings.contains(prompt,"mirai-gameplay/SKILL.md") && !strings.contains(prompt,"mirai-rendering") && !strings.contains(prompt,project.path(engine,"AGENTS.md",allocator=context.temp_allocator)))
-    testing.expect(t,strings.contains(prompt,project.path(s.project_root,AI_PROJECT_MEMORY,allocator=context.temp_allocator)),"the agent keeps the AGENTS.md of the project")
-    testing.expect(t,strings.contains(prompt,"`scene_batch`") && strings.contains(prompt,"`finish`"),"the tools are named as the agent calls them")
+    testing.expect(t,strings.contains(stable,"mirai-gameplay/SKILL.md") && !strings.contains(stable,"mirai-rendering") && !strings.contains(stable,project.path(engine,"AGENTS.md",allocator=context.temp_allocator)))
+    testing.expect(t,strings.contains(stable,project.path(s.project_root,AI_PROJECT_MEMORY,allocator=context.temp_allocator)),"the agent keeps the AGENTS.md of the project")
+    testing.expect(t,strings.contains(stable,"`scene_batch`") && strings.contains(stable,"`finish`"),"the tools are named as the agent calls them")
     testing.expect(t,strings.contains(prompt,"0000000000000021 |") && strings.contains(prompt,"(selected)"),"the entities in view are in the instructions")
-    testing.expect(t,strings.contains(prompt,"MCP server `mirai`"))
+    testing.expect(t,strings.contains(stable,"MCP server `mirai`"))
     rpc:=strings.concatenate({"`",tool," rpc <method> '<json>'`"},context.temp_allocator)
-    testing.expect(t,strings.contains(prompt,rpc) && strings.contains(prompt,"write and run a script") && !strings.contains(prompt,"only through"),"scripts call the API through the client")
+    testing.expect(t,strings.contains(stable,rpc) && strings.contains(stable,"write and run a script") && !strings.contains(stable,"only through"),"scripts call the API through the client")
     for hidden in ([?]string{"--task","--port","X-Mirai-Ai-Task",api.AI_TASK_VARIABLE,"/rpc","carry the turn"}) {
-        testing.expectf(t,!strings.contains(prompt,hidden),"the agent is not told how its calls reach its turn: %s",hidden)
+        testing.expectf(t,!strings.contains(prompt,hidden) && !strings.contains(stable,hidden),"the agent is not told how its calls reach its turn: %s",hidden)
     }
     mcp_file,mcp_error:=os.read_entire_file(ai_task_path(&s,first,AI_FILE_MCP),context.temp_allocator)
     testing.expect(t,mcp_error==nil && !strings.contains(string(mcp_file),`X-Mirai-Plugins`),"a turn gets the core tools and call: a plugin it asks for through call")
-    testing.expect(t,strings.contains(prompt,"Respond in English."))
-    testing.expect(t,strings.contains(prompt,"MCP tool `finish` exactly once") && !strings.contains(prompt,"with `id`") && strings.contains(prompt,"omit `response`"))
+    testing.expect(t,strings.contains(stable,"Respond in English."))
+    testing.expect(t,strings.contains(stable,"MCP tool `finish` exactly once") && !strings.contains(stable,"with `id`") && strings.contains(stable,"omit `response`"))
     testing.expect(t,!strings.contains(prompt,"Image of the region:") && !strings.contains(prompt,"Image of the whole window:"))
     context_file,context_error:=os.read_entire_file(ai_task_path(&s,first,AI_FILE_CONTEXT),context.temp_allocator)
     testing.expect(t,context_error==nil && !strings.contains(string(context_file),"USER_REQUEST_SENT_SEPARATELY"))
@@ -136,11 +135,11 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     testing.expect_value(t,continued.transcript.count,previous_lines+1)
     testing.expect_value(t,string(continued.conversation.native_session[:continued.conversation.native_session_len]),"persisted-native-session")
     continued.state=.Done
-    wrong_provider,provider_error:=ai_task_create(&s,ai,{0,0,800,600},"Follow up","claude",first.id)
-    testing.expect(t,wrong_provider==nil && provider_error!="")
+    // A message to the main chat from another document is valid, and the chat follows it.
     document.path_length=copy(document.path[:],"scenes/other.scene")
-    wrong_document,document_error:=ai_task_create(&s,ai,{0,0,800,600},"Follow up","codex",first.id)
-    testing.expect(t,wrong_document==nil && document_error!="")
+    elsewhere,elsewhere_error:=ai_task_create(&s,ai,{0,0,800,600},"Follow up","codex",first.id)
+    testing.expect(t,elsewhere==first && elsewhere_error=="" && string(first.conversation.document[:first.conversation.document_len])=="scenes/other.scene" && first.world==rawptr(&world))
+    first.state=.Done
     document.path_length=copy(document.path[:],"scenes/main.scene")
     player:=core.create(&live.entities)
     core.add(&live.ids,player,{value=7});core.add(&live.names,player,core.name_make("Live player"))
@@ -188,19 +187,24 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     ai.connections[AI_CLAUDE].configured=true
     base.text_set(ai.connections[AI_CLAUDE].model[:],"default")
     base.text_set(ai.connections[AI_CLAUDE].effort[:],"low")
-    base.text_set(ai.agent[:],"claude")
-    selected,selected_error:=ai_task_create(&s,ai,{0,0,800,600},"Use my selected agent","")
-    if !testing.expect(t,selected!=nil && selected_error=="") {return}
-    testing.expect_value(t,base.text_get(selected.agent[:]),"claude")
-    testing.expect_value(t,string(selected.conversation.model[:selected.conversation.model_len]),"default")
-    selected.state=.Done
+    // Another agent takes the same chat, on a session of its own.
+    moved,moved_error:=ai_task_create(&s,ai,{0,0,800,600},"Use my selected agent","claude")
+    if !testing.expect(t,moved==first && moved_error=="") {return}
+    testing.expect_value(t,base.text_get(moved.agent[:]),"claude")
+    testing.expect_value(t,string(moved.conversation.model[:moved.conversation.model_len]),"default")
+    testing.expect_value(t,moved.conversation.native_session_len,0)
+    moved.state=.Done
     base.text_set(ai.agent[:],"codex")
-    resumed,resumed_error:=ai_task_create(&s,ai,{0,0,800,600},"Continue without an explicit provider","",selected.id)
-    if !testing.expect(t,resumed==selected && resumed_error=="") {return}
+    resumed,resumed_error:=ai_task_create(&s,ai,{0,0,800,600},"Continue without an explicit provider","",moved.id)
+    if !testing.expect(t,resumed==first && resumed_error=="") {return}
     testing.expect_value(t,base.text_get(resumed.agent[:]),"claude")
+    testing.expect_value(t,ai.task_count,1)
     resumed.state=.Done
+    // The first message of a project takes the agent chosen, or the first one configured.
+    ai.main,ai.selected=0,0
     ai.agent={}
     configured,configured_error:=ai_task_create(&s,ai,{0,0,800,600},"Use the configured agent","")
-    if !testing.expect(t,configured!=nil && configured_error=="") {return}
+    if !testing.expect(t,configured!=nil && configured!=first && configured_error=="") {return}
     testing.expect_value(t,base.text_get(configured.agent[:]),"claude")
+    testing.expect(t,ai.main==configured.id && ai.selected==configured.id && configured.conversation.kind==.Main)
 }

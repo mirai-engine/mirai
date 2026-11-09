@@ -98,6 +98,7 @@ ai_review_record :: proc(s:^Session,task:^Ai_Task,serial_before:u64) {
     for row in transaction.rows {ai_review_add_id(review,row.id)}
     for file in transaction.files {ai_review_add_file(review,file.path)}
     append(&review.transactions,transaction)
+    ai_provenance_record(s,task,&review.transactions[len(review.transactions)-1])
     review.pending=true;task.review_finished=false;s.ai.scene_serial+=1
     ai_scene_follow(s,task,w,transaction.rows[:])
 }
@@ -120,6 +121,7 @@ ai_task_finish :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {
     task.question=.None
     ai_task_dirty(task)
     m.scene_serial+=1
+    m.deliveries_due=true
     return true
 }
 
@@ -140,6 +142,7 @@ ai_task_revert :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     ai_transcript_add(&task.transcript,AI_DECLINED_NOTE,.Note)
     ai_task_dirty(task)
     m.scene_serial+=1
+    m.deliveries_due=true
     return ""
 }
 
@@ -264,7 +267,8 @@ ai_review_path :: proc(s:^Session,task:^Ai_Task) -> string {
 }
 
 ai_review_save :: proc(s:^Session,task:^Ai_Task) -> string {
-    if task==nil || task.conversation.id==0 || s.project_root=="" {return ""}
+    // What it found on the disk is still there, and not in memory yet.
+    if task==nil || task.conversation.id==0 || s.project_root=="" || task.review_deferred {return ""}
     scratch:vmem.Arena
     if vmem.arena_init_static(&scratch,uint(AI_REVIEW_SCRATCH_CAPACITY),64<<10)!=nil {return "No memory for project scene review storage"}
     defer vmem.arena_destroy(&scratch)

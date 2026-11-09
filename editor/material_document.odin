@@ -654,7 +654,8 @@ material_document_build :: proc(s:^Session) {
             if d:=asset_document_active(s);d!=nil {title=asset_document_title(s,d)}
             ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
         }
-        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+        origin:=ai_provenance_asset_row(s)
+        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
             material_document_parameters(s,w)
         }
     }

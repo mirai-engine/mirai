@@ -45,9 +45,19 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - **Details, rows by reflection, tags, copy and paste, collision, material**:
   [inspector](references/inspector.md); the particles section belongs to the `vfx` plugin
   ([vfx in the editor](../mirai-plugins/references/vfx-editor.md)).
-- **Connections, chat, workers, history and its search, context and AI figures**:
-  [chats and agents](references/ai-tasks.md); the steps of the agent's own tools, in
-  [end of the turn](references/ai-tasks.md#chat-flow).
+- **Connections, the main chat, workers, steering, what a turn sends, `chat.db` and its search,
+  context and AI figures**: [chats and agents](references/ai-tasks.md); the steps of the agent's
+  own tools, in [end of the turn](references/ai-tasks.md#chat-flow).
+- **Subagents, their defaults, reports and deliveries**:
+  [subagents](references/ai-tasks.md#subagents),
+  [deliveries](references/ai-tasks.md#deliveries-and-reports).
+- **Memory, notes, compaction, handoff and reopening**:
+  [memory](references/ai-tasks.md#memory),
+  [compaction](references/ai-tasks.md#compaction-and-handoff).
+- **Pins, annotations, provenance**:
+  [pins](references/ai-tasks.md#pins-annotations-and-provenance); how the panel shows all of it
+  (status line, report cards, subagent view, expanded chat, popups, marks):
+  [AI panel](references/panels.md#ai-panel).
 - **Attribution, Finish, Revert, Restore, Retry, persistence of the review**:
   [change review](references/ai-review.md).
 - **Git** (Git tab, init, commit, push, pull, merge mode, `git.*` methods):
@@ -133,6 +143,16 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - Each turn has its worker and its review; API handlers run one at a time. Transactions (scene
   rows and project files) are attributed by the turn's header and Revert keeps later edits
   ([review](references/ai-review.md)).
+- A project has one continuous chat, and the user only talks to it: no sessions to open, pick or
+  start, and the word session is not in the UI. Subagents are tasks of the editor, started only
+  by the main agent and never by another subagent, and one worker is never taken by them.
+- Enter while an agent works steers it without interrupting and without a queue to manage; Stop
+  is the only way to cut a turn. A message that cannot join the turn waits and is the next one.
+- The stable instructions go once per native session and the per-turn data in a delta; the chat
+  outlives its native context through the handoff, which Mirai builds without calling a model.
+- Memory is two levels and never the same fact in both: Markdown for what is durable and
+  versioned, `chat.db` for what Mirai queries and updates. A database that is corrupt or of
+  another version is reported and never deleted.
 - The agent never names its turn: its MCP server and the commands it runs carry it
   ([attribution](references/ai-tasks.md#project-data)).
 - An agent outside the editor is shown and reviewed as a chat of its own, and works only while the
@@ -178,8 +198,44 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   agent's tools,
   `ai_codex_models_are_restricted_and_tools_of_the_agent_are_steps_once_they_end`. Its image,
   `editor.action` `ai_chat` and `editor.capture` with the UI in a session.
-- Chat history and its search index: the `ai_store_*` tests of `editor/ai_store_test.odin`; live,
-  `ai.history.search` in a session for a word of a chat of that session.
+- Chat database and its search: the `ai_store_*` tests of `editor/ai_store_test.odin` (reopening,
+  search ranked and kept up to date, a corrupt database left alone, the import of the files of
+  before it, each table, kinds and parents, a second store on the same project); live,
+  `ai.history.search` in a session for a word of the chat.
+- Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`):
+  `the_main_chat_is_restored_with_its_transcript_and_never_evicted`,
+  `a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user`,
+  `agent_spawn_works_only_from_a_running_turn_of_the_main_chat`,
+  `what_a_subagent_runs_with_follows_the_explicit_values_and_the_default_of_the_project`,
+  `a_finished_subagent_reports_and_what_waits_becomes_one_system_turn_of_the_idle_chat`,
+  `a_message_to_a_working_chat_joins_its_turn_or_waits_for_the_next_one` and
+  `one_worker_is_never_taken_by_a_subagent`.
+- What a turn sends and its memory, in the same file:
+  `the_stable_block_is_the_same_each_turn_and_goes_once_per_native_session`,
+  `the_stable_block_goes_again_after_a_compaction`,
+  `the_delta_has_what_waits_what_is_pinned_and_who_works`,
+  `the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_compaction`,
+  `a_pinned_chip_stays_over_the_composer_once_it_leaves_the_message`,
+  `annotations_outlive_the_editor_and_the_agent_reads_and_clears_them`,
+  `memory_save_stays_in_its_files_and_within_its_caps` and
+  `the_memory_index_catches_what_is_edited_outside_the_editor`.
+- Compaction, handoff and reopening, in the same file:
+  `a_full_context_asks_for_notes_once_per_native_session`,
+  `without_the_command_compacting_starts_a_new_native_session_with_a_handoff`,
+  `the_compact_command_runs_as_a_turn_that_needs_no_finish_and_keeps_the_review`,
+  `a_handoff_says_what_the_context_before_it_left` and
+  `reopening_starts_a_clean_context_unless_a_build_restarted_the_editor`. Steering and compaction
+  in the transport, in `editor/acp/client_test.odin`:
+  `acp_initialize_announces_compaction_and_reads_steering`,
+  `acp_steer_joins_the_running_turn_and_is_answered_by_id`,
+  `acp_steer_failures_do_not_end_the_turn`, `acp_steer_requires_the_announcement` and
+  `acp_session_commands_track_compact_until_a_session_opens`.
+- The panel of the single chat, in `editor/ai_chat_test.odin`:
+  `ai_chat_has_one_status_line_and_no_new_chat_button`,
+  `ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat`,
+  `ai_a_subagent_is_inspected_from_its_own_view_and_written_to` and
+  `ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents`; its image,
+  `editor.capture` with the UI in a session, also expanded.
 - Attribution of the agent's commands: `an_agent_command_is_attributed_to_the_turn_its_agent_runs`
   and, in `tools/mirai`, `the_commands_of_an_agent_call_its_editor_in_its_context`; live, a command
   agent added with `ai.agent.add` whose turn runs `mirai rpc`, then `ai.status` and `ai.revert` of

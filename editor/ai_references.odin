@@ -2,7 +2,6 @@ package editor
 
 import "core:encoding/base64"
 import "core:fmt"
-import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -65,7 +64,7 @@ ai_reference_rows :: proc(s:^Session,width:f32) -> int {
     ctx:=s.gui.ctx
     used:=f32(0);rows:=1
     for i in 0..<m.reference_count {
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,filepath.base(base.text_get(m.references[i][:])),ctx.theme.font_small))+AI_CHIP_ROOM)
+        size:=ai_chip_width(ctx,filepath.base(base.text_get(m.references[i][:])),width)
         if used>0 && used+size>width {rows+=1;used=0}
         used+=size+5
     }
@@ -80,14 +79,16 @@ ai_references_build :: proc(s:^Session,width:f32,rows:int) {
     remove:=-1
     used:=f32(0);row:=0
     for i in 0..<m.reference_count {
-        label:=filepath.base(base.text_get(m.references[i][:]))
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,label,ctx.theme.font_small))+AI_CHIP_ROOM)
+        path:=base.text_get(m.references[i][:])
+        label:=filepath.base(path)
+        size:=ai_chip_width(ctx,label,width)
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
         if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ctx.theme.field,radius=ctx.theme.radius_control}) {
             ui.icon(ctx,.Texture,ctx.theme.text_muted,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-40)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-40-AI_CHIP_PIN_ROOM)
+            ai_chip_pin(s,ui.id(ctx,"pin_reference",i+1),AI_PIN_IMAGE,path,label)
             if ui.button(ctx,ui.id(ctx,"remove_reference",i+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
         }
         used+=size+5

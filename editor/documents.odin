@@ -18,7 +18,6 @@ Document_Tab :: struct {
     inspector:Inspector,
     outliner:Outliner,
     prefabs:Prefabs,
-    ai:Ai_Document_State,
     recovery:Recovery_Chain,
     quit_approved:bool,
 }
@@ -46,7 +45,6 @@ document_tab_exchange :: proc(s:^Session,tab:^Document_Tab) {
     s.viewport.preferences=preferences
     swap_values(s.inspector,&tab.inspector)
     swap_values(s.outliner,&tab.outliner)
-    if s.ai!=nil {swap_values(&s.ai.document,&tab.ai)}
     if p:=prefabs_of(s);p!=nil {swap_values(p,&tab.prefabs)}
     swap_values(&s.recovery.chain,&tab.recovery)
 }

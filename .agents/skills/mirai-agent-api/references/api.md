@@ -46,8 +46,9 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   turns. A request of its own over HTTP without the header belongs to no turn.
 - The turn must exist, still be Running and belong to the active document; one that is closed or
   replaced by another request of the same chat fails with `-32000`. After `finish`, reads continue
-  until ACP completes the turn and a write fails. `finish` finishes the turn of its header and is
-  listed only to a request that has one (`Method_Flag.Turn`).
+  until ACP completes the turn and a write fails. `finish` finishes the turn of its header and
+  `agent.spawn` starts a subagent from it; both are listed only to a request that has one
+  (`Method_Flag.Turn`), and `agent.spawn` fails unless the turn is the main chat's.
 - A turn does not discard the user's unsaved work: `engine.shutdown`, `scene.load`,
   `editor.recover` with `discard` and closing a document with changes fail, asking it to ask.
 - A tagged write closes the user's previous gesture and, if it succeeds, attributes to the turn

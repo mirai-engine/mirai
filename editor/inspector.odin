@@ -410,6 +410,11 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
             ui.label(ctx,fmt.tprintf("Variant of %s",variant),th.font_small,PREFAB_TEXT,0)
         }
     }
+    origin:=f32(0)
+    if single && s.mode==.Edit {
+        id_text:[16]u8
+        if id:=api_entity_id(w,active);id!=0 {origin=ai_provenance_row(s,.Entity,base.entity_id_format(id,id_text[:]))}
+    }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(SEARCH_BAR),padding={8,0,8,6},align_y=.Center}) {
         if search_field(s,ui.id(ctx,"inspector_search"),ins.search[:],&ins.search_length,"Search details") {ins.scroll=0}
         scroll_shadow(s,ins.scroll.y>0)
@@ -418,7 +423,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     sectioned:=!preview && section_locked(s,w,active)
     if sectioned {ui.disabled_begin(ctx)}
     defer if sectioned {ui.disabled_end(ctx)}
-    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-origin-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
         needle:=inspector_needle(ins)
         if single && review==nil {ai_review_entity_bar(s,w,active,width-16)}
         inner:=width-16

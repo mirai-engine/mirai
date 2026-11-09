@@ -194,13 +194,14 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
             ui.id_push(ctx,properties_id)
             defer ui.id_pop(ctx)
             properties_head(s,u)
+            origin:=editor.ai_provenance_asset_row(s)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.SEARCH_BAR),padding={8,0,8,6},align_y=.Center}) {
                 if editor.search_field(s,ui.id(ctx,"search"),u.search[:],&u.search_length,"Search properties") {u.properties_scroll=0}
                 editor.scroll_shadow(s,u.properties_scroll.y>0)
             }
             // What another node shows has another length: kept, the offset could show nothing.
             if u.scrolled!=u.selected {u.properties_scroll,u.scrolled={},u.selected}
-            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
                 properties(s,u,a,details.width.value)
             }
         }

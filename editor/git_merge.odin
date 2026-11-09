@@ -494,11 +494,10 @@ git_merge_ai :: proc(s:^Session,index:int) {
 git_ai_ask :: proc(s:^Session,text:string) -> bool {
     m:=s.ai
     if m==nil {return false}
-    ai_chat_new(s)
-    m.prompt_length=copy(m.prompt[:],text)
+    m.selected=m.main
+    m.prompt_length=copy(m.prompt[:AI_MESSAGE_BYTES-1],text)
     library_select(s,.Ai)
-    ai_chat_submit(s)
-    return m.pending
+    return ai_chat_send(s)
 }
 
 // While the merge waits, its entities are outlined red until accepted.

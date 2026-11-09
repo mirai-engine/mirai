@@ -202,6 +202,11 @@ User_Icon :: enum u8 {
     Plugin,        // three blocks and a fourth set apart: a plugin without an icon of its own
     Mirai_Shape,   // the mark in one color, the one given
     Puzzle,        // a piece with knobs on top and at its right and notches at the other two sides
+    Corners_Out,   // four corners pointing out: take the whole window
+    Corners_In,    // and in: back to the panel
+    Dashed_Box,    // the outline of its area as dashes; data: its color
+    Annotate,      // a map pin
+    Pin,Pin_Filled, // a thumbtack: what keeps a chip of the composer, and the same when it keeps one
 }
 
 DRAWING_CAPACITY :: 8 // areas plugins draw in one frame
@@ -310,7 +315,7 @@ tool_panel_inner :: proc(g:^Editor_Ui) -> f32 {return g.tool_width-2*PANEL_PADDI
 // True while a tool of a plugin or a panel of the project takes the place of
 // Details.
 tool_panel_shown :: proc(s:^Session) -> bool {
-    if playing(s) || scene_covered(s) {return false}
+    if playing(s) || scene_covered(s) || tool_on(s,AI_ANNOTATE_TOOL) {return false}
     return s.viewport.plugin_tool!=0 || panel_shown(s.panels)!=nil
 }
 
@@ -348,6 +353,17 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
         }
         ui.draw_polyline(ctx,points[:],1.3*s,color)
         ui.draw_polyline(ctx,([][2]f32{c+{2*s,-5*s},c+{6*s,-5*s},c+{6*s,-9*s}}),1.3*s,color)
+    case .Corners_Out,.Corners_In:
+        out:=User_Icon(kind)==.Corners_Out
+        far,near:=f32(5.5),f32(2)
+        for corner in ([4][2]f32{{-1,-1},{1,-1},{1,1},{-1,1}}) {
+            tip:=out?far:near
+            away:=out?near:far
+            bend:=[3][2]f32{c+{corner.x*away,corner.y*tip}*s,c+{corner.x*tip,corner.y*tip}*s,c+{corner.x*tip,corner.y*away}*s}
+            ui.draw_polyline(ctx,bend[:],1.4*s,color)
+        }
+    case .Dashed_Box:
+        ai_dashed_box_draw(ctx,rect,transmute(ui.Color)u32(data))
     case .Close:
         ui.draw_line(ctx,c+{-3.5,-3.5},c+{3.5,3.5},1.2,color)
         ui.draw_line(ctx,c+{3.5,-3.5},c+{-3.5,3.5},1.2,color)
@@ -517,6 +533,25 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
             back:=[2]f32{-d.x*0.7071-side*d.y*0.7071,-d.y*0.7071+side*d.x*0.7071}
             ui.draw_line(ctx,tip,tip+back*4.5*s,1.5,color)
         }
+    case .Annotate:
+        head:=c+[2]f32{0,-1.5}*s
+        outline:[11][2]f32
+        for &point,i in outline {
+            angle:=f32(i)*math.PI*4/3/10-math.PI*7/6
+            point=head+[2]f32{math.cos(angle),math.sin(angle)}*4.2*s
+        }
+        ui.draw_polyline(ctx,outline[:],1.3*s,color)
+        tip:=c+[2]f32{0,6.5}*s
+        ui.draw_line(ctx,outline[0],tip,1.3*s,color)
+        ui.draw_line(ctx,outline[10],tip,1.3*s,color)
+        ui.draw_circle(ctx,head,1.3*s,color)
+    case .Pin,.Pin_Filled:
+        if User_Icon(kind)==.Pin_Filled {ui.draw_line(ctx,c+[2]f32{0,-4}*s,c+[2]f32{0,0.5}*s,4.2*s,color)}
+        ui.draw_line(ctx,c+[2]f32{-3.5,-5.5}*s,c+[2]f32{3.5,-5.5}*s,1.4*s,color)
+        body:=[6][2]f32{{-2,-5.5},{-2,-1},{-4.5,1.5},{4.5,1.5},{2,-1},{2,-5.5}}
+        for &point in body {point=c+point*s}
+        ui.draw_polyline(ctx,body[:],1.3*s,color)
+        ui.draw_line(ctx,c+[2]f32{0,1.5}*s,c+[2]f32{0,7}*s,1.3*s,color)
     case .Back:
         chevron:=[3][2]f32{{2.5,-5},{-2.5,0},{2.5,5}}
         for &p in chevron {p=c+p*s}
@@ -664,6 +699,12 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     details:=panels || s.mode==.Paused && !s.play_stepped && !player_processes_view(s)
 
     shown_tab:=library_tab_shown(s)
+    // The chat takes the whole area below the bars, and nothing else is drawn on it.
+    expanded:=s.ai.chat_expanded && shown_tab==.Ai && panels && l.left_open
+    if expanded {
+        left_width=ctx.size.x-RAIL_WIDTH
+        details=false
+    }
     if (panels || play && !player_processes_view(s)) && !s.viewport.pick.active {
         rail_build(s,shown_tab,bars)
         g.rects.left={0,bars,RAIL_WIDTH,ctx.size.y-bars}
@@ -671,11 +712,13 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     if (panels && l.left_open || play && s.play_chat_open) && !s.viewport.pick.active {
         height:=max(ctx.size.y-bars,80)
         id:=shell_id(g,"left")
-        if ui.panel(ctx,id,{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={RAIL_WIDTH,bars},docked=true,corners={0,LEFT_RADIUS,LEFT_RADIUS,0}}) {
+        style:=ui.Panel_Float{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={RAIL_WIDTH,bars},docked=true,corners={0,LEFT_RADIUS,LEFT_RADIUS,0}}
+        if expanded {style.padding,style.gap,style.corners={},0,{}}
+        if ui.panel(ctx,id,style) {
             // Only the tabs with controls of their own take a row for them.
-            header:=shown_tab==.Ai || shown_tab==.Editor
+            header:=shown_tab==.Ai && !expanded || shown_tab==.Editor
             if header {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=3,align_x=.End,align_y=.Center}) {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=shown_tab==.Ai?2:3,align_x=.End,align_y=.Center}) {
                     if shown_tab==.Ai {
                         ai_chat_bar_buttons(s)
                         ai_chat_settings_button(s)
@@ -694,7 +737,9 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
             case .Content: content_build(s,w,room,left_width-2*PANEL_PADDING)
             case .World: world_map_build(s,w,left_width-2*PANEL_PADDING,room)
             case .Git: git_panel_build(s,left_width-2*PANEL_PADDING,room)
-            case .Ai: ai_chat_content_build(s,left_width-2*PANEL_PADDING,room)
+            case .Ai:
+                if expanded {ai_chat_expanded_build(s,left_width,height)}
+                else {ai_chat_content_build(s,left_width-2*PANEL_PADDING,room)}
             }
             ui.id_pop(ctx)
             if shown_tab==.Ai {
@@ -705,7 +750,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         }
         if rect,found:=ui.widget_rect(ctx,id);found {g.rects.left=rect}
     }
-    if panels && l.bottom_open {
+    if panels && l.bottom_open && !expanded {
         x0:=RAIL_WIDTH+(l.left_open?left_width:0)+th.margin
         x1:=ctx.size.x-(right_dock>0?right_dock:0)-th.margin
         y:=bottom_limit-bottom_height
@@ -762,10 +807,12 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         }
         if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect} else {g.rects.right={ctx.size.x-DETAILS_MARGIN-right_width,top,right_width,120}}
     }
-    if right_dock>0 {dock_edge(s,right_width,bars,ctx.size.y-bars)}
-    if panels && material_document_shown(s) {material_document_build(s)}
-    camera_preview_bar(s)
-    play_history_bar(s)
+    if right_dock>0 && !expanded {dock_edge(s,right_width,bars,ctx.size.y-bars)}
+    if panels && !expanded && material_document_shown(s) {material_document_build(s)}
+    if !expanded {
+        camera_preview_bar(s)
+        play_history_bar(s)
+    }
     inspector_popups(s,w)
     tools_popups(s,w)
     if s.projects!=nil && s.projects.shown {projects_popup_build(s)}

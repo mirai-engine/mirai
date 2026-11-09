@@ -12,13 +12,13 @@ Test_Events :: struct {
     counts:[Event_Kind]int,
     text,request_id,session_id,update:[1024]u8,
     replay:bool,
-    code:int,
+    code,steer_id:int,
 }
 
 collect :: proc(user:rawptr,event:Event) {
     events:=cast(^Test_Events)user
     events.counts[event.kind]+=1
-    events.code=event.code;events.replay=event.replay
+    events.code=event.code;events.replay=event.replay;events.steer_id=event.steer_id
     text_set(events.text[:],event.text)
     text_set(events.request_id[:],event.request_id)
     text_set(events.session_id[:],text(at(event.value,"sessionId")))
@@ -229,8 +229,7 @@ acp_session_title_negotiation_is_optional_and_required_when_a_title_is_requested
     events:Test_Events
     testing.expect_value(t,initialize_request(&c,false),Error.None)
     request:=test_queued(t,&c)
-    client_capabilities,_:=at(request,"params","clientCapabilities").(json.Object)
-    testing.expect_value(t,len(client_capabilities),0)
+    testing.expect(t,at(request,"params","clientCapabilities","_meta")==nil)
     receive(&c,`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"_meta":{"jetbrains":{"air":{"version":1,"capabilities":["sessionRename"]}}}}}`,collect,&events)
     testing.expect(t,!c.session_rename)
     testing.expect_value(t,open_session(&c,{cwd=TEST_CWD,title="A task"}),Error.Unsupported)
@@ -321,6 +320,144 @@ acp_prompt_escapes_content_and_permissions_require_an_explicit_response :: proc(
     testing.expect_value(t,permission(&c,"null","",true),Error.Invalid_Message)
 }
 
+test_turn :: proc(t:^testing.T,c:^Client) {
+    c.phase=.Ready;c.steering=true
+    text_set(c.session[:],"s1")
+    testing.expect_value(t,prompt(c,{{kind=.Text,text="Start"}}),Error.None)
+    _=test_queued(t,c)
+}
+
+test_event_text :: proc(events:^Test_Events) -> string {
+    return strings.trim_right(string(events.text[:]),"\x00")
+}
+
+@(test)
+acp_initialize_announces_compaction_and_reads_steering :: proc(t:^testing.T) {
+    for session_titles in ([]bool{false,true}) {
+        c:=test_client(t,receive_bytes=4096,send_bytes=8192)
+        defer destroy(&c,nil)
+        events:Test_Events
+        testing.expect_value(t,initialize_request(&c,session_titles),Error.None)
+        request:=test_queued(t,&c)
+        _,compaction:=at(request,"params","clientCapabilities","session","compaction").(json.Object)
+        testing.expect(t,compaction,"the compaction capability is announced")
+        receive(&c,`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"_meta":{"steering":{"supported":true}}}}`,collect,&events)
+        testing.expect(t,c.steering)
+    }
+}
+
+@(test)
+acp_steer_joins_the_running_turn_and_is_answered_by_id :: proc(t:^testing.T) {
+    c:=test_client(t,receive_bytes=4096,send_bytes=8192)
+    defer destroy(&c,nil)
+    events:Test_Events
+    blocks:=[]Content{{kind=.Text,text="Also the door"}}
+    c.phase=.Ready;c.steering=true
+    testing.expect_value(t,steer(&c,blocks),Error.Invalid_State)
+    test_turn(t,&c)
+    prompt_id:=c.pending_id
+    testing.expect_value(t,steer(&c,blocks),Error.None)
+    first:=c.steer_id
+    request:=test_queued(t,&c)
+    testing.expect_value(t,text(at(request,"method")),"_session/steering")
+    testing.expect_value(t,text(at(request,"params","sessionId")),"s1")
+    testing.expect_value(t,text(at(request,"params","_meta","steering","idleBehavior")),"promptRequired")
+    chunks,_:=at(request,"params","prompt").(json.Array)
+    testing.expect_value(t,len(chunks),1)
+    if len(chunks)>0 {testing.expect_value(t,text(at(chunks[0],"text")),"Also the door")}
+    testing.expect_value(t,steer(&c,blocks),Error.None)
+    second:=c.steer_id
+    _=test_queued(t,&c)
+    testing.expect(t,second>first)
+    testing.expect_value(t,c.phase,Phase.Prompting)
+    testing.expect_value(t,c.pending,Request.Prompt)
+    testing.expect_value(t,c.pending_id,prompt_id)
+    receive(&c,`{"jsonrpc":"2.0","id":2,"result":{"outcome":"injected"}}`,collect,&events)
+    testing.expect_value(t,events.counts[.Steer_Done],1)
+    testing.expect_value(t,events.steer_id,first)
+    testing.expect_value(t,test_event_text(&events),"injected")
+    testing.expect_value(t,c.phase,Phase.Prompting)
+    receive(&c,`{"jsonrpc":"2.0","id":3,"result":{"outcome":"promptRequired","reason":"idle"}}`,collect,&events)
+    testing.expect_value(t,events.counts[.Steer_Done],2)
+    testing.expect_value(t,events.steer_id,second)
+    testing.expect_value(t,test_event_text(&events),"promptRequired")
+    testing.expect_value(t,c.phase,Phase.Prompting)
+    receive(&c,`{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}`,collect,&events)
+    testing.expect_value(t,events.counts[.Prompt_Done],1)
+    testing.expect_value(t,c.phase,Phase.Ready)
+}
+
+@(test)
+acp_steer_failures_do_not_end_the_turn :: proc(t:^testing.T) {
+    c:=test_client(t,receive_bytes=4096,send_bytes=8192)
+    defer destroy(&c,nil)
+    events:Test_Events
+    blocks:=[]Content{{kind=.Text,text="Also the door"}}
+    test_turn(t,&c)
+    testing.expect_value(t,steer(&c,blocks),Error.None)
+    _=test_queued(t,&c)
+    receive(&c,`{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"No turn"}}`,collect,&events)
+    testing.expect_value(t,events.counts[.Steer_Done],1)
+    testing.expect_value(t,test_event_text(&events),"failed")
+    testing.expect_value(t,events.code,-32000)
+    testing.expect_value(t,events.steer_id,c.steer_id)
+    testing.expect_value(t,events.counts[.Error],0)
+    testing.expect_value(t,events.counts[.Prompt_Done],0)
+    testing.expect_value(t,error_text(&c),"")
+    testing.expect_value(t,c.phase,Phase.Prompting)
+    testing.expect_value(t,c.pending,Request.Prompt)
+    testing.expect_value(t,steer(&c,blocks),Error.None)
+    _=test_queued(t,&c)
+    receive(&c,`{"jsonrpc":"2.0","id":3,"result":{"outcome":"unknown"}}`,collect,&events)
+    testing.expect_value(t,test_event_text(&events),"failed")
+    testing.expect_value(t,steer(&c,blocks),Error.None)
+    _=test_queued(t,&c)
+    steers_fail(&c,collect,&events)
+    testing.expect_value(t,events.counts[.Steer_Done],3)
+    testing.expect_value(t,events.steer_id,c.steer_id)
+    testing.expect_value(t,c.steer_count,0)
+    for _ in 0..<STEER_CAPACITY {
+        testing.expect_value(t,steer(&c,blocks),Error.None)
+        _=test_queued(t,&c)
+    }
+    testing.expect_value(t,steer(&c,blocks),Error.Capacity)
+    testing.expect_value(t,c.queued,0)
+}
+
+@(test)
+acp_steer_requires_the_announcement :: proc(t:^testing.T) {
+    c:=test_client(t,receive_bytes=4096,send_bytes=8192)
+    defer destroy(&c,nil)
+    events:Test_Events
+    c.pending=.Initialize;c.pending_id=1;c.phase=.Initializing
+    receive(&c,`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"_meta":{"steering":{"supported":false}}}}`,collect,&events)
+    testing.expect(t,!c.steering)
+    c.phase=.Prompting
+    testing.expect_value(t,steer(&c,{{kind=.Text,text="Also the door"}}),Error.Unsupported)
+    testing.expect_value(t,c.queued,0)
+    testing.expect_value(t,c.steer_count,0)
+}
+
+@(test)
+acp_session_commands_track_compact_until_a_session_opens :: proc(t:^testing.T) {
+    c:=test_client(t,receive_bytes=4096,send_bytes=8192)
+    defer destroy(&c,nil)
+    events:Test_Events
+    c.phase=.Initialized
+    with:=`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"review"},{"name":"compact"}]}}}`
+    without:=`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"review"}]}}}`
+    receive(&c,with,collect,&events)
+    testing.expect(t,c.compact_command)
+    testing.expect_value(t,events.counts[.Update],1)
+    receive(&c,without,collect,&events)
+    testing.expect(t,!c.compact_command)
+    testing.expect_value(t,events.counts[.Update],2)
+    receive(&c,with,collect,&events)
+    testing.expect(t,c.compact_command)
+    testing.expect_value(t,open_session(&c,{cwd=TEST_CWD}),Error.None)
+    testing.expect(t,!c.compact_command)
+}
+
 @(test)
 acp_capacity_and_configuration_errors_do_not_substitute_models :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=256,send_bytes=512)
@@ -333,6 +470,11 @@ acp_capacity_and_configuration_errors_do_not_substitute_models :: proc(t:^testin
     testing.expect_value(t,prompt(&c,{{kind=.Text,text=string(enormous[:])}}),Error.Capacity)
     testing.expect_value(t,c.queued,0)
     testing.expect_value(t,c.phase,Phase.Ready)
+    c.phase=.Prompting;c.steering=true
+    testing.expect_value(t,steer(&c,{{kind=.Text,text=string(enormous[:])}}),Error.Capacity)
+    testing.expect_value(t,c.queued,0)
+    testing.expect_value(t,c.steer_count,0)
+    testing.expect_value(t,c.next_id,1)
     c.phase=.Initialized
     testing.expect_value(t,open_session(&c,{cwd=TEST_CWD,session_id="saved"}),Error.Unsupported)
     testing.expect_value(t,open_session(&c,{cwd=TEST_CWD,model="gpt-6-luna",effort="low"}),Error.None)

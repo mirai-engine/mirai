@@ -49,8 +49,8 @@ Procedures:
 ### Tabs
 
 - Tabs share the window and the UI context. Each `Document_Tab` keeps world, document, history,
-  selection, camera, inspector, hierarchy, prefab state and the AI chat draft and context
-  ([chats](ai-tasks.md)).
+  selection, camera, inspector, hierarchy and prefab state. The AI chat is one per project, not
+  per tab ([chats](ai-tasks.md)).
 - The generated storages contain only those of the active document; the swap happens between
   frames. Changing document stops the Play.
 - Save and undo act on the front tab: each scene or prefab has its `Edits`, with its selection

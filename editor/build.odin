@@ -286,6 +286,7 @@ build_reload :: proc(s:^Session) {
     case .Restart:
         b.reload=false
         b.play={}
+        ai_resume_native_mark(s)
         s.requests+={.Restart}
     case .Reloaded:
         b.reload=false

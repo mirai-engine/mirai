@@ -104,12 +104,18 @@ ai_connections_back :: proc(s:^Session,label:string="Back") -> bool {
     return ui.button(ctx,ui.id(ctx,"back"),{label=label,style=.Field,width=84,height=32,center=true}).clicked
 }
 
+// The mark of an agent without its color.
+@(private)
+ai_connection_mark :: proc(agent:Ai_Agent) -> ui.Icon {
+    icons:=[Ai_Agent]ui.Icon{.Codex=ui.icon_user(u8(User_Icon.Component)),.Claude=.Sparkle,.Command=ui.icon_user(u8(User_Icon.Connection))}
+    return icons[agent]
+}
+
 @(private)
 ai_connections_logo :: proc(ctx:^ui.Context,agent:Ai_Agent,size:f32) {
     colors:=[Ai_Agent]ui.Color{.Codex={230,232,237,255},.Claude={211,159,123,255},.Command={150,158,171,255}}
-    icons:=[Ai_Agent]ui.Icon{.Codex=ui.icon_user(u8(User_Icon.Component)),.Claude=.Sparkle,.Command=ui.icon_user(u8(User_Icon.Connection))}
     if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(size),align_x=.Center,align_y=.Center,fill=colors[agent],radius=size*.25}) {
-        ui.icon(ctx,icons[agent],{31,26,28,255},size*.56)
+        ui.icon(ctx,ai_connection_mark(agent),{31,26,28,255},size*.56)
     }
 }
 

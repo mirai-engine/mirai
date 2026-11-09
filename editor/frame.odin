@@ -504,7 +504,10 @@ editor_shortcuts :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,keys:core.Keys,modi
 editor_tools :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,world:core.World_Ref) {
     started:=platform.clock_ns();defer api_timed(s,.Tools,started)
     if !g.begun {return}
-    if s.mode!=.Play && !scene_covered(s) {tools_update(s,world)}
+    if s.mode!=.Play && !scene_covered(s) {
+        tools_update(s,world)
+        ai_annotation_pointer(s,world)
+    }
     collab_follow(s)
     viewport_camera(v)
     view_write(s,world)

@@ -8,12 +8,13 @@ import "core:time"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import "mirai:editor/acp"
 import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:ui"
 
 AI_TASK_CAPACITY :: 16
-AI_WORKER_CAPACITY :: 3
+AI_WORKER_CAPACITY :: 8 // one of them is never taken by a subagent: the main chat can always answer
 AI_MESSAGE_BYTES :: ui.TEXT_EDIT_CAPACITY // of a message or of the instructions of the project, as the chat edits them
 AI_STEP_CAPACITY :: 64 // steps of undo remembered per task
 AI_PATH_BYTES :: 512
@@ -23,7 +24,8 @@ AI_REFERENCE_QUALITY :: 90 // of the JPEG of one
 AI_FOLDER :: "ai"      // under the generated folder of the project
 AI_REGION_MIN :: f32(8)   // minimum snapshot side in window points
 
-Ai_Task_State :: enum u8 {Queued,Running,Done,Failed,Cancelled}
+Ai_Task_State :: enum u8 {Queued,Running,Done,Failed,Cancelled,Interrupted}
+Ai_Compact :: enum u8 {None,Running,Failed}
 
 // The plan of a turn as the agent reports it (the ACP update plan): each
 // report replaces the whole list. It lasts until the next turn and is not saved.
@@ -34,7 +36,7 @@ Ai_Plan_Entry :: struct {
     text:[AI_PLAN_BYTES]u8,
     status:Ai_Plan_Status,
 }
-AI_STATE_NAMES :: [Ai_Task_State]string{.Queued="queued",.Running="running",.Done="done",.Failed="failed",.Cancelled="cancelled"}
+AI_STATE_NAMES :: [Ai_Task_State]string{.Queued="queued",.Running="running",.Done="done",.Failed="failed",.Cancelled="cancelled",.Interrupted="interrupted"}
 
 // What the agent wants back when it ends a turn with a question. Every kind
 // also takes free text: the user is never cornered into the options.
@@ -90,6 +92,7 @@ Ai_Task :: struct {
     dirty:bool,
     stream_open:bool,
     finish_called:bool,
+    system_turn:bool, // the editor started this turn: it may end without finish, having nothing to say
     play:bool,
     world:rawptr,
     document_closed:bool,
@@ -114,26 +117,17 @@ Ai_Task :: struct {
     context_count:int,
     kept,rejected:int, // the changes the review kept and put back one by one, for the note that ends it
     material:Ai_Material_Context,
+    about:int,          // the unit its message is about (ai_about_set)
     plan:[AI_PLAN_ENTRIES]Ai_Plan_Entry,
     plan_count:int,
-}
-
-Ai_Document_State :: struct {
-    region:ui.Rect,
-    has_region:bool,
-    selected:int,
-    prompt:[AI_MESSAGE_BYTES]u8,
-    prompt_length:int,
-    references:[AI_REFERENCES][AI_PATH_BYTES]u8, // images the next message takes, by their path
-    reference_count:int,
-    attachments:[AI_ATTACHMENTS]base.Asset_Id, // assets dragged onto the chat that the next message takes
-    attachment_count:int,
-    range:Ai_Range, // the time chosen on a timeline the next message takes
-    agent:[32]u8,
-    focus:bool,
-    scroll:f32,
-    list_scroll:[2]f32,
-    stick:bool,
+    held:int,       // messages written while it worked that wait in deliveries for its next turn
+    held_lines:int, // the lines of the transcript that have not reached its agent, the latest ones of the user
+    steers:[acp.STEER_CAPACITY]Ai_Steer, // sent to the running turn, until the agent says what became of them
+    steer_count:int,
+    compact:Ai_Compact,      // the /compact the editor sent is running; the state of the chat goes back to compact_state
+    compact_state:Ai_Task_State,
+    stable_native:[256]u8,   // the native session that has the stable instructions
+    notes_native:[256]u8,    // the native session that was asked to save its notes
 }
 
 // What the editor shows of the agents, as it keeps it between sessions.
@@ -144,6 +138,7 @@ Ai_View :: struct {
 @(storage)
 Ai :: struct {
     tasks:[AI_TASK_CAPACITY]Ai_Task,
+    main:int, // the task of the chat of the project; 0 until its first message
     code:map[string][]u8, // what files of the project held, by path, size and time: those the turns that run started with
     task_count:int,
     next_id:int,
@@ -177,7 +172,45 @@ Ai :: struct {
     using view:Ai_View,
     scene_serial:u64,
 
-    using document:Ai_Document_State,
+    // What the chat shows and what the next message takes, one per project.
+    region:ui.Rect,
+    has_region:bool,
+    selected:int, // the task shown: the main chat, or a subagent while it is inspected
+    prompt:[AI_MESSAGE_BYTES]u8,
+    prompt_length:int,
+    references:[AI_REFERENCES][AI_PATH_BYTES]u8, // images the next message takes, by their path
+    reference_count:int,
+    attachments:[AI_ATTACHMENTS]base.Asset_Id, // assets dragged onto the chat that the next message takes
+    attachment_count:int,
+    range:Ai_Range, // the time chosen on a timeline the next message takes
+    about:int,          // the unit the next message is about, as a chip over the composer
+    annotations:Ai_Annotations,
+    pins:[AI_PINS]Ai_Pin_Row, // of the database, read when it changes
+    pin_count:int,
+    pins_loaded:bool,
+    provenance_views:[Ai_Provenance_Kind]Ai_Provenance_View, // what the rows of Details show
+    asset_marks:map[u64]int, // the unit an asset waits for, by the hash of its path; made for asset_marks_serial
+    asset_marks_serial:u64,
+    agent:[32]u8,
+    focus:bool,
+    scroll:f32,
+    scroll_to:int, // a sequence of the chat shown, plus one, to bring into sight; 0: none
+    list_scroll:[2]f32,
+    stick:bool,
+    chat_expanded:bool, // the chat takes the whole area below the bars
+    agents_open:bool,   // the status line is unfolded into the list of the units
+    report_open:int,    // the subagent whose report card lists its changes; 0: none
+    report_scroll:[2]f32,
+    reports:[AI_REPORT_CACHE]Ai_Report_Text, // answers of subagents no longer in tasks
+    report_next:int,
+    chat_hits:[AI_CHAT_HITS]Ai_Chat_Hit,     // of the search of the main chat
+    chat_hit_count:int,
+    hit_view:Ai_Hit_View,
+    memory_ui:Ai_Memory_Ui,
+
+    subagent:Ai_Subagent_Default, // what a subagent runs with unless agent.spawn says otherwise
+    deliveries_due:bool, // something happened that may let what waits in deliveries go
+    closing:bool,        // the editor is closing: the turns it cuts stay interrupted, without a report
     chat_open:bool,
     submit_frame:u64,
     pending:bool,
@@ -193,7 +226,6 @@ Ai :: struct {
     review_task:int, // conversation being walked through, and how far
     review_at:int,
     review_scroll:[2]f32, // of the list of changes of the card under the chat
-    steer:bool,        // what is written goes to the selected chat once its turn stopped
     review_shown:base.Entity_Id, // a deletion of review_task the walk brought into sight: Details shows it
     review_selection:u64,        // while the selection keeps this serial
     marks:[dynamic]Ai_Review_Mark, // rows of the entity Details shows, for its id and the serial they were made with
@@ -270,9 +302,10 @@ ai_task_slot :: proc(m:^Ai) -> ^Ai_Task {
     if m.task_count==AI_TASK_CAPACITY {
         for &task,index in m.tasks[:m.task_count] {
             if !ai_task_finished(&task) {continue}
-            if !task.review_finished && (task.review.pending || task.context_count>0) {continue}
-            if m.selected==task.id {m.selected=0}
+            if task.id==m.main || !task.review_finished && (task.review.pending || task.context_count>0) {continue}
+            if m.selected==task.id {m.selected=m.main}
             ai_review_free(&task.review)
+            ai_steers_free(&task)
             copy(m.tasks[index:m.task_count-1],m.tasks[index+1:m.task_count])
             m.task_count-=1
             break
@@ -309,8 +342,8 @@ ai_task_fail :: proc(task:^Ai_Task,format:string,args:..any) {
 @(private)
 ai_task_select :: proc(m:^Ai,task:^Ai_Task) {
     m.selected=task.id
-    m.region,m.has_region=task.region,task.region.w>0 && task.region.h>0
-    if base.text_get(task.agent[:])!="" && !ai_task_external(task) {base.text_set(m.agent[:],base.text_get(task.agent[:]))}
+    // m.agent is the one of the main chat: an inspected agent keeps its own.
+    if base.text_get(task.agent[:])!="" && !ai_task_inspected(task) {base.text_set(m.agent[:],base.text_get(task.agent[:]))}
     m.chat_open,m.stick=true,true
 }
 
@@ -321,27 +354,30 @@ ai_input :: proc(s:^Session,m:^Ai) {
     for &task in m.tasks[:m.task_count] {
         if task.image_write.busy {host.app_png_write_poll(s.app,&task.image_write)}
         for &write in task.reference_writes {if write.busy {host.app_png_write_poll(s.app,&write)}}
-    }
-    // A correction goes once the turn it stopped has ended.
-    if m.steer && !ai_task_busy(m,m.selected) {
-        m.steer=false
-        ai_chat_submit(s)
+        if task.review_deferred {ai_task_review_follow(s,&task)}
     }
     if m.pending && s.frame>m.submit_frame {
         m.pending=false
         region:=m.has_region?m.region:free_region(s.gui,s.viewport.window)
-        // The chat of an agent outside the editor is not written to: a message starts a chat of the editor.
+        // The chat of an agent outside the editor is not written to: a message goes to the main chat.
         continuing:=m.selected
-        if selected:=ai_task_find(m,continuing);selected!=nil && ai_task_external(selected) {continuing=0}
-        task,message:=ai_task_create(s,m,region,string(m.prompt[:m.prompt_length]),base.text_get(m.agent[:]),continuing,base.text_get(m.pending_model[:]),base.text_get(m.pending_effort[:]))
+        agent:=base.text_get(m.agent[:])
+        if selected:=ai_task_find(m,continuing);selected!=nil {
+            if ai_task_external(selected) {continuing=0} else if ai_task_subagent(selected) {agent=""}
+        }
+        first:=m.main==0
+        task,message:=ai_task_create(s,m,region,string(m.prompt[:m.prompt_length]),agent,continuing,base.text_get(m.pending_model[:]),base.text_get(m.pending_effort[:]))
         m.pending_model,m.pending_effort={},{}
         if task==nil {
             notify(s,message)
         } else {
             // From the empty chat the composer goes down to its place.
-            if continuing==0 && m.composer_empty_y>0 && s.gui!=nil {m.composer_drop_at,m.composer_drop_from=max(s.gui.ctx.time,1e-6),m.composer_empty_y}
+            if first && m.composer_empty_y>0 && s.gui!=nil {m.composer_drop_at,m.composer_drop_from=max(s.gui.ctx.time,1e-6),m.composer_empty_y}
             m.prompt_length,m.reference_count,m.attachment_count=0,0,0
             m.range={}
+            m.about=0
+            m.annotations.group_count=0
+            m.has_region=false
             ai_task_select(m,task)
         }
         m.focus=true
@@ -349,6 +385,7 @@ ai_input :: proc(s:^Session,m:^Ai) {
     ai_play_follow(s)
     ai_task_poll(s,m)
     ai_external_poll(s,m)
+    ai_deliveries_advance(s,m)
     ai_queue_advance(s,m)
 }
 

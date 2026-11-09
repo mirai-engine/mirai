@@ -122,7 +122,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     d:=s.document
     if document_file(d)!=file {
         ai_document_closed(s,s.edit_world)
-        if s.ai!=nil {s.ai.document={};s.ai.pending=false}
+        if s.ai!=nil {s.ai.pending=false}
     }
     document_previous_free(d)
     d.previous=loaded
@@ -139,7 +139,7 @@ scene_new :: proc(s:^Session) {
     runs_stop(s)
     tools_release(s)
     ai_document_closed(s,s.edit_world)
-    if s.ai!=nil {s.ai.document={};s.ai.pending=false}
+    if s.ai!=nil {s.ai.pending=false}
     w:=edited_world(s)
     w.info.clear(w.data)
     sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
