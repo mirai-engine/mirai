@@ -49,6 +49,7 @@ Import_Params :: struct {
     rig_crotch:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the crotch in the model, where a skirt or a coat hides it; 0 is where the fit finds it"`,
     rig_neck:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the neck in the model; 0 is where the fit finds it"`,
     skeleton:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
+    front:[16]u8 `mirai:"text,optional,label=Of a model: where it stands facing once imported, when that is not the -Z every model faces: z, x or negative_x turn it about +Y to -Z with all its file holds; negative_z keeps it as read; auto turns a file that is a rig (all it draws is skinned) from where the body of its skeleton is found facing, and keeps any other as read. Of a source in the project the choice stays in its settings. Empty: what they say"`,
     image:[24]u8 `mirai:"text,optional,label=Of an image: what it holds; color (sRGB) or data (linear: a packed metallic-roughness or occlusion or a mask) or normal or normal_green_down (DirectX). Of a source in the project the choice stays in its settings. Empty: what they say or else what its name says"`,
 }
 
@@ -180,7 +181,16 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
             return
         }
     }
-    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton) {
+    front:Maybe(importer.Front)
+    if text:=base.text_get(params.front[:]);text!="" {
+        stated,known:=importer.front_from_name(text)
+        if !known {
+            api.call_failf(call,api.INVALID_PARAMS,"front %q: give z, x or negative_x for where the model stands facing once imported, negative_z to keep it as read, or auto to turn a rig from where its body faces",text)
+            return
+        }
+        front=stated
+    }
+    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton,front) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }

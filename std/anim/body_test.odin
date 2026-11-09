@@ -78,7 +78,8 @@ body_test_concat :: proc(a,b:string) -> string {
 body_detect_finds_the_parts_of_a_game_humanoid_and_its_axes :: proc(t:^testing.T) {
     rig:=body_test_humanoid()
     map_:=body_map_empty()
-    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
+    facing:math.Vec3
+    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_,&facing)) {return}
     expected:=[Body_Part]string{
         .Pelvis="pelvis",.Neck="neck_01",.Head="head",
         .Clavicle_L="clavicle_l",.Shoulder_L="upperarm_l",.Elbow_L="lowerarm_l",.Hand_L="hand_l",
@@ -91,7 +92,7 @@ body_detect_finds_the_parts_of_a_game_humanoid_and_its_axes :: proc(t:^testing.T
         testing.expectf(t,map_.confidence[part]>=.8,"%v confidence %v",part,map_.confidence[part])
     }
     testing.expect_value(t,map_.up,math.Vec3{0,1,0})
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
+    testing.expect_value(t,facing,math.Vec3{0,0,-1})
     testing.expect(t,map_.axes_confidence>=.8)
     testing.expect(t,body_map_valid(map_,len(rig.parents)))
 
@@ -143,7 +144,8 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
         {"mixamorig:RightFoot","mixamorig:RightLeg",{-.1,.08,0}},{"mixamorig:RightToeBase","mixamorig:RightFoot",{-.1,.02,.12}},
     })
     map_:=body_map_empty()
-    if !testing.expect(t,body_detect(mixamo.parents,mixamo.names,mixamo.rest,mixamo.world,&map_)) {return}
+    facing:math.Vec3
+    if !testing.expect(t,body_detect(mixamo.parents,mixamo.names,mixamo.rest,mixamo.world,&map_,&facing)) {return}
     body_test_expect(t,mixamo,map_,.Pelvis,"mixamorig:Hips")
     body_test_expect(t,mixamo,map_,.Head,"mixamorig:Head")
     body_test_expect(t,mixamo,map_,.Clavicle_L,"mixamorig:LeftShoulder")
@@ -154,7 +156,18 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
     body_test_expect(t,mixamo,map_,.Toe_L,"mixamorig:LeftToeBase")
     body_test_expect(t,mixamo,map_,.Foot_R,"mixamorig:RightFoot")
     // A rig from a source that faces the other way: its left is at +X and it faces +Z, so the detector is covered in both directions.
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,1})
+    testing.expect_value(t,facing,math.Vec3{0,0,1})
+    testing.expect(t,map_.up==math.Vec3{0,1,0} && body_map_valid(map_,len(mixamo.parents)),"its map stands on its up whatever it faces")
+
+    // A body that lies along the forward has no up across it: the map keeps +Y as a guess.
+    lying:=body_test_rig({
+        {"hips","",{0,.2,0}},{"neck","hips",{0,.2,-.5}},{"head","neck",{0,.2,-.6}},
+        {"thigh_l","hips",{-.1,.2,.05}},{"calf_l","thigh_l",{-.1,.2,.5}},{"foot_l","calf_l",{-.1,.2,.9}},
+        {"thigh_r","hips",{.1,.2,.05}},{"calf_r","thigh_r",{.1,.2,.5}},{"foot_r","calf_r",{.1,.2,.9}},
+    })
+    map_=body_map_empty()
+    if !testing.expect(t,body_detect(lying.parents,lying.names,lying.rest,lying.world,&map_,&facing)) {return}
+    testing.expect(t,map_.bones[.Foot_L]>=0 && map_.up==math.Vec3{0,1,0} && map_.axes_confidence<=.1 && abs(facing.z)<1e-3,"a lying body keeps its parts and a valid up")
 
     // Biped hangs the thighs from the spine, below the pelvis.
     biped:=body_test_rig({
@@ -165,7 +178,7 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
         {"Bip01 L Clavicle","Bip01 Neck",{-.05,1.48,0}},{"Bip01 L UpperArm","Bip01 L Clavicle",{-.18,1.45,0}},{"Bip01 L Forearm","Bip01 L UpperArm",{-.45,1.45,0}},{"Bip01 L Hand","Bip01 L Forearm",{-.7,1.45,0}},
     })
     map_=body_map_empty()
-    if !testing.expect(t,body_detect(biped.parents,biped.names,biped.rest,biped.world,&map_)) {return}
+    if !testing.expect(t,body_detect(biped.parents,biped.names,biped.rest,biped.world,&map_,&facing)) {return}
     body_test_expect(t,biped,map_,.Pelvis,"Bip01 Pelvis")
     body_test_expect(t,biped,map_,.Hip_R,"Bip01 R Thigh")
     body_test_expect(t,biped,map_,.Toe_L,"Bip01 L Toe0")
@@ -173,7 +186,7 @@ body_detect_reads_mixamo_biped_and_motion_capture_names :: proc(t:^testing.T) {
     body_test_expect(t,biped,map_,.Hand_L,"Bip01 L Hand")
     body_test_expect(t,biped,map_,.Hand_R,"(none)")
     // This one faces -Z: its left is at -X.
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
+    testing.expect_value(t,facing,math.Vec3{0,0,-1})
 
     // Motion capture glues the side to the word and calls the wrist before the hand.
     capture:=body_test_rig({
@@ -202,8 +215,9 @@ body_detect_sides_unnamed_limbs_by_position_and_keeps_manual_parts :: proc(t:^te
         {"prop","hips",{0,1,-.3}},
     })
     map_:=body_map_empty()
-    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
+    facing:math.Vec3
+    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_,&facing)) {return}
+    testing.expect_value(t,facing,math.Vec3{0,0,-1})
     body_test_expect(t,rig,map_,.Foot_L,"foot_a")
     body_test_expect(t,rig,map_,.Knee_R,"shin_b")
     testing.expect(t,map_.confidence[.Foot_L]<1 && map_.confidence[.Foot_L]>.5)
@@ -249,11 +263,12 @@ body_detect_keeps_hip_and_knee_of_a_leg_without_foot :: proc(t:^testing.T) {
         {"left hip","hips",{-.1,.95,0}},{"left knee","left hip",{-.1,.5,0}},{"right hip","hips",{.1,.95,0}},{"right knee","right hip",{.1,.5,0}},
     })
     map_:=body_map_empty()
-    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
+    facing:math.Vec3
+    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_,&facing)) {return}
     body_test_expect(t,rig,map_,.Hip_L,"left hip")
     body_test_expect(t,rig,map_,.Knee_R,"right knee")
     body_test_expect(t,rig,map_,.Foot_L,"(none)")
     body_test_expect(t,rig,map_,.Shoulder_L,"left shoulder")
     body_test_expect(t,rig,map_,.Hand_R,"right wrist")
-    testing.expect_value(t,map_.forward,math.Vec3{0,0,-1})
+    testing.expect_value(t,facing,math.Vec3{0,0,-1})
 }

@@ -104,6 +104,21 @@ meters and in the engine's axes, with no added nodes or negative scales:
   conjugated by the inversion of v; the identity stays the same, with no negative zeros.
 - A space equal to the engine's touches nothing: the bytes are those of the source.
 
+### Front
+
+Every model faces -Z. A file that follows its format already does once its space is baked; one that
+does not is turned about +Y after the read (`model_front`), in place: the source is parsed once.
+
+- `Import_Settings.front` states where the model stands facing once imported, and the import turns
+  it from there with all the file holds; `Negative_Z` keeps it as read.
+- With `Auto`, a file that is a rig, all it draws being skinned, is turned from where the body of
+  its first skeleton with one is found facing (`body_detect`), when detection is sure of it. A
+  file that also draws meshes without skin (a level with a character in it) is not turned.
+- A body left facing elsewhere warns with what to do, because the `.skeleton` stores no forward:
+  animation, retargeting and ragdolls read every body as facing -Z.
+- `space_turn` applies the turn, a change of basis like any other: to the vertices, normals,
+  tangents, morph deltas and bounds the builders made, and through `space_bake` to the rest.
+
 ### Adding a format
 
 1. A package `cook/import/<format>` that imports `importer "mirai:cook/import"` and nothing from the
@@ -323,6 +338,9 @@ its fields are the options of `mirai import` (`IMPORT_USAGE`). What is not obvio
   `--rdo-lambda 0` writes, the least error.
 - `max_triangles` simplifies a mesh with more triangles down to them as a
   [level](#levels-of-detail), and that is its level 0.
+- `front` (`--front auto|negative_z|z|x|negative_x`, `front` of `asset.import`) is where a model
+  stands facing once imported, for a source that does not face the front its format says and that
+  detection does not turn or turns wrong ([front](#front)). It is part of a mesh's settings hash.
 - `rig` gives a model a [template rig](#template-rigs-cookrig) (`Humanoid` or a Mesh2Motion
   animal) in place of the skeletons and skins of the source; `rig_crotch` and `rig_neck`, only for
   the humanoid, are the heights in meters of the crotch and the neck when the fit does not see them

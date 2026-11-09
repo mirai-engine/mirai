@@ -78,6 +78,9 @@ the assets.
   says them and declares its `Source_Space`; the import bakes units, axes, mirroring and V origin
   into the geometry, transforms, bones, clips and maps. What is written is in meters and in the
   engine's axes, with no added nodes or negative scales.
+- **Every model faces -Z, and the source is parsed once.** What faces elsewhere is turned in
+  place after the read: from the `front` its settings state, or else, for a file that is a rig,
+  from where its body is found facing ([front](references/imports.md#front)).
 - **The source is not modified.** The same bytes and options give the same assets.
 - **An asset's id lives in its header and nothing derives it.** The first import gives random ids;
   reimporting writes each part in its file and with its id, even if it was moved or renamed in the

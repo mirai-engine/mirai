@@ -97,7 +97,6 @@ skeleton_keeps_its_body_by_bone_path_through_a_round_trip :: proc(t:^testing.T) 
     count,written:=skeleton_body_rows(bones,map_,&body,&parts)
     testing.expect(t,written && count==17)
     testing.expect_value(t,body.up,[3]f32{0,1,0})
-    testing.expect_value(t,body.forward,[3]f32{0,0,-1})
     doc:Document
     if !testing.expect_value(t,skeleton_document(&doc,&types,{id={3,9},bones=bones,body=&body,body_parts=parts[:count]}),Error.None) {return}
     defer document_destroy(&doc)
@@ -149,6 +148,6 @@ skeleton_rejects_bodies_that_do_not_fit_its_bones :: proc(t:^testing.T) {
     rows[4].bone={};testing.expect(t,!skeleton_check(bad));rows[4].manual=true;testing.expect(t,skeleton_check(bad));rows=parts
     testing.expect(t,skeleton_check(bad))
     tilted:=body;tilted.up={0,1,.5};bad=good;bad.body=&tilted;testing.expect(t,!skeleton_check(bad))
-    tilted=body;tilted.forward=tilted.up;testing.expect(t,!skeleton_check(bad))
+    tilted=body;tilted.up={0,0,-1};testing.expect(t,!skeleton_check(bad))
     tilted=body;tilted.confidence=-1;testing.expect(t,!skeleton_check(bad))
 }

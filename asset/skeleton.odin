@@ -4,7 +4,7 @@ import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-SKELETON_VERSION :: 2
+SKELETON_VERSION :: 3
 SKELETON_OLDEST :: SKELETON_VERSION
 SKELETON_MAX_BONES :: 65536
 
@@ -26,11 +26,11 @@ Skeleton_Bone :: struct {
     scale:[3]f32,
 }
 
-// The body of a skeleton (anim.Body_Map): where it faces (-Z) and its up at rest,
-// and in body_parts the bone of each part found, by path. confidence goes
-// from 0 to 1; manual marks what a person set, which detection keeps.
+// The body of a skeleton (anim.Body_Map): its up at rest, across the -Z it
+// faces, and in body_parts the bone of each part found, by path. confidence
+// goes from 0 to 1; manual marks what a person set, which detection keeps.
 Skeleton_Body :: struct {
-    forward,up:[3]f32,
+    up:[3]f32,
     confidence:f32,
     manual:bool,
 }
@@ -83,13 +83,13 @@ skeleton_check :: proc(view:Skeleton_View) -> bool {
     return skeleton_body_check(view)
 }
 
-// A body with unit perpendicular axes, and each part once on a bone of its
+// A body with a unit up across its forward, and each part once on a bone of its
 // own, all confidences between 0 and 1.
 @(private="file")
 skeleton_body_check :: proc(view:Skeleton_View) -> bool {
     if view.body==nil {return len(view.body_parts)==0}
     body:=view.body
-    if !anim.body_axes_valid(body.forward,body.up) || !finite(body.confidence) || body.confidence<0 || body.confidence>1 {return false}
+    if !anim.body_up_valid(body.up) || !finite(body.confidence) || body.confidence<0 || body.confidence>1 {return false}
     if len(view.body_parts)>len(anim.Body_Part) {return false}
     for &row,i in view.body_parts {
         if row.part>max(anim.Body_Part) || !text_valid(row.bone[:]) || !finite(row.confidence) || row.confidence<0 || row.confidence>1 {return false}
@@ -112,7 +112,7 @@ skeleton_bone_index :: proc(bones:[]Skeleton_Bone,path:[NODE_PATH_CAPACITY]u8) -
 skeleton_body_map :: proc(bones:[]Skeleton_Bone,body:^Skeleton_Body,parts:[]Skeleton_Body_Part) -> anim.Body_Map {
     map_:=anim.body_map_empty()
     if body==nil {return map_}
-    map_.forward,map_.up,map_.axes_confidence=body.forward,body.up,body.confidence
+    map_.up,map_.axes_confidence=body.up,body.confidence
     for &row in parts {
         if row.part>max(anim.Body_Part) {continue}
         bone:=skeleton_bone_index(bones,row.bone)
@@ -137,13 +137,14 @@ skeleton_body_rows :: proc(bones:[]Skeleton_Bone,map_:anim.Body_Map,body:^Skelet
         count+=1
     }
     if !found {return 0,false}
-    body^={forward=map_.forward,up=map_.up,confidence=map_.axes_confidence}
+    body^={up=map_.up,confidence=map_.axes_confidence}
     return count,true
 }
 
 // Finds the body of a skeleton (anim.body_detect), keeping what `previous`
-// marks manual. The work arrays come from the allocator.
-skeleton_body_detect :: proc(bones:[]Skeleton_Bone,previous:anim.Body_Map,allocator:=context.temp_allocator) -> (map_:anim.Body_Map,ok:bool) {
+// marks manual; facing, when given, receives where it was found facing. The
+// work arrays come from the allocator.
+skeleton_body_detect :: proc(bones:[]Skeleton_Bone,previous:anim.Body_Map,allocator:=context.temp_allocator,facing:^mm.Vec3=nil) -> (map_:anim.Body_Map,ok:bool) {
     n:=len(bones)
     if n==0 {return}
     parents,e1:=make([]i32,n,allocator)
@@ -158,7 +159,7 @@ skeleton_body_detect :: proc(bones:[]Skeleton_Bone,previous:anim.Body_Map,alloca
         rest[i]={bone.translation,bone.rotation,bone.scale}
     }
     map_=previous
-    if !anim.body_detect(parents,names,rest,world,&map_) {return {},false}
+    if !anim.body_detect(parents,names,rest,world,&map_,facing) {return {},false}
     return map_,true
 }
 

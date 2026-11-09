@@ -312,8 +312,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 if !finite(speed) {authoring_failure(call,"locomote.speed","Invalid_Value","finite m/s",fmt.tprintf("%v",speed),"The speed is invalid");return false}
                 direction:=linalg.normalize0(toward)
                 // The clip travels the way the body faces; the warp turns it toward the target.
-                _,forward:=request_body(s,world,entity,.Pelvis)
-                facing:=mm.quat_rotate(placed.rotation,forward);facing.y=0
+                facing:=mm.quat_rotate(placed.rotation,mm.FORWARD);facing.y=0
                 waiting:=len(requests.locomotion.items)
                 anim.motion_locomotion(requests,{rig=entity,velocity=direction*speed,source_velocity=linalg.normalize0(facing)*speed,weight=1,enabled=true})
                 if len(requests.locomotion.items)==waiting {authoring_failure(call,"locomote","Rejected_Request","a finite target and queue capacity","rejected","The locomotion input was rejected",api.SERVER_ERROR);return false}
@@ -483,16 +482,7 @@ request_operation :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Ent
 
 // The bone path of a body part of the skeleton the rig shows, or "".
 @(private)
-request_body_bone :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> string {
-    bone,_:=request_body(s,world,entity,part)
-    return bone
-}
-
-// The path of a body part of the skeleton the rig shows ("" without it) and
-// the way the body faces in the space of the rig.
-@(private)
-request_body :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> (bone:string,forward:mm.Vec3) {
-    forward=mm.FORWARD
+request_body_bone :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> (bone:string) {
     id:=rig_skeleton(s,world,entity)
     if id=={} || s.app==nil || s.app.assets==nil {return}
     file:asset.Asset
@@ -501,7 +491,6 @@ request_body :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,p
     view,error:=asset.skeleton_view(&file,&s.app.assets.types)
     if error!=.None {return}
     map_:=asset.skeleton_body_map(view.bones,view.body,view.body_parts)
-    forward=map_.forward
     if index:=map_.bones[part];index>=0 {bone=strings.clone(base.text_get(view.bones[index].path[:]),context.temp_allocator)}
     return
 }

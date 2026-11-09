@@ -74,33 +74,29 @@ space_basis :: proc "contextless" (space:Source_Space) -> (b:Basis,ok:bool) {
     return b,true
 }
 
-@(private) FACING_BACK :: [3]f32{0,0,1}
-@(private) FACING_RIGHT :: [3]f32{1,0,0}
-@(private) FACING_LEFT :: [3]f32{-1,0,0}
-
-// The axes of a source whose rig stands facing an axis other than -Z, turned
-// about +Y so that it faces -Z: facing is what the read of those axes found;
-// zero leaves them as they are.
-space_faced :: proc "contextless" (axes:[3]Axis,facing:[3]f32) -> [3]Axis {
-    turned:=axes
-    switch facing {
-    case FACING_BACK:  turned[0],turned[2]=axis_opposite(axes[0]),axis_opposite(axes[2])
-    case FACING_RIGHT: turned[0],turned[2]=axes[2],axis_opposite(axes[0])
-    case FACING_LEFT:  turned[0],turned[2]=axis_opposite(axes[2]),axes[0]
-    }
-    return turned
+// The turn about +Y, as a change of basis within the engine's space, that
+// brings what stands facing front to -Z.
+front_basis :: proc "contextless" (front:Front) -> Basis {
+    AXES :: [Front][3]Axis{.Auto={.X,.Y,.Z},.Negative_Z={.X,.Y,.Z},.Z=FACING_PLUS_Z,.X={.Z,.Y,.Negative_X},.Negative_X={.Negative_Z,.Y,.X}}
+    axes:=AXES
+    b,_:=space_basis({meters_per_unit=1,axes=axes[front] if front<=max(Front) else axes[.Auto]})
+    return b
 }
 
-// A facing space_faced can turn to -Z: an axis of the ground other than -Z.
-body_turnable :: proc "contextless" (facing:[3]f32) -> bool {
-    return facing==FACING_BACK || facing==FACING_RIGHT || facing==FACING_LEFT
+// The front of what stands facing this way; false between the axes of the ground.
+front_of :: proc "contextless" (facing:[3]f32) -> (front:Front,ok:bool) {
+    switch facing {
+    case {0,0,-1}: return .Negative_Z,true
+    case {0,0,1}:  return .Z,true
+    case {1,0,0}:  return .X,true
+    case {-1,0,0}: return .Negative_X,true
+    }
+    return
 }
 
 // The space a file states of itself, for a format whose files each say theirs
 // (USD): it replaces Format.space. Before the first builder_triangle.
 source_space :: proc(r:^Reader,space:Source_Space) -> bool {
-    space:=space
-    space.axes=space_faced(space.axes,r.facing)
     basis,ok:=space_basis(space)
     if !ok {return fail(r,.Malformed,"%s: the space of the source needs positive units and three distinct axes",r.file_name)}
     r.space,r.basis=space,basis
@@ -163,11 +159,36 @@ space_uv :: #force_inline proc "contextless" (space:Source_Space,uv:[2]f32) -> [
     return uv
 }
 
-// Everything the builder did not see, in the engine's space: nodes, bones,
-// sockets, inverse binds, clips and lights.
+// A model already in the engine's space, turned about +Y so that what stood
+// facing front faces -Z: the geometry its builders made, which a turn does
+// not mirror, and what space_bake conjugates.
 @(private)
-space_bake :: proc(r:^Reader) {
-    b:=r.basis
+space_turn :: proc(r:^Reader,front:Front) {
+    b:=front_basis(front)
+    if b.identity {return}
+    for &mesh in r.meshes {
+        for &vertex in mesh.vertices {
+            vertex.position=space_point(b,vertex.position)
+            vertex.normal=mm.normal_pack(space_direction(b,mm.normal_unpack(vertex.normal)))
+            // Zero is a vertex without tangent: tangent_pack never gives it.
+            if vertex.tangent==0 {continue}
+            tangent,sign:=mm.tangent_unpack(vertex.tangent)
+            vertex.tangent=mm.tangent_pack(space_direction(b,tangent),sign)
+        }
+        for &delta in mesh.morph_deltas {
+            delta.position=space_direction(b,delta.position)
+            delta.normal=space_direction(b,delta.normal)
+            delta.tangent=space_direction(b,delta.tangent)
+        }
+        mesh.bounds_min,mesh.bounds_max=asset.mesh_bounds(mesh.vertices)
+    }
+    space_bake(r,b)
+}
+
+// Everything the builder did not see, through a change of basis: nodes,
+// bones, sockets, inverse binds, colliders, clips and lights.
+@(private)
+space_bake :: proc(r:^Reader,b:Basis) {
     if b.identity {return}
     frame:=light_frame(b)
     for &node in r.nodes {
