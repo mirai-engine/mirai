@@ -17,8 +17,10 @@ schema_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,al
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
+// A schema read or cloned with the memory ending at each request in turn:
+// Out_Of_Memory, nothing of it kept, and with memory enough the schema whole.
 @(test)
-schema_read_releases_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
+schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
     Kind :: enum u8 {First,Second}
     Sample :: struct {kind:Kind,values:[3]f32 `mirai:"label=Values,unit=m"`}
     original:Schema;schema_init(&original);defer schema_destroy(&original)
@@ -27,30 +29,42 @@ schema_read_releases_every_partial_allocation_and_hashes_retry_without_memory ::
     schema_write(&bytes,&original)
     failure:=Schema_Allocation_Failure{owner=context.allocator}
     allocator:=runtime.Allocator{schema_failure_allocator,&failure}
-    succeeded:=false
-    for budget in 0..<128 {
-        failure.remaining=budget
-        reader:=reader_init(writer_bytes(&bytes))
-        loaded:Schema
-        error:=schema_read(&reader,&loaded,allocator)
-        if error!=.None {
-            testing.expect_value(t,error,Schema_Error.Out_Of_Memory)
-            testing.expect(t,loaded.types==nil && loaded.fields==nil && loaded.choices==nil)
-            continue
+    Call :: enum {Read,Clone}
+    for call in Call {
+        succeeded,refused:=false,false
+        for budget in 0..<128 {
+            failure.remaining=budget
+            loaded:Schema
+            error:Schema_Error
+            switch call {
+            case .Read:
+                reader:=reader_init(writer_bytes(&bytes))
+                error=schema_read(&reader,&loaded,allocator)
+            case .Clone:
+                error=schema_clone(&loaded,&original,allocator)
+            }
+            if error!=.None {
+                refused=true
+                testing.expectf(t,error==.Out_Of_Memory,"%v with %d requests served: %v",call,budget,error)
+                testing.expectf(t,loaded.types==nil && loaded.fields==nil && loaded.choices==nil,"%v with %d requests served kept a part",call,budget)
+                continue
+            }
+            succeeded=true
+            testing.expectf(t,len(loaded.types)==len(original.types) && len(loaded.fields)==len(original.fields) && len(loaded.choices)==len(original.choices),"%v: the schema whole",call)
+            for field,i in loaded.fields {testing.expect(t,field.name==original.fields[i].name && field.label==original.fields[i].label && field.unit==original.fields[i].unit)}
+            failure.remaining=0
+            testing.expect_value(t,schema_validate(&loaded),Schema_Error.Out_Of_Memory)
+            hashes:=make([dynamic]u64,allocator)
+            testing.expect(t,!schema_hashes_update(&loaded,&hashes))
+            testing.expect_value(t,len(hashes),0)
+            failure.remaining=128
+            testing.expect(t,schema_hashes_update(&loaded,&hashes))
+            testing.expect_value(t,len(hashes),len(loaded.types))
+            delete(hashes);schema_destroy(&loaded)
+            break
         }
-        succeeded=true
-        failure.remaining=0
-        testing.expect_value(t,schema_validate(&loaded),Schema_Error.Out_Of_Memory)
-        hashes:=make([dynamic]u64,allocator)
-        testing.expect(t,!schema_hashes_update(&loaded,&hashes))
-        testing.expect_value(t,len(hashes),0)
-        failure.remaining=128
-        testing.expect(t,schema_hashes_update(&loaded,&hashes))
-        testing.expect_value(t,len(hashes),len(loaded.types))
-        delete(hashes);schema_destroy(&loaded)
-        break
+        testing.expectf(t,succeeded && refused,"%v: refused without memory, and with it it goes through",call)
     }
-    testing.expect(t,succeeded)
 }
 
 @(test)

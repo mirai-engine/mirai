@@ -2,6 +2,7 @@ package ai
 
 import cmath "core:math"
 import "core:math/linalg"
+import "mirai:std/base"
 import math "mirai:std/math"
 
 // The detail mesh: per polygon, its edges sampled every detail_sample_distance
@@ -593,7 +594,7 @@ nav_poly_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,polygon:[]math.Vec3,pat
             if _,error:=append(&s.detail_tris,[4]i32{0,i32(k-1),i32(k),0});error!=nil {return false}
         }
     }
-    if len(s.detail_tris)>NAV_DETAIL_MAX_TRIS {resize(&s.detail_tris,NAV_DETAIL_MAX_TRIS)}
+    base.truncate(&s.detail_tris,NAV_DETAIL_MAX_TRIS)
     on_hull :: proc "contextless" (dp:^Nav_Detail_Poly,a,b:i32) -> bool {
         for i,j:=0,dp.hull_count-1;i<dp.hull_count;j,i=i,i+1 {
             if dp.hull[j]==a && dp.hull[i]==b || dp.hull[j]==b && dp.hull[i]==a {return true}
