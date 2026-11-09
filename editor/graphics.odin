@@ -42,7 +42,7 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Indirect_Light={"Off","Probes"},
     .Probes={"Low","Medium","High"},
     .Reflections={"Off","Traced","Detailed"},
-    .Light_Samples={"1 to 127"},
+    .Light_Samples={"1 to 31"},
     .Light_Resolution={"Full","Half"},
     .Glass_Shadows={"Off","Colored"},
     .Glass_Layers={"1","2"},
@@ -54,7 +54,7 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
 }
 // Megapixels of a 16:9 image of each height; 0: one per point of the window.
 GRAPHICS_RESOLUTIONS :: [?]f32{0.9216,1.44,2.0736,3.6864,0}
-GRAPHICS_LIGHT_SAMPLES_MAX :: 127
+GRAPHICS_LIGHT_SAMPLES_MAX :: erender.GRAPHICS_LIGHT_SAMPLES_MAX
 GRAPHICS_FRAME_LIMITS :: [?]u32{30,60,120,144,240,0}
 GRAPHICS_PRESET_LABELS :: [erender.Graphics_Preset]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra"}
 

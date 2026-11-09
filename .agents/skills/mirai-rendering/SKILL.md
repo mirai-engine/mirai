@@ -113,6 +113,8 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
+- A graphics option keeps a choice, and a preset a step above another, only where the image
+  differs to the eye: what costs more and looks the same is not offered.
 - Every view is exposed one EV above its meter (`EXPOSURE_BIAS`), as Unreal's default bias; the
   ACES 2.0 calibration is not touched.
 - `render` does not see native handles: backend differences stay in `rhi`, with a single
