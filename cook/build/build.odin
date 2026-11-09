@@ -603,6 +603,34 @@ job_probe_start :: proc(job:^Job) -> ^Job {
     return job
 }
 
+// What a compiler left in the files of its streams: job.result.diagnostics,
+// the text it wrote besides them, whether a diagnostic is an error and all it
+// wrote to its error stream, for the frame. links: the text goes without the
+// calls to the linker it printed.
+@(private)
+job_compile_read :: proc(job:^Job,files:[2]string,links:=false) -> (text:string,errors:bool,output:string) {
+    a:=virtual.arena_allocator(&job.arena)
+    streams:[2]string
+    for file,i in files {
+        data,_:=os.read_entire_file(file,context.temp_allocator)
+        streams[i]=string(data)
+    }
+    rest:string
+    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
+    text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
+    for diagnostic in job.result.diagnostics {
+        if diagnostic.severity==.Error {errors=true}
+    }
+    return text,errors,streams[0]
+}
+
+// Ends the job with what its compiler said, or says that it said nothing.
+@(private)
+job_compile_fail :: proc(job:^Job,exit_code:int) {
+    if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,virtual.arena_allocator(&job.arena))}
+    job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+}
+
 // Takes what the compiler of a check or of the tests left.
 @(private)
 job_probe_finish :: proc(job:^Job,exit_code:int) {
@@ -625,16 +653,10 @@ job_probe_finish :: proc(job:^Job,exit_code:int) {
         job_done(job)
         return
     }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    job.result.text=strings.trim_space(strings.concatenate({rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-    failed:=exit_code!=0
-    for diagnostic in job.result.diagnostics {
-        if diagnostic.severity==.Error {failed=true}
-    }
-    if failed {
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+    errors:bool
+    job.result.text,errors,_=job_compile_read(job,job.stream_files)
+    if errors || exit_code!=0 {
+        job_compile_fail(job,exit_code)
         return
     }
     job.result.status=.Built
@@ -678,18 +700,11 @@ tests_report_read :: proc(path,log:string,report:^Test_Report,allocator:runtime.
 job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
     lib:=&job.plugins[compile.library]
-    streams:[2]string
-    for file,i in compile.streams {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
+    text,errors,output:=job_compile_read(job,compile.streams,links=true)
     sources:=project.path(job.engine_root,"plugins",allocator=context.temp_allocator)
-    failed:=exit_code!=0 || !os.is_file(compile.staged)
+    failed:=errors || exit_code!=0 || !os.is_file(compile.staged)
     for &diagnostic in job.result.diagnostics {
         if strings.has_prefix(diagnostic.file,lib.stage) {diagnostic.file=project.path(sources,diagnostic.file[len(lib.stage):],allocator=a)}
-        if diagnostic.severity==.Error {failed=true}
     }
     if failed && compile.relink {
         // The objects do not link again: it compiles.
@@ -701,9 +716,8 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if failed {
         remove_later({compile.folder})
-        job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+        job.result.text=text
+        job_compile_fail(job,exit_code)
         return
     }
     job.result.diagnostics=nil
@@ -713,7 +727,7 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if compile.relink {
         job.result.plugins_relinked+=1
-    } else if command,found:=link_command_find(streams[0]);found {
+    } else if command,found:=link_command_find(output);found {
         link_folder_trim(compile.folder)
         link_record_write(plugin_link_file(lib),{hash=job.plugin_compile_hashes[compile.library],folder=compile.folder,command=command})
     } else {
@@ -941,18 +955,10 @@ job_file_pid :: proc(name:string) -> int {
 @(private)
 job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
-    streams:[2]string
-    for file,i in job.stream_files {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-    failed:=exit_code!=0 || !os.is_file(compile.staged)
-    for diagnostic in job.result.diagnostics {
-        if diagnostic.severity==.Error {failed=true}
-    }
+    errors:bool
+    output:string
+    job.result.text,errors,output=job_compile_read(job,job.stream_files,links=true)
+    failed:=errors || exit_code!=0 || !os.is_file(compile.staged)
     if failed && compile.relink {
         // The objects do not link again: it compiles.
         job.result.diagnostics,job.result.text=nil,""
@@ -963,8 +969,7 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if failed {
         if compile.folder!="" {remove_later({compile.folder})}
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+        job_compile_fail(job,exit_code)
         return
     }
     sources,_:=dependencies_read(compile.relink?job.sources_file:job.sources_staged,context.temp_allocator)
@@ -996,7 +1001,7 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     if !stamped {_=os.remove(job.stamp_file)}
     job.result.relinked=compile.relink
     if compile.folder!="" && !compile.relink {
-        command,found:=link_command_find(streams[0])
+        command,found:=link_command_find(output)
         if stamped && found {
             masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
             link_folder_trim(compile.folder)

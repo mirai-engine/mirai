@@ -98,7 +98,7 @@ a_plugin_library_under_a_folder_with_spaces_links_with_its_definition :: proc(t:
         defer os.remove_all(folder)
         lib:=spaced_library(folder)
         testing.expect(t,os.make_directory_all(lib.stage)==nil)
-        entry_write(lib.stage,PLUGIN_ENTRY,{},"plugins")
+        entry_write(lib.stage,PLUGIN_ENTRY,{})
         testing.expect(t,os.write_entire_file(project.path(lib.stage,PLUGIN_ENTRY,"answer.odin"),"package __plugin\n\n@(export)\nanswer :: proc \"c\" () -> i32 {return 42}\n")==nil)
         testing.expect(t,plugin_definition_write(&lib))
         staged:=project.path(folder,"a folder","staged.dll")
@@ -393,7 +393,7 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
     declared_say,_:=os.read_entire_file(project.path(decl,"thing","say.odin"),context.temp_allocator)
     testing.expectf(t,strings.contains(string(declared_say),"fmt.bprintf") && strings.contains(string(declared_say),"link_name=\"mirai.thing.count\""),"say is compiled where it is called and count through the library:\n%s",string(declared_say))
-    entry_write(stage,"__engine",{"thing"})
+    entry_write(stage,"__engine",{"mirai:thing"})
     testing.expect(t,os.make_directory_all(out)==nil || os.is_dir(out))
     memory,_:=compiler_memory()
     environment:=child_environment(repository,context.temp_allocator)
