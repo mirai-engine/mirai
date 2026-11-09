@@ -185,9 +185,7 @@ mirai rpc --batch <calls.jsonl> [the same options]
 Every method takes two reserved params the server handles: `_select` (`"a.b,c[0].d"`) answers
 only those fields, as an object by their paths, and `_wait_until` (`"phase=Built"`) calls the
 method again until the condition holds, the editor going on meanwhile, for at most
-`api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout` sends. Over MCP the text of the
-answer is the selection and `structuredContent` stays the whole result, which clients check
-against the tool's schema. Selecting reads the result of a call that already ran, so a field that
+`api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout` sends. Selecting reads the result of a call that already ran, so a field that
 is not there is no error: the answer keeps the fields it found and says briefly which are missing
 and which exist, in the `note` member of the JSON-RPC response or in a second text of the MCP
 content. `--select` and `--wait-until` of `mirai rpc` send these params: the server does both, and
@@ -262,10 +260,10 @@ batch, without sessions or server events.
 - `engine.describe` with `methods`, `prefix` or `plugin` adds to `guides` the guides
   (`api.server_guides_set`) of the methods it gives: those of the plugin of any of them, that of
   the method or that of a prefix of its name ending in a dot. Without parameters it gives no
-  guides. It paginates with `nextCursor`. `outputSchema` goes with a result declared with a type
-  or with a `result_schema` of `type:"object"`.
-- `tools/call`: the result as JSON text in `content` and, if it is an object, also in
-  `structuredContent`; a method error is `isError:true` with `{"error":{...}}` in the text. With
+  guides. It paginates with `nextCursor`. Tools declare no `outputSchema`: `engine.describe` gives
+  the shape of a result.
+- `tools/call`: the result as JSON text in `content`, the only copy, since clients give models
+  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. With
   `mcp_content:true` it is an MCP content envelope (`view.viewport`). A handler
   with a typed result attaches a PNG with `api.call_image` (`capture`): MCP gives it as an
   image after the text and JSON-RPC returns only the result; if it does not fit in the response or

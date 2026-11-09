@@ -39,7 +39,7 @@ select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: p
     tool:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_shapes","arguments":{"position":[1,2,3],"_select":"mode"}}}`)
     testing.expect_value(t,string_of(at(tool_text(t,tool),"mode")),"Walk")
     testing.expect(t,at(tool_text(t,tool),"position")==nil,"the text keeps what it names")
-    testing.expect(t,at(tool,"result","structuredContent","position")!=nil,"the structured result stays whole")
+    testing.expect(t,at(tool,"result","structuredContent")==nil,"the selection is all a model gets")
     unknown:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_add","arguments":{"a":1,"b":1,"_select":"total"}}}`)
     testing.expect(t,is_bool(at(unknown,"result","isError"),false),"a tool that ran is not a tool error")
     testing.expect(t,at(tool_text(t,unknown),"sum")==nil,"nothing was found")

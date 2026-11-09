@@ -146,7 +146,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     `region` in points, or a cell of `size` centered where the `follow` entity (its name, id or
     handle) projects through the game camera (with `ui`, inside the viewport). One PNG, cells left
     to right and top to bottom with their tick in the corner, scaled down past a sheet width;
-    `structuredContent` gives each cell's tick.
+    the result gives each cell's tick.
   - It changes neither the document nor the history.
   - A job compresses and writes the PNG: with a window the editor keeps drawing; a manual one
     waits without advancing frames.

@@ -10,8 +10,8 @@ import "mirai:std/serial"
 // without server-sent events: every POST /mcp carries one JSON-RPC message (or
 // a batch) and gets one JSON answer, or 202 when it is a notification. Each
 // method is a tool named like it with dots as underscores; its input schema
-// is the JSON Schema of its params. Object results also carry structured
-// content; a failed call is a tool error carrying {"error":{code,message,data}}.
+// is the JSON Schema of its params. A result is its JSON as text, what models
+// read; a failed call is a tool error carrying {"error":{code,message,data}}.
 // tools/list gives the tool docs, the basic tools of the editor (Core: what
 // an agent uses most) and the tool call, which runs any method by its name with its params, and
 // with them those of the plugins the header X-Mirai-Plugins names (* for
@@ -78,20 +78,6 @@ mcp_initialize :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
 }
 
 @(private)
-mcp_output_object :: proc(s:^Server,method:^Method) -> (object:bool,ok:bool) {
-    if method.result!=serial.TYPE_NONE {return true,true}
-    if method.result_schema=="" {return false,true}
-    mark:=base.arena_mark(&s.scratch)
-    defer base.arena_rewind(&s.scratch,mark)
-    failed:=s.scratch.failed
-    allocator:=base.arena_allocator(&s.scratch)
-    values:[1]string
-    if !object_values(allocator,method.result_schema,{"type"},values[:]) || values[0]=="" {return false,s.scratch.failed==failed}
-    kind,valid:=string_value(allocator,values[0])
-    return valid && kind=="object",s.scratch.failed==failed
-}
-
-@(private)
 mcp_tools_list :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     values:[1]string
     start:=0
@@ -117,9 +103,6 @@ mcp_tools_list :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         raw(w,`{"name":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))
         raw(w,`,"description":`);serial.text_write_string(w,method.summary)
         raw(w,`,"inputSchema":`);method_schema_write(w,s,method,false)
-        object,valid:=mcp_output_object(s,method)
-        if !valid {s.stats.scratch_failures+=1;return {INTERNAL_ERROR,"the output schema needs more scratch memory than the server has",""},false}
-        if object {raw(w,`,"outputSchema":`);method_schema_write(w,s,method,true)}
         raw(w,`,"annotations":{"readOnlyHint":`);raw(w,.Read_Only in method.flags?"true":"false")
         raw(w,`,"destructiveHint":`);raw(w,.Destructive in method.flags?"true":"false")
         raw(w,`,"idempotentHint":`);raw(w,.Idempotent in method.flags?"true":"false")
@@ -185,30 +168,24 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     }
     method:=tool_find(s,name)
     if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q; engine_describe lists the methods",shorten(name)),""},false}
-    object_schema,schema_valid:=mcp_output_object(s,method)
-    if !schema_valid {s.stats.scratch_failures+=1;return {INTERNAL_ERROR,"the output schema needs more scratch memory than the server has",""},false}
     serial.writer_reset(&s.stage)
-    // The text is what _select keeps; the structured content stays the whole
-    // result, which clients check against the output schema of the tool.
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
     if ok && s.stage.overflow>0 {
         s.stats.oversized+=1
         err,ok={SERVER_ERROR,"the result does not fit in the response buffer",""},false
     }
-    object_result:=false
     if ok {
         result:=string(serial.writer_bytes(&s.stage))
         mark:=base.arena_mark(&s.scratch)
         failed:=s.scratch.failed
         r:serial.Text_Reader
         serial.text_reader_init(&r,result,base.arena_allocator(&s.scratch))
-        object_result=serial.text_peek(&r)=='{'
         valid:=serial.text_skip(&r) && serial.text_end(&r)
         base.arena_rewind(&s.scratch,mark)
         if s.scratch.failed!=failed {
             s.stats.scratch_failures+=1
             err,ok={INTERNAL_ERROR,"the result needs more scratch memory than the server has",""},false
-        } else if !valid || (object_schema && !object_result) {
+        } else if !valid {
             err,ok={INTERNAL_ERROR,"the tool returned an invalid result",""},false
         }
     }
@@ -225,9 +202,8 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     serial.text_write_string(w,ok && selected!=""?selected:string(serial.writer_bytes(&s.stage)))
     raw(w,`}`)
     if ok && note!="" {raw(w,`,{"type":"text","text":`);serial.text_write_string(w,note);raw(w,`}`)}
-    if ok && s.image!="" {mcp_image_write(s,w,s.image,object_result?len(serial.writer_bytes(&s.stage)):0)}
+    if ok && s.image!="" {mcp_image_write(s,w,s.image)}
     raw(w,`]`)
-    if ok && object_result {raw(w,`,"structuredContent":`);raw(w,string(serial.writer_bytes(&s.stage)))}
     raw(w,`,"isError":`);raw(w,ok?"false":"true");raw(w,"}")
     return {},true
 }
@@ -237,9 +213,9 @@ BASE64 :: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 // The PNG at path as an image content item, encoded straight into w; a text
 // item that says where it is when it cannot be read or does not fit beside
-// the rest of the answer (kept: the bytes still to be written after it).
+// the rest of the answer.
 @(private)
-mcp_image_write :: proc(s:^Server,w:^serial.Writer,path:string,kept:int) {
+mcp_image_write :: proc(s:^Server,w:^serial.Writer,path:string) {
     note :: proc(s:^Server,w:^serial.Writer,format:string,args:..any) {
         raw(w,`,{"type":"text","text":`)
         serial.text_write_string(w,format_text(base.arena_allocator(&s.scratch),format,..args))
@@ -249,7 +225,7 @@ mcp_image_write :: proc(s:^Server,w:^serial.Writer,path:string,kept:int) {
     if error!=nil {note(s,w,"The image %s could not be read: %v",path,error);return}
     defer delete(data,s.allocator)
     encoded:=(len(data)+2)/3*4
-    room:=len(w.data)-w.count-kept-256
+    room:=len(w.data)-w.count-256
     if encoded>room {
         note(s,w,"The image of %d bytes does not fit in the answer (%d bytes at most); it is at %s",len(data),max(room/4*3,0),path)
         return

@@ -144,7 +144,6 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     call :: proc(path:string) -> string {return fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"shot_take","arguments":{{"path":%q}}}}}}`,path)}
     reply:=mcp(t,&f,call(small))
     testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),7)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),7)
     testing.expect_value(t,string_of(at(reply,"result","content",1,"type")),"image")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"data")),"AQIDBA==")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"mimeType")),"image/png")
@@ -152,7 +151,7 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     testing.expect_value(t,integer(at(direct,"result","sum")),7)
     // One that does not fit says where it is, and the result stays.
     big:=mcp(t,&f,call(large))
-    testing.expect_value(t,integer(at(big,"result","structuredContent","sum")),7)
+    testing.expect_value(t,integer(at(tool_text(t,big),"sum")),7)
     testing.expect(t,strings.contains(string_of(at(big,"result","content",1,"text")),"large.png"))
     missing:=mcp(t,&f,call(fmt.tprintf("%s/none.png",folder)))
     testing.expect(t,strings.contains(string_of(at(missing,"result","content",1,"text")),"could not be read"))
@@ -303,10 +302,7 @@ mcp_lists_each_method_as_a_tool_with_its_input_and_object_output_schemas :: proc
     testing.expect_value(t,string_of(at(add,"description")),"Adds two integers.")
     testing.expect_value(t,string_of(at(add,"inputSchema","type")),"object")
     testing.expect_value(t,integer(at(add,"inputSchema","properties","a","maximum")),2147483647)
-    testing.expect_value(t,string_of(at(add,"outputSchema","type")),"object")
-    testing.expect_value(t,string_of(at(add,"outputSchema","properties","sum","type")),"integer")
-    testing.expect_value(t,string_of(at(add,"outputSchema","required",0)),"sum")
-    testing.expect(t,at(reply,"result","tools",5,"outputSchema")==nil,"free-form results do not promise a schema")
+    testing.expect(t,at(add,"outputSchema")==nil,"a model reads a result as text")
     testing.expect(t,is_bool(at(add,"annotations","readOnlyHint"),true),"boolean flag")
     testing.expect(t,is_bool(at(add,"annotations","destructiveHint"),false),"boolean flag")
     testing.expect(t,is_bool(at(add,"annotations","idempotentHint"),true),"boolean flag")
@@ -341,7 +337,7 @@ mcp_lists_the_tools_of_the_plugins_that_x_mirai_plugins_names :: proc(t:^testing
     testing.expect_value(t,len(two),11)
     testing.expect_value(t,len(names(t,&f,"*")),11)
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"anim_play","arguments":{"a":1,"b":2}}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),3)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),3)
     status,_,_:=client_post(server_port(&f.server),"/mcp",`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`,3000,context.temp_allocator,"","anim;rm")
     testing.expect_value(t,status,400)
 }
@@ -376,7 +372,7 @@ mcp_lists_tools_in_pages_when_they_do_not_fit :: proc(t:^testing.T) {
 }
 
 @(test)
-mcp_calls_a_tool_and_returns_object_results_as_text_and_structured_content :: proc(t:^testing.T) {
+mcp_calls_a_tool_and_returns_results_as_text :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":"c1","method":"tools/call","params":{"name":"test_add","arguments":{"a":40,"b":2}}}`)
@@ -384,16 +380,12 @@ mcp_calls_a_tool_and_returns_object_results_as_text_and_structured_content :: pr
     testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"text")
     testing.expect(t,is_bool(at(reply,"result","isError"),false),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),42)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),42)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_echo","arguments":{"text":"say \"hi\"\n","times":2}}}`)
     testing.expect_value(t,string_of(at(tool_text(t,reply),"text")),"say \"hi\"\nsay \"hi\"\n")
-    testing.expect_value(t,string_of(at(reply,"result","structuredContent","text")),"say \"hi\"\nsay \"hi\"\n")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"engine_describe","arguments":{"methods":["test.add"]}}}`)
     testing.expect_value(t,string_of(at(tool_text(t,reply),"methods",0,"name")),"test.add")
-    testing.expect_value(t,string_of(at(reply,"result","structuredContent","methods",0,"name")),"test.add")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"test_raw"}}`)
     testing.expect_value(t,integer(at(tool_text(t,reply),"bytes")),2)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","bytes")),2)
     reply=mcp(t,&f,`[{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"test_add","arguments":{"a":1,"b":1}}},{"jsonrpc":"2.0","method":"notifications/initialized"}]`)
     testing.expect_value(t,len(reply.(json.Array)),1)
 }
@@ -406,7 +398,6 @@ mcp_failures_are_tool_errors_and_misuse_is_a_protocol_error :: proc(t:^testing.T
     testing.expect(t,is_bool(at(reply,"result","isError"),true),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),SERVER_ERROR)
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","data","attempt")),4)
-    testing.expect(t,at(reply,"result","structuredContent")==nil,"tool errors do not claim to conform to the success schema")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_add","arguments":{"a":"x","b":1}}}`)
     testing.expect(t,is_bool(at(reply,"result","isError"),true),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INVALID_PARAMS)
@@ -469,21 +460,14 @@ mcp_explicit_object_output_schemas_share_the_method_contract :: proc(t:^testing.
     testing.expect_value(t,method_register(&s,{name="any",result_schema=`{}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="invalid",result_schema=`{"type":`,handler=mcp_json_handler,user=&text}),Register_Error.Invalid_Schema)
     reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-    schema:=at(reply,"result","tools",1,"outputSchema")
-    testing.expect_value(t,string_of(at(schema,"type")),"object")
-    testing.expect_value(t,string_of(at(schema,"properties","value","type")),"integer")
-    testing.expect_value(t,string_of(at(schema,"required",0)),"value")
-    testing.expect(t,is_bool(at(schema,"additionalProperties"),false))
-    testing.expect(t,at(reply,"result","tools",2,"outputSchema")==nil)
-    testing.expect(t,at(reply,"result","tools",3,"outputSchema")==nil)
     reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),7)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),7)
     testing.expect_value(t,integer(at(tool_text(t,reply),"value")),7)
     testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),text)
 }
 
 @(test)
-mcp_rejects_malformed_results_and_object_schema_type_mismatches :: proc(t:^testing.T) {
+mcp_rejects_malformed_results :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     text:=`{"value":7}`
@@ -494,12 +478,10 @@ mcp_rejects_malformed_results_and_object_schema_type_mismatches :: proc(t:^testi
         text=value
         reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"free"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),false))
-        testing.expect(t,at(reply,"result","structuredContent")==nil,"MCP 2025 structured content is an object")
         testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),value)
         reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),true))
         testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-        testing.expect(t,at(reply,"result","structuredContent")==nil)
     }
     malformed:=[]string{`{"value":`,`{"value":7} false`,`not json`}
     for value in malformed {
@@ -507,7 +489,6 @@ mcp_rejects_malformed_results_and_object_schema_type_mismatches :: proc(t:^testi
         reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"free"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),true))
         testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-        testing.expect(t,at(reply,"result","structuredContent")==nil)
     }
 }
 
@@ -542,7 +523,6 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),true))
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-    testing.expect(t,at(reply,"result","structuredContent")==nil)
     testing.expect_value(t,s.stats.scratch_failures,1)
     text=`{"value":42}`
     context.allocator=mem.nil_allocator()
@@ -553,7 +533,7 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     context.allocator=saved_allocator
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),42)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),42)
     serial.writer_reset(&w)
     raw(&w,`{"type":"object","description":"`)
     for _ in 0..<1300 {raw(&w,`\n`)}
@@ -575,7 +555,7 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     context.allocator=saved_allocator
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),42)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),42)
 }
 
 is_bool :: proc(value:json.Value,want:bool) -> bool {
@@ -595,9 +575,9 @@ mcp_lists_the_core_and_call_runs_any_other_method_by_its_name :: proc(t:^testing
     testing.expect(t,string_of(at(call,"name"))==MCP_CALL_TOOL && string_of(at(call,"inputSchema","required",0))=="method")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"call","arguments":{"method":"rare.sum","params":{"a":2,"b":3}}}}`)
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),5)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),5)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"rare_sum","arguments":{"a":1,"b":1}}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),2)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),2)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"call","arguments":{"method":"missing.thing"}}}`)
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),"engine_describe lists the methods"),"an unknown method says where the methods are")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"call","arguments":{"params":{}}}}`)
