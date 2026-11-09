@@ -213,7 +213,7 @@ describe_shows_types_defaults_an_example_and_the_result :: proc(t:^testing.T) {
         "    at: number[3] m, required\n",
         "    dt: number 0.0001..0.25 s. Step\n",
         "    scale: number[3], default 1 each\n",
-        "  example: mirai rpc test.echo '{\"text\":\"x\",\"target\":\"0000000000000001\",\"at\":[0,0,0]}'\n",
+        "  example: mirai rpc test.echo text=x target=0000000000000001 at=[0,0,0]\n",
         "    count: integer\n",
     }) {
         testing.expectf(t,strings.contains(text,line),"%q in:\n%s",line,text)
@@ -221,7 +221,7 @@ describe_shows_types_defaults_an_example_and_the_result :: proc(t:^testing.T) {
     testing.expect(t,!strings.contains(text,"test.echo_twice"),"the method named alone")
     both:=rpc_describe_text(describe,"test.")
     testing.expect(t,strings.contains(both,"test.echo_twice\n  Twice.\n  params: no schema"),both)
-    testing.expect(t,strings.contains(both,"example: mirai rpc test.echo_twice '{}'"),both)
+    testing.expect(t,strings.contains(both,"example: mirai rpc test.echo_twice\n"),both)
     testing.expect(t,strings.contains(both,"result: no schema"),both)
     testing.expect_value(t,rpc_similar_names(describe,"test.repeat"),"test.echo, test.echo_twice")
     testing.expect_value(t,rpc_similar_names(describe,"echo"),"test.echo, test.echo_twice")
