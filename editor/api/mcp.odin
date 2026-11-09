@@ -166,7 +166,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         name,arguments=method_name,call[1]!=""?call[1]:"{}"
     }
     method:=tool_find(s,name)
-    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q; engine_describe lists the methods",shorten(name)),""},false}
+    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q%s; engine_describe lists the methods",shorten(name),methods_similar(s,tool_as_method(name))),""},false}
     serial.writer_reset(&s.stage)
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
     if ok && s.stage.overflow>0 {
@@ -201,6 +201,14 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     raw(w,`]`)
     raw(w,`,"isError":`);raw(w,ok?"false":"true");raw(w,"}")
     return {},true
+}
+
+// A name of a tool as the method it may mean: its first underscore a dot.
+@(private)
+tool_as_method :: proc(name:string) -> string {
+    if strings.contains_rune(name,'.') {return name}
+    named,_:=strings.replace(name,"_",".",1,context.temp_allocator)
+    return named
 }
 
 @(private)

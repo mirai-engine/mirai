@@ -14,6 +14,7 @@ import "mirai:std/serial"
 @(private) ECHO_BYTES :: 240 // of a list of names an error repeats
 @(private) BRIEF_BYTES :: 80 // of a value inside a message
 @(private) NOTE_BYTES :: 480 // of what _select says it did not find
+@(private) WAIT_VALUE_BYTES :: 240 // of the value a wait that ran out repeats
 
 // <field><op><value> of _wait_until.
 Condition :: struct {
@@ -437,7 +438,7 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         if met {break}
         if time.duration_seconds(time.tick_since(started))>limit {
             message:=format_text(allocator,"%s did not meet %s in %.0f s: %s is %s",method.name,options.until.text,limit,options.until.path.text,json_brief(value))
-            return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),value)},false,"",""
+            return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),wait_value_brief(allocator,value))},false,"",""
         }
         base.arena_rewind(&s.scratch,mark)
         if !server_pause(s) {return {CLOSED,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
@@ -446,6 +447,15 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         selected,note=fields_select(allocator,string(out.data[start:out.count]),options.select)
     }
     return
+}
+
+// The value a wait that ran out repeats: whole when it is short, else its
+// first bytes and how many more it has.
+@(private)
+wait_value_brief :: proc(allocator:runtime.Allocator,value:string) -> string {
+    prefix,omitted:=text_cut(value,WAIT_VALUE_BYTES)
+    if omitted==0 {return value}
+    return format_text(allocator,`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix,allocator),omitted)
 }
 
 @(private)

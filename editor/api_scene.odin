@@ -104,8 +104,8 @@ Api_Play_Player_Result :: struct {
     camera:Api_Play_Player_Entity `mirai:"label=The camera the view shows; that of the body when the view names none"`,
 }
 Api_Play_Player_Entity :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
-    id:[16]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
+    id:[API_HANDLE_TEXT]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
     name:[64]u8 `mirai:"text"`,
     position:[3]f32 `mirai:"label=Local to the parent"`,
     rotation_deg:[3]f32 `mirai:"label=Local to the parent in degrees"`,

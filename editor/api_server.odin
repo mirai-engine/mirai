@@ -25,7 +25,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "12"
+API_VERSION :: "13"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with methods, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and _wait_until, a condition (phase=Built) it is called again until. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -747,6 +747,14 @@ rpc_raw :: proc(a:^Rpc_Args) -> (text:string,ok:bool) {
 }
 
 // ---------------------------------------------------------------- small helpers
+
+// A text that holds a handle as the answers write it: 0x, its 16 digits and the NUL.
+API_HANDLE_TEXT :: 19
+
+// A handle as every answer writes it, the form of a core.Entity in the schema.
+api_handle_text :: proc(e:core.Entity,allocator:=context.temp_allocator) -> string {return fmt.aprintf("0x%016x",u64(e),allocator=allocator)}
+
+api_handle_put :: proc(buffer:[]u8,e:core.Entity) {base.text_set(buffer,api_handle_text(e))}
 
 // The id of an entity of a world, 0 without one.
 api_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {

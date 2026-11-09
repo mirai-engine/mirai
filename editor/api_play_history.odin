@@ -231,17 +231,14 @@ api_history_trace :: proc(s:^Session,call:^api.Call,r:^Run,p:^Api_Play_Trace,raw
     every:=u64(max(p.every,1))
     span:=int(min(to-from,u64(API_TRACE_ROWS-1)*every))
     if problem:=api_trace_read(s,call,run_ref(s,r),p,raw,span,trace);problem!="" {return problem}
-    last:=history_frame_of(h,first).tick
+    walk:=history_walk(h,first,to,every)
     pending:=u64(0) // a frame played after the last row, whose tick is the last of the trace
-    for serial:=first+1;serial<=h.serial;serial+=1 {
-        f:=history_frame_of(h,serial)
-        if f==nil || f.tick>to {break}
-        due:=f.tick>=last+every
+    for f,due in history_walk_next(&walk) {
         if due && trace.row_count==API_TRACE_ROWS {next^,pending=f.tick,0;break}
-        if !history_seek(s,r,serial).ok {return "No memory to play the past again"}
-        if !due {pending=serial;continue}
+        if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
+        if !due {pending=walk.at;continue}
         if problem:=api_trace_take(s,trace,run_ref(s,r),0);problem!="" {return problem}
-        last,pending=f.tick,0
+        pending=0
     }
     if pending==0 {return ""}
     if trace.row_count==API_TRACE_ROWS {

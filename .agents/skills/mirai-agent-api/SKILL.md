@@ -183,8 +183,8 @@ positions misses both.
 - The caller does not pass revisions: a field edited by two authors keeps the last one's, and the
   user reverts it with the turn's change review or with undo; a replacement of a whole file, the
   same ([protocol](references/api.md#concurrency-transactions-and-undo)).
-- Answers name entities by `core.Id` (16 hexadecimal digits in a string) and assets by `Asset_Id`
-  (32).
+- Answers name entities by `core.Id`, or a live one by its handle (`0x` and 16 hexadecimal digits
+  in a string), and assets by `Asset_Id` (32 digits).
 - Methods and their schemas are server data; they are not duplicated by hand elsewhere.
 - Each method belongs to the editor or to the plugin whose provider registers it. MCP lists only
   the editor core (the methods with the `Core` flag: the basics of a scene) and the `call` tool,

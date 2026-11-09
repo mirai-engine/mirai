@@ -23,6 +23,7 @@ Shape_Field :: struct {name:string,node:^Shape_Node}
 @(private="file")
 Shape_Node :: struct {
     known,list,other,vector,text:bool, // list: takes an array; other: takes something else; vector: an array of a fixed length over one; text: takes a string and nothing else
+    closed:bool, // additionalProperties is false: only its fields
     items:^Shape_Node,
     fields:[]Shape_Field,
     names:[]string,
@@ -36,7 +37,7 @@ Shaper :: struct {
     checker:Checker,
     r:serial.Text_Reader,
     edits:[dynamic]Shape_Edit,
-    names:bool, // enum names too: their reader does not take them as an agent writes them
+    by_hand:bool, // the handler reads them itself: enum names as an agent writes them, and no key the schema does not close over
 }
 
 @(private="file")
@@ -68,6 +69,8 @@ shape_node :: proc(schema:string,c:^Shaper,depth:int) -> ^Shape_Node {
                 if !is_text {node.names=nil;break}
                 node.names[i]=strings.clone(text,c.checker.allocator)
             }
+        case "additionalProperties":
+            node.closed=member.value=="false"
         case "minItems":
             least,_:=strconv.parse_int(member.value,10)
             node.vector=least>1
@@ -136,6 +139,11 @@ shape_object :: proc(c:^Shaper,node:^Shape_Node) -> bool {
         if field==nil {
             field=shape_field_meant(c,node,key,object)
             if field!=nil {append(&c.edits,Shape_Edit{at,end,serial.text_quote(field.name,c.checker.allocator)})}
+        }
+        if field==nil && node.closed && c.by_hand {
+            names:=make([]string,len(node.fields),c.checker.allocator)
+            for each,i in node.fields {names[i]=each.name}
+            return check_fail(&c.checker,"%s",base.name_problem(key,"a parameter",names,c.checker.allocator))
         }
         serial.text_expect(r,':') or_return
         if field!=nil {
@@ -214,7 +222,7 @@ shape_value :: proc(c:^Shaper,node:^Shape_Node) -> bool {
         return shape_list(c,node)
     case kind=='{' && len(node.fields)>0:
         return shape_object(c,node)
-    case kind=='"' && len(node.names)>0 && c.names:
+    case kind=='"' && len(node.names)>0 && c.by_hand:
         return shape_name(c,node)
     case node.text && len(node.names)==0 && (kind=='t' || kind=='f' || kind=='-' || kind>='0' && kind<='9'):
         at:=r.offset
@@ -238,11 +246,11 @@ params_schema_text :: proc(s:^Server,method:^Method) -> string {
 // The params made into what schema declares; the same text when nothing
 // changes or the schema says nothing of them. problem: what they ask that
 // cannot be made valid. Text that is not JSON stays for its reader to report.
-params_shape :: proc(s:^Server,schema,params:string,names:=true) -> (shaped,problem:string) {
+params_shape :: proc(s:^Server,schema,params:string,by_hand:=true) -> (shaped,problem:string) {
     shaped=params
     if schema=="" || params=="{}" {return}
     allocator:=base.arena_allocator(&s.scratch)
-    c:=Shaper{checker={allocator=allocator},edits=make([dynamic]Shape_Edit,allocator),names=names}
+    c:=Shaper{checker={allocator=allocator},edits=make([dynamic]Shape_Edit,allocator),by_hand=by_hand}
     root:=shape_node(schema,&c,0)
     if root==nil || len(root.fields)==0 {return}
     serial.text_reader_init(&c.r,params,allocator)

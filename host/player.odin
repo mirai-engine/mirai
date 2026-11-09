@@ -240,10 +240,7 @@ player_script_pointer :: proc(script:^Player_Script,frame:int) -> (pointer:[2]f3
 // keys and buttons as a window gives them.
 @(private)
 player_script_ui :: proc(input:^ui.Input,scripted:core.Input,pointer:[2]f32,points:bool) {
-    frame:platform.Input_Frame
-    frame.keys_down,frame.keys_pressed,frame.keys_repeated=scripted.keys_down,scripted.keys_pressed,scripted.keys_pressed
-    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=scripted.mouse_down,scripted.mouse_pressed,scripted.mouse_released
-    if .Left in scripted.mouse_pressed {frame.mouse_clicks[.Left]=1}
+    frame:=input_frame_of(scripted)
     given:=ui_input_from_platform(&frame)
     input.down+=given.down
     input.pressed+=given.pressed
@@ -254,23 +251,6 @@ player_script_ui :: proc(input:^ui.Input,scripted:core.Input,pointer:[2]f32,poin
     input.keys_repeated+=given.keys_repeated
     input.modifiers+=given.modifiers
     if points {input.pointer,input.pointer_absent=pointer,false}
-}
-
-// A frame of the player: app_frame with what the script does added to the
-// input of the UI, once the frame has built it from the devices.
-@(private)
-player_frame :: proc(app:^App,phases:core.Phases,played:bool,scripted:core.Input,pointer:[2]f32,points:bool) -> bool {
-    if !app_frame_begin(app) {
-        profile_frame_close(app)
-        return false
-    }
-    if played {
-        player_script_ui(&app.ui_input,scripted,pointer,points)
-        if points {ui_input_camera(&app.ui_input,app.camera,app_scene_points(app))}
-    }
-    if app.world!=nil {app_game_frame(app,app.world,phases)}
-    app_frame_end(app)
-    return !app.quit
 }
 
 // Why app_capture failed, which only says that it did.
@@ -451,7 +431,8 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         }
         if surface!=nil && !surface_frame_begin(app,surface) {break}
         if attached!=nil && attached_gone(attached) {break}
-        if !player_frame(app,phases,played,input,pointer,points) {
+        adds:=Frame_Script{input,pointer,points}
+        if !app_frame(app,phases,played?&adds:nil) {
             code=app.exit_code
             break
         }

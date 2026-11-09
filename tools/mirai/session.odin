@@ -131,6 +131,25 @@ process_end :: proc(pid:int,wait:time.Duration) {
     }
 }
 
+// The session of the project that answers, or one opened for a command, which
+// closes it when reused is false; code is not 0 after saying why there is none.
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+    alive:bool
+    file,alive=session_find(folder)
+    reused=alive && session_answers(file.port)
+    if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
+    if !reused {file,code=session_open(root,folder,mode,false,180,{})}
+    return
+}
+
+// One call of a command to its session; what fails goes to stderr.
+session_call :: proc(command:string,port:int,method:string,params:any,timeout_ms:=600000) -> (result:string,ok:bool) {
+    text,_:=json.marshal(params,allocator=context.temp_allocator)
+    response,err,called:=api.rpc_call(port,method,string(text),1,timeout_ms,context.allocator)
+    if !called {fmt.eprintfln("mirai %s: %s: %s",command,method,api.error_text(err,context.temp_allocator))}
+    return response,called
+}
+
 session_answers :: proc(port:int) -> bool {
     _,_,called:=api.rpc_call(port,"engine.status","{}",1,5000,context.temp_allocator)
     return called

@@ -166,12 +166,24 @@ app_exit :: proc(app:^App,code:int) {
     app.quit,app.exit_code=true,code
 }
 
+// What a script of the player adds to the input of the UI of a frame, once the
+// frame has built it from the devices.
+Frame_Script :: struct {
+    input:core.Input,
+    pointer:[2]f32,
+    points:bool, // pointer is a place of the script
+}
+
 // The player's frame, with the phases of the game loop it runs. False once
 // the application was asked to end.
-app_frame :: proc(app:^App,phases:=ALL_PHASES) -> bool {
+app_frame :: proc(app:^App,phases:=ALL_PHASES,script:^Frame_Script=nil) -> bool {
     if !app_frame_begin(app) {
         profile_frame_close(app)
         return false
+    }
+    if script!=nil {
+        player_script_ui(&app.ui_input,script.input,script.pointer,script.points)
+        if script.points {ui_input_camera(&app.ui_input,app.camera,app_scene_points(app))}
     }
     if app.world!=nil {app_game_frame(app,app.world,phases)}
     app_frame_end(app)

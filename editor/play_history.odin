@@ -133,6 +133,32 @@ history_frame_of :: proc "contextless" (h:^Run_History,serial:u64) -> ^History_F
     return history_frame_at(h,h.frame_count-1-int(h.serial-serial))
 }
 
+// A walk over the frames kept after a first one, up to a tick: what looking at
+// the past plays, a sample every some ticks.
+History_Walk :: struct {
+    h:^Run_History,
+    at:u64, // the serial of the frame it gave last
+    to:u64,
+    every:u64,
+    last:u64, // the tick of the frame that was due last
+}
+
+history_walk :: proc "contextless" (h:^Run_History,first,to,every:u64) -> History_Walk {
+    return {h=h,at=first,to=to,every=every,last=history_frame_of(h,first).tick}
+}
+
+// The next frame up to the tick to, and whether it is due: every ticks past
+// the last that was.
+history_walk_next :: proc "contextless" (walk:^History_Walk) -> (f:^History_Frame,due,more:bool) {
+    walk.at+=1
+    if walk.at>walk.h.serial {return}
+    f=history_frame_of(walk.h,walk.at)
+    if f==nil || f.tick>walk.to {return nil,false,false}
+    due=f.tick>=walk.last+walk.every
+    if due {walk.last=f.tick}
+    return f,due,true
+}
+
 // What says that a replay left the World as the frame did.
 @(private)
 history_hash :: proc(w:core.World_Ref) -> u64 {

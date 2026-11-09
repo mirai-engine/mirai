@@ -596,7 +596,6 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
         case "entity": id,has_id=editor.rpc_id(&request,"entity")
         case "values": values,_=editor.rpc_raw(&request)
         case "parameters": parameters,_=editor.rpc_raw(&request)
-        case: editor.rpc_fail_type(&request,"%s is not a parameter: entity, values, parameters",key)
         }
     }
     if request.failed {return}

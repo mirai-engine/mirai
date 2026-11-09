@@ -213,11 +213,43 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
+// What an error adds about the methods whose names look like name; "" without one.
+@(private)
+methods_similar :: proc(s:^Server,name:string) -> string {
+    allocator:=base.arena_allocator(&s.scratch)
+    names:=make([]string,s.method_count,allocator)
+    for &method,i in s.methods[:s.method_count] {names[i]=method.name}
+    similar:=names_similar(names,name,allocator)
+    return similar!=""?format_text(allocator,"; similar: %s",similar):""
+}
+
+// Up to a dozen of names that look like name: those that contain its last word
+// first, then the others of its namespace (scene. of scene.spawn).
+names_similar :: proc(names:[]string,name:string,allocator:runtime.Allocator) -> string {
+    dot:=strings.last_index_byte(name,'.')
+    namespace:=name[:dot+1]
+    word:=strings.to_lower(name[dot+1:],allocator)
+    first:=make([dynamic]string,allocator)
+    second:=make([dynamic]string,allocator)
+    for each in names {
+        switch {
+        case word!="" && strings.contains(strings.to_lower(each,allocator),word): append(&first,each)
+        case namespace!="" && strings.has_prefix(each,namespace): append(&second,each)
+        }
+    }
+    append(&first,..second[:])
+    if len(first)>SIMILAR_NAMES {return format_text(allocator,"%s and %d more",strings.join(first[:SIMILAR_NAMES],", ",allocator),len(first)-SIMILAR_NAMES)}
+    return strings.join(first[:],", ",allocator)
+}
+
+@(private)
+SIMILAR_NAMES :: 12
+
 @(private)
 rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     method:=method_find(s,req.method)
     if method==nil {
-        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
+        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q%s",shorten(req.method),methods_similar(s,req.method)),""},false
     }
     start:=w.count
     err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)
@@ -275,7 +307,7 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         first:=params_parse_error(s,method,params,&r)
         problem:string
-        shaped,problem=params_shape(s,params_schema_text(s,method),params,names=false)
+        shaped,problem=params_shape(s,params_schema_text(s,method),params,by_hand=false)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
         if shaped==params {return nil,params,first,false}

@@ -17,7 +17,6 @@ RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--w
 RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
 RPC_WAIT_MARGIN_MS :: 5000 // a --wait-until reads the answer past its limit: the server says what it last saw
-RPC_ECHO_BYTES :: 240 // of a result an error repeats
 
 // The methods, by their tool names, that only make sense with an editor
 // already open: calling one never starts a session.
@@ -237,7 +236,7 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
         return rpc_fail({api.INVALID_PARAMS,"params must be a JSON object: key=value arguments, '{...}' as one argument, - to read it from stdin, or --file F",""})
     }
     result,err,called:=rpc_request_call(connection,request,params)
-    if !called {return rpc_fail(rpc_hint(connection,request.method,err))}
+    if !called {return rpc_fail(rpc_hint(err))}
     return rpc_print(result,request.select!="")
 }
 
@@ -393,50 +392,17 @@ rpc_print :: proc(result:string,selected:bool) -> int {
     return 0
 }
 
-// The error of a call with what to do next: a longer --timeout, or the
-// methods whose names look like the one that does not exist.
+// The error of a call with what to do next.
 @(private="file")
-rpc_hint :: proc(connection:Connection,method:string,err:api.Error) -> api.Error {
+rpc_hint :: proc(err:api.Error) -> api.Error {
     err:=err
     switch err.code {
     case api.TIMEOUT:
         err.message=fmt.tprintf("%s; --timeout S waits longer",err.message)
     case api.METHOD_NOT_FOUND:
-        if similar:=rpc_similar(connection,method);similar!="" {
-            err.message=fmt.tprintf("%s; similar: %s; mirai rpc describe <method> gives their params",err.message,similar)
-        } else {
-            err.message=fmt.tprintf("%s; mirai rpc describe lists the methods",err.message)
-        }
+        err.message=fmt.tprintf("%s; mirai rpc describe lists the methods and gives their params",err.message)
     }
     return err
-}
-
-// The methods whose names look like name, of the editor that is called.
-@(private="file")
-rpc_similar :: proc(connection:Connection,name:string) -> string {
-    result,_,called:=rpc_call_waiting(connection,"engine.describe","{}",2)
-    if !called {return ""}
-    return rpc_similar_names(result,name)
-}
-
-// Up to a dozen names of the methods engine.describe lists: those that
-// contain the last word of name first, then the others of its namespace
-// (scene. of scene.spawn).
-rpc_similar_names :: proc(describe,name:string) -> string {
-    dot:=strings.last_index_byte(name,'.')
-    namespace:=name[:dot+1]
-    word:=strings.to_lower(name[dot+1:],context.temp_allocator)
-    first:=make([dynamic]string,context.temp_allocator)
-    second:=make([dynamic]string,context.temp_allocator)
-    for method_name in rpc_listed_names(describe) {
-        switch {
-        case word!="" && strings.contains(strings.to_lower(method_name,context.temp_allocator),word): append(&first,method_name)
-        case namespace!="" && strings.has_prefix(method_name,namespace): append(&second,method_name)
-        }
-    }
-    append(&first,..second[:])
-    if len(first)>12 {return fmt.tprintf("%s and %d more",strings.join(first[:12],", ",context.temp_allocator),len(first)-12)}
-    return strings.join(first[:],", ",context.temp_allocator)
 }
 
 // mirai rpc describe [plugin|method|prefix|method...]: without one, the
@@ -469,7 +435,7 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     if !called {
         if err.code!=api.INVALID_PARAMS || key=="plugin" {return rpc_fail(err)}
         message:=fmt.tprintf("no method starts with '%s'",name)
-        if similar:=rpc_similar_names(listing,name);similar!="" {message=fmt.tprintf("%s; similar: %s",message,similar)}
+        if similar:=api.names_similar(rpc_listed_names(listing),name,context.temp_allocator);similar!="" {message=fmt.tprintf("%s; similar: %s",message,similar)}
         return rpc_fail({api.INVALID_PARAMS,fmt.tprintf("%s; mirai rpc describe without an argument lists them all",message),""})
     }
     fmt.print(rpc_describe_text(result,name))
@@ -622,7 +588,7 @@ rpc_stdin_line :: proc(connection:Connection,line:string,allocator:=context.allo
     if line=="" {return}
     context.allocator=allocator
     answer :: proc(text:string) {fmt.println(api.json_single_line(text,context.allocator))}
-    fail :: proc(err:api.Error) {answer(api.error_text(rpc_error_short(err),context.allocator))}
+    fail :: proc(err:api.Error) {answer(api.error_text(err,context.allocator))}
     request,problem,parsed:=rpc_stdin_request(line)
     if !parsed {
         if problem=="" {problem=fmt.tprintf("not a call: write method key=value... or method {{json}}, as: %s",line)}
@@ -636,7 +602,7 @@ rpc_stdin_line :: proc(connection:Connection,line:string,allocator:=context.allo
     }
     result,err,called:=rpc_request_call(connection,request,params)
     if !called {
-        fail(rpc_hint(connection,request.method,err))
+        fail(rpc_hint(err))
         return
     }
     answer(result)
@@ -774,7 +740,7 @@ rpc_batch :: proc(connection:Connection,file:string) -> int {
             append(&results,result)
             fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
         } else {
-            fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text(rpc_error_short(err),context.temp_allocator))
+            fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text(err,context.temp_allocator))
             failed=true
             break
         }
@@ -796,18 +762,8 @@ params_is_object :: proc(text:string) -> bool {
 }
 
 rpc_fail :: proc(err:api.Error) -> int {
-    fmt.eprintln(api.error_text(rpc_error_short(err),context.allocator))
+    fmt.eprintln(api.error_text(err,context.allocator))
     return 1
-}
-
-// An error as it is shown: data that echoes a large result becomes its first
-// bytes and the size of the rest. What a method takes is shown whole.
-rpc_error_short :: proc(err:api.Error) -> api.Error {
-    prefix,omitted:=api.text_cut(err.data,RPC_ECHO_BYTES)
-    if omitted==0 || api.json_member(err.data,"usage")!="" {return err}
-    short:=err
-    short.data=fmt.tprintf(`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix),omitted)
-    return short
 }
 
 read_stdin :: proc() -> string {

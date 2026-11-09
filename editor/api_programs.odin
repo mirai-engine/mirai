@@ -127,7 +127,6 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
     for key in rpc_next(&a,&o) {
         switch key {
         case "program","material","source","kind":
-            if (create && key=="material") || (!create && key=="kind") {rpc_fail_type(&a,"%s is not a parameter: %s",key,create?"program, kind or source":"program, material, source or edits");return}
             text,read:=serial.text_string(&a.r)
             if !read {rpc_fail_type(&a,"%s must be a string",key);return}
             text=strings.clone(text,call.allocator)
@@ -138,7 +137,6 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
             case:            p.source,p.has_source=text,true
             }
         case "edits":
-            if create {rpc_fail_type(&a,"edits is not a parameter: program, kind or source");return}
             if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"edits must be an array of {old, new}");return}
             for i:=0;!serial.text_accept(&a.r,']');i+=1 {
                 if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"edits must be an array of {old, new}");return}
@@ -158,9 +156,6 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
                 if edit[0]=="" {rpc_fail(&a,"edits[%d].old is empty: give the text to replace",i);return}
                 append(&p.edits,edit)
             }
-        case:
-            rpc_fail_type(&a,"%s is not a parameter: %s",key,create?"program, kind or source":"program, material, source or edits")
-            return
         }
     }
     if a.failed {return}

@@ -68,7 +68,7 @@ api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_all
     for match,i in matches[:min(len(matches),API_ENTITY_SEVERAL_SHOWN)] {
         if i>0 {strings.write_string(&b,", ")}
         strings.write_string(&b,api_entity_path(w,match,allocator))
-        if id:=api_entity_id(w,match);id!=0 {fmt.sbprintf(&b," (id %016x)",u64(id))} else {fmt.sbprintf(&b," (handle %016x)",u64(match))}
+        if id:=api_entity_id(w,match);id!=0 {fmt.sbprintf(&b," (id 0x%016x)",u64(id))} else {fmt.sbprintf(&b," (handle 0x%016x)",u64(match))}
     }
     if len(matches)>API_ENTITY_SEVERAL_SHOWN {fmt.sbprintf(&b," and %d more",len(matches)-API_ENTITY_SEVERAL_SHOWN)}
     fmt.sbprintf(&b,"; give a path of its parents as Parent/%s, or one id or handle",text)

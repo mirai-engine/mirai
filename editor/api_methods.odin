@@ -1494,13 +1494,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
 // window takes it (host.ui_input_from_platform), and text typed.
 @(private)
 api_play_ui_input :: proc(given:core.Input,text:string) -> ui.Input {
-    frame:platform.Input_Frame
-    frame.keys_down,frame.keys_pressed,frame.keys_released=given.keys_down,given.keys_pressed,given.keys_released
-    frame.keys_repeated=given.keys_pressed
-    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=given.mouse_down,given.mouse_pressed,given.mouse_released
-    if .Left in given.mouse_pressed {frame.mouse_clicks[.Left]=1}
-    frame.mouse_position,frame.mouse_inside,frame.wheel=given.mouse_position,true,given.wheel
-    frame.gamepads=given.gamepads
+    frame:=host.input_frame_of(given)
     for c,i in text {frame.text[i]=c}
     frame.text_count=len(text)
     return host.ui_input_from_platform(&frame)

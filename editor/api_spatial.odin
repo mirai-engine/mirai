@@ -5,7 +5,6 @@ import "mirai:core"
 import "mirai:editor/api"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // Spatial queries on the document, in Edit or while a game runs, over the meshes the viewport
 // picks: rays, boxes and resting entities on what is under them. Places come

@@ -51,7 +51,7 @@ Api_Play_Get_Params :: struct {
 }
 
 Api_Play_Get_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
     value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
 }
@@ -245,9 +245,7 @@ api_play_get :: proc(s:^Session,call:^api.Call) {
     value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
     if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
     out:=call.out
-    handle:[16]u8
-    api_handle_put(handle[:],e)
-    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,string(handle[:]))
+    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,api_handle_text(e))
     api.write_key(out,"tick")
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}

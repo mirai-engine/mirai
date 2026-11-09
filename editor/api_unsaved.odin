@@ -72,7 +72,6 @@ api_unsaved_params :: proc(call:^api.Call,p:^Api_Unsaved_Params) -> bool {
             }
         case "all":    p.all,_=rpc_bool(&a,"all")
         case "folder": rpc_text(&a,"folder",p.folder[:len(p.folder)-1])
-        case:          return rpc_fail_type(&a,"%s is not a parameter: assets, all or folder",key)
         }
     }
     return !a.failed

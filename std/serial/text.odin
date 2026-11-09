@@ -526,7 +526,7 @@ text_error_message :: proc(r:^Text_Reader,prefix:="",allocator:=context.allocato
     return string(out[:])
 }
 
-@(private="file")
+// What a code of the reader means, in words.
 text_error_words :: proc(code:Text_Error_Code) -> string {
     switch code {
     case .None: return "no error"

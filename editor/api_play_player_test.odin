@@ -76,7 +76,7 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     version:=running.bodies.version
     value:=play_player_snapshot(core.world_ref(&running,&info))
     testing.expect(t,value.available && value.tick==9 && value.seconds==1.5)
-    testing.expect_value(t,value.seat.id,"0000000000000007")
+    testing.expect_value(t,value.seat.id,"0x0000000000000007")
     testing.expect_value(t,value.seat.name,"Player")
     testing.expect(t,value.body.entity!="" && value.body.id=="")
     testing.expect_value(t,value.body.position,([3]f32{4,5,6}))

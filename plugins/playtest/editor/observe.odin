@@ -76,7 +76,7 @@ Api_Play_Observe_Problem :: struct {
 }
 Api_Play_Observe_Target :: struct {
     name:[64]u8 `mirai:"text"`,
-    entity:[16]u8 `mirai:"text,label=Its handle"`,
+    entity:[editor.API_HANDLE_TEXT]u8 `mirai:"text,label=Its handle"`,
     distance:f32 `mirai:"label=Meters from the eye of the player's camera"`,
     bearing:f32 `mirai:"label=Degrees to the right of where the camera looks; negative to its left"`,
     elevation:f32 `mirai:"label=Degrees above where the camera looks"`,
@@ -222,7 +222,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
             serial.write_u8(out,'{')
             api.write_text(out,"name",editor.entity_name(w,f.entity),true)
             api.write_key(out,"entity")
-            serial.write_u8(out,'"');serial.text_write_hex(out,u64(f.entity),16,false);serial.write_u8(out,'"')
+            serial.write_u8(out,'"');serial.text_write_hex(out,u64(f.entity));serial.write_u8(out,'"')
             api.write_key(out,"distance");api.write_number(out,observe_round(f.distance,10))
             api.write_key(out,"bearing");api.write_number(out,observe_round(f.bearing,1))
             api.write_key(out,"elevation");api.write_number(out,observe_round(f.elevation,1))

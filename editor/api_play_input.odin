@@ -38,7 +38,7 @@ Api_Play_Input_Params :: struct {
 }
 
 Api_Play_Input_Result :: struct {
-    seat:[16]u8 `mirai:"text,label=The handle of the seat of the actions; empty with segments alone"`,
+    seat:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the seat of the actions; empty with segments alone"`,
     tick:u64 `mirai:"label=The tick they act from: the next one the game runs"`,
     queued:int `mirai:"label=Holds and releases asked"`,
     scripted:int `mirai:"label=Ticks of segments the next steps play"`,

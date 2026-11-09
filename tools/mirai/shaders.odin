@@ -11,19 +11,6 @@ import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
 
-// The value of `--name value` or `--name=value` at args[index^]; advances the index past it.
-@(private="file")
-option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
-    argument:=args[index^]
-    if argument==name {
-        if index^+1>=len(args) {return "",true,false}
-        index^+=1
-        return args[index^],true,true
-    }
-    if strings.has_prefix(argument,name) && len(argument)>len(name) && argument[len(name)]=='=' {return argument[len(name)+1:],true,true}
-    return "",false,false
-}
-
 SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
 SHADERS_USAGE :: "shaders [--project <path> [--whole]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"

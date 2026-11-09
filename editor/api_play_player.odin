@@ -28,8 +28,8 @@ Play_Player_Snapshot :: struct {
 @(private)
 play_player_entity :: proc(w:core.World_Ref,e:core.Entity) -> (value:Play_Player_Entity) {
     if !core.alive(core.world_entities(w),e) {return}
-    value.entity=fmt.tprintf("%016x",u64(e))
-    if id:=api_entity_id(w,e);id!=0 {value.id=fmt.tprintf("%016x",u64(id))}
+    value.entity=api_handle_text(e)
+    if id:=api_entity_id(w,e);id!=0 {value.id=fmt.tprintf("0x%016x",u64(id))}
     value.name=entity_name(w,e)
     local:=entity_local(w,e)
     value.position,value.scale=local.position,local.scale

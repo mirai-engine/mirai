@@ -56,11 +56,6 @@ asset_params :: proc(call:^api.Call,key:string,extra:[]string={}) -> (p:Asset_Pa
             start:=r.offset
             if !serial.text_skip(&r) {return p,failed(call,&r)}
             if other>=0 {p.extra[other]=call.raw[start:r.offset]} else {p.values=call.raw[start:r.offset]}
-        case:
-            more:=strings.builder_make(context.temp_allocator)
-            for each in extra {fmt.sbprintf(&more,", %s",each)}
-            api.call_failf(call,api.INVALID_PARAMS,"%s is not a parameter: %s, path, values%s",name,key,strings.to_string(more))
-            return
         }
         if serial.text_accept(&r,',') {continue}
         if !serial.text_expect(&r,'}') {return p,failed(call,&r)}
