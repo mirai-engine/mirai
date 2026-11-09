@@ -52,10 +52,42 @@ BENCH_TITLES :: [Bench_Section]string{
 
 // What the editor answers to profile.capture that the comparison reads.
 Bench_Summary :: struct {
+    frame:struct {p50_ms,p95_ms:f64},
+    cpu:struct {
+        ms:f64,
+        parts:[]struct {name:string,mean_ms:f64},
+        zones:[]struct {name,thread:string,self_ms:f64},
+    },
+    gpu:struct {
+        mean_ms:f64,
+        passes:[]struct {name:string,mean_ms:f64},
+    },
+}
+
+// profile.capture of a base from before its tracks, with the times of the
+// CPU and the GPU on the frame and the passes in gpu: bench_summary reads it
+// as Bench_Summary. It goes once main answers with tracks.
+@(private="file")
+Bench_Summary_Untracked :: struct {
     frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
     parts:[]struct {name:string,mean_ms:f64},
     gpu:[]struct {name:string,mean_ms:f64},
     zones:[]struct {name,thread:string,self_ms:f64},
+}
+
+// The summary of a profile.capture of either shape.
+@(private)
+bench_summary :: proc(text:string,summary:^Bench_Summary) -> bool {
+    if json.unmarshal_string(text,summary)==nil {return true}
+    old:Bench_Summary_Untracked
+    if json.unmarshal_string(text,&old)!=nil {return false}
+    summary^={}
+    summary.frame={old.frame.p50_ms,old.frame.p95_ms}
+    summary.cpu.ms,summary.gpu.mean_ms=old.frame.cpu_ms,old.frame.gpu_ms
+    summary.cpu.parts=transmute(type_of(summary.cpu.parts))old.parts
+    summary.cpu.zones=transmute(type_of(summary.cpu.zones))old.zones
+    summary.gpu.passes=transmute(type_of(summary.gpu.passes))old.gpu
+    return true
 }
 
 // One measure across the captures: of head and of base, one per pair; NaN
@@ -217,7 +249,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
             return 1
         }
     } else {
-        target,ok,same:=render_base_prepare(root,o.base,relative)
+        target,ok,same:=render_base_prepare(root,o.base,relative,release=true)
         if !ok {return 1}
         if same {fmt.eprintfln("mirai bench: this checkout has the sources of %s: there is nothing to compare",o.base);return 1}
         base={name="base",checkout=target.checkout,project=target.project,editor=target.editor}
@@ -254,11 +286,11 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         if !ok {return 1}
         summary:Bench_Summary
         value,parse_error:=json.parse_string(text,parse_integers=true)
-        if parse_error!=nil || json.unmarshal_string(text,&summary)!=nil {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
+        if parse_error!=nil || !bench_summary(text,&summary) {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
         append(&report.captures,Bench_Capture{name,pair,value})
         append(&summaries[run],summary)
         if object,is_object:=value.(json.Object);is_object && conditions[run]==nil {conditions[run]=object["conditions"]}
-        fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.frame.cpu_ms,summary.frame.gpu_ms)
+        fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.cpu.ms,summary.gpu.mean_ms)
     }
     for &e in editors {headless_close(&e)}
     render_load(&load,0,"at the end",true)
@@ -281,7 +313,9 @@ bench_compare :: proc(root:string,args:[]string) -> int {
 
 @(private="file")
 bench_call :: proc(e:^Headless_Editor,method:string,params:json.Object) -> (result:string,ok:bool) {
-    response,err,called:=headless_call(e,method,params)
+    dropped:=make([dynamic]string,context.temp_allocator)
+    response,err,called:=headless_call_known(e,method,params,&dropped)
+    for field in dropped {fmt.eprintfln("mirai bench: %s: %s does not take %s in this build: measured without it",e.label,method,field)}
     if !called {fmt.eprintfln("mirai bench: %s: %s: %s",e.label,method,api.error_text(err,context.temp_allocator));return "",false}
     return response,true
 }
@@ -314,6 +348,7 @@ bench_capture :: proc(e:^Headless_Editor,o:Bench_Options,label:string) -> (text:
     params["advance"]=true
     params["label"]=label
     params["top"]=json.Integer(64)
+    params["memory"]=false // a cost measure samples no memory
     return bench_call(e,"profile.capture",params)
 }
 
@@ -368,11 +403,11 @@ bench_rows :: proc(head,base:[]Bench_Summary) -> []Bench_Row {
         for s,pair in summaries {
             put(&rows,&index,pairs,.Frame,"frame p50","",run,pair,s.frame.p50_ms)
             put(&rows,&index,pairs,.Frame,"frame p95","",run,pair,s.frame.p95_ms)
-            put(&rows,&index,pairs,.Frame,"CPU of the main thread","",run,pair,s.frame.cpu_ms)
-            put(&rows,&index,pairs,.Frame,"GPU","",run,pair,s.frame.gpu_ms)
-            for part in s.parts {put(&rows,&index,pairs,.Parts,part.name,"",run,pair,part.mean_ms)}
-            for pass in s.gpu {put(&rows,&index,pairs,.Passes,pass.name,"",run,pair,pass.mean_ms)}
-            for zone in s.zones {put(&rows,&index,pairs,.Zones,zone.name,zone.thread,run,pair,zone.self_ms)}
+            put(&rows,&index,pairs,.Frame,"CPU of the main thread","",run,pair,s.cpu.ms)
+            put(&rows,&index,pairs,.Frame,"GPU","",run,pair,s.gpu.mean_ms)
+            for part in s.cpu.parts {put(&rows,&index,pairs,.Parts,part.name,"",run,pair,part.mean_ms)}
+            for pass in s.gpu.passes {put(&rows,&index,pairs,.Passes,pass.name,"",run,pair,pass.mean_ms)}
+            for zone in s.cpu.zones {put(&rows,&index,pairs,.Zones,zone.name,zone.thread,run,pair,zone.self_ms)}
         }
     }
     return rows[:]

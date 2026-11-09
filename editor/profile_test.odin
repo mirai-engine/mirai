@@ -41,9 +41,15 @@ recording_fixture :: proc(a_ms:i64) -> host.Profile_Recording {
         )
     }
     frames:=make([]host.Profile_Frame,2,context.temp_allocator)
-    frames[0]={number=5,drawn=true,render_wait_ms=0.5,gpu=true,gpu_ms=3}
-    frames[1]={number=6,drawn=true,render_wait_ms=0.5,gpu=true,gpu_ms=3}
-    return {frames=frames,zones=zones[:],threads=2,complete=true}
+    frames[0]={number=5,drawn=true,render_wait_ms=0.5}
+    frames[1]={number=6,drawn=true,render_wait_ms=0.5}
+    gpu:=make([]host.Profile_Gpu_Frame,2,context.temp_allocator)
+    gpu[0]={measured=true,ms=3}
+    gpu[1]={measured=true,ms=3}
+    memory:=make([]host.Profile_Memory_Frame,2,context.temp_allocator)
+    memory[0]={process={resident=200<<20,private=100<<20},gpu_used=300<<20,gpu_budget=4096<<20}
+    memory[1]={process={resident=200<<20,private=104<<20},gpu_used=300<<20,gpu_budget=4096<<20}
+    return {tracks=host.PROFILE_TRACKS_ALL,frames=frames,cpu={zones=zones[:],threads=2},gpu={frames=gpu},memory=memory,complete=true}
 }
 
 @(private="file")
@@ -73,10 +79,10 @@ a_capture_keeps_each_zone_with_its_own_time_and_each_frame_with_its_waits :: pro
     testing.expect_value(t,profile_frame_cpu_ms(c.frames[0]),8.5)
 
     // The main zones of a frame come by start, the zone around before the ones inside.
-    zones:=c.zones[c.frames[0].zone_first:][:c.frames[0].zone_count]
+    zones:=c.cpu.zones[c.frames[0].zone_first:][:c.frames[0].zone_count]
     testing.expect_value(t,len(zones),5)
     order:=[?]string{"editor","a","job","b","pacing"}
-    for name,i in order {testing.expect_value(t,c.names[zones[i].name],name)}
+    for name,i in order {testing.expect_value(t,c.cpu.names[zones[i].name],name)}
     testing.expect_value(t,zones[1].self_ns,3*MS) // a without the job it ran
     testing.expect_value(t,zones[0].self_ns,1*MS) // editor without a and b
 }
@@ -92,16 +98,58 @@ the_gpu_numbers_leave_out_the_frames_whose_gpu_times_did_not_come_back :: proc(t
     context.allocator=vmem.arena_allocator(&c.arena)
     c.conditions={optimization="Speed",mode="Edit",backend="Vulkan",window={800,600},render={800,600},workers=1}
     recording:=recording_fixture(4)
-    recording.frames[1].gpu,recording.frames[1].gpu_ms=false,0
+    recording.gpu.frames[1]={}
     profile_build(&c,recording,nil)
     summary:=profile_summary(&c,4)
 
     testing.expect_value(t,summary.frame.count,2)
-    testing.expect_value(t,summary.frame.gpu_frames,1)
-    testing.expect_value(t,summary.frame.gpu_ms,3.0)
+    testing.expect_value(t,summary.gpu.frames,1)
+    testing.expect_value(t,summary.gpu.mean_ms,3.0)
     noted:=false
     for note in summary.notes {if strings.contains(note,"have no GPU times") {noted=true}}
     testing.expect(t,noted,"the summary says which frames the GPU numbers leave out")
+}
+
+// The memory track says where a counter started, ended and rose, and the
+// summary notes private memory that grew while the frames ran.
+@(test)
+the_memory_track_says_where_the_memory_went_up :: proc(t:^testing.T) {
+    c:Profile_Capture
+    if !testing.expect(t,capture_fixture(&c,1,4)) {return}
+    defer profile_capture_free(&c)
+    context.allocator=context.temp_allocator
+    summary:=profile_summary(&c,4)
+
+    testing.expect(t,summary.memory.recorded)
+    testing.expect_value(t,summary.memory.gpu_budget_mb,4096.0)
+    private:Profile_Memory_Stat_Out
+    for counter in summary.memory.counters {if counter.name=="process_private" {private=counter}}
+    testing.expect_value(t,private.first_mb,100.0)
+    testing.expect_value(t,private.growth_mb,4.0)
+    testing.expect_value(t,private.rises,1)
+    noted:=false
+    for note in summary.notes {if strings.contains(note,"private memory of the process went up") {noted=true}}
+    testing.expect(t,noted,"the summary says the frames allocated")
+
+    detail,error:=profile_memory_detail(&c,"",8)
+    testing.expect_value(t,error,"")
+    testing.expect_value(t,detail.counter,"process_private")
+    testing.expect_value(t,len(detail.rises),1)
+    testing.expect_value(t,detail.rises[0].index,1)
+    testing.expect_value(t,detail.rises[0].rise_mb,4.0)
+    _,error=profile_memory_detail(&c,"heap",8)
+    testing.expect(t,strings.contains(error,"process_private"),"an unknown counter names the known ones")
+
+    without:Profile_Capture
+    if vmem.arena_init_growing(&without.arena)!=nil {return}
+    defer profile_capture_free(&without)
+    without.id=2
+    recording:=recording_fixture(4)
+    recording.tracks,recording.memory={.Cpu,.Gpu},nil
+    profile_build(&without,recording,nil)
+    testing.expect(t,!profile_summary(&without,4).memory.recorded)
+    _,error=profile_memory_detail(&without,"",8)
+    testing.expect(t,strings.contains(error,"memory:true"),"a capture without the track says how to record it")
 }
 
 @(test)
@@ -114,21 +162,21 @@ the_summary_ranks_zones_by_their_own_time_and_reads_what_bounds_the_frames :: pr
     testing.expect_value(t,summary.frame.count,2)
     testing.expect_value(t,summary.frame.max_ms,17.0)
     testing.expect_value(t,summary.frame.worst[0],1)
-    testing.expect_value(t,summary.zones[0].name,"a")
-    testing.expect_value(t,summary.zones[0].thread,"main")
-    testing.expect_value(t,summary.zones[0].self_ms,7.0)   // (3+11)/2
-    testing.expect_value(t,summary.zones[0].total_ms,8.0)  // (4+12)/2
-    testing.expect_value(t,summary.zones[0].calls_per_frame,1.0)
+    testing.expect_value(t,summary.cpu.zones[0].name,"a")
+    testing.expect_value(t,summary.cpu.zones[0].thread,"main")
+    testing.expect_value(t,summary.cpu.zones[0].self_ms,7.0)   // (3+11)/2
+    testing.expect_value(t,summary.cpu.zones[0].total_ms,8.0)  // (4+12)/2
+    testing.expect_value(t,summary.cpu.zones[0].calls_per_frame,1.0)
     workers:=false
-    for z in summary.zones {if z.name=="job" && z.thread=="workers" {workers=true}}
+    for z in summary.cpu.zones {if z.name=="job" && z.thread=="workers" {workers=true}}
     testing.expect(t,workers,"the jobs of the workers are a zone of their own")
     parts:=map[string]bool{}
     defer delete(parts)
-    for part in summary.parts {parts[part.name]=true}
+    for part in summary.cpu.parts {parts[part.name]=true}
     testing.expect(t,parts["editor"] && parts["pacing"] && parts["other"] && parts["between"],"the parts of the frame, what they leave and what runs between frames")
     testing.expect_value(t,summary.frame.bound.cpu,2)
-    testing.expect_value(t,summary.workers.threads,1)
-    testing.expect_value(t,summary.workers.busy_ms,2.0)
+    testing.expect_value(t,summary.cpu.workers.threads,1)
+    testing.expect_value(t,summary.cpu.workers.busy_ms,2.0)
     testing.expect(t,len(summary.notes)>0,"two frames are too few for percentiles")
 }
 
@@ -143,11 +191,11 @@ frames_and_zones_answer_where_a_slow_frame_went :: proc(t:^testing.T) {
     frame:=profile_frame_out(&c,1,2,0)
     testing.expect_value(t,frame.index,1)
     testing.expect_value(t,frame.ms,17.0)
-    testing.expect_value(t,len(frame.zones),4)
-    testing.expect_value(t,frame.hidden_zones,1) // the job, one level deeper than asked
-    testing.expect_value(t,frame.zones[1].name,"a")
-    testing.expect_value(t,frame.zones[1].start_ms,1.0)
-    testing.expect_value(t,frame.zones[1].self_ms,11.0)
+    testing.expect_value(t,len(frame.cpu.zones),4)
+    testing.expect_value(t,frame.cpu.hidden_zones,1) // the job, one level deeper than asked
+    testing.expect_value(t,frame.cpu.zones[1].name,"a")
+    testing.expect_value(t,frame.cpu.zones[1].start_ms,1.0)
+    testing.expect_value(t,frame.cpu.zones[1].self_ms,11.0)
 
     detail,error:=profile_zone_detail(&c,"a","")
     testing.expect_value(t,error,"")
@@ -180,8 +228,8 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
     result:=profile_compare(&before,&after,8)
     testing.expect(t,result.comparable,"same conditions")
     testing.expect_value(t,len(result.differences),0)
-    testing.expect_value(t,result.zones[0].name,"a")
-    testing.expect_value(t,result.zones[0].delta_ms,-4.0) // own time 7 -> 3
+    testing.expect_value(t,result.cpu.zones[0].name,"a")
+    testing.expect_value(t,result.cpu.zones[0].delta_ms,-4.0) // own time 7 -> 3
     testing.expect_value(t,result.mean_ms.delta,-4.0)
     testing.expect(t,result.mean_ms.delta_pct<0)
 
@@ -233,8 +281,8 @@ a_capture_exports_as_a_trace_event_file :: proc(t:^testing.T) {
     if !testing.expect(t,capture_fixture(&c,1,4)) {return}
     defer profile_capture_free(&c)
     text,events:=profile_trace(&c)
-    // Two thread names, two events per frame and every zone that is not a frame.
-    testing.expect_value(t,events,2+2*2+len(c.zones))
+    // Two thread names, three events per frame with the memory track and every zone that is not a frame.
+    testing.expect_value(t,events,2+3*2+len(c.cpu.zones))
     testing.expect(t,strings.contains(text,`"name":"a","ph":"X","pid":1,"tid":0`))
     testing.expect(t,strings.contains(text,`"args":{"name":"worker 1"}`))
     testing.expect(t,strings.has_suffix(text,"]}\n"))

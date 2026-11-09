@@ -13,7 +13,7 @@ near :: proc(a,b:f64) -> bool {return abs(a-b)<1e-9}
 // A summary as profile.capture answers it, with what the comparison reads.
 @(private="file")
 summary_of :: proc(frame,cpu,gpu,game,shadows:f64,zones:string) -> (s:Bench_Summary) {
-    text:=fmt.tprintf(`{{"id":1,"frame":{{"count":240,"p50_ms":%f,"p95_ms":%f,"cpu_ms":%f,"gpu_ms":%f}},"parts":[{{"name":"game","mean_ms":%f,"p95_ms":1}},{{"name":"audio","mean_ms":0.0001}}],"gpu":[{{"name":"shadows","mean_ms":%f}}],"zones":[%s],"notes":["Headless"]}}`,frame,frame+2,cpu,gpu,game,shadows,zones)
+    text:=fmt.tprintf(`{{"id":1,"frame":{{"count":240,"p50_ms":%f,"p95_ms":%f}},"cpu":{{"ms":%f,"parts":[{{"name":"game","mean_ms":%f,"p95_ms":1}},{{"name":"audio","mean_ms":0.0001}}],"zones":[%s]}},"gpu":{{"recorded":true,"mean_ms":%f,"passes":[{{"name":"shadows","mean_ms":%f}}]}},"notes":["Headless"]}}`,frame,frame+2,cpu,game,zones,gpu,shadows)
     _=json.unmarshal_string(text,&s,allocator=context.temp_allocator)
     return
 }
@@ -174,4 +174,23 @@ bench_conditions_warn_when_the_builds_were_measured_apart :: proc(t:^testing.T) 
     testing.expect(t,strings.contains(joined,"base measured with the validation"),joined)
     testing.expect(t,!strings.contains(joined,"entities"),joined)
     testing.expect(t,!strings.contains(joined,"head is not"),joined)
+}
+
+// A base from before the tracks of profile.capture answers with the times on the frame and the
+// passes in gpu: the comparison reads them in the same places as those of the head.
+@(test)
+bench_reads_the_summary_of_a_base_without_tracks :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    head:=`{"frame":{"p50_ms":9.5,"p95_ms":10},"cpu":{"ms":1.5,"parts":[{"name":"render","mean_ms":1}],"zones":[{"name":"z","thread":"main","self_ms":0.2}]},"gpu":{"mean_ms":9.4,"passes":[{"name":"reflect","mean_ms":2.5}]}}`
+    base:=`{"frame":{"p50_ms":9.6,"p95_ms":10.1,"cpu_ms":1.4,"gpu_ms":9.3},"parts":[{"name":"render","mean_ms":0.9}],"gpu":[{"name":"reflect","mean_ms":2.4}],"zones":[{"name":"z","thread":"main","self_ms":0.1}]}`
+    for text,i in ([2]string{head,base}) {
+        s:Bench_Summary
+        if !testing.expectf(t,bench_summary(text,&s),"summary %d",i) {continue}
+        testing.expect(t,s.frame.p50_ms>9 && s.cpu.ms>1 && s.gpu.mean_ms>9)
+        testing.expect(t,len(s.cpu.parts)==1 && s.cpu.parts[0].name=="render")
+        testing.expect(t,len(s.gpu.passes)==1 && s.gpu.passes[0].name=="reflect")
+        testing.expect(t,len(s.cpu.zones)==1 && s.cpu.zones[0].thread=="main")
+    }
+    s:Bench_Summary
+    testing.expect(t,!bench_summary(`{"frame":3}`,&s),"neither shape")
 }

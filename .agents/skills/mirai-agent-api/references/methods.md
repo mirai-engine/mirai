@@ -245,13 +245,14 @@ and an error leaves nothing. Contract: [paint](../../mirai-plugins/references/pl
 
 ## Profiling
 
-A capture records whole frames ([recorder](../../mirai-core/references/host.md#the-frame)): one zone
-per part of the frame, one per loop function with its name from `info.steps`, a `job` or `range`
-per `std/jobs` task on the thread that ran it and, per frame, the renderer's wait for a GPU slot,
-the GPU passes of what that frame submitted, where they ran (`start_ms` since the frame began on
-the CPU), and the conditions of the measurement. GPU numbers count only the frames whose GPU times
-came back (`gpu_frames`, `gpu_measured`); `profile.export` puts the passes on a `GPU` thread. The editor keeps the last `PROFILE_CAPTURES`
-(`editor/profile.odin`).
+A capture records whole frames in tracks
+([recorder](../../mirai-core/references/host.md#the-frame)), and every answer has a section per
+track: `cpu`, always, with one zone per part of the frame, one per loop function with its name from
+`info.steps`, a `job` or `range` per `std/jobs` task on the thread that ran it and the renderer's
+wait for a GPU slot; `gpu` (`gpu:true`) with the passes of what each frame submitted and where they
+ran; `memory` (`memory:true`) with what the process, the GPU and the pools of the renderer held at
+the end of each frame. Both are on by default. The editor keeps the last `PROFILE_CAPTURES`
+(`editor/profile.odin`) with the conditions of the measurement.
 
 - `profile.capture` with `advance` runs the frames inside the call, holding the server like
   `engine.step`, and measures only between checkouts: if another measurement or a `mirai` build is
@@ -298,7 +299,7 @@ Reading a capture:
 - **What limits the frame.** `paced` if pacing (`frame_limit` or vsync) took at least a quarter of
   the frame; `gpu` if the wait for a GPU slot took it (with vsync it includes the display's wait);
   `cpu` otherwise. If most are `gpu`, saving CPU does not shorten the frame; if `paced`, the cost
-  is given by `cpu_ms`.
+  is given by `cpu.ms`.
 - **Presentation.** `presentation` counts the images that went to the display, generated ones
   included ([frame generation](../../mirai-rendering/references/views.md#frame-generation)):
   per second, the mean interval between two and its deviation (how even the pace is) and the
@@ -306,9 +307,14 @@ Reading a capture:
   frames.
 - **Own time.** `self_ms` excludes the zones inside: a function that waits for its tasks has them
   as children (`job`, `range`); what the workers run appears with `thread:"workers"`.
+- **GPU.** The numbers of `gpu` count only the frames whose GPU times came back (`gpu.frames`;
+  `measured` per frame), which arrive frames after the CPU submitted them. Metal does not measure
+  passes: its `gpu` is only the whole frame. `profile.export` puts the passes on a `GPU` thread.
+- **Memory.** A stable frame allocates nothing: private memory that goes up while the frames run
+  is noted, and `profile.memory` names the frames a counter went up the most in. Cost measures
+  (`mirai bench`, `mirai render check`) record without the memory track.
 - **Conditions.** `notes` warns about what invalidates a reading: engine at `-o:minimal`,
-  validation, pacing, few frames, lost zones. Metal does not measure passes: its `gpu` is only the
-  whole frame.
+  validation, pacing, few frames, lost zones, a missing track.
 - **An optimization.** Capture, change, another capture under the same conditions and
   `profile.compare`; `profile.frames` and `profile.zone` explain a spike or a function.
 - **Against `main`.** `mirai bench compare [project] [--scene S] [--camera x,y,z,tx,ty,tz]`,

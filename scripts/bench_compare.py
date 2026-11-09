@@ -471,15 +471,17 @@ def scenario_particles(b: Bench):
                     "rate": 25000, "lifetime": [1, 1], "shape": "Sphere", "shape_size": [0.5, 0.5, 0.5],
                     "shell": 0, "speed": [0, 0], "size": [0.05, 0.08], "gravity": 0, **look}})
             step(b, 120)
-            summary = rpc(b, "profile.capture", {"frames": 300, "advance": True, "top": 64}, 1200)
+            summary = rpc(b, "profile.capture", {"frames": 300, "advance": True, "top": 64, "memory": False}, 1200)
             frame = summary.get("frame") or {}
-            metrics[f"{variant}_gpu_ms"] = rounded(number(frame.get("gpu_ms")), 3)
+            cpu = summary.get("cpu") or {}
+            gpu_track = summary.get("gpu") or {}
+            metrics[f"{variant}_gpu_ms"] = rounded(number(gpu_track.get("mean_ms")), 3)
             metrics[f"{variant}_frame_ms"] = rounded(number(frame.get("p50_ms")), 3)
-            metrics[f"{variant}_cpu_ms"] = rounded(number(frame.get("cpu_ms")), 3)
+            metrics[f"{variant}_cpu_ms"] = rounded(number(cpu.get("ms")), 3)
             passes[variant] = {entry["name"]: rounded(number(entry.get("mean_ms")), 4)
-                               for entry in summary.get("gpu") or [] if entry.get("name")}
+                               for entry in gpu_track.get("passes") or [] if entry.get("name")}
             parts[variant] = {entry["name"]: rounded(number(entry.get("self_ms")), 4)
-                              for entry in summary.get("zones") or [] if entry.get("name")}
+                              for entry in cpu.get("zones") or [] if entry.get("name")}
             status = rpc(b, "engine.status")
             alive = status.get("particles")
             for counter in status.get("counters") or []:
@@ -518,15 +520,17 @@ def scenario_particlelights(b: Bench):
                     "shell": 0, "speed": [0, 0], "size": [0.04, 0.06], "gravity": 0, "blend": "Additive", "lit": False,
                     "lights": 256, "light_intensity": 30, "light_range": 4, "light_shadows": shadows}})
             step(b, 120)
-            summary = rpc(b, "profile.capture", {"frames": 300, "advance": True, "top": 64}, 1200)
+            summary = rpc(b, "profile.capture", {"frames": 300, "advance": True, "top": 64, "memory": False}, 1200)
             frame = summary.get("frame") or {}
-            metrics[f"{variant}_gpu_ms"] = rounded(number(frame.get("gpu_ms")), 3)
+            cpu = summary.get("cpu") or {}
+            gpu_track = summary.get("gpu") or {}
+            metrics[f"{variant}_gpu_ms"] = rounded(number(gpu_track.get("mean_ms")), 3)
             metrics[f"{variant}_frame_ms"] = rounded(number(frame.get("p50_ms")), 3)
-            metrics[f"{variant}_cpu_ms"] = rounded(number(frame.get("cpu_ms")), 3)
+            metrics[f"{variant}_cpu_ms"] = rounded(number(cpu.get("ms")), 3)
             passes[variant] = {entry["name"]: rounded(number(entry.get("mean_ms")), 4)
-                               for entry in summary.get("gpu") or [] if entry.get("name")}
+                               for entry in gpu_track.get("passes") or [] if entry.get("name")}
             parts[variant] = {entry["name"]: rounded(number(entry.get("self_ms")), 4)
-                              for entry in summary.get("zones") or [] if entry.get("name")}
+                              for entry in cpu.get("zones") or [] if entry.get("name")}
             status = rpc(b, "engine.status")
             alive = 0
             for counter in status.get("counters") or []:
