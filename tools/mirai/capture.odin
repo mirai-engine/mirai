@@ -140,7 +140,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     }
     reload:=scene if scene!="" else (document.dirty?"":document.path)
     if scene!="" {
-        if _,ok:=call(file.port,"scene.load",struct{path:string}{scene});!ok {return 1}
+        if _,ok:=call(file.port,"scene.open",struct{path:string}{scene});!ok {return 1}
     }
     camera:=make(json.Object)
     if entity!="" {camera["entity"]=entity}
@@ -179,7 +179,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     if captured_ok && repeat {
         again=fmt.tprintf("%s.repeat.png",strings.trim_suffix(out,".png"))
         if reload!="" {
-            _,captured_ok=call(file.port,"scene.load",struct{path:string}{reload})
+            _,captured_ok=call(file.port,"scene.open",struct{path:string}{reload})
             if captured_ok && len(camera)>0 {_,captured_ok=call(file.port,"camera.set",camera)}
         } else {
             fmt.eprintln("mirai capture: the document has unsaved changes or no file: the second capture goes on from the first, with what the GI gathered since")
@@ -319,7 +319,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
     }
     // A capture of the view from its scene loaded anew, the clock at zero.
     shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string) -> bool {
-        if _,ok:=call(port,"scene.load",struct{path:string}{v.scene});!ok {return false}
+        if _,ok:=call(port,"scene.open",struct{path:string}{v.scene});!ok {return false}
         if len(v.position)==3 {
             camera:=make(json.Object,context.temp_allocator)
             camera["position"]=vector_json({v.position[0],v.position[1],v.position[2]})

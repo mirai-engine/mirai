@@ -132,7 +132,7 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
     api_scene_write_register(s,st)
     api_register(s,st,{name="scene.batch",flags={.Core},params_schema=API_BATCH_SCHEMA,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
     api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
-    api_register(s,st,{name="scene.load",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_load})
+    api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_open})
 }
 
 // ---------------------------------------------------------------- scene.inspect
@@ -930,7 +930,7 @@ api_scene_save :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_scene_load :: proc(s:^Session,call:^api.Call) {
+api_scene_open :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
     params:=api.call_params(call,Api_Path_Params)
     if s.recovery.pending {

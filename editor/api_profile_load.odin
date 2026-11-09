@@ -112,7 +112,7 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
     }
     if len(loads)==0 {
         what:=p.kind==.All?"":fmt.tprintf("%v ",p.kind)
-        api.call_failf(call,api.SERVER_ERROR,"No %sload yet: scene.load, play.start or a section that loads makes one",what)
+        api.call_failf(call,api.SERVER_ERROR,"No %sload yet: scene.open, play.start or a section that loads makes one",what)
         return
     }
     api_profile_write(call,Profile_Loads_Out{loads[:]})

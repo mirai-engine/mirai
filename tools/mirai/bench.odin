@@ -292,7 +292,7 @@ bench_prepare :: proc(e:^Headless_Editor,o:Bench_Options) -> bool {
     if o.scene!="" {
         params:=make(json.Object,context.temp_allocator)
         params["path"]=o.scene
-        if _,ok:=bench_call(e,"scene.load",params);!ok {return false}
+        if _,ok:=bench_call(e,"scene.open",params);!ok {return false}
     }
     if len(o.camera)>0 {
         position,target:=make(json.Array,0,3,context.temp_allocator),make(json.Array,0,3,context.temp_allocator)

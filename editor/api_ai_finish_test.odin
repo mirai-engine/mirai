@@ -258,7 +258,7 @@ a_turn_cannot_throw_away_what_the_user_has_not_saved :: proc(t:^testing.T) {
     shutdown:=Api_Shutdown_Params{discard=true}
     load:=Api_Path_Params{}
     recover:=Api_Recovery_Params{discard=true}
-    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,&shutdown,Api_Shutdown_Params},{api_scene_load,&load,Api_Path_Params},{api_recover,&recover,Api_Recovery_Params}}
+    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,&shutdown,Api_Shutdown_Params},{api_scene_open,&load,Api_Path_Params},{api_recover,&recover,Api_Recovery_Params}}
     for c in calls {
         method:=api.Method{params_id=c.type}
         call:=api.Call{method=&method,params=c.params,out=&out,allocator=context.temp_allocator,client_tag="4-0"}

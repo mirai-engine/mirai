@@ -328,7 +328,7 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,monitors:strin
             path:serial.Writer
             serial.writer_init(&path,0,context.temp_allocator)
             serial.text_write_raw(&path,`{"path":`);serial.text_write_string(&path,target);serial.write_u8(&path,'}')
-            if _,error,ok:=api_scenario_call(server,"scene.load",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
+            if _,error,ok:=api_scenario_call(server,"scene.open",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
                 return fmt.bprintf(buffer,"scene: %s could not be opened: %s",sc.scene,error.message),0,""
             }
         }

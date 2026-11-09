@@ -70,7 +70,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
 - `editor.action`: runs an action of `editor.inspect.actions` as its menu or its shortcut (`save`,
   `undo`, `duplicate`, `tool_move`, `focus`, `grid`, `play`, `prefab_apply`, `library_panel`…).
   - Fails with a disabled action and with those that open a dialog: `open`, `save_as`, `quit`,
-    `shortcuts`, `import` (use `scene.load`, `scene.save`, `engine.shutdown`, `asset.import`).
+    `shortcuts`, `import` (use `scene.open`, `scene.save`, `engine.shutdown`, `asset.import`).
   - `library_panel` (Tab) toggles the shared left panel keeping its tab and state.
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
@@ -283,7 +283,7 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   summary says `comparable:false`; a headless editor waits for neither the display nor a limit.
 - `profile.compare` gives `comparable:false` with a blocking difference in conditions or if either
   of the two is not `comparable`.
-- `profile.load` answers about the last load of the document (`scene.load`, a scene a game asks
+- `profile.load` answers about the last load of the document (`scene.open`, a scene a game asks
   for), of Play (`play.start`) and of a section, without recording anything first
   ([loads](../../mirai-core/references/host.md#the-frame)): `ready_ms` until it was the document
   or the world, `resident_ms` until the end of the first frame after that which drew with nothing
@@ -407,7 +407,7 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
 - `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
   becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
   scene never saved.
-- `scene.load`: opens a scene or a prefab in the active document, with an empty history; without
+- `scene.open`: opens a scene or a prefab in the active document, with an empty history; without
   `path` it rereads the document's file. Fails as a guest.
 
 **Entity of `scene.inspect`.**
@@ -490,7 +490,7 @@ foliage) at the place the locals give them, with the edits of the same frame.
     `discard`, which gives back what the file has.
   - Switching scene document stops Play; a guest leaves the shared session first. `Preview_Sun`
     requires a prefab and touches neither its history nor its file.
-- `scene.load` replaces the active document; `scene.save` and `history.*` act on it, also with an
+- `scene.open` replaces the active document; `scene.save` and `history.*` act on it, also with an
   asset document in front. `engine.shutdown` requires saving or discarding if any tab has changes
   or any asset is left unsaved.
 

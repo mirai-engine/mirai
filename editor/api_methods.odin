@@ -629,7 +629,7 @@ api_editor_action :: proc(s:^Session,call:^api.Call) {
     }
     #partial switch action {
     case .Open,.Save_As,.Quit,.Shortcuts,.Import:
-        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.load, scene.save or engine.shutdown",name)
+        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.open, scene.save or engine.shutdown",name)
         return
     }
     prefabs_sync(s,prefabs_of(s))

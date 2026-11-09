@@ -48,7 +48,7 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   replaced by another request of the same chat fails with `-32000`. After `finish`, reads continue
   until ACP completes the turn and a write fails. `finish` finishes the turn of its header and is
   listed only to a request that has one (`Method_Flag.Turn`).
-- A turn does not discard the user's unsaved work: `engine.shutdown`, `scene.load`,
+- A turn does not discard the user's unsaved work: `engine.shutdown`, `scene.open`,
   `editor.recover` with `discard` and closing a document with changes fail, asking it to ask.
 - A tagged write closes the user's previous gesture and, if it succeeds, attributes to the turn
   only the new transactions of that request
