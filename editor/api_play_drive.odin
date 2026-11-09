@@ -11,7 +11,8 @@ import mm "mirai:std/math"
 
 // A drive of play.step: its ticks steer the focused player to a target by the
 // move action of the game, re-aimed every tick toward where the target is
-// now, as play.explore steers. It takes off at the edge of a gap and when
+// now, as play.explore steers, or toward the next point of the way a plugin
+// gives (Route_Provider: the navigation). It takes off at the edge of a gap and when
 // blocked, and holds the jump as long as it still rises or until it is over the
 // far side; then tries each side. It stops within a distance across the ground,
 // or standing on a target that is out of reach or a solid raised over its feet,
@@ -43,6 +44,9 @@ API_DRIVE_ACTIONS :: 64
 @(private) DRIVE_TAKEOFF_GROW :: f32(0.8)   // m farther after each jump that did not land on it
 @(private) DRIVE_RUN_UP :: f32(1.5)         // m it goes back past where it takes off, for speed
 @(private) DRIVE_NO_MESH_SIZE :: f32(1)     // m from its origin a solid target without meshes is taken to reach
+@(private) DRIVE_ROUTE_EVERY :: 5           // ticks between two searches of its way
+@(private) DRIVE_ROUTE_CORNER :: f32(0.5)   // m to the next point of the way: it asks for the following one
+@(private) DRIVE_ROUTE_WAIT :: 180          // ticks it waits for the way before going straight
 
 Api_Drive_Stop :: enum u8 {Arrived,Until,Ticks,Stuck,No_Body,Target_Gone,Run_Ended}
 
@@ -93,6 +97,9 @@ Api_Drive :: struct {
     takeoff:f32,    // from the edge of the target
     takeoff_y:f32,  // where its feet left the ground
     side:f32,
+    route:Route,    // the way a plugin gave, or none
+    routed:bool,    // getting closer is along that way
+    route_age,route_waited:int, // ticks since it was asked for; ticks waited for it
 }
 
 // The actions a bot plays by: move an Axis2 named or bound to keys or to the
@@ -355,12 +362,20 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
     if !d.measured {return true}
     query:=api_drive_query(w)
     standing:=api_drive_standing(s,w,body)
-    if d.best==0 {d.best=d.distance}
+    api_drive_route_update(s,w,d,body,goal)
+    if d.route.state==.Waiting && d.route_waited<DRIVE_ROUTE_WAIT {
+        d.route_waited+=1
+        return true
+    }
+    routed:=d.route.state==.Found
+    if routed!=d.routed {d.routed,d.best,d.still=routed,0,0}
+    left:=routed?d.route.left:d.distance
+    if d.best==0 {d.best=left}
     if d.detour>0 || d.clearing {
         // A step away gets no closer on purpose: it counts from where it ends.
-        d.best,d.still=max(d.best,d.distance),0
-    } else if d.distance<d.best-DRIVE_PROGRESS {
-        d.best,d.still,d.rounds=d.distance,0,0
+        d.best,d.still=max(d.best,left),0
+    } else if left<d.best-DRIVE_PROGRESS {
+        d.best,d.still,d.rounds=left,0,0
     } else {
         d.still+=1
     }
@@ -370,6 +385,12 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
     jump_asked,gap_jump:=false,false
     above:=d.must_stand && d.boxed && d.position.y<d.top-DRIVE_ON_SLACK
     edge:=d.boxed?api_drive_edge(d,goal,d.position):0
+    // Around what blocks it, and up onto a target at hand, it goes by itself.
+    if routed && d.detour==0 && !d.clearing && !(above && edge<=d.takeoff) {
+        toward:=d.route.next-d.position
+        toward.y=0
+        if linalg.length(toward)>1e-4 {direction=linalg.normalize(toward)}
+    }
     if above {
         // Fell back from a jump onto it: another run at it, from farther.
         if d.climbing && standing && !d.jumping {
@@ -424,6 +445,18 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
     vector:=[2]f32{linalg.dot(direction,right),linalg.dot(direction,forward)}
     if vector!={} {input.hold(requests,seat,d.move,vector,1)}
     return true
+}
+
+// Asks for the way when it is old or its next point is at hand.
+@(private)
+api_drive_route_update :: proc(s:^Session,w:core.World_Ref,d:^Api_Drive,body:core.Entity,goal:[3]f32) {
+    toward:=d.route.next-d.position
+    toward.y=0
+    if d.route.state==.Found && d.route_age<DRIVE_ROUTE_EVERY && linalg.length(toward)>DRIVE_ROUTE_CORNER {
+        d.route_age+=1
+        return
+    }
+    d.route,d.route_age=route_of_body(s,w,body,goal),0
 }
 
 // The way out from under the target: toward its nearest edge across the ground.

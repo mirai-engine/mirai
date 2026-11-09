@@ -98,6 +98,24 @@ Asset_Menu_Provider :: struct {
     menu:proc(s:^Session,file:^asset.Registry_File),
 }
 
+// What a plugin knows of the way from a body to a goal in a game: the drive of
+// play.step takes its next point when one is given.
+Route_State :: enum u8 {
+    None,    // no way known: the drive goes straight
+    Waiting, // not known yet: the meshes are still being made
+    Found,
+}
+
+Route :: struct {
+    state:Route_State,
+    next:[3]f32, // the next point of the way
+    left:f32,    // m of the way that are left
+}
+
+Route_Provider :: struct {
+    next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
+}
+
 PROVIDER_CAPACITY :: 32 // of a kind the editor holds at once
 
 @(private)
@@ -105,7 +123,8 @@ Providers :: struct {
     library:int, // library_generation+1 of what it holds
     simulation:Simulation_Provider,
     play:Play_Provider,
-    simulates,plays:bool,
+    route:Route_Provider,
+    simulates,plays,routes:bool,
     inspectors:[PROVIDER_CAPACITY]Inspector_Provider,
     inspector_count:int,
     components:[PROVIDER_CAPACITY]Component_Provider,
@@ -127,6 +146,7 @@ providers :: proc(s:^Session) -> ^Providers {
     p^={library=s.library_generation+1}
     p.simulation,p.simulates=provided(s,Simulation_Provider)
     p.play,p.plays=provided(s,Play_Provider)
+    p.route,p.routes=provided(s,Route_Provider)
     p.inspector_count=provided_all(s,p.inspectors[:])
     p.component_count=provided_all(s,p.components[:])
     p.menu_count=provided_all(s,p.menus[:])
@@ -241,6 +261,12 @@ provided :: proc(s:^Session,$T:typeid) -> (provider:T,found:bool) {
     one:[1]T
     found=provided_all(s,one[:])>0
     return one[0],found
+}
+
+// The way from a body to a goal, as the plugin that knows it says; None without one.
+route_of_body :: proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route {
+    p:=providers(s)
+    return p.routes && p.route.next!=nil?p.route.next(s,w,body,goal):{}
 }
 
 // The body a selected entity moves while Simular runs; none without one, or without physics.

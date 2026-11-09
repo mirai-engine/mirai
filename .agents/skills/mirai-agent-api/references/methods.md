@@ -594,9 +594,6 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   An action is held for `ticks` or `seconds`, the nearest whole ticks.
   Typical test: hold `jump` for 1 tick, `play.step` 30 ticks with a `trace` of the height (or
   `capture` with a filmstrip that follows the body), `play.check` the height.
-- `play.walk` (registered by the `navigation` plugin): walks the body of a seat to a point or
-  an entity tick by tick through the meshes and says how it ended
-  ([walk](../../mirai-plugins/references/navigation.md#editor-and-api)).
 - `play.record`: requires a GPU. Deletes the previous sequence in the folder, pauses the run,
   advances it `1/fps` of game time per frame (with its `Clock`), draws the world alone through the
   camera of its `View`, without screen UI, and writes `frame_000000.png` (16 bits, after the

@@ -222,7 +222,7 @@ Api_Play_Step_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
-    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at ticks or seconds (30 s if neither is given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick along the navigation meshes when the project has them; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at ticks or seconds (30 s if neither is given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
     look_at:Api_Play_Look_At `mirai:"optional,label=Turns what the player sees through toward an entity or a point in every tick of the step; instead of mouse_delta; play.view says where it looks with follow.yaw_deg and follow.pitch_deg"`,
 }
 

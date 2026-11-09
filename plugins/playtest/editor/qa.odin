@@ -15,7 +15,7 @@ import "mirai:std/serial"
 
 // Monitors of the game a run plays, armed by play.qa.start and read by
 // play.qa.report, for the ticks the API runs (play.step, a scenario,
-// play.explore, a filmstrip, play.walk). The first thing the API does to a run
+// play.explore, a filmstrip). The first thing the API does to a run
 // reserves its log of what the run received, from which a repro plays the same
 // ticks again whenever the monitors started; a tick writes into that.
 

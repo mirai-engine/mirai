@@ -596,6 +596,26 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     }
 }
 
+// With a way of a plugin it heads for the next point of it, not at the target.
+@(test)
+a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    probe_drive(f)
+    way :: proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route {
+        at:=entity_world(w,body).position
+        return at.x<2?Route{state=.Found,next={8,0,0},left=9-at.x}:{}
+    }
+    f.s.providers={library=f.s.library_generation+1,route={next=way},routes=true}
+    running:=cast(^Probe_World)run_find(&f.s,0).world
+    place:=core.get(&running.transforms,f.hero)
+    place.position={0,0,0}
+    error,text:=probe_call(f,"play.step",`{"drive":{"position":[-4,0,0],"move":"move"},"ticks":2}`)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`),text)
+    testing.expectf(t,place.position.x>0,"along the way, away from its target: %v",place.position)
+}
+
 // Over a gap a drive takes off at the edge and holds the jump for all it needs,
 // and a platform raised over its feet it arrives at standing on it, not under it.
 @(test)
