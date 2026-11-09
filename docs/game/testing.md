@@ -28,6 +28,13 @@ Prefer the first that answers the question:
   screen and the nearest `targets`; with `step` it runs those ticks first.
 - `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
 
+## Play by hand
+
+- A key named in consecutive `play.step` calls stays held with no release between them; a call
+  that omits it releases it, also a step with no keys. A jump held over several steps is not cut.
+- Walk to something without a bot: `play.step` with `drive`
+  ([scenario.md](testing/scenario.md#drive)).
+
 ## UI and menus
 
 - Sweep every button with no model: `play.explore {"mode":"Ui"}`; read `never` (buttons it never

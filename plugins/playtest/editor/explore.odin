@@ -440,40 +440,6 @@ explore_ui_play :: proc(x:^Explore_Run) {
     x.stopped=.Ticks
 }
 
-// The actions of the bot, named or found in the bindings of the map.
-@(private)
-explore_actions :: proc(s:^editor.Session,m:^input.Input_Map,move_name,jump_name:string) -> (move,jump:input.Action,can_jump:bool,problem:string) {
-    named :: proc(s:^editor.Session,m:^input.Input_Map,name:string,kind:input.Action_Kind,what:string) -> (action:input.Action,problem:string) {
-        found,declared:=core.name_value(s.info,input.Action,name)
-        if !declared || m.kinds[found]!=kind || m.declared&input.action_bit(input.Action(found))==0 {return 0,fmt.tprintf("%s %q is not a %v action: input.get lists them",what,name,kind)}
-        return input.Action(found),""
-    }
-    has_move:=false
-    if move_name!="" {
-        if move,problem=named(s,m,move_name,.Axis2,"move");problem!="" {return}
-        has_move=true
-    }
-    if jump_name!="" {
-        if jump,problem=named(s,m,jump_name,.Button,"jump");problem!="" {return}
-        can_jump=true
-    }
-    for &b in m.bindings[:m.binding_count] {
-        kind:=m.kinds[b.action]
-        if !has_move && kind==.Axis2 && b.count>0 && b.codes[0].device==.Key {move,has_move=b.action,true}
-        if !can_jump && kind==.Button && b.count==1 {
-            code:=b.codes[0]
-            if code.device==.Key && core.Key(code.code)==.Space || code.device==.Gamepad_Button && core.Gamepad_Button(code.code)==.South {jump,can_jump=b.action,true}
-        }
-    }
-    if !has_move {
-        for &b in m.bindings[:m.binding_count] {
-            if m.kinds[b.action]==.Axis2 && b.count==2 && b.codes[0].device==.Gamepad_Axis && core.Gamepad_Axis(b.codes[0].code)==.Left_X {move,has_move=b.action,true;break}
-        }
-    }
-    if !has_move {problem="The game binds no Axis2 action to keys or to the left stick: give the one that moves with move; input.get lists them"}
-    return
-}
-
 @(private)
 explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (problem:string) {
     s:=x.s
@@ -482,17 +448,17 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     if m==nil || requests==nil {return "This game has no input actions: its world does not take engine/input"}
     move,jump:input.Action
     can_jump:bool
-    move,jump,can_jump,problem=explore_actions(s,m,base.text_get(p.move[:]),base.text_get(p.jump[:]))
+    move,jump,can_jump,problem=editor.play_actions(s,m,base.text_get(p.move[:]),base.text_get(p.jump[:]))
     if problem!="" {return}
     if !explore_idle(x,min(2,x.total)) {return}
-    seat,body:=play_focused(editor.run_ref(s,x.r))
+    seat,body:=editor.play_focused(editor.run_ref(s,x.r))
     for wait:=0;body==core.NONE;wait+=1 {
         if wait>=EXPLORE_WARM_TICKS {
             x.stopped=.No_Body
             return
         }
         if !explore_tick(x,{}) {return}
-        seat,body=play_focused(editor.run_ref(s,x.r))
+        seat,body=editor.play_focused(editor.run_ref(s,x.r))
     }
     directions:=EXPLORE_DIRECTIONS
     avoid:bit_set[0..<8]
@@ -503,7 +469,7 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     for x.ran<x.total {
         w=editor.run_ref(s,x.r)
         requests=core.world_storage_of(w,input.Hold_Requests)
-        seat,body=play_focused(w)
+        seat,body=editor.play_focused(w)
         if body==core.NONE {
             if !explore_tick(x,{}) {return}
             continue
@@ -527,7 +493,7 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
                 avoid+={chosen}
                 still=0
             } else {avoid={}}
-            right,forward:=explore_axes(w)
+            right,forward:=editor.play_view_axes(w)
             chosen=explore_direction(&x.cells,at,right,forward,p.cell,avoid,&x.rng)
             hold:=u32(EXPLORE_HOLD_TICKS)
             input.hold(requests,seat,move,directions[chosen],hold)
@@ -547,19 +513,6 @@ explore_modal_on_top :: proc(x:^Explore_Run) -> bool {
     rects:=make([dynamic][4]f32,context.temp_allocator)
     modal:bool
     return explore_ui_read(x,&buttons,&rects,&modal) && modal
-}
-
-// The axes of the camera along the ground: where a Move_Input of y and x goes.
-@(private)
-explore_axes :: proc(w:core.World_Ref) -> (right,forward:[3]f32) {
-    forward={0,0,-1}
-    if view:=core.world_storage_of(w,core.View);view!=nil {
-        look:=core.view_forward(view^)
-        look.y=0
-        if linalg.length(look)>0.001 {forward=linalg.normalize(look)}
-    }
-    right=linalg.cross(forward,[3]f32{0,1,0})
-    return
 }
 
 @(private)

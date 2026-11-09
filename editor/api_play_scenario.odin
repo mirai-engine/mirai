@@ -282,16 +282,18 @@ api_scenario_call :: proc(server:^api.Server,name,params:string,buffer:[]u8) -> 
 
 // Whether a step whose method answered held: not when its answer says passed
 // false (the conditions of play.check), nor when play.step with until ran out
-// of its ticks before they held; why not.
+// of its ticks before they hold, nor when a drive ended without arriving; why not.
 @(private)
 scenario_step_held :: proc(params,answer:string) -> (held:bool,why:string) {
-    values:[2]string
-    api.object_values(context.temp_allocator,answer,{"passed","met"},values[:])
-    until:[1]string
-    api.object_values(context.temp_allocator,params,{"until"},until[:])
+    values:[3]string
+    api.object_values(context.temp_allocator,answer,{"passed","met","drive"},values[:])
+    asked:[2]string
+    api.object_values(context.temp_allocator,params,{"until","drive"},asked[:])
     switch {
-    case values[0]=="false":                return false,"did not hold"
-    case until[0]!="" && values[1]=="false": return false,"until did not hold within its ticks"
+    case values[0]=="false":                 return false,"did not hold"
+    case asked[1]!="":
+        if !api_drive_held(values[2]) {return false,fmt.tprintf("the drive did not arrive: %s",values[2])}
+    case asked[0]!="" && values[1]=="false": return false,"until did not hold within its ticks"
     }
     return true,""
 }

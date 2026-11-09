@@ -113,6 +113,12 @@ spatial_ray :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,ray:mm.Ray,re
     return
 }
 
+// Whether a mesh lies down from origin within reach, not counting body and what hangs from it.
+spatial_ground_below :: proc(s:^Session,w:core.World_Ref,origin:[3]f32,reach:f32,body:core.Entity) -> bool {
+    ignore:=[1]core.Entity{body}
+    return spatial_ray(s,w,spatial_items(s,w,false),{origin,{0,-1,0}},reach,ignore[:]).entity!=core.NONE
+}
+
 // The world box of the meshes of an entity and of what hangs from it, moved
 // by `by`. Without meshes, the point of the entity.
 @(private="file")

@@ -64,6 +64,7 @@ Api_Play_Step_Result :: struct {
     ran:int `mirai:"label=The ticks it ran"`,
     met:bool `mirai:"label=With until: whether they held when it stopped"`,
     scripted:int `mirai:"optional,label=Ticks left of the input play.input scheduled: the next steps without input play them"`,
+    drive:Api_Play_Drive_Result `mirai:"optional,label=With drive: where the player ended and why it stopped; ran says its ticks"`,
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
 }
 Api_Play_Trace_Table :: struct {
@@ -375,6 +376,7 @@ Api_Step_Run :: struct {
     timeline:[]Api_Step_Input,
     until:[]Api_Play_Condition, // checked by the caller
     sampler:Api_Step_Sampler,   // the sample before the first tick is the caller's
+    drive:^Api_Drive,           // nil: none; it steers before each tick
 }
 
 // Runs the ticks of a timeline, its segments one after the other, until its
@@ -396,6 +398,7 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
     scripted:=!api_timeline_input(run.timeline)
     for ran<total {
         if len(run.until)>0 && met {break}
+        if run.drive!=nil && !api_drive_steer(s,target,run.drive) {break}
         for at>=run.timeline[segment].ticks {segment+=1;at=0}
         if at==0 && run.timeline[segment].press!="" {
             if problem=api_press_aim(s,target,&run.timeline[segment]);problem!="" {return}
@@ -572,7 +575,7 @@ api_trace_component_absent :: proc(s:^Session,whole:json.Value,path:string) -> b
 
 // The result of play.step: that of the other play methods, and its trace.
 @(private)
-api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,trace:^Api_Trace) {
+api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,trace:^Api_Trace,drive:^Api_Drive=nil) {
     result:Api_Play_Result
     api_play_result_fill(s,&result,r)
     result.ran,result.met=ran,met
@@ -581,9 +584,21 @@ api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,tr
     if !found {api.call_fail(call,api.INTERNAL_ERROR,"the result of the play methods has no schema");return}
     out:=call.out
     serial.text_write(out,sc,index,mem.ptr_to_bytes(&result),.Line)
-    if trace==nil {return}
+    if trace==nil && drive==nil {return}
     out.count-=1 // the brace that closes it
-    api_trace_write(s,out,trace)
+    if drive!=nil {api_drive_write(out,api_drive_result(drive))}
+    if trace!=nil {api_trace_write(s,out,trace)}
+    serial.write_u8(out,'}')
+}
+
+@(private)
+api_drive_write :: proc(out:^serial.Writer,drive:Api_Play_Drive_Result) {
+    drive:=drive
+    api.write_key(out,"drive")
+    serial.write_u8(out,'{')
+    api.write_text(out,"stopped",fmt.tprint(drive.stopped),true)
+    api.write_key(out,"position");api.write_list(out,drive.position[:])
+    api.write_key(out,"distance");api.write_number(out,drive.distance)
     serial.write_u8(out,'}')
 }
 

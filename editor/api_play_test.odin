@@ -255,6 +255,10 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     error,text:=probe_call(f,"play.inspect",`{"storage":"Probe_*","limit":1}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"storages":{"Probe_Score":{"points": 0, "state": "Waiting", "seen": {"version": 0, "gone": 0}}`),text)
+    testing.expect(t,strings.contains(text,`"entities":[]`) && strings.contains(text,`"matched":0`),"a storage named answers no entities")
+    error,text=probe_call(f,"play.inspect",`{"storage":"Probe_*","name":"Hero"}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,strings.contains(text,`"name":"Hero"`) && strings.contains(text,`"storages"`),"entities named too keep them")
     error,_=probe_call(f,"play.inspect",`{"storage":"Score"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     // A component and a teleport, without the document.
@@ -441,6 +445,78 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
     testing.expect_value(t,error.code,0)
     step(f)
     testing.expect(t,input.seat_action(read,f.seat,PROBE_MOVE).released)
+}
+
+// Keys named by consecutive calls are one hold, as a person keeps a key down:
+// the first call presses it, the ones after go on with no release between
+// them, and the call that omits it lets go.
+@(test)
+a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    api_state(&f.s).step_frame=probe_frame
+    running:=cast(^Probe_World)run_find(&f.s,0).world
+    read:=core.read(&running.seats)
+    call :: proc(t:^testing.T,f:^Probe,params:string) {
+        error,_:=probe_call(f,"play.step",params)
+        testing.expect_value(t,error.code,0)
+    }
+    call(t,f,`{"keys":["Space"]}`)
+    jump:=input.seat_action(read,f.seat,PROBE_JUMP)
+    testing.expect(t,jump.pressed && jump.down,"the first call presses it")
+    call(t,f,`{"keys":["Space"],"ticks":3}`)
+    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    testing.expect(t,jump.down && !jump.pressed && !jump.released && running.input.keys_released=={},"the next call goes on holding it")
+    call(t,f,`{"keys":["Space"]}`)
+    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    testing.expect(t,jump.down && !jump.pressed && !jump.released,"also over a third call")
+    call(t,f,`{"ticks":1}`)
+    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    testing.expect(t,jump.released && !jump.down && .Space in running.input.keys_released,"a call that omits it lets go")
+}
+
+// A drive steers the focused player by the move action of the game to its
+// target, and says where it ended and why: within its distance, at its ticks
+// or at its until; blocked it jumps and at last gives up, not spending
+// the ticks left.
+@(test)
+a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    probe_drive(f)
+    running:=cast(^Probe_World)run_find(&f.s,0).world
+    place:=core.get(&running.transforms,f.hero)
+    error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"ticks":300}`)
+    testing.expectf(t,error.code==0,"%v",error)
+    api_result_shape_expect(t,text,Api_Play_Step_Result)
+    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran": 4`),text)
+    testing.expect_value(t,place.position.x,5)
+    // The limit of the step, and the conditions of the step stop it too.
+    place.position={1,0,0}
+    error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"ticks":2}`)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran": 2`),text)
+    place.position={1,0,0}
+    points:=running.score.points+2
+    error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"ticks":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met": true`),text)
+    // Behind the wall at x 6: it jumps, sidesteps and stops getting closer, its ticks left over.
+    place.position={1,0,0}
+    error,text=probe_call(f,"play.step",`{"drive":{"position":[9,0,0],"move":"move"}}`)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran": 1800`),text)
+    testing.expect(t,place.position.x==6 && place.position.y<0,"it reached the wall and jumped")
+    refused:=[?]struct{params,says:string}{
+        {`{"drive":{}}`,"name where it goes"},
+        {`{"drive":{"entity":"Foe","position":[1,0,0]}}`,"give one"},
+        {`{"drive":{"entity":"Nobody"}}`,"Nobody"},
+        {`{"drive":{"position":[0,0,0]},"segments":[{"ticks":1}]}`,"without segments or press"},
+        {`{"drive":{"position":[0,0,0],"move":"nothing"}}`,"is not a Axis2 action"},
+    }
+    for c in refused {
+        error,_=probe_call(f,"play.step",c.params)
+        testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
+    }
 }
 
 // A frame of the editor as a step runs it, without the window.
@@ -911,6 +987,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     f:=new(Probe);defer free(f)
     if !probe_open(t,f) {return}
     defer probe_close(f)
+    api_state(&f.s).step_frame=probe_frame
     error,_:=probe_call(f,"play.stop",`{}`)
     testing.expect_value(t,error.code,0)
     folder:=project.path_absolute(fmt.tprintf(".mirai/test-scenarios-%d",os.get_pid()),context.temp_allocator)
@@ -957,6 +1034,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     // A step that fails, an until that runs out and files the methods would not take.
     cases:=[?]struct{text,says:string}{
         {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
+        {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"ticks":2}}]}`,"the drive did not arrive"},
         {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
         {`{"steps":[{"method":"scene.add","params":{}}]}`,"steps are play methods"},
         {`{"steps":[{"method":"play.start"}]}`,"leave it out"},

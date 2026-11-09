@@ -182,7 +182,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
     w:=editor.run_ref(s,r)
     tick,seconds:=u64(0),f64(0)
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick,seconds=t.tick,t.seconds}
-    _,body:=play_focused(w)
+    _,body:=editor.play_focused(w)
     moved:[3]f32
     if body!=core.NONE {moved=editor.entity_world(w,body).position}
     // The tracker: a body is stuck that asked to move and stayed where it was.

@@ -9,7 +9,7 @@ time. The first step that fails ends it.
 
 - The smallest file: [Write one](#write-one). The template's `shell.mirai` is a larger one.
 - Test a value: [Conditions](#conditions). Wait for something: [Wait](#wait).
-- Press keys, click, hold an action: [Input](#input).
+- Press keys, click, hold an action: [Input](#input). Walk somewhere, no bot: [Drive](#drive).
 - Run them, read a failure: [Run](#run). Add the monitors of QA: [Monitors](#monitors).
 
 ## Write one
@@ -73,8 +73,29 @@ none run when they hold already. If they never hold, the step and the scenario f
 - Ten quiet ticks after a key let a menu change page before the next check.
 - Click a button of the screen on top by its name: `{"press": "start", "ticks": 10}`; it holds
   the pointer and the button as a click takes, and `ticks` run after it.
+- A key named in consecutive steps stays held, with no release between them; a step that omits it
+  releases it: a jump held over several steps is not cut.
 - Hold a game action by name for some ticks: `play.input`; teleport or change an entity:
   `play.set`; place a prefab: `play.spawn`.
+
+## Drive
+
+`drive` in `play.step` walks the focused player to a target by the game's own move action, re-aimed
+every tick, so a test or an agent writes no bot. Its target is an `entity`, followed where it goes,
+or a `position`. It jumps at a gap ahead and when blocked, then tries each side, and stops within
+`within` meters across the ground (1 by default), at the `ticks` or `seconds` of the step (30 s if
+neither is given), when the step's `until` holds, or when it gets no closer.
+
+```json
+{"name": "cross to the checkpoint", "method": "play.step",
+ "params": {"drive": {"entity": "Checkpoint 2", "within": 1.5}, "seconds": 20}}
+```
+
+- The answer says `drive.stopped` (`Arrived`, `Until`, `Ticks`, `Stuck`, `No_Body`, `Target_Gone`,
+  `Run_Ended`), where it ended (`drive.position`, `drive.distance`) and `ran` its ticks. In a
+  scenario a drive that does not arrive (or end at its `until`) fails the step.
+- A moving platform is not predicted: wait for it with a `play.step` with `until` on its
+  `world_position` ([Wait](#wait)), then drive to the entity.
 
 ## Run
 

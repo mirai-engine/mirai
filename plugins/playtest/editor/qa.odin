@@ -144,16 +144,6 @@ qa_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",params=Api_Play_Qa_Report_Params,params_info=type_info_of(Api_Play_Qa_Report_Params),result=Api_Play_Qa_Report,result_info=type_info_of(Api_Play_Qa_Report),writes_result=true,defaults=&report,run=api_play_qa_report})
 }
 
-// The seat with the focus and the body it drives; NONE where there is none.
-@(private)
-play_focused :: proc(w:core.World_Ref) -> (seat,body:core.Entity) {
-    state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
-    if state==nil || seats==nil {return}
-    seat=input.focused(state,core.read(seats))
-    if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {body=input.body_of(core.read(drivables),seat)}
-    return
-}
-
 // Whether a body is asked to move this tick, by a seat or by whatever drives it.
 @(private)
 play_moving :: proc(w:core.World_Ref,body:core.Entity) -> bool {
@@ -203,7 +193,7 @@ qa_arm :: proc(s:^editor.Session,r:^editor.Run,limits:Qa_Limits) -> ^Run_Qa {
     q.counts={}
     q.stuck,q.fell=false,false
     q.anchor_seconds=seconds
-    _,body:=play_focused(w)
+    _,body:=editor.play_focused(w)
     if body!=core.NONE {q.anchor=editor.entity_world(w,body).position}
     if problems:=host.app_world_storage(s.app,w.data,core.Problems);problems!=nil {q.serial=problems.serial}
     q.memory_base=platform.process_memory_bytes()
@@ -363,7 +353,7 @@ qa_tick :: proc(s:^editor.Session,r:^editor.Run) {
     q.tick=tick
     if !q.armed {return}
     limits:=&q.limits
-    _,body:=play_focused(w)
+    _,body:=editor.play_focused(w)
     at:[3]f32
     if body!=core.NONE {at=editor.entity_world(w,body).position}
     if limits.problems {
