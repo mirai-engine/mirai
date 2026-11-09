@@ -149,19 +149,6 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     return metrics,true
 }
 
-// The .match of the demo by its content: idle and walk on the ground, a fall loop in the air, and
-// the jump and the landing as entry clips of those modes.
-@(private="file")
-mirai_avatar_match_profile :: proc(animation:base.Asset_Id) -> Match_Profile {
-    clips:=make([]Match_Source,5)
-    Clip :: struct {name:string,modes:u32,loop:bool}
-    for value,i in ([5]Clip{{"idle",MODE_WALK,true},{"walk",MODE_WALK,true},{"fall",MODE_FALL,true},{"jump",MODE_FALL,false},{"land",MODE_WALK,false}}) {
-        base.text_set(clips[i].clip[:],value.name);clips[i].modes,clips[i].loop,clips[i].entry=value.modes,value.loop,!value.loop
-    }
-    info:=MATCH_INFO_DEFAULT;info.animation=animation
-    return {info=info,clips=clips}
-}
-
 @(test)
 matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows_the_stick :: proc(t:^testing.T) {
     root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
@@ -177,13 +164,6 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
         record,present:=asset.registry_find_path(&assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id
-    }
-    if match_content(&graphs,&app,ids[0])==nil {
-        // An older version of the asset: its content, as the demo means it.
-        profile:=mirai_avatar_match_profile(ids[1])
-        if !testing.expect(t,match_check(profile)) {match_profile_free(&profile);return}
-        content:=&graphs.matches[len(graphs.matches)-1]
-        content.profile,content.valid,content.error=profile,true,.None
     }
     matched,matched_ok:=mirai_avatar_walk(t,&app,&skeletons,&graphs,ids[0],ids[2])
     if !testing.expect(t,matched_ok) {return}
@@ -594,47 +574,18 @@ match_assets_roundtrip_refuse_no_memory_or_looping_entries_and_report_a_database
     profile:=f.graphs.matches[0].profile
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;if !testing.expect_value(t,match_document(&doc,&types,MATCH_TEST_ID,profile),asset.Error.None) {return};defer asset.document_destroy(&doc)
-    // Every version from the oldest to the current one reads; an older or a newer one is refused.
-    for version in ([4]type_of(doc.kind_version){MATCH_VERSION,MATCH_OLDEST,MATCH_OLDEST-1,MATCH_VERSION+1}) {
+    // Only the current version reads.
+    for version in ([3]type_of(doc.kind_version){MATCH_VERSION,MATCH_VERSION-1,MATCH_VERSION+1}) {
         doc.kind_version=version
         writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
         if !testing.expect_value(t,asset.document_write(&doc,&writer),asset.Error.None) {continue}
         file:asset.Asset
         if !testing.expect_value(t,asset.asset_open(&file,serial.writer_bytes(&writer)),asset.Error.None) {continue};defer asset.asset_close(&file)
         view,read:=match_view(&file,&types)
-        if version<MATCH_OLDEST || version>MATCH_VERSION {testing.expect_value(t,read,asset.Error.Version);continue}
+        if version!=MATCH_VERSION {testing.expect_value(t,read,asset.Error.Version);continue}
         if !testing.expect_value(t,read,asset.Error.None) {continue}
         testing.expect_value(t,view.info,profile.info);testing.expect_value(t,len(view.clips),len(profile.clips))
         for clip,i in view.clips {testing.expect_value(t,clip,profile.clips[i])}
-    }
-    {
-        // A .match of version 6 stored its sources with a blend of three clips and no rates of
-        // their own: its rows migrate by the schema of the file.
-        Source_6 :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,modes:u32,loop,entry:bool,speed:f32,blend:[3][64]u8 `mirai:"text"`}
-        Sample_6 :: struct {source:u32,weights:[4]f32,speed:f32}
-        old:asset.Document;asset.document_init(&old,MATCH_KIND,MATCH_TEST_ID);defer asset.document_destroy(&old)
-        old.kind_version=6
-        sources:=make([]Source_6,len(profile.clips));defer delete(sources)
-        wanted:=make([]Match_Source,len(profile.clips));defer delete(wanted)
-        for clip,i in profile.clips {
-            sources[i]={clip=clip.clip,animation=clip.animation,modes=clip.modes,loop=clip.loop,entry=clip.entry,speed=clip.speed}
-            wanted[i]={clip=clip.clip,animation=clip.animation,modes=clip.modes,loop=clip.loop,entry=clip.entry,speed=clip.speed}
-            for k in 0..<3 {sources[i].blend[k]=clip.blend[k];wanted[i].blend[k]=clip.blend[k]}
-        }
-        info:=profile.info
-        _,put:=asset.document_put_row(&old,&types,"match",&info);testing.expect_value(t,put,asset.Error.None)
-        _,put=asset.document_put(&old,&types,"clips",sources);testing.expect_value(t,put,asset.Error.None)
-        _,put=asset.document_put(&old,&types,"samples",[]Sample_6{});testing.expect_value(t,put,asset.Error.None)
-        bytes,written:=asset.document_bytes(&old,context.temp_allocator)
-        file:asset.Asset
-        if testing.expect_value(t,written,asset.Error.None) && testing.expect_value(t,asset.asset_open(&file,bytes,context.temp_allocator),asset.Error.None) {
-            defer asset.asset_close(&file)
-            view,read:=match_view(&file,&types)
-            if testing.expect_value(t,read,asset.Error.None) && testing.expect_value(t,len(view.clips),len(wanted)) {
-                testing.expect_value(t,view.info,profile.info)
-                for clip,i in view.clips {testing.expect_value(t,clip,wanted[i])}
-            }
-        }
     }
     changed:=profile;changed.info.memory=0
     testing.expect(t,!match_check(changed),"a .match keeps some memory")

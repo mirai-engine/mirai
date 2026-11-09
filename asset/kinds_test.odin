@@ -380,17 +380,6 @@ a_read_of_the_small_levels_decodes_only_the_start_of_the_texels :: proc(t:^testi
     free_all(context.temp_allocator)
 }
 
-// The texture of a file written before textures had layers.
-@(private="file")
-Texture_Info_One_Layer :: struct {
-    width:u32,
-    height:u32,
-    mip_count:u32,
-    format:Texture_Format,
-    flags:Texture_Flags,
-    alpha_coverage:f32,
-}
-
 @(test)
 texture_layers_keep_each_image_of_every_level :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
@@ -424,25 +413,6 @@ texture_layers_keep_each_image_of_every_level :: proc(t:^testing.T) {
     refuse(t,&types,{width=4,height=4,layers=6,format=.RGBA8,mips={face[:4*4*4*5]}})
     refuse(t,&types,{width=1,height=1,layers=TEXTURE_MAX_LAYERS+1,format=.RGBA8,mips={make([]u8,4*(TEXTURE_MAX_LAYERS+1),context.temp_allocator)}})
     refuse(t,&types,{width=1,height=1,layers=-1,format=.RGBA8,mips={face[:4]}})
-
-    // A file without layers holds one.
-    document_init(&doc,KIND_TEXTURE,{7,8})
-    doc.kind_version=TEXTURE_VERSION
-    old:=Texture_Info_One_Layer{width=2,height=1,mip_count=1,format=.RGBA8,flags={.Srgb}}
-    _,row_error:=document_put_row(&doc,&types,"texture",&old)
-    _,mips_error:=document_put(&doc,&types,"mips",[]Texture_Mip{{2,1,0,8}})
-    testing.expect(t,row_error==.None && mips_error==.None)
-    texels,_:=document_table_add(&doc,"texels",{.Bulk})
-    document_resize(&doc,texels,8)
-    byte,_:=document_type(&doc,&types,u8)
-    document_column_add(&doc,texels,"",byte,{},.None,TEXTURE_BULK_ALIGNMENT)
-    serial.writer_reset(&w)
-    document_write(&doc,&w)
-    document_destroy(&doc)
-    testing.expect_value(t,asset_open(&a,serial.writer_bytes(&w)),Error.None)
-    defer asset_close(&a)
-    view,error=texture_view(&a,&types)
-    testing.expect(t,error==.None && view.info.layers==1 && len(texture_layer(view,0,0))==8)
     free_all(context.temp_allocator)
 }
 

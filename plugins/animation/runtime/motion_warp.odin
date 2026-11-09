@@ -11,7 +11,6 @@ import mm "mirai:std/math"
 
 MOTION_KIND :: asset.Fourcc(u32('M')|u32('O')<<8|u32('T')<<16|u32('N')<<24)
 MOTION_VERSION :: 2
-MOTION_OLDEST :: MOTION_VERSION
 MOTION_WINDOWS :: 64
 MOTION_KEYS :: 4096
 Pose_Warp_Leg :: struct {hip,knee,foot:Bone_Ref}
@@ -92,7 +91,7 @@ motion_profile_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,prof
     return asset.document_save(&doc,path)
 }
 motion_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Motion_Profile,error:asset.Error) {
-    asset.kind_check(file,MOTION_KIND,MOTION_OLDEST,MOTION_VERSION) or_return
+    asset.kind_check(file,MOTION_KIND,MOTION_VERSION) or_return
     info:=asset.asset_rows(file,types,"info","",Motion_Info) or_return
     if len(info)!=1 {return {},.Corrupt};profile.info=info[0]
     profile.windows=asset.asset_rows(file,types,"windows","",Motion_Window) or_return

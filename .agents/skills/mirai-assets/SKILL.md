@@ -38,15 +38,13 @@ types, scene/prefab, registry).
    prefabs. In a game they are files of `assets/` written through the API or the editor; only the
    demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
-3. **Changing a serialized struct.** Adding, removing, reordering or changing the type of a field
-   requires neither a version nor a converter: the reader migrates by field name.
+3. **Changing a serialized struct.** A component or a record of a game changes without a version
+   or a converter: the reader migrates its rows by field name.
    - Renaming a field makes it another one: the previous value is lost and the new one takes the
      default.
-   - A new field that must not be zero needs a default in the read (`asset_row(..., &defaults)`),
-     like `MATERIAL_DEFAULTS`.
-   - A change old files need a step for raises the type's `*_VERSION` and keeps `*_OLDEST`: the
-     read branches on the file's version. A change in what a value means raises both: older files
-     fail with `Version` and are made again ([version rule](references/formats.md#versions)).
+   - A change in what an asset type stores or in what a value means raises its `*_VERSION`: files
+     of another version fail with `Version` and are made again
+     ([version rule](references/formats.md#versions)).
 4. **Adding an asset type.** Choose a fourcc and extension, declare the flat structs of its tables,
    write them with `document_put`/`document_put_row` and read them with `asset_rows`/`asset_row`.
    Minimal example: `asset/texture.odin` (description, `*_document`, `*_view`, `*_check`).

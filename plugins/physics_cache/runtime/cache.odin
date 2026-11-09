@@ -8,7 +8,6 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 CACHE_VERSION :: 2
-CACHE_OLDEST :: CACHE_VERSION
 CACHE_MAX_TRACKS :: 4096
 
 Cache_Error :: enum u8 {None,Invalid,Capacity,Out_Of_Memory,Geometry_Unavailable}
@@ -40,7 +39,7 @@ Cache_View :: struct {
 Playback_Piece :: struct {track:u32,pose:mm.Transform}
 
 cache_view :: proc(file:^asset.Asset,types:^asset.Types) -> (view:Cache_View,error:asset.Error) {
-    asset.kind_check(file,asset.KIND_PHYSICS_CACHE,CACHE_OLDEST,CACHE_VERSION) or_return
+    asset.kind_check(file,asset.KIND_PHYSICS_CACHE,CACHE_VERSION) or_return
     view.info=asset.asset_row(file,types,"cache",Cache_Info) or_return
     view.tracks=asset.asset_rows(file,types,"tracks","",Cache_Track) or_return
     view.vertices=asset.asset_rows(file,types,"vertices","",Cache_Vertex) or_return

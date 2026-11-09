@@ -48,7 +48,6 @@ import "mirai:std/serial"
 // by inverse(mesh_node_world) * joint_world * inverse_bind.
 
 MESH_VERSION :: 11
-MESH_OLDEST :: MESH_VERSION
 MESH_MAX_SLOTS :: 32
 MESH_MAX_LEVELS :: 32
 MESH_RAY_LEVELS :: 4 // the level 0 rays trace near, and up to three coarser cuts of the DAG for far away
@@ -445,7 +444,7 @@ mesh_pages_repack :: proc(doc:^Document,p:Pack) -> Error {
     pages_table,has_pages:=document_table(doc,"pages")
     data_table,has_data:=document_table(doc,"page_data")
     if !has_pages || !has_data {return .None}
-    if kind_age(doc.kind_version,MESH_OLDEST,MESH_VERSION)>=.Too_Old {return .Version}
+    if doc.kind_version!=MESH_VERSION {return .Version}
     info_table,has_info:=document_table(doc,"mesh")
     clusters_table,has_clusters:=document_table(doc,"clusters")
     if !has_info || !has_clusters {return .Corrupt}
@@ -488,7 +487,7 @@ mesh_save :: proc(path:string,types:^Types,desc:Mesh_Desc,allocator:=context.all
 // the asset. Everything a range refers to is inside what the file holds;
 // mesh_check_indices looks at the indices and the weights themselves.
 mesh_view :: proc(a:^Asset,types:^Types) -> (view:Mesh_View,error:Error) {
-    kind_check(a,KIND_MESH,MESH_OLDEST,MESH_VERSION) or_return
+    kind_check(a,KIND_MESH,MESH_VERSION) or_return
     view.info=asset_row(a,types,"mesh",Mesh_Info) or_return
     view.clusters=table_rows(a,types,"clusters",Cluster) or_return
     view.levels=table_rows(a,types,"levels",Mesh_Level) or_return

@@ -31,7 +31,6 @@ import "mirai:std/serial"
 // runtime.ui_tree_view.
 
 UI_VERSION :: 5
-UI_OLDEST :: UI_VERSION
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"
@@ -99,7 +98,7 @@ UI_FONT_CAPACITY :: 16
 // names animations that exist. The values themselves (enums, numbers, texts)
 // are for whoever checks them against the schema.
 ui_check :: proc(a:^Asset,types:^Types) -> bool {
-    if kind_check(a,KIND_UI,UI_OLDEST,UI_VERSION)!=.None {return false}
+    if kind_check(a,KIND_UI,UI_VERSION)!=.None {return false}
     rows :: proc(a:^Asset,types:^Types,name:string,$T:typeid) -> (list:[]T,ok:bool) {
         if _,found:=asset_table(a,name);!found {return nil,true}
         error:Error

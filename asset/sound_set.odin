@@ -10,7 +10,6 @@ import "mirai:std/base"
 //   sound_set   Sound_Set_Info, one row
 
 SOUND_SET_VERSION :: 1
-SOUND_SET_OLDEST :: SOUND_SET_VERSION
 SOUND_SET_CAPACITY :: 16
 SOUND_SET_PITCH_MAX :: 64
 
@@ -80,7 +79,7 @@ sound_set_bytes :: proc(types:^Types,desc:Sound_Set_Desc,allocator:=context.allo
 }
 
 sound_set_view :: proc(a:^Asset,types:^Types) -> (view:Sound_Set_View,error:Error) {
-    kind_check(a,KIND_SOUND_SET,SOUND_SET_OLDEST,SOUND_SET_VERSION) or_return
+    kind_check(a,KIND_SOUND_SET,SOUND_SET_VERSION) or_return
     defaults:=SOUND_SET_DEFAULTS
     view.info=asset_row(a,types,"sound_set",Sound_Set_Info,&defaults) or_return
     if _,message:=sound_set_problem(view.info^);message!="" {return {},.Corrupt}

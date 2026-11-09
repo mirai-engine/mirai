@@ -70,7 +70,7 @@ ui_tree_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,data:ui.Tre
 // lays them out, copies the asset owns otherwise. A table the file lacks is
 // empty. Nothing in them is checked: ui.tree_load does it.
 ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,error:asset.Error) {
-    asset.kind_check(a,asset.KIND_UI,asset.UI_OLDEST,asset.UI_VERSION) or_return
+    asset.kind_check(a,asset.KIND_UI,asset.UI_VERSION) or_return
     rows :: proc(a:^asset.Asset,types:^asset.Types,name:string,$T:typeid) -> ([]T,asset.Error) {
         if _,found:=asset.asset_table(a,name);!found {return nil,.None}
         return asset.asset_rows(a,types,name,"",T)

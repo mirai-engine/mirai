@@ -19,7 +19,6 @@ import "mirai:std/serial"
 // the text of its entries; a language it lacks has none.
 
 RECORDS_VERSION :: 1
-RECORDS_OLDEST :: RECORDS_VERSION
 RECORDS_NAME :: 64     // bytes of the name of a row, its NUL included: core.RECORD_NAME
 RECORDS_TYPE :: 128    // bytes of the name of the type of the rows
 RECORDS_LANGUAGE :: 16 // bytes of the code of a language
@@ -110,7 +109,7 @@ records_bytes :: proc(types:^Types,desc:Records_Desc,allocator:=context.allocato
 }
 
 records_view :: proc(a:^Asset,types:^Types) -> (view:Records_View,error:Error) {
-    kind_check(a,KIND_RECORDS,RECORDS_OLDEST,RECORDS_VERSION) or_return
+    kind_check(a,KIND_RECORDS,RECORDS_VERSION) or_return
     view.info=asset_row(a,types,TABLE_RECORDS,Records_Info) or_return
     view.ids=asset_rows(a,types,TABLE_ROWS,"id",u64) or_return
     view.names=asset_rows(a,types,TABLE_ROWS,"name",Records_Name) or_return

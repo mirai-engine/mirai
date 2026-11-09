@@ -9,7 +9,6 @@ import mm "mirai:std/math"
 
 BLEND_KIND :: asset.Fourcc(u32('B')|u32('L')<<8|u32('N')<<16|u32('D')<<24)
 BLEND_VERSION :: 1
-BLEND_OLDEST :: BLEND_VERSION
 Blend_Axis :: struct {name:[32]u8 `mirai:"text"`,min,max:f32}
 Blend_Info :: struct {animation:base.Asset_Id,dimension:lib.Blend_Dimension,x,y:Blend_Axis}
 Blend_Sample :: struct {position:mm.Vec2,clip:[64]u8 `mirai:"text"`,speed:f32,animation:base.Asset_Id}
@@ -101,7 +100,7 @@ blend_space_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile
     return asset.document_save(&doc,path)
 }
 blend_space_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Blend_Profile,error:asset.Error) {
-    asset.kind_check(file,BLEND_KIND,BLEND_OLDEST,BLEND_VERSION) or_return
+    asset.kind_check(file,BLEND_KIND,BLEND_VERSION) or_return
     info:=asset.asset_row(file,types,"blend",Blend_Info) or_return
     profile.info=info^
     profile.samples=asset.asset_rows(file,types,"samples","",Blend_Sample) or_return
