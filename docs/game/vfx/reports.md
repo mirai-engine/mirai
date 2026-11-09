@@ -7,7 +7,7 @@ reports of a frame arrive some frames later, once each, in `vfx.Particle_Reports
 
 ```odin
 @(step="late")
-sparks_react :: proc(reports:core.Ref(vfx.Particle_Reports), spawns:^scene.Spawns) {
+sparks_react :: proc(reports:core.Ref(vfx.Particle_Reports), spawner:scene.Spawner) {
     for r in reports.reports {
         if r.kind != .Collision {continue}
         // r.entity (the emitter), r.position, r.velocity, r.normal of what it hit

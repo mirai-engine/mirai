@@ -68,7 +68,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    is `transient` (not saved or replicated); what must not travel over the network is `local`.
 3. The signature declares what the function reads and writes. A table owned by someone else that
    is not `shared` is not written: a request is sent to its owner (`core.place`,
-   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.Spawns`,
+   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.spawn`,
    `multiplayer.send`).
 4. Phase of the function: simulation in `fixed`, camera and presentation in `late`, own interfaces
    in `ui`, reading to draw in `render`.

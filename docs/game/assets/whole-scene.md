@@ -1,33 +1,33 @@
-# A whole scene from a content tool
+# A whole scene through the API
 
-A [content tool](content-tool.md) writes a scene with the terrain, foliage and sea it shows, in
-one run: there is no second step through the API. Each plugin adds its part to
-`asset.Scene_Builder`, a procedure that writes its asset and adds its entity.
+A scene and a prefab are files of `assets/`, the source of the game, as a `.ui` is: an agent
+writes them through the API, a person in the editor, and nothing writes over what either saved.
+Terrain, foliage and sea go in one `--batch` file of JSON lines, one line per call, each finding
+what it needs by name ([terrain-foliage](../world/terrain-foliage.md)):
 
-```odin
-b:asset.Scene_Builder
-asset.builder_init(&b,&c,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","island"))
-defer asset.builder_destroy(&b)
-terrain.builder_terrain(&b,"Island",{file="assets/island/ground.terrain",samples=257,
-    spacing=1,height=island_height,layers={{material=sand,tiling=6},
-    {material=grass,automatic=true,height={2.6,40},slope={0,42},softness={6,1.2}}}})
-foliage.builder_foliage(&b,"Plants",{file="assets/island/plants.foliage",
-    generate={{at={0,0,0},radius=82}},
-    types={{name="palm",mesh=palm,density=0.007,scale={0.8,1.25},align=0.15,
-        rule=true,slope={0,28},ground_height={0.9,6.5},casts_shadow=true}}})
-water.builder_sea(&b,"Sea")
-asset.builder_save(&b,"assets/island/island.scene")
+```json
+{"method":"scene.open","params":{"path":"scenes/main.scene"}}
+{"method":"terrain.create","params":{"name":"Island","samples":257,"spacing":1,"at":[0,0,0],"heightmap":"source/island.png","height_scale":40}}
+{"method":"terrain.layer","params":{"entity":"Island","material":"island/sand.mat","tiling":6}}
+{"method":"terrain.layer","params":{"entity":"Island","material":"island/grass.mat","automatic":true,"height":[2.6,40],"slope":[0,42],"softness":[6,1.2]}}
+{"method":"foliage.create","params":{"name":"Plants"}}
+{"method":"foliage.type_add","params":{"entity":"Plants","mesh":"island/palm.mesh","name":"palm","density":0.007,"scale":[0.8,1.25],"align":0.15,"rule":true,"slope":[0,28],"ground_height":[0.9,6.5]}}
+{"method":"foliage.paint","params":{"entity":"Plants","mode":"generate","at":[0,0,0],"radius":82}}
+{"method":"scene.add","params":{"name":"Sea","components":{"Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}}
+{"method":"asset.save","params":{"all":true}}
+{"method":"scene.save","params":{}}
 ```
 
-- `height` is a proc of x and z from the center of the terrain, the same a game can read as its
-  ground truth; or `heights` with its rows, or neither for flat.
-- A layer's `material` and a type's `mesh` are ids of what the tool wrote or imported before.
-  Field names follow `terrain.layer` and `foliage.type_add`, angles in degrees.
-- In a `foliage.Type_Desc`, a field left out takes the value of `foliage.type_add`, and `align`,
-  `wind`, `yaw`, `tilt`, `weight`, `fade_distance` and `cull_distance` take 0 only when given.
-- `water.builder_sea(&b,"Sea",look=look)` takes a `water.WATER_DEFAULT` with its colors changed,
-  and `waves` a `phys.FLUID_WAVES_DEFAULT`.
-- `file` paths are the tool's: a folder of the theme of the scene, created when missing, never a
-  folder of kinds. The same code gives the same bytes every run.
-- The tool is the source of the scene: change it there and run it again. A run rewrites the
-  scene, so an edit made through the API or the editor is lost at the next run.
+`scene.save` with a new `path` writes another scene.
+
+```sh
+mirai rpc --project . --batch island.jsonl
+```
+
+- Hills come from a heightmap of the project (a 16-bit PNG, `terrain.heightmap` exports the format)
+  or from brushes (`terrain.edit`: `noise`, `raise`, `ramp`...), in the same file.
+- A generated mesh or material (a palm, the sand) is an asset a [content tool](content-tool.md)
+  wrote; its path or id is what a layer and a type name. The tool runs before this file; it never
+  writes a scene.
+- The file is the recipe of a first version: to change the scene later, edit what it made
+  (`scene.set`, `terrain.layer`, `foliage.type_set`) and save, as with any scene.

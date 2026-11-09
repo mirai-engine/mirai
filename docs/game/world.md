@@ -6,12 +6,12 @@ description: Author an outdoor or indoor scene in a Mirai game - terrain, foliag
 
 # Game world
 
-A scene is entities with components, written by a content tool
-([assets](assets.md)) or through `mirai rpc`.
+A scene is entities with components, a file of `assets/` written through `mirai rpc` or in the
+editor.
 
 ## Map
 
-- A whole scene in one run of a content tool: [whole-scene.md](assets/whole-scene.md).
+- A whole scene in one `--batch` file: [whole-scene.md](assets/whole-scene.md).
 - Ground, hills, paths, trees and grass: [terrain-foliage.md](world/terrain-foliage.md).
   **Use the terrain and foliage plugins for natural ground and vegetation; never build them
   from cubes, planes or hand-made meshes.**

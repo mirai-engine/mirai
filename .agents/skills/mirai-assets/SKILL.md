@@ -33,10 +33,8 @@ types, scene/prefab, registry).
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
    ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes and
-   prefabs. A content tool writes new ones with `asset.Scene_Builder`: a plugin adds its part as a
-   `builder_*` of its runtime (`terrain.builder_terrain`, `foliage.builder_foliage`,
-   `water.builder_sea`), which writes its asset and adds its entity, so a whole scene is one run.
-   Meshes from code go through `asset.content_mesh` over the shapes of `std/geom`
+   prefabs. In a game they are files of `assets/` written through the API or the editor; only the
+   demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** Adding, removing, reordering or changing the type of a field
    requires neither a version nor a converter: the reader migrates by field name.

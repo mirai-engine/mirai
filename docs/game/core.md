@@ -26,7 +26,7 @@ project.mirai   manifest: name, start_scene, plugins, window, build
 settings.mirai  project settings, only what differs; input.mirai: rebinds, never by hand
 cook.mirai      roots only code names (assets)
 assets/ source/ binary assets; art sources, never shipped    game/  the game package
-plugins/<n>/    your plugins (plugins)   tools/content/  writes assets (assets)
+plugins/<n>/    your plugins (plugins)   tools/content/  writes generated assets (assets)
 tests/scenarios/  mirai play test .           .mirai/  generated, never edited (.mirai/gen)
 ```
 

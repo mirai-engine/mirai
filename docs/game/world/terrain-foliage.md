@@ -5,10 +5,8 @@ the plugins stream, draw with levels of detail and collide. Add `"terrain"` and 
 `plugins` in `project.mirai`. Never make ground or vegetation from cubes, planes or imported
 meshes placed one by one: they do not stream, paint, scatter or collide as these do.
 
-Terrain, foliage and sea can be written all at once by a
-[content tool](../assets/whole-scene.md). Through the API, name what you make:
-later calls find it by that name, so one `--batch` file of JSON lines builds a whole scene, with no
-ids to pass between calls.
+Name what you make: later calls find it by that name, so one `--batch` file of JSON lines builds a
+whole scene, with no ids to pass between calls ([whole-scene.md](../assets/whole-scene.md)).
 
 ## Ground
 

@@ -27,7 +27,7 @@ Reflections :: enum u8 {
     Detailed, // and sharp ones show the glass and the gloss of what they reflect
 }
 
-@(storage,setting="machine")
+@(storage,shared,setting="machine")
 Graphics_Settings :: struct {
     quality:Graphics_Quality `mirai:"section=Resolution"`, // only an input: the last preset named, whose fields follow (graphics_apply); the preset the fields are at is graphics_quality_of
     render_scale:f32 `mirai:"min=0,max=2"`,                // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing

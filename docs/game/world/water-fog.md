@@ -27,8 +27,6 @@ $P scene.add '{"name":"Pond","position":[30,0,10],"components":{
 - `Water` changes the look: its `material` (a `.mat`), how it absorbs and scatters light, shafts
   and caustics. A zeroed `Water` is not the default: add it with `{}` (the
   starting value) or copy `water.WATER_DEFAULT`.
-- A content tool adds a whole sea with `water.builder_sea(&b,"Sea")`
-  ([whole-scene.md](../assets/whole-scene.md)).
 - Code: `phys.fluid_volume_sea(1025)`, `phys.fluid_volume_box(half_extents)` and
   `phys.fluid_volume_dry(half_extents)` give a `Fluid_Volume`.
 

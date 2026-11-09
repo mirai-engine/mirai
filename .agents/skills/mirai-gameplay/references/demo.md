@@ -17,13 +17,13 @@ Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP 
 ([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)), and
 the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
 
-The assets of `templates/game` but its `.ui` (written with `ui.write` and kept in the repository)
-are written by its `tools/content`, from the project folder. It does
-not go into the game: only `game/`, `editor/` and the plugins are compiled.
+The scene, the prefab and the `.ui` of `templates/game` are its source: files kept in the
+repository and written through the API. Its `tools/content` writes only what code generates (the
+badge and the hum), from the project folder, and does not go into the game: only `game/`,
+`editor/` and the plugins are compiled.
 
 ```sh
-odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins \
-  -collection:project=. -custom-attribute:<attributes>
+odin run tools/content -collection:mirai=<engine> -ignore-unknown-attributes
 ```
 
 ## Demo
@@ -101,7 +101,7 @@ Scenes:
 - **`game.odin`**: the demo's actions (`Action`, `@(actions)`) with their default bindings
   (`Demo_Actions`), and the components of the scenes.
   - `game_use` reads the actions of the body's seat: opens doors, changes the material sample and
-    throws a cube with `scene.Spawns`.
+    throws a cube with `scene.spawn`.
   - `game_projectiles` (`stage="react"`, `before="destruct_step"`) damages with `destruct.damage`
     what the cube touches, and destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of

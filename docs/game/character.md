@@ -27,7 +27,7 @@ A player is a seat (`inp.Seat`) that drives a body (`inp.Drivable`); a body that
 
 No spawn or camera code: `settings.mirai` has `{"Spawn_Settings":{"players":true}}`, the scene a
 `spawn.Spawn_Point{prefab=PLAYER_PREFAB_ID}` entity (an `Asset_Id`), and the prefab the pieces of
-[a whole player](third-person.md#2-the-player). A content tool writes it ([assets](assets.md)); a
+[a whole player](third-person.md#2-the-player), a file of `assets/` written through the API; a
 body and a camera both face -Z, so the eyes child needs no turn. For a first-person view:
 
 ```odin

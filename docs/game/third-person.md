@@ -20,54 +20,43 @@ are a clear day, auto exposure meters it.
 
 ## 2. The player
 
-Replace `write_player` in `tools/content/main.odin` and run the tool, as its header comment says:
+`assets/prefabs/Player.prefab` is the source of the player, as the scene and each `.ui` are: change
+it through the API or the editor, and nothing writes over it. With the session open:
 
-```odin
-write_player :: proc(c:^asset.Content) {
-    b:asset.Scene_Builder
-    asset.builder_init(&b,c,asset.KIND_PREFAB,PLAYER_PREFAB_ID)
-    defer asset.builder_destroy(&b)
-    root:=asset.builder_entity(&b,"Player")
-    character:=phys.character_default()
-    character.move_relative_to=.Camera   // W goes where the camera looks
-    character.turn_speed=12              // the body turns toward its movement
-    asset.builder_set(&b,root,character)
-    walk:=phys.WALK_DEFAULT
-    walk.max_speed,walk.air_control,walk.coyote_time=7,0.55,0.13
-    walk.jump_height,walk.jump_rise,walk.jump_cut=1.9,0.11,0.42 // variable height: hold or tap
-    asset.builder_set(&b,root,walk)
-    asset.builder_set(&b,root,phys.collider_character())
-    asset.builder_set(&b,root,game.Player{})
-    body:=asset.builder_entity(&b,"Body",{position={0,0.9,0},scale={0.6,0.9,0.6}},root)
-    asset.builder_set(&b,body,render.Mesh_Renderer{shape=.Capsule})
-    asset.builder_set(&b,body,render.Tint{color={0.9,0.45,0.25,1}})
-    view:=asset.builder_entity(&b,"Player view",{},root)
-    asset.builder_set(&b,view,render.Camera{fov=game.VIEW_FOV,near=0.05,active=true})
-    asset.builder_set(&b,view,audio.Audio_Listener{})
-    follow:=cam.CAMERA_FOLLOW_DEFAULT    // Orbit; a probe keeps it out of walls
-    follow.offset,follow.distance={0,1.5,0},5
-    follow.pitch,follow.min_pitch,follow.max_pitch=0.3,-0.3,1.2 // radians; positive is above
-    follow.turn,follow.recenter=true,1.5 // the look action turns it; it swings back behind
-    asset.builder_set(&b,view,follow)
-    asset.builder_set(&b,root,inp.Drivable{camera=core.Entity(view)})
-    asset.builder_save(&b,"assets/prefabs/Player.prefab")
-}
+```sh
+P="mirai rpc --project ."
+$P scene.open '{"path":"prefabs/Player.prefab"}'
+$P scene.set '{"entity":"Player","components":{
+  "Character":{"move_relative_to":"Camera","turn_speed":12},
+  "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
+          "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}}}'
+$P scene.write '{"root":"Player view","entities":[{"name":"Player view","components":{
+  "Camera":{"fov":1.2217,"near":0.05,"active":true},"Audio_Listener":{},
+  "Camera_Follow":{"offset":[0,1.5,0],"distance":5,"pitch":0.3,"min_pitch":-0.3,"max_pitch":1.2,
+                   "turn":true,"recenter":1.5}}}]}'
+$P scene.add '{"name":"Body","parent":"Player","position":[0,0.9,0],"scale":[0.6,0.9,0.6],
+  "components":{"Mesh_Renderer":{"shape":"Capsule"},"Tint":{"color":[0.9,0.45,0.25,1]}}}'
+$P scene.save '{}'
 ```
+
+W goes where the camera looks and the body turns toward its movement. `Camera_Follow` starts as the
+orbit camera, with a probe that keeps it out of walls; `pitch` is in radians and positive is above;
+the look action turns it and it swings back behind. Variable jump: hold or tap.
 
 Move, jump, look and menu have their keys already. Your own actions:
 [actions-seats.md](character/actions-seats.md). Other cameras: [camera.md](character/camera.md).
 
 ## 3. The scene
 
-The content tool is the source of `assets/scenes/main.scene`: change `write_scene` in
-`tools/content/main.odin` and run the tool again. A run rewrites the scene, so an edit made through
-the API or the editor is lost at the next run. A Sea plane is everything under its height
-([water-fog.md](world/water-fog.md)); with `water "plugins:water/runtime"` imported, before
-`asset.builder_save`:
+`assets/scenes/main.scene` is a file of the project too. A Sea plane is everything under its
+height ([water-fog.md](world/water-fog.md)):
 
-```odin
-water.builder_sea(&b,"Sea",height=-1)
+```sh
+$P scene.open '{"path":"scenes/main.scene"}'
+$P scene.add '{"name":"Sea","position":[0,-1,0],"components":{
+  "Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}'
+$P scene.save '{}'
 ```
 
-Hills and trees in the same tool: [whole-scene.md](assets/whole-scene.md). A moving platform or a
+Hills and trees in one `--batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform or a
 zone: [platforms-triggers.md](character/platforms-triggers.md).
