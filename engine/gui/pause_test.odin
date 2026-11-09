@@ -85,7 +85,9 @@ the_menu_action_is_reported_unless_an_interface_used_escape :: proc(t:^testing.T
     testing.expect_value(t,len(gui_.pending),0)
     gui_.escape_used=false
     menu_report(&gui_,true)
-    testing.expect(t,len(gui_.pending)==1 && menu_pressed(Frame_Events{items=gui_.pending[:]}))
+    delivered:UI_Events
+    delivered.items=gui_.pending
+    testing.expect(t,len(gui_.pending)==1 && menu_pressed(&delivered))
 }
 
 // The mouse is captured while the seat with it drives a body whose look the

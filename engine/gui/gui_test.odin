@@ -45,7 +45,7 @@ the_rect_of_a_node_of_a_screen_is_in_window_points :: proc(t:^testing.T) {
 the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=3,resimulating=true})
     testing.expect(t,len(events.items)==0 && len(gui.pending)==1)
@@ -53,15 +53,17 @@ the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing
     testing.expect(t,len(events.items)==1 && len(gui.pending)==0 && events.items[0].name==7)
 }
 
-// The helpers read the events of a frame as those of a tick, from the slice events_this_frame gives.
 @(test)
 a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
     gui_:Gui
     a,b:=core.entity_make(1,1),core.entity_make(2,1)
-    asked_frame(&gui_,a,"play")
-    asked_frame(&gui_,a,"play")
-    asked_frame(&gui_,b,"play")
-    asked_frame(&gui_,a,"")
+    events:=events_this_frame(&gui_)
+    clicked(events,a,"play")
+    clicked(events,a,"play")
+    clicked(events,b,"play")
+    clicked(events,a,"")
+    asked_merge(&gui_,events)
+    testing.expect_value(t,events.asked_count,0)
     testing.expect_value(t,gui_.names_asked_count,2)
     testing.expect(t,gui_.names_asked[0].name==base.name_hash("play") && gui_.names_asked[0].entity==a,"what was asked, each once")
 }
@@ -69,17 +71,21 @@ a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
 @(test)
 the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
     entity:=core.entity_make(1,1)
-    events:=Frame_Events{items=[]UI_Event{
-        {entity=entity,name=base.name_hash("play"),kind=.Clicked},
-        {entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
-        {entity=entity,kind=.Back},
-        {kind=.Menu},
-    }}
+    gui_:Gui
+    defer delete(gui_.arrived.items)
+    append(&gui_.arrived.items,
+        UI_Event{entity=entity,name=base.name_hash("play"),kind=.Clicked},
+        UI_Event{entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
+        UI_Event{entity=entity,kind=.Back},
+        UI_Event{kind=.Menu},
+    )
+    events:=events_this_frame(&gui_)
     testing.expect(t,menu_pressed(events))
     testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
     value,ok:=changed_value(events,entity,"volume")
     testing.expect(t,ok && value==0.5)
     testing.expect(t,back(events,entity))
+    testing.expect(t,!clicked(events_this_frame(nil),entity,"play") && !menu_pressed(nil),"without a Gui there are no events")
 }
 
 // A frame step reads an event once, in frames with several ticks and with none.
@@ -87,7 +93,7 @@ the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
 events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     event:=UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked}
     read :: proc(t:^testing.T,gui:^Gui,want:int,loc:=#caller_location) {
         testing.expect_value(t,len(events_this_frame(gui).items),want,loc=loc)
@@ -121,7 +127,7 @@ events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T)
 a_tick_that_runs_again_gets_the_events_it_got :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=5})
     gui_events_deliver(&events,&gui,core.Time{tick=6})
@@ -528,7 +534,7 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
 events_go_to_the_frame_phase_while_no_tick_runs :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     // A tick ran in the frame: the frame phase leaves it its events.
     append(&gui.pending,UI_Event{name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=4})
