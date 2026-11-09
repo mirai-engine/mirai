@@ -51,12 +51,13 @@ save_test_settle :: proc(world,shared,editor:rawptr) {
 }
 
 @(private="file")
-save_test_clear :: proc(world:rawptr) {
+save_test_clear :: proc(world:rawptr) -> bool {
     w:=cast(^Save_Test_World)world
-    core.entities_clear(&w.entities)
+    if !core.entities_clear(&w.entities) {return false}
     core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms);core.table_clear(&w.parents)
     core.table_clear(&w.remotes);core.table_clear(&w.targets)
     core.hierarchy_clear(&w.hierarchy)
+    return true
 }
 
 @(private="file")

@@ -380,7 +380,7 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     s.refusal={}
     s.built=true
     serial.schema_init(&s.schema,allocator)
-    wire.protocol_init(&s.protocol,allocator)
+    wire.protocol_init(&s.protocol,allocator) or_return
     pose:=serial.schema_add(&s.schema,Pose) or_return
     motion:=serial.schema_add(&s.schema,Motion_State) or_return
     driver:=serial.schema_add(&s.schema,Driver_State) or_return
@@ -430,7 +430,7 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     }
     s.follows=s.own.world>=0 && s.own.ready>=0 && s.own.player>=0 && s.own.section>=0 && s.own.gone>=0
     wire.input_register(&s.protocol,&s.schema,input) or_return
-    wire.protocol_seal(&s.protocol)
+    _=wire.protocol_seal(&s.protocol) or_return
     s.types=make([]Net_Type,wire.TYPE_CAPACITY,allocator)
     error:runtime.Allocator_Error
     s.scratch,error=make_aligned_bytes(largest,allocator)

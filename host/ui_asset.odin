@@ -1,5 +1,6 @@
 package host
 
+import "base:runtime"
 import "core:fmt"
 import "mirai:asset"
 import "mirai:std/base"
@@ -114,7 +115,8 @@ ui_tree_imports_of :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_S
     for component in data.components {widgets|=component.widget!={}}
     if !widgets {return nil,true}
     if depth>=ui.TREE_DEPTH {return nil,false}
-    imports=make([]ui.Tree_Data,len(data.components),allocator)
+    allocation:runtime.Allocator_Error
+    if imports,allocation=make([]ui.Tree_Data,len(data.components),allocator);allocation!=nil {return nil,false}
     for component,row in data.components {
         id:=component.widget
         if id=={} {continue}

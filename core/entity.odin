@@ -55,10 +55,11 @@ entities_destroy :: proc(es:^Entities) {
     es^={}
 }
 
-entities_clear :: proc(es:^Entities) {
-    if len(es.generation)==0 {resize(&es.generation,1)}
+// False without memory for the list of its free indices: nothing changed.
+entities_clear :: proc(es:^Entities) -> bool {
+    if len(es.generation)==0 && resize(&es.generation,1)!=nil {return false}
     count:=len(es.generation)-1
-    resize(&es.free,count)
+    if resize(&es.free,count)!=nil {return false}
     for index in 1..<len(es.generation) {
         es.generation[index]+=1
         if es.generation[index]==0 {es.generation[index]=1}
@@ -72,6 +73,7 @@ entities_clear :: proc(es:^Entities) {
     es.disabled=0
     ids_clear(&es.ids)
     es.ids.whole=true
+    return true
 }
 
 create :: proc(es:^Entities) -> Entity {

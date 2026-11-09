@@ -9,11 +9,11 @@ import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-@(private="file") Marks_Model :: struct {mesh:base.Asset_Id}
-@(private="file") Marks_Held :: struct {list:[dynamic]base.Asset_Id}
-@(private="file") Marks_World :: struct {entities:core.Entities,models:core.Table(Marks_Model),held:Marks_Held}
+@(private) Marks_Model :: struct {mesh:base.Asset_Id}
+@(private) Marks_Held :: struct {list:[dynamic]base.Asset_Id}
+@(private) Marks_World :: struct {entities:core.Entities,models:core.Table(Marks_Model),held:Marks_Held}
 
-@(private="file")
+@(private)
 marks_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
     w:=cast(^Marks_World)data
     core.table_init(&w.models,"Marks_Model",allocator)
@@ -21,7 +21,7 @@ marks_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
     return core.entities_init(&w.entities,allocator)
 }
 
-@(private="file")
+@(private)
 marks_destroy :: proc(data:rawptr) {
     w:=cast(^Marks_World)data
     core.table_destroy(&w.models)

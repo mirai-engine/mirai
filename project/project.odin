@@ -256,7 +256,9 @@ plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.alloca
         append(&walk.order,index)
         return {}
     }
-    walk:=Walk{plugins,make([]Visit,len(plugins),context.temp_allocator),make([dynamic]int,0,len(plugins),allocator)}
+    listed,allocation:=make([dynamic]int,0,len(plugins),allocator)
+    if allocation!=nil {return nil,{code=.Out_Of_Memory}}
+    walk:=Walk{plugins,make([]Visit,len(plugins),context.temp_allocator),listed}
     for name in wanted {
         index,found:=plugin_find(plugins,name)
         if !found {error=error_about(.Plugin_Missing,name)}

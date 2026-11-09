@@ -66,7 +66,7 @@ entity_map_reserve :: proc(m:^Entity_Map($T),count:int,indices:=0) -> bool {
     }
     if indices>len(m.rows) {
         if indices>cap(m.rows) && reserve(&m.rows,max(indices,2*cap(m.rows)))!=nil {return false}
-        resize(&m.rows,indices)
+        if resize(&m.rows,indices)!=nil {return false}
     }
     return true
 }

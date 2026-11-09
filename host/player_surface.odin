@@ -1,5 +1,6 @@
 package host
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -50,7 +51,8 @@ Player_Surface :: struct {
 @(private)
 surface_open :: proc(app:^App,s:^Player_Surface) -> bool {
     s.density=app.density
-    s.pending=make([dynamic]u8,0,4096)
+    error:runtime.Allocator_Error
+    if s.pending,error=make([dynamic]u8,0,4096);error!=nil {return false}
     if app.mixer!=nil {_=audio.bus_set_mute(app.mixer,audio.BUS_MASTER,true)}
     if !surface_textures(app,s,app.drawable) {return false}
     s.reader=thread.create(surface_read)
