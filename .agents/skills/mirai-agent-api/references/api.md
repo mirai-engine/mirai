@@ -150,8 +150,7 @@ mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
   [--wait-until CONDITION]
   [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
-mirai rpc --batch <calls.jsonl> [the same options]
-mirai rpc --stdin [the same options]
+mirai rpc --batch <calls.jsonl|-> [the same options]
 ```
 
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
@@ -173,14 +172,12 @@ mirai rpc --stdin [the same options]
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
-  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line and stops
-  at the first error; a value of the params that is exactly `$N` or `$N.path` (the paths of
+  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
+  file or from stdin (`-`), over one connection, so many calls cost one process; it prints a JSON
+  array with the result of each and stops at the first error, whose entry says its `line`. A value
+  of the params that is exactly `$N` or `$N.path` (the paths of
   `--select`, as `$0.id` or `$1.entities[0].id`) stands for the result of the call N or that field
   of it, and `$$` writes a literal `$`.
-- `--stdin` keeps one connection open for many calls in one process: one call per line, `method
-  key=value...` or `method {json}`, with `--select` and `--wait-until` after it, and one line of
-  JSON per call on stdout, its result or `{"error":...}`; a failed call does not end it. It ends
-  at the end of the input. A script of many calls costs one process, not one per call.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it

@@ -17,8 +17,8 @@ difference with the catalog, it rules.
 ## Map
 
 - Connecting a client, limits, errors, MCP: [protocol and CLI](references/api.md).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, whose
-  calls can name the results of earlier ones, and `--stdin`, many calls over one connection) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
+  calls over one connection, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:

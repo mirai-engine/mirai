@@ -2,7 +2,6 @@ package main
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -12,7 +11,7 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> | rpc --stdin [--project P|--port N] [--timeout S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl|-> [--project P|--port N] [--timeout S] [--client NAME]"
 
 RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
@@ -31,7 +30,7 @@ Connection :: struct {
     named:bool,     // --project named project, which a call may open a session of
     near:string,    // with a port: the project at or above the working folder, to know the process of an editor of that port
     client:string,  // the agent outside the editor that calls: --client, MIRAI_CLIENT, or claude-code from its shell
-    link:^api.Client_Connection, // --stdin: one connection for all its calls
+    link:^api.Client_Connection, // --batch: one connection for all its calls
     rest:[dynamic]string,
 }
 
@@ -219,9 +218,6 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     case "--batch":
         if len(connection.rest)!=2 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
         return rpc_batch(connection,connection.rest[1])
-    case "--stdin":
-        if len(connection.rest)!=1 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
-        return rpc_stdin(connection)
     case "describe":
         return rpc_describe(connection,connection.rest[1:])
     }
@@ -547,110 +543,6 @@ rpc_describe_text :: proc(result,name:string) -> string {
     return strings.to_string(b)
 }
 
-// mirai rpc --stdin: one connection and one call per line of stdin,
-// "method key=value..." or "method {json}", with the options of a call after
-// it, so a script makes many calls in one process. One line of JSON on stdout
-// per call: its result, or {"error":{...}} when it failed. Ends at the end of
-// the input.
-@(private="file")
-rpc_stdin :: proc(connection:Connection) -> int {
-    connection:=connection
-    link:api.Client_Connection
-    defer api.client_connection_close(&link)
-    connection.link=&link
-    pending:=make([dynamic]u8)
-    chunk:[4096]u8
-    arena:virtual.Arena
-    if virtual.arena_init_growing(&arena)!=nil {fmt.eprintln("mirai rpc: no memory");return 1}
-    line_memory:=virtual.arena_allocator(&arena)
-    for {
-        n,read_error:=os.read(os.stdin,chunk[:])
-        if n>0 {append(&pending,..chunk[:n])}
-        finished:=read_error!=nil || n==0
-        for {
-            end:=strings.index_byte(string(pending[:]),'\n')
-            if end<0 && !(finished && len(pending)>0) {break}
-            count:=end>=0?end:len(pending)
-            rpc_stdin_line(connection,strings.trim_space(string(pending[:count])),line_memory)
-            virtual.arena_free_all(&arena)
-            free_all(context.temp_allocator)
-            consumed:=end>=0?end+1:len(pending)
-            remove_range(&pending,0,consumed)
-        }
-        if finished {break}
-    }
-    return 0
-}
-
-// Runs a line of --stdin and prints its answer as one line of JSON.
-@(private="file")
-rpc_stdin_line :: proc(connection:Connection,line:string,allocator:=context.allocator) {
-    if line=="" {return}
-    context.allocator=allocator
-    answer :: proc(text:string) {fmt.println(api.json_single_line(text,context.allocator))}
-    fail :: proc(err:api.Error) {answer(api.error_text(err,context.allocator))}
-    request,problem,parsed:=rpc_stdin_request(line)
-    if !parsed {
-        if problem=="" {problem=fmt.tprintf("not a call: write method key=value... or method {{json}}, as: %s",line)}
-        fail({api.INVALID_PARAMS,problem,""})
-        return
-    }
-    params:=strings.trim_space(request.params)
-    if !api.json_valid(context.allocator,params) || !params_is_object(params) {
-        fail({api.INVALID_PARAMS,"params must be a JSON object: key=value arguments or one {...} after the method",""})
-        return
-    }
-    result,err,called:=rpc_request_call(connection,request,params)
-    if !called {
-        fail(rpc_hint(err))
-        return
-    }
-    answer(result)
-}
-
-// A line of --stdin as what its arguments give: the JSON object is one
-// argument whatever spaces it has, a "quoted value" keeps its spaces.
-rpc_stdin_request :: proc(line:string) -> (request:Rpc_Request,problem:string,ok:bool) {
-    args:=make([dynamic]string,context.temp_allocator)
-    rest:=line
-    if first:=strings.index_any(rest," \t");first>=0 {
-        append(&args,rest[:first])
-        rest=strings.trim_left_space(rest[first:])
-    } else {
-        append(&args,rest)
-        rest=""
-    }
-    if strings.has_prefix(rest,"{") {
-        r:serial.Text_Reader
-        serial.text_reader_init(&r,rest,context.temp_allocator)
-        serial.text_peek(&r)
-        if serial.text_skip(&r) {
-            append(&args,rest[:r.offset])
-            rest=strings.trim_left_space(rest[r.offset:])
-        } else {
-            append(&args,rest)
-            rest=""
-        }
-    }
-    for len(rest)>0 {
-        end:=0
-        quoted:=false
-        for end<len(rest) && (quoted || (rest[end]!=' ' && rest[end]!='\t')) {
-            if rest[end]=='"' {quoted=!quoted}
-            end+=1
-        }
-        arg:=rest[:end]
-        // Whole quoted, as a --select with spaces; key="a b" keeps them for its JSON.
-        if len(arg)>=2 && arg[0]=='"' && arg[len(arg)-1]=='"' {arg=arg[1:len(arg)-1]}
-        append(&args,arg)
-        rest=strings.trim_left_space(rest[end:])
-    }
-    for arg in args[1:] {
-        if arg=="-" {return request,"params come on the line: key=value arguments or one {...} after the method",false}
-    }
-    return rpc_request(args[:])
-}
-
 // What the batch answered so far: each result, for the references of the calls after it.
 // A string that is exactly $N or $N.path stands for that result or its field
 // (the fields go as in --select); $$ begins a text that really starts with $.
@@ -697,53 +589,63 @@ rpc_batch_value :: proc(value:json.Value,results:[]string) -> (out:json.Value,pr
     return value,""
 }
 
-// mirai rpc --batch <file>: one call per line, {"method": "...", "params": {...}},
-// in order and over the same editor; prints a JSON array with the result or
-// the error of each and stops at the first error. A value of the params that
-// is exactly $N or $N.path (the same paths as --select) stands for the result
-// of the call N of the batch or for that field of it; $$ writes a literal $.
+// mirai rpc --batch <file or ->: one call per line, {"method": "...", "params": {...}},
+// in order and over one connection; prints a JSON array with the result of each
+// and, at the first that fails, the line it is on and its error, and stops. A
+// value of the params that is exactly $N or $N.path (the same paths as --select)
+// stands for the result of the call N of the batch or for that field of it; $$
+// writes a literal $.
 @(private="file")
 rpc_batch :: proc(connection:Connection,file:string) -> int {
-    data,error:=os.read_entire_file(file,context.allocator)
-    if error!=nil {fmt.eprintfln("mirai rpc: could not read %s",file);return 2}
+    text:string
+    if file=="-" {
+        text=read_stdin()
+    } else {
+        data,error:=os.read_entire_file(file,context.allocator)
+        if error!=nil {fmt.eprintfln("mirai rpc: could not read %s",file);return 2}
+        text=string(data)
+    }
+    connection:=connection
+    link:api.Client_Connection
+    defer api.client_connection_close(&link)
+    connection.link=&link
     Line :: struct {method:string,params:json.Value}
     out:=strings.builder_make()
     strings.write_string(&out,"[")
     results:=make([dynamic]string)
-    id:=0
     failed:=false
-    text:=string(data)
+    number:=0
     for line in strings.split_lines_iterator(&text) {
+        number+=1
         trimmed:=strings.trim_space(line)
         if trimmed=="" {continue}
         call:Line
-        if json.unmarshal_string(trimmed,&call,allocator=context.temp_allocator)!=nil || call.method=="" {
-            fmt.eprintfln("mirai rpc: line %d is not {\"method\": ..., \"params\": {...}}",id+1)
-            return 2
-        }
+        err:api.Error
         params:="{}"
-        id+=1
-        if id>1 {strings.write_string(&out,",")}
-        if call.params!=nil {
+        if json.unmarshal_string(trimmed,&call,allocator=context.temp_allocator)!=nil || call.method=="" {
+            err={api.INVALID_PARAMS,`not a call: write {"method": "...", "params": {...}}`,""}
+        } else if call.params!=nil {
             resolved,problem:=rpc_batch_value(call.params,results[:])
-            if problem!="" {
-                fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text({api.INVALID_PARAMS,problem,""},context.temp_allocator))
-                failed=true
-                break
+            if problem!="" {err={api.INVALID_PARAMS,problem,""}}
+            else {
+                encoded,marshal_error:=json.marshal(resolved,allocator=context.temp_allocator)
+                if marshal_error!=nil {return 2}
+                params=string(encoded)
             }
-            encoded,marshal_error:=json.marshal(resolved,allocator=context.temp_allocator)
-            if marshal_error!=nil {return 2}
-            params=string(encoded)
         }
-        result,err,called:=rpc_call_waiting(connection,call.method,params,id)
-        if called {
-            append(&results,result)
-            fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
-        } else {
-            fmt.sbprintf(&out,"\n{{\"method\": %q, \"error\": %q}}",call.method,api.error_text(err,context.temp_allocator))
-            failed=true
-            break
+        if len(results)>0 {strings.write_string(&out,",")}
+        if err.code==0 {
+            result,call_error,called:=rpc_call_waiting(connection,call.method,params,number)
+            if called {
+                append(&results,result)
+                fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
+                continue
+            }
+            err=call_error
         }
+        fmt.sbprintf(&out,"\n{{\"line\": %d, \"method\": %q, \"error\": %q}}",number,call.method,api.error_text(err,context.temp_allocator))
+        failed=true
+        break
     }
     strings.write_string(&out,"\n]")
     fmt.println(strings.to_string(out))
