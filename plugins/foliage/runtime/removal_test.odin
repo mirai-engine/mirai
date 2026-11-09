@@ -162,9 +162,9 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
-    testing.expect(t,physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1}))
+    {complete,enough:=physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
     shapes:=int(w_sim.shape_count)
-    testing.expect(t,physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1},nil,false,nil,0,gone))
+    {complete,enough:=physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1},nil,false,nil,0,gone);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w_sim.shape_count),shapes-3)
     for cell in fp.cells {if cell.coord==coord {testing.expect(t,cell.body=={},"a cell without an instance that collides has no body")}}
     // A hit on a shape names the instance it is.

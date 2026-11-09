@@ -156,18 +156,18 @@ the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
     reach:=collision_reach(&s)
     testing.expect_value(t,reach,f32(40))
     near:=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true,&near,reach))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true,&near,reach);testing.expect(t,complete && enough)}
     testing.expect_value(t,len(fp.cells),4)
     testing.expect_value(t,int(w.body_count),1)
     testing.expect(t,fp.cells[0].resident && fp.cells[0].body!={} && !fp.cells[1].resident && fp.cells[1].body=={})
     // The source moves to the second tree: its cell collides, the first lets go.
     sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
     near=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false,&near,reach))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false,&near,reach);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.body_count),1)
     testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && sim.body_valid(&w,fp.cells[1].body))
     // Without sources every cell collides.
-    testing.expect(t,physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true))
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.body_count),4)
 }
 

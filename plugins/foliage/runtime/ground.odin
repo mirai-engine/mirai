@@ -135,9 +135,9 @@ pool_block_add :: proc(pool:^Ground_Pool,coord:[2]i32) -> (block:u32,ok:bool) {
     // They grow by doubling: tile after tile does not copy them all each time.
     if first+side>cap(pool.heights) && reserve(&pool.heights,max(first+side,2*cap(pool.heights)))!=nil {return}
     if first+side>cap(pool.weights) && reserve(&pool.weights,max(first+side,2*cap(pool.weights)))!=nil {return}
-    if _,error:=append(&pool.coords,coord);error!=nil {return}
-    resize(&pool.heights,first+side)
-    resize(&pool.weights,first+side)
+    if resize(&pool.heights,first+side)!=nil {return}
+    if resize(&pool.weights,first+side)!=nil {base.truncate(&pool.heights,first);return}
+    if _,error:=append(&pool.coords,coord);error!=nil {base.truncate(&pool.heights,first);base.truncate(&pool.weights,first);return}
     for &h in pool.heights[first:] {h=NO_GROUND}
     for &w in pool.weights[first:] {w={}}
     return u32(len(pool.coords)-1),true
@@ -156,9 +156,9 @@ pool_block_free :: proc(owner:^Ground_Owner,p,block:u32) {
         pool.coords[block]=moved
         if at:=ground_tile_find(owner,moved);at>=0 {owner.tiles[at].block=block}
     }
-    resize(&pool.heights,last*side)
-    resize(&pool.weights,last*side)
-    resize(&pool.coords,last)
+    base.truncate(&pool.heights,last*side)
+    base.truncate(&pool.weights,last*side)
+    base.truncate(&pool.coords,last)
 }
 
 NO_GROUND :: f32(0h7fc00000)
