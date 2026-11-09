@@ -123,10 +123,10 @@ physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),transfo
     }
 }
 
-@(step="fixed",stage="react",after="destruct_step")
 // Where the burst of a station shows, over the point of the event and toward the player.
 physics_gallery_burst_at :: proc(point:mm.Vec3) -> mm.Vec3 {return point+mm.Vec3{0,.5,.8}}
 
+@(step="fixed",stage="react",after="destruct_step")
 physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physics_Gallery_Events,events:core.Ref(destruct.Destruct_Events),spawner:scene.Spawner,bodies:^phys.Body_Requests) {
     current,_:=core.first(stations)
     if current!=counts.scene {counts^=Physics_Gallery_Events{scene=current}}

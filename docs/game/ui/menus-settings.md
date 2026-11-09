@@ -78,8 +78,8 @@ an input: writing a preset there moves its fields, and nothing writes it back.
 was changed by hand. A preset selector is a `Selector` of its own name (inside a `select_row` every
 control is named `control`), bound to a field the game fills with that value; on `Changed` the game
 calls `render.graphics_preset_apply`, which also gets back to the preset `quality` already names.
-Naming a preset resets `render_scale` to 0, which follows the target of the preset: a height of lines over
-the window, never above a pixel per point.
+Naming a preset resets `render_scale` to 0, which follows the target of the preset: a height of
+lines over the window, never above a pixel per point.
 
 ## Persist
 
