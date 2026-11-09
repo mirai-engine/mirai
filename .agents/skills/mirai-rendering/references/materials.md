@@ -420,7 +420,7 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   coverage, normal and depth. What is not covered is extended by `impostor_dilate`, on any thread,
   like the levels (`texture_build`, which `texture_add_built` uploads afterwards). The grid and the
   axes of each frame are `impostor_direction` and `impostor_axes`; a shader that draws an impostor
-  repeats them ([foliage](../../mirai-plugins/references/foliage.md#far-impostor-and-crown)).
+  repeats them ([foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown)).
 
 ## Traced reflections
 

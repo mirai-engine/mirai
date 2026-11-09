@@ -164,11 +164,11 @@ The network and physics share only `core` tables, each with one writer:
 `destruct_multiplayer` replicates fractures
 ([networked destruction](../../mirai-physics/references/engine-destruct.md#network)),
 `foliage_multiplayer` the foliage instances taken out in play
-([foliage](../../mirai-plugins/references/foliage.md#instances-removed-in-play)) and
+([foliage](../../mirai-world/references/foliage.md#instances-removed-in-play)) and
 `terrain_multiplayer` terrain edits
-([terrain](../../mirai-plugins/references/terrain.md#network)). The `behavior` minds decide only on
+([terrain](../../mirai-world/references/terrain.md#network)). The `behavior` minds decide only on
 the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-plugins/references/behavior.md#minds)).
+predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Authority and players
 

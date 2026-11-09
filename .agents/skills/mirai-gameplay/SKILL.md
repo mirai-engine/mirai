@@ -1,12 +1,13 @@
 ---
 name: mirai-gameplay
-description: Write games and plugins with the game libraries of `engine/` (scene, volume, render,
-  input, camera, audio, gui, save) and the plugins spawn, cinematics, animation and vfx. Covers
-  per-zone values (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based
-  input, player seats, driving bodies and cameras, spawn points, saves (slots, autosave,
-  checkpoints), cinematics, enemies and NPCs with AI (minds, smart objects), mining or dig-and-break
-  terrain games (what is dug by material, inventory, dust, pieces and drops), the demo project and
-  the templates.
+description: Write games with the game libraries of `engine/scene`, `engine/volume`,
+  `engine/render`, `engine/input`, `engine/camera`, `engine/audio`, `engine/gui` and `engine/save`,
+  with the plugins `spawn`, `spawn_physics`, `cinematics` and `streaming`. Covers per-zone values
+  (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based input, player seats,
+  driving bodies and cameras, spawn points, saves (slots, autosave, checkpoints), cinematics,
+  section streaming, the `demo` project and the game templates. Use when writing game code against
+  those libraries, building a game from a template, or looking for where a game feature lives
+  (enemies, NPCs and mining games are in `mirai-world`, attacks and skills in `mirai-abilities`).
 ---
 
 # Mirai gameplay
@@ -28,7 +29,7 @@ the same attributes and no private paths. Declaration and parameter binding:
 - Per-zone values (`Volume`, `Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and
   their single algorithm: [volume](references/libraries.md#volume).
 - Particles (plugin `vfx`: emitters, effects, clocks and requests):
-  [vfx](../mirai-plugins/references/vfx.md#game).
+  [vfx](../mirai-world/references/vfx.md#game).
 - Animation of transforms and skeletons: [plugin
   animation](../mirai-animation/references/animation.md#components-and-shared-data); the gallery
   that shows each feature: [animation gallery](references/animation-gallery.md#animation-gallery).
@@ -50,13 +51,13 @@ the same attributes and no private paths. Declaration and parameter binding:
 - Attacks, combos, dashes, skills and hit reactions with costs, cooldowns, charges and damage
   (plugin `abilities`): [abilities](../mirai-abilities/SKILL.md); no state machines.
 - Enemies and NPCs (patrol, chase and attack, phased bosses, tactical bots, hordes, use of the
-  environment): [enemies with minds](../mirai-plugins/references/behavior.md#enemies-with-minds);
+  environment): [enemies with minds](../mirai-world/references/behavior.md#enemies-with-minds);
   no state machines, trees or planners.
 - Mining, craters and excavation (digging deeper gives another material, veins, caves, debris):
-  a Volume with an [interior](../mirai-plugins/references/terrain.md#volume-interior), the
+  a Volume with an [interior](../mirai-world/references/terrain.md#volume-interior), the
   game that calls `terrain.dig` and adds up `terrain.Terrain_Digs`, and the dust, pieces
   and drops per layer
-  ([what digging leaves](../mirai-plugins/references/terrain.md#what-digging-leaves)); the example
+  ([what digging leaves](../mirai-world/references/terrain.md#what-digging-leaves)); the example
   is the `dig` scene of the [demo](references/demo.md#code-demogame).
 - Testing that the game plays as it should (walk there, press that, the door opens) in a file
   played again after each change and in CI:
@@ -168,7 +169,7 @@ the same attributes and no private paths. Declaration and parameter binding:
   tests of `engine/audio` (reverb), `plugins/physics/runtime` (`gravity_test.odin`),
   `plugins/vfx/runtime` (`fields_test.odin`) and the capture of `church` (fog).
 - Plugin `vfx`: `mirai test plugins/vfx/runtime`
-  ([verification](../mirai-plugins/references/vfx.md#verification)).
+  ([verification](../mirai-world/references/vfx.md#verification)).
 - `engine/audio`: `mirai test engine/audio`, with assets in a temporary folder and the mixer in
   memory: voices per world, the repeated tick that does not sound again, the choice of a set, the
   buses according to `Audio_Settings`, the listener in the `View` with its velocity, occlusion with

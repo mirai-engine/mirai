@@ -2,11 +2,11 @@
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
   `plugins/physics/runtime/sim` solver with bodies, joints, queries, character and snapshots, the
-  `plugins/physics/runtime` integration with character locomotion, and its editor part), the
-  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`) and
-  `std/spatial`. Use to change the solver or the model, write gameplay with bodies and characters
-  (walk, jump, fly, swim, `Character`, `Walk`, `Swim`), water and buoyancy (`Fluid_Volume`,
-  buoyancy, drag, surface query) or change how the simulation is reflected in entities.
+  `plugins/physics/runtime` integration with character locomotion, and its editor part) and the
+  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`). Use when changing
+  the solver or the model, writing gameplay with bodies and characters (walk, jump, fly, swim,
+  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid_Volume`s (the drawn water
+  is in `mirai-world`) or changing how the simulation is reflected in entities.
 ---
 
 # Mirai physics
@@ -61,7 +61,7 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   [reflection, queries and events](references/engine-destruct.md#reflection-queries-and-events)
   and [network](references/engine-destruct.md#network)
 - Breaking or digging terrain (craters, debris, pieces with physics per material): not `destruct`
-  → [what can be dug](../mirai-plugins/references/terrain.md#what-digging-leaves)
+  → [what can be dug](../mirai-world/references/terrain.md#what-digging-leaves)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
 - Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision

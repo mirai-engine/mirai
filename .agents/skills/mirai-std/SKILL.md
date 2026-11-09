@@ -1,9 +1,10 @@
 ---
 name: mirai-std
-description: Mirai standard library for games, with the packages std/base, jobs, math, anim (clips,
-  poses, motion matching, inertialization, IK), ai (minds, navigation, influence), input, geom,
-  spatial and subprocess. Use when changing, extending or consuming any of those packages, or when
-  deciding how an enemy or an NPC thinks.
+description: Mirai standard library for games, with the packages `std/base`, `std/jobs`, `std/math`,
+  `std/anim` (clips, poses, motion matching, inertialization, IK), `std/ai` (A*, tiled navmesh, flow
+  fields, steering, utility), `std/input`, `std/geom`, `std/spatial` and `std/subprocess`. Use when
+  changing, extending or consuming any of those packages; enemies and NPCs that decide are in
+  `mirai-world`.
 ---
 
 # Mirai standard library

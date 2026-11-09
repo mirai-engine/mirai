@@ -1,10 +1,10 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/api` and `editor/acp`) - session,
-  Play, Simulate and networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`),
-  inspector, content browser, prefabs, collaboration (`--share`, `--join`), AI chats and
-  extensions. Use when changing the editor, adding a tool or panel of a plugin, editing the scene
-  from editor code or driving an open editor.
+description: The Mirai editor (package `editor`, with `editor/acp`) - session, Play, Simulate and
+  networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`), inspector, content
+  browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when changing
+  the editor, adding a tool or panel of a plugin, editing the scene from editor code or driving an
+  open editor.
 ---
 
 # Mirai editor
@@ -64,7 +64,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [copying and pasting](references/inspector.md#copying-and-pasting-values),
   [collision](references/inspector.md#collision) and [material](references/inspector.md#material);
   the particles section belongs to the `vfx` plugin
-  ([vfx in the editor](../mirai-plugins/references/vfx-editor.md#particle_emitter-section)).
+  ([vfx in the editor](../mirai-world/references/vfx-editor.md#particle_emitter-section)).
 - **Connections, the main chat, workers, steering, what a turn sends, `chat.db` and its search,
   context and AI figures**: [connections](references/ai-tasks.md#connections-and-installation),
   [chat flow](references/ai-tasks.md#chat-flow),

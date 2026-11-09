@@ -1,14 +1,15 @@
 ---
 name: mirai-imports
-description: Mirai importers that convert OBJ, glTF/GLB, USD, FBX, static and skinned meshes,
-  morph targets, sockets and animations, and images (HDR, 16-bit, cubes and arrays) to .mesh,
-  .skeleton, .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to
-  .font, CSV texts to .strings and prompt manifests to .prompts with their atlases (`cook/import`,
-  its formats `cook/import/obj`, `gltf`, `usd` and `fbx` (ufbx), `cook/import/sources`,
-  `cook/textures`, the `mirai import` command), and the formats and whole sources a plugin adds to
-  the editor (`Import_Format_Provider`, `Import_Source_Provider`). Use when importing or verifying
-  a model, animation, texture, font, texts or prompts, when changing or adding an import format,
-  when importing with a plugin or when regenerating the demo's imported assets.
+description: Mirai importers that convert OBJ, glTF/GLB, USD, FBX, static and skinned meshes, morph
+  targets, sockets and animations, and images (HDR, 16-bit, cubes and arrays) to .mesh, .skeleton,
+  .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to .font, CSV
+  texts to .strings and prompt manifests to .prompts with their atlases (`cook/import`, its formats
+  `cook/import/obj`, `gltf`, `usd` and `fbx` (ufbx), `cook/import/sources`, `cook/textures`,
+  `cook/rig` template rigs, `cook/cache`, the `mirai import` command), and the formats and whole
+  sources a plugin adds to the editor (`Import_Format_Provider`, `Import_Source_Provider`). Use when
+  importing or verifying a model, animation, texture, font, texts or prompts, when changing or
+  adding an import format, when importing with a plugin or when regenerating the demo's imported
+  assets.
 ---
 
 # Importing models and textures

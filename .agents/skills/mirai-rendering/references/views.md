@@ -42,7 +42,7 @@
   - `host.app_world_draw` draws this way, between frames, a world of its own into a texture: each
     frame it moves its clocks with the `Fixed` phase of the editor loop and draws it with the
     `Render` phase of its game, and returns the window's camera and time as they were. The editor's
-    particle previews use it ([vfx](../../mirai-plugins/references/vfx-editor.md)).
+    particle previews use it ([vfx](../../mirai-world/references/vfx-editor.md)).
 - **`Frame_View.inspection`** (and `Frame_Desc.inspection` for the view of a frame without views):
   what that view shows instead of its lit image
   ([inspection modes](settings.md#inspection-modes)). Changing it keeps targets and histories; a
@@ -298,7 +298,7 @@ frame and the current one:
   textures-only frame), after its G-buffer and its occlusion; a `ui_only` frame does not run it. It
   dispatches with the scene tables bound: it traces (`hw`), reads the light tree and the probe
   volume, and reads the depth and normal of that view with `pass_surface_read`. The
-  [particles](../../mirai-plugins/references/vfx.md#passes) use it.
+  [particles](../../mirai-world/references/vfx.md#passes) use it.
 - **`Gbuffer`**: each view, after `Simulate` and before `Mask`: surfaces that the extension draws
   in the G-buffer and that are lit like the scene. `pass_gbuffer_begin` opens the view's G-buffer
   targets with its depth; `pass_gbuffer_pipeline(pass, shader)` gives the pipeline of
@@ -311,7 +311,7 @@ frame and the current one:
   with `material_vertex_tint`: a program reads the color as data and does not multiply it. With
   `fragment`, `<fragment>.frag` writes the targets instead of the engine, with the `plain` and
   `layers` variants and the packing of `gbuffer.slang`, like the
-  [foliage](../../mirai-plugins/references/foliage.md#far-impostor-and-crown) impostor. Materials
+  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the
@@ -336,7 +336,7 @@ frame and the current one:
   in front (`Front`), over the lit glass; without glass, once (`All`). `.Glass_Depth` gives the
   layer: a medium applies its share of the path on each side, and what only changes opaque surfaces
   does nothing in front. The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
-  [water](../../mirai-plugins/references/water.md) caustics use it.
+  [water](../../mirai-world/references/water.md) caustics use it.
 - **`Blend`**: each view, over the lit image before TAA, except in a view with an inspection mode.
   With glass in view it runs twice: behind the nearest layer, after its raster and before the glass
   reads what is behind it (`glass` `Behind`), and in front, over the lit glass (`Front`); without
@@ -390,7 +390,7 @@ frame and the current one:
 - `instance_wet_set(app, index, wet)` says how wet an instance of `Render_Sync.instances` is, from
   0 to 1, with the same rules of identity, light and rays; every material applies it
   ([wet](materials.md#evaluation)). It has a single writer, the
-  [water](../../mirai-plugins/references/water.md#what-physics-shows) plugin.
+  [water](../../mirai-world/references/water.md#what-physics-shows) plugin.
 - `pass_scissor` limits the pixels (without size: the whole view); `pass_draw` and `pass_dispatch`
   execute. After a stage the renderer binds the scene tables again.
 - `pass_timestamp(pass, name)`: the GPU time of what the pass records from there counts under that
@@ -530,7 +530,7 @@ Hooks:
 of the calling function: each world publishes its own and those of the displayed world are drawn. A
 batch lasts until `batch_remove` or until `batches_epoch` changes: whoever publishes them keeps
 their handles in a `by_world` storage and removes them in the `release` of its world. The
-[foliage](../../mirai-plugins/references/foliage.md) plugin uses it.
+[foliage](../../mirai-world/references/foliage.md) plugin uses it.
 
 ## Deformable meshes
 

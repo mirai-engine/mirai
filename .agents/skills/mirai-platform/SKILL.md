@@ -1,9 +1,9 @@
 ---
 name: mirai-platform
-description: Mirai operating system layer (the platform package, over SDL3) and its audio library
-  (the audio package). Use for window and custom chrome, per-frame and per-tick input, clock and
-  frame pacing, child processes, file watching, paths, mixer, voices, buses, positional audio and
-  WAV/OGG decoding.
+description: Mirai operating system layer (the `platform` package, over SDL3) and its audio library
+  (the `audio` package). Use when working on window and custom chrome, per-frame and per-tick input,
+  clock and frame pacing, child processes, file watching, paths, mixer, voices, buses, positional
+  audio and WAV/OGG decoding.
 ---
 
 # Mirai platform and audio

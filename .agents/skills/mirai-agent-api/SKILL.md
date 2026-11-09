@@ -1,9 +1,10 @@
 ---
 name: mirai-agent-api
 description: Mirai editor agent API - JSON-RPC and MCP on 127.0.0.1 (`editor/api`,
-  `editor/api_*.odin`), the `mirai rpc` and `mirai mcp` commands and the method catalog. Use when
-  driving an open editor from an agent or a script, when adding or changing a method or when
-  investigating a protocol error.
+  `editor/api_*.odin`), the `mirai rpc`, `mirai mcp`, `mirai capture` and `mirai image` commands
+  (`cook/image`), the recordings of a game (`cook/movie`), scenarios and the method catalog. Use
+  when driving an open editor from an agent or a script, testing a game as a player, capturing and
+  comparing frames, adding or changing a method or investigating a protocol error.
 ---
 
 # Mirai agent API

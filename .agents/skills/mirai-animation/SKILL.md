@@ -1,16 +1,16 @@
 ---
 name: mirai-animation
-description: Mirai animation - the `animation` plugin (`plugins/animation/runtime` and `editor`),
-  the `animation_physics` bridge and `std/anim`, with `.anim` clips, skeletons, skinning,
-  locomotion by motion matching (`.match`, `match_goal`, `match_play`) with inertialization,
-  layered actions, composition graphs (`.agraph`), aim offsets and additives (`.blend`), root
-  motion, retarget, mirroring, rigs and IK, morph targets, motion profiles and warping, grounding,
-  budget, `Keyframe_Path` sequences, authoring by intent and by API, and the auto-rig of an
-  uploaded or generated character without a skeleton. Use when animating characters or objects,
-  building the locomotion or the actions of a character, porting a character's or a weapon's
-  motion and events from another engine's data, looking for a state machine or a
-  locomotion blend space (they do not exist; see the workflow), touching those packages or their
-  assets, or diagnosing a pose, a skinning or a clip.
+description: Mirai animation - the `animation` plugin (`plugins/animation/runtime` and
+  `plugins/animation/editor`) and the `animation_physics` bridge (its math library is in
+  `mirai-std`), with `.anim` clips, skeletons, skinning, locomotion by motion matching (`.match`,
+  `match_goal`, `match_play`) with inertialization, layered actions, composition graphs (`.agraph`),
+  aim offsets and additives (`.blend`), root motion, retarget, mirroring, rigs and IK, morph
+  targets, motion profiles and warping, grounding, budget, `Keyframe_Path` sequences, authoring by
+  intent and by API, and the auto-rig of an uploaded or generated character without a skeleton. Use
+  when animating characters or objects, building the locomotion or the actions of a character,
+  porting a character's or a weapon's motion and events from another engine's data, looking for a
+  state machine or a locomotion blend space (they do not exist; see the workflow), touching those
+  packages or their assets, or diagnosing a pose, a skinning or a clip.
 ---
 
 # Mirai animation

@@ -69,7 +69,7 @@ Scenes:
 - **`raft`**: a raft and boxes that float in the sea, a beach that rises to an island and the
   first-person swimmer (prefab `Swimmer`, with `Walk`, `Swim` and `Diver`): it jumps into the water,
   swims on the surface and under it, climbs back and drowns if it runs out of air. The sea is drawn
-  by the [`water`](../../mirai-plugins/references/water.md) plugin, with waves, shore foam and
+  by the [`water`](../../mirai-world/references/water.md) plugin, with waves, shore foam and
   splashes.
 - **`ocean`**: a water material program.
 - **`animation`**: the only animation scene, a hall that the player walks with Mirai, with a
@@ -157,7 +157,7 @@ values.
 ## AI arenas
 
 An entity with `AI_Arena` builds in Play, where it is, agents that decide with
-[minds](../../mirai-plugins/references/behavior.md#enemies-with-minds), walk or fly through
+[minds](../../mirai-world/references/behavior.md#enemies-with-minds), walk or fly through
 navigation and perceive through behavior, and its place (`arena_place`, in pieces), unless `place`
 is false because the scene has it: `tools/demo_content` writes it that way in the `ai` scene, so
 that the navmesh exists in the editor.

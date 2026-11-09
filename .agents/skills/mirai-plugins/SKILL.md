@@ -1,9 +1,13 @@
 ---
 name: mirai-plugins
-description: Write and maintain Mirai plugins (runtime and editor parts) and the first-party
-  plugins, such as the `behavior` AI (minds, smart objects, perception, influence). Use when
-  creating or changing a plugin, splitting its responsibilities, or integrating it with the
-  project world.
+description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime and editor parts,
+  dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
+  the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
+  `physics_fields`, `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
+  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
+  Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
+  extend the engine or integrate with the project world, or when working on one of those plugins.
+  The plugins of terrain, vegetation, water, particles, navigation and AI are in `mirai-world`.
 ---
 
 # Mirai plugins
@@ -27,6 +31,8 @@ project world. Layout, manifests and build:
   `mirai-engine/mirai-plugins` catalog):
   [git plugins](references/plugins.md#git-plugins-and-catalog); publishing one in the catalog:
   [workflow](#publish-a-plugin-in-the-catalog)
+- World content (`terrain`, `foliage`, `water`, `imprint`, `vfx`, `navigation`, `behavior`,
+  `shapes` and their bridges): [mirai-world](../mirai-world/SKILL.md)
 - `paint` (vertex color brush, `paint.*`): [plugins.md#paint](references/plugins.md#paint)
 - `physics_placement` (`placement.drop`):
   [plugins.md#physics-placement](references/plugins.md#physics-placement)
@@ -35,84 +41,6 @@ project world. Layout, manifests and build:
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
   [sound documents](references/previews.md#sound-documents)
-- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, Vfx programs
-  with surfaces, bones, channels and grids, stages and neighbors, volumes, events to the game):
-  [format](references/vfx.md#format), [game](references/vfx.md#game),
-  [surfaces, bones and resources](references/vfx.md#surfaces-bones-and-resources),
-  [grids and stages](references/vfx.md#grids-and-stages),
-  [world textures](references/vfx.md#world-textures), [grid states](references/vfx.md#grid-states),
-  [volumes](references/vfx.md#volumes), [channels](references/vfx.md#channels),
-  [data channels](references/vfx.md#data-channels), [UI effects](references/vfx.md#ui-effects),
-  [reports](references/vfx.md#reports),
-  [GPU pools and emitters](references/vfx.md#pools-and-emitters),
-  [births and steps](references/vfx.md#births-and-steps),
-  [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes) and
-  [particle lights](references/vfx.md#particle-lights)
-- `fluids` (plane fluids on a `vfx` grid) is not part of the engine: it is installed from the
-  catalog (<https://github.com/tomaszbk/mirai-fluids>); how `water` takes its waves:
-  [what physics shows](references/water.md#what-physics-shows).
-- `imprint` (snow, mud and sand that keep footprints and furrows: height clipmap on a `vfx` grid,
-  stamps, displacement of the ground meshes as seen by rays):
-  [the field](references/imprint.md#the-field), [stamps](references/imprint.md#stamps),
-  [what is drawn](references/imprint.md#what-is-drawn) and [scene](references/imprint.md#scene)
-- `water` (the `Fluid_Volume`s drawn as water: glass surface, `fog` medium, caustics, foam,
-  splashes and wakes from physics): [appearance](references/water.md#appearance),
-  [what physics shows](references/water.md#what-physics-shows),
-  [sound](references/water.md#sound), [scene](references/water.md#scene) and
-  [limits](references/water.md#limits)
-- `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
-  thumbnails, Particles card, `particle.*` methods):
-  [Particle_Emitter section](references/vfx-editor.md#particle_emitter-section),
-  [effect preview](references/vfx-editor.md#effect-preview),
-  [particle document](references/vfx-editor.md#particle-document) and
-  [thumbnails](references/vfx-editor.md#thumbnails)
-- `terrain` (format, chunks, material layers, levels of detail, holes, tool, in-game editing,
-  residency): [source and chunks](references/terrain.md#entity-source-and-chunks),
-  [volume with heightfield](references/terrain.md#joining-a-volume-with-a-heightfield),
-  [format](references/terrain.md#canonical-format),
-  [geometry and collision](references/terrain.md#geometry-and-collision),
-  [materials and layers](references/terrain.md#materials-and-layers),
-  [mesh authoring](references/terrain.md#mesh-authoring), [tool](references/terrain.md#tool),
-  [API](references/terrain.md#api),
-  [editing during Play](references/terrain.md#editing-during-play),
-  [publishing and residency](references/terrain.md#jobs-publishing-and-residency) and
-  [open worlds](references/terrain.md#limits-in-open-worlds)
-  - Network edits and the `terrain_multiplayer` bridge: [network](references/terrain.md#network)
-  - Material under the surface of a Volume (strata, veins, `terrain.interior`):
-    [interior](references/terrain.md#volume-interior)
-  - What digging removes (`Terrain_Digs`), the `terrain_vfx` dust and the `terrain_debris` pieces
-    and drops: [what digging leaves](references/terrain.md#what-digging-leaves)
-  - Quadtree, far nodes, coarse grid and piece budget:
-    [quadtree](references/terrain.md#quadtree-and-nodes)
-- `foliage` (`.foliage`, cells, generator, overrides and orphans, ground and its `foliage_terrain`
-  bridge, per-cell batches, types from prefabs, octahedral impostors and canopy in rays, wind by
-  variants and by hook, bending by `Foliage_Bender`, collision by resident cells, brush and
-  instance selection): [source](references/foliage.md#entity-and-source),
-  [format](references/foliage.md#format), [cells](references/foliage.md#layers-of-a-cell),
-  [ground](references/foliage.md#ground), [drawing](references/foliage.md#drawing),
-  [impostor and crown](references/foliage.md#far-impostor-and-crown),
-  [wind](references/foliage.md#wind), [collision](references/foliage.md#collision),
-  [removed in play](references/foliage.md#instances-removed-in-play) and
-  [tool](references/foliage.md#tool)
-- `navigation` (automatic navmesh per agent class, areas, obstacles, manual and generated links,
-  agents, link crossing, crowd, air and water volumes, `.navmesh`, `nav.*`):
-  [meshes](references/navigation.md#meshes),
-  [air and water volumes](references/navigation.md#air-and-water-volumes),
-  [links](references/navigation.md#links), [agents](references/navigation.md#agents),
-  [baking](references/navigation.md#baking) and
-  [editor and API](references/navigation.md#editor-and-api)
-  - Tiles per section, stitching, baking of each section and coarse graph:
-    [sections](references/navigation.md#sections); agents that keep going far from the players
-    (`scene.Roaming`, `Nav_Far`): [the far field](references/navigation.md#the-far-field)
-- `behavior` (minds by name, enemies with minds, perception, smart objects, place queries,
-  influence maps, `behavior.*`): [minds](references/behavior.md#minds),
-  [enemies with minds](references/behavior.md#enemies-with-minds),
-  [smart objects](references/behavior.md#smart-objects),
-  [influence maps](references/behavior.md#influence-maps),
-  [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
-  [API](references/behavior.md#api)
-- `navigation_terrain` (automatic bridge: where the terrain collision is not loaded, for the
-  navmesh): [navigation.md](references/navigation.md#meshes)
 - `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
   the motion matching of its `Animation`):
   [locomotion](../mirai-animation/references/animation.md#locomotion-by-motion-matching)
@@ -121,12 +49,6 @@ project world. Layout, manifests and build:
   documentation in <https://github.com/tomaszbk/mirai-unreal>
 - `streaming` (loading of `Spatial` sections by proximity and what crosses sections):
   [libraries](../mirai-gameplay/references/libraries.md#plugin-streaming)
-- `shapes` (editable outlines and solids of brush entities saved as source, stamps and vertex
-  edits, bevels of the rims of an outline, the derived child with mesh and collider, static or
-  dynamic; the Shapes tool and `shapes.*`):
-  [source and derived](references/shapes.md#source-and-derived),
-  [static and dynamic](references/shapes.md#static-and-dynamic),
-  [editing](references/shapes.md#editing) and [Shapes tool](references/shapes.md#shapes-tool)
 - `physics_cache` (portable recording, `Geometry_Playback`):
   [recording](references/physics-cache.md#recording),
   [relation with animation](references/physics-cache.md#relation-with-animation) and
@@ -206,20 +128,10 @@ project world. Layout, manifests and build:
 - Two types with the same name in different packages are legal (the world field carries the
   package in front), but the names of functions and of types used in scenes must be unambiguous:
   prefix with the plugin.
-- Authoring geometry preview: immutable generated meshes and visual instances, with the same
-  constructor as execution; it keeps identity and revision and frees the previous version after
-  generating the new one. Confirming the source is a transaction, and what can be undone stays in
-  a component or revisioned source. Runtime can publish resident chunks without a file and save
-  on explicit request. Lifetimes: [terrain](references/terrain.md),
-  [host](../mirai-core/references/host.md) and [preview](../mirai-editor/references/extensions.md).
 - When changing a first-party plugin, update the demo project if it uses it.
 - The authoring and control API expresses intent with names and defaults. Resolve handles and
   indices inside the plugin, separate influence goals from activation, and publish solver details
   only through optional inspection (example: [animation](../mirai-animation/SKILL.md)).
-- AI over the network: the minds decide on the server.
-- Navigation: automatic navmesh by tiles from the collision.
-- Far-away simulation: automatic coarse simulation through the portal graph.
-- Water: Gerstner waves.
 
 ## Verification
 
@@ -227,8 +139,9 @@ project world. Layout, manifests and build:
   parts need `-collection:plugins=<root>/plugins`.
 - World: `mirai generate <project that enables the plugin>`, and build and run that project.
 - Tests: `mirai test plugins/<n>/runtime` or `.../editor` with the cases of the Verification
-  section of the area's reference (see Map); `--release` only if a failure may depend on optimization.
-- GPU: terrain uses `-define:TERRAIN_GPU=true`; skinning and render plugins, graphics validation.
+  section of the area's reference (see Map); `--release` only if a failure may depend on
+  optimization.
+- GPU: skinning and render plugins, graphics validation.
 - Discovery, order or validation of manifests:
   [project verification](../mirai-projects/SKILL.md#verification). Editor tools:
   [mirai-editor](../mirai-editor/SKILL.md#verification).

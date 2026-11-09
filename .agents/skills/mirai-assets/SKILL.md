@@ -2,9 +2,10 @@
 name: mirai-assets
 description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
-  their container, `std/serial`, the registry and the `mirai asset` tool. Use when reading,
-  creating or editing an asset, adding an asset type or a serialized component, or touching
-  `asset/`, `std/serial/` or `tools/mirai/asset.odin`.
+  their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
+  compression of assets (`std/compressor`, `cook/compressor`), `std/serial` and the `mirai asset`
+  tool. Use when reading, creating or editing an asset, adding an asset type or a serialized
+  component, compressing or decoding asset data, or when an asset does not load.
 ---
 
 # Mirai assets
@@ -36,7 +37,7 @@ types, scene/prefab, registry).
   [sound set](references/kinds.md#sound-set), [interface](references/kinds.md#interface),
   [font](references/kinds.md#font), [texts](references/kinds.md#texts),
   [records](references/kinds.md#records) and [prompts](references/kinds.md#prompts). A plugin's
-  types are its own: `.particle` ([vfx](../mirai-plugins/references/vfx.md#format)), `.terrain`,
+  types are its own: `.particle` ([vfx](../mirai-world/references/vfx.md#format)), `.terrain`,
   `.foliage`.
 - Scenes, prefabs, instances and overrides:
   [scene and prefab](references/scenes.md#scene-and-prefab),

@@ -1,12 +1,13 @@
 ---
 name: mirai-projects
-description: Mirai projects and plugins - `project` (manifests, plugin discovery and order,
-  layout), `cook/build` (generated world, engine binaries, libraries and shipped game, project
-  shaders, fingerprint, cooking and engine-time exclusion), the installed engine (`mirai package
-  engine`, binary package and release workflow), the `tools/mirai` commands, the external scripts
-  and the templates. Use when changing a manifest, the layout or how a project or the engine is
-  generated, compiled or distributed, when investigating why something does not compile or what
-  went into the game, or when taking reference frames or sound from a YouTube or X video.
+description: Mirai projects and plugins - `project` (manifests, plugin discovery and order, layout),
+  `cook/build` (generated world, engine binaries, libraries and shipped game, project shaders,
+  fingerprint, cooking and engine-time exclusion), `cook/workspace` (worktrees, dependencies, shared
+  cache and locks), the installed engine (`mirai package engine`, binary package and release
+  workflow), the `tools/mirai` commands, the external scripts and the `templates`. Use when changing
+  a manifest, the layout or how a project or the engine is generated, compiled or distributed, when
+  investigating why something does not compile or what went into the game, or when taking reference
+  frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build

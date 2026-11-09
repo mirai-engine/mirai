@@ -1,12 +1,12 @@
 # Animation and sound documents
 
 `plugins/previews/editor` opens animations (`.anim`), sounds (`.sound`) and sound sets
-(`.sound_set`) as
-[asset documents](../../mirai-editor/references/panels.md#asset-documents): it declares them
-with `Previews_Documents` (an `editor.Asset_Document_Provider`) and draws them from
-`previews_document`, a `ui` step that looks at the front document. The material has its document
-in the editor, and the particle effect, in the [vfx](vfx-editor.md#particle-document) plugin. It
-also provides the animation thumbnails ([thumbnails](#animation-thumbnails)).
+(`.sound_set`) as [asset documents](../../mirai-editor/references/panels.md#asset-documents): it
+declares them with `Previews_Documents` (an `editor.Asset_Document_Provider`) and draws them from
+`previews_document`, a `ui` step that looks at the front document. The material has its document in
+the editor, and the particle effect, in the
+[vfx](../../mirai-world/references/vfx-editor.md#particle-document) plugin. It also provides the
+animation thumbnails ([thumbnails](#animation-thumbnails)).
 
 ## Animation document
 

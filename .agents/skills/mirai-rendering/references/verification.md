@@ -32,7 +32,7 @@
   synchronization error.
 - `render`: passes, scene, materials, UI, extension stages, without allocations in stable frames.
   The particles, in `plugins/vfx/runtime`
-  ([verification](../../mirai-plugins/references/vfx.md#verification)).
+  ([verification](../../mirai-world/references/vfx.md#verification)).
 - `engine/render`: world extraction and visual instances.
 - `cook/shaders`: generation, cache, catalog and transactions; the programs require `slangc`.
 

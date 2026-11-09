@@ -80,7 +80,7 @@
   program alone. `mirai_vfx_texture(index, uv, level)` reads the texture of a parameter and
   `mirai_vfx_random(seed)` gives a number from 0 to 1. The domain belongs to the generation (like
   Surface and PostProcess); the stages that evaluate its programs belong to the
-  [`vfx` plugin](../../mirai-plugins/references/vfx.md#vfx-programs), and `Orbit`
+  [`vfx` plugin](../../mirai-world/references/vfx.md#vfx-programs), and `Orbit`
   (`plugins/vfx/shaders/orbit.slang`) is its own.
 - A Vfx program declares what it reads besides its parameters with `//! resource name surface`,
   `channel`, `bones`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
@@ -97,13 +97,13 @@
   normal and whether it started inside a closed mesh) in `initialize`, `update` and the stages,
   which include `trace.slang` and declare the `hw` variant; in `render` it finds nothing. Which
   mesh, which skin, which channel or which grid each one is is resolved by the
-  [plugin](../../mirai-plugins/references/vfx.md#surfaces-bones-and-resources).
+  [plugin](../../mirai-world/references/vfx.md#surfaces-bones-and-resources).
 - Its stages (`//! stage name over particles|resource [iterations N] [neighbors radius]`, up to
   `MAX_STAGES`) are functions of the namespace: over particles with the signature of `update` (and
   `mirai_vfx_neighbors` with `mirai_vfx_neighbor_next` if it declares `neighbors`), over the cells
   of a grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
-  [plugin](../../mirai-plugins/references/vfx.md#grids-and-stages) runs them.
+  [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
 - A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach
   <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
   a number from 0 or a parameter of one float; another word, a reach of another type or the line
@@ -134,7 +134,7 @@
   texture at its finest resident level: a program asks for all the levels of its textures.
 - `ctx.particle_data`, `ctx.particle_given`, `ctx.particle_random` and `ctx.particle_radius` are
   what the particle of a sprite that draws the point gives, which also gives its color in
-  `ctx.vertex_color` ([`vfx` sprites](../../mirai-plugins/references/vfx.md#passes)); in
+  `ctx.vertex_color` ([`vfx` sprites](../../mirai-world/references/vfx.md#passes)); in
   everything else, nothing given and zero.
 - A PostProcess program reads outside its pixel, at a `uv` from 0 to 1 from the top-left corner:
   `mirai_scene_color(ctx, uv)` is the image the previous effect left, exposed like `ctx.color`;

@@ -63,7 +63,7 @@ or interleave its own passes.
      where a list fills for the first time, not again at that size.
    - Then, the `Simulate` extension stages (first window view, or texture view in a
      textures-only frame: what moves on the GPU against this depth, like the
-     [particles](../../mirai-plugins/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
+     [particles](../../mirai-world/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
      extension in the G-buffer).
    - With extension passes: `Mask` stage, G-buffers of [nested views](views.md#nested-views) and
      `Surface` stage.

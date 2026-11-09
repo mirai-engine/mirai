@@ -182,7 +182,7 @@ its own seats; `Drivable` is not replicated.
 - An AI needs no seat: it writes the `Move_Input` of its body while no seat drives it, only where
   this end decides (`core.owned`). A seated `Nav_Agent` also walks a body its seat drives while it
   goes, keeping the seat's buttons
-  ([navigation](../../mirai-plugins/references/navigation.md#agents)).
+  ([navigation](../../mirai-world/references/navigation.md#agents)).
 
 ## Spawn points
 
