@@ -9,9 +9,9 @@ description: HUD, main menu, pause, settings screens, world panels and keyboard 
 Imports: `gui "mirai:engine/gui"`, `render "mirai:engine/render"`, `save "mirai:engine/save"`.
 
 **A new game already has the shell**: `game/shell.odin` (main menu, pause, graphics settings)
-drawn by `assets/ui/shell.ui`, over the engine's Escape, frozen clock, free mouse and kept
-options; `theme.ui` holds the shared look and `tests/scenarios/shell.mirai` drives it. The `.ui`
-are the source: restyle and extend them with [ui.write](ui/writing-ui.md); do not write another menu system.
+drawn by `assets/ui/shell.ui`, over the engine's Escape, clock, mouse and options; `theme.ui` holds
+the shared look and `tests/scenarios/shell.mirai` drives it. The `.ui` are the source: restyle and
+extend them with [ui.write](ui/writing-ui.md); do not write another menu system.
 
 ## Map
 
