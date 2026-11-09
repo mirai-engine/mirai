@@ -18,7 +18,10 @@ import "mirai:std/serial"
 // min and max, which also bound each element of an array field. A result a
 // handler writes itself describes a list of any length with an array tagged
 // `list`, any JSON value with a field tagged `any`, and a key that cannot be
-// the name of a field (an Odin keyword such as where) with `key=where`.
+// the name of a field (an Odin keyword such as where) with `key=where`. A
+// param tagged `any` takes any JSON too; its handler reads it from Call.raw.
+// An integer param that only bounds how much a method answers is tagged
+// `clamp`: past its max it takes the max and the answer says so in _clamped.
 
 DEFAULT_PORT :: 7940
 
@@ -115,10 +118,11 @@ Method :: struct {
     flags:Method_Flags,
     mcp_content:bool,
     writes_result:bool,
+    clamps:bool, // a field of its params is tagged clamp
 }
 
 // What the tag of a field tells the API beyond std/serial.
-Field_Tag :: enum u8 {Optional,List,Any}
+Field_Tag :: enum u8 {Optional,List,Any,Clamp}
 Field_Tags :: bit_set[Field_Tag;u8]
 
 Call :: struct {
@@ -226,6 +230,7 @@ Server :: struct {
     client_name:string,
     client_plugins:string, // of the request that runs
     image:string,          // Call.image of the call that ran last; in its scratch
+    clamped:string,        // what the params read last asked past a maximum, as members of _clamped; in its scratch
     plugins:[]Plugin,
     guides:[]Guide,
     assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
@@ -255,6 +260,7 @@ method_find :: proc(s:^Server,name:string) -> ^Method {
 // A reader of text that came with a call: asset fields take a path as well as an id.
 call_reader_init :: proc(call:^Call,r:^serial.Text_Reader,text:string) {
     serial.text_reader_init(r,text,call.allocator)
+    r.loose_names=true
     if call.server!=nil {r.assets=call.server.assets}
 }
 

@@ -169,14 +169,14 @@ api_scenario_check :: proc(server:^api.Server,sc:^Scenario,allocator:=context.al
         if method==nil {return fmt.aprintf("steps[%d].method: %q is not a method of this editor; engine.describe lists them",i,step.method,allocator=allocator)}
         if refusal:=scenario_method_refusal(step.method);refusal!="" {return fmt.aprintf("steps[%d].method: %s: %s",i,step.method,refusal,allocator=allocator)}
         mark:=base.arena_mark(&server.scratch)
-        _,error,read:=api.params_read(server,method,step.params)
+        _,_,error,read:=api.params_read(server,method,step.params)
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("steps[%d].params: %s",i,error.message,allocator=allocator)}
         if method.params==serial.TYPE_NONE && !api.json_valid(allocator,step.params) {return fmt.aprintf("steps[%d].params: not valid JSON",i,allocator=allocator)}
     }
     if start:=api.method_find(server,"play.start");start!=nil {
         mark:=base.arena_mark(&server.scratch)
-        _,error,read:=api.params_read(server,start,sc.start)
+        _,_,error,read:=api.params_read(server,start,sc.start)
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("start: %s",error.message,allocator=allocator)}
     }

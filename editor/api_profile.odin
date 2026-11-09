@@ -30,19 +30,19 @@ Api_Profile_Capture_Params :: struct {
     advance:bool `mirai:"optional,label=Run the frames inside the call and answer with the summary; first it runs frames until they stop getting faster, unless those that ran just before already did, since a GPU that idled starts at a lower clock. false records the frames the loop runs next (of a window or engine.step or editor.input or play.step) and answers at once: profile.summary answers once they ran"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Of each frame a manual editor runs"`,
     label:[32]u8 `mirai:"optional,text,label=Name to tell the capture by"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes in the summary"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
     wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to wait for a compilation or another measurement that runs; past it the call fails. A longer wait needs a client that waits longer (mirai rpc --timeout)"`,
     allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
 }
 Api_Profile_Id_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes in the summary"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
 }
 Api_Profile_Frames_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
-    worst:int `mirai:"optional,min=1,max=16,label=The slowest frames when first is not given"`,
+    worst:int `mirai:"optional,min=1,max=16,clamp,label=The slowest frames when first is not given"`,
     first:int `mirai:"optional,min=-1,max=3599,label=First frame of a range by index in the capture; -1 takes the worst"`,
-    count:int `mirai:"optional,min=1,max=16,label=Frames of the range"`,
+    count:int `mirai:"optional,min=1,max=16,clamp,label=Frames of the range"`,
     depth:int `mirai:"optional,min=1,max=16,label=Deepest zone: 1 the parts of the frame; 2 the functions of the loops; 3 what runs inside them"`,
     min_ms:f32 `mirai:"optional,min=0,max=1000,label=Zones shorter than this are left out"`,
 }
@@ -54,7 +54,7 @@ Api_Profile_Zone_Params :: struct {
 Api_Profile_Compare_Params :: struct {
     base:int `mirai:"optional,min=0,label=Capture to compare against; 0 is the one before id"`,
     id:int `mirai:"optional,min=0,label=Capture compared; 0 is the last one"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes that changed the most"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes that changed the most"`,
 }
 Api_Profile_Export_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,

@@ -101,7 +101,7 @@ Query_Params :: struct {
     id:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
     min:[3]f32 `mirai:"optional,label=A corner of the box of the world it lists; without min and max: only the types and their counts"`,
     max:[3]f32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=4096,label=Instances listed at most"`,
+    limit:u32 `mirai:"optional,min=1,max=4096,clamp,label=Instances listed at most"`,
 }
 
 @(private) LAYER_NAME_BYTES :: 256

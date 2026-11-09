@@ -25,7 +25,7 @@ Inspect_Params :: struct {
     class:[32]u8 `mirai:"text,optional,label=The class; empty is the first"`,
     min:[3]f32 `mirai:"optional,label=Corner of the box to look in; without min and max: everything"`,
     max:[3]f32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=2048,label=Polygons and links listed at most"`,
+    limit:u32 `mirai:"optional,min=1,max=2048,clamp,label=Polygons and links listed at most"`,
 }
 
 Agent_Params :: struct {

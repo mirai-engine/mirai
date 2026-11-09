@@ -403,7 +403,8 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     } else if named {
         table:^core.Table_Info
         if component!="" {
-            if _,table=core.world_table_named(w,component);table==nil {return fmt.tprintf("trace.component %q is not a component of the game; component.list lists them",component)}
+            problem:string
+            if table,problem=api_component_named(w,component);table==nil {return fmt.tprintf("trace.component: %s; component.list lists them",problem)}
         }
         candidates:[]core.Entity
         one:[1]core.Entity

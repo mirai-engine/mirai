@@ -233,7 +233,7 @@ describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^te
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),"without params"),"the error says how to list the names")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.echo","missing","gone"]}}`)
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),`"missing", "gone"`),"the error names every unknown method")
-    for params in ([]string{`{"methods":["test.echo"],"prefix":"test."}`,`{"methods":["test.echo"],"plugin":"editor"}`,`{"compact":true}`,`{"schemas":false}`,`{"methods":["missing"]}`,`{"method":"test.echo"}`,`{"verbose":true}`}) {
+    for params in ([]string{`{"methods":["test.echo"],"prefix":"test."}`,`{"methods":["test.echo"],"plugin":"editor"}`,`{"compact":true}`,`{"schemas":false}`,`{"methods":["missing"]}`,`{"verbose":true}`}) {
         reply=rpc(t,&f,strings.concatenate({`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":`,params,"}"},context.temp_allocator))
         testing.expectf(t,integer(at(reply,"error","code"))==INVALID_PARAMS,"%s is refused",params)
     }

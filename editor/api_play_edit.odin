@@ -158,7 +158,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         if !rpc_object_begin(&c,"components") {return}
         for key in rpc_next(&c,&values) {
             name:=strings.clone(key,call.allocator)
-            t:=component_table(s,name)
+            t,_:=api_component_named(shown_world(s),name)
             if t==nil || t.place!=.World || api_state(s).types[api_table_index(s,t)]==serial.TYPE_NONE {rpc_fail(&c,"components: %q is not a component of the game; play.inspect names those of an entity",name);break}
             if !api_component_listed(s,t,true) {rpc_fail(&c,"components: %s is not changed as a component: position and rotation_deg teleport the entity",name);break}
             if serial.text_keyword(&c.r,"null") {append(&changes,Api_Play_Change{t,nil});continue}

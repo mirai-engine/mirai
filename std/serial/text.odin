@@ -345,6 +345,7 @@ Text_Error :: struct {
     code:Text_Error_Code,
     offset:int,   // into the text
     names:string, // Unknown_Field, Unknown_Member: the names the struct, enum or bit set has, as `a, b, c`; a view of Text_Reader.names
+    whole:bool,   // names is the whole of what is wrong
     path:[TEXT_PATH_BYTES]u8, // where in the value, from the outermost (text_error_within): `exposure.adaptation_mode`, `parts[1].shape`
     path_length:int,
 }
@@ -365,6 +366,7 @@ Text_Reader :: struct {
     names:[dynamic]u8, // of the error
     assets:Text_Assets,
     asset_kinds:string, // of the field being read
+    loose_names:bool,   // text a person or an agent wrote: members of enums and bit sets as base.name_find takes them
 }
 
 // How a reader that knows the assets takes a name for one where an Asset_Id
@@ -440,6 +442,37 @@ text_fail_names :: proc(r:^Text_Reader,code:Text_Error_Code,offset:int,choices:[
     return false
 }
 
+// The value of a member of an enum or a bit set by its name.
+@(private="file")
+text_member :: proc(r:^Text_Reader,choices:[]Choice,name:string) -> (value:i64,found:bool) {
+    for choice in choices {
+        if choice.name==name {return choice.value,true}
+    }
+    if !r.loose_names {return}
+    index,_:=base.name_find(name,text_choice_names(r,choices))
+    if index<0 {return}
+    return choices[index].value,true
+}
+
+@(private="file")
+text_choice_names :: proc(r:^Text_Reader,choices:[]Choice) -> []string {
+    names:=make([]string,len(choices),r.names.allocator)
+    for choice,i in choices {names[i]=choice.name}
+    return names
+}
+
+// Fails for a name that is no member; loose names are told the nearest ones.
+@(private="file")
+text_fail_member :: proc(r:^Text_Reader,offset:int,choices:[]Choice,name:string) -> bool {
+    if !r.loose_names {return text_fail_names(r,.Unknown_Member,offset,choices,nil)}
+    if r.error.code!=.None {return false}
+    problem:=base.name_problem(name,"one of its names",text_choice_names(r,choices),r.names.allocator)
+    clear(&r.names)
+    append(&r.names,problem)
+    r.error={code=.Unknown_Member,offset=offset,names=string(r.names[:]),whole=true}
+    return false
+}
+
 // What is wrong with what r read, for whoever wrote it: where in the value,
 // after `prefix`, the name the caller gives the whole of it, and what; for a
 // name the type does not have, the names it has. Where in the text is
@@ -464,6 +497,7 @@ text_error_message :: proc(r:^Text_Reader,prefix:="",allocator:=context.allocato
     }
     parts:[]string
     switch {
+    case e.whole:                                         parts={e.names}
     case e.code==.Unknown_Member && named && e.names!="": parts={`"`,name,`" is not one of `,e.names}
     case e.code==.Unknown_Field && named && e.names!="":  parts={`"`,name,`" is not a field: the fields are `,e.names}
     case e.code==.Unknown_Asset:                          parts={e.names}
@@ -756,10 +790,8 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
     case .Enum:
         if text_peek(r)=='"' {
             name:=text_string(r) or_return
-            for choice in s.choices[type.first:][:type.count] {
-                if choice.name==name {scalar_store(bytes,u64(choice.value));return true}
-            }
-            return text_fail_names(r,.Unknown_Member,start,s.choices[type.first:][:type.count],nil)
+            if value,found:=text_member(r,s.choices[type.first:][:type.count],name);found {scalar_store(bytes,u64(value));return true}
+            return text_fail_member(r,start,s.choices[type.first:][:type.count],name)
         }
         negative,magnitude:=text_integer(r) or_return
         scalar_store(bytes,negative?~magnitude+1:magnitude)
@@ -774,10 +806,9 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
                 bit:=-1
                 if text_peek(r)=='"' {
                     name:=text_string(r) or_return
-                    for choice in s.choices[type.first:][:type.count] {
-                        if choice.name==name {bit=int(choice.value);break}
-                    }
-                    if bit<0 {return text_fail_names(r,.Unknown_Member,at,s.choices[type.first:][:type.count],nil)}
+                    value,found:=text_member(r,s.choices[type.first:][:type.count],name)
+                    if !found {return text_fail_member(r,at,s.choices[type.first:][:type.count],name)}
+                    bit=int(value)
                 } else {
                     negative,magnitude:=text_integer(r) or_return
                     if negative || magnitude>=u64(type.size)*8 {return text_fail(r,.Out_Of_Range,at)}
@@ -837,7 +868,9 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             text_expect(r,':') or_return
             r.asset_kinds=found.asset_kinds
             part:=bytes[found.offset:][:s.types[found.type].size]
-            if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
+            if found.any_value {
+                text_skip(r) or_return
+            } else if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
                 text_error_within(r,found.name)
                 return false
             }

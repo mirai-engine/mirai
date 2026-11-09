@@ -10,7 +10,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-Morph_Inspect_Params :: struct {id:base.Entity_Id,entity:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256"`,diagnostics:bool `mirai:"optional"`}
+Morph_Inspect_Params :: struct {id:base.Entity_Id,entity:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Morph_Set_Params :: struct {
     id:base.Entity_Id,
     name:[64]u8 `mirai:"text,label=A target of the mesh; an instance weights up to 16"`,

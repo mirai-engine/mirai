@@ -350,11 +350,12 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
 - `scene.inspect` (`read_only`): free-form result
   `{path,dirty,playing,total,offset, entities[],shown,matched,omitted}`.
   - Filters: `entity` (only that one); `name` (exact name; `*` stands for any sequence and case is
-    significant); `component` (only the entities that have it, by its name, case-insensitive; an
-    unknown one is `-32602`).
+    significant); `component` (only the entities that have it, by its name as
+    [names of the API](api.md#method-conventions) take it; an unknown one is `-32602`).
   - `summary` (false): each entity is only `{id,name,parent,components:[names]}`, without place,
-    prefab or values. `components:false` omits the components; `include_runtime` also names those
-    of runtime state.
+    prefab or values. `components` is `true` (every value), `false` (none) or a list of names
+    (only those, the way to keep an answer small); `include_runtime` also names those of runtime
+    state.
   - Page: `offset` and `limit` (1 to 4096, 256). `total` counts the live entities of the world,
     `matched` those that pass the filters, `offset` is counted over them and `omitted` says how
     many remain after the page (the next one starts at `offset` + `shown`).

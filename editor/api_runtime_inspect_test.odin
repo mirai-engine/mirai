@@ -25,6 +25,28 @@ Inspect_World :: struct {
 @(private="file") Inspect_Editor :: struct {api:Api}
 
 @(test)
+a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
+    tables:=[]core.Table_Info{{name="Point_Light",place=.World},{name="Spot_Light",place=.World},{name="Hidden_State",place=.Editor}}
+    info:=core.World_Info{tables=tables}
+    w:=core.World_Ref{info=&info,place=.World}
+    cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
+        {"Point_Light",&tables[0],""},
+        {"PointLight",&tables[0],""},
+        {"spot light",&tables[1],""},
+        {"Hidden_State",nil,`"Hidden_State" is not a component of the world`},
+        {"Light",nil,`"Light" is not a component of the world; the nearest are Spot_Light, Point_Light`},
+    }
+    for c in cases {
+        found,problem:=api_component_named(w,c.name)
+        testing.expectf(t,found==c.found && strings.has_prefix(problem,c.says),"%s: %s",c.name,problem)
+    }
+    key,known:=api_key_from_name("left-control")
+    testing.expect(t,known && key==.Left_Control)
+    _,known=api_key_from_name("Return")
+    testing.expect(t,!known)
+}
+
+@(test)
 api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: proc(t:^testing.T) {
     world:Inspect_World
     core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
@@ -103,8 +125,30 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     core.get(&running.state,entity).ticks=42
     session.mode=.Play
     session.runs[0]={world=&running}
-    params:=Api_Inspect_Params{components=true,include_runtime=true,limit=1}
+    params:=Api_Inspect_Params{include_runtime=true,limit=1}
     method:=api.Method{params_id=Api_Inspect_Params}
+    selections:=[]struct{raw,has,lacks,fails:string}{
+        {`{"components":true}`,`"ticks": 42`,"",""},
+        {`{"components":false}`,"",`"components"`,""},
+        {`{"components":["inspect config"]}`,`"speed"`,`"ticks"`,""},
+        {`{"components":"Inspect_Runtime"}`,`"ticks": 42`,`"speed"`,""},
+        {`{"components":["Inspect"]}`,"","",`"Inspect" is not a component of the world; the nearest are Inspect_Config, Inspect_Runtime`},
+        {`{"components":["Transform"]}`,"","","Transform has no values"},
+        {`{"components":7}`,"","","components must be true"},
+    }
+    for selection in selections {
+        call:=api.Call{method=&method,raw=selection.raw,params=&params,out=&out,allocator=context.temp_allocator}
+        out.count=0
+        api_play_inspect(&session,&call)
+        text:=string(serial.writer_bytes(&out))
+        if selection.fails!="" {
+            testing.expectf(t,call.failed && strings.contains(call.error.message,selection.fails),"%s: %s",selection.raw,call.error.message)
+            continue
+        }
+        testing.expectf(t,!call.failed,"%s: %s",selection.raw,call.error.message)
+        testing.expectf(t,strings.contains(text,selection.has),"%s: %s",selection.raw,text)
+        testing.expectf(t,selection.lacks=="" || !strings.contains(text,selection.lacks),"%s: %s",selection.raw,text)
+    }
     call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
     out.count=0
     api_play_inspect(&session,&call)

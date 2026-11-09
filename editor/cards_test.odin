@@ -1,5 +1,6 @@
 package editor
 
+import "core:strings"
 import "core:testing"
 import "mirai:core"
 
@@ -46,6 +47,11 @@ the_cards_of_plugins_follow_the_presets_and_are_those_of_the_library_in_use :: p
     testing.expect(t,named && index==len(Preset))
     index,named=card_named(&session,"Test Mark")
     testing.expect(t,named && index==len(Preset)+1)
+    index,named=card_named(&session,"PointLight")
+    testing.expect(t,named && index==int(Preset.Point_Light))
+    index,named=card_named(&session,"test-gate")
+    testing.expect(t,named && index==len(Preset))
+    testing.expect(t,strings.has_prefix(cards_problem(&session,"pointlite"),`"pointlite" is not a preset or the card of a plugin; the nearest are point_light`),cards_problem(&session,"pointlite"))
     _,named=card_named(&session,"test")
     testing.expect(t,!named)
 

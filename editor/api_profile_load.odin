@@ -13,7 +13,7 @@ Profile_Load_Kind :: enum u8 {All,Scene,Play,Section}
 
 Api_Profile_Load_Params :: struct {
     kind:Profile_Load_Kind `mirai:"optional,label=Which load; All: the last of each kind there was"`,
-    top:int `mirai:"optional,min=1,max=16,label=Slowest assets and loop functions of each load"`,
+    top:int `mirai:"optional,min=1,max=16,clamp,label=Slowest assets and loop functions of each load"`,
 }
 
 Profile_Load_Phase_Out :: struct {name:string,ms:f64,count:i64,summed:bool}

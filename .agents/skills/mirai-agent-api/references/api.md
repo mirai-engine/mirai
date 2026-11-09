@@ -264,19 +264,34 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **An asset field takes a path or an id.** Asset_Id params and component fields also take the path
   under the assets folder, with or without its extension, checked against the field's `kind`;
   results keep ids. A miss lists the nearest paths of that kind.
+- **Params are taken as they can only be meant**, in one place before anything reads them
+  (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
+  the singular or the plural of one field (`id` and `ids` also of `entity` and `entities`), a
+  single value where a list goes and a list of one where a single value goes. A list of several
+  for a single value fails saying so.
+- **A name of a registry is matched as a person writes it** (`base.name_find`): components, enum
+  members of params and values, input keys and presets, without minding case, underscores, spaces
+  or hyphens. It resolves only when exactly one candidate fits; otherwise the error says which
+  fit or the nearest ones. It is for what comes through the API: assets and binary data are read
+  exactly.
 - **Params and result are flat structs.** A field is required unless its tag carries `optional`;
   when absent, it takes the value from the method's `defaults`, or zero.
   - Text: `[N]u8` with tag `text`, up to N bytes.
   - `min`/`max` bound numbers and each element of an array; `label` is the schema description and
     `unit`, its unit (`x-unit`).
   - An array of numbers has exactly its length; another array, up to its length.
+  - `any` on a param takes any JSON, which its handler reads from `Call.raw`.
+  - `clamp` on an integer that only bounds how much a method answers: past its `max` it takes it,
+    and the result says so in `_clamped`. Other ranges fail.
   - A fixed array with tag `trim` is written up to its last element with any non-zero byte
     (`engine.status` uses it in `gpu_timings` and `functions`); it does not change the binary
     schema.
   - An unknown field is `-32602`. The message of a badly written value, in params or in a value a
     method reads (settings, components, particles), says where it is
     (`View_Volume.exposure.adaptation_mode`), what fails and, for a name that does not exist, the
-    fields or members that exist (`serial.text_error_message`), with the line and column.
+    fields or the nearest members that exist (`serial.text_error_message`), with the line and
+    column. `data.usage` of every `-32602` of a method is what `mirai rpc describe` gives of its
+    params, with a valid example, when the answer has room for it.
 - **Enums by name** (`"Edit"`), **bit sets as arrays of names** (`["W","Left_Shift"]`). A NaN or
   infinite float is written `"nan"`, `"inf"` or `"bits:0x…"`.
 - **Hexadecimal ids.** An entity (`core.Id`) is a string of up to 16 digits

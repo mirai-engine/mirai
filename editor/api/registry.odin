@@ -61,7 +61,7 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
     type_infos_collect(root,&infos)
     for len(s.tags)<len(s.schema.fields) {append(&s.tags,Field_Tags{})}
     for len(s.keys)<len(s.schema.fields) {append(&s.keys,"")}
-    names:=[Field_Tag]string{.Optional="optional",.List="list",.Any="any"}
+    names:=[Field_Tag]string{.Optional="optional",.List="list",.Any="any",.Clamp="clamp"}
     for type_id,type_index in s.schema.lookup {
         if int(type_index)<first_type {continue}
         type:=s.schema.types[type_index]
@@ -132,6 +132,7 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     ok:bool
     method.params,ok=schema_register(s,desc.params,desc.params_info)
     if !ok {return .Invalid_Type}
+    method.clamps=type_clamps(s,method.params)
     method.result,ok=schema_register(s,desc.result,desc.result_info)
     if !ok {return .Invalid_Type}
     for pair in ([2]struct{text:string,type:typeid}{{desc.params_schema,desc.params},{desc.result_schema,desc.result}}) {
@@ -153,6 +154,21 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     s.methods[s.method_count]=method
     s.method_count+=1
     return .None
+}
+
+// Whether a field of the type, at any depth, is tagged clamp.
+@(private)
+type_clamps :: proc(s:^Server,index:serial.Type_Index) -> bool {
+    if index==serial.TYPE_NONE {return false}
+    type:=s.schema.types[index]
+    #partial switch type.kind {
+    case .Array: return type_clamps(s,type.elem)
+    case .Struct:
+        for &f,i in s.schema.fields[type.first:][:type.count] {
+            if .Clamp in s.tags[int(type.first)+i] || type_clamps(s,f.type) {return true}
+        }
+    }
+    return false
 }
 
 // The information of every type reachable from info, by typeid: what a

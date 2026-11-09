@@ -27,7 +27,7 @@ Asset_Inspect_Params :: struct {
     slot:u8 `mirai:"optional,label=.anim with section Track: its slot"`,
     table:Profile_Table `mirai:"optional,label=.pose: the table"`,
     offset:u32 `mirai:"optional,label=First row of each long table"`,
-    limit:u32 `mirai:"optional,min=1,max=512,label=Rows of each long table"`,
+    limit:u32 `mirai:"optional,min=1,max=512,clamp,label=Rows of each long table"`,
 }
 // Parts of an animated instance.
 Instance_Part :: enum u8 {Rig,Match,Modifiers,Actions,Motion,Morphs,Pose}
@@ -40,7 +40,7 @@ Instance_Inspect_Params :: struct {
     parts:Instance_Parts `mirai:"optional,label=Omitted is all of them but Pose, which needs names"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Pose: the bones and sockets to place; a bone by path or name or as a part of the body (@hand_r) and a socket by its name"`,
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
     diagnostics:bool `mirai:"optional,label=Solver and fade details of rig operations and morphs"`,
 }
 

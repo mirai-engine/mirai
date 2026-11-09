@@ -570,6 +570,22 @@ component_table :: proc(s:^Session,name:string) -> ^core.Table_Info {
     return info
 }
 
+// The table of the component a text of the API names in a world, as
+// base.name_find takes it; nil and what is wrong with the name otherwise.
+api_component_named :: proc(w:core.World_Ref,name:string) -> (table:^core.Table_Info,problem:string) {
+    for &t in w.info.tables {
+        if t.place==w.place && t.name==name {return &t,""}
+    }
+    names:=make([dynamic]string,context.temp_allocator)
+    tables:=make([dynamic]^core.Table_Info,context.temp_allocator)
+    for &t in w.info.tables {
+        if t.place==w.place {append(&names,t.name);append(&tables,&t)}
+    }
+    index,_:=base.name_find(name,names[:])
+    if index>=0 {return tables[index],""}
+    return nil,base.name_problem(name,"a component of the world",names[:])
+}
+
 // Gives an entity a component, or replaces its value: value nil gives the
 // one it starts with (component_default).
 component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=nil) {

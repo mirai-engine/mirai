@@ -196,8 +196,9 @@ api_collision_component :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
 api_collision_target :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,request:^Api_Collision_Request,set:bool) -> (target:Api_Collision_Target,ok:bool) {
     if base.text_get(request.component[:])=="" && !api_collision_component(s,call,w,request,set) {return}
     name:=base.text_get(request.component[:])
-    _,table:=core.world_table_named(w,name)
-    if table==nil || table.place!=.World || !editor.inspector_listed(s,table) {
+    table,problem:=editor.api_component_named(w,name)
+    if table==nil {api.call_failf(call,api.INVALID_PARAMS,"component: %s",problem);return}
+    if table.place!=.World || !editor.inspector_listed(s,table) {
         api.call_failf(call,api.INVALID_PARAMS,"component %q is not an editable component of the world",name);return
     }
     entity:=editor.api_entity(w,request.id)
