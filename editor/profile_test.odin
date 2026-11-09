@@ -1,12 +1,14 @@
 package editor
 
 import "core:encoding/json"
+import "core:os"
 import vmem "core:mem/virtual"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:editor/api"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -225,7 +227,7 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
     if !testing.expect(t,capture_fixture(&other,3,4,"Low")) {return}
     defer profile_capture_free(&other)
 
-    result:=profile_compare(&before,&after,8)
+    result:=profile_compare(profile_digest(&before),profile_digest(&after),8)
     testing.expect(t,result.comparable,"same conditions")
     testing.expect_value(t,len(result.differences),0)
     testing.expect_value(t,result.cpu.zones[0].name,"a")
@@ -233,7 +235,7 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
     testing.expect_value(t,result.mean_ms.delta,-4.0)
     testing.expect(t,result.mean_ms.delta_pct<0)
 
-    result=profile_compare(&after,&other,8)
+    result=profile_compare(profile_digest(&after),profile_digest(&other),8)
     testing.expect(t,!result.comparable,"another preset changes the times by itself")
     testing.expect_value(t,result.differences[0].field,"preset")
     testing.expect(t,len(result.notes)>0)
@@ -268,11 +270,11 @@ a_capture_measured_with_limits_is_not_comparable :: proc(t:^testing.T) {
 
     testing.expect(t,profile_summary(&free,4).comparable)
     testing.expect(t,!profile_summary(&limited,4).comparable)
-    result:=profile_compare(&limited,&other,8)
+    result:=profile_compare(profile_digest(&limited),profile_digest(&other),8)
     testing.expect_value(t,len(result.differences),0)
     testing.expect(t,!result.comparable,"both waited for the display")
     testing.expect(t,strings.contains(strings.join(result.notes,"\n",context.temp_allocator),"allow_limited"))
-    testing.expect(t,profile_compare(&free,&free,8).comparable)
+    testing.expect(t,profile_compare(profile_digest(&free),profile_digest(&free),8).comparable)
 }
 
 @(test)
@@ -399,6 +401,18 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
     }
     compare:=Api_Profile_Compare_Params{base=1,id=2,top=12}
     profile_answer_expect(t,&s,api_profile_compare,&compare,Api_Profile_Compare_Params,Api_Profile_Compare)
+    owners:=make(map[string]Profile_Step_Owner,context.temp_allocator)
+    owners["a"]={.Game,""}
+    first,second:=&s.profiles.captures[0],&s.profiles.captures[1]
+    audit:=profile_audit({capture=second,summary=profile_summary(second,12),owners=owners,budget={frame=5,memory=50}},10)
+    for compared in ([]Maybe(Profile_Compare_Out){nil,profile_compare(profile_digest(first),profile_digest(second),12)}) {
+        w:serial.Writer
+        serial.writer_init(&w,0,context.temp_allocator)
+        method:=api.Method{}
+        call:=api.Call{method=&method,out=&w,allocator=context.temp_allocator}
+        profile_audit_write(&call,audit,compared)
+        if testing.expectf(t,!call.failed,"%s",call.error.message) {api_result_shape_expect(t,string(serial.writer_bytes(&w)),Api_Profile_Audit)}
+    }
 
     // A load still waiting, and one that ended, with what it counted.
     app:host.App
@@ -415,4 +429,91 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
     host.load_profile_frame(&app,true)
     load.kind=.Play
     profile_answer_expect(t,&s,api_profile_load,&load,Api_Profile_Load_Params,Api_Profile_Loads)
+}
+
+// An audit reads a capture against the budgets of the project and ranks what
+// costs by who owns it: the project acts on its own code, not on the engine's.
+@(test)
+an_audit_ranks_what_costs_by_who_owns_it_against_the_budgets :: proc(t:^testing.T) {
+    c:Profile_Capture
+    if !testing.expect(t,capture_fixture(&c,1,4)) {return}
+    defer profile_capture_free(&c)
+
+    project_plugins:=make(map[string]bool,context.temp_allocator)
+    project_plugins["tools"]=true
+    Owner_Case :: struct {game:bool,plugin:string,owner:Profile_Owner}
+    for o in ([]Owner_Case{{true,"",.Game},{false,"",.Engine},{false,"tools",.Project_Plugin},{false,"physics",.Plugin}}) {
+        testing.expect_value(t,profile_step_owner(o.game,o.plugin,project_plugins).owner,o.owner)
+    }
+
+    owners:=make(map[string]Profile_Step_Owner,context.temp_allocator)
+    owners["a"],owners["b"]={.Game,""},{.Plugin,"physics"}
+    out:=profile_audit({capture=&c,summary=profile_summary(&c,12),owners=owners,budget={frame=5,memory=50}},32)
+    testing.expect_value(t,out.verdict,"over")
+    testing.expect_value(t,out.bound,"cpu")
+    testing.expect_value(t,len(out.budgets),2)
+    for b in out.budgets {testing.expectf(t,b.over,"%s: %v over %v",b.name,b.measured,b.budget)}
+
+    first:=out.findings[0]
+    testing.expect_value(t,first.subject,"a")
+    testing.expect_value(t,first.severity,"high")
+    testing.expect_value(t,first.owner,"game")
+    testing.expect(t,first.actionable)
+    testing.expect_value(t,first.next,`profile.zone {"id":1,"name":"a","thread":"main"}`)
+    plugin,memory:=false,false
+    for f in out.findings {
+        testing.expectf(t,!strings.contains(f.next,"%!"),"%s: %s",f.subject,f.next)
+        if f.subject=="b" {
+            plugin=true
+            testing.expect_value(t,f.owner,"plugin")
+            testing.expect_value(t,f.plugin,"physics")
+            testing.expect(t,!f.actionable,"an engine plugin is not code of the project")
+        }
+        if f.kind=="memory" {memory=true;testing.expect_value(t,f.subject,"process_private")}
+    }
+    testing.expect(t,plugin && memory,"the plugin zone and the memory that went up are findings")
+
+    within:=profile_audit({capture=&c,summary=profile_summary(&c,12),owners=owners,budget={frame=100}},1)
+    testing.expect_value(t,within.verdict,"within")
+    testing.expect_value(t,len(within.findings),1)
+}
+
+// A baseline outlives the captures of a session: what it keeps compares as the
+// capture it came from did.
+@(test)
+a_baseline_saved_in_the_project_compares_as_its_capture_did :: proc(t:^testing.T) {
+    before,after:Profile_Capture
+    if !testing.expect(t,capture_fixture(&before,1,12)) {return}
+    defer profile_capture_free(&before)
+    if !testing.expect(t,capture_fixture(&after,2,4)) {return}
+    defer profile_capture_free(&after)
+    // What outlives the frames a call runs, which free the temp allocator.
+    arena:vmem.Arena
+    if !testing.expect(t,vmem.arena_init_growing(&arena)==nil) {return}
+    defer vmem.arena_destroy(&arena)
+    kept:=vmem.arena_allocator(&arena)
+    temporary,_:=os.temp_directory(context.temp_allocator)
+    root:=project.path(temporary,"mirai-profile-baseline",allocator=kept)
+    defer os.remove_all(root)
+
+    _,error:=profile_baseline_save(root,"no spaces",profile_digest(&before))
+    testing.expect(t,error!="","a name that is not a file name")
+    path:string
+    path,error=profile_baseline_save(root,"before",profile_digest(&before))
+    if !testing.expectf(t,error=="",error) {return}
+    testing.expect(t,os.is_file(path))
+    names:=profile_baselines(root)
+    testing.expect(t,len(names)==1 && names[0]=="before")
+
+    saved,loaded:=profile_baseline_load(root,"before",kept)
+    if !testing.expectf(t,loaded=="",loaded) {return}
+    free_all(context.temp_allocator)
+    result:=profile_compare(saved,profile_digest(&after),8)
+    testing.expect_value(t,result.base,0)
+    testing.expect_value(t,result.baseline,"before")
+    testing.expect(t,result.comparable,"same conditions")
+    testing.expect_value(t,result.cpu.zones[0].name,"a")
+    testing.expect_value(t,result.cpu.zones[0].delta_ms,-4.0)
+    _,error=profile_baseline_load(root,"missing")
+    testing.expect(t,strings.contains(error,"profile.audit"),error)
 }

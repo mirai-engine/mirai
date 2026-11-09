@@ -193,6 +193,7 @@ a_bad_project_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {text="{\"name\": \"x\", \"build\": {\"defines\": [\"=1\"]}}",code=.Define_Invalid,subject="=1"},
         {text="{\"name\": \"x\", \"window\": {\"width\": 0}}",code=.Window_Invalid},
         {text="{\"name\": \"x\", \"window\": {\"height\": 20000}}",code=.Window_Invalid},
+        {text="{\"name\": \"x\", \"performance\": {\"frame\": -1}}",code=.Budget_Invalid},
     }
     for c in cases {
         _,error:=manifest_parse(c.text)

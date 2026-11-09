@@ -55,6 +55,14 @@ Window :: struct {
     width,height:i32,             // pixels; the size of the window when it is not in full screen or maximized
 }
 
+// What the game holds on the machine it is made for; profile.audit says which
+// a measurement goes over. 0: no budget.
+Performance :: struct {
+    frame:f32 `mirai:"min=0,unit=ms"`,  // the 95th percentile of the frame time
+    memory:f32 `mirai:"min=0,unit=MB"`, // the private memory of the process at its highest
+    load:f32 `mirai:"min=0,unit=ms"`,   // from loading a scene or starting Play until a frame drew with all of it resident
+}
+
 // A plugin of the project that comes from a git repository: plugins/<name>
 // is a checkout of url at commit, which the repository of the project
 // ignores and cook/install makes again where it is missing.
@@ -76,6 +84,7 @@ Manifest :: struct {
     sources:[MAX_SOURCES]Source `mirai:"trim,hidden"`, // plugins of its plugins/ that come from git
     window:Window `mirai:"section=Window"`,
     build:Build_Options `mirai:"section=Build"`,
+    performance:Performance `mirai:"section=Performance"`,
 }
 
 Identifier :: [128]u8
@@ -143,6 +152,7 @@ Error_Code :: enum u8 {
     Executable_Invalid, // subject has something besides letters, digits, '_' and '-'
     Define_Invalid,     // subject is not NAME or NAME=value
     Window_Invalid,     // a side outside 1..MAX_WINDOW_SIDE
+    Budget_Invalid,     // a budget of performance below 0 or above MAX_BUDGET
     Depends_On_Itself,
     Folder_Mismatch,    // the manifest in folder `plugin` names itself subject
     Part_Missing,       // the manifest declares the part subject and its folder does not exist
@@ -168,11 +178,13 @@ Error :: struct {
 }
 
 MAX_WINDOW_SIDE :: 16384
+MAX_BUDGET :: 1e7 // of a budget of performance, in its own unit
 
 manifest_default :: proc(name:string) -> (m:Manifest) {
     base.text_set(m.name[:],name)
     base.text_set(m.version[:],"0.1.0")
     m.window.width,m.window.height=1280,720
+    m.performance.frame=1000.0/60
     return
 }
 
@@ -224,6 +236,9 @@ manifest_validate :: proc(m:^Manifest) -> Error {
     }
     for side in ([2]i32{m.window.width,m.window.height}) {
         if side<1 || side>MAX_WINDOW_SIDE {return {code=.Window_Invalid}}
+    }
+    for budget in ([3]f32{m.performance.frame,m.performance.memory,m.performance.load}) {
+        if !(budget>=0 && budget<=MAX_BUDGET) {return {code=.Budget_Invalid}}
     }
     for &source,i in m.sources {
         name:=base.text_get(source.name[:])
@@ -396,6 +411,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Executable_Invalid: return fmt.aprintf("%s: the executable '%s' may only have letters, digits, '_' and '-'",file,subject)
     case .Define_Invalid:     return fmt.aprintf("%s: '%s' is neither NAME nor NAME=value",file,subject)
     case .Window_Invalid:     return fmt.aprintf("%s: the width and height of the window go from 1 to %d",file,MAX_WINDOW_SIDE)
+    case .Budget_Invalid:     return fmt.aprintf("%s: each budget of performance goes from 0, none, to %.0f",file,MAX_BUDGET)
     case .Depends_On_Itself:  return fmt.aprintf("%s: '%s' depends on itself",file,subject)
     case .Folder_Mismatch:    return fmt.aprintf("%s: it is named '%s' and its folder '%s'",file,subject,plugin)
     case .Part_Missing:       return fmt.aprintf("%s: declares %s/ and the folder does not exist",file,subject)

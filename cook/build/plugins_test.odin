@@ -326,6 +326,12 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     world:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(world.errors)==0,"%v",world.errors) {return}
     testing.expect(t,strings.contains(world.game_world,"p_thing.thing_probe(p_core.Prober{probes=&w.probe,asks=&w.asks})"),world.game_world)
+    // Its step names the plugin that owns it, which profile.audit tells the project apart by.
+    owned:=false
+    for line in strings.split_lines(world.game_world) {
+        if strings.contains(line,`{"thing_probe",`) {owned=strings.has_suffix(line,`,"thing",false}`)}
+    }
+    testing.expect(t,owned,world.game_world)
     decl:=engine_paths(engine,.Dev).decl
     declared,_:=declare({root=engine,packages={"core"},binary="mirai",library=project.path(folder,"runtime.lib"),stage=project.path(folder,"stage"),decl=decl})
     if !testing.expectf(t,len(declared)==0,"%v",declared) {return}

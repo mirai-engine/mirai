@@ -252,6 +252,11 @@ Agent scope, fixed by `prompt.md`:
 - It names the tools as they are called (`scene_batch`) and includes the schemas of
   `AI_PROMPT_SCHEMAS` from the live registry, the scene review on sending and the entities in view,
   the selected ones first.
+- Performance is measured, not guessed: `profile_audit` is its tool. It acts on the findings the
+  project owns (its code and what its scenes draw) and reports those of the engine and its plugins,
+  which are not its work. It saves a baseline before a change and audits against it after, so its
+  answer says what the change did
+  ([audit](../../mirai-agent-api/references/methods.md#profiling)). The budgets are the user's.
 - For an interface of the user's own it points it to `panel_save`, not editor code: buttons per
   variant (with `where` for all the entities that match) without rows for what they change, and
   rows for what is adjusted by hand ([project panels](panels.md#project-panels)).
