@@ -195,7 +195,10 @@ For a renderer that generates frames (`rhi/present.odin`):
 ### Pipeline cache
 
 - Vulkan saves the `VkPipelineCache` in `Device_Desc.pipeline_cache_path` when destroying the
-  device, replacing the whole file: several processes share it. `host` uses `pipelines.bin` in the
+  device, and while it lives once the pipelines compiled since the last save took
+  `PIPELINE_CACHE_SAVE_AFTER` of driver time: a process ended before that, as a session that timed
+  out on a cold cache, keeps what it compiled. Each save replaces the whole file: several processes
+  share it. `host` uses `pipelines.bin` in the
   [project user folder](../../mirai-core/references/host.md#the-application).
 - Metal shares library and function between identical sources; the caller may free `Shader_Code`
   after creating the pipeline.
