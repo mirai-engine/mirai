@@ -550,7 +550,7 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	testing.expect(t, renderer_set_display_transform(r, .ACES_2), r.error)
+	renderer_set_display_transform(r, .ACES_2)
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {20, 0.2, 40}), tint = {0.6, 0.55, 0.45}},
 		{object_id = 2, mesh = f.cube, transform = trs({-0.15, 0.45, -8}, {0.14, 0.9, 0.14}), tint = {0.3, 0.3, 0.3}},

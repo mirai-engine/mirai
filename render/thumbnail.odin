@@ -92,6 +92,7 @@ thumbnail_view :: proc(r:^Renderer,vertices:[]Thumbnail_Vertex,materials:int,wid
     }
     frame_view_constants(&constants,camera,world_view,projection,projection,forward,f32(height))
     preview_lighting(&constants,light)
+    constants.flags|=display_frame_flags(r)
     return constants,true
 }
 

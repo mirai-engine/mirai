@@ -178,6 +178,7 @@ struct Frame_Data {
 #define FRAME_FLAG_STUDIO      8u // a preview lit by the analytic studio
 #define FRAME_FLAG_GRID       16u
 #define FRAME_FLAG_GLASS      32u // some instance has blended triangles
+#define FRAME_FLAG_NEUTRAL    128u // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 #define FRAME_FLAG_REFLECTANCE 64u // the G-buffer keeps what each pixel reflects (surface_specular)
 
 // ---------------------------------------------------------------- scene data

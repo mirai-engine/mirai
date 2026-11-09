@@ -145,7 +145,7 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	if !units_fixture(t, &f) {return}
 	defer units_destroy(&f)
 	r := f.renderer
-	testing.expect(t, renderer_set_display_transform(r, .ACES_2), r.error)
+	renderer_set_display_transform(r, .ACES_2)
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}
@@ -404,7 +404,7 @@ the_scene_exposes_the_views_whose_camera_has_no_exposure :: proc(t: ^testing.T) 
 	if !units_fixture(t, &f) {return}
 	defer units_destroy(&f)
 	r := f.renderer
-	testing.expect(t, renderer_set_display_transform(r, .ACES_2), r.error)
+	renderer_set_display_transform(r, .ACES_2)
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}

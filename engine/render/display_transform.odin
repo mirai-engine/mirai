@@ -1,6 +1,5 @@
 package render
 
-import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 
@@ -14,10 +13,6 @@ Display_Transform_Settings :: struct {
 
 // Brings the renderer to the transform of the project when it changes.
 @(step="render",loops="game editor",before="render_sync")
-display_transform_apply :: proc(settings:Display_Transform_Settings,app:^host.App,problems:^core.Problems) {
-    r:=app.renderer
-    if r==nil || r.display_transform==settings.transform {return}
-    if !gpu.renderer_set_display_transform(r,settings.transform) {
-        core.report(problems,core.NONE,"render.display_transform","The display LUT of Display_Transform_Settings.transform = %v could not be baked: %s",settings.transform,r.error)
-    }
+display_transform_apply :: proc(settings:Display_Transform_Settings,app:^host.App) {
+    if app.renderer!=nil {gpu.renderer_set_display_transform(app.renderer,settings.transform)}
 }

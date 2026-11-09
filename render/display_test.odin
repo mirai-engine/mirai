@@ -39,7 +39,8 @@ shown :: proc(lut: []f16, scene: Vec3) -> Vec3 {
 }
 
 // Choosing a transform changes the color of a scene and not how bright it is:
-// each shows the card a view exposes for it as the same light.
+// each shows the card a view exposes for it as the same light, in the image
+// a frame draws. Neutral shows a midtone as authored, less its offset.
 @(test)
 every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testing.T) {
 	device, error := shared_device.take(t, hardware_rt = false)
@@ -47,23 +48,44 @@ every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testi
 		if rhi.gpu_skip_allowed() {fmt.eprintln("display test skipped:", error)} else {testing.expect(t, false, error)}
 		return
 	}
+	settings := DEFAULT_SETTINGS
+	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
 	r:=new(Renderer);defer free(r)
-	if !renderer_init(r, {device = device, width = 8, height = 8}) {testing.expect(t, false, r.error); return}
+	if !renderer_init(r, {device = device, width = 96, height = 64, settings = settings}) {testing.expect(t, false, r.error); return}
 	defer renderer_destroy(r)
-	lut := make([]f16, N * N * N * 4, context.temp_allocator)
+	scene_set(r, nil, nil, {}, {})
+	// What the display shows, in linear light, of a backdrop the view exposes to scene.
+	seen :: proc(t: ^testing.T, r: ^Renderer, scene: Vec3) -> (shown: Vec3, ok: bool) {
+		camera := Camera{position = {0, 1, 4}, forward = {0, 0, -4}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		renderer_set_backdrop(r, scene / exposure_of_ev100(UNIT_EXPOSURE.ev100, display_exposure_bias(r.display_transform)))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error) or_return
+		pixels, _, _, captured := golden_capture(r)
+		testing.expect(t, captured, r.error) or_return
+		defer delete(pixels)
+		center := (32 * 96 + 48) * 4
+		return {srgb_decode(f32(pixels[center]) / 255), srgb_decode(f32(pixels[center + 1]) / 255), srgb_decode(f32(pixels[center + 2]) / 255)}, true
+	}
 	for transform in Display_Transform {
-		if !testing.expect(t, renderer_set_display_transform(r, transform), r.error) {return}
-		if !testing.expect(t, rhi.texture_read(device, r.display_lut, ([^]u8)(raw_data(lut))[:len(lut) * 2]), rhi.device_error(device)) {return}
+		renderer_set_display_transform(r, transform)
 		card := MIDDLE_GRAY * math.pow(f32(2), display_exposure_bias(transform))
-		gray := shown(lut, {card, card, card})
-		testing.expectf(t, abs(gray.x - gray.y) < 2e-3 && abs(gray.y - gray.z) < 2e-3, "%v shows the card neutral: %v", transform, gray)
-		testing.expectf(t, abs(gray.y - DISPLAY_ACES_GRAY) < 0.004, "%v shows the card as %v, not %v", transform, gray.y, DISPLAY_ACES_GRAY)
-		if transform == .Neutral {
-			// A midtone comes out as authored, less the offset.
-			color := Vec3{0.5, 0.3, 0.2}
-			out := shown(lut, color)
-			for c in 0 ..< 3 {testing.expectf(t, abs(out[c] - (color[c] - DISPLAY_NEUTRAL_OFFSET)) < 0.006, "Neutral shows %v as %v", color, out)}
-		}
+		gray, drawn := seen(t, r, {card, card, card})
+		if !drawn {return}
+		testing.expectf(t, abs(gray.x - gray.y) < 0.008 && abs(gray.y - gray.z) < 0.008, "%v shows the card neutral: %v", transform, gray)
+		testing.expectf(t, abs(gray.y - DISPLAY_ACES_GRAY) < 0.008, "%v shows the card as %v, not %v", transform, gray.y, DISPLAY_ACES_GRAY)
+	}
+	renderer_set_display_transform(r, .Neutral)
+	color := Vec3{0.5, 0.3, 0.2}
+	out, drawn := seen(t, r, color)
+	if !drawn {return}
+	for c in 0 ..< 3 {testing.expectf(t, abs(out[c] - (color[c] - DISPLAY_NEUTRAL_OFFSET)) < 0.008, "Neutral shows %v as %v", color, out)}
+	// Its highlights roll off along its curve, with no step of a LUT.
+	start := 0.8 - DISPLAY_NEUTRAL_OFFSET
+	for step in 0 ..< 24 {
+		white := math.pow(f32(2), f32(step) / 8)
+		expected := 1 - (1 - start) * (1 - start) / (white - DISPLAY_NEUTRAL_OFFSET + 1 - 2 * start)
+		bright, lit := seen(t, r, {white, white, white})
+		if !lit {return}
+		testing.expectf(t, abs(bright.y - expected) < 0.012 && abs(bright.x - bright.z) < 0.008, "Neutral shows a white of %v as %v, not %v", white, bright, expected)
 	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
@@ -78,7 +100,6 @@ the_display_lut_holds_the_aces_2_output_transform :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	if !renderer_init(r, {device = device, width = 8, height = 8}) {testing.expect(t, false, r.error); return}
 	defer renderer_destroy(r)
-	testing.expect(t, renderer_set_display_transform(r, .ACES_2), r.error)
 	lut := make([]f16, N * N * N * 4, context.temp_allocator)
 	if !testing.expect(t, rhi.texture_read(device, r.display_lut, ([^]u8)(raw_data(lut))[:len(lut) * 2]), rhi.device_error(device)) {return}
 	finite, inside := true, true

@@ -859,6 +859,7 @@ frame_constants_write :: proc(p: ^Pass) {
 @(private)
 frame_constants_fill :: proc(r: ^Renderer, to: rawptr, frame: ^Gpu_Frame) {
 	layout := &r.frame_layout
+	frame.flags |= display_frame_flags(r)
 	mem.copy(to, frame, size_of(Gpu_Frame))
 	if layout.size > size_of(Gpu_Frame) {mem.zero(rawptr(uintptr(to) + size_of(Gpu_Frame)), layout.size - size_of(Gpu_Frame))}
 	if layout.nested {

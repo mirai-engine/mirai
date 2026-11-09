@@ -89,6 +89,7 @@ FRAME_FLAG_STUDIO       :: 8
 FRAME_FLAG_GRID         :: 16
 FRAME_FLAG_GLASS        :: 32
 FRAME_FLAG_REFLECTANCE  :: 64
+FRAME_FLAG_NEUTRAL      :: 128
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).

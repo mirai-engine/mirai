@@ -542,8 +542,8 @@ Renderer :: struct {
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
-	display_lut:     rhi.Texture, // the display transform (display.odin)
-	display_transform: Display_Transform, // the one display_lut holds
+	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
+	display_transform: Display_Transform, // how the passes encode; Neutral is the default of a project
 	font:            rhi.Texture,
 	font_size:       [2]int,
 	font_pending:    rhi.Texture_Region, // texels of the atlas the next frame copies; zero: none
@@ -700,8 +700,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	white := [4]u8{255, 255, 255, 255}
 	if !renderer_set_font(r, white[:], 1, 1) {return false}
 	if !extension_counters_init(r) || !ui_offscreen_init(r) {return false}
-	// Neutral, the default of a project: only one that chooses another bakes it again.
-	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR, .Neutral) {return false}
+	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	r.hardware_rt = info.features.ray_query && r.settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	if info.features.ray_query {
 		verified, note := hardware_rt_self_test(r)

@@ -1,8 +1,8 @@
-// The display transform: exposed scene-linear Rec.709 (middle gray 0.18) to
-// what the display shows, encoded, through the LUT that display_lut.comp
-// bakes from the transform the project chooses. Its axes are log2 of each
-// channel around middle gray (display_shaper): a grading LUT in the same
-// space goes before it.
+// The display transform the project chooses: exposed scene-linear Rec.709
+// (middle gray 0.18) to what the display shows, encoded. PBR Neutral is
+// computed; ACES 2.0 is read from the LUT display_lut.comp bakes, whose axes
+// are log2 of each channel around middle gray (display_shaper): a grading LUT
+// in the same space goes before it.
 #ifndef MIRAI_DISPLAY_SLANG
 #define MIRAI_DISPLAY_SLANG
 #include "scene.slang"
@@ -48,17 +48,19 @@ float3 pbr_neutral(float3 color) {
 #ifndef DISPLAY_LUT_WRITER
 [[vk::binding(SLOT_PASS5, 0)]] Texture3D<float4> display_lut : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 
-// The encoded color of the display for an exposed scene-linear one.
-float3 display_encode(float3 scene_linear) {
-    float3 at = (display_shaper(scene_linear) * (DISPLAY_LUT_SIZE - 1.0) + 0.5) / DISPLAY_LUT_SIZE;
-    return display_lut.SampleLevel(linear_sampler, at, 0.0).rgb;
-}
-
 // The encoded color of a preview (thumbnails and the studio of the asset
 // documents) for an exposed scene-linear one: PBR Neutral, whatever the
 // display transform of the scene.
 float3 preview_encode(float3 scene_linear) {
     return linear_to_srgb(saturate(pbr_neutral(max(scene_linear, 0.0))));
+}
+
+// The encoded color of the display for an exposed scene-linear one. PBR
+// Neutral is computed: a LUT of this size shows its highlights in rings.
+float3 display_encode(float3 scene_linear) {
+    if ((frame.flags & FRAME_FLAG_NEUTRAL) != 0u) return preview_encode(scene_linear);
+    float3 at = (display_shaper(scene_linear) * (DISPLAY_LUT_SIZE - 1.0) + 0.5) / DISPLAY_LUT_SIZE;
+    return display_lut.SampleLevel(linear_sampler, at, 0.0).rgb;
 }
 #endif
 
