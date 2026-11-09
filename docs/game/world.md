@@ -32,16 +32,14 @@ brings `fog`. A plugin not listed skips its components in a scene without an err
 A new scene starts with a `Sky` and a `Sun`. Sky luminance is in nits, the sun in lux (a clear
 noon is 100000), point and spot lights in candelas, rect lights in nits.
 
-```odin
-sky:=render.SKY_DEFAULT                 // start from the defaults: a zeroed Sky is black
-sun:=render.SUN_DEFAULT
-look:=render.VIEW_VOLUME_DEFAULT        // a zeroed View_Volume has a black tint
-look.exposure.compensation=0.5
-aim:=linalg.quaternion_between_two_vector3([3]f32{0,0,1},linalg.normalize(render.SUN_DIRECTION))
-asset.builder_set(&b,asset.builder_entity(&b,"Sky"),sky)
-asset.builder_set(&b,asset.builder_entity(&b,"Sun",{rotation=aim}),sun)      // shines toward -Z
-asset.builder_set(&b,asset.builder_entity(&b,"Look"),look)                   // whole scene
+```json
+{"method":"scene.add","params":{"name":"Sky","components":{"Sky":{}}}}
+{"method":"scene.add","params":{"preset":"sun"}}
+{"method":"scene.add","params":{"name":"Look","components":{"View_Volume":{"exposure":{"compensation":0.5}}}}}
 ```
+
+A component starts from its defaults and takes the fields named. The `sun` preset aims it like the
+editor's sun, shining toward its -Z; a `View_Volume` without a `Volume` is the whole scene.
 
 - Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air
   lit by the sun: turning the sun entity then changes the whole day. One `Sky` is on at a time;

@@ -30,14 +30,13 @@ and `Rigid_Body` set to `phys.RIGID_BODY_KINEMATIC`. A conveyor belt needs no co
 
 ## Trigger zones
 
-A zone is an entity with a `Collider` whose `preset` is `phys.PRESET_TRIGGER`: it blocks nothing
-and reports what overlaps it. Scale the entity to size it.
+A zone is an entity with a `Collider` whose `preset` is `trigger` (`phys.PRESET_TRIGGER`): it
+blocks nothing and reports what overlaps it. Scale the entity to size it. `Heal_Zone` is a
+component of the game, `@(component) Heal_Zone :: struct {amount:f32}`.
 
-```odin
-box:=phys.collider_box({0.5,0.5,0.5})
-box.preset=phys.PRESET_TRIGGER
-asset.builder_set(&b,zone,box)
-asset.builder_set(&b,zone,Heal_Zone{amount=10}) // @(component) Heal_Zone :: struct {amount:f32}
+```json
+{"method":"scene.add","params":{"name":"Heal zone","scale":[4,2,4],
+ "components":{"Collider":{"preset":"trigger"},"Heal_Zone":{"amount":10}}}}
 ```
 
 Read the events in `stage="react"`; each pair gives one event per side:

@@ -12,15 +12,14 @@ the body looks; `Camera.own_hidden` leaves the head of that body out of its view
 
 ## Third person
 
-```odin
-follow:=cam.CAMERA_FOLLOW_DEFAULT       // Orbit; a probe keeps it out of walls
-follow.offset={0,1.6,0}                 // the pivot, over the feet
-follow.distance=4.5
-follow.pitch=0.3                        // radians, see the sign below
-follow.min_pitch,follow.max_pitch=-0.4,1.2
-follow.aim=true                         // shooter: it looks where the body looks
-asset.builder_set(&b,eyes,follow)
+```json
+{"method":"scene.set","params":{"entity":"Player view","components":{"Camera_Follow":{
+ "mode":"Orbit","offset":[0,1.6,0],"distance":4.5,"pitch":0.3,"min_pitch":-0.4,"max_pitch":1.2,
+ "aim":true}}}}
 ```
+
+`Orbit` keeps the camera out of walls with a probe; `offset` is the pivot, over the feet; the
+pitches are radians (the sign is below); `aim` makes it look where the body looks, as a shooter.
 
 - Shooter, the body turns with the look: `aim=true` and the body's `move_relative_to=.Look`.
 - Free orbit, the body turns toward its movement: `turn=true` (the player's `look` action turns

@@ -28,10 +28,9 @@ The nodes of `hud.ui` bind by path; the entity of the screen carries `Status`:
 
 Write it with [ui.write](writing-ui.md). In the scene, the screen and its data on one entity:
 
-```odin
-hud:=asset.builder_entity(&b,"Hud")
-asset.builder_set(&b,hud,gui.UI_Screen{asset=hud_id})           // Passive by default
-asset.builder_set(&b,hud,status)
+```json
+{"method":"scene.add","params":{"name":"Hud","components":{
+ "UI_Screen":{"asset":"hud/hud.ui"},"Status":{"message":"Hit the wall"}}}}
 ```
 
 - A path starts at a component of the entity of the screen (`UI_Screen.entity` names another
@@ -49,13 +48,14 @@ asset.builder_set(&b,hud,status)
 An entity with a `World_Widget` shows a `.ui` at its place; its paths name components of that
 entity first, so one `.ui` serves every entity that has them.
 
-```odin
-widget:=gui.WORLD_WIDGET_DEFAULT                     // a zeroed World_Widget has no size
-widget.asset,widget.size,widget.scale=sign_id,{220,70},0.01   // meters per layout unit
-widget.facing,widget.pivot=.Billboard_Upright,.Bottom_Center  // turns to the camera, stands on it
-asset.builder_set(&b,board,widget)
-asset.builder_set(&b,board,status)                   // what its paths read
+```json
+{"method":"scene.add","params":{"name":"Sign","position":[-3,1.6,2],"components":{
+ "World_Widget":{"asset":"arena/sign.ui","size":[220,70],"scale":0.01,
+  "facing":"Billboard_Upright","pivot":"Bottom_Center"},
+ "Status":{"message":"Hit the wall"}}}}
 ```
+
+`scale` is metres per layout unit; `Status` is what its paths read.
 
 - `facing`: `Billboard` (parallel to the screen), `Billboard_Upright` (turns about up) or `Fixed`
   (the rotation of the entity: its face shows toward the forward of the entity, -Z, as anything
