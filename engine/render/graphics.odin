@@ -169,7 +169,14 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 @(step="render",loops="game editor",before="render_sync")
 graphics_apply :: proc(settings:^Graphics_Settings,sync:^Render_Sync,app:^host.App) {
     if sync.graphics_applied && sync.graphics==settings^ {return}
-    graphics_quality_settle(settings,sync.graphics_applied?sync.graphics.quality:.Custom)
+    seen:=sync.graphics.quality
+    if !sync.graphics_applied {
+        // The default of the device names no preset: only a layer that says another does.
+        defaults:=GRAPHICS_SETTINGS_DEFAULT
+        if app.device!=nil {defaults=graphics_settings_for_device(rhi.device_info(app.device)^)}
+        seen=defaults.quality
+    }
+    graphics_quality_settle(settings,seen)
     graphics:=settings^
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {

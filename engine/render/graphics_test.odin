@@ -103,6 +103,24 @@ setting_a_preset_applies_it_and_a_field_changed_by_hand_reads_as_custom :: proc(
 }
 
 @(test)
+the_first_read_keeps_the_fields_of_a_project_over_the_default_and_applies_a_preset_it_names :: proc(t:^testing.T) {
+    app:=new(host.App)
+    defer free(app)
+    own:=GRAPHICS_SETTINGS_DEFAULT
+    own.shadowed_lights,own.glass_shadows,own.glass_layers=16,true,2
+    sync:=new(Render_Sync)
+    defer free(sync)
+    graphics_apply(&own,sync,app)
+    testing.expect(t,own.shadowed_lights==16 && own.glass_shadows && own.glass_layers==2 && own.quality==.Custom)
+    named:=GRAPHICS_SETTINGS_DEFAULT
+    named.quality=.Low
+    other:=new(Render_Sync)
+    defer free(other)
+    graphics_apply(&named,other,app)
+    testing.expect(t,named.quality==.Low && named.reflections==.Off)
+}
+
+@(test)
 textures_and_detail_set_the_limits_of_the_renderer_and_the_pool_follows_the_memory :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     g.textures,g.detail=.Low,.Ultra
