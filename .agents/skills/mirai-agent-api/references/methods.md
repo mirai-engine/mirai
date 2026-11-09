@@ -317,6 +317,19 @@ Reading a capture:
   validation, pacing, few frames, lost zones, a missing track.
 - **An optimization.** Capture, change, another capture under the same conditions and
   `profile.compare`; `profile.frames` and `profile.zone` explain a spike or a function.
+- **An audit.** `profile.audit` is where an agent starts: a capture with every track read against
+  the `performance` budgets of `project.mirai`
+  ([manifests](../../mirai-projects/references/projects.md#manifests)) and findings, the severest
+  first. A finding's owner comes from the package of the loop function (`Step_Info.plugin` and
+  `game`): `game` and `project_plugin` are code of the project and `scene` is what it draws (GPU
+  passes, GPU memory, loads); `plugin` and `engine` are not the project's, even when what the scene
+  holds drives them. `actionable` marks what the project can change and `next` is the call that
+  explains it. A spike belongs to the loop function that took most of the slowest frame; memory
+  that went up is `unattributed` until `profile.memory` and `profile.frames` say where.
+- **Baselines.** `profile.audit` with `save` keeps, in `.mirai/profiles/baselines` of the project
+  and outside git, what `profile.compare` reads of its capture, with its conditions. `baseline` in
+  `profile.audit` or `profile.compare` compares against it once the session that saved it closed;
+  `profile.list` names them. One from another machine or build is `comparable:false`.
 - **Against `main`.** `mirai bench compare [project] [--scene S] [--camera x,y,z,tx,ty,tz]`,
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
   or a checkout with its editor at `--release`) at `--release`, the base in the worktree of
@@ -766,7 +779,8 @@ in `build.status` (the first) and in `engine.diagnostics` (`build`).
 `active`, `named` (the manifest names it; an active one not named is a dependency or automatic) and
 `needed_by` ([manifests](../../mirai-projects/references/projects.md#manifests)).
 
-- `project.set` receives the manifest fields that change (`window` and `build` field by field;
+- `project.set` receives the manifest fields that change (`window`, `build` and `performance`
+  field by field;
   `defines` replaces the list) and `plugins: {"<plugin>": true|false}`. Everything is validated
   before writing: an invalid field, a plugin that does not exist, an automatic one, turning off one
   that another active one needs, an `icon`, a `thumbnail` or a `start_scene` that do not exist are

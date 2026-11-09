@@ -1997,7 +1997,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         loop_set:=strings.builder_make(context.temp_allocator)
         if s.loops[0] {strings.write_string(&loop_set,".Game,")}
         if s.loops[1] {strings.write_string(&loop_set,".Editor,")}
-        fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s,%v}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name,step_access(g,s).main)
+        fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s,%v,%q,%v}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name,step_access(g,s).main,project.import_plugin(s.pkg.path),strings.has_prefix(s.pkg.path,"project:") && !strings.has_prefix(s.pkg.path,"project:plugins/"))
     }
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")

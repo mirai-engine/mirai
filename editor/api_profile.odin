@@ -60,6 +60,7 @@ Api_Profile_Memory_Params :: struct {
 }
 Api_Profile_Compare_Params :: struct {
     base:int `mirai:"optional,min=0,label=Capture to compare against; 0 is the one before id"`,
+    baseline:[PROFILE_BASELINE_NAME_BYTES]u8 `mirai:"optional,text,label=A baseline of the project to compare against instead of base: profile.audit with save writes one, and profile.list names them"`,
     id:int `mirai:"optional,min=0,label=Capture compared; 0 is the last one"`,
     top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes that changed the most"`,
 }
@@ -201,6 +202,7 @@ Profile_Gpu_Compare_Out :: struct {
 Profile_Memory_Compare_Out :: struct {counters:[]Profile_Memory_Change_Out}
 Profile_Compare_Out :: struct {
     base,id:int,
+    baseline:string,
     comparable:bool,
     differences:[]Profile_Difference_Out,
     mean_ms,p95_ms:Profile_Delta_Out,
@@ -211,7 +213,7 @@ Profile_Compare_Out :: struct {
 }
 
 Profile_List_Item :: struct {id:int,label,state:string,frames:int,tracks:[]string,mean_ms,p95_ms:f64,mode,optimization,preset,document:string}
-Profile_List_Out :: struct {recording,recorded,requested:int,captures:[]Profile_List_Item}
+Profile_List_Out :: struct {recording,recorded,requested:int,captures:[]Profile_List_Item,baselines:[]string}
 
 Api_Profile_Stat :: struct {
     name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
@@ -439,7 +441,9 @@ Api_Profile_Memory_Compare :: struct {
     counters:[1]Api_Profile_Memory_Change `mirai:"list,label=The highest of each counter; empty unless both recorded the memory track"`,
 }
 Api_Profile_Compare :: struct {
-    base,id:int,
+    base:int `mirai:"label=0 when it compared against a baseline"`,
+    id:int,
+    baseline:[PROFILE_BASELINE_NAME_BYTES]u8 `mirai:"text,label=The baseline it compared against; empty: base"`,
     comparable:bool `mirai:"label=No blocking difference and neither measured with VSync or a frame limit or graphics validation"`,
     differences:[1]Api_Profile_Difference `mirai:"list,label=How their conditions differ"`,
     mean_ms:Api_Profile_Delta `mirai:"label=Of the time of a frame"`,
@@ -474,6 +478,7 @@ Api_Profile_List :: struct {
     recorded:int `mirai:"label=Frames the capture that records recorded so far"`,
     requested:int `mirai:"label=Frames the capture that records asked for"`,
     captures:[1]Api_Profile_List_Item `mirai:"list,label=Those that ended; the newest last"`,
+    baselines:[1][PROFILE_BASELINE_NAME_BYTES]u8 `mirai:"text,list,label=The baselines the project saved, by name: profile.compare and profile.audit take them"`,
 }
 
 @(private)
@@ -493,6 +498,7 @@ profile_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="profile.compare",summary="Two captures: whether they were measured alike and, track by track, zone by zone, pass by pass and counter by counter, what changed the most.",params=Api_Profile_Compare_Params,result=Api_Profile_Compare,writes_result=true,defaults=&compare_default,flags={.Read_Only},run=api_profile_compare})
     load_default:=Api_Profile_Load_Params{top=PROFILE_LOAD_TOP}
     api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=Api_Profile_Load_Params,result=Api_Profile_Loads,writes_result=true,defaults=&load_default,flags={.Read_Only},run=api_profile_load})
+    profile_audit_register(s,st)
     api_register(s,st,{name="profile.export",summary="Writes a capture as a Chrome trace (JSON) for Perfetto, chrome://tracing or Spall.",params=Api_Profile_Export_Params,result=Api_Profile_Export,run=api_profile_export})
 }
 
@@ -554,13 +560,27 @@ api_profile_get :: proc(s:^Session,call:^api.Call,id:int) -> ^Profile_Capture {
 @(private)
 api_profile_capture :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Capture_Params)
+    c:=profile_record(s,call,p^)
+    if c==nil {return}
+    if !p.advance {
+        api_profile_write(call,Profile_Recording_Out{c.id,c.label,"Recording",p.frames})
+        return
+    }
+    api_profile_write(call,profile_summary(c,p.top))
+}
+
+// Records a capture as profile.capture asks: with advance, it runs its frames
+// and returns it Done or Stopped; otherwise it returns it Recording. On nil
+// the call failed, saying why.
+@(private)
+profile_record :: proc(s:^Session,call:^api.Call,p:Api_Profile_Capture_Params) -> ^Profile_Capture {
     if !p.allow_limited {
         conditions:Profile_Conditions
         {
             context.allocator=context.temp_allocator
             conditions=profile_conditions(s)
         }
-        if refusal:=profile_refusal(profile_limits(conditions));refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
+        if refusal:=profile_refusal(profile_limits(conditions));refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return nil}
     }
     // Frames that run here run alone among the checkouts, or not at all.
     measure:workspace.Lock
@@ -571,7 +591,7 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         measure,ok,holder,compiling=workspace.measure_try(s.engine_root,fmt.tprintf("pid %d, profile.capture in %s",os.get_pid(),s.project_root),time.Duration(p.wait)*time.Second)
         if holder=="" {holder="another process"}
         what:=compiling?"A compilation":"Another measurement"
-        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s): pass a longer wait, up to 900, with a client that waits longer (mirai rpc --timeout)",what,holder,p.wait);return}
+        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s): pass a longer wait, up to 900, with a client that waits longer (mirai rpc --timeout)",what,holder,p.wait);return nil}
     }
     // While another capture records, profile_begin refuses: no frames run into it.
     profile_collect(s)
@@ -580,13 +600,11 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
     tracks:=host.Profile_Tracks{.Cpu}
     if p.gpu {tracks+={.Gpu}}
     if p.memory {tracks+={.Memory}}
-    c,error:=profile_begin(s,p.frames,base.text_get(p.label[:]),tracks)
-    if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return}
+    label:=p.label
+    c,error:=profile_begin(s,p.frames,base.text_get(label[:]),tracks)
+    if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return nil}
     c.warmup,c.unsettled=warmup,!settled
-    if !p.advance {
-        api_profile_write(call,Profile_Recording_Out{c.id,c.label,"Recording",p.frames})
-        return
-    }
+    if !p.advance {return c}
     api_frames(s,p.frames,p.dt)
     // The GPU times of the last frames come back frames later: the recording ends once they did.
     for _ in 0..<host.PROFILE_GPU_LATE {
@@ -594,7 +612,7 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
     }
     host.profile_stop(s.app)
     profile_collect(s)
-    api_profile_write(call,profile_summary(c,p.top))
+    return c
 }
 
 @(private)
@@ -624,6 +642,7 @@ api_profile_list :: proc(s:^Session,call:^api.Call) {
     }
     slice.sort_by(list[:],proc(a,b:Profile_List_Item) -> bool {return a.id<b.id})
     out.captures=list[:]
+    if s.has_project {out.baselines=profile_baselines(s.project_root)}
     api_profile_write(call,out)
 }
 
@@ -1065,6 +1084,14 @@ api_profile_compare :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Compare_Params)
     b:=api_profile_get(s,call,p.id)
     if b==nil {return}
+    if name:=base.text_get(p.baseline[:]);name!="" {
+        if p.base!=0 {api.call_fail(call,api.INVALID_PARAMS,"Pass base or baseline, not both");return}
+        if !s.has_project {api.call_fail(call,api.SERVER_ERROR,"Without a project there are no baselines");return}
+        a,error:=profile_baseline_load(s.project_root,name)
+        if error!="" {api.call_fail(call,api.INVALID_PARAMS,error);return}
+        api_profile_write(call,profile_compare(a,profile_digest(b),p.top))
+        return
+    }
     base_id:=p.base
     if base_id==0 {
         for &c in s.profiles.captures {
@@ -1075,65 +1102,70 @@ api_profile_compare :: proc(s:^Session,call:^api.Call) {
     a:=api_profile_get(s,call,base_id)
     if a==nil {return}
     if a==b {api.call_fail(call,api.INVALID_PARAMS,"base and id are the same capture");return}
-    api_profile_write(call,profile_compare(a,b,p.top))
+    api_profile_write(call,profile_compare(profile_digest(a),profile_digest(b),p.top))
 }
 
-profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Profile_Compare_Out) {
+profile_compare :: proc(a,b:Profile_Digest,top:int) -> (out:Profile_Compare_Out) {
     context.allocator=context.temp_allocator
-    out.base,out.id=a.id,b.id
+    out.base,out.id,out.baseline=a.id,b.id,a.baseline
     out.differences=profile_differences(a.conditions,b.conditions)
     apart:=false
     for d in out.differences {if d.blocking {apart=true}}
     limited:=profile_limits(a.conditions)!={} || profile_limits(b.conditions)!={}
     out.comparable=!apart && !limited
 
-    fa,fb:=profile_spread(frame_values(a,0)),profile_spread(frame_values(b,0))
-    out.mean_ms,out.p95_ms=delta(fa.mean,fb.mean),delta(fa.p95,fb.p95)
-    out.cpu.ms=delta(profile_spread(frame_values(a,1)).mean,profile_spread(frame_values(b,1)).mean)
-    both_gpu:=.Gpu in a.tracks && .Gpu in b.tracks
-    if both_gpu {out.gpu.ms=delta(profile_spread(profile_gpu_ms(a)).mean,profile_spread(profile_gpu_ms(b)).mean)}
+    out.mean_ms,out.p95_ms=delta(a.mean_ms,b.mean_ms),delta(a.p95_ms,b.p95_ms)
+    out.cpu.ms=delta(a.cpu_ms,b.cpu_ms)
+    if a.gpu && b.gpu {out.gpu.ms=delta(a.gpu_ms,b.gpu_ms)}
 
-    ma,mb:=means(a),means(b)
+    ma:=make(map[Key]f64)
+    for z in a.zones {ma[{z.name,z.worker}]=z.self_ms}
     changes:=make([dynamic]Profile_Change_Out)
     only_a,only_b:=make([dynamic]string),make([dynamic]string)
-    for key,x in ma {
-        y,found:=mb[key]
-        if !found {append(&only_a,key.name);continue}
-        d:=delta(x,y)
-        append(&changes,Profile_Change_Out{key.name,key.worker?"workers":"main",d.base,d.id,d.delta,d.delta_pct})
+    seen:=make(map[Key]bool)
+    for z in b.zones {
+        key:=Key{z.name,z.worker}
+        seen[key]=true
+        x,found:=ma[key]
+        if !found {append(&only_b,z.name);continue}
+        d:=delta(x,z.self_ms)
+        append(&changes,Profile_Change_Out{z.name,z.worker?"workers":"main",d.base,d.id,d.delta,d.delta_pct})
     }
-    for key,_ in mb {if key not_in ma {append(&only_b,key.name)}}
+    for z in a.zones {if (Key{z.name,z.worker}) not_in seen {append(&only_a,z.name)}}
     slice.sort_by(changes[:],proc(x,y:Profile_Change_Out) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
     out.cpu.zones=changes[:min(len(changes),top)]
     out.cpu.only_in_base,out.cpu.only_in_id=only_a[:min(len(only_a),top)],only_b[:min(len(only_b),top)]
 
-    pa,pb:=pass_means(a),pass_means(b)
+    pa:=make(map[string]f64)
+    for pass in a.passes {pa[pass.name]=pass.ms}
     gpu_changes:=make([dynamic]Profile_Change_Out)
-    for name,x in pa {
-        y,found:=pb[name]
+    for pass in b.passes {
+        x,found:=pa[pass.name]
         if !found {continue}
-        d:=delta(x,y)
-        append(&gpu_changes,Profile_Change_Out{name,"gpu",d.base,d.id,d.delta,d.delta_pct})
+        d:=delta(x,pass.ms)
+        append(&gpu_changes,Profile_Change_Out{pass.name,"gpu",d.base,d.id,d.delta,d.delta_pct})
     }
     slice.sort_by(gpu_changes[:],proc(x,y:Profile_Change_Out) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
     out.gpu.passes=gpu_changes[:min(len(gpu_changes),top)]
 
-    if .Memory in a.tracks && .Memory in b.tracks && len(a.memory)>0 && len(b.memory)>0 {
-        names:=PROFILE_MEMORY_NAMES
+    if a.memory && b.memory {
         memory:=make([dynamic]Profile_Memory_Change_Out)
-        for counter in Profile_Memory_Counter {
-            x,y:=f64(profile_memory_series(a,counter).high)/(1<<20),f64(profile_memory_series(b,counter).high)/(1<<20)
-            d:=delta(x,y)
-            append(&memory,Profile_Memory_Change_Out{names[counter],d.base,d.id,d.delta,d.delta_pct})
+        for y in b.counters {
+            for x in a.counters {
+                if x.name!=y.name {continue}
+                d:=delta(x.high_mb,y.high_mb)
+                append(&memory,Profile_Memory_Change_Out{y.name,d.base,d.id,d.delta,d.delta_pct})
+            }
         }
         out.memory.counters=memory[:]
     }
 
     notes:=make([dynamic]string)
+    if a.baseline!="" {append(&notes,fmt.tprintf("base is the baseline %q, saved %s",a.baseline,a.saved))}
     if apart {append(&notes,"Measured in different conditions: a change in time can be the conditions and not the code. Record both alike")}
     if limited {append(&notes,"A capture was measured with VSync, a frame limit or graphics validation (allow_limited): its frame time is not the cost; cpu_ms and the zones still compare")}
-    if a.tracks!=b.tracks {append(&notes,"They recorded different tracks: gpu and memory compare only when both recorded them")}
-    if len(a.frames)<30 || len(b.frames)<30 {append(&notes,"Fewer than 30 frames in a capture: differences of a few percent are noise")}
+    if a.gpu!=b.gpu || a.memory!=b.memory {append(&notes,"They recorded different tracks: gpu and memory compare only when both recorded them")}
+    if a.frames<30 || b.frames<30 {append(&notes,"Fewer than 30 frames in a capture: differences of a few percent are noise")}
     out.notes=notes[:]
     return
 }
@@ -1144,33 +1176,7 @@ delta :: proc(x,y:f64) -> Profile_Delta_Out {
 }
 
 @(private="file")
-frame_values :: proc(c:^Profile_Capture,which:int) -> []f64 {
-    values:=make([dynamic]f64,0,len(c.frames))
-    for f in c.frames {
-        switch which {
-        case 0: append(&values,profile_frame_ms(f))
-        case 1: append(&values,profile_frame_cpu_ms(f))
-        }
-    }
-    return values[:]
-}
-
-@(private="file")
 Key :: struct {name:string,worker:bool}
-
-@(private="file")
-means :: proc(c:^Profile_Capture) -> map[Key]f64 {
-    result:=make(map[Key]f64)
-    for agg in profile_aggregate(c) {result[{c.cpu.names[agg.name],agg.worker}]=profile_spread(agg.self).mean}
-    return result
-}
-
-@(private="file")
-pass_means :: proc(c:^Profile_Capture) -> map[string]f64 {
-    result:=make(map[string]f64)
-    for values,i in profile_passes_by_name(c) {result[c.gpu.pass_names[i]]=profile_spread(values).mean}
-    return result
-}
 
 @(private="file")
 difference_check :: proc(list:^[dynamic]Profile_Difference_Out,field:string,x,y:$T,blocking:bool) {

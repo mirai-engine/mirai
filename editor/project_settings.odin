@@ -226,7 +226,7 @@ Api_Project_Plugin :: struct {
 
 Api_Project :: struct {
     file:[256]u8 `mirai:"text,label=The project.mirai it reads and writes"`,
-    manifest:u8 `mirai:"any,label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
+    manifest:u8 `mirai:"any,label=project.mirai: name version identifier icon thumbnail start_scene plugins window build and performance"`,
     plugins:[1]Api_Project_Plugin `mirai:"list,label=Every plugin the project can see"`,
     building:bool `mirai:"label=A build of the project started: the plugins or the options of the build changed"`,
 }
@@ -240,11 +240,12 @@ API_PROJECT_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"proper
     `"start_scene":{"type":"string","description":"a .scene relative to the assets folder; empty: none"},` +
     `"window":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","description":"empty: the name"},"mode":{"enum":["Maximized","Fullscreen","Windowed"]},"width":{"type":"integer","minimum":1,"maximum":16384},"height":{"type":"integer","minimum":1,"maximum":16384}}},` +
     `"build":{"type":"object","additionalProperties":false,"properties":{"executable":{"type":"string","description":"file of the shipped game without extension; empty: from the name"},"optimization":{"enum":["Minimal","None","Size","Speed","Aggressive"]},"debug":{"type":"boolean"},"defines":{"type":"array","items":{"type":"string"},"description":"NAME or NAME=value"}}},` +
+    `"performance":{"type":"object","additionalProperties":false,"description":"what the game holds on the machine it is made for, which profile.audit checks; 0: no budget","properties":{"frame":{"type":"number","minimum":0,"description":"ms: 95th percentile of the frame time"},"memory":{"type":"number","minimum":0,"description":"MB: private memory of the process at its highest"},"load":{"type":"number","minimum":0,"description":"ms: from loading a scene or starting Play until a frame drew with all of it resident"}}},` +
     `"plugins":{"type":"object","additionalProperties":{"type":"boolean"},"description":"{\"<plugin>\": true to activate it, false to deactivate it}; project.get lists them"}}}`
 
 @(private)
 project_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,writes_result=true,flags={.Read_Only},run=api_project_get})
+    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window, build and performance budgets) and every plugin the project can see, active or not.",result=Api_Project,writes_result=true,flags={.Read_Only},run=api_project_get})
     api_register(s,st,{name="project.set",params_schema=API_PROJECT_SET_SCHEMA,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor.",result=Api_Project,writes_result=true,run=api_project_set})
 }
 

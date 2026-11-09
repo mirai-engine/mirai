@@ -100,6 +100,8 @@ Step_Info :: struct {
     loops:Loops,
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
     main:bool,      // runs on the thread that runs its loop: it receives the application (^host.App, Records) or a storage of it or of the editor
+    plugin:string,  // the plugin whose package declares it; empty for the engine and the project
+    game:bool,      // the project declares it outside its plugins, not the engine or a plugin
 }
 
 Loop_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)

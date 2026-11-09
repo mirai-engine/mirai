@@ -50,8 +50,11 @@ keeps its default; one the struct does not have is an error.
   window and the shipped game carries it at the same path. `thumbnail`, another PNG relative to the
   project, is the image the [project list](../../mirai-editor/references/panels.md#projects)
   shows it with; it does not go into the shipped game.
-- The `section=` tags of `Manifest` build the Game, Window and Build sections of the Project
-  category of the
+- `performance` holds the budgets the game keeps on the machine it is made for, which
+  [`profile.audit`](../../mirai-agent-api/references/methods.md#profiling) checks; 0 is no
+  budget. They are a decision of the user, versioned with the game, not a setting the game reads.
+- The `section=` tags of `Manifest` build the Game, Window, Build and Performance sections of the
+  Project category of the
   [settings dialog](../../mirai-editor/references/panels.md#project-settings); `plugins` and
   `sources` are `hidden` because the Plugins category edits them.
 - `sources`: the plugins of `plugins/` that come from git, each at a full commit; `catalog` marks
