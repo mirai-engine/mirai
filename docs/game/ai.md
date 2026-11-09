@@ -14,7 +14,7 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 
 ## Map
 
-- A whole working mind and the entity that carries it: [mind.md](ai/mind.md).
+- A mind: its `think`, one action and the step that runs it: [mind.md](ai/mind.md).
 - Smart objects (ammo, cover, turrets), fences the game crosses, place queries:
   [smart-objects.md](ai/smart-objects.md).
 - Animation an agent asks for: [animation](animation.md); over the network:

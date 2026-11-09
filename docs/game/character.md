@@ -26,24 +26,14 @@ A player is a seat (`inp.Seat`) that drives a body (`inp.Drivable`); a body that
 ## Body
 
 No spawn or camera code: `settings.mirai` has `{"Spawn_Settings":{"players":true}}`, the scene a
-`spawn.Spawn_Point{prefab=PLAYER_PREFAB}` entity, and the prefab the pieces below. A content tool
-writes it ([assets](assets.md)); a body and a camera both face -Z, so the eyes child needs no
-turn.
+`spawn.Spawn_Point{prefab=PLAYER_PREFAB}` entity, and the prefab the pieces of
+[a whole player](third-person.md#2-the-player). A content tool writes it ([assets](assets.md)); a
+body and a camera both face -Z, so the eyes child needs no turn. For a first-person view:
 
 ```odin
-root:=asset.scene_new_id(&s); asset.scene_entity_add(&s,root,0,"Player"); s.info.root=root
 character:=phys.character_default()
 character.move_relative_to=.Look                  // Look, Camera, World, View or Game
-walk:=phys.WALK_DEFAULT; walk.max_speed=4
-capsule:=phys.collider_character()
-asset.scene_set(&s,root,"Character",&character)
-asset.scene_set(&s,root,"Walk",&walk)
-asset.scene_set(&s,root,"Collider",&capsule)
-eyes:=asset.scene_new_id(&s); asset.scene_entity_add(&s,eyes,root,"Eyes")
-asset.scene_set(&s,eyes,"Transform",&core.Transform{{0,1.6,0},1,{1,1,1}})
-asset.scene_set(&s,eyes,"Camera",&render.Camera{fov=70*mm.RAD_PER_DEG,near=0.05,active=true})
-asset.scene_set(&s,eyes,"Camera_Follow",&cam.Camera_Follow{mode=.Eyes,offset={0,1.6,0}})
-asset.scene_set(&s,root,"Drivable",&inp.Drivable{camera=core.Entity(eyes)})
+asset.builder_set(&b,eyes,cam.Camera_Follow{mode=.Eyes,offset={0,1.6,0}})
 ```
 
 `move_relative_to` says what forward is for the seat: `Look` (first person), `Camera` (a camera
@@ -56,8 +46,11 @@ Start from `phys.WALK_DEFAULT`, then set `max_speed`, `jump_height` and the rest
 on `Walk`: sprint, air control, coyote time, crouch). A held jump keeps rising for `jump_rise`.
 **`jump_cut`** is the share of its upward speed a jump keeps when the button is let go while
 rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it, and a ledge jump is never
-cut. Locomotion does the rest from the seat's actions: the game sets how fast (`max_speed`), never
-the velocity. Flying and swimming are components too (`phys.Fly`, `phys.Swim`).
+cut. Locomotion does the rest from the seat's actions: the game sets how fast (`max_speed`), it
+does not steer by writing a velocity. A launch, such as a jump pad, works on a `Character`:
+`phys.set_velocity(requests,e,v)` replaces its velocity and `phys.apply_impulse(requests,e,impulse)`
+adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too (`phys.Fly`,
+`phys.Swim`).
 
 ## Pitfalls that fail silently
 

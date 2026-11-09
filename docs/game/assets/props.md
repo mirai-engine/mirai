@@ -1,10 +1,11 @@
 # Low-poly props from code
 
-A prop is a `geom.Mesh_Buffer` built in a few calls in the [content tool](content-tool.md):
-every `geom.*_build` appends to the buffer, parts merge into one mesh, each part is painted
-with one color and `asset.content_mesh` writes the `.mesh`. No OBJ, no import.
+A prop is a `geom.Mesh_Buffer` (import `geom "mirai:std/geom"`) built in a few calls in the
+[content tool](content-tool.md): every `geom.*_build` appends to the buffer, parts merge into one
+mesh, each part is painted with one color and `asset.content_mesh` writes the `.mesh`. No OBJ, no
+import.
 
-A palm and a bush:
+A palm:
 
 ```odin
 palm_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
@@ -18,22 +19,9 @@ palm_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
     geom.mesh_buffer_flatten(&m)                           // cut facets instead of smooth shading
     return asset.content_mesh(c,"assets/island/palm.mesh",&m)
 }
-
-bush_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
-    m:geom.Mesh_Buffer
-    geom.mesh_buffer_init(&m,context.temp_allocator)
-    for i in 0..<3 {
-        at:=len(m.positions)
-        geom.blob_build(&m,{0.9,0.75,0.9},subdivisions=1,lumps=0.22,seed=u32(i+1))
-        geom.mesh_buffer_place(&m,at,{f32(i)*0.7-0.7,0.6+f32(i%2)*0.25,0.3*f32(i-1)})
-    }
-    geom.mesh_buffer_paint(&m,{0.16,0.46,0.16,1})
-    geom.mesh_buffer_flatten(&m)
-    return asset.content_mesh(c,"assets/island/bush.mesh",&m)
-}
 ```
 
-Put them in the scene as foliage types ([whole-scene.md](whole-scene.md)) or
+Put a prop in the scene as a foliage type ([whole-scene.md](whole-scene.md)) or
 on an entity with `render.Mesh_Renderer{mesh=palm_mesh(c)}`. The asset folder is the theme of what
 it belongs to (`assets/island/`), never its kind.
 

@@ -4,9 +4,10 @@ This is a Mirai game project.
 
 ## Documentation
 
-- The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell.
-- Call it before writing game code, and read only the section the task needs. A third-person 3D
-  game is one read: `docs third-person`, with the code and the settings it needs.
+- The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell. It lists
+  the topics and their sub-pages, each with what it holds.
+- Read what the step at hand needs, with `section` for part of a topic (`mirai docs core prefabs`);
+  do not sweep it in advance.
 - Start from the code already here: `game/game.odin` and `assets/scenes/main.scene` play as they
   are; `game/shell.odin` is the main menu, pause and graphics settings, and
   `tests/scenarios/shell.mirai` drives them. Extend them instead of studying the engine.

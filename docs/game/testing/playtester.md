@@ -4,12 +4,6 @@ When the question needs judgment ("can a new player reach the door?", "is the HU
 a model plays. The game advances only between calls, so the model can take as long as it needs
 per decision and a small, slow one plays as well as a fast one.
 
-## Map
-
-- Hand a goal to the agent: [Agent](#agent).
-- Look at the state yourself, cheaply: [Inspect](#inspect).
-- Look at the image: [Images](#images).
-
 ## Agent
 
 `.claude/agents/playtester.md` says how it plays. It needs the `playtest` plugin, which the game

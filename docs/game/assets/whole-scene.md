@@ -1,9 +1,8 @@
 # A whole scene from a content tool
 
 A [content tool](content-tool.md) writes a scene with the terrain, foliage and sea it shows, in
-one run: there is no second step through the API, and nothing rewrites what the API made. Each
-plugin adds its part to `asset.Scene_Builder`, a procedure that writes its asset and adds its
-entity.
+one run: there is no second step through the API. Each plugin adds its part to
+`asset.Scene_Builder`, a procedure that writes its asset and adds its entity.
 
 ```odin
 b:asset.Scene_Builder
@@ -30,6 +29,5 @@ asset.builder_save(&b,"assets/island/island.scene")
   and `waves` a `phys.FLUID_WAVES_DEFAULT`.
 - `file` paths are the tool's: a folder of the theme of the scene, created when missing, never a
   folder of kinds. The same code gives the same bytes every run.
-- Materials a layer names can be written with `asset.material_save` in the tool too.
-- Run the tool again rather than editing the scene through the API: running it rewrites the
-  scene, so keep what you edit in the tool.
+- The tool is the source of the scene: change it there and run it again. A run rewrites the
+  scene, so an edit made through the API or the editor is lost at the next run.

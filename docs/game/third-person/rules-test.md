@@ -1,4 +1,4 @@
-# Rules and test of a third-person game
+# Rules of a run with respawn and the test that plays it
 
 The second read of [third-person](../third-person.md).
 

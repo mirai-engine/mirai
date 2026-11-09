@@ -72,6 +72,4 @@ scene, not how bright it is.
 
 ## Pitfalls that fail silently
 
-- Under `Auto`, a dark image means `compensation` is negative or the range (`min_ev100`,
-  `max_ev100`) clamps it: check them before adding light.
 - A change in the editor's view does not change the game: save the scene (`scene.save`).

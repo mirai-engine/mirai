@@ -57,7 +57,8 @@ $P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":
   one instance, `foliage.query` lists types and instances.
 - Foliage stands on the terrain by itself (`foliage_terrain`) and follows it when it is sculpted.
   Far away it becomes impostors; collision is per type.
-- A `Wind` component (`volume`) on any entity makes foliage sway; `wind` on a type scales it.
+- A `Wind` component (`volume "mirai:engine/volume"`) on any entity makes foliage sway; `wind` on
+  a type scales it.
 
 ## Pitfalls that fail silently
 

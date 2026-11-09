@@ -7,14 +7,6 @@ sounds, interfaces, meshes made from code, prefabs and scenes. Art files go thro
 `mirai import` instead ([assets](../assets.md#import)). The command that runs a tool is at the top
 of the project's `tools/content/main.odin`; run it from the project folder.
 
-## Map
-
-- Skeleton and ids: [Skeleton](#skeleton). Texture: [Texture](#texture).
-- Sound from a generated WAV: [Sound](#sound). Several sounds as one: [Sound set](#sound-set).
-- Prefab and scene: [Prefab and scene](#prefab-and-scene). A whole scene, with terrain, foliage
-  and sea: [whole-scene.md](whole-scene.md). Meshes from code: [props.md](props.md).
-- Importing art from the tool: [Import](#import).
-
 ## Skeleton
 
 ```odin
@@ -78,15 +70,9 @@ and a `weight` per sound. A set that is invalid returns `.Invalid`.
 
 ## Prefab and scene
 
-```odin
-b:asset.Scene_Builder
-asset.builder_init(&b,&c,asset.KIND_PREFAB,PLAYER_PREFAB) // KIND_SCENE for a scene
-defer asset.builder_destroy(&b)
-root:=asset.builder_entity(&b,"Player")
-eyes:=asset.builder_entity(&b,"Eyes",{position={0,1.6,0}},root)
-asset.builder_set(&b,root,phys.collider_character())
-asset.builder_save(&b,"assets/prefabs/Player.prefab")
-```
+An `asset.Scene_Builder` writes both: `asset.builder_init(&b,&c,asset.KIND_PREFAB,id)` (`KIND_SCENE`
+for a scene), `builder_entity`, `builder_set`, `builder_save` and `builder_destroy`. A whole player:
+[third-person](../third-person.md#2-the-player).
 
 - `builder_entity` also writes the `Transform`: a rotation or a scale left out is the identity.
   The entity without a parent of a prefab is its root.
@@ -111,5 +97,8 @@ report,error:=sources.import_source("source/models/crate.glb","assets/models/cra
 ## Pitfalls that fail silently
 
 - Write assets first, then prefabs, then scenes: a scene names the ids the earlier ones return.
-- Materials a terrain layer names can be written with `asset.material_save` in the tool too.
+- Materials a terrain layer names can be written in the tool too:
+  `info:=asset.MATERIAL_DEFAULTS;info.maps.base_color.texture=tex`, then
+  `asset.material_save(path,&c.types,{id=...,info=info})`; the maps are `base_color`,
+  `metallic_roughness`, `normal`, `emission` and `occlusion`.
 - Rerunning the tool rewrites the same files: an open editor picks them up at its next call.

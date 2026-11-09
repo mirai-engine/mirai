@@ -55,17 +55,8 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 is the result, read with `core.Read(core.World_Transform)`. Never keep your own child list.
 
 ```odin
-@(step="fixed")
-game_glow :: proc(hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),
-                  lamps:core.Read(Lamp),tints:^core.Table(render.Tint)) {
-    for row in 0..<core.count(lamps) {
-        lamp:=core.entity_at(lamps,row)
-        for c:=core.first_child(hierarchy,lamp);c!=core.NONE;c=core.next_sibling(hierarchy,c) {
-            if core.name_get(names,c)!="Globe" {continue}
-            if tint:=core.get(tints,c);tint!=nil {tint.emission=core.at(lamps,row).glow}
-        }
-    }
-}
+// hierarchy:core.Ref(core.Hierarchy)
+for c:=core.first_child(hierarchy,e);c!=core.NONE;c=core.next_sibling(hierarchy,c) {...}
 ```
 
 - Whole subtree, parents before children:

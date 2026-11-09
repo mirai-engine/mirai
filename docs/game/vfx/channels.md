@@ -1,4 +1,4 @@
-# Births by channel
+# Births by channel: many per tick, each with its place and velocity
 
 Use it when a game gives an effect many births per tick, each with its own place and velocity
 (bullet impacts, footsteps, sparks).

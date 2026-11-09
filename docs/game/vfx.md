@@ -22,19 +22,9 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 ## One-shot effect
 
 The prefab is one entity with `Particle_Emitter{particle=id, active=true, destroy_when_done=true}`
-and `loop` off; it deletes itself once its particles are dead.
-
-```odin
-@(step="fixed")
-hit_fx :: proc(hits:core.Read(Hit), spawns:^scene.Spawns) {
-    for i in 0..<core.count(hits) {
-        at:=core.at(hits, i).point
-        scene.request_spawn(spawns, "prefabs/Burst.prefab", {position=at}, transient=true)
-    }
-}
-```
-
-`transient=true` keeps it out of saves.
+and `loop` off; it deletes itself once its particles are dead. Spawn it as in
+[spawn and forget](core/prefabs.md#spawn-and-forget), with `transient=true`, which keeps it out of
+saves.
 
 ## Control an emitter
 

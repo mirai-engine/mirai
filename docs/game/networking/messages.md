@@ -1,4 +1,4 @@
-# Messages
+# Messages between server and clients
 
 For what is not an action or replicated state: an announcement, a purchase, a vote. A `struct` of
 plain data up to 256 bytes (an `Entity` field must name a replicated entity). Movement and buttons

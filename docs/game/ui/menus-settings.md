@@ -4,16 +4,6 @@ The shell of a new game: `game/shell.odin` holds the logic and `assets/ui/shell.
 `Switcher` whose pages are named after the members of `Shell_Page`, written by `write_shell` of
 `tools/content`. Change both and run the content tool.
 
-## Map
-
-- Colors, fonts, sizes, button shape: [Restyle](#restyle).
-- A new button or page: [Add a page](#add-a-page).
-- A new option on the settings page: [Add an option](#add-an-option).
-- Quality, scale, shadows, frame limit, fullscreen: [Apply settings](#apply-settings).
-- Keep the player's choices: [Persist](#persist).
-- Escape or Start, frozen clock: [Pause](#pause).
-- A free cursor, mouse capture: [Mouse](#mouse).
-
 ## Restyle
 
 All styles, colors and control sizes are in `write_shell`: the constants at its top
@@ -67,8 +57,10 @@ graphics.frame_limit,graphics.vsync=60,true // 0: no limit
 display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
 ```
 
-`frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a preset; what a preset
-and `render_scale` do: [settings](../ship/settings.md#an-options-menu-in-the-game).
+`frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a preset. `quality` reads
+the preset the fields are at, and changing a field by hand reads as `Custom`. Naming a preset
+resets `render_scale` to 0, which follows the target of the preset: a height of lines over the
+window, never above a pixel per point.
 
 ## Persist
 

@@ -36,9 +36,8 @@ and reports what overlaps it. Scale the entity to size it.
 ```odin
 box:=phys.collider_box({0.5,0.5,0.5})
 box.preset=phys.PRESET_TRIGGER
-asset.scene_set(&s,zone,"Collider",&box)
-heal:=Heal_Zone{amount=10}               // @(component) Heal_Zone :: struct {amount:f32}
-asset.scene_set(&s,zone,"Heal_Zone",&heal)
+asset.builder_set(&b,zone,box)
+asset.builder_set(&b,zone,Heal_Zone{amount=10}) // @(component) Heal_Zone :: struct {amount:f32}
 ```
 
 Read the events in `stage="react"`; each pair gives one event per side:

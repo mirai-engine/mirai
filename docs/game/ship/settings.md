@@ -13,7 +13,8 @@ this machine (machine settings only, shared by every project); `settings.mirai` 
 (any setting); in a shipped or played game, the player's options file (machine settings only). The
 top layer that sets a field wins. A file stores only what differs from the layers below. The
 machine and player files start with `"version"`: one of another version is left unread and the next
-save writes it anew, with no migration.
+save writes it anew, with no migration. The player's options and rebinds live in the project's user
+data folder (`host.app_user_folder`).
 
 ```json
 {
@@ -55,15 +56,10 @@ test ([player.md](player.md)).
 ## An options menu in the game
 
 A settings screen is data: its `.ui` selectors and checkboxes bind the fields of these storages
-([options](../ui/menus-settings.md#add-an-option)) and the engine keeps them. A game step may also
-write them, and the engine brings the window and the renderer to them at once.
-
-`Graphics_Settings.render_scale` is the fraction of the window that is drawn. 0 follows the target
-of the preset, a height of lines over the window, never above a pixel per point. `quality` reads
-the preset the fields are at; naming one applies it and resets the scale to 0, and changing a field
-by hand reads as `Custom`. Choices that are the game's own go in a `@(storage,persist)`
-([core](../core/saves.md)). Volume is a field of `Audio_Volumes` ([audio](../audio.md)); language
-and interface scale are `gui.UI_Preferences`.
+([options](../ui/menus-settings.md#add-an-option)) and the engine keeps them. Quality, render scale
+and writing them from code: [apply settings](../ui/menus-settings.md#apply-settings). Volume is a
+field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale are
+`gui.UI_Preferences`.
 
 ## Pitfalls that fail silently
 

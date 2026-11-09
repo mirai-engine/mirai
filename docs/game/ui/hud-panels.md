@@ -4,14 +4,6 @@ A HUD shows data the game already keeps: its `.ui` binds paths to a component an
 re-reads them each frame. The game never pushes text into widgets; it writes the component.
 The template does this with `Status` (`message`, `hits`) shown by `hud.ui` and by `sign.ui`.
 
-## Map
-
-- Text, a counter, a bar on screen: [HUD](#hud).
-- A sign, a name tag or a health bar over an entity: [World panel](#world-panel).
-- A screen on a mesh, such as a monitor or a wall: [On a mesh](#on-a-mesh).
-- Pointing at a panel with the view or the pointer: [Input](#input).
-- Writing the `.ui` itself: [writing-ui.md](writing-ui.md).
-
 ## HUD
 
 ```odin
@@ -31,10 +23,10 @@ status.hits+=1
 ```
 
 ```odin
-// scene, in the content tool (entity and put are its helpers): screen and data on one entity
-hud:=entity(&s,"Hud")
-put(&s,hud,"UI_Screen",&gui.UI_Screen{asset=hud_id})            // Passive by default
-put(&s,hud,"Status",&status)
+// scene, in the content tool: screen and data on one entity
+hud:=asset.builder_entity(&b,"Hud")
+asset.builder_set(&b,hud,gui.UI_Screen{asset=hud_id})           // Passive by default
+asset.builder_set(&b,hud,status)
 ```
 
 - A path starts at a component of the entity of the screen (`UI_Screen.entity` names another
@@ -55,8 +47,8 @@ entity first, so one `.ui` serves every entity that has them.
 widget:=gui.WORLD_WIDGET_DEFAULT                     // a zeroed World_Widget has no size
 widget.asset,widget.size,widget.scale=sign_id,{220,70},0.01   // meters per layout unit
 widget.facing,widget.pivot=.Billboard_Upright,.Bottom_Center  // turns to the camera, stands on it
-put(&s,board,"World_Widget",&widget)
-put(&s,board,"Status",&status)                       // what its paths read
+asset.builder_set(&b,board,widget)
+asset.builder_set(&b,board,status)                   // what its paths read
 ```
 
 - `facing`: `Billboard` (parallel to the screen), `Billboard_Upright` (turns about up) or `Fixed`

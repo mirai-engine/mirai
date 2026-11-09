@@ -24,14 +24,11 @@ Prefer the first that answers the question:
 
 ## Look
 
-- `play.observe`: tick, the body's place and facing, `stuck`, `problems`, the buttons of the top
-  screen and the nearest `targets`; with `step` it runs those ticks first.
 - `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
 
 ## Play by hand
 
-- A key named in consecutive `play.step` calls stays held with no release between them; a call
-  that omits it releases it, also a step with no keys. A jump held over several steps is not cut.
+- Keys across consecutive `play.step` calls: [input](testing/scenario.md#input).
 - Walk to something without a bot: `play.step` with `drive`
   ([scenario.md](testing/scenario.md#drive)).
 
@@ -49,4 +46,3 @@ Prefer the first that answers the question:
 
 - A repro plays from tick 0: give the game its ticks with `play.step` from the first one (a Play
   outside a turn runs by itself until the first `play.step`).
-- `play.stop` discards what the game changed; read what you need before it.

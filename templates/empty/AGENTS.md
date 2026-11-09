@@ -4,8 +4,10 @@ This is a Mirai game project.
 
 ## Documentation
 
-- The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell.
-- Call it before writing game code, and read only the section the task needs.
+- The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell. It lists
+  the topics and their sub-pages, each with what it holds.
+- Read what the step at hand needs, with `section` for part of a topic (`mirai docs core prefabs`);
+  do not sweep it in advance.
 - Start from the code already here: `game/game.odin` and `plugins/sample/` are small and run as
   they are. Extend them instead of studying the engine.
 - Engine sources are not the documentation. Do not read them to learn the API.

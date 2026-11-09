@@ -57,7 +57,5 @@ $P scene.add '{"name":"Valley mist","position":[0,0,0],"components":{
 - A `Plane` with the entity at the wrong height: everything below it is water, even a cellar.
 - A `Fluid_Volume` with density 0 and `Plane` shape is not made (`physics.fluid`).
 - `Fluid_Waves` on a `Box` makes no waves: the problem `physics.fluid_waves`.
-- A character that falls in floats at the surface, so a height test never fires:
-  [end a run in the water](../character/swimming.md#end-a-run-in-the-water).
 - A fog that hides the whole view is a `density` too high: lower it before touching exposure
   ([exposure.md](exposure.md)).

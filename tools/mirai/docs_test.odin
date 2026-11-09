@@ -53,7 +53,7 @@ docs_root :: proc(t:^testing.T) -> string {
         testing.expect(t,os.write_entire_file(file,transmute([]u8)text)==nil)
     }
     write(t,root,"core.md",DOCS_TOPIC)
-    write(t,root,"core/prefabs.md","Prefab body.\n")
+    write(t,root,"core/prefabs.md","# Prefabs and spawning\n\nPrefab body.\n")
     write(t,root,"ship.md","---\nname: ship\ndescription: Ship a game.\n---\n\n# Ship\n")
     return root
 }
@@ -98,7 +98,7 @@ docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(whole,"Last body."))
     index,_:=api.docs_answer(root,"","")
     testing.expect(t,strings.contains(index,"Core of a game - components, steps and phases."),index)
-    testing.expect_value(t,strings.count(index,"\n"),1)
+    testing.expect(t,strings.contains(index,"\n  core prefabs: Prefabs and spawning\nship"),index)
 
     empty,_:=os.make_directory_temp("","mirai-docs-*",context.temp_allocator)
     defer os.remove_all(empty)
@@ -151,5 +151,5 @@ the_docs_tool_is_answered_by_the_bridge :: proc(t:^testing.T) {
     instructions,_:=api.json_string(api.json_member(api.json_member(mcp_docs_instructions(root,reply),"result"),"instructions"))
     testing.expect(t,strings.contains(instructions,"mirai session start"),instructions)
     testing.expect(t,strings.contains(instructions,api.DOCS_INSTRUCTION),instructions)
-    testing.expect(t,strings.contains(instructions,"- core: Core of a game\n- ship: Ship a game."),instructions)
+    testing.expect(t,strings.contains(instructions,"- core: Core of a game\n  - core prefabs: Prefabs and spawning\n- ship: Ship a game."),instructions)
 }

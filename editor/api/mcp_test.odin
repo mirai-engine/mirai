@@ -448,6 +448,8 @@ mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
     defer os.remove_all(root)
     testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s",root,DOCS_FOLDER))==nil)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core.md",root,DOCS_FOLDER),transmute([]u8)string("---\ndescription: Entities and tables.\n---\n# Core\n\nBody.\n"))==nil)
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s/core",root,DOCS_FOLDER))==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core/prefabs.md",root,DOCS_FOLDER),transmute([]u8)string("# Prefabs and spawning\n\nPage.\n"))==nil)
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     s.docs_root=strings.clone(root,s.allocator)
@@ -458,7 +460,12 @@ mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
     reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs","arguments":{"topic":"nope"}}}`)
     testing.expect(t,is_bool(at(reply,"result","isError"),true))
     reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
-    testing.expect(t,strings.contains(string_of(at(reply,"result","instructions")),DOCS_INSTRUCTION))
+    instructions:=string_of(at(reply,"result","instructions"))
+    testing.expect(t,strings.contains(instructions,DOCS_INSTRUCTION))
+    testing.expect(t,strings.contains(instructions,"- core: Entities and tables.\n  - core prefabs: Prefabs and spawning"),instructions)
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"docs","arguments":{}}}`)
+    index:=string_of(at(reply,"result","content",0,"text"))
+    testing.expect(t,strings.contains(index,"Entities and tables.\n  core prefabs: Prefabs and spawning"),index)
 }
 
 @(test)

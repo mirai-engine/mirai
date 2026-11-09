@@ -1,16 +1,9 @@
-# Scenarios
+# Scenarios: gameplay tests as files
 
 A scenario is a gameplay test written once as a file, `tests/scenarios/<name>.mirai`. It plays a
 scene from its first tick, runs its steps in order as calls of `play.*` methods with their params,
 and stops the game. Only its steps advance the game, so the same file plays the same ticks every
 time. The first step that fails ends it.
-
-## Map
-
-- The smallest file: [Write one](#write-one). The template's `shell.mirai` is a larger one.
-- Test a value: [Conditions](#conditions). Wait for something: [Wait](#wait).
-- Press keys, click, hold an action: [Input](#input). Walk somewhere, no bot: [Drive](#drive).
-- Run them, read a failure: [Run](#run). Add the monitors of QA: [Monitors](#monitors).
 
 ## Write one
 
@@ -114,7 +107,6 @@ on any violation, which is how a repro ends ([explore-qa.md](explore-qa.md#qa)).
 
 ## Pitfalls that fail silently
 
-- Steps after the first failure do not run: fix in order, one failure at a time.
 - `ticks` and `seconds` in one step are refused; `seconds` rounds to whole ticks, at least 1.
 - A condition on a `name` reads the first entity with it; give test entities distinct names.
 - A scenario file in `tests/scenarios` that is a left-over `bug_*.mirai` runs with the rest.

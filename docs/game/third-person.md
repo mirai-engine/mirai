@@ -1,8 +1,7 @@
 ---
 name: third-person
-description: Start here for a third-person 3D game in Mirai (platformer, adventure, action) - the
-  recipe in two reads - plugins, settings, player prefab with orbit camera and jump, scene, rules
-  with respawn and the test that plays it.
+description: A worked third-person game from plugins to a test - plugins, settings, player prefab
+  with orbit camera and jump, scene, rules with respawn and the test that plays it.
 ---
 
 # A third-person game
@@ -60,14 +59,15 @@ Move, jump, look and menu have their keys already. Your own actions:
 
 ## 3. The scene
 
-Run the content tool first, then edit with `mirai rpc --project .` and `scene.save` (the tool
-rewrites the files it saves). A Sea plane is everything under its height:
+The content tool is the source of `assets/scenes/main.scene`: change `write_scene` in
+`tools/content/main.odin` and run the tool again. A run rewrites the scene, so an edit made through
+the API or the editor is lost at the next run. A Sea plane is everything under its height
+([water-fog.md](world/water-fog.md)); with `water "plugins:water/runtime"` imported, before
+`asset.builder_save`:
 
-```sh
-mirai rpc --project . scene.add '{"name":"Sea","position":[0,-1,0],"components":{
-  "Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}'
-mirai rpc --project . scene.save
+```odin
+water.builder_sea(&b,"Sea",height=-1)
 ```
 
-Hills and trees: [terrain-foliage.md](world/terrain-foliage.md). A moving platform or a zone:
-[platforms-triggers.md](character/platforms-triggers.md).
+Hills and trees in the same tool: [whole-scene.md](assets/whole-scene.md). A moving platform or a
+zone: [platforms-triggers.md](character/platforms-triggers.md).

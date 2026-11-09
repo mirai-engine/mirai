@@ -10,7 +10,7 @@ Add `phys.Swim` to the character prefab beside `Walk`, starting from `phys.SWIM_
 
 ```odin
 swim:=phys.SWIM_DEFAULT          // speed, acceleration, depth, surface_offset
-asset.scene_set(&s,root,"Swim",&swim)
+asset.builder_set(&b,root,swim)
 ```
 
 - Walking or falling, it starts swimming where the water over the ground exceeds `Swim.depth`
@@ -25,44 +25,17 @@ asset.scene_set(&s,root,"Swim",&swim)
 
 `core.Read(phys.Character_State)` of the character: `submersion` (0 to 1 of the body under the
 surface), `head_depth` (m of the top of the head under the surface, negative above it), `depth`
-(m of fluid over the feet), `fluid` (flags `In_Fluid`, `Underwater`) and `fluid_velocity`.
-
-```odin
-@(step="fixed")
-game_breath :: proc(divers:^core.Table(Diver),states:core.Read(phys.Character_State),
-                    time:core.Time) {
-    for row in 0..<core.count(divers) {
-        state,found:=core.get(states,core.entity_at(divers,row))
-        if !found {continue}
-        diver:=core.at(divers,row)
-        change:=state.head_depth>0 ? -time.dt : time.dt   // head under the surface, or out
-        diver.oxygen=clamp(diver.oxygen+change,0,diver.capacity)
-    }
-}
-```
-
-Oxygen, drowning and cold are game rules over these numbers.
-
-## End a run in the water
-
-A character floats at the surface, so testing its height fails: `Character_State.submersion` says
-it fell in. The whole rule, with a respawn:
-[the rules of a game](../third-person/rules-test.md#the-rules).
+(m of fluid over the feet), `fluid` (flags `In_Fluid`, `Underwater`) and `fluid_velocity`. Ending a
+run when it falls in: [the rules of a game](../third-person/rules-test.md#the-rules).
 
 ## The surface at a point
 
 ```odin
-@(step="fixed")
-game_surface :: proc(probes:core.Read(Probe),physics:core.Ref(phys.Physics_State)) {
-    for row in 0..<core.count(probes) {
-        at:=core.at(probes,row).point
-        sample,volume,found:=phys.fluid_at(physics,at)
-        if !found {continue}                 // no simulation yet, or no fluid there
-        under:=sample.density>0              // 0 above the surface and inside a dry box
-        // sample.height: world y of the surface; also sample.normal, sample.current;
-        // volume is the entity of the Fluid_Volume
-    }
-}
+// physics:core.Ref(phys.Physics_State); found is false with no simulation yet or no fluid there
+sample,volume,found:=phys.fluid_at(physics,at)
+under:=sample.density>0              // 0 above the surface and inside a dry box
+// sample.height: world y of the surface; also sample.normal, sample.current;
+// volume is the entity of the Fluid_Volume
 ```
 
 `phys.fluid_at` includes the waves at the world's time, so a boat or a splash follows the drawn

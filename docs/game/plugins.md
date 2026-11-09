@@ -31,35 +31,9 @@ with `.odin` sources (not `_test.odin`) is another package. `assets/` mounts und
 {"name": "heal", "version": "0.1.0", "dependencies": [], "parts": ["Runtime"]}
 ```
 
-`plugins/heal/runtime/heal.odin`: the plugin owns its data and takes requests.
-```odin
-package heal
-
-import "mirai:core"
-
-@(component)
-Health :: struct {hp:f32}
-
-Heal_Request :: struct {target:core.Entity, amount:f32}
-
-@(storage,queue)
-Heal_Requests :: struct {queue:core.Queue(Heal_Request)}
-
-heal :: proc(requests:^Heal_Requests, target:core.Entity, amount:f32) {
-    core.push(&requests.queue, Heal_Request{target, amount})
-}
-
-@(step="fixed")
-heal_apply :: proc(requests:^Heal_Requests, healths:^core.Table(Health), problems:^core.Problems) {
-    for r in core.take(&requests.queue) {
-        if health := core.get(healths, r.target); health != nil {
-            health.hp += r.amount
-        } else {
-            core.report(problems, r.target, "heal.no_health", "add Health to the entity")
-        }
-    }
-}
-```
+`plugins/heal/runtime/heal.odin` is `package heal`: the plugin owns its data and takes
+[requests](core/wiring.md#request-ask-the-library-that-owns-the-data), here a `Heal_Requests` queue
+storage and a proc `heal`.
 
 The game does `import heal "project:plugins/heal/runtime"` and, in a `@(step="fixed")` taking
 `^heal.Heal_Requests`, calls `heal.heal(requests, target, 25)`. Components show in the inspector

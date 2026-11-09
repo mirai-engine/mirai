@@ -38,10 +38,9 @@ sun:=render.SUN_DEFAULT
 look:=render.VIEW_VOLUME_DEFAULT        // a zeroed View_Volume has a black tint
 look.exposure.compensation=0.5
 aim:=linalg.quaternion_between_two_vector3([3]f32{0,0,1},linalg.normalize(render.SUN_DIRECTION))
-asset.scene_set(&s,sky_entity,"Sky",&sky)
-asset.scene_set(&s,sun_entity,"Sun",&sun)
-asset.scene_set(&s,sun_entity,"Transform",&core.Transform{{},aim,{1,1,1}})   // shines toward -Z
-asset.scene_set(&s,look_entity,"View_Volume",&look)                          // whole scene
+asset.builder_set(&b,asset.builder_entity(&b,"Sky"),sky)
+asset.builder_set(&b,asset.builder_entity(&b,"Sun",{rotation=aim}),sun)      // shines toward -Z
+asset.builder_set(&b,asset.builder_entity(&b,"Look"),look)                   // whole scene
 ```
 
 - Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air

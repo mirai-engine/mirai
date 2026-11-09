@@ -4,14 +4,6 @@ A `.ui` is a flat list of nodes in preorder with its styles beside it. A game wr
 content tool, so the same bytes come out every run; the editor and the API edit the same file.
 The template's `tools/content` writes `hud.ui`, `sign.ui` and `shell.ui`: copy the nearest one.
 
-## Map
-
-- The smallest `.ui`: [Content tool](#content-tool).
-- Hover, focus and press looks: [Variants](#variants).
-- Controls and their events: [Controls](#controls).
-- Editing a `.ui` with the open editor: [API](#api).
-- Strings in several languages: [Texts](#texts).
-
 ## Content tool
 
 ```odin
@@ -42,19 +34,9 @@ err:=host.ui_tree_save("assets/ui/hud.ui",&types,id_of("ui","hud"),
 
 ## Variants
 
-A variant changes some fields of a style while a state holds:
-
-```odin
-lit :: proc(style:u16,states:ui.Style_States,fill,stroke:ui.Color) -> ui.Tree_Style_Variant {
-    values:ui.Node_Style
-    values.fill,values.stroke=fill,stroke
-    return ui.tree_variant_record(style,"",states,{fields={.Fill,.Stroke},values=values})
-}
-variants:=[]ui.Tree_Style_Variant{
-    lit(BUTTON,{.Hovered},FACE_LIT,EDGE),lit(BUTTON,{.Focused},FACE_LIT,ACCENT),
-}
-// pass variants=variants in ui.Tree_Data; set transition=0.08 on the style to fade between looks
-```
+A variant changes some fields of a style while a state holds: `lit` in the template's
+`write_shell` makes one with `ui.tree_variant_record`. Pass them as `variants` in `ui.Tree_Data`
+and set `transition=0.08` on the style to fade between looks.
 
 `Focused` is the keyboard ring and looks different from `Hovered`: define both, or a player on
 keys cannot see where they are.
@@ -63,9 +45,8 @@ keys cannot see where they are.
 
 `Button` reports `Clicked`; `Checkbox`, `Slider`, `Selector`, `Dropdown`, `Radio`, `Number` and
 `Field` report `Changed`; `Field` also `Submitted`. A `Selector` takes its options in `text`
-separated by `|` and binds the index, or the value of options written `Label=Value`; bound to a
-setting (`Graphics_Settings.vsync`) it writes it itself. The game answers on each event:
-[events](../ui.md#events).
+separated by `|`; what each one writes: [add an option](menus-settings.md#add-an-option). The game
+answers on each event: [events](../ui.md#events).
 
 ## API
 

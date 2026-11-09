@@ -5,13 +5,6 @@ plays the same ticks. The QA monitors watch every tick the API runs (`play.step`
 `play.explore`, a filmstrip) and turn what goes wrong into a violation you can replay. Both come
 with the `playtest` plugin, which the game template enables.
 
-## Map
-
-- Sweep the world or press every button: [Explore](#explore).
-- Read what it says: [Read the result](#read-the-result).
-- Arm monitors and list violations: [QA](#qa).
-- A violation to replay and to look at: [Repro and filmstrip](#repro-and-filmstrip).
-
 ## Explore
 
 ```bash

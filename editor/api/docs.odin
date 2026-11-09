@@ -13,11 +13,12 @@ import "mirai:std/serial"
 // read it, the same with an editor (POST /mcp) and without one (mirai mcp).
 
 DOCS_FOLDER :: "docs/game"
-DOCS_INSTRUCTION :: "Call the docs tool (or mirai docs) before writing game code. Topics:"
+DOCS_INSTRUCTION :: "The game documentation, by topic and its sub-pages. Read with the docs tool (or mirai docs) what the step at hand needs, with section for part of a topic (core prefabs is topic core, section prefabs); do not sweep it in advance:"
 MCP_DOCS_TOOL :: "docs"
-MCP_DOCS_ENTRY :: `{"name":"docs","description":"Reads the game documentation of this engine, with or without an editor. Without arguments, the index of topics; with topic, that topic; with section too, one heading of it by its anchor or one of its task files (a link core/wiring.md is topic core, section wiring).","inputSchema":{"type":"object","properties":{"topic":{"type":"string"},"section":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}`
+MCP_DOCS_ENTRY :: `{"name":"docs","description":"Reads the game documentation of this engine, with or without an editor. Without arguments, the index of topics and their sub-pages; with topic, that topic; with section too, one heading of it by its anchor or one of its task files (a link core/wiring.md is topic core, section wiring).","inputSchema":{"type":"object","properties":{"topic":{"type":"string"},"section":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}`
 
-Docs_Topic :: struct {name,description:string}
+// A topic or, in pages, one of its sub-pages, whose description is its title.
+Docs_Topic :: struct {name,description:string,pages:[]Docs_Topic}
 
 // A heading of a document: its anchor, and where its line starts.
 Docs_Heading :: struct {slug:string,level,start:int}
@@ -56,7 +57,10 @@ docs_answer :: proc(root,topic,section:string) -> (text:string,ok:bool) {
     if topic=="" {
         if section!="" {return "a section needs its topic",false}
         b:=strings.builder_make(context.temp_allocator)
-        for found,i in docs_topics(root) {fmt.sbprintf(&b,"%s%-12s %s",i>0?"\n":"",found.name,found.description)}
+        for found,i in docs_topics(root) {
+            fmt.sbprintf(&b,"%s%-12s %s",i>0?"\n":"",found.name,found.description)
+            for page in found.pages {fmt.sbprintf(&b,"\n  %s %s: %s",found.name,page.name,page.description)}
+        }
         return strings.to_string(b),true
     }
     if !slice.contains(names,topic) {return fmt.tprintf("unknown topic '%s'; topics: %s",topic,strings.join(names,", ",context.temp_allocator)),false}
@@ -91,7 +95,10 @@ docs_compact :: proc(root:string) -> string {
     if len(topics)==0 {return ""}
     b:=strings.builder_make(context.temp_allocator)
     strings.write_string(&b,DOCS_INSTRUCTION)
-    for found in topics {fmt.sbprintf(&b,"\n- %s: %s",found.name,docs_brief(found.description))}
+    for found in topics {
+        fmt.sbprintf(&b,"\n- %s: %s",found.name,docs_brief(found.description))
+        for page in found.pages {fmt.sbprintf(&b,"\n  - %s %s: %s",found.name,page.name,page.description)}
+    }
     return strings.to_string(b)
 }
 
@@ -101,9 +108,23 @@ docs_topics :: proc(root:string) -> []Docs_Topic {
     topics:=make([dynamic]Docs_Topic,context.temp_allocator)
     for name in docs_names(folder) {
         text,_:=docs_read(project.path(folder,fmt.tprintf("%s.md",name),allocator=context.temp_allocator))
-        append(&topics,Docs_Topic{name,docs_description(text)})
+        pages_folder:=project.path(folder,name,allocator=context.temp_allocator)
+        pages:=make([dynamic]Docs_Topic,context.temp_allocator)
+        for page in docs_names(pages_folder) {
+            body,_:=docs_read(project.path(pages_folder,fmt.tprintf("%s.md",page),allocator=context.temp_allocator))
+            append(&pages,Docs_Topic{name=page,description=docs_title(body)})
+        }
+        append(&topics,Docs_Topic{name,docs_description(text),pages[:]})
     }
     return topics[:]
+}
+
+// The first line of a sub-page, its title; "" when that is not a heading.
+@(private="file")
+docs_title :: proc(text:string) -> string {
+    line:=text
+    if end:=strings.index_byte(text,'\n');end>=0 {line=text[:end]}
+    return strings.has_prefix(line,"# ")?strings.trim_space(line[2:]):""
 }
 
 // The names of the Markdown files of a folder, without extension and sorted.

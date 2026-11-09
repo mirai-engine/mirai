@@ -19,7 +19,7 @@ follow.distance=4.5
 follow.pitch=0.3                        // radians, see the sign below
 follow.min_pitch,follow.max_pitch=-0.4,1.2
 follow.aim=true                         // shooter: it looks where the body looks
-asset.scene_set(&s,eyes,"Camera_Follow",&follow)
+asset.builder_set(&b,eyes,follow)
 ```
 
 - Shooter, the body turns with the look: `aim=true` and the body's `move_relative_to=.Look`.
@@ -43,15 +43,7 @@ down. Angles are radians.
 ## Change the view
 
 ```odin
-@(step="fixed")
-game_view :: proc(actions:inp.Input_Of(Action),players:core.Read(inp.Drivable),
-                  changes:^cam.Camera_Changes) {
-    for row in 0..<core.count(players) {
-        if inp.pressed(actions,core.entity_at(players,row),.Use) {
-            cam.camera_mode(changes,core.at(players,row).camera,.Third_Person)
-        }
-    }
-}
+cam.camera_mode(changes,camera,.Third_Person) // in a fixed step, changes:^cam.Camera_Changes
 ```
 
 - `camera_mode(changes,camera,preset or setup,blend)`: presets `Isometric`, `Top_Down`, `Side`,
