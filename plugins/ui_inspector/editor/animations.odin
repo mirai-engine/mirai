@@ -203,6 +203,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         if ui.dropdown(ctx,ui.id(ctx,"component"),names,&chosen,{width=-1}) {n.component=u16(chosen+1);changed(u,"Component")}
     }
     if chosen<0 || chosen>=len(r.templates) {return}
+    if u.scope<0 && !p.readonly {param_rows(p,a,n,chosen)}
     if advanced(p) {component_fields_rows(p,n)}
     template:=&r.templates[chosen]
     bind_only(p,"Data",n.data[:],.Data,"What the paths of its widget that start with @ read: a struct or an entity of the game, so one widget shows the health of the player in one place and of an enemy in another")
@@ -251,6 +252,39 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     if ui.dropdown(ctx,ui.id(ctx,"override_add"),targets,&added,{width=-1,empty="Override a node",disabled=len(targets)==0}) {
         records_override(r,u.selected,targets[added],{})
         changed(u,"Add override")
+    }
+}
+
+// The parameters of a component a use says by name, each a row with what
+// it gives: changing one writes where the component says it goes.
+@(private)
+param_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node,component:int) {
+    u:=p.u
+    r:=&u.records
+    template:=&r.templates[component]
+    name:=serial.text_field(template.component.name[:])
+    data:=records_data(r)
+    imports,_:=imports_cached(&u.imports,a,data,u.allocator)
+    params:=make([dynamic]ui.Tree_Param,context.temp_allocator)
+    append_params :: proc(list:^[dynamic]ui.Tree_Param,from:[]ui.Tree_Param,name:string) {
+        for &one in from {if serial.text_field(one.component[:])==name {append(list,one)}}
+    }
+    append_params(&params,r.params[:],name)
+    source:^Records
+    if template.component.widget!={} && component<len(imports) {
+        append_params(&params,imports[component].params,name)
+        lib:Records
+        if records_load(&lib,imports[component],context.temp_allocator) {source=new_clone(lib,context.temp_allocator)}
+    }
+    for &param in params {
+        label:=serial.text_field(param.name[:])
+        w:=Doc_Write{r=r,list=r.nodes[:],scope=-1}
+        current,_:=doc_param_value(&w,u.selected,&param)
+        buffer,zero:[TEXT_EDIT]u8
+        ui.tree_text_set(buffer[:],current)
+        if value_row(p,label,Text_Value,&buffer,zero,fmt.tprintf("A parameter of %s: it goes to %s",name,serial.text_field(param.node[:]))) {
+            if records_param_set(r,u.selected,&param,serial.text_field(buffer[:]),source,name) {changed(u,"Parameter")}
+        }
     }
 }
 

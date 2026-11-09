@@ -26,6 +26,7 @@ Tree_Node :: struct {
     text_id:u64, // Localized: its text among the translations of the file; unique in the project
     fields:[TREE_TEXT_FIELDS]Tree_Text_Field, // what the names in braces of its text show
     layout:Layout,
+    layout_own:Style_Keys, // what of its layout is its own: the rest comes from its style when that gives it
     float:Float,
     clip:bool,
     block:bool,
@@ -80,14 +81,46 @@ Tree_Translation :: struct {
 // The nodes a named style is for: a node is offered the styles of its family.
 Style_Family :: enum u8 {Box, Text, Control}
 
-// What the editor knows of a style, by its row: none of it builds the tree.
+// What is known of a style by its row: its name and what its names resolve
+// to when a tree is written and linked (tree_settle). Only its layout and
+// blur reach the nodes, at load.
 Tree_Style_Info :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // empty: no style, the own look of the node that has it
     base:u16, // row plus one of the style a node overrides with this one until it saves it there; 0: none
     family:Style_Family,
     defaults:Node_Kinds, // the kinds whose new nodes take this style; a kind is in one style of a file at most
     from:u16, // row plus one of the component whose file has the style of this name: this row is that style once linked; 0: its own
+    extends:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // the style it takes what it does not set from, here or in a file its tree links; empty: none
+    sets:Style_Keys, // what it sets itself, with an extends; its layout and blur also without
+    layout:Layout,   // of the nodes that take it, in what layout_keys says
+    layout_keys:Style_Keys, // what of layout it gives: what it sets and what it extends
+    blur:f32,        // of what is behind the nodes that take it
 }
+// A value of a file by name: changing it reaches every style that names it.
+Tree_Token :: struct {
+    name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+    numeric:bool, // a number, not a color
+    color:Color,
+    number:f32,
+}
+// A value of a style, or of a rule of it (variant and states), that a token
+// gives.
+Tree_Token_Use :: struct {
+    style:u16, // row of styles
+    variant:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+    states:Style_States,
+    key:Style_Key,
+    token:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+}
+// A parameter of a component: what a use of it says by name and where it
+// goes, a field of one of its nodes (empty node: its root).
+Tree_Param :: struct {
+    component:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+    name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+    node:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
+    field:Tree_Param_Field,
+}
+Tree_Param_Field :: enum u8 {Text,Style,Data,Bind_Text,Bind_Value,Bind_Visible,Bind_Selected,Bind_Disabled,Bind_Items,Bind_Image,Bind_Tint,Bind_Variant,Variant,Action,Tag,Accepts}
 Tree_Font :: struct {
     font:base.Asset_Id, // a .font
 }
@@ -131,6 +164,9 @@ Tree_Data :: struct {
     translations:[]Tree_Translation,
     grid_tracks:[]Grid_Tracks, // the columns a Grid names by Layout.tracks
     text:[]u8, // the texts of nodes and translations
+    tokens:[]Tree_Token,         // values by name that styles and other files take
+    token_uses:[]Tree_Token_Use, // which values of styles name them
+    params:[]Tree_Param,         // of its components, by name
 }
 
 // A text of the records; empty when it is outside them.
@@ -219,7 +255,7 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
     if len(resources.programs)!=0 && len(resources.programs)!=len(data.styles) {return false}
     if !tree_rows_named(data.nodes) || !tree_rows_named(data.styles) || !tree_rows_named(data.images) || !tree_rows_named(data.anims) {return false}
     if !tree_rows_named(data.variants) || !tree_rows_named(data.components) || !tree_rows_named(data.component_nodes) || !tree_rows_named(data.overrides) {return false}
-    if !tree_rows_named(data.tracks) || !tree_rows_named(data.keys) || !tree_rows_named(data.anim_sets) {return false}
+    if !tree_rows_named(data.tracks) || !tree_rows_named(data.keys) || !tree_rows_named(data.anim_sets) || !tree_rows_named(data.style_infos) {return false}
     for font in data.fonts {if font.font=={} {return false}}
     // An info is that of a style and names as its base another style.
     if len(data.style_infos)>len(data.styles) {return false}
@@ -227,6 +263,7 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
     expanded,ok:=tree_expand(data,allocator)
     if !ok {return false}
     defer delete(expanded,allocator)
+    tree_nodes_take_styles(expanded,data.style_infos)
     data.nodes=expanded
     strings:=0
     for &node in data.nodes {

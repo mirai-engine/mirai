@@ -265,8 +265,9 @@ bind_types_host :: proc(b:^Bind_Types,info:^core.World_Info,allocator:runtime.Al
 BIND_PROBLEMS :: 16 // problems a check of one .ui reports at most
 
 // What fails: a path the game does not have, a name in braces of a text, a
-// widget it uses, or records that do not load.
-Bind_Fault :: enum u8 {Path,Template,Widget,Load}
+// widget it uses, records that do not load, or a name of a style, a token, a
+// component or a parameter that resolves to nothing.
+Bind_Fault :: enum u8 {Path,Template,Widget,Load,Name}
 
 WIDGET_MISSING :: "a widget it uses is missing, does not load or uses it back"
 
@@ -374,6 +375,7 @@ bind_problem_text :: proc(a:^host.Assets,problem:^Bind_Problem) -> string {
     file:=editor.asset_name_of(a,problem.asset,"missing")
     switch problem.fault {
     case .Widget,.Load: return fmt.tprintf("%s does not load: %s",file,serial.text_field(problem.path[:]))
+    case .Name:         return fmt.tprintf("%s: %s",file,serial.text_field(problem.path[:]))
     case .Template:     return fmt.tprintf("%s: node '%s' has a name in braces of its text without a field, or whose field names a path the game does not have or cannot show",file,serial.text_field(problem.name[:]))
     case .Path:
     }
@@ -493,9 +495,12 @@ bind_check_file :: proc(problems:^[dynamic]Bind_Problem,types:^Bind_Types,alloca
     count:int
     records:Records
     if records_read(a,id,&records,context.temp_allocator) {
-        data:=records_data(&records)
-        imports,imported:=host.ui_tree_imports(a,data)
-        count=bind_check(types,allocator,a,info,data,imports,imported,found[:])
+        count=records_names_check(a,&records,found[:])
+        if count<len(found) {
+            data:=records_data(&records)
+            imports,imported:=host.ui_tree_imports(a,data)
+            count+=bind_check(types,allocator,a,info,data,imports,imported,found[count:])
+        }
     } else {
         found[0]={row=-1,node=-1,fault=.Load}
         ui.tree_text_set(found[0].path[:],"its file cannot be read")
@@ -514,6 +519,99 @@ bind_check_all :: proc(problems:^[dynamic]Bind_Problem,types:^Bind_Types,allocat
         if file.kind!=asset.KIND_UI || file.id=={} {continue}
         bind_check_file(problems,types,allocator,a,info,file.id)
     }
+}
+
+// The names of a .ui that resolve to nothing: of styles, tokens, components
+// and parameters, with where. What the file named in another that changed
+// since it was written shows here, before it fails to load. How many went to out.
+records_names_check :: proc(a:^host.Assets,r:^Records,out:[]Bind_Problem) -> (count:int) {
+    args:=Tree_Args{}
+    report :: proc(out:[]Bind_Problem,count:^int,format:string,args:..any) {
+        if count^>=len(out) {return}
+        out[count^]={row=-1,node=-1,fault=.Name}
+        ui.tree_text_set(out[count^].path[:],fmt.tprintf(format,..args))
+        count^+=1
+    }
+    libs:=make([dynamic]Doc_Lib,context.temp_allocator)
+    args.libs=&libs
+    for &template in r.templates {
+        if template.component.widget=={} {continue}
+        seen:=false
+        for &lib in libs {seen||=lib.id==template.component.widget}
+        if seen {continue}
+        records:Records
+        if records_read(a,template.component.widget,&records,context.temp_allocator) {append(&libs,Doc_Lib{template.component.widget,records})}
+    }
+    has_style :: proc(r:^Records,libs:[]Doc_Lib,name:string) -> bool {
+        if tree_style_row(r,name)>=0 {return true}
+        for &lib in libs {
+            for &info in lib.records.style_infos {if serial.text_field(info.name[:])==name {return true}}
+        }
+        return false
+    }
+    for &info,row in r.style_infos {
+        name:=records_style_name(r,row)
+        if ext:=serial.text_field(info.extends[:]);ext!="" && !has_style(r,libs[:],ext) {
+            report(out,&count,"style '%s' extends '%s', which is no style of this file or of a file it uses",name,ext)
+        }
+        if info.from!=0 {
+            found:=false
+            for &lib in libs {
+                for &other in lib.records.style_infos {found||=other.name==info.name}
+            }
+            if !found {report(out,&count,"nodes take the style '%s', which the file it is taken from no longer has",name)}
+        }
+    }
+    for &use in r.token_uses {
+        token:=serial.text_field(use.token[:])
+        if doc_token_find(r,libs[:],token)==nil {
+            report(out,&count,"style '%s' names the token '%s', which is not in tokens or in a file this one uses",records_style_name(r,int(use.style)),token)
+        }
+    }
+    for &p in r.params {
+        component:=serial.text_field(p.component[:])
+        node:=serial.text_field(p.node[:])
+        if node=="" {continue}
+        found:=false
+        for &template in r.templates {
+            if template.component.widget!={} || serial.text_field(template.component.name[:])!=component {continue}
+            for &n in template.nodes {found||=serial.text_field(n.name[:])==node}
+        }
+        if !found {report(out,&count,"the parameter '%s' of '%s' goes to node '%s', which the component does not have",serial.text_field(p.name[:]),component,node)}
+    }
+    for &n in r.nodes {
+        if n.kind!=.Component || n.component==0 || int(n.component)>len(r.templates) {continue}
+        c:=&r.templates[n.component-1].component
+        name:=serial.text_field(c.name[:])
+        if !c.named && c.widget=={} {continue}
+        if c.named {
+            found:=false
+            for &lib in libs {
+                if lib.id!=c.widget {continue}
+                for &other in lib.records.templates {found||=!other.component.library && serial.text_field(other.component.name[:])==name}
+            }
+            if !found {report(out,&count,"node '%s' uses the component '%s', which its file no longer has",serial.text_field(n.name[:]),name)}
+        }
+        // A parameter a use gives: that its node still exists is the check of the load.
+    }
+    for &o in r.overrides {
+        n:=&r.nodes[o.instance] if int(o.instance)<len(r.nodes) else nil
+        if n==nil || n.kind!=.Component || n.component==0 || int(n.component)>len(r.templates) {continue}
+        c:=&r.templates[n.component-1].component
+        if !c.named {continue}
+        name:=serial.text_field(c.name[:])
+        target:=serial.text_field(o.node[:])
+        found:=false
+        for &lib in libs {
+            if lib.id!=c.widget {continue}
+            for &other in lib.records.templates {
+                if other.component.library || serial.text_field(other.component.name[:])!=name {continue}
+                for &tn in other.nodes {found||=serial.text_field(tn.name[:])==target}
+            }
+        }
+        if !found {report(out,&count,"node '%s' sets node '%s' of '%s', which the component does not have",serial.text_field(n.name[:]),target,name)}
+    }
+    return
 }
 
 // Whether the game lacks what a binding of the node chosen names.
@@ -974,7 +1072,7 @@ Ui_Rename_Result :: struct {
 bind_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",params=Ui_Paths_Params,params_info=type_info_of(Ui_Paths_Params),result=Ui_Paths_Result,result_info=type_info_of(Ui_Paths_Result),writes_result=true,flags={.Read_Only},run=api_paths})
     editor.api_method_register(s,{name="ui.bind",summary="Binds a property of a node of a .ui to a path of the data of the game, checked against its types, or unbinds it. One step of history; the file waits for Save.",params=Ui_Bind_Params,params_info=type_info_of(Ui_Bind_Params),result=Ui_Bind_Result,result_info=type_info_of(Ui_Bind_Result),run=api_bind})
-    editor.api_method_register(s,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, and each .ui that does not load with why.",params=Ui_Empty_Params,params_info=type_info_of(Ui_Empty_Params),result=Ui_Check_Result,result_info=type_info_of(Ui_Check_Result),writes_result=true,flags={.Read_Only},run=api_check})
+    editor.api_method_register(s,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",params=Ui_Empty_Params,params_info=type_info_of(Ui_Empty_Params),result=Ui_Check_Result,result_info=type_info_of(Ui_Check_Result),writes_result=true,flags={.Read_Only},run=api_check})
     editor.api_method_register(s,{name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",params=Ui_Rename_Params,params_info=type_info_of(Ui_Rename_Params),result=Ui_Rename_Result,result_info=type_info_of(Ui_Rename_Result),writes_result=true,run=api_rename})
     texts_api_register(s)
 }
@@ -1100,9 +1198,9 @@ records_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,label:
     if !found {return "the .ui is not in the assets",false}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     records_tidy(records)
-    data:=records_data(records)
-    imports,imported:=host.ui_tree_imports(a,data)
+    imports,imported:=records_settle(records,a)
     if !imported {return WIDGET_MISSING,false}
+    data:=records_data(records)
     bytes,error:=host.ui_tree_bytes(&a.types,id,data,imports,context.temp_allocator)
     if error==.Invalid {return fmt.tprintf("the interface would not load: %s",load_why(a,data,imports)),false}
     if error!=.None {return fmt.tprintf("the interface could not be written: %v",error),false}

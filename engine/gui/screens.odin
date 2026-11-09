@@ -3,6 +3,8 @@ package gui
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:strings"
+import masset "mirai:asset"
 import "mirai:core"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
@@ -287,6 +289,57 @@ storage_named :: proc(world:core.World_Ref,name:string) -> ^core.Storage_Info {
         if s.place==world.place && !s.by_world && s.name==name {return &s}
     }
     return nil
+}
+
+// Says once what a name a step asked of a screen that does not have it is:
+// the screen, and what it does have.
+@(private)
+asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
+    for &asked in gui.names_asked[:gui.names_asked_count] {
+        if asked.checked {continue}
+        found:=false
+        slots:=core.entity_map_get(&gui.index,asked.entity)
+        if slots==nil {continue}
+        any:=false
+        for slot in slots^ {
+            if slot==0 {continue}
+            content:=host.content_ui(app,gui.instances[slot-1].asset)
+            if content==nil || gui.instances[slot-1].failed {continue}
+            any=true
+            for &node in content.tree.nodes[:content.tree.node_count] {
+                if node.name==asked.name {found=true;break}
+            }
+            if found {break}
+        }
+        if !any {continue}
+        asked.checked=true
+        if !found {asked_report(gui,app,&asked,slots,problems)}
+    }
+}
+
+// The problem of a name no interface of the entity has.
+@(private)
+asked_report :: proc(gui:^Gui,app:^host.App,asked:^Asked_Name,slots:^Instance_Slots,problems:^core.Problems) {
+    screen:[base.ASSET_ID_TEXT]u8
+    title:=""
+    has:=make([dynamic]string,context.temp_allocator)
+    for slot in slots^ {
+        if slot==0 {continue}
+        id:=gui.instances[slot-1].asset
+        if title=="" {title=host.assets_name(app.assets,id,&screen)}
+        file:masset.Asset
+        if host.assets_file(app.assets,id,masset.KIND_UI,&file)!=.None {continue}
+        defer masset.asset_close(&file)
+        data,error:=host.ui_tree_view(&file,&app.assets.types)
+        if error!=.None {continue}
+        for &n in data.nodes {
+            #partial switch n.kind {
+            case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio,.Component,.Tabs:
+                if text:=string(cstring(&n.name[0]));text!="" {append(&has,text)}
+            }
+        }
+    }
+    core.report(problems,asked.entity,"gui.names","a step asks interface %s for '%s', which it does not have, so that event never comes; its nodes of events are: %s",title,base.text_get(asked.text[:]),strings.join(has[:],", ",context.temp_allocator))
 }
 
 // The instance of the interface of a screen or a widget, made again when its

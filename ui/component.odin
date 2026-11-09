@@ -35,14 +35,30 @@ Tree_Style_Variant :: struct {
     variant:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     states:Style_States,
     patch:Style_Patch,
+    own:Style_Keys,       // what it sets itself; none: every value it has, unless inherited
+    inherited:bool,       // kept for a style that extends the one it came from: tree_settle makes it again
+    extends:Style_States, // the states of another rule of its style and variant it starts from
 }
 TREE_EXPANDED_NODES :: 65535
+
+// What of its layout v gives over what node has: what v has as its own, or
+// all of it when v does not say.
+@(private)
+tree_layout_patch :: proc "contextless" (node,v:^Tree_Node) {
+    if v.layout_own=={} {
+        node.layout=v.layout
+        node.layout_own=LAYOUT_KEYS
+        return
+    }
+    for key in v.layout_own&LAYOUT_KEYS {layout_key_copy(&node.layout,&v.layout,key)}
+    node.layout_own+=v.layout_own&LAYOUT_KEYS
+}
 
 @(private)
 tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tree_Node) {
     if .Text in fields {node.text,node.text_id,node.fields=v.text,v.text_id,v.fields}
     if .Style in fields {node.style=v.style}
-    if .Layout in fields {node.layout=v.layout}
+    if .Layout in fields {tree_layout_patch(node,v)}
     if .Float in fields {node.float=v.float}
     if .Image in fields {node.image=v.image}
     if .Animations in fields {node.anims=v.anims}

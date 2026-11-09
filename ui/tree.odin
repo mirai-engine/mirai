@@ -178,6 +178,7 @@ Widget_Tree :: struct {
     grid_tracks:[]Grid_Tracks,grid_track_count:int,
     anim_names:[]u64,  // name_hash of each animation, by Anim minus one: what tree_play finds
     programs:[]u32,    // of each style: the ui program of its fill; 0: none
+    pages_focused:bool, // tree_pages_focus went over its nodes: the first build does it
     allocator:runtime.Allocator,
 }
 Widget_Tree_Desc :: struct {
@@ -654,6 +655,10 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     for g in tree.grid_tracks[:tree.grid_track_count] {if grid_tracks_add(ctx,g)==0 {break}}
     b.tracks_end=ctx.layout.track_count
     instance.bar_next_count=0
+    if !tree.pages_focused {
+        tree_pages_focus(tree.nodes[:tree.node_count])
+        tree.pages_focused=true
+    }
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}

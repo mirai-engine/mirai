@@ -55,14 +55,26 @@ the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing
 
 // The helpers read the events of a frame as those of a tick, from the slice events_this_frame gives.
 @(test)
+a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
+    gui_:Gui
+    a,b:=core.entity_make(1,1),core.entity_make(2,1)
+    asked_frame(&gui_,a,"play")
+    asked_frame(&gui_,a,"play")
+    asked_frame(&gui_,b,"play")
+    asked_frame(&gui_,a,"")
+    testing.expect_value(t,gui_.names_asked_count,2)
+    testing.expect(t,gui_.names_asked[0].name==base.name_hash("play") && gui_.names_asked[0].entity==a,"what was asked, each once")
+}
+
+@(test)
 the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
     entity:=core.entity_make(1,1)
-    events:=[]UI_Event{
+    events:=Frame_Events{items=[]UI_Event{
         {entity=entity,name=base.name_hash("play"),kind=.Clicked},
         {entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
         {entity=entity,kind=.Back},
         {kind=.Menu},
-    }
+    }}
     testing.expect(t,menu_pressed(events))
     testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
     value,ok:=changed_value(events,entity,"volume")
@@ -78,7 +90,7 @@ events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T)
     defer {delete(gui.pending);delete(gui.arrived);delete(events.items)}
     event:=UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked}
     read :: proc(t:^testing.T,gui:^Gui,want:int,loc:=#caller_location) {
-        testing.expect_value(t,len(events_this_frame(gui)),want,loc=loc)
+        testing.expect_value(t,len(events_this_frame(gui).items),want,loc=loc)
     }
     // Two ticks: the second leaves UI_Events empty, this frame still has it, the next one does not.
     append(&gui.pending,event)

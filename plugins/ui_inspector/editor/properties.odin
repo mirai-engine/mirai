@@ -498,28 +498,44 @@ binding_row :: proc(p:^Pane,label:string,field:^[ui.TREE_PATH_CAPACITY]u8,about:
 @(private)
 section_layout :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
-    l:=&n.layout
-    d:=node_default(n.kind).layout
     list:=scope_nodes(u)
-    edit(u,"Layout",size_row(p,"Width",&l.width,d.width))
-    if l.width.kind==.Fit || l.width.kind==.Grow {edit(u,"Layout",limits_row(p,"Width limits",&l.width,d.width))}
-    edit(u,"Layout",size_row(p,"Height",&l.height,d.height))
-    if l.height.kind==.Fit || l.height.kind==.Grow {edit(u,"Layout",limits_row(p,"Height limits",&l.height,d.height))}
-    edit(u,"Layout",value_row(p,"Aspect",Positive_Value,&l.aspect,d.aspect,"The width over the height it keeps: the side that fits gives the other; 0: none"))
-    // How it places itself in what holds it.
-    if parent:=int(n.parent);parent>=0 && parent<len(list) {
-        about:="Where it goes across the direction of what holds it, in its cell of a grid or in a stack: as what holds it says, or on its own"
-        edit(u,"Layout",value_row(p,"Align self X",Enum_Value(ui.Self_Align),&l.self_x,d.self_x,about))
-        edit(u,"Layout",value_row(p,"Align self Y",Enum_Value(ui.Self_Align),&l.self_y,d.self_y,about))
-        if list[parent].layout.direction==.Grid {edit(u,"Layout",value_row(p,"Span",Span_Value,&l.span,d.span,"The columns of the grid it takes; 0 is 1"))}
+    holds:=ui.node_kind_holds(n.kind) || n.kind==.Action_Bar
+    grid:=false
+    if parent:=int(n.parent);parent>=0 && parent<len(list) {grid=list[parent].layout.direction==.Grid}
+    layout_rows(p,&n.layout,node_default(n.kind).layout,&n.layout_own,n,int(n.parent)>=0 && int(n.parent)<len(list),holds,grid)
+}
+
+// The rows of a layout, of a node or of a style: the row a person changes is
+// its own from then on, what its style gave it until then. own: the keys of
+// the layout that are set here. n: the node, for its grid.
+@(private)
+layout_rows :: proc(p:^Pane,l:^ui.Layout,d:ui.Layout,own:^ui.Style_Keys,n:^ui.Tree_Node,in_parent,holds,grid:bool) {
+    u:=p.u
+    row :: proc(p:^Pane,own:^ui.Style_Keys,key:ui.Style_Key,changes:bool) {
+        if changes {
+            own^+={key}
+            changed(p.u,"Layout")
+        }
     }
-    if ui.node_kind_holds(n.kind) || n.kind==.Action_Bar {
-        edit(u,"Layout",value_row(p,"Direction",Enum_Value(ui.Direction),&l.direction,d.direction,"How it lays out what it holds: in a row, in a column, in a grid of Columns cells, in rows that wrap where the next does not fit, or one over another"))
-        if l.direction==.Grid {grid_rows(p,n)}
-        edit(u,"Layout",value_row(p,"Align X",Align_X_Value,&l.align_x,d.align_x,"Where what it holds goes across it when it does not fill it; to fill it, a node grows"))
-        edit(u,"Layout",value_row(p,"Align Y",Align_Y_Value,&l.align_y,d.align_y,"Where what it holds goes down it when it does not fill it; to fill it, a node grows"))
-        edit(u,"Layout",value_row(p,"Gap",Positive_Value,&l.gap,d.gap,"The room between the nodes it holds"))
-        edit(u,"Layout",value_row(p,"Padding",Sides_Value,&l.padding,d.padding,"The room between its edges and what it holds"))
+    row(p,own,.Width,size_row(p,"Width",&l.width,d.width))
+    if l.width.kind==.Fit || l.width.kind==.Grow {row(p,own,.Width,limits_row(p,"Width limits",&l.width,d.width))}
+    row(p,own,.Height,size_row(p,"Height",&l.height,d.height))
+    if l.height.kind==.Fit || l.height.kind==.Grow {row(p,own,.Height,limits_row(p,"Height limits",&l.height,d.height))}
+    row(p,own,.Aspect,value_row(p,"Aspect",Positive_Value,&l.aspect,d.aspect,"The width over the height it keeps: the side that fits gives the other; 0: none"))
+    // How it places itself in what holds it.
+    if in_parent {
+        about:="Where it goes across the direction of what holds it, in its cell of a grid or in a stack: as what holds it says, or on its own"
+        row(p,own,.Self_X,value_row(p,"Align self X",Enum_Value(ui.Self_Align),&l.self_x,d.self_x,about))
+        row(p,own,.Self_Y,value_row(p,"Align self Y",Enum_Value(ui.Self_Align),&l.self_y,d.self_y,about))
+        if grid {row(p,own,.Span,value_row(p,"Span",Span_Value,&l.span,d.span,"The columns of the grid it takes; 0 is 1"))}
+    }
+    if holds {
+        row(p,own,.Direction,value_row(p,"Direction",Enum_Value(ui.Direction),&l.direction,d.direction,"How it lays out what it holds: in a row, in a column, in a grid of Columns cells, in rows that wrap where the next does not fit, or one over another"))
+        if l.direction==.Grid && n!=nil {grid_rows(p,n)}
+        row(p,own,.Align_X,value_row(p,"Align X",Align_X_Value,&l.align_x,d.align_x,"Where what it holds goes across it when it does not fill it; to fill it, a node grows"))
+        row(p,own,.Align_Y,value_row(p,"Align Y",Align_Y_Value,&l.align_y,d.align_y,"Where what it holds goes down it when it does not fill it; to fill it, a node grows"))
+        row(p,own,.Gap,value_row(p,"Gap",Positive_Value,&l.gap,d.gap,"The room between the nodes it holds"))
+        row(p,own,.Padding,value_row(p,"Padding",Sides_Value,&l.padding,d.padding,"The room between its edges and what it holds"))
     }
 }
 
@@ -579,7 +595,7 @@ section_floating :: proc(p:^Pane,n:^ui.Tree_Node) {
 section_focus :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
     d:=node_default(n.kind).flags
-    if focusable(n.kind) {edit(u,"Navigation",flag_row(p,"Focused first",&n.flags,.Focus_First,d,"It has the focus when the interface shows"))}
+    if focusable(n.kind) {edit(u,"Navigation",flag_row(p,"Focused first",&n.flags,.Focus_First,d,"It asks for the focus when its page shows; without this the first control of the page has it"))}
     edit(u,"Navigation",flag_row(p,"Skipped",&n.flags,.Skip,d,"Navigation goes past it, and past what it holds"))
     if ui.node_kind_holds(n.kind) {
         edit(u,"Navigation",flag_row(p,"Wraps sideways",&n.flags,.Wrap_X,d,"Past its last node to the right, the focus goes to its first"))
@@ -719,8 +735,9 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     // The changes of this node to the style it shares: into the style, or away.
     if base>=0 && !p.readonly {
         p.flush=true
-        if row(p,"Changes",fmt.tprintf("What this node changes of %s, marked *: Apply to style writes it into the style, for every node that has it; Revert leaves the style as it is and the node with it",records_style_name(r,base))) {
-            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+        lent:=r.style_infos[base].from!=0
+        if row(p,"Changes",fmt.tprintf("What this node changes of %s, marked *: Apply to style writes it into the style, for every node that has it; Revert leaves the style as it is and the node with it. A style another file lends is changed in that file",records_style_name(r,base))) {
+            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",style=.Field,width=-1,height=th.row,size=th.font_small,disabled=lent}).clicked {
                 n.style=u16(records_style_save(r,int(n.style)))
                 changed(u,"Apply to style")
             }
@@ -742,6 +759,27 @@ style_rename_begin :: proc(u:^Ui_Inspector,row:int) {
     u.style_name_length=copy(u.style_name[:len(u.style_name)-1],records_style_name(&u.records,row))
 }
 
+// What names give a style, in the Style card: the style it extends, and the
+// rows of the layout it gives every node that takes it. Changing a layout
+// here reaches them at once, as the file settles when it is written.
+@(private)
+style_names_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
+    r:=&p.u.records
+    row:=int(n.style)
+    if row<=0 || row>=len(r.style_infos) || records_style_base(r,row)>=0 || !records_style_named(r,row) {return}
+    info:=&r.style_infos[row]
+    ctx:=p.s.gui.ctx
+    if p.needle=="" {
+        if ext:=serial.text_field(info.extends[:]);ext!="" {ui.label(ctx,fmt.tprintf("Extends %s",ext),ctx.theme.font_small,ctx.theme.text_muted)}
+        if info.from!=0 {ui.label(ctx,"From another file: change it there",ctx.theme.font_small,ctx.theme.text_muted)}
+    }
+    if info.from!=0 || p.readonly {return}
+    open:=p.u.ux.style_layout_open
+    defer p.u.ux.style_layout_open=open
+    if p.needle=="" && !subsection(p,ui.id(ctx,"style_layout"),"Layout of the style",&open) {return}
+    layout_rows(p,&info.layout,{},&info.sets,nil,true,true,false)
+}
+
 // The style of the node: its look, box and text, in the variant it shows,
 // and below it what each state changes, folded, and the rules of several
 // states together.
@@ -755,6 +793,7 @@ section_style :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     style_head(p,n)
     if p.style.row>=len(r.styles) {return}
     if users:=records_style_users(r,int(n.style));users>1 && p.needle=="" && records_style_named(r,int(n.style)) {ui.label(ctx,fmt.tprintf("Shared by %d nodes",users),th.font_small,th.text_muted)}
+    style_names_rows(p,n)
     // What lays the text out is the style's in every variant and state: first.
     fixed_rows(p,n)
     look_head(p,n)

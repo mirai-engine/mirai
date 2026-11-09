@@ -90,6 +90,7 @@ Ux :: struct {
     combo_open:[64]bool,          // by Style_States: the fold of that rule of several states is open
     combo_shown:ui.Style_States,  // of those, the one opened last: Edit shows the node in it
     sound:Sound_Choice,
+    style_layout_open:bool, // the rows of the layout of a style in the Style card are open
 }
 
 // A node of a document closed in the hierarchy, or a widget instance opened.

@@ -209,7 +209,7 @@ a_scroll_node_moves_what_does_not_fit_with_the_wheel :: proc(t:^testing.T) {
         names:=[5]string{"a","b","c","d","e"}
         tree_node(&s.tree,area,{kind=.Spacer,name=names[i],layout={width=fixed(100),height=fixed(20)}})
     }
-    tree_node(&s.tree,area,{kind=.Button,name="last",text="Last",layout={width=fixed(100),height=fixed(20)}})
+    tree_node(&s.tree,area,{kind=.Button,name="last",text="Last",flags={.Skip},layout={width=fixed(100),height=fixed(20)}})
     testing.expect(t,tree_instance_init(&s.instance,&s.tree,nil))
     defer tree_instance_destroy(&s.instance)
     input:=test_input()

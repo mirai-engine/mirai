@@ -26,16 +26,16 @@ import "mirai:ui"
 Ui_Tree_Api :: struct {provider:editor.Api_Provider}
 ui_tree_api_default :: proc() -> Ui_Tree_Api {return {provider={register=tree_api_register}}}
 
-@(private) TREE_ASSET_SCHEMA :: `"asset":{"type":"string","description":"id of a .ui of the project"}`
+@(private) TREE_ASSET_SCHEMA :: `"asset":{"type":"string","description":"the path of a .ui of the project (ui/hud.ui), or its id"}`
 @(private) TREE_NODE_KEYS :: `"text":{"type":"string","description":"its text, in the language interfaces are written in (ui.text.set gives the others)"},"style":{"type":"string","description":"the name of a style of the file (ui.style.set makes one); empty: its own look"},"fields":{"type":"object","description":"fields of ui.Tree_Node by name, partially: {\"layout\":{\"width\":{\"kind\":\"Fixed\",\"value\":200}},\"float\":{\"to\":\"Safe\"},\"bind_value\":\"Player.health\"}; engine.describe has the types"},"image":{"type":["object","null"],"description":"fields of ui.Tree_Image (texture, uv, border, border_uv, fit, frames, name); null: none"},"events":{"type":"object","description":"by trigger (shown, hidden, hovered, unhovered, pressed, released, focused, unfocused, selected, unselected, clicked), the name of the animation it plays; empty: none"}`
 @(private) TREE_INSPECT_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row: that node and what it holds, with the styles and animations they take; absent: the whole file"}}}`
-@(private) TREE_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","document"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"},"document":{"type":"object","description":"as ui.inspect gives it. styles and animations by name: those it names become what it says, null takes one away, the others stay. nodes, each {name, kind or widget, text, style or look, image, events, fields, children}: the nodes of the file, or of node, become these, matched by name and kind so a node keeps its translations; those it does not declare are taken away, and what a node does not give is that of a new node of its kind. Without nodes, no node changes"}}}`
+@(private) TREE_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","document"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"},"document":{"type":"object","description":"as ui.inspect gives it: use (files it takes names from), tokens, styles, components (with params) and animations by name, and nodes nested, each {name, kind (a Node_Kind or a component), text, style, the keys of its layout (width, height, gap...), events, children}, a use also the parameters of its component. tokens, styles, components and animations it names become what it says, null takes one away, the others stay; the nodes of the file, or of node, become these, matched by name and kind. Without nodes, no node changes"},"save":{"type":"boolean","description":"writes the file now, as asset.save does, instead of leaving it for Save; a path that does not exist yet makes the .ui"}}}`
 @(private) TREE_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset"],"properties":{` + TREE_ASSET_SCHEMA + `,"kind":{"type":"string","description":"Box, Text, Image, Button, Progress, Checkbox, Slider, Field, Number, Selector, Dropdown, Radio, Rich_Text, Prompt, Action_Bar, Scroll, List, Switcher, Tabs, Popup, Modal, Context_Menu, Radial, Tooltip, View, Particles or Spacer; absent with widget"},"widget":{"type":"string","description":"id of another .ui: the node is an instance of it"},"name":{"type":"string"},"parent":{"type":"string","description":"the container it goes in; absent: a root"},"before":{"type":"string","description":"the node of parent it goes before; absent: last"},"children":{"type":"array","description":"the nodes it holds, in order, each with the keys of ui.node.add but asset, parent and before: a whole tree in one call","items":{"type":"object"}},` + TREE_NODE_KEYS + `}}`
 @(private) TREE_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","node"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row"},"name":{"type":"string","description":"a new name, unique in the file"},` + TREE_NODE_KEYS + `}}`
 @(private) TREE_MOVE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","node"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string"},"parent":{"type":"string","description":"absent: a root"},"before":{"type":"string","description":"absent: last"}}}`
 @(private) TREE_NODE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","node"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row"}}}`
-@(private) TREE_STYLE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","style"],"properties":{` + TREE_ASSET_SCHEMA + `,"style":{"type":"string","description":"its name; a style the file lacks is made"},"family":{"type":"string","enum":["Box","Text","Control"],"description":"the nodes it is offered to, when it is made"},"rename":{"type":"string"},"defaults":{"type":"array","items":{"type":"string"},"description":"the kinds whose new nodes take it (Button, Text, ...), its family alone, and no other style of the file; []: none"},"fields":{"type":"object","description":"fields of ui.Node_Style by name, partially: {\"fill\":[30,36,52,255],\"radius\":[6,6,6,6],\"text\":{\"size\":15}}"}}}`
-@(private) TREE_VARIANT_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","style"],"properties":{` + TREE_ASSET_SCHEMA + `,"style":{"type":"string"},"variant":{"type":"string","description":"the name a node, its screen or the game chooses; empty: every variant"},"states":{"type":"array","items":{"type":"string","enum":["Selected","Hovered","Focused","Over","Pressed","Disabled"]},"description":"all of them active"},"fields":{"type":"object","description":"what the rule sets, by the names of ui.Node_Style: fill, fill2, stroke, track, knob, mark, radius, stroke_width, shadow (with shadow_color, shadow_blur, shadow_offset) and text {font, size, color, outline, outline_color, shadow, shadow_color}"},"tokens":{"type":"object","description":"colors of the theme instead of literals: fill, fill2, stroke, text, track, knob, mark (Accent, Text, Field, ...)"},"remove":{"type":"boolean"}}}`
+@(private) TREE_STYLE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","style"],"properties":{` + TREE_ASSET_SCHEMA + `,"style":{"type":"string","description":"its name; a style the file lacks is made"},"family":{"type":"string","enum":["Box","Text","Control"],"description":"the nodes it is offered to, when it is made"},"rename":{"type":"string"},"defaults":{"type":"array","items":{"type":"string"},"description":"the kinds whose new nodes take it (Button, Text, ...), its family alone, and no other style of the file; []: none"},"fields":{"type":"object","description":"the keys of a style of the document, partially: {\"fill\":\"#1e2434\",\"radius\":6,\"width\":\"grow\",\"size\":15}"}}}`
+@(private) TREE_VARIANT_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","style"],"properties":{` + TREE_ASSET_SCHEMA + `,"style":{"type":"string"},"variant":{"type":"string","description":"the name a node, its screen or the game chooses; empty: every variant"},"states":{"type":"array","items":{"type":"string","enum":["Selected","Hovered","Focused","Over","Pressed","Disabled"]},"description":"all of them active"},"fields":{"type":"object","description":"what the rule sets, by the keys of a state of the document: fill, fill2, stroke, border, radius, track, knob, mark, size, color, font, outline, outline_color, move_x, move_y, scale, shadow {color, blur, x, y} and text_shadow {color, x, y}"},"tokens":{"type":"object","description":"colors of the theme instead of literals: fill, fill2, stroke, text, track, knob, mark (Accent, Text, Field, ...)"},"remove":{"type":"boolean"}}}`
 @(private) TREE_ANIM_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","name"],"properties":{` + TREE_ASSET_SCHEMA + `,"name":{"type":"string","description":"what events and the game name it by; one the file lacks is made"},"kind":{"type":"string","enum":["Clip","Sequence","Parallel"]},"loop":{"type":"string","enum":["Once","Loop","Ping_Pong"]},"tracks":{"type":"array","description":"of a Clip","items":{"type":"object","properties":{"property":{"type":"string","enum":["Offset","Scale","Rotation","Opacity","Color","Width","Height","Value","Frame","Reveal"]},"keys":{"type":"array","items":{"type":"object","properties":{"time":{"type":"number"},"value":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"ease":{"type":"string"}}}}}}},"parts":{"type":"array","items":{"type":"string"},"description":"of a Sequence or a Parallel: names of animations made before it"}}}`
 
 // Bytes of a text of a result that no capacity of its own bounds.
@@ -91,7 +91,7 @@ tree_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.style.set",summary="Makes or changes a named style of a .ui; what the call does not name stays. Nodes take it with the key style of ui.node.set.",params_schema=TREE_STYLE_SCHEMA,result=Tree_Row_Answer,result_info=type_info_of(Tree_Row_Answer),run=api_tree_style})
     editor.api_method_register(s,{name="ui.variant.set",summary="Makes, changes or removes the rule of a style for a variant and states: what it sets over the style while a node shows that variant with those states active.",params_schema=TREE_VARIANT_SCHEMA,result=Ui_Ok,result_info=type_info_of(Ui_Ok),run=api_tree_variant})
     editor.api_method_register(s,{name="ui.anim.set",summary="Makes or replaces a named animation of a .ui. Nodes play it by their events; the game by tree_play.",params_schema=TREE_ANIM_SCHEMA,result=Tree_Row_Answer,result_info=type_info_of(Tree_Row_Answer),run=api_tree_anim})
-    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it: nodes matched by name keep their translations, the others are made, and those it does not declare go. One step of history; the file waits for Save.",params_schema=TREE_WRITE_SCHEMA,result=Tree_Write_Answer,result_info=type_info_of(Tree_Write_Answer),run=api_tree_write})
+    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; nodes matched by name keep their translations, the others are made and those it does not declare go. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params_schema=TREE_WRITE_SCHEMA,result=Tree_Write_Answer,result_info=type_info_of(Tree_Write_Answer),run=api_tree_write})
     capture_api_register(s)
 }
 
@@ -159,6 +159,7 @@ Tree_Args :: struct {
     registry:^asset.Registry,
     asset:base.Asset_Id, // the .ui edited; tree_open sets it
     session:^editor.Session,
+    libs:^[dynamic]Doc_Lib, // the files a document takes names from
 }
 
 @(private)
@@ -237,7 +238,7 @@ tree_open :: proc(s:^editor.Session,args:^Tree_Args,records:^Records) -> (id:bas
     if !read {return}
     if !found {api.call_fail(args.call,api.INVALID_PARAMS,"asset is required: the path of a .ui of the project or its id");return}
     problem:string
-    if id,problem=editor.asset_resolve(s,text,".ui");problem!="" {api.call_failf(args.call,api.INVALID_PARAMS,"asset: %s",problem);return}
+    if id,problem=editor.asset_resolve(s,tree_asset_path(text),".ui");problem!="" {api.call_failf(args.call,api.INVALID_PARAMS,"asset: %s",problem);return}
     a:=s.app.assets
     if a==nil || !records_read(a,id,records,args.call.allocator) {
         api.call_failf(args.call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the path of a .ui of the project or its id",text)
@@ -663,48 +664,26 @@ tree_style_apply :: proc(args:^Tree_Args,r:^Records) -> int {
         records_kind_style_set(r,row,kinds)
     }
     if fields,found:=tree_arg(args,"fields");found {
-        if !tree_fields_read(call,args.types,ui.Node_Style,&r.styles[row],fields,"fields") {return -1}
+        keys,values,read:=tree_object(call,fields,"fields")
+        if !read {return -1}
+        style_args:=args^
+        for key,i in keys {
+            info:=&r.style_infos[row]
+            own:=info.sets
+            if !doc_style_value_apply(&style_args,r,row,&r.styles[row],info,&own,"",{},key,values[i]) {return -1}
+            // What a call names is its own, and no token gives it any more.
+            info.sets=own
+            if len(args.keys)>0 {doc_uses_keep(r,row,key)}
+        }
     }
     return row
 }
 
-// What fields of a patch the keys of an object of fields of a Node_Style set.
+// A value a call to ui.style.set gave by itself keeps no token.
 @(private)
-tree_patch_fields :: proc(call:^api.Call,text:string) -> (fields:ui.Style_Fields,ok:bool) {
-    keys,values:=tree_object(call,text,"fields") or_return
-    for key,i in keys {
-        switch key {
-        case "fill":         fields+={.Fill}
-        case "fill2":        fields+={.Fill2}
-        case "stroke":       fields+={.Stroke}
-        case "track":        fields+={.Track}
-        case "knob":         fields+={.Knob}
-        case "mark":         fields+={.Mark}
-        case "radius":       fields+={.Radius}
-        case "stroke_width": fields+={.Stroke_Width}
-        case "shadow","shadow_color","shadow_blur","shadow_offset": fields+={.Shadow}
-        case "move":         fields+={.Move}
-        case "scale":        fields+={.Scale}
-        case "text":
-            text_keys,_:=tree_object(call,values[i],"fields.text") or_return
-            for t in text_keys {
-                switch t {
-                case "font":                    fields+={.Text_Font}
-                case "size":                    fields+={.Text_Size}
-                case "color":                   fields+={.Text_Color}
-                case "outline","outline_color": fields+={.Text_Outline}
-                case "shadow","shadow_color":   fields+={.Text_Shadow}
-                case:
-                    api.call_failf(call,api.INVALID_PARAMS,"fields.text.%s stays as the style has it: a rule sets font, size, color, outline, outline_color, shadow and shadow_color",t)
-                    return
-                }
-            }
-        case:
-            api.call_failf(call,api.INVALID_PARAMS,"fields.%s stays as the style has it: a rule sets fill, fill2, stroke, track, knob, mark, radius, stroke_width, shadow, shadow_color, shadow_blur, shadow_offset and text",key)
-            return
-        }
-    }
-    return fields,true
+doc_uses_keep :: proc(r:^Records,row:int,key:string) {
+    keys:=DOC_KEYS
+    for k in keys {if k.key==key {records_token_use(r,row,"",{},k.which,"")}}
 }
 
 @(private)
@@ -755,10 +734,18 @@ tree_rule_apply :: proc(args:^Tree_Args,r:^Records,style:int) -> bool {
         }
         rule:=&r.variants[at]
         if fields,found:=tree_arg(args,"fields");found {
-            set,set_ok:=tree_patch_fields(call,fields)
-            if !set_ok {return false}
-            if !tree_fields_read(call,args.types,ui.Node_Style,&rule.patch.values,fields,"fields") {return false}
-            rule.patch.fields+=set
+            keys,values:=tree_object(call,fields,"fields") or_return
+            own:=ui.rule_own_keys(rule)
+            variant_text:=strings.clone(serial.text_field(rule.variant[:]),call.allocator)
+            rule_states:=rule.states
+            for key,i in keys {
+                rule_args:=args^
+                if !doc_style_value_apply(&rule_args,r,style,&r.variants[at].patch.values,nil,&own,variant_text,rule_states,key,values[i]) {return false}
+                rule=&r.variants[at]
+            }
+            rule.own=own
+            rule.inherited=false
+            rule.patch.fields=ui.style_keys_fields(own)
         }
         if tokens,found:=tree_arg(args,"tokens");found {
             if !tree_fields_read(call,args.types,ui.Style_Tokens,&rule.patch.tokens,tokens,"tokens") {return false}
@@ -900,9 +887,10 @@ api_tree_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if !root_ok {return}
     a:=s.app.assets
     out:=call.out
+    libs:=doc_libs(&args,&r)
     serial.write_u8(out,'{')
     api.write_key(out,"document",true)
-    document_write(out,&a.types,&r,root)
+    document_write(out,&a.types,&r,root,libs[:],a)
     api.write_key(out,"widgets");serial.write_u8(out,'[')
     first:=true
     for &template in r.templates {
@@ -936,10 +924,15 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     args,args_ok:=tree_args(s,call)
     if !args_ok {return}
     for key in args.keys {
-        if key!="asset" && key!="node" && key!="document" {api.call_failf(call,api.INVALID_PARAMS,"ui.write has no '%s'; it has asset, node and document",key);return}
+        if key!="asset" && key!="node" && key!="document" && key!="save" {api.call_failf(call,api.INVALID_PARAMS,"ui.write has no '%s'; it has asset, node, document and save",key);return}
     }
     text,found:=tree_arg(&args,"document")
-    if !found {api.call_fail(call,api.INVALID_PARAMS,"document is required: as ui.inspect gives it, with what it declares");return}
+    if !found {api.call_fail(call,api.INVALID_PARAMS,"document is required: as ui.inspect gives it, with what it declares; on the command line document=@file reads it from a file");return}
+    save,save_ok:=tree_arg_bool(&args,"save")
+    if !save_ok {return}
+    if save && !editor.api_guard(s,call) {return}
+    // A path that names nothing yet makes the .ui.
+    if !tree_asset_make(s,&args) {return}
     r:Records
     id,opened:=tree_open(s,&args,&r)
     if !opened {return}
@@ -947,5 +940,35 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     if !root_ok {return}
     made,removed,applied:=document_apply(&args,&r,root,text)
     if !applied || !tree_write(s,call,id,&r,"Write") {return}
+    if save {
+        record,recorded:=asset.registry_find(&s.app.assets.registry,id)
+        if !recorded {api.call_fail(call,api.SERVER_ERROR,"the .ui it wrote is not in the assets");return}
+        if _,failures:=editor.assets_write(s,{record.path});failures!="" {api.call_failf(call,api.SERVER_ERROR,"the .ui stays unsaved: %s",failures);return}
+    }
     api.call_result(call,Tree_Write_Answer)^={ok=true,made=made,removed=removed}
 }
+
+// Makes the empty .ui the path of the params names when it does not exist
+// yet; false after failing the call.
+@(private)
+tree_asset_make :: proc(s:^editor.Session,args:^Tree_Args) -> bool {
+    call:=args.call
+    text,_,read:=tree_arg_string(args,"asset")
+    if !read {return false}
+    path:=tree_asset_path(text)
+    if !strings.has_suffix(path,".ui") || strings.contains_rune(path,':') {return true}
+    a:=s.app.assets
+    if a==nil {return true}
+    host.assets_scan(a)
+    if _,exists:=asset.registry_find_path(&a.registry,path);exists {return true}
+    id:=editor.asset_id_new(s)
+    if problem:=editor.asset_create(s,asset.KIND_UI,path,id);problem!="" {
+        api.call_failf(call,api.INVALID_PARAMS,"asset: %s",problem)
+        return false
+    }
+    return true
+}
+
+// The path of a .ui as the registry names it: under the folder of the assets.
+@(private)
+tree_asset_path :: proc(path:string) -> string {return strings.trim_prefix(path,"assets/")}

@@ -16,6 +16,9 @@ import "mirai:std/serial"
 //   fonts       the .font assets the styles name
 //   translations the text of a localized node in the other languages of the game, by its text_id
 //   grid_tracks  the widths of the columns of the grids that name them
+//   tokens       values by name that styles and other files take
+//   token_uses   which values of styles name them
+//   params       the parameters of its components
 //   text        bulk u8: the texts of nodes and translations, UTF-8, by offset and length
 //
 // A component may name another .ui (widget): its template is the tree of that
@@ -45,6 +48,9 @@ UI_TABLE_FONTS :: "fonts"
 UI_TABLE_STYLE_INFOS :: "style_infos"
 UI_TABLE_TRANSLATIONS :: "translations"
 UI_TABLE_GRID_TRACKS :: "grid_tracks"
+UI_TABLE_TOKENS :: "tokens"
+UI_TABLE_TOKEN_USES :: "token_uses"
+UI_TABLE_PARAMS :: "params"
 UI_TABLE_TEXT :: "text"
 
 // As ui.TREE_DEPTH and ui.TREE_CLIP_TRACKS: the limits of the tree the records are built into.

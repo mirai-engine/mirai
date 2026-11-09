@@ -125,6 +125,9 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         first:=u32(len(component_nodes))
         for node in expanded {
             moved:=node
+            // Its layout from the styles of its file, which this table of styles does not hold by row.
+            if int(moved.style)<len(widget.style_infos) {tree_node_take_style(&moved,&widget.style_infos[moved.style])}
+            moved.layout_own=LAYOUT_KEYS
             moved.style+=at.style
             if moved.image!=0 {moved.image+=at.image}
             if moved.anims!=0 {moved.anims+=at.set}
@@ -136,9 +139,9 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         component.first,component.count,component.widget=first,u32(len(expanded)),{}
     }
     // A style that names a file takes what that style is there.
-    style_infos:=make([]Tree_Style_Info,len(data.style_infos),allocator)
-    copy(style_infos,data.style_infos)
-    for &info,row in style_infos {
+    style_infos:=make([dynamic]Tree_Style_Info,len(data.style_infos),max(len(styles),len(data.style_infos)),allocator)
+    copy(style_infos[:],data.style_infos)
+    for &info,row in style_infos[:] {
         if info.from==0 {continue}
         if int(info.from)>len(data.components) || row>=len(data.styles) || data.components[info.from-1].widget=={} {return {},false}
         file:=imports[info.from-1]
@@ -149,6 +152,9 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         for &other,i in file.style_infos {if serial.text_field(other.name[:])==wanted {found=i;break}}
         if found<0 || found>=len(file.styles) {return {},false}
         styles[row]=styles[int(at.style)+found]
+        had:=file.style_infos[found]
+        info.layout,info.layout_keys,info.blur=had.layout,had.layout_keys,had.blur
+        for i:=len(variants)-1;i>=0;i-=1 {if int(variants[i].style)==row {ordered_remove(&variants,i)}}
         for variant in file.variants {
             if int(variant.style)!=found {continue}
             moved:=variant
@@ -159,10 +165,32 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         info.from=0
     }
     if !ok {return {},false}
+    // What a style of this file names in a file it links resolves here: the
+    // styles and tokens of the file join those of the tree under their names,
+    // after those of the tree.
+    tokens:=make([dynamic]Tree_Token,allocator)
+    append(&tokens,..data.tokens)
+    resize(&style_infos,len(styles))
+    for j in joined {
+        component:=-1
+        for &c,i in data.components {if c.widget==j.id {component=i;break}}
+        if component<0 {continue}
+        file:=imports[component]
+        for info,row in file.style_infos {
+            at:=int(j.style)+row
+            if at<len(style_infos) && style_infos[at].name[0]==0 {
+                style_infos[at]=info
+                style_infos[at].from=0 // a row the tree knows by name, already linked
+            }
+        }
+        append(&tokens,..file.tokens)
+    }
+    tree_settle(styles[:],style_infos[:],&variants,tokens[:],data.token_uses)
     linked=data
-    linked.style_infos=style_infos
+    linked.style_infos=style_infos[:]
     linked.components,linked.component_nodes,linked.styles,linked.variants=components[:],component_nodes[:],styles[:],variants[:]
     linked.images,linked.fonts,linked.anims,linked.tracks,linked.keys,linked.parts,linked.anim_sets=images[:],fonts[:],anims[:],tracks[:],keys[:],parts[:],anim_sets[:]
     linked.translations,linked.grid_tracks,linked.text=translations[:],grid_tracks[:],text[:]
+    linked.tokens=tokens[:]
     return linked,true
 }

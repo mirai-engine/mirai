@@ -336,7 +336,8 @@ Rpc_Field :: struct {
 }
 
 // The JSON object of key=value arguments: a value that parses as JSON is that
-// JSON and any other is text, and dots in a key make objects inside.
+// JSON and any other is text, dots in a key make objects inside, and @file is
+// the contents of a file that exists.
 rpc_fields_params :: proc(args:[]string) -> (params,problem:string) {
     set :: proc(fields:^[dynamic]Rpc_Field,path:[]string,value:string) -> bool {
         for &field in fields {
@@ -365,7 +366,13 @@ rpc_fields_params :: proc(args:[]string) -> (params,problem:string) {
         for name in path {
             if name=="" {return "",fmt.tprintf("'%s': a key is names joined by dots",key)}
         }
-        json_value:=api.json_valid(context.temp_allocator,value)?value:serial.text_quote(value)
+        file_value:=value
+        if strings.has_prefix(file_value,"@") && len(file_value)>1 && os.is_file(file_value[1:]) {
+            bytes,error:=os.read_entire_file_from_path(file_value[1:],context.temp_allocator)
+            if error!=nil {return "",fmt.tprintf("'%s': the file could not be read",file_value[1:])}
+            file_value=strings.trim_space(string(bytes))
+        }
+        json_value:=api.json_valid(context.temp_allocator,file_value)?file_value:serial.text_quote(file_value)
         if !set(&fields,path,json_value) {return "",fmt.tprintf("'%s' is given twice, or inside a field that has a value",key)}
     }
     b:=strings.builder_make(context.temp_allocator)

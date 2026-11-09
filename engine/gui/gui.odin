@@ -217,6 +217,26 @@ UI_Events :: struct {
     using queue:core.Queue(UI_Event),
     pointer_consumed:bool,  // the pointer was over the UI or held by a widget
     keyboard_consumed:bool, // a field, a popup or the navigation focus had the keyboard
+    asked:[EVENT_ASKS]Asked_Name, // the names steps asked of it, which the frame checks against the screen
+    asked_count:int,
+}
+
+// What the game asked an interface by name: gui_frame_begin says once what a
+// name a screen does not have is.
+Asked_Name :: struct {
+    entity:core.Entity,
+    name:u64,
+    text:[ui.TREE_NAME_CAPACITY]u8,
+    checked:bool,
+}
+EVENT_ASKS :: 16
+GUI_ASKS :: 128
+
+// The events of a frame, and the Gui that says when a step asks for a name
+// the screen does not have.
+Frame_Events :: struct {
+    items:[]UI_Event,
+    gui:^Gui,
 }
 
 // The particle effects the interfaces show in this frame, each drawn into
@@ -328,6 +348,8 @@ Gui :: struct {
     actions:[dynamic]Action_Name, // the input actions by the name_hash of their names
     actions_ready:bool,
     pointer_consumed,keyboard_consumed:bool,
+    names_asked:[GUI_ASKS]Asked_Name, // what steps asked by name, each checked once against the screen that shows
+    names_asked_count:int,
     pausing:bool,              // a Modal screen with pause shows this frame
     clock_held:bool,           // it stopped the clock, and gives it back when none shows
     modal_up:bool,             // a Modal is on top this frame
@@ -361,10 +383,14 @@ gui_consumed :: proc "contextless" (events:^UI_Events) -> (pointer,keyboard:bool
 // widget asks for now. Every helper below reads that one.
 ui_event :: proc{ui_event_tick,ui_event_frame}
 ui_event_tick :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
-    return ui_event_frame(events.items[:],entity,name,kind)
+    asked_tick(events,entity,name)
+    event:=event_find(events.items[:],entity,name,kind)
+    if event==nil {return}
+    return event^,true
 }
-ui_event_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
-    event:=event_find(events,entity,name,kind)
+ui_event_frame :: proc(events:Frame_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
+    asked_frame(events.gui,entity,name)
+    event:=event_find(events.items,entity,name,kind)
     if event==nil {return}
     return event^,true
 }
@@ -378,21 +404,46 @@ event_find :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Even
     return nil
 }
 
+// A name a step asked: an unnamed event, one the frame already knows and one
+// that does not fit go by without work; the frame checks the rest.
+@(private)
+asked_add :: proc "contextless" (list:[]Asked_Name,count:^int,entity:core.Entity,name:string) {
+    if name=="" || entity==core.NONE {return}
+    hash:=base.name_hash(name)
+    for &a in list[:count^] {if a.entity==entity && a.name==hash {return}}
+    if count^>=len(list) {return}
+    a:=&list[count^]
+    count^+=1
+    a^={entity=entity,name=hash}
+    ui.tree_text_set(a.text[:],name)
+}
+@(private)
+asked_tick :: proc "contextless" (events:^UI_Events,entity:core.Entity,name:string) {
+    asked_add(events.asked[:],&events.asked_count,entity,name)
+}
+@(private)
+asked_frame :: proc "contextless" (gui:^Gui,entity:core.Entity,name:string) {
+    if gui!=nil {asked_add(gui.names_asked[:],&gui.names_asked_count,entity,name)}
+}
+
 // Whether the node called name of an interface of the entity was clicked.
 clicked :: proc{clicked_tick,clicked_frame}
 clicked_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> bool {
-    return clicked_frame(events.items[:],entity,name)
+    asked_tick(events,entity,name)
+    return event_find(events.items[:],entity,name,.Clicked)!=nil
 }
-clicked_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> bool {
-    return event_find(events,entity,name,.Clicked)!=nil
+clicked_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> bool {
+    asked_frame(events.gui,entity,name)
+    return event_find(events.items,entity,name,.Clicked)!=nil
 }
 
 // Which element of its list a button that was clicked is in.
 clicked_item :: proc{clicked_item_tick,clicked_item_frame}
 clicked_item_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
-    return clicked_item_frame(events.items[:],entity,name)
+    event:=ui_event_tick(events,entity,name,.Clicked) or_return
+    return event.item,true
 }
-clicked_item_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
+clicked_item_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
     event:=ui_event_frame(events,entity,name,.Clicked) or_return
     return event.item,true
 }
@@ -401,9 +452,10 @@ clicked_item_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> 
 // what it asks for: the game writes it to the field the checkbox binds.
 changed :: proc{changed_tick,changed_frame}
 changed_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (on,ok:bool) {
-    return changed_frame(events.items[:],entity,name)
+    event:=ui_event_tick(events,entity,name,.Changed) or_return
+    return event.on,true
 }
-changed_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (on,ok:bool) {
+changed_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (on,ok:bool) {
     event:=ui_event_frame(events,entity,name,.Changed) or_return
     return event.on,true
 }
@@ -411,9 +463,10 @@ changed_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (on,o
 // The number a slider, selector, dropdown or radio called name asks for.
 changed_value :: proc{changed_value_tick,changed_value_frame}
 changed_value_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
-    return changed_value_frame(events.items[:],entity,name)
+    event:=ui_event_tick(events,entity,name,.Changed) or_return
+    return event.value,true
 }
-changed_value_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
+changed_value_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
     event:=ui_event_frame(events,entity,name,.Changed) or_return
     return event.value,true
 }
@@ -422,10 +475,14 @@ changed_value_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) ->
 // it to the field the node binds. Valid while the events are.
 changed_text :: proc{changed_text_tick,changed_text_frame}
 changed_text_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    return changed_text_frame(events.items[:],entity,name)
+    asked_tick(events,entity,name)
+    event:=event_find(events.items[:],entity,name,.Changed)
+    if event==nil {return}
+    return base.text_get(event.text[:]),true
 }
-changed_text_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_find(events,entity,name,.Changed)
+changed_text_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+    asked_frame(events.gui,entity,name)
+    event:=event_find(events.items,entity,name,.Changed)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
@@ -434,10 +491,14 @@ changed_text_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> 
 // while the events are.
 submitted :: proc{submitted_tick,submitted_frame}
 submitted_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    return submitted_frame(events.items[:],entity,name)
+    asked_tick(events,entity,name)
+    event:=event_find(events.items[:],entity,name,.Submitted)
+    if event==nil {return}
+    return base.text_get(event.text[:]),true
 }
-submitted_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_find(events,entity,name,.Submitted)
+submitted_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
+    asked_frame(events.gui,entity,name)
+    event:=event_find(events.items,entity,name,.Submitted)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
@@ -446,19 +507,19 @@ submitted_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (te
 // from_item) and the entity of its interface (from_entity).
 dropped :: proc{dropped_tick,dropped_frame}
 dropped_tick :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
-    return ui_event_frame(events.items[:],entity,name,.Dropped)
+    return ui_event_tick(events,entity,name,.Dropped)
 }
-dropped_frame :: proc(events:[]UI_Event,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
+dropped_frame :: proc(events:Frame_Events,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
     return ui_event_frame(events,entity,name,.Dropped)
 }
 
 // Whether the animation anim that play_animation started on node ended.
 finished :: proc{finished_tick,finished_frame}
 finished_tick :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool {
-    return finished_frame(events.items[:],entity,node,anim)
+    return finished_frame(Frame_Events{items=events.items[:]},entity,node,anim)
 }
-finished_frame :: proc(events:[]UI_Event,entity:core.Entity,node,anim:string) -> bool {
-    for event in events {
+finished_frame :: proc(events:Frame_Events,entity:core.Entity,node,anim:string) -> bool {
+    for event in events.items {
         if event.entity==entity && event.kind==.Finished && event.name==base.name_hash(node) && event.from==base.name_hash(anim) {return true}
     }
     return false
@@ -467,25 +528,25 @@ finished_frame :: proc(events:[]UI_Event,entity:core.Entity,node,anim:string) ->
 // Whether the screen of the entity reported Back.
 back :: proc{back_tick,back_frame}
 back_tick :: proc(events:^UI_Events,entity:core.Entity) -> bool {
-    return back_frame(events.items[:],entity)
+    return event_find(events.items[:],entity,"",.Back)!=nil
 }
-back_frame :: proc(events:[]UI_Event,entity:core.Entity) -> bool {
-    return event_find(events,entity,"",.Back)!=nil
+back_frame :: proc(events:Frame_Events,entity:core.Entity) -> bool {
+    return event_find(events.items,entity,"",.Back)!=nil
 }
 
 // Whether the player pressed the Menu action (Menu_Action: Escape, Start of a
 // gamepad, rebound like any action) and no interface used that Escape. What a
 // game does with it is its own: open or close a menu.
 menu_pressed :: proc{menu_pressed_tick,menu_pressed_frame}
-menu_pressed_tick :: proc(events:^UI_Events) -> bool {return menu_pressed_frame(events.items[:])}
-menu_pressed_frame :: proc(events:[]UI_Event) -> bool {return event_find(events,core.NONE,"",.Menu)!=nil}
+menu_pressed_tick :: proc(events:^UI_Events) -> bool {return event_find(events.items[:],core.NONE,"",.Menu)!=nil}
+menu_pressed_frame :: proc(events:Frame_Events) -> bool {return event_find(events.items,core.NONE,"",.Menu)!=nil}
 
 // The events that reached the game in this frame, each once: read them from a
 // frame step, not a fixed one, and the ticks of the frame (none while the clock
 // is stopped, or several) make no difference. Valid until the next frame phase.
-events_this_frame :: proc(gui:^Gui) -> []UI_Event {
-    if gui==nil {return nil}
-    return gui.arrived[:]
+events_this_frame :: proc(gui:^Gui) -> Frame_Events {
+    if gui==nil {return {}}
+    return {gui.arrived[:],gui}
 }
 
 @(private)
@@ -497,12 +558,20 @@ events_arrive :: proc(gui:^Gui) {
     append(&gui.arrived,..gui.pending[:])
 }
 
+// What the fixed steps asked of the last tick joins what the frame checks.
+@(private)
+asked_merge :: proc(gui:^Gui,events:^UI_Events) {
+    for &a in events.asked[:events.asked_count] {asked_add(gui.names_asked[:],&gui.names_asked_count,a.entity,base.text_get(a.text[:]))}
+}
+
 // The events of the last frame become those of the tick, once; a tick that
 // runs again gets those it got.
 @(step="fixed",stage="input")
 gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     clear(&events.items)
+    defer events.asked_count=0
     if gui==nil {return}
+    asked_merge(gui,events)
     events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
     first:=max(gui.delivered_count-DELIVERED_CAPACITY,0)
     if time.resimulating {
@@ -528,7 +597,9 @@ gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
 // phase instead, once; a tick that runs again later does not get them.
 @(step="frame",stage="input")
 gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
+    defer events.asked_count=0
     if gui==nil {return}
+    asked_merge(gui,events)
     defer gui.arrived_read=true
     ticked:=time.tick!=gui.frame_tick
     gui.frame_tick=time.tick
@@ -582,6 +653,7 @@ frame_begin :: proc(
 ) {
     if gui==nil {return}
     if effects!=nil {clear(&effects.items)}
+    asked_check(gui,app,problems)
     gui.frame+=1
     gui.pausing=false
     gui.settings,gui.preferences=settings,preferences

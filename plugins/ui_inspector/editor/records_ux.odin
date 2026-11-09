@@ -258,14 +258,7 @@ records_anim_remove :: proc(r:^Records,anim:int) {
     if anim<0 || anim>=len(r.anims) {return}
     a:=r.anims[anim]
     if a.kind==.Clip {
-        for t:=int(a.first+a.count)-1;t>=int(a.first);t-=1 {
-            track:=r.tracks[t]
-            records_keys_remove(r,int(track.first_key),int(track.key_count))
-        }
-        remove_range(&r.tracks,int(a.first),int(a.first+a.count))
-        for &other,i in r.anims {
-            if i!=anim && other.kind==.Clip && other.first>=a.first+a.count {other.first-=a.count}
-        }
+        records_anim_contents_drop(r,anim)
     } else {
         for part:=int(a.count)-1;part>=0;part-=1 {records_part_remove(r,anim,part)}
     }
@@ -309,4 +302,24 @@ widget_reaches :: proc(from,target:base.Asset_Id,children:proc(user:rawptr,id:ba
         }
     }
     return false
+}
+
+// Takes away the tracks and keys of an animation, or its parts: the row stays
+// for the events that play it, with nothing in it.
+records_anim_contents_drop :: proc(r:^Records,anim:int) {
+    if anim<0 || anim>=len(r.anims) {return}
+    a:=r.anims[anim]
+    if a.kind==.Clip {
+        for t:=int(a.first+a.count)-1;t>=int(a.first);t-=1 {
+            track:=r.tracks[t]
+            records_keys_remove(r,int(track.first_key),int(track.key_count))
+        }
+        remove_range(&r.tracks,int(a.first),int(a.first+a.count))
+        for &other,i in r.anims {
+            if i!=anim && other.kind==.Clip && other.first>=a.first+a.count {other.first-=a.count}
+        }
+    } else {
+        for part:=int(a.count)-1;part>=0;part-=1 {records_part_remove(r,anim,part)}
+    }
+    r.anims[anim].first,r.anims[anim].count=0,0
 }

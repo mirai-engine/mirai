@@ -44,6 +44,9 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLE_INFOS,data.style_infos) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TRANSLATIONS,data.translations,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_GRID_TRACKS,data.grid_tracks) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKENS,data.tokens) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKEN_USES,data.token_uses) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_PARAMS,data.params) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk},.LZ) or_return
     return .None
 }
@@ -54,23 +57,6 @@ ui_tree_bytes :: proc(types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,impo
     ui_tree_document(&doc,types,id,data,imports,allocator) or_return
     defer asset.document_destroy(&doc)
     return asset.document_bytes(&doc,allocator)
-}
-
-// Writes a sheet to its file: what is wrong with the sheet is printed and
-// counted in content, as content_check does with the other assets.
-ui_sheet_save :: proc(c:^asset.Content,path:string,id:base.Asset_Id,sheet:^ui.Sheet) {
-    if problem:=ui.sheet_problem(sheet);problem!="" {
-        fmt.eprintfln("content: %s: %s",path,problem)
-        c.failed=true
-        return
-    }
-    data,imports:=ui.sheet_data(sheet)
-    if problem:=ui.sheet_problem(sheet);problem!="" {
-        fmt.eprintfln("content: %s: %s",path,problem)
-        c.failed=true
-        return
-    }
-    asset.content_check(c,path,ui_tree_save(path,&c.types,id,data,imports))
 }
 
 ui_tree_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,imports:[]ui.Tree_Data={},allocator:=context.allocator) -> asset.Error {
@@ -105,6 +91,9 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.style_infos=rows(a,types,asset.UI_TABLE_STYLE_INFOS,ui.Tree_Style_Info) or_return
     data.translations=rows(a,types,asset.UI_TABLE_TRANSLATIONS,ui.Tree_Translation) or_return
     data.grid_tracks=rows(a,types,asset.UI_TABLE_GRID_TRACKS,ui.Grid_Tracks) or_return
+    data.tokens=rows(a,types,asset.UI_TABLE_TOKENS,ui.Tree_Token) or_return
+    data.token_uses=rows(a,types,asset.UI_TABLE_TOKEN_USES,ui.Tree_Token_Use) or_return
+    data.params=rows(a,types,asset.UI_TABLE_PARAMS,ui.Tree_Param) or_return
     data.text=rows(a,types,asset.UI_TABLE_TEXT,u8) or_return
     return data,.None
 }
