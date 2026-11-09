@@ -206,9 +206,9 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
         transform:=core.at(worlds,c.placed)
         // On a mesh: its plane is where the ray meets it when the mesh cannot
         // say, and its text is rasterized for the texels of its texture.
-        facing,density,rotation:=widget.facing,f32(0),transform.rotation
-        // A mesh shows its front toward -Z, and a panel its face toward +Z.
-        if widget.target==.Mesh {facing,density,rotation=.Fixed,widget.pixels>0?widget.pixels:MESH_TEXELS,rotation*quaternion(w=0,x=0,y=1,z=0)}
+        facing,density:=widget.facing,f32(0)
+        if widget.target==.Mesh {facing,density=.Fixed,widget.pixels>0?widget.pixels:MESH_TEXELS}
+        rotation:=panel_rotation(transform.rotation)
         append(&gui.plan,Planned{
             entity=c.entity,instance=index,content=content,player=c.player,world=true,passive=true,interactive=widget.input==.Interactive,
             mesh=mesh,variant=ui.style_variant(base.text_get(widget.variant[:])),
@@ -222,6 +222,13 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
         gui.dropped_widgets+=u64(dropped)
         core.report(problems,left,"gui.widgets","%d World_Widgets in sight were not built in a frame: a local player sees at most %d at once and %d on meshes, and the nearest win; give fewer entities a World_Widget, or hide those that are far",dropped,WIDGET_CAPACITY,MESH_CAPACITY)
     }
+}
+
+// The rotation of the panel of an entity: its face shows toward the forward
+// of the entity (-Z), and a panel has its face toward its own +Z.
+@(private)
+panel_rotation :: #force_inline proc "contextless" (entity:quaternion128) -> quaternion128 {
+    return entity*quaternion(w=0,x=0,y=1,z=0)
 }
 
 // By context, then nearest first.

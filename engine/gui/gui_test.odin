@@ -613,6 +613,18 @@ the_instances_of_an_entity_are_found_after_others_go :: proc(t:^testing.T) {
 }
 
 @(test)
+a_fixed_panel_shows_its_face_toward_the_forward_of_its_entity :: proc(t:^testing.T) {
+    rotation:=panel_rotation(quaternion128(1))
+    face:=linalg.quaternion_mul_vector3(rotation,[3]f32{0,0,1})
+    right:=linalg.quaternion_mul_vector3(rotation,[3]f32{1,0,0})
+    testing.expect(t,linalg.distance(face,[3]f32{0,0,-1})<1e-5,"it faces -Z, as any entity")
+    testing.expect(t,linalg.distance(right,[3]f32{-1,0,0})<1e-5,"so what looks at it reads it from left to right")
+    // Half a turn more and the panel looks at +Z.
+    turned:=panel_rotation(quaternion128(quaternion(w=0,x=0,y=1,z=0)))
+    testing.expect(t,linalg.distance(linalg.quaternion_mul_vector3(turned,[3]f32{0,0,1}),[3]f32{0,0,1})<1e-5)
+}
+
+@(test)
 widgets_out_of_sight_are_not_built_and_the_nearest_come_first :: proc(t:^testing.T) {
     view:=Player_View{camera={position={0,0,5},forward={0,0,-5},up={0,1,0},fov_y=90,near=0.1,far=100},rect={0,0,1000,1000}}
     widget:=WORLD_WIDGET_DEFAULT
