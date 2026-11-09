@@ -283,12 +283,14 @@ records_kind_look :: proc(r:^Records,kind:ui.Node_Kind) -> u16 {
 
 // Adds a node of a kind as the last one inside parent (-1: the last root) and
 // returns its row; -1 when parent holds nothing or there is no memory.
-records_insert :: proc(r:^Records,parent:int,kind:ui.Node_Kind) -> int {
+// replacing: a List takes it beside the node it holds, which the caller then
+// takes away.
+records_insert :: proc(r:^Records,parent:int,kind:ui.Node_Kind,replacing:=false) -> int {
     list:=&r.nodes
     if parent<-1 || parent>=len(list) || kind==.Component {return -1}
     if parent>=0 && !ui.node_kind_holds(list[parent].kind) && list[parent].kind!=.Component {return -1}
     // A List holds one node.
-    if parent>=0 && list[parent].kind==.List && records_subtree(list[:],parent)>0 {return -1}
+    if !replacing && parent>=0 && list[parent].kind==.List && records_subtree(list[:],parent)>0 {return -1}
     at:=len(list) if parent<0 else parent+records_subtree(list[:],parent)+1
     node:=node_default(kind)
     records_text_set(r,&node.text,node_default_text(kind))
@@ -1095,13 +1097,14 @@ records_takes :: proc(nodes:[]ui.Tree_Node,parent:int) -> bool {
 // before the node at row before, or last when before is -1, with its
 // overrides and translations. Returns where it went; -1 when it cannot: into
 // itself or into what takes no other node.
-records_place :: proc(r:^Records,row,parent,before:int) -> int {
+records_place :: proc(r:^Records,row,parent,before:int,replacing:=false) -> int {
     list:=r.nodes[:]
     if row<0 || row>=len(list) || parent>=len(list) || before>=len(list) {return -1}
     count:=records_subtree(list,row)+1
     inside :: proc(at,row,count:int) -> bool {return at>=row && at<row+count}
     if parent>=0 && inside(parent,row,count) || before>=0 && inside(before,row,count) {return -1}
-    if int(list[row].parent)!=parent && !records_takes(list,parent) {return -1}
+    crowded:=replacing && parent>=0 && list[parent].kind==.List
+    if int(list[row].parent)!=parent && !crowded && !records_takes(list,parent) {return -1}
     block:=records_block(r,row)
     records_remove(r,row)
     after :: proc(at,row,count:int) -> int {return at-count if at>row else at}

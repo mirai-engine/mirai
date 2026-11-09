@@ -5,6 +5,8 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:core"
+import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:engine/gui"
 import "mirai:host"
@@ -671,4 +673,142 @@ what_make_widget_declares_and_what_a_person_changes :: proc(t:^testing.T) {
     ui.tree_text_set(widget.nodes[1].name[:],"caption")
     records_rename(&widget,1,"title")
     testing.expect_value(t,serial.text_field(widget.params[0].node[:]),"caption")
+}
+
+// ---------------------------------------------------------------- the paths a write binds
+
+@(private="file") Game_Slot :: struct {label:[16]u8,count:i32}
+@(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
+@(private="file") Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
+@(private="file") Game_Enemy :: struct {label:[16]u8,health:f32}
+
+@(private="file") STAT_ID :: base.Asset_Id{0x57a7,1}
+@(private="file") HUD_ID :: base.Asset_Id{0x4d,1}
+@(private="file") STALE_ID :: base.Asset_Id{0x57a1e,1}
+
+// A widget whose paths only its uses know: with @, inside a List of one and in the braces of a text.
+@(private="file") PATHS_STAT :: `{"params":{"label":"name.text","value":"amount.bind_text","of":"data"},"nodes":[{"name":"stat","kind":"Box","children":[{"name":"name","kind":"Text"},{"name":"amount","kind":"Text"},{"name":"now","kind":"Text","text":"{now} now","fields":[{"name":"now","path":"@hits"}]},{"name":"bar","kind":"Progress","bind_value":"@health"},{"name":"rows","kind":"List","bind_items":"@slots","children":[{"name":"row","kind":"Text","bind_text":"label"}]}]}]}`
+@(private="file") PATHS_HUD :: `{"use":["hud/stat.ui"],"nodes":[{"name":"root","kind":"Box","children":[` +
+    `{"name":"health","kind":"Progress","bind_value":"Status.health"},` +
+    `{"name":"second","kind":"Text","bind_text":"Hotbar.slots.1.count"},` +
+    `{"name":"count","kind":"Text","text":"{hits} hits","fields":[{"name":"hits","path":"Status.hits"}]},` +
+    `{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"slot","kind":"Text","bind_text":"label"}]},` +
+    `{"name":"enemies","kind":"List","bind_items":"Enemy","children":[{"name":"enemy","kind":"Progress","bind_value":"health"}]},` +
+    `{"name":"hits","kind":"stat","label":"Hits","value":"Status.hits","of":"Status"}]}]}`
+// Written before the game lost a field: one path of it resolves no more.
+@(private="file") PATHS_STALE :: `{"styles":{"plain":{"size":12}},"nodes":[{"name":"root","kind":"Box","children":[{"name":"old","kind":"Progress","bind_value":"Status.fuel"},{"name":"fresh","kind":"Text","style":"plain"}]}]}`
+
+@(private="file")
+paths_hud :: proc(node:string) -> string {
+    return strings.concatenate({`{"use":["hud/stat.ui"],"nodes":[{"name":"root","kind":"Box","children":[`,node,`]}]}`},context.temp_allocator)
+}
+
+@(test)
+a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.T) {
+    p:Project
+    if !project_init(t,&p,"paths") {return}
+    defer project_destroy(&p)
+    tables:=[2]core.Table_Info{
+        {name="Status",library="game",info=type_info_of(Game_Status),place=.World,game=true},
+        {name="Enemy",library="game",info=type_info_of(Game_Enemy),place=.World,game=true},
+    }
+    storages:=[1]core.Storage_Info{{name="Hotbar",library="game",info=type_info_of(Game_Hotbar),place=.World,game=true}}
+    info:=core.World_Info{tables=tables[:],storages=storages[:]}
+    app:=host.App{allocator=context.allocator,assets=&p.assets,info=&info}
+    s:=editor.Session{app=&app,assets_root=p.root,headless=true}
+    write :: proc(s:^editor.Session,file,node,document:string) -> (message:string,ok:bool) {
+        named:=fmt.tprintf(`"node":%q,`,node) if node!="" else ""
+        params:=strings.concatenate({`{"asset":"`,file,`",`,named,`"document":`,document,"}"},context.temp_allocator)
+        answer:Tree_Write_Answer
+        method:=api.Method{result_id=Tree_Write_Answer}
+        call:=api.Call{method=&method,raw=params,result=&answer,allocator=context.temp_allocator}
+        api_tree_write(s,&call)
+        return call.error.message,!call.failed && answer.ok
+    }
+    // What the files hold before: saved, with nothing waiting for Save.
+    files:=[?]struct{path:string,id:base.Asset_Id,document:string}{{"hud/stat.ui",STAT_ID,PATHS_STAT},{"hud/hud.ui",HUD_ID,PATHS_HUD},{"hud/stale.ui",STALE_ID,PATHS_STALE}}
+    for f in files {
+        if _,made:=project_doc(t,&p,f.path,f.id,f.document);!made {return}
+        if !testing.expect_value(t,asset.registry_memory_write(&p.assets.registry,f.path),asset.Error.None) {return}
+    }
+    host.assets_scan(&p.assets)
+    saved :: proc(p:^Project,path:string) -> string {
+        bytes,_:=os.read_entire_file(fmt.tprintf("%s/%s",p.root,path),context.temp_allocator)
+        return string(bytes)
+    }
+    hud_before:=saved(&p,"hud/hud.ui")
+    if !testing.expect(t,hud_before!="") {return}
+
+    refused:=[?]struct{asset,node,document:string,says:[]string}{
+        {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Statuz.health"}`),
+            {"nodes[0].children[0] 'health'","bind_value 'Statuz.health'","no component or storage 'Statuz'","Status","Nothing changed","ui.paths"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.helth"}`),
+            {"nodes[0].children[0] 'health'","bind_value 'Status.helth'","no field 'helth'","health, hits, message"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.message"}`),
+            {"'health'","bind_value 'Status.message'","takes a number"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"second","kind":"Text","bind_text":"Hotbar.slots.3.count"}`),
+            {"'second'","bind_text 'Hotbar.slots.3.count'","3 elements"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"slot","kind":"Text","bind_text":"nmae"}]}`),
+            {"nodes[0].children[0].children[0] 'slot'","bind_text 'nmae'","no field 'nmae'","label, count"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"enemies","kind":"List","bind_items":"Enemy","children":[{"name":"enemy","kind":"Progress","bind_value":"helth"}]}`),
+            {"'enemy'","bind_value 'helth'","no field 'helth'","label, health"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"count","kind":"Text","text":"{hits} of {most}","fields":[{"name":"hits","path":"Status.hitz"}]}`),
+            {"'count'","{hits} 'Status.hitz'","no field 'hitz'","{most} has no path"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"hits","kind":"stat","label":"Hits","value":"Status.hitz"}`),
+            {"nodes[0].children[0] 'hits'","value gives","'amount'","'Status.hitz'","no field 'hitz'"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"hits","kind":"stat","of":"Statuz"}`),
+            {"'hits'","of gives","'Statuz.","no component or storage 'Statuz'"}},
+        {"hud/hud.ui","health",`{"nodes":[{"name":"health","kind":"Progress","bind_value":"Status.helth"}]}`,
+            {"nodes[0] 'health'","bind_value 'Status.helth'"}},
+        {"hud/new.ui","",paths_hud(`{"name":"health","kind":"Progress","bind_value":"Status.helth"}`),
+            {"'health'","bind_value 'Status.helth'"}},
+        // A document that reads and a tree that does not load: a use holds a node and its widget has no slot.
+        {"hud/held.ui","",paths_hud(`{"name":"hits","kind":"stat","children":[{"name":"inside","kind":"Text"}]}`),
+            {"would not load","Nothing changed"}},
+        {"hud/hud.ui","",paths_hud(`{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"slot","kind":"Text","bind_text":"label"},{"name":"count","kind":"Text","bind_text":"count"}]}`),
+            {"nodes[0].children[0].children[","a List holds one node","put a Box there"}},
+    }
+    for c in refused {
+        message,written:=write(&s,c.asset,c.node,c.document)
+        if !testing.expectf(t,!written,"%s was written",c.document) {continue}
+        for part in c.says {testing.expectf(t,strings.contains(message,part),"%s\nlacks: %s\nsays:  %s",c.document,part,message)}
+        _,unsaved:=asset.registry_memory_find(&p.assets.registry,c.asset)
+        testing.expectf(t,!unsaved,"%s waits for Save after a refused write",c.asset)
+    }
+    testing.expect(t,saved(&p,"hud/hud.ui")==hud_before,"the file is as it was")
+    host.assets_scan(&p.assets)
+    for path in ([]string{"hud/new.ui","hud/held.ui"}) {
+        _,made:=asset.registry_find_path(&p.assets.registry,path)
+        testing.expectf(t,!made && !os.exists(fmt.tprintf("%s/%s",p.root,path)),"%s was made by a refused write",path)
+    }
+
+    // What the game has, what only a use knows, and what the document does not declare.
+    taken:=[?]struct{asset,node,document:string}{
+        {"hud/hud.ui","",PATHS_HUD},
+        {"hud/stat.ui","",PATHS_STAT},
+        {"hud/stale.ui","fresh",`{"nodes":[{"name":"fresh","kind":"Text","bind_text":"Status.message"}]}`},
+        {"hud/stale.ui","",`{"styles":{"plain":{"size":14}}}`},
+        // The node a List holds becomes another, which may hold the one it held.
+        {"hud/hud.ui","slots",`{"nodes":[{"name":"slots","kind":"List","bind_items":"Hotbar.slots","children":[{"name":"cell","kind":"Box","children":[{"name":"slot","kind":"Text","bind_text":"label"}]}]}]}`},
+        {"hud/hud.ui","enemies",`{"nodes":[{"name":"enemies","kind":"List","bind_items":"Enemy","children":[{"name":"foe","kind":"Text","bind_text":"label"}]}]}`},
+    }
+    for c in taken {
+        message,written:=write(&s,c.asset,c.node,c.document)
+        testing.expectf(t,written,"%s %s: %s",c.asset,c.node,message)
+    }
+    hud:Records
+    if !project_records(t,&p,HUD_ID,&hud) {return}
+    holds :: proc(r:^Records,holder,held:string) -> bool {
+        at:=document_row_of(r,held)
+        return at>=0 && r.nodes[at].parent>=0 && serial.text_field(r.nodes[r.nodes[at].parent].name[:])==holder
+    }
+    testing.expect(t,holds(&hud,"slots","cell") && holds(&hud,"cell","slot") && holds(&hud,"enemies","foe"),doc_text(&p,&hud))
+    testing.expect(t,document_row_of(&hud,"enemy")<0 && records_subtree(hud.nodes[:],document_row_of(&hud,"enemies"))==1,"what the List held went")
+    _,unsaved:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
+    testing.expect(t,unsaved,"a write the game takes waits for Save")
+    // Written whole, the file answers for every path it holds.
+    stale:Records
+    if !project_records(t,&p,STALE_ID,&stale) {return}
+    message,written:=write(&s,"hud/stale.ui","",doc_text(&p,&stale))
+    testing.expectf(t,!written && strings.contains(message,"'old'") && strings.contains(message,"no field 'fuel'"),"%s",message)
 }

@@ -198,6 +198,11 @@ changes nothing and says why.
   - A name of the part cannot be outside it, and a name that resolves to nothing (style, token,
     component, parameter) fails: an error says where (`nodes[0].children[2]: …`) and changes
     nothing. `ui.check` says the same for every `.ui` of the project.
+  - A path that the nodes it declares bind (`bind_*`, `fields`, the `data` and the parameters of a
+    use) and the game of the open build lacks fails the same way, with what the game has there
+    (`document_paths_check`, on the resolver of the game: `bind_check`). Not checked, because
+    only a use knows them: a path that starts with `@`, what a `List` of one holds and a text
+    with one in its braces; and no path is while the editor has no game types.
   - A use says the parameters of its widget by name (`Tree_Param`, flat after `tree_link`): one
     that goes to a node of it, also past another use, is an override of that node, one that goes
     to its root is the use's; a use that does not say one takes it away. The visual editor shows
@@ -250,9 +255,10 @@ Over a project in the registry's memory, `project_files_test.odin`: the texts CS
 (`texts_go_to_a_csv_and_back_with_commas_quotes_and_lines`,
 `a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text`), the rename in
 the `.ui`s that use the widget
-(`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`) and the incremental
+(`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`), the incremental
 check
-(`the_check_of_interfaces_reads_again_only_what_changed_and_finds_what_the_full_check_finds`).
+(`the_check_of_interfaces_reads_again_only_what_changed_and_finds_what_the_full_check_finds`) and
+the paths `ui.write` refuses (`a_write_refuses_the_paths_the_game_lacks_and_changes_nothing`).
 The document is checked in the demo editor by API: `editor.document` opens a `.ui`,
 `capture` shows it; the gestures (choosing in the preview, editing in place, Try) are tested
 by a person.

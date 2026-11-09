@@ -77,8 +77,10 @@ A document only sees its own `styles` and those of what it lists in `use`.
 
 Changing a single piece: `ui.write` with `node=<name>` declares that node and what it holds, and
 nothing else of the file changes; a document with only `styles` or `animations` changes those it
-names. Paths: `ui.paths` lists what a binding of a node can take and `ui.check` says what the game
-lacks. `ui.capture` draws one alone.
+names. Paths: `ui.paths` lists what a binding of a node can take. `ui.write` refuses a path the
+built game lacks and says what the game has there: declare the component or the field and build
+before binding it. A path that starts with `@` is of a widget and is checked where it is used.
+`ui.check` says what the game lacks in every `.ui`. `ui.capture` draws one alone.
 
 ## Controls
 

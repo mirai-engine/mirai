@@ -1,0 +1,12 @@
+{
+  "project": "game",
+  "tools": ["Read", "Edit", "Write"],
+  "prompt": "The HUD of this game, hud/hud.ui of its assets, should also show the longest streak of hits, which the game does not keep yet. Add an integer field named streak to the Status component in the code of the game (the game folder of this project), get it built so the open editor has it, without closing the editor, and add inside the node count of the HUD a text named streak that shows that field. Keep everything the HUD already shows, and save it.",
+  "checks": [
+    {"entity": "Hud", "components": {"Status": {"streak": 0, "hits": 0}}},
+    {"ui": "hud/hud.ui", "nodes": {"streak": {"kind": "Text", "bind_text": "Status.streak", "parent": "count"}, "hits": {"kind": "Text", "bind_text": "Status.hits", "parent": "count"}, "message": {"kind": "Text", "bind_text": "Status.message"}}},
+    {"ui": "arena/sign.ui", "nodes": {"hits": {"bind_text": "Status.hits"}}},
+    {"count": {}, "equals": 9},
+    {"unchanged": {}}
+  ]
+}
