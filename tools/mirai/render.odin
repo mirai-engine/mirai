@@ -876,28 +876,17 @@ render_session :: proc(report:^Render_Report,r:^Render_Run,target:Render_Target,
 // call goes again without it, and the run says so.
 @(private="file")
 render_call :: proc(e:^Render_Editor,method:string,params:json.Object) -> (result:string,ok:bool) {
-    params:=params
-    for {
-        response,err,called:=headless_call(e,method,params)
-        if called {return response,true}
-        if err.code==api.INVALID_PARAMS {
-            MARK :: `unknown field "`
-            if at:=strings.index(err.message,MARK);at>=0 {
-                rest:=err.message[at+len(MARK):]
-                field:=rest[:max(strings.index_byte(rest,'"'),0)]
-                if field in params {
-                    delete_key(&params,field)
-                    note:=fmt.aprintf("%s does not take %s in this build: measured without it",method,field)
-                    known:=false
-                    for n in e.run.notes {known||=n==note}
-                    if !known {append(&e.run.notes,note)}
-                    continue
-                }
-            }
-        }
-        fmt.eprintfln("mirai render: %s: %s",method,api.error_text(err,context.temp_allocator))
-        return "",false
+    dropped:=make([dynamic]string,context.temp_allocator)
+    response,err,called:=headless_call_known(e,method,params,&dropped)
+    for field in dropped {
+        note:=fmt.aprintf("%s does not take %s in this build: measured without it",method,field)
+        known:=false
+        for n in e.run.notes {known||=n==note}
+        if !known {append(&e.run.notes,note)}
     }
+    if called {return response,true}
+    fmt.eprintfln("mirai render: %s: %s",method,api.error_text(err,context.temp_allocator))
+    return "",false
 }
 
 @(private="file")

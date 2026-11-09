@@ -223,7 +223,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
             return 1
         }
     } else {
-        target,ok,same:=render_base_prepare(root,o.base,relative)
+        target,ok,same:=render_base_prepare(root,o.base,relative,release=true)
         if !ok {return 1}
         if same {fmt.eprintfln("mirai bench: this checkout has the sources of %s: there is nothing to compare",o.base);return 1}
         base={name="base",checkout=target.checkout,project=target.project,editor=target.editor}
@@ -287,7 +287,9 @@ bench_compare :: proc(root:string,args:[]string) -> int {
 
 @(private="file")
 bench_call :: proc(e:^Headless_Editor,method:string,params:json.Object) -> (result:string,ok:bool) {
-    response,err,called:=headless_call(e,method,params)
+    dropped:=make([dynamic]string,context.temp_allocator)
+    response,err,called:=headless_call_known(e,method,params,&dropped)
+    for field in dropped {fmt.eprintfln("mirai bench: %s: %s does not take %s in this build: measured without it",e.label,method,field)}
     if !called {fmt.eprintfln("mirai bench: %s: %s: %s",e.label,method,api.error_text(err,context.temp_allocator));return "",false}
     return response,true
 }

@@ -3,6 +3,7 @@ package main
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:time"
 import "mirai:editor/api"
 import "mirai:std/subprocess"
@@ -62,4 +63,30 @@ headless_step :: proc(e:^Headless_Editor,frames:int) -> bool {
         }
     }
     return true
+}
+
+// Calls method on e; a field of params that the build of e does not take (an
+// older base) is dropped and the call made again without it. dropped names
+// those fields, for the report to say that the build was measured without them.
+headless_call_known :: proc(e:^Headless_Editor,method:string,params:json.Object,dropped:^[dynamic]string) -> (result:string,err:api.Error,called:bool) {
+    params:=params
+    for {
+        result,err,called=headless_call(e,method,params)
+        if called || err.code!=api.INVALID_PARAMS {return}
+        field,unknown:=unknown_field(err.message)
+        if !unknown || field not_in params {return}
+        delete_key(&params,field)
+        append(dropped,field)
+    }
+}
+
+// The field an error of invalid params names as not one of the method:
+// `"name" is not a field: the fields are ...`.
+unknown_field :: proc(message:string) -> (field:string,found:bool) {
+    MARK :: `" is not a field`
+    end:=strings.index(message,MARK)
+    if end<0 {return}
+    start:=strings.last_index_byte(message[:end],'"')
+    if start<0 {return}
+    return message[start+1:end],true
 }
