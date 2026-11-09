@@ -265,10 +265,9 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
 
 - `profile.capture` with `advance` runs the frames inside the call, holding the server like
   `engine.step`, and measures only between checkouts: if another measurement or a `mirai` build is
-  running, it waits for them up to `wait` and then fails saying who
-  ([turns](../../mirai-projects/references/build.md#turns-between-processes)). A `wait` greater than
-  the default needs `mirai rpc --timeout` above it. With `advance:false` it records the frames the
-  loop runs afterwards (those of a window, or those of `engine.step`, `editor.input` and
+  running, it queues for them up to `wait` and then fails saying who
+  ([turns](../../mirai-projects/references/build.md#turns-between-processes)). With
+  `advance:false` it records the frames the loop runs afterwards (those of a window, or those of `engine.step`, `editor.input` and
   `play.step` in a manual editor); fails while another one is recording.
 - With `advance`, once it has the turn, it runs frames until they stop speeding up and only then
   records: a GPU that was idle starts at a lower clock and raises it in steps, and lowers it again

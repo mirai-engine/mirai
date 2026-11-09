@@ -190,7 +190,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     serial.writer_reset(&s.stage)
     // The text is what _select keeps; the structured content stays the whole
     // result, which clients check against the output schema of the tool.
-    err,ok,selected:=method_call(s,method,arguments,&s.stage)
+    err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
     if ok && s.stage.overflow>0 {
         s.stats.oversized+=1
         err,ok={SERVER_ERROR,"the result does not fit in the response buffer",""},false
@@ -224,6 +224,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     raw(w,`{"content":[{"type":"text","text":`)
     serial.text_write_string(w,ok && selected!=""?selected:string(serial.writer_bytes(&s.stage)))
     raw(w,`}`)
+    if ok && note!="" {raw(w,`,{"type":"text","text":`);serial.text_write_string(w,note);raw(w,`}`)}
     if ok && s.image!="" {mcp_image_write(s,w,s.image,object_result?len(serial.writer_bytes(&s.stage)):0)}
     raw(w,`]`)
     if ok && object_result {raw(w,`,"structuredContent":`);raw(w,string(serial.writer_bytes(&s.stage)))}

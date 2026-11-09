@@ -88,7 +88,8 @@ condition_met :: proc(condition:Condition,value:string) -> (met:bool,mismatch:st
 }
 
 // A field of a JSON value: names of members separated by dots and [i] for
-// the element i of an array, from its end when i is negative: a.b, c[0].d, [-1].
+// the element i of an array, from its end when i is negative: a.b, c[0].d,
+// [-1]. A step of digits on an array is that index: a.0.b is a[0].b.
 Json_Path :: struct {
     text:string,
     steps:[]Json_Step,
@@ -133,11 +134,14 @@ json_at :: proc(text:string,path:Json_Path) -> (value,problem:string) {
     value=strings.trim_space(text)
     for step,i in path.steps {
         place:=i==0?"the result":json_path_text(path.steps[:i])
-        if step.name=="" {
+        wanted:=step.index
+        numeric:=false
+        if step.name!="" && len(value)>0 && value[0]=='[' {wanted,numeric=strconv.parse_int(step.name,10)}
+        if step.name=="" || numeric {
             elements,is_array:=json_elements(value)
             if !is_array {return "",fmt.tprintf("%s is not an array: it is %s",place,json_brief(value))}
-            index:=step.index<0?len(elements)+step.index:step.index
-            if index<0 || index>=len(elements) {return "",fmt.tprintf("%s has %d elements: there is no [%d]",place,len(elements),step.index)}
+            index:=wanted<0?len(elements)+wanted:wanted
+            if index<0 || index>=len(elements) {return "",fmt.tprintf("%s has %d elements: there is no [%d]",place,len(elements),wanted)}
             value=elements[index]
             continue
         }
@@ -291,16 +295,9 @@ WAIT_UNTIL_PAUSE :: 0.1   // seconds between its calls
 
 param_reserved :: proc(name:string) -> bool {return name==PARAM_SELECT || name==PARAM_WAIT_UNTIL}
 
-// How long a client gives a method that answers when a job ends.
+// The longest a client gives a call when --timeout does not say: what ends
+// it before is an editor that ended or hung (Client_Watch).
 WAIT_TIMEOUT_MS :: 2*3600*1000
-
-// Whether a call answers when a job of the editor ends, not at once.
-call_waits :: proc(method,params:string) -> bool {
-    switch method {
-    case "build.start","build.check","build.test","play.start","play.scenario.run","asset.import","git.init","git.commit","git.push","git.pull","git.finish","git.abort","git.discard": return true
-    }
-    return strings.contains(params,PARAM_WAIT_UNTIL)
-}
 
 @(private)
 Call_Options :: struct {
@@ -356,19 +353,32 @@ call_options_take :: proc(s:^Server,params:string) -> (rest:string,options:Call_
     return strings.to_string(b),options,{},true
 }
 
-// The fields of a result as an object by their paths; problem names the first
-// that is not there.
+// The fields of a result as an object by their paths. Selecting is a read of
+// the result of a call that already ran, so a field that is not there is not
+// an error: selected is empty, the answer keeps the whole result and note says
+// which fields are missing and what there is.
 @(private)
-fields_select :: proc(allocator:runtime.Allocator,result:string,select:[]Json_Path) -> (selected,problem:string) {
+fields_select :: proc(allocator:runtime.Allocator,result:string,select:[]Json_Path) -> (selected,note:string) {
     b:=strings.builder_make(allocator)
+    notes:=strings.builder_make(allocator)
     strings.write_byte(&b,'{')
-    for path,i in select {
+    comma:=false
+    for path in select {
         value,missing:=json_at(result,path)
-        if missing!="" {return "",format_text(allocator,"_select %s: %s",path.text,missing)}
-        if i>0 {strings.write_byte(&b,',')}
+        if missing!="" {
+            if strings.builder_len(notes)>0 {strings.write_string(&notes,"; ")}
+            strings.write_string(&notes,format_text(allocator,"_select %s: %s",path.text,missing))
+            continue
+        }
+        if comma {strings.write_byte(&b,',')}
+        comma=true
         strings.write_string(&b,serial.text_quote(path.text))
         strings.write_byte(&b,':')
         strings.write_string(&b,value)
+    }
+    if strings.builder_len(notes)>0 {
+        strings.write_string(&notes,"; this is the whole result")
+        return "",strings.to_string(notes)
     }
     strings.write_byte(&b,'}')
     return strings.to_string(b),""
@@ -376,11 +386,12 @@ fields_select :: proc(allocator:runtime.Allocator,result:string,select:[]Json_Pa
 
 // A call of a client: the method with its params, the server doing what the
 // reserved ones ask. The whole result stays in out; selected is what the
-// answer keeps of it with _select, "" otherwise.
-method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool,selected:string) {
+// answer keeps of it with _select, "" otherwise. note says which fields
+// _select named that the result does not have: the answer keeps the whole result.
+method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -> (err:Error,ok:bool,selected,note:string) {
     allocator:=base.arena_allocator(&s.scratch)
     rest,options,problem,read:=call_options_take(s,params)
-    if !read {return problem,false,""}
+    if !read {return problem,false,"",""}
     start:=out.count
     started:=time.tick_now()
     for {
@@ -390,21 +401,19 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         if !ok || !options.waits || out.overflow>0 {break}
         result:=string(out.data[start:out.count])
         value,missing:=json_at(result,options.until.path)
-        if missing!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,missing),""},false,""}
+        if missing!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,missing),""},false,"",""}
         met,mismatch:=condition_met(options.until,value)
-        if mismatch!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,mismatch),""},false,""}
+        if mismatch!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,mismatch),""},false,"",""}
         if met {break}
         if time.duration_seconds(time.tick_since(started))>WAIT_UNTIL_SECONDS {
             message:=format_text(allocator,"%s did not meet %s in %d s: %s is %s",method.name,options.until.text,WAIT_UNTIL_SECONDS,options.until.path.text,json_brief(value))
-            return {TIMEOUT,message,format_text(allocator,`{"field":%s,"value":%s}`,serial.text_quote(options.until.path.text),value)},false,""
+            return {TIMEOUT,message,format_text(allocator,`{"field":%s,"value":%s}`,serial.text_quote(options.until.path.text),value)},false,"",""
         }
         base.arena_rewind(&s.scratch,mark)
-        if !server_pause(s) {return {SERVER_ERROR,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,""}
+        if !server_pause(s) {return {SERVER_ERROR,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
     }
     if ok && len(options.select)>0 && out.overflow==0 {
-        missing:string
-        selected,missing=fields_select(allocator,string(out.data[start:out.count]),options.select)
-        if missing!="" {return {INVALID_PARAMS,missing,""},false,""}
+        selected,note=fields_select(allocator,string(out.data[start:out.count]),options.select)
     }
     return
 }

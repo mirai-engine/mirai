@@ -14,9 +14,6 @@ MCP_USAGE :: "mcp [--project P|--port N] [--timeout S] [--plugins A,B|*] [--clie
 MCP_PROJECT_POLL :: 1 // seconds between readings of the port file of --project
 MCP_NO_EDITOR_SCHEMA :: `{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"additionalProperties":true}`
 
-// An editor of a project, as its port file names it; zero when it has none.
-Mcp_Editor :: struct {port,pid:int}
-
 // stdout is written by the messages and by the watcher of the editor.
 Mcp_Bridge :: struct {
     root:string,
@@ -27,7 +24,7 @@ Mcp_Bridge :: struct {
     client:string,  // X-Mirai-Client: --client, the name its initialize gives, or that of the shell it runs in
     named:bool,     // by --client
     asked:bool,        // with --project: the client has asked for the list of tools
-    listed:Mcp_Editor, // with --project: the editor that list came from; zero: none answered it
+    listed:Connection_Editor, // with --project: the editor that list came from; zero: none answered it
 }
 
 // MCP over stdio, one JSON message per line, forwarded to the editor.
@@ -40,8 +37,6 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
         fmt.eprintfln("Usage: mirai %s",MCP_USAGE)
         return 2
     }
-    // A tool may answer when a build or an import ends: the client bounds its own calls.
-    if !connection.timed {connection.timeout_ms=api.WAIT_TIMEOUT_MS}
     bridge:=Mcp_Bridge{root=root,connection=connection,plugins=plugins,client=connection.client}
     bridge.named=bridge.client!=""
     if !bridge.named {bridge.client=client_environment()}
@@ -76,14 +71,15 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     if text=="" {return}
     if name:=api.bridge_client_name(context.temp_allocator,text);name!="" && !bridge.named {bridge.client=strings.clone(name)}
     c:=bridge.connection
-    editor:=mcp_editor(c)
+    editor:=connection_editor(c)
     method,_:=api.json_string(api.json_member(text,"method"))
     reply:string
     answer,unlisted:bool
     if method=="tools/call" {reply,answer=mcp_docs_call(bridge.root,text)}
     if !answer && c.project!="" && editor.port==0 {reply,answer=mcp_no_editor(c.project,text)}
     if !answer {
-        reply,answer,unlisted=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client)
+        watch:=connection_watch(c,editor,fmt.tprintf("mirai mcp %s",method))
+        reply,answer,unlisted=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch)
         if unlisted && c.project!="" {reply,_=mcp_no_editor(c.project,text)}
         if c.project!="" && method=="initialize" {reply=mcp_lists_changes(reply)}
     }
@@ -94,16 +90,9 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     }
     sync.guard(&bridge.lock)
     if unlisted {bridge.unlisted=true}
-    if method=="tools/list" {bridge.asked,bridge.listed=true,unlisted?Mcp_Editor{}:editor}
+    if method=="tools/list" {bridge.asked,bridge.listed=true,unlisted?Connection_Editor{}:editor}
     os.write_string(os.stdout,reply)
     os.write_string(os.stdout,"\n")
-}
-
-// The editor messages go to now: with --project, the one its port file names.
-mcp_editor :: proc(connection:Connection) -> Mcp_Editor {
-    if connection.project=="" {return {port=connection.port}}
-    file,alive:=session_find(connection.project)
-    return alive?Mcp_Editor{file.port,file.pid}:Mcp_Editor{}
 }
 
 // An editor that answers an initialize says its tools do not change; with
@@ -188,7 +177,7 @@ mcp_watch :: proc(bridge:^Mcp_Bridge) {
         sync.lock(&bridge.lock)
         unlisted:=bridge.unlisted
         sync.unlock(&bridge.lock)
-        reachable:=unlisted && api.bridge_reachable(connection_port(bridge.connection),context.temp_allocator)
+        reachable:=unlisted && api.bridge_reachable(connection_editor(bridge.connection).port,context.temp_allocator)
         free_all(context.temp_allocator)
         if !reachable {continue}
         sync.guard(&bridge.lock)
@@ -200,7 +189,7 @@ mcp_watch :: proc(bridge:^Mcp_Bridge) {
 // Whether the list the client holds came from another editor than the one
 // there is now: it started, restarted or changed port. An editor that closes
 // changes nothing until another one opens.
-mcp_list_stale :: proc(asked:bool,listed,now:Mcp_Editor) -> bool {
+mcp_list_stale :: proc(asked:bool,listed,now:Connection_Editor) -> bool {
     return asked && now.port!=0 && now!=listed
 }
 
@@ -209,7 +198,7 @@ mcp_list_stale :: proc(asked:bool,listed,now:Mcp_Editor) -> bool {
 mcp_watch_project :: proc(bridge:^Mcp_Bridge) {
     for {
         time.sleep(MCP_PROJECT_POLL*time.Second)
-        editor:=mcp_editor(bridge.connection)
+        editor:=connection_editor(bridge.connection)
         sync.lock(&bridge.lock)
         stale:=mcp_list_stale(bridge.asked,bridge.listed,editor)
         sync.unlock(&bridge.lock)

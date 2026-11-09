@@ -16,13 +16,13 @@ BRIDGE_LIST_CHANGED :: `{"jsonrpc":"2.0","method":"notifications/tools/list_chan
 // the client was given an empty list, so it is told when the editor runs.
 // plugins: the plugins whose tools are listed besides those of the editor.
 // client: the name of the MCP client, sent as X-Mirai-Client.
-bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="") -> (reply:string,ok,unlisted:bool) {
+bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{}) -> (reply:string,ok,unlisted:bool) {
     values:[3]string
     object:=object_values(allocator,message,{"id","method","params"},values[:])
     if !object && !json_valid(allocator,message) {
         return bridge_error(allocator,"",{PARSE_ERROR,"parse error",""}),true,false
     }
-    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client)
+    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch)
     if post_error.code==0 {
         if status==202 {return "",false,false}
         if status==200 {return json_single_line(string(body),allocator),true,false}

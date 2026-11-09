@@ -27,6 +27,8 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     at(t,"entities[-1].tags[0]",`"light"`)
     at(t,"camera.position[2]","-3")
     at(t,"camera",`{"position": [1, 2.5, -3]}`)
+    at(t,"entities.1.name",`"Lamp"`)
+    at(t,"entities.-1.tags.0",`"light"`)
     testing.expect_value(t,api.json_scalar_text(`"Compiling"`),"Compiling")
     testing.expect_value(t,api.json_scalar_text("2.5"),"2.5")
     testing.expect_value(t,api.json_scalar_text(`{"a": [1]}`),"{\n  \"a\": [\n    1\n  ]\n}")
@@ -38,6 +40,8 @@ select_reads_members_elements_and_counts_from_the_end :: proc(t:^testing.T) {
     }
     missing(t,"phases","has no 'phases'; it has: phase, errors, frame, ok, entities, camera")
     missing(t,"entities[2]","entities has 2 elements: there is no [2]")
+    missing(t,"entities.2.name","entities has 2 elements: there is no [2]")
+    missing(t,"camera.0","camera has no '0'; it has: position")
     missing(t,"entities[0].name.first","entities[0].name is not an object")
     missing(t,"camera[0]","camera is not an array")
     for wrong in ([]string{"","a..b",".a","a.","a[","a[x]","a[0]b","a.[0]"}) {
@@ -130,12 +134,14 @@ the_commands_of_an_agent_call_its_editor_in_its_context :: proc(t:^testing.T) {
     }
     for c in cases {
         connection,ok:=connection_args(c.args,agent)
-        port:=connection_port(connection)
+        port:=connection_editor(connection).port
         testing.expectf(t,ok && port==c.port && connection_task(connection,port)==c.task,"%v: %d %q",c.args,port,connection_task(connection,port))
     }
     connection,ok:=connection_args({"scene.inspect","--project","elsewhere"},agent)
     testing.expect(t,ok && connection.project!="" && connection_task(connection,7960)=="","another editor is not told the context")
+    testing.expect(t,connection.named,"--project names the project whose session a call may open")
     connection,ok=connection_args({"scene.inspect","--port","7951"},{})
+    testing.expect(t,ok && !connection.named,"a port names no project to open")
     testing.expect(t,ok && connection_task(connection,7951)=="","outside an agent a call has no context")
     // An agent outside the editor names its client: --client first, then MIRAI_CLIENT, then Claude Code's shell.
     connection,ok=connection_args({"--client","codex","ai.turn_end"},{})
@@ -234,4 +240,27 @@ describe_without_arguments_groups_the_methods_by_plugin :: proc(t:^testing.T) {
     testing.expect(t,rpc_describe_is_plugin(listing,"animation") && rpc_describe_is_plugin(listing,"terrain") && rpc_describe_is_plugin(listing,"editor"))
     testing.expect(t,!rpc_describe_is_plugin(listing,"scene.") && !rpc_describe_is_plugin(listing,"scene.add"),"a prefix or a method is not a plugin")
     testing.expect_value(t,rpc_similar_names(listing,"scene.ad"),"scene.add")
+}
+
+// Quoting a JSON object differs per shell: key=value arguments need none.
+@(test)
+key_value_arguments_are_the_params_of_a_call :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    params :: proc(t:^testing.T,args:[]string,expected:string,loc:=#caller_location) {
+        request,problem,ok:=rpc_request(args)
+        testing.expectf(t,ok && problem=="" && request.method=="scene.set" && request.params==expected,"%v: %q %s",args,request.params,problem,loc=loc)
+    }
+    params(t,{"scene.set","entity=Floor","name=Ground"},`{"entity":"Floor","name":"Ground"}`)
+    params(t,{"scene.set","count=3","ok=true","nothing=null","at=[1,2.5]","other={\"a\":1}"},`{"count":3,"ok":true,"nothing":null,"at":[1,2.5],"other":{"a":1}}`)
+    params(t,{"scene.set","id=00000000000000a1","text=with spaces=and equals","empty="},`{"id":"00000000000000a1","text":"with spaces=and equals","empty":""}`)
+    params(t,{"scene.set","a.b=1","a.c.d=two","--select","x"},`{"a":{"b":1,"c":{"d":"two"}}}`)
+    params(t,{"scene.set",`{"a":1}`},`{"a":1}`)
+    wrong :: proc(t:^testing.T,args:[]string,said:string,loc:=#caller_location) {
+        _,problem,ok:=rpc_request(args)
+        testing.expectf(t,!ok && strings.contains(problem,said),"%v: %s",args,problem,loc=loc)
+    }
+    wrong(t,{"scene.set","a=1","a=2"},"given twice")
+    wrong(t,{"scene.set","a=1","a.b=2"},"given twice")
+    wrong(t,{"scene.set","a..b=1"},"names joined by dots")
+    wrong(t,{"scene.set",`{"a":1}`,"b=2"},"do not go together")
 }

@@ -10,10 +10,11 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [json|-|--file F] [--select FIELDS] [--wait-until CONDITION [--every S]] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> [--project P|--port N] [--timeout S] [--wait S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION [--every S]] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl> [--project P|--port N] [--timeout S] [--wait S] [--client NAME]"
 
 // How often --wait-until calls again without --every, in milliseconds.
 RPC_EVERY_MS :: 1000
+RPC_WAIT_UNTIL_MS :: 30000 // how long --wait-until repeats its call without --timeout
 RPC_ECHO_BYTES :: 240 // of a result an error repeats
 
 Connection :: struct {
@@ -22,6 +23,8 @@ Connection :: struct {
     timed:bool,  // --timeout gave timeout_ms
     agent:Agent_Environment, // the task context the calls to the editor of that port belong to
     project:string, // with --project and no --port: whose api.json names the port, read again on every attempt
+    named:bool,     // --project named project, which a call may open a session of
+    near:string,    // with a port: the project at or above the working folder, to know the process of an editor of that port
     client:string,  // the agent outside the editor that calls: --client, MIRAI_CLIENT, or claude-code from its shell
     rest:[dynamic]string,
 }
@@ -47,7 +50,7 @@ agent_environment :: proc() -> Agent_Environment {
 // project at or above the working directory; api.DEFAULT_PORT only outside
 // any project, never for one.
 connection_args :: proc(args:[]string,agent:Agent_Environment) -> (connection:Connection,ok:bool) {
-    connection={port=0,timeout_ms=30000,agent=agent}
+    connection={port=0,timeout_ms=api.WAIT_TIMEOUT_MS,agent=agent}
     folder:=""
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
@@ -74,7 +77,7 @@ connection_args :: proc(args:[]string,agent:Agent_Environment) -> (connection:Co
     }
     if connection.port==0 {
         if folder!="" {
-            connection.project=project.path_absolute(folder)
+            connection.project,connection.named=project.path_absolute(folder),true
             return connection,true
         }
         connection.port=agent.port
@@ -86,15 +89,32 @@ connection_args :: proc(args:[]string,agent:Agent_Environment) -> (connection:Co
             connection.port=api.DEFAULT_PORT
         }
     }
+    connection.near=project_of(".")
     return connection,true
 }
 
-// The port to call now: with --project, the one its api.json names, or 0
-// while it has no editor.
-connection_port :: proc(connection:Connection) -> int {
-    if connection.project=="" {return connection.port}
-    if file,alive:=session_find(connection.project);alive {return file.port}
-    return 0
+// An editor calls go to, as the port file of its project names it; zero when
+// a project has none, and only the port when the process is unknown.
+Connection_Editor :: struct {port,pid:int}
+
+// The editor calls go to now: with a project, the one its port file names, or
+// none while it has no editor; with a port, that port and, when the port file
+// of the project near it names it, its process.
+connection_editor :: proc(connection:Connection) -> Connection_Editor {
+    folder:=connection.project!=""?connection.project:connection.near
+    if folder=="" {return {port=connection.port}}
+    file,alive:=session_find(folder)
+    if connection.project!="" {return alive?Connection_Editor{file.port,file.pid}:Connection_Editor{}}
+    return alive && file.port==connection.port?Connection_Editor{file.port,file.pid}:Connection_Editor{port=connection.port}
+}
+
+// What a client watches of the editor a call goes to, with the log of a
+// session and label naming the call in its notices.
+connection_watch :: proc(connection:Connection,editor:Connection_Editor,label:string) -> api.Client_Watch {
+    log:=""
+    folder:=connection.project!=""?connection.project:connection.near
+    if file,alive:=session_find(folder);alive && file.pid==editor.pid && file.manual {log=session_log_path(folder)}
+    return {editor.pid,log,label}
 }
 
 // The agent outside the editor whose shell runs the command: MIRAI_CLIENT,
@@ -120,8 +140,9 @@ no_editor_text :: proc(project:string,allocator:=context.temp_allocator) -> stri
 rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (result:string,err:api.Error,called:bool) {
     start:=time.tick_now()
     for {
-        if port:=connection_port(connection);port!=0 {
-            result,err,called=api.rpc_call(port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,port),connection.client)
+        if editor:=connection_editor(connection);editor.port!=0 {
+            watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
+            result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch)
         } else {
             err={api.UNREACHABLE,no_editor_text(connection.project,context.allocator),""}
         }
@@ -150,8 +171,10 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     switch connection.rest[0] {
     case "--batch":
         if len(connection.rest)!=2 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
+        if code:=rpc_session_open(root,connection);code!=0 {return code}
         return rpc_batch(connection,connection.rest[1])
     case "describe":
+        if code:=rpc_session_open(root,connection);code!=0 {return code}
         return rpc_describe(connection,connection.rest[1:])
     }
     request,problem,parsed:=rpc_request(connection.rest[:])
@@ -162,13 +185,29 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
     }
     params:=strings.trim_space(request.params)
     if !api.json_valid(context.allocator,params) || !params_is_object(params) {
-        return rpc_fail({api.INVALID_PARAMS,"params must be a JSON object: '{...}' as one argument, - to read it from stdin, or --file F",""})
+        return rpc_fail({api.INVALID_PARAMS,"params must be a JSON object: key=value arguments, '{...}' as one argument, - to read it from stdin, or --file F",""})
     }
-    if !connection.timed && api.call_waits(request.method,params) {connection.timeout_ms=api.WAIT_TIMEOUT_MS}
+    if request.method!="engine.shutdown" {
+        if code:=rpc_session_open(root,connection);code!=0 {return code}
+    }
     if request.waits {return rpc_wait(connection,request,params)}
     result,err,called:=rpc_call_waiting(connection,request.method,params,1)
     if !called {return rpc_fail(rpc_hint(connection,request.method,err))}
     return rpc_print(result,request.select[:])
+}
+
+// Opens the headless session of the project --project names when it has no
+// editor, saying so on stderr, where all that mirai session start prints goes
+// too: stdout is the answer of the call. 0 when there is an editor to call.
+rpc_session_open :: proc(root:string,connection:Connection) -> int {
+    if !connection.named || connection_editor(connection).port!=0 {return 0}
+    fmt.eprintfln("mirai rpc: %s has no open editor; starting its headless session (mirai session start %s --dev)",connection.project,connection.project)
+    self,error:=os.get_executable_path(context.temp_allocator)
+    if error!=nil {return rpc_fail({api.UNREACHABLE,fmt.tprintf("could not start the session of %s: %v",connection.project,error),""})}
+    if run_with(root,{self,"session","start",connection.project,"--dev"},os.stderr)!=0 {
+        return rpc_fail({api.UNREACHABLE,fmt.tprintf("mirai session start %s --dev failed; what it said is above",connection.project),""})
+    }
+    return 0
 }
 
 // The method, its params and what to do with the result, from what
@@ -178,6 +217,7 @@ rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:boo
     request.every_ms=RPC_EVERY_MS
     request.select=make([dynamic]api.Json_Path,context.temp_allocator)
     positional:=make([dynamic]string,context.temp_allocator)
+    fields:=make([dynamic]string,context.temp_allocator)
     file:=""
     every:=false
     for i:=0;i<len(args);i+=1 {
@@ -207,13 +247,21 @@ rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:boo
                 file=value
             }
         case:
-            if strings.has_prefix(arg,"--") {return request,fmt.tprintf("unknown option '%s'",arg),false}
-            append(&positional,arg)
+            switch {
+            case strings.has_prefix(arg,"--"): return request,fmt.tprintf("unknown option '%s'",arg),false
+            case rpc_field_arg(arg):           append(&fields,arg)
+            case:                              append(&positional,arg)
+            }
         }
     }
     if every && !request.waits {return request,"--every is the interval of --wait-until",false}
     if len(positional)==0 || len(positional)>2 || (len(positional)==2 && file!="") {return request,"",false}
     request.method=positional[0]
+    if len(fields)>0 {
+        if len(positional)==2 || file!="" {return request,"key=value arguments and a JSON object do not go together",false}
+        request.params,problem=rpc_fields_params(fields[:])
+        return request,problem,problem==""
+    }
     switch {
     case len(positional)==2 && positional[1]=="-": request.params=read_stdin()
     case len(positional)==2: request.params=positional[1]
@@ -225,38 +273,105 @@ rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:boo
     return request,"",true
 }
 
+// A key=value argument of mirai rpc: its key is a name or names joined by dots.
+rpc_field_arg :: proc(arg:string) -> bool {
+    at:=strings.index_byte(arg,'=')
+    if at<=0 || !(arg[0]=='_' || arg[0]>='a' && arg[0]<='z' || arg[0]>='A' && arg[0]<='Z') {return false}
+    for c in transmute([]u8)arg[:at] {
+        if !(c=='_' || c=='.' || c>='a' && c<='z' || c>='A' && c<='Z' || c>='0' && c<='9') {return false}
+    }
+    return true
+}
+
+// A member of the object key=value arguments build: its value as JSON, or
+// the members inside it.
+Rpc_Field :: struct {
+    name,value:string,
+    fields:[dynamic]Rpc_Field,
+}
+
+// The JSON object of key=value arguments: a value that parses as JSON is that
+// JSON and any other is text, and dots in a key make objects inside.
+rpc_fields_params :: proc(args:[]string) -> (params,problem:string) {
+    set :: proc(fields:^[dynamic]Rpc_Field,path:[]string,value:string) -> bool {
+        for &field in fields {
+            if field.name!=path[0] {continue}
+            return len(path)>1 && field.value=="" && set(&field.fields,path[1:],value)
+        }
+        field:=Rpc_Field{name=path[0],fields=make([dynamic]Rpc_Field,context.temp_allocator)}
+        if len(path)==1 {field.value=value}
+        else if !set(&field.fields,path[1:],value) {return false}
+        append(fields,field)
+        return true
+    }
+    write :: proc(b:^strings.Builder,fields:[]Rpc_Field) {
+        strings.write_byte(b,'{')
+        for field,i in fields {
+            if i>0 {strings.write_byte(b,',')}
+            fmt.sbprintf(b,"%s:",serial.text_quote(field.name))
+            if field.value!="" {strings.write_string(b,field.value)} else {write(b,field.fields[:])}
+        }
+        strings.write_byte(b,'}')
+    }
+    fields:=make([dynamic]Rpc_Field,context.temp_allocator)
+    for arg in args {
+        key,_,value:=strings.partition(arg,"=")
+        path:=strings.split(key,".",context.temp_allocator)
+        for name in path {
+            if name=="" {return "",fmt.tprintf("'%s': a key is names joined by dots",key)}
+        }
+        json_value:=api.json_valid(context.temp_allocator,value)?value:serial.text_quote(value)
+        if !set(&fields,path,json_value) {return "",fmt.tprintf("'%s' is given twice, or inside a field that has a value",key)}
+    }
+    b:=strings.builder_make(context.temp_allocator)
+    write(&b,fields[:])
+    return strings.to_string(b),""
+}
+
 // The result, or the fields of it select names, each a line: a string
-// without quotes, a number, true, false or null, and the rest as indented JSON.
+// without quotes, a number, true, false or null, and the rest as indented
+// JSON. Selecting reads the result of a call that already ran: a field that
+// is not there says so on stderr and prints the whole result.
 rpc_print :: proc(result:string,select:[]api.Json_Path) -> int {
     if len(select)==0 {
         fmt.println(api.json_pretty(result,context.allocator))
         return 0
     }
     values:=make([]string,len(select),context.temp_allocator)
+    missing:=false
     for path,i in select {
         value,problem:=api.json_at(result,path)
-        if problem!="" {return rpc_fail({api.INVALID_PARAMS,fmt.tprintf("--select %s: %s",path.text,problem),strings.concatenate({`{"result":`,result,"}"},context.temp_allocator)})}
+        if problem!="" {
+            fmt.eprintfln("mirai rpc: --select %s: %s; this is the whole result",path.text,problem)
+            missing=true
+        }
         values[i]=value
+    }
+    if missing {
+        fmt.println(api.json_pretty(result,context.allocator))
+        return 0
     }
     for value in values {fmt.println(api.json_scalar_text(value))}
     return 0
 }
 
-// Calls every request.every_ms until the field of the condition meets it,
-// for at most --timeout in all, and prints the result that met it. An editor
-// that does not answer, or that ends while it answers, is waited for: Build
-// restarts it, and the call is made again anyway.
+// Calls every request.every_ms until the field of the condition meets it, for
+// at most --timeout in all (RPC_WAIT_UNTIL_MS without it, a limit between
+// calls that does not cut one that runs), and prints the result that met it.
+// An editor that does not answer, or that ends while it answers, is waited
+// for: Build restarts it, and the call is made again anyway.
 @(private="file")
 rpc_wait :: proc(connection:Connection,request:Rpc_Request,params:string) -> int {
     start:=time.tick_now()
     elapsed :: proc(start:time.Tick) -> int {return int(time.duration_milliseconds(time.tick_since(start)))}
     last:=""
     last_error:api.Error
+    limit:=connection.timed?connection.timeout_ms:RPC_WAIT_UNTIL_MS
     for id:=1;;id+=1 {
-        remaining:=connection.timeout_ms-elapsed(start)
+        remaining:=limit-elapsed(start)
         if remaining<=0 {break}
         attempt:=connection
-        attempt.timeout_ms=remaining
+        if connection.timed {attempt.timeout_ms=remaining}
         attempt.wait_ms=min(connection.wait_ms,remaining)
         result,err,called:=rpc_call_waiting(attempt,request.method,params,id)
         switch {
@@ -272,9 +387,9 @@ rpc_wait :: proc(connection:Connection,request:Rpc_Request,params:string) -> int
         case:
             return rpc_fail(rpc_hint(connection,request.method,err))
         }
-        if pause:=min(request.every_ms,connection.timeout_ms-elapsed(start));pause>0 {time.sleep(time.Duration(pause)*time.Millisecond)}
+        if pause:=min(request.every_ms,limit-elapsed(start));pause>0 {time.sleep(time.Duration(pause)*time.Millisecond)}
     }
-    message:=fmt.tprintf("%s did not meet %s in %d s",request.method,request.until.text,connection.timeout_ms/1000)
+    message:=fmt.tprintf("%s did not meet %s in %d s",request.method,request.until.text,limit/1000)
     data:=""
     if last!="" {
         message=fmt.tprintf("%s: %s is %s",message,request.until.path.text,api.json_brief(last))
