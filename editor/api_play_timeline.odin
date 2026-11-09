@@ -247,7 +247,7 @@ api_press_center :: proc(top:^Play_Ui_Top,name:string) -> (center:[2]f32,problem
     names:=make([]string,len(top.buttons),context.temp_allocator)
     for &b,i in top.buttons {names[i]=b.name}
     index,_:=base.name_find(name,names)
-    if index<0 {return {},fmt.tprintf("press: %s",base.name_problem(name,"a button of the screen on top",names))}
+    if index<0 {return {},fmt.tprintf("press: %q does not name one button of the screen on top: %s",name,strings.join(names,", ",context.temp_allocator))}
     b:=&top.buttons[index]
     if b.disabled {return {},fmt.tprintf("press: %q is disabled",b.name)}
     if !b.laid {return {},fmt.tprintf("press: %q has no place in the window: the last frame did not lay it out",b.name)}
