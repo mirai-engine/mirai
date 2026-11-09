@@ -1,5 +1,6 @@
 package api
 
+import "core:encoding/json"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -25,8 +26,9 @@ select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: p
     testing.expect_value(t,integer(at(reply,"result","position[1]")),2)
     testing.expect(t,at(reply,"result","flags")==nil,"only what it names")
     missing:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"test.add","params":{"a":1,"b":1,"_select":"total"}}`)
-    testing.expect_value(t,integer(at(missing,"error","code")),i64(INVALID_PARAMS))
-    testing.expect(t,strings.contains(string_of(at(missing,"error","message")),"sum"),"names what there is")
+    testing.expect(t,at(missing,"error")==nil,"the call ran: a field it does not have is not an error")
+    testing.expect_value(t,integer(at(missing,"result","sum")),2)
+    testing.expect(t,strings.contains(string_of(at(missing,"note")),"has no 'total'; it has: sum"),"says what is missing and what there is")
     malformed:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"test.add","params":{"a":1,"b":1,"_wait_until":"sum"}}`)
     testing.expect_value(t,integer(at(malformed,"error","code")),i64(INVALID_PARAMS))
 
@@ -34,6 +36,11 @@ select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: p
     testing.expect_value(t,string_of(at(tool_text(t,tool),"mode")),"Walk")
     testing.expect(t,at(tool_text(t,tool),"position")==nil,"the text keeps what it names")
     testing.expect(t,at(tool,"result","structuredContent","position")!=nil,"the structured result stays whole")
+    unknown:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_add","arguments":{"a":1,"b":1,"_select":"total"}}}`)
+    testing.expect(t,is_bool(at(unknown,"result","isError"),false),"a tool that ran is not a tool error")
+    testing.expect_value(t,integer(at(tool_text(t,unknown),"sum")),2)
+    content:=at(unknown,"result","content").(json.Array)
+    testing.expect(t,len(content)==2 && strings.contains(string_of(at(content[1],"text")),"has no 'total'"),"the note follows the whole result")
 
     described:=rpc(t,&f,`{"jsonrpc":"2.0","id":3,"method":"engine.describe","params":{"methods":["test.add"]}}`)
     properties:=at(described,"result","methods",0,"params","properties")
@@ -53,13 +60,13 @@ wait_until_calls_the_method_again_until_its_result_meets_the_condition :: proc(t
     serial.writer_init(&out,allocator=context.allocator)
     defer serial.writer_destroy(&out)
     method:=method_find(&server,"count")
-    error,ok,selected:=method_call(&server,method,`{"_wait_until":"value>=3","_select":"value"}`,&out)
+    error,ok,selected,_:=method_call(&server,method,`{"_wait_until":"value>=3","_select":"value"}`,&out)
     testing.expectf(t,ok,"%v",error)
     testing.expect_value(t,count,3)
     testing.expect_value(t,selected,`{"value":3}`)
     base.arena_reset(&server.scratch)
     ending :: proc(s:^Server,seconds:f64) -> bool {return false}
     server.pause=ending
-    error,ok,_=method_call(&server,method,`{"_wait_until":"value<0"}`,&out)
+    error,ok,_,_=method_call(&server,method,`{"_wait_until":"value<0"}`,&out)
     testing.expect(t,!ok && strings.contains(error.message,"ending"),error.message)
 }

@@ -8,7 +8,8 @@ description: Verify a Mirai game cheaply - scenario files and mirai play test, p
 
 The game advances only when a call asks for ticks, so every check is repeatable and a slow
 model plays as well as a fast one. Open a headless editor once: `mirai session start .`; later
-calls are `mirai rpc --project . <method> '<json>' --select <fields>`. Params of any method:
+calls are `mirai rpc --project . <method> key=value... --select <fields>` (or one JSON object).
+Params of any method:
 `mirai rpc --project . describe <method>`. Never call without `--project`.
 
 ## Map

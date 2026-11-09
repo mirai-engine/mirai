@@ -105,6 +105,11 @@ session_options :: proc(args:[]string) -> (options:Session_Options,problem:strin
     return options,""
 }
 
+// The log of the session of the project at folder.
+session_log_path :: proc(folder:string) -> string {
+    return project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
+}
+
 // The port file of the editor of the project at folder, when its process is alive.
 session_find :: proc(folder:string) -> (file:api.Port_File,alive:bool) {
     path:=project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator)
@@ -163,8 +168,7 @@ session_port_remove :: proc(folder:string,pid:int) {
 
 @(private="file")
 session_print :: proc(folder:string,file:api.Port_File) {
-    log:=project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
-    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,log)
+    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,session_log_path(folder))
 }
 
 @(private="file")
@@ -252,7 +256,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     if found_file,found_code,found:=open(root,folder,mode);found {return found_file,found_code}
     _=os.remove(project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator))
     layers_isolate(root)
-    log:=project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
+    log:=session_log_path(folder)
     engine:=build.engine_mode_resolve(root,mode)
     editor_args:=session_api_args(editor_args)
     command:=make([dynamic]string)

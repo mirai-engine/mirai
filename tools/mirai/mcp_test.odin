@@ -59,8 +59,7 @@ a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
 
     connection,ok:=connection_args({"--project",root},{})
     testing.expect(t,ok && connection.project!="" && len(connection.rest)==0)
-    testing.expect_value(t,mcp_editor(connection),Mcp_Editor{})
-    testing.expect_value(t,connection_port(connection),0)
+    testing.expect_value(t,connection_editor(connection),Connection_Editor{})
 
     file:=project.path(folder,api.PORT_FILE,allocator=context.temp_allocator)
     write :: proc(t:^testing.T,file:string,port:int,loc:=#caller_location) {
@@ -68,10 +67,10 @@ a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
         testing.expect(t,os.write_entire_file(file,transmute([]u8)text)==nil,loc=loc)
     }
     write(t,file,7951)
-    first:=mcp_editor(connection)
-    testing.expect_value(t,first,Mcp_Editor{7951,os.get_pid()})
+    first:=connection_editor(connection)
+    testing.expect_value(t,first,Connection_Editor{7951,os.get_pid()})
     write(t,file,7952)
-    moved:=mcp_editor(connection)
+    moved:=connection_editor(connection)
     testing.expect_value(t,moved.port,7952)
 
     testing.expect(t,!mcp_list_stale(false,{},first),"nothing to change before the client asks for a list")
@@ -86,7 +85,7 @@ a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
 
     without,_:=connection_args({"scene.inspect"},{})
     testing.expect_value(t,without.project,"")
-    testing.expect(t,mcp_editor(without).port==without.port && mcp_editor(without).pid==0,"without --project nothing is read")
+    testing.expect(t,connection_editor(without).port==without.port && connection_editor(without).pid==0,"without --project nothing is read")
 }
 
 // A path of --capture or --input is one of whoever runs the command; the

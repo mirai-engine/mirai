@@ -237,11 +237,12 @@ rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
         return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
     }
     start:=w.count
-    err,ok,selected:=method_call(s,method,req.has_params?req.params:"{}",w)
+    err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)
     if ok && selected!="" {
         w.count,w.overflow=start,0
         raw(w,selected)
     }
+    if ok && note!="" {raw(w,`,"note":`);serial.text_write_string(w,note)}
     return err,ok
 }
 

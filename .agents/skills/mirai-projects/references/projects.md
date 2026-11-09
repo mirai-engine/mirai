@@ -405,7 +405,7 @@ tools come from `.deps`, also from a worktree.
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins |
 | Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
-| Call the editor API | `mirai rpc <method> [json] [--select c] [--wait-until c=v] [--project P]` |
+| Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |

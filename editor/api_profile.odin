@@ -20,7 +20,7 @@ import "mirai:std/serial"
 // agent needs to decide, not with the events themselves. Every time is in ms.
 
 PROFILE_TREE_ZONES :: 256 // zones of one frame in profile.frames
-PROFILE_WAIT :: 20        // seconds profile.capture waits by default for a compilation or another measurement: within the 30 a client waits by default
+PROFILE_WAIT :: 900       // seconds profile.capture queues by default for a compilation or another measurement: the maximum of its wait
 PROFILE_NAME_BYTES :: 128 // of a zone or a GPU pass in an answer
 PROFILE_NOTE_BYTES :: 256
 PROFILE_LOAD_TOP :: 8     // slowest assets and loop functions of each load in profile.load
@@ -31,7 +31,7 @@ Api_Profile_Capture_Params :: struct {
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Of each frame a manual editor runs"`,
     label:[32]u8 `mirai:"optional,text,label=Name to tell the capture by"`,
     top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes in the summary"`,
-    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to wait for a compilation or another measurement that runs; past it the call fails. A longer wait needs a client that waits longer (mirai rpc --timeout)"`,
+    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to queue for a compilation or another measurement that runs; past it the call fails"`,
     allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
 }
 Api_Profile_Id_Params :: struct {
@@ -453,7 +453,7 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         measure,ok,holder,compiling=workspace.measure_try(s.engine_root,fmt.tprintf("pid %d, profile.capture in %s",os.get_pid(),s.project_root),time.Duration(p.wait)*time.Second)
         if holder=="" {holder="another process"}
         what:=compiling?"A compilation":"Another measurement"
-        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s): pass a longer wait, up to 900, with a client that waits longer (mirai rpc --timeout)",what,holder,p.wait);return}
+        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait);return}
     }
     // While another capture records, profile_begin refuses: no frames run into it.
     profile_collect(s)

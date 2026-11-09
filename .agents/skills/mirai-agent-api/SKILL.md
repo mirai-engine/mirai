@@ -68,7 +68,8 @@ difference with the catalog, it rules.
 1. Open it with `mirai edit` (window or manual mode and port per
    [arguments](../mirai-editor/references/editor.md#arguments)) or, without a window and in the
    background, with `mirai session start [project] --dev`, on a free port that is never 7940
-   unless `--api-port` names one; `mirai rpc --project <project>` finds the port. If the user's
+   unless `--api-port` names one; `mirai rpc --project <project>` finds the port and starts that
+   session when the project has none. If the user's
    windowed editor holds the project, `--copy` opens a session on a fresh copy under its
    `.mirai/tmp/`, whose path it prints; `mirai session stop <copy>` deletes it, and the next
    `--copy` (or `stop --orphans <project>`) deletes the copies a killed run left behind.
