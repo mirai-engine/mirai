@@ -117,14 +117,16 @@ work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
 // The build of a chunk or a node, from its source as it is now; a node of a
 // Heightfield takes a copy of its border.
 @(private)
-work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil) {
+work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil) -> bool {
+    // Before the slot is taken: without room for the border it stays free.
+    if border!=nil {for i in 0..<4 {
+        if resize(&slot.border.sides[i],len(border.sides[i]))!=nil || resize(&slot.border.corners[i],len(border.corners[i]))!=nil {return false}
+        copy(slot.border.sides[i][:],border.sides[i][:])
+        copy(slot.border.corners[i][:],border.corners[i][:])
+    }}
     slot.owner=owner
     slot.kind,slot.urgent,slot.phase,slot.epoch,slot.limits=.Build,urgent,phase,data.epoch,limits
     slot.source,slot.id,slot.index,slot.version,slot.key,slot.ok=&entry.source,entry.id,index,data_version(entry,index),key,false
-    if border!=nil {for i in 0..<4 {
-        resize(&slot.border.sides[i],len(border.sides[i]));copy(slot.border.sides[i][:],border.sides[i][:])
-        resize(&slot.border.corners[i],len(border.corners[i]));copy(slot.border.corners[i][:],border.corners[i][:])
-    }}
     slot.join={}
     clear(&slot.cuts)
     if join!=nil && key.join!=0 {
@@ -134,6 +136,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
     }
     slot.join.cuts=slot.cuts[:]
     work_start(data,slot)
+    return true
 }
 
 // The reading of page index of a grid of a source from its block. False

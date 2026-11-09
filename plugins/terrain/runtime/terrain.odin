@@ -496,12 +496,16 @@ data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^
     if !found || record.kind!=KIND {return nil}
     if _,held:=asset.registry_memory_find(&a.registry,record.path);held {return nil}
     heap:=runtime.heap_allocator()
-    load:=new(Source_Load,heap)
+    load,allocation_error:=new(Source_Load,heap)
+    if allocation_error!=nil {return nil}
     load.id,load.stamp,load.js=id,terrain_stamp(a,id),data.jobs
     load.path=asset.registry_file_path(&a.registry,record.path,heap)
     asset.types_init(&load.types,heap)
     if data.loads==nil {data.loads=make([dynamic]^Source_Load,heap)}
-    append(&data.loads,load)
+    if _,append_error:=append(&data.loads,load);append_error!=nil {
+        data_load_free(load)
+        return nil
+    }
     if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
     return load
 }
