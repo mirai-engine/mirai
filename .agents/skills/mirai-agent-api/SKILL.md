@@ -16,7 +16,9 @@ difference with the catalog, it rules.
 
 ## Map
 
-- Connecting a client, limits, errors, MCP: [protocol and CLI](references/api.md).
+- Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
+  [method conventions](references/api.md#method-conventions) and
+  [MCP over HTTP](references/api.md#mcp-over-http).
 - Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
   calls over one connection, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
@@ -48,18 +50,36 @@ difference with the catalog, it rules.
   repeats it (first tick and field that differ): [`play.history`](references/methods.md#play).
 - Capturing the world without UI and comparing it with a reference:
   [`mirai capture`](references/api.md#mirai-capture); measuring PNGs, cropping them, enlarging
-  them or reading their pixels: [`mirai image`](references/image.md).
+  them or reading their pixels: [`mirai image`](references/image.md#comparing-images-mirai-image).
 - Console text, validation and build errors, and the problems of each world (which entity failed,
   why and how to fix it) after a failure:
   [`engine.diagnostics`](references/methods.md#server-and-execution).
-- What a method does and what its schema does not say: [catalog](references/methods.md).
+- What a method does and what its schema does not say, by area of the catalog:
+  [server and execution](references/methods.md#server-and-execution),
+  [editor and viewport](references/methods.md#editor-and-viewport),
+  [collision](references/methods.md#collision), [cinematics](references/methods.md#cinematics),
+  [ragdoll](references/methods.md#ragdoll), [interfaces](references/methods.md#interfaces),
+  [painting and placement](references/methods.md#painting-and-placement),
+  [profiling](references/methods.md#profiling), [history](references/methods.md#history),
+  [scene](references/methods.md#scene), [spatial queries](references/methods.md#spatial-queries),
+  [editor documents](references/methods.md#editor-documents), [Play](references/methods.md#play),
+  [simulation](references/methods.md#simulation), [saves](references/methods.md#saves),
+  [build](references/methods.md#build), [project](references/methods.md#project),
+  [prefabs](references/methods.md#prefabs),
+  [components and assets](references/methods.md#components-and-assets),
+  [graphics and settings](references/methods.md#graphics-and-settings),
+  [input](references/methods.md#input),
+  [material programs](references/methods.md#material-programs),
+  [collaboration](references/methods.md#collaboration),
+  [project panels](references/methods.md#project-panels) and [AI](references/methods.md#ai).
   The animation ones are in `mirai-animation`
-  ([animation-api.md](../mirai-animation/references/animation-api.md)); the AI ones, in
-  `mirai-editor` ([ai-tasks.md](../mirai-editor/references/ai-tasks.md#api-methods)).
+  ([animation-api.md](../mirai-animation/references/animation-api.md#animation-api-methods)); the
+  AI ones, in `mirai-editor` ([ai-tasks.md](../mirai-editor/references/ai-tasks.md#api-methods)).
 - Concurrency, transactions and undo:
   [protocol](references/api.md#concurrency-transactions-and-undo).
 - AI turns and their header: [context](references/api.md#ai-turn-context) and
-  [change review](../mirai-editor/references/ai-review.md).
+  [change sets](../mirai-editor/references/ai-review.md#change-sets) and
+  [finish, revert and retry](../mirai-editor/references/ai-review.md#finish-revert-and-retry).
 - Methods of a plugin:
   [providers](../mirai-editor/references/extensions.md#api-methods).
 - Profiling an open editor, and where the seconds of a load or a Play start went:

@@ -48,7 +48,7 @@ mode.
 - In common PBR, mask coverage reads only opacity and base color.
 - The scene caches the opaque instances that require their own F0/F90; G-buffer and lighting use
   stored reflectance only while some of their boxes is in the frustum of the view or of a nested
-  view ([G-buffer](frame-graph.md#frame-graph)), and the target is allocated the first time it is
+  view ([G-buffer](frame-graph.md#passes)), and the target is allocated the first time it is
   needed.
 
 ## BRDF

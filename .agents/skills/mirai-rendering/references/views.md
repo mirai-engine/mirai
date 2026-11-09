@@ -203,7 +203,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
   reload gives another) and keeps up to `RENDER_PIPELINE_CAPACITY` (16); one that no recent frame
   requested leaves its place.
 - **Standard** (`Standard_Pipeline`, `standard_pipeline_passes`), always present:
-  - `Full`: all the stages ([frame graph](frame-graph.md#frame-graph)).
+  - `Full`: all the stages ([frame graph](frame-graph.md#passes)).
   - `Light`: `Full` without `Reflections` or `Indirect`, with `Direct` in `Traced` mode.
 - **Use.** `Frame_View.pipeline` chooses a view's. 0 is the frame's main one
   (`renderer_main_pipeline`, which lasts that frame) in a window view, and `Full` in a texture one.
@@ -288,7 +288,7 @@ frame and the current one:
   `scene_world`: an extension records only what belongs to that world), the frame number
   (`frame`), the world seconds (`time`) and, in `Blend`, the glass side (`glass`).
 
-Stages, in frame order:
+## Stages in frame order
 
 - **`Geometry`**: once per frame, after uploading the scene and before the views; its `Pass` has no
   view (size and matrix at zero). It writes vertices of [deformable meshes](#deformable-meshes):
@@ -373,7 +373,7 @@ Stages, in frame order:
   inside `Nested`, `Surface` and `Lit`; `Blend`, inside `Transparency`; `Post`, inside `Output`: one
   without them draws no nested views, decals, fog or particles.
 
-Restrictions of the `pass_*`:
+## Restrictions of the `pass_*`
 
 - `pass_params` and `pass_upload` return `false` if the frame memory is not enough: that draw is
   not made.

@@ -31,14 +31,16 @@ the assets.
   --profile`: [in parallel](references/imports.md#in-parallel).
 - A character or an animal without a rig (`rig=Humanoid`, `Fox`, `Spider`..., `cook/rig`):
   [template rigs](references/imports.md#template-rigs-cookrig); how an agent animates it:
-  [auto-rig](../mirai-animation/references/animation-autorig.md).
-- Rules per format: OBJ, glTF/GLB (skeletons, morph targets, clips, meshopt), USD,
-  [FBX](references/imports.md#fbx) (ufbx, its binding and its fixtures), sounds,
-  [fonts](references/imports.md#fonts), [texts](references/imports.md#texts) and
-  [prompts](references/imports.md#prompts), in the same reference.
+  [auto-rig](../mirai-animation/references/animation-autorig.md#workflow).
+- Rules per format: [OBJ](references/imports.md#obj),
+  [glTF/GLB](references/imports.md#gltf-and-glb) (skeletons, morph targets, clips, meshopt),
+  [USD](references/imports.md#usd), [FBX](references/imports.md#fbx) (ufbx, its binding and its
+  fixtures), [sounds](references/imports.md#sounds), [fonts](references/imports.md#fonts),
+  [texts](references/imports.md#texts) and [prompts](references/imports.md#prompts).
 - Formats of `.mesh`, `.mat`, `.tex`, `.anim` and the version rule: [asset
-  formats](../mirai-assets/references/formats.md); verifying what was written: [asset
-  CLI](../mirai-assets/references/cli.md).
+  types](../mirai-assets/references/formats.md#asset-types) and
+  [versions](../mirai-assets/references/formats.md#versions); verifying what was written: [asset
+  CLI](../mirai-assets/references/cli.md#subcommands).
 - Formats and whole sources a plugin adds to the editor (`Import_Format_Provider`,
   `Import_Source_Provider`): [plugins](references/imports.md#plugin-formats) and
   [editor extension](../mirai-editor/references/extensions.md#importers-of-a-plugin). The

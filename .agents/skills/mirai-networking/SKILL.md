@@ -28,12 +28,29 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 ## Map
 
 - Bitstream, transport, host, connections and security, channels, protocol and types, replication,
-  events, authority, clock, rollback → [networking.md](references/networking.md)
+  events, authority, clock, rollback →
+  [bitstream](references/networking.md#bitstream-stdserialbitstreamodin),
+  [transport](references/networking.md#transport), [host](references/networking.md#host-two-halves),
+  [connections](references/networking.md#connections),
+  [channels](references/networking.md#channels),
+  [protocol](references/networking.md#protocol-and-descriptors),
+  [replication](references/networking.md#replication), [events](references/networking.md#events),
+  [authority](references/networking.md#authority),
+  [clock and inputs](references/networking.md#time-and-inputs),
+  [rollback](references/networking.md#prediction-rollbackodin) and
+  [known limits](references/networking.md#known-limits)
 - Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
-  PCP, NAT-PMP, UPnP) → [port-mapping.md](references/port-mapping.md)
+  PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
+  [protocols](references/port-mapping.md#protocols) and
+  [scope and limits](references/port-mapping.md#scope-and-limits)
 - Replicated entities, game messages and collections, session, tick, prediction and correction,
-  lent simulation, connection events → [multiplayer.md](references/multiplayer.md); what the
-  network could not do → [problems](references/multiplayer.md#problems)
+  lent simulation, connection events →
+  [what the game declares](references/multiplayer.md#what-the-game-declares),
+  [networked play](references/multiplayer.md#networked-play),
+  [the tick](references/multiplayer.md#the-tick),
+  [delegated authority](references/multiplayer.md#delegated-authority) and
+  [connection events](references/multiplayer.md#connection-events); what the network could not
+  do → [problems](references/multiplayer.md#problems)
 - Lag compensation (`Rewind`, `rewind_tick`, `rewind_pose`, `rewind_tolerance`) and the absolute
   look in the input → [lag compensation](references/multiplayer.md#lag-compensation)
 - Replicated bodies, `core.Pose_Target` and `core.Motion` →

@@ -19,18 +19,23 @@ the same attributes and no private paths. Declaration and parameter binding:
 ## Map
 
 - Writing a game: [the docs games read](../../../docs/game/core.md), and the requests and events
-  of each library: [game.md](references/game.md).
-- `scene`, `render`, `input`, `audio`, `gui`, `save`:
-  [libraries.md](references/libraries.md).
+  of each library: [requests and events](references/game.md#requests-and-events) and
+  [code style rules](references/game.md#game-code-style-rules).
+- `scene`, `render`, `input`, `audio`, `gui`, `save`: [scene](references/libraries.md#scene),
+  [render](references/libraries.md#render), [input](references/libraries.md#input),
+  [audio](references/libraries.md#audio), [gui](references/libraries.md#gui) and
+  [save](references/libraries.md#save).
 - Per-zone values (`Volume`, `Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and
   their single algorithm: [volume](references/libraries.md#volume).
 - Particles (plugin `vfx`: emitters, effects, clocks and requests):
   [vfx](../mirai-plugins/references/vfx.md#game).
 - Animation of transforms and skeletons: [plugin
-  animation](../mirai-animation/references/animation.md); the gallery that shows each feature:
-  [animation-gallery.md](references/animation-gallery.md).
+  animation](../mirai-animation/references/animation.md#components-and-shared-data); the gallery
+  that shows each feature: [animation gallery](references/animation-gallery.md#animation-gallery).
 - Seats, driving bodies and `Move_Input` (`engine/input`), cameras (`engine/camera`), spawn points
-  (plugin `spawn`), their networking: [control.md](references/control.md).
+  (plugin `spawn`), their networking: [seats](references/control.md#seats),
+  [driving](references/control.md#driving), [spawn points](references/control.md#spawn-points),
+  [cameras](references/control.md#cameras) and [networking](references/control.md#networking).
 - Declare an input action (`inp.Action`), its default bindings, `input.mirai` and renaming it:
   [actions](references/control.md#actions). Input contexts (menus, vehicles) and chords:
   [contexts](references/control.md#contexts), [chords](references/control.md#chords).
@@ -38,7 +43,10 @@ the same attributes and no private paths. Declaration and parameter binding:
   [locomotion](../mirai-physics/references/engine.md#locomotion).
 - Slow or fast world time with the player at normal speed (bullet time: `core.Clock` and
   `core.Own_Pace`): [own pace](../mirai-core/references/core.md#core-storages).
-- Cinematics (plugin `cinematics`): [cinematics.md](references/cinematics.md).
+- Cinematics (plugin `cinematics`): [components](references/cinematics.md#components),
+  [playback](references/cinematics.md#playback), [viewers](references/cinematics.md#viewers),
+  [events](references/cinematics.md#events), [networking](references/cinematics.md#networking) and
+  [editor and API](references/cinematics.md#editor-and-api).
 - Attacks, combos, dashes, skills and hit reactions with costs, cooldowns, charges and damage
   (plugin `abilities`): [abilities](../mirai-abilities/SKILL.md); no state machines.
 - Enemies and NPCs (patrol, chase and attack, phased bosses, tactical bots, hordes, use of the
@@ -54,7 +62,10 @@ the same attributes and no private paths. Declaration and parameter binding:
   played again after each change and in CI:
   [scenarios](../../../docs/game/testing/scenario.md), written as the
   [player plays](../mirai-agent-api/SKILL.md#testing-like-a-player).
-- Demo, templates, generated content, portal game: [demo.md](references/demo.md).
+- Demo, templates, generated content, portal game: [templates](references/demo.md#templates),
+  [demo](references/demo.md#demo), [AI arenas](references/demo.md#ai-arenas),
+  [generated content](references/demo.md#generated-content) and
+  [portal game](references/demo.md#portal-game).
 - Physics and destruction: [mirai-physics](../mirai-physics/SKILL.md). Networking:
   [mirai-networking](../mirai-networking/SKILL.md).
 

@@ -91,7 +91,7 @@ Scenes:
 - **`decals`, `deform`, `monitors`, `portals`, `portal_lab`**: scenes of the render plugins
   ([what each one shows](../../mirai-plugins/references/render-plugins.md#verification)).
 
-### Code (`demo/game`)
+## Code (`demo/game`)
 
 - **`game.odin`**: the demo's actions (`Action`, `@(actions)`) with their default bindings
   (`Demo_Actions`), and the components of the scenes.
@@ -154,7 +154,7 @@ Scenes:
 Each component assigned to objects in the editor carries its `NAME_DEFAULT`; scenes store the
 values.
 
-### AI arenas
+## AI arenas
 
 An entity with `AI_Arena` builds in Play, where it is, agents that decide with
 [minds](../../mirai-plugins/references/behavior.md#enemies-with-minds), walk or fly through
@@ -193,7 +193,7 @@ that the navmesh exists in the editor.
   and rings the bells. The agents receive a `core.Id` so that `behavior.inspect` and `nav.agent` can
   name them.
 
-### Game data
+## Game data
 
 The demo shows how a game builds its rules over `.records` tables
 ([game data](../../mirai-core/references/core.md#game-data)): the engine brings no
@@ -216,14 +216,14 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
   the language changes, so editing a row during Play is seen in the next tick at no cost to the
   others.
 
-### Local multiplayer
+## Local multiplayer
 
 `control.scene` carries an `inp.Local_Multiplayer{players=2}`, which applies with `mirai play`
 without `--players`; in the editor the Play selector rules. `input` creates one seat per player,
 each receives its person through `Spawn_Settings.players` and `engine/camera` splits the screen. In
 Play, F1 releases the mouse and the click that returns it chooses who receives keyboard and mouse.
 
-### Generated content
+## Generated content
 
 `tools/demo_content` writes everything that is not edited by hand and gives the same bytes on every
 run:
@@ -300,7 +300,7 @@ Content:
 - **Hand-edited assets** (with the editor or `mirai asset set`): `main`, `ocean`, `skeletal`, the
   model prefabs and the materials of `assets/surfaces`.
 
-### Portal game
+## Portal game
 
 `portals/portal_chamber.scene` uses the
 [`portals`](../../mirai-plugins/references/render-plugins.md#portals) plugin. The player
@@ -322,7 +322,7 @@ and they do not push it.
   at the exit threshold is a thin trigger: whoever crosses it loses the portals and a cube returns
   to where it started, like one that falls out of the level.
 
-### Control
+## Control
 
 The `control` scene walks through the contract of [control](control.md) and of
 [cinematics](cinematics.md).
@@ -336,7 +336,7 @@ The `control` scene walks through the contract of [control](control.md) and of
 - The intro is a `Cinematic` with shots, tracks and markers; its viewer (without a seat: the focused
   player) blocks its input.
 
-### Networking
+## Networking
 
 The demo is a networked game with a dedicated server and no network code of its own
 ([multiplayer](../../mirai-networking/references/multiplayer.md)): `--server` and `--connect`, or

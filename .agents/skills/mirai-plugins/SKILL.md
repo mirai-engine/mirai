@@ -18,7 +18,11 @@ project world. Layout, manifests and build:
 ## Map
 
 - Shape, parts, dependencies, build and list of first-party plugins:
-  [plugins.md](references/plugins.md)
+  [shape](references/plugins.md#shape),
+  [what each part does](references/plugins.md#what-each-part-does),
+  [dependencies and compatibility](references/plugins.md#dependencies-and-compatibility),
+  [first-party plugins](references/plugins.md#first-party-plugins) and
+  [changing a plugin](references/plugins.md#changing-a-plugin)
 - Plugins from other repositories (`mirai plugin`, `cook/install`, companions, the
   `mirai-engine/mirai-plugins` catalog):
   [git plugins](references/plugins.md#git-plugins-and-catalog); publishing one in the catalog:
@@ -27,22 +31,52 @@ project world. Layout, manifests and build:
 - `physics_placement` (`placement.drop`):
   [plugins.md#physics-placement](references/plugins.md#physics-placement)
 - `previews` (animation documents, animation and skeleton thumbnails; `animation.capture`):
-  [previews.md](references/previews.md)
+  [animation document](references/previews.md#animation-document),
+  [thumbnails](references/previews.md#animation-thumbnails),
+  [capture](references/previews.md#animation-capture) and
+  [sound documents](references/previews.md#sound-documents)
 - `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, Vfx programs
   with surfaces, bones, channels and grids, stages and neighbors, volumes, events to the game):
-  [vfx.md](references/vfx.md)
+  [format](references/vfx.md#format), [game](references/vfx.md#game),
+  [surfaces, bones and resources](references/vfx.md#surfaces-bones-and-resources),
+  [grids and stages](references/vfx.md#grids-and-stages),
+  [world textures](references/vfx.md#world-textures), [grid states](references/vfx.md#grid-states),
+  [volumes](references/vfx.md#volumes), [channels](references/vfx.md#channels),
+  [data channels](references/vfx.md#data-channels), [UI effects](references/vfx.md#ui-effects),
+  [reports](references/vfx.md#reports),
+  [GPU pools and emitters](references/vfx.md#pools-and-emitters),
+  [births and steps](references/vfx.md#births-and-steps),
+  [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes) and
+  [particle lights](references/vfx.md#particle-lights)
 - `fluids` (plane fluids on a `vfx` grid) is not part of the engine: it is installed from the
   catalog (<https://github.com/tomaszbk/mirai-fluids>); how `water` takes its waves:
-  [water](references/water.md).
+  [what physics shows](references/water.md#what-physics-shows).
 - `imprint` (snow, mud and sand that keep footprints and furrows: height clipmap on a `vfx` grid,
   stamps, displacement of the ground meshes as seen by rays):
-  [imprint.md](references/imprint.md)
+  [the field](references/imprint.md#the-field), [stamps](references/imprint.md#stamps),
+  [what is drawn](references/imprint.md#what-is-drawn) and [scene](references/imprint.md#scene)
 - `water` (the `Fluid_Volume`s drawn as water: glass surface, `fog` medium, caustics, foam,
-  splashes and wakes from physics): [water.md](references/water.md)
+  splashes and wakes from physics): [appearance](references/water.md#appearance),
+  [what physics shows](references/water.md#what-physics-shows),
+  [sound](references/water.md#sound), [scene](references/water.md#scene) and
+  [limits](references/water.md#limits)
 - `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
-  thumbnails, Particles card, `particle.*` methods): [vfx-editor.md](references/vfx-editor.md)
+  thumbnails, Particles card, `particle.*` methods):
+  [Particle_Emitter section](references/vfx-editor.md#particle_emitter-section),
+  [effect preview](references/vfx-editor.md#effect-preview),
+  [particle document](references/vfx-editor.md#particle-document) and
+  [thumbnails](references/vfx-editor.md#thumbnails)
 - `terrain` (format, chunks, material layers, levels of detail, holes, tool, in-game editing,
-  residency): [terrain.md](references/terrain.md)
+  residency): [source and chunks](references/terrain.md#entity-source-and-chunks),
+  [volume with heightfield](references/terrain.md#joining-a-volume-with-a-heightfield),
+  [format](references/terrain.md#canonical-format),
+  [geometry and collision](references/terrain.md#geometry-and-collision),
+  [materials and layers](references/terrain.md#materials-and-layers),
+  [mesh authoring](references/terrain.md#mesh-authoring), [tool](references/terrain.md#tool),
+  [API](references/terrain.md#api),
+  [editing during Play](references/terrain.md#editing-during-play),
+  [publishing and residency](references/terrain.md#jobs-publishing-and-residency) and
+  [open worlds](references/terrain.md#limits-in-open-worlds)
   - Network edits and the `terrain_multiplayer` bridge: [network](references/terrain.md#network)
   - Material under the surface of a Volume (strata, veins, `terrain.interior`):
     [interior](references/terrain.md#volume-interior)
@@ -53,15 +87,30 @@ project world. Layout, manifests and build:
 - `foliage` (`.foliage`, cells, generator, overrides and orphans, ground and its `foliage_terrain`
   bridge, per-cell batches, types from prefabs, octahedral impostors and canopy in rays, wind by
   variants and by hook, bending by `Foliage_Bender`, collision by resident cells, brush and
-  instance selection): [foliage.md](references/foliage.md)
+  instance selection): [source](references/foliage.md#entity-and-source),
+  [format](references/foliage.md#format), [cells](references/foliage.md#layers-of-a-cell),
+  [ground](references/foliage.md#ground), [drawing](references/foliage.md#drawing),
+  [impostor and crown](references/foliage.md#far-impostor-and-crown),
+  [wind](references/foliage.md#wind), [collision](references/foliage.md#collision),
+  [removed in play](references/foliage.md#instances-removed-in-play) and
+  [tool](references/foliage.md#tool)
 - `navigation` (automatic navmesh per agent class, areas, obstacles, manual and generated links,
   agents, link crossing, crowd, air and water volumes, `.navmesh`, `nav.*`):
-  [navigation.md](references/navigation.md)
+  [meshes](references/navigation.md#meshes),
+  [air and water volumes](references/navigation.md#air-and-water-volumes),
+  [links](references/navigation.md#links), [agents](references/navigation.md#agents),
+  [baking](references/navigation.md#baking) and
+  [editor and API](references/navigation.md#editor-and-api)
   - Tiles per section, stitching, baking of each section and coarse graph:
     [sections](references/navigation.md#sections); agents that keep going far from the players
     (`scene.Roaming`, `Nav_Far`): [the far field](references/navigation.md#the-far-field)
 - `behavior` (minds by name, enemies with minds, perception, smart objects, place queries,
-  influence maps, `behavior.*`): [behavior.md](references/behavior.md)
+  influence maps, `behavior.*`): [minds](references/behavior.md#minds),
+  [enemies with minds](references/behavior.md#enemies-with-minds),
+  [smart objects](references/behavior.md#smart-objects),
+  [influence maps](references/behavior.md#influence-maps),
+  [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
+  [API](references/behavior.md#api)
 - `navigation_terrain` (automatic bridge: where the terrain collision is not loaded, for the
   navmesh): [navigation.md](references/navigation.md#meshes)
 - `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
@@ -75,20 +124,35 @@ project world. Layout, manifests and build:
 - `shapes` (editable outlines and solids of brush entities saved as source, stamps and vertex
   edits, bevels of the rims of an outline, the derived child with mesh and collider, static or
   dynamic; the Shapes tool and `shapes.*`):
-  [shapes.md](references/shapes.md)
+  [source and derived](references/shapes.md#source-and-derived),
+  [static and dynamic](references/shapes.md#static-and-dynamic),
+  [editing](references/shapes.md#editing) and [Shapes tool](references/shapes.md#shapes-tool)
 - `physics_cache` (portable recording, `Geometry_Playback`):
-  [physics-cache.md](references/physics-cache.md)
-- `physics_fields` (force and strain regions): [physics-fields.md](references/physics-fields.md)
-- `ragdoll` (components and `ragdoll.setup`): [ragdoll.md](references/ragdoll.md)
+  [recording](references/physics-cache.md#recording),
+  [relation with animation](references/physics-cache.md#relation-with-animation) and
+  [playback](references/physics-cache.md#playback)
+- `physics_fields` (force and strain regions): [component](references/physics-fields.md#component),
+  [fixed step](references/physics-fields.md#fixed-step) and
+  [selection preview](references/physics-fields.md#selection-preview)
+- `ragdoll` (components and `ragdoll.setup`): [components](references/ragdoll.md#components),
+  [setup by API](references/ragdoll.md#setup-by-api),
+  [state and errors](references/ragdoll.md#state-and-errors) and
+  [order and memory](references/ragdoll.md#order-and-memory)
 - `ui_inspector` (`.ui` document, paths and the `ui.*` API):
-  [ui-inspector.md](references/ui-inspector.md)
+  [document](references/ui-inspector.md#document), [paths](references/ui-inspector.md#paths),
+  [API](references/ui-inspector.md#api) and
+  [document bar](references/ui-inspector.md#document-bar)
 - `playtest` (what an agent or a bot plays with: `play.observe`, the monitors of `play.qa.*` and
   `play.explore`): [plugins.md](references/plugins.md#first-party-plugins)
 - `profiler` and `tracy` (development: captures panel and Tracy client in Odin):
-  [profiling.md](references/profiling.md)
+  [profiler in the editor](references/profiling.md#profiler-editor) and
+  [Tracy at runtime](references/profiling.md#tracy-runtime)
 - `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr`, `lens` and plugins that
-  extend the renderer: [render-plugins.md](references/render-plugins.md) and [renderer
-  extensions](../mirai-rendering/references/views.md#views-cameras-and-extensions)
+  extend the renderer: [decals](references/render-plugins.md#decals),
+  [deform](references/render-plugins.md#deform), [monitors](references/render-plugins.md#monitors),
+  [portals](references/render-plugins.md#portals), [mirror](references/render-plugins.md#mirror),
+  [fog](references/render-plugins.md#fog), [fsr](references/render-plugins.md#fsr) and [renderer
+  extensions](../mirai-rendering/references/views.md#extension-stages)
 - `prompts_kenney` (Kenney prompt pack and how it is regenerated):
   [plugins.md](references/plugins.md#first-party-plugins)
 - `abilities` (attacks, combos, dashes and reactions as rows of game data: sheets with timeline

@@ -12,7 +12,7 @@
 
 ## Shader toolchain
 
-### Tools
+## Tools
 
 - `mirai setup slang [--archive <file>]` installs in `.deps/slang/` the pinned precompiled Slang
   (`SLANG_VERSION`, with SHA-256 per platform) and keeps the previous installation until the new
@@ -28,7 +28,7 @@
 - `mirai shaders --project <path>` adds the `shaders/` of the active plugins that declare them,
   the same ones the build passes (`build.shader_sources`).
 
-### Compilation
+## Compilation
 
 - Column-major matrices, profile `sm_6_5`, SPIR-V 1.5 for Vulkan 1.2. Slang runs with `-O0` and
   the spirv-opt passes of its `-O3` without its first redundancy elimination (`SLANG_FLAGS`).
@@ -55,7 +55,7 @@
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 
-### Backends of a generation
+## Backends of a generation
 
 - Each backend is a separate compilation of the stage (`Options.backends`, `--backends`). Every
   generation has by default only `HOST_BACKEND`, the only one the executable, `host` and
@@ -65,7 +65,7 @@
   that asks for `mirai shaders --backends all`. The code of a backend is the same, byte for byte,
   whether compiled alone or with the other.
 
-### Programs
+## Programs
 
 - Each program declares `//! mirai surface Name`, `postprocess`, `vfx` or `ui`, and metadata
   `//! parameter field {json}`; `group` is the Details card that shows the parameter in the
@@ -152,7 +152,7 @@
   `Ui_Gradient_Sweep` (a gradient toward another color that shifts). Selector and registration:
   [UI](ui.md#ui-world-panels-and-debug-lines).
 
-### Programs and stages
+## Programs and stages
 
 - The generation writes one include per domain:
   - `include/surface_programs.slang`: that of the stages without a program, whose
@@ -194,7 +194,7 @@
 - Program ids are consecutive across the domains, in file order (engine, project, plugins): adding
   a program of one domain changes the other's dispatcher if it comes before any of its programs.
 
-### Inputs and outputs
+## Inputs and outputs
 
 - `--project <path>` incorporates the programs of `<path>/shaders`. `Options.sources`
   (`{name, folder}` per plugin) adds the `shaders/` of plugins, copied to
@@ -219,7 +219,7 @@
 - `renderer_init` receives a loaded generation in `Renderer_Desc.shaders`;
   `renderer_reload_shaders` replaces it at once ([loading in host](#loading-in-host)).
 
-### Cache and fingerprints
+## Cache and fingerprints
 
 - **Shared cache** (`cache.odin`): `<main checkout>/.mirai/cache/shaders`
   (`workspace.cache_folder`), the same for all the repository's worktrees, branches and projects.
@@ -283,7 +283,7 @@
 - A stage that fails does not stop the others: what compiles stays in the cache for the next
   generation.
 
-### Early stages and cancellation
+## Early stages and cancellation
 
 - `Options.first` names stages (`thumbnail.frag`) that the workers take first. When they all
   compile, `Options.first_output` receives a generation that loads by itself: the catalog and those
@@ -296,7 +296,7 @@
 - `cancel(&progress)`, from another thread, stops the generation: no more stages start, the running
   tools are killed and it ends with `Result.cancelled`, without publishing.
 
-### In-memory sources
+## In-memory sources
 
 - `Options.overlay` gives sources that the generation reads instead of their files: what an editor
   has unsaved. It goes through `Sources`, so fingerprints, stamp, listings and the copy of the
@@ -309,7 +309,7 @@
   stage fails (`it includes ..., which has unsaved changes`) instead of storing in the cache the
   code of the file with the fingerprint of the memory.
 
-### Generation without changes
+## Generation without changes
 
 - A published generation leaves `generation.json` with the request, the tools, the hash of each
   source, the includes not found and what was published. If everything matches, it starts no
@@ -317,7 +317,7 @@
   `up to date`); `shaders.current` answers the same without lock or writes. If not, the full path
   checks each stage by its fingerprint.
 
-### Publication
+## Publication
 
 - The whole directory and the Odin tables that change are prepared in staging; the renames keep the
   previous generation until finished and a failure reverts them: the visible output always
@@ -327,7 +327,7 @@
   fingerprint of the engine sources (`SHADERS_FINGERPRINT`) and `shader_assets_load` rejects
   shaders from other sources.
 
-### Diagnostics
+## Diagnostics
 
 - `slang_diagnostics` reads Slang's machine-readable diagnostics into `Diagnostic`, with the files
   named by the source (also the copy of a program). A generation that fails leaves them in

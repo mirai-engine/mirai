@@ -39,11 +39,17 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
   [generation](references/views.md#frame-generation); presenting them paced from a thread
   (`swapchain_set_paced`, `present_stats`) → [rhi](references/rhi.md#paced-presentation)
 - Extension API for plugins (stages, world buffers, counters, hooks, batches, deformable and
-  skinned meshes) → [extensions](references/views.md#extension-stages); plugins that use it:
-  [render plugins](../mirai-plugins/references/render-plugins.md) and
-  [particles](../mirai-plugins/references/vfx.md)
+  skinned meshes) → [extensions](references/views.md#extension-stages),
+  [stages](references/views.md#stages-in-frame-order),
+  [restrictions](references/views.md#restrictions-of-the-pass_),
+  [hooks](references/views.md#extension-hooks-and-constants),
+  [batches](references/views.md#batches), [deformable meshes](references/views.md#deformable-meshes)
+  and [skinned meshes](references/views.md#skinned-meshes); plugins that use it:
+  [decals](../mirai-plugins/references/render-plugins.md#decals),
+  [fog](../mirai-plugins/references/render-plugins.md#fog) and
+  [particle passes](../mirai-plugins/references/vfx.md#passes)
 - Order of the passes, what each one reads and writes →
-  [frame graph](references/frame-graph.md#frame-graph)
+  [frame graph](references/frame-graph.md#passes)
 - Editor and game outlines (`Outline`), reference grid, `renderer_stats` →
   [frame graph](references/frame-graph.md#outlines)
 - Particles → the [`vfx`](../mirai-plugins/references/vfx.md#gpu) plugin

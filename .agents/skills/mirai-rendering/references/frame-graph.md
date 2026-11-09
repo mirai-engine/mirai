@@ -5,6 +5,8 @@ recorded first and then the window ones. Each view goes through passes 2 to 16, 
 stages of the standard `Full` pipeline; a [pipeline](views.md#render-pipelines) can omit stages
 or interleave its own passes.
 
+## Passes
+
 1. **upload**: skinning of the poses that changed; instances, materials, lights and their
    [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the
    refit of the ray structure in use and, with hardware RT, the native TLAS. What does not fit in

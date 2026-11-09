@@ -168,7 +168,7 @@ it:
     filter blurs it like a newly uncovered one. The box of what changed joins where it was and
     where it is, so the ray of the shadow that leaves crosses it in the frame in which it leaves.
   - TAA treats the pixel of a marked block as one that moves
-    ([TAA](frame-graph.md#frame-graph)), and the fog does not blend the history of a froxel whose
+    ([TAA](frame-graph.md#passes)), and the fog does not blend the history of a froxel whose
     ray crosses what changed ([`fog`](../../mirai-plugins/references/render-plugins.md)).
   - A batch that casts shadows marks its box when it arrives, leaves or changes (`batch_set`,
     `batch_remove`).
