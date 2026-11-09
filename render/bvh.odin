@@ -39,15 +39,18 @@ EMPTY_BOUNDS_MIN :: Vec3{1e30, 1e30, 1e30}
 @(private)
 EMPTY_BOUNDS_MAX :: Vec3{-1e30, -1e30, -1e30}
 
-// Builds into nodes/order (cleared first). Returns false only when there are
-// no items. Allocations happen in the caller's arrays (load transactions).
+// Builds into nodes/order (cleared first). Returns false when there are no
+// items or no memory for them, with both empty. Allocations happen in the
+// caller's arrays (load transactions).
 bvh_build :: proc(items: []Bvh_Item, max_leaf: int, nodes: ^[dynamic]Gpu_Bvh_Node, order: ^[dynamic]u32) -> bool {
 	clear(nodes)
 	clear(order)
 	if len(items) == 0 {return false}
-	resize(order, len(items))
+	if resize(order, len(items)) != nil || reserve(nodes, 2 * len(items)) != nil {
+		clear(order)
+		return false
+	}
 	for i in 0 ..< len(items) {order[i] = u32(i)}
-	reserve(nodes, 2 * len(items))
 	append(nodes, Gpu_Bvh_Node{})
 	stack := make([dynamic]Task, 0, 64, context.temp_allocator)
 	append(&stack, Task{node = 0, start = 0, count = len(items), depth = 0})

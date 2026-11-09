@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Material textures. Each one takes an entry of the RHI texture table, which
 // shaders index with the number a material stores, so no pass binds a texture
@@ -180,7 +181,8 @@ texture_limits_of :: proc(r: ^Renderer, settings: Settings) -> Texture_Limits {
 }
 
 // Builds the levels of a texture from its RGBA8 pixels. Images larger than
-// max_size start at the first level that fits.
+// max_size start at the first level that fits. False when the pixels do not
+// hold the image or there is no memory for the levels.
 texture_build :: proc(desc: Texture_Desc, max_size: int, allocator := context.allocator) -> (data: Texture_Data, ok: bool) {
 	if desc.width <= 0 || desc.height <= 0 || len(desc.pixels) < desc.width * desc.height * 4 {return {}, false}
 	decode: [256]f32
@@ -193,26 +195,40 @@ texture_build :: proc(desc: Texture_Desc, max_size: int, allocator := context.al
 	coverage := alpha_coverage(level, desc.alpha_coverage, 1) if desc.alpha_coverage > 0 else 0
 	owned: []u8
 	defer delete(owned, allocator)
-	next :: proc(level: []u8, width, height: int, decode: ^[256]f32, desc: Texture_Desc, coverage: f32, allocator := context.allocator) -> ([]u8, int, int) {
+	next :: proc(level: []u8, width, height: int, decode: ^[256]f32, desc: Texture_Desc, coverage: f32, allocator := context.allocator) -> ([]u8, int, int, bool) {
 		w, h := max(width / 2, 1), max(height / 2, 1)
-		reduced := make([]u8, w * h * 4, allocator)
+		reduced, error := make([]u8, w * h * 4, allocator)
+		if error != nil {return nil, 0, 0, false}
 		texture_reduce(level, width, height, reduced, w, h, decode, desc.srgb, desc.normal_map)
 		if desc.alpha_coverage > 0 {alpha_coverage_keep(reduced, desc.alpha_coverage, coverage)}
-		return reduced, w, h
+		return reduced, w, h, true
 	}
 	for max(width, height) > max(max_size, 1) {
-		reduced, w, h := next(level, width, height, &decode, desc, coverage, allocator)
+		reduced, w, h, reduced_ok := next(level, width, height, &decode, desc, coverage, allocator)
+		if !reduced_ok {return {}, false}
 		delete(owned, allocator)
 		owned, level, width, height = reduced, reduced, w, h
 	}
 	data.format, data.width, data.height = .RGBA8_Srgb if desc.srgb else .RGBA8_Unorm, width, height
 	data.levels = make([dynamic][]u8, allocator)
 	for {
-		stored := make([]u8, len(level), allocator)
+		stored, stored_error := make([]u8, len(level), allocator)
+		if stored_error != nil {
+			texture_data_destroy(&data, allocator)
+			return {}, false
+		}
 		copy(stored, level)
-		append(&data.levels, stored)
+		if _, append_error := append(&data.levels, stored); append_error != nil {
+			delete(stored, allocator)
+			texture_data_destroy(&data, allocator)
+			return {}, false
+		}
 		if width == 1 && height == 1 || len(data.levels) == rhi.MAX_TEXTURE_MIPS {break}
-		reduced, w, h := next(level, width, height, &decode, desc, coverage, allocator)
+		reduced, w, h, reduced_ok := next(level, width, height, &decode, desc, coverage, allocator)
+		if !reduced_ok {
+			texture_data_destroy(&data, allocator)
+			return {}, false
+		}
 		delete(owned, allocator)
 		owned, level, width, height = reduced, reduced, w, h
 	}
@@ -251,7 +267,7 @@ textures_destroy :: proc(r: ^Renderer) {
 
 // Makes room for the texture of handle index + 1 in what the renderer keeps
 // of each texture, doubling it as the table grows. False past
-// texture_capacity.
+// texture_capacity or without memory.
 @(private)
 textures_room :: proc(r: ^Renderer, index: int, name: string) -> bool {
 	state := &r.textures
@@ -260,21 +276,25 @@ textures_room :: proc(r: ^Renderer, index: int, name: string) -> bool {
 		return false
 	}
 	if index < len(state.textures) {return true}
+	before := len(state.textures)
+	fits := true
 	if index >= cap(state.textures) {
 		size := max(2 * cap(state.textures), rhi.TEXTURE_TABLE_FIRST, index + 1)
-		reserve(&state.textures, size)
-		reserve(&state.keys, size)
-		reserve(&state.sizes, size)
-		reserve(&state.stored, size)
-		reserve(&state.partial, size)
-		reserve(&state.residency.streams, size)
+		fits = reserve(&state.textures, size) == nil && reserve(&state.keys, size) == nil && reserve(&state.sizes, size) == nil &&
+			reserve(&state.stored, size) == nil && reserve(&state.partial, size) == nil && reserve(&state.residency.streams, size) == nil
 	}
-	resize(&state.textures, index + 1)
-	resize(&state.keys, index + 1)
-	resize(&state.sizes, index + 1)
-	resize(&state.stored, index + 1)
-	resize(&state.partial, index + 1)
-	resize(&state.residency.streams, index + 1)
+	fits = fits && resize(&state.textures, index + 1) == nil && resize(&state.keys, index + 1) == nil && resize(&state.sizes, index + 1) == nil &&
+		resize(&state.stored, index + 1) == nil && resize(&state.partial, index + 1) == nil && resize(&state.residency.streams, index + 1) == nil
+	if !fits {
+		base.truncate(&state.textures, before)
+		base.truncate(&state.keys, before)
+		base.truncate(&state.sizes, before)
+		base.truncate(&state.stored, before)
+		base.truncate(&state.partial, before)
+		base.truncate(&state.residency.streams, before)
+		set_error(r, "texture %s: out of memory for the table of %d textures", name, index + 1)
+		return false
+	}
 	return true
 }
 
@@ -360,7 +380,11 @@ texture_add :: proc(r: ^Renderer, desc: Texture_Desc) -> (Texture_Handle, bool) 
 	// Scratch lives on the heap: an image can exceed the per-frame arena.
 	data, built := texture_build(desc, texture_limits(r).max_size)
 	if !built {
-		set_error(r, "texture %s: %d bytes do not hold %dx%d RGBA8 pixels", desc.name, len(desc.pixels), desc.width, desc.height)
+		if desc.width <= 0 || desc.height <= 0 || len(desc.pixels) < desc.width * desc.height * 4 {
+			set_error(r, "texture %s: %d bytes do not hold %dx%d RGBA8 pixels", desc.name, len(desc.pixels), desc.width, desc.height)
+		} else {
+			set_error(r, "texture %s: out of memory for its levels", desc.name)
+		}
 		return 0, false
 	}
 	defer texture_data_destroy(&data)

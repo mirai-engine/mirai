@@ -237,7 +237,8 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	s := &r.scene
 	if record.count == 0 || record.tree_nodes > 0 || batch_classes(record.desc.flags, false) == 0 {return}
 	mesh := s.meshes[record.desc.mesh]
-	items := make([]Bvh_Item, record.count, r.allocator)
+	items, items_error := make([]Bvh_Item, record.count, r.allocator)
+	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
 		words := s.indices[record.words + u32(k) * BATCH_WORDS:][:BATCH_WORDS]
@@ -249,7 +250,7 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	order := make([dynamic]u32, 0, 0, r.allocator)
 	defer delete(nodes)
 	defer delete(order)
-	if !bvh_build(items, 2, &nodes, &order) {return}
+	if !bvh_build(items, 2, &nodes, &order) {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	if !pool_room(r, .Index, len(order)) || !pool_room(r, .Node, len(nodes)) {s.refused.batches += 1;return}
 	first := u32(len(s.indices))
 	append(&s.indices, ..order[:])

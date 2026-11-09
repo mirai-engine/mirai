@@ -86,13 +86,17 @@ table_grown :: proc "contextless" (capacity, index, limit: int) -> int {
 }
 
 // Gives every copy a bit for each of capacity entries, none set: a copy
-// made with every entry has none to take.
+// made with every entry has none to take. False without memory, and then no
+// copy lost a bit it had.
 @(private)
-table_changes_reset :: proc(changes: ^Table_Changes, capacity: int) {
+table_changes_reset :: proc(changes: ^Table_Changes, capacity: int) -> bool {
 	for &copy in changes {
-		resize(&copy, (capacity + 63) / 64)
+		if resize(&copy, (capacity + 63) / 64) != nil {return false}
+	}
+	for &copy in changes {
 		for &word in copy {word = 0}
 	}
+	return true
 }
 
 @(private)

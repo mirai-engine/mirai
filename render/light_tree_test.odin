@@ -74,7 +74,7 @@ the_light_tree_holds_every_light_inside_the_bounds_of_its_nodes :: proc(t: ^test
 	defer delete(nodes)
 	defer delete(keys)
 	defer delete(leaves)
-	cost := light_tree_build(&nodes, &keys, &leaves, lights[:])
+	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:])
 	testing.expect_value(t, len(nodes), 2 * (len(lights) - 1) - 1)
 	testing.expect(t, cost > 0 && cost == light_tree_cost(nodes[:]))
 	seen: [300]int
@@ -100,7 +100,7 @@ a_refit_light_tree_keeps_its_bounds_and_is_the_built_one_where_the_lights_stay :
 	leaves, built_leaves: [dynamic]u32
 	dirty: [dynamic]Pool_Range
 	defer {delete(nodes); delete(built); delete(keys); delete(leaves); delete(built_leaves); delete(dirty)}
-	cost := light_tree_build(&nodes, &keys, &leaves, lights[:])
+	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:])
 	// Other colors, intensities, ranges and sizes in the same places: the tree a build gives.
 	for i := 0; i < len(lights); i += 7 {
 		lights[i].color_intensity = {rand.float32_range(0.1, 1), 0.5, 0.2, rand.float32_range(0.5, 40)}
@@ -149,8 +149,8 @@ the_room_for_gpu_lights_comes_before_the_tree_of_the_scene :: proc(t: ^testing.T
 	defer {delete(nodes); delete(alone); delete(keys); delete(leaves); delete(alone_leaves); delete(dirty)}
 	REGION :: Light_Region{lights = 4}
 	first := light_region_first(REGION)
-	cost := light_tree_build(&nodes, &keys, &leaves, lights[:], REGION)
-	alone_cost := light_tree_build(&alone, &keys, &alone_leaves, lights[:])
+	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:], REGION)
+	alone_cost, _ := light_tree_build(&alone, &keys, &alone_leaves, lights[:])
 	testing.expect_value(t, len(nodes), int(first) + len(alone))
 	testing.expect_value(t, cost, alone_cost)
 	empty := u32(len(lights)) + REGION.lights

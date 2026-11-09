@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // GPU scene: one global vertex/index pool for every mesh, per-mesh BLAS (a
@@ -374,9 +375,10 @@ Scene_State :: struct {
 	uploads:              Geometry_Uploads, // meshes whose geometry goes to the GPU over frames (geometry_uploads.odin)
 }
 
-// The tables of the scene grow in the allocator of the renderer.
+// The tables of the scene grow in the allocator of the renderer. False
+// without memory for the lists of a fixed size.
 @(private)
-scene_init :: proc(r: ^Renderer) {
+scene_init :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	a := r.allocator
 	s.vertices = make([dynamic]u32, a)
@@ -400,7 +402,8 @@ scene_init :: proc(r: ^Renderer) {
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
-	s.material_ranges = make([dynamic]Pool_Range, 0, MATERIAL_RANGES_MAX + 1, a)
+	errors: [4]mem.Allocator_Error
+	s.material_ranges, errors[0] = make([dynamic]Pool_Range, 0, MATERIAL_RANGES_MAX + 1, a)
 	s.instance_keys = make([dynamic]Instance_Key, a)
 	s.desc_instance = make([dynamic]i32, a)
 	s.previous = make(map[Instance_Key]Gpu_Instance, a)
@@ -411,15 +414,16 @@ scene_init :: proc(r: ^Renderer) {
 	s.tlas_items = make([dynamic]Bvh_Item, a)
 	s.tlas_scratch = make([dynamic]Bvh_Item, a)
 	batches_init(r)
-	s.touched = make([dynamic]u32, 0, SCENE_TOUCHED_MAX, a)
+	s.touched, errors[1] = make([dynamic]u32, 0, SCENE_TOUCHED_MAX, a)
 	s.hw_instances = make([dynamic]rhi.Tlas_Instance, a)
 	s.lights = make([dynamic]Gpu_Light, a)
 	s.light_tree = make([dynamic]Gpu_Light_Node, a)
 	s.light_keys = make([dynamic]Light_Key, a)
 	s.light_leaves = make([dynamic]u32, a)
 	// A refit adds a path of the tree before the ranges are counted.
-	s.light_ranges = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
-	s.light_node_ranges = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
+	s.light_ranges, errors[2] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
+	s.light_node_ranges, errors[3] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
+	return errors == {}
 }
 
 // ---------------------------------------------------------------- materials
@@ -498,31 +502,34 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 // the default material. Vertices and instances name rows, so while meshes are
 // resident the table only grows or changes the values of its rows. Only the
 // rows whose values differ go to the GPU, with the next frame, and they keep
-// the BLASes, the TLAS and the light list (materials_store).
-materials_set :: proc(r: ^Renderer, materials: []Material_Desc) {
+// the BLASes, the TLAS and the light list (materials_store). False without
+// memory for the rows: the table stays as it was.
+materials_set :: proc(r: ^Renderer, materials: []Material_Desc) -> bool {
 	s := &r.scene
 	// Rows that vertices may still name keep existing, as the default material.
 	rows := max(len(s.materials), len(materials) + 1)
-	changes := materials_grow(r, rows)
+	changes := materials_grow(r, rows) or_return
 	for row in 1 ..< rows {
 		material_store(s, u32(row), gpu_material(r, materials[row - 1] if row <= len(materials) else DEFAULT_MATERIAL), &changes)
 	}
 	materials_changed(s, changes)
+	return true
 }
 
 // Gives some rows of the table the values they have in materials, as
 // materials_set reads it: row n takes materials[n - 1]. The other rows are
-// not looked at.
-materials_update :: proc(r: ^Renderer, materials: []Material_Desc, rows: []u32) {
+// not looked at. False without memory for the rows: the table stays as it was.
+materials_update :: proc(r: ^Renderer, materials: []Material_Desc, rows: []u32) -> bool {
 	s := &r.scene
 	last := 0
 	for row in rows {if row > 0 && int(row) <= len(materials) {last = max(last, int(row))}}
-	changes := materials_grow(r, last + 1)
+	changes := materials_grow(r, last + 1) or_return
 	for row in rows {
 		if row == 0 || int(row) > len(materials) {continue}
 		material_store(s, row, gpu_material(r, materials[row - 1]), &changes)
 	}
 	materials_changed(s, changes)
+	return true
 }
 
 // What some rows that changed values change for the rest of the scene.
@@ -537,10 +544,15 @@ Material_Changes :: struct {
 MATERIAL_LIT_ROWS :: 16
 
 // The table holds at least rows rows: the new ones are the default material.
+// False without memory for them, with the error set and the table as it was.
 @(private = "file")
-materials_grow :: proc(r: ^Renderer, rows: int) -> (changes: Material_Changes) {
+materials_grow :: proc(r: ^Renderer, rows: int) -> (changes: Material_Changes, ok: bool) {
 	s := &r.scene
-	if len(s.materials) >= rows {return}
+	if len(s.materials) >= rows {return {}, true}
+	if reserve(&s.materials, max(rows, 2 * cap(s.materials)) if rows > cap(s.materials) else rows) != nil || resize(&s.material_versions, rows) != nil {
+		set_error(r, "material table of %d rows: out of memory", rows)
+		return {}, false
+	}
 	if len(s.materials) == 0 {
 		append(&s.materials, gpu_material(r, DEFAULT_MATERIAL))
 		s.materials_dirty = true
@@ -549,9 +561,8 @@ materials_grow :: proc(r: ^Renderer, rows: int) -> (changes: Material_Changes) {
 		material_range_add(s, u32(len(s.materials)))
 		append(&s.materials, gpu_material(r, DEFAULT_MATERIAL))
 	}
-	resize(&s.material_versions, len(s.materials))
 	changes.smoothest = true
-	return
+	return changes, true
 }
 
 // One row takes a value. Equal values change nothing; other ones go to the
@@ -676,16 +687,22 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 }
 
 // Grows the table with the default material up to row, as the slots of a mesh that name rows past it ask.
+// False without memory for them, with the error set and the table as it was.
 @(private)
-materials_reach :: proc(r: ^Renderer, row: u32) {
+materials_reach :: proc(r: ^Renderer, row: u32) -> bool {
 	s := &r.scene
+	rows := max(len(s.materials), int(row) + 1)
+	if reserve(&s.materials, max(rows, 2 * cap(s.materials)) if rows > cap(s.materials) else rows) != nil || resize(&s.material_versions, rows) != nil {
+		set_error(r, "material table of %d rows: out of memory", rows)
+		return false
+	}
 	for int(row) >= len(s.materials) {
 		value := gpu_material(r, DEFAULT_MATERIAL)
 		append(&s.materials, value)
 		s.smoothest = min(s.smoothest, material_smoothness(value))
 		s.materials_dirty = true
 	}
-	resize(&s.material_versions, len(s.materials))
+	return true
 }
 
 // The lowest roughness a row can have: a roughness texture or a Surface
@@ -746,7 +763,7 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 	}
 	// A ray that only looks for glass tests these boxes, usually a handful,
 	// instead of walking the whole tree: left_first is the instance.
-	resize(&s.tlas_nodes, s.tlas_node_count)
+	base.truncate(&s.tlas_nodes, s.tlas_node_count)
 	for inst, i in s.instances {
 		if inst.meta.w & INSTANCE_FLAG_BLENDED != 0 && inst.meta.w & INSTANCE_FLAG_HIDDEN == 0 {
 			append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = inst.bounds_min.xyz, left_first = u32(i), bounds_max = inst.bounds_max.xyz, count = 1})
@@ -916,10 +933,11 @@ geometry_blas_inputs :: proc(r:^Renderer,frame:bool) -> (left:bool) {
     s.blas_refused={}
     triangles:=0
     // Room for what a frame adds, grown by doubling: blas_inputs_add makes room for each mesh, and
-    // one pool made again for each would copy it whole each time.
-    grow :: proc(pool:^[dynamic]u32,more:int) {if len(pool)+more>cap(pool) {reserve(pool,max(len(pool)+more,2*cap(pool)))}}
-    grow(&s.vertices,BLAS_INPUT_TRIANGLES*9)
-    grow(&s.indices,BLAS_INPUT_TRIANGLES*3)
+    // one pool made again for each would copy it whole each time. Without memory for it each mesh
+    // still asks for its own room, and waits when there is none.
+    grow :: proc(pool:^[dynamic]u32,more:int) -> bool {return len(pool)+more<=cap(pool) || reserve(pool,max(len(pool)+more,2*cap(pool)))==nil}
+    _=grow(&s.vertices,BLAS_INPUT_TRIANGLES*9)
+    _=grow(&s.indices,BLAS_INPUT_TRIANGLES*3)
     for &m,index in s.meshes {
         // The BLAS of a mesh whose geometry goes over frames is built once it went.
         if m.vertex_count==0 || mesh_pending(s,u32(index)) {continue}
@@ -1164,6 +1182,11 @@ tlas_build :: proc(s: ^Scene_State) {
 		append(&s.tlas_refs, 0)
 	}
 	s.tlas_node_count = len(s.tlas_nodes)
+	// Without memory for the tree rays meet nothing, and the next frame builds it again.
+	if !built && len(items) > 0 {
+		s.tlas_stale, s.tlas_cost, s.glass_node_count = true, 0, 0
+		return
+	}
 	tlas_refs_classify(s)
 	s.tlas_cost = tlas_refit(s)
 }
@@ -1437,8 +1460,21 @@ Instance_Given :: struct {values:Vec4,wet:f32}
 @(private)
 instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {instance_values(inst),inst.wet}}
 
+// Room for count instances in every table that holds one of each, and in
+// those of what rays and glass need of them. False without memory.
+@(private="file")
+instances_reserve :: proc(s:^Scene_State,count:int) -> bool {
+    return reserve(&s.instances,count)==nil && reserve(&s.instance_next,count)==nil && reserve(&s.instance_prev,count)==nil &&
+           reserve(&s.overlays,count)==nil && reserve(&s.instance_keys,count)==nil && reserve(&s.tlas_items,count)==nil &&
+           reserve(&s.hw_instances,count)==nil && reserve(&s.desc_instance,count)==nil &&
+           reserve(&s.translucent,count)==nil && reserve(&s.reflective,count)==nil &&
+           reserve(&s.tlas_nodes,count*2+1)==nil && reserve(&s.tlas_refs,max(count,1))==nil
+}
+
+// False when the instance is past the tables and they have no room for it
+// (instances_reserve makes it): nothing is written.
 @(private)
-instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,given:Instance_Given) {
+instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,given:Instance_Given) -> bool {
     s:=&r.scene
     desc:=desc
     // An instance whose material programs move its vertices shows its own pose of its mesh.
@@ -1446,9 +1482,13 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
     values:=given.values
     s.ray_cuts_stale=true
     count:=int(index)+1
-    if count>len(s.instances) {
-        resize(&s.instances,count);resize(&s.instance_next,count);resize(&s.instance_prev,count);resize(&s.overlays,count)
-        resize(&s.instance_keys,count);resize(&s.tlas_items,count);resize(&s.hw_instances,count)
+    if before:=len(s.instances);count>before {
+        if resize(&s.instances,count)!=nil || resize(&s.instance_next,count)!=nil || resize(&s.instance_prev,count)!=nil || resize(&s.overlays,count)!=nil ||
+           resize(&s.instance_keys,count)!=nil || resize(&s.tlas_items,count)!=nil || resize(&s.hw_instances,count)!=nil {
+            base.truncate(&s.instances,before);base.truncate(&s.instance_next,before);base.truncate(&s.instance_prev,before);base.truncate(&s.overlays,before)
+            base.truncate(&s.instance_keys,before);base.truncate(&s.tlas_items,before);base.truncate(&s.hw_instances,before)
+            return false
+        }
     }
 		mesh := s.meshes[desc.mesh]
 		// The cut rays trace an instance with stays while it shows the same mesh
@@ -1511,6 +1551,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			s.bounds_max = linalg.max(s.bounds_max, bmax)
 			s.has_bounds = true
 		}
+    return true
 }
 
 @(private)
@@ -1531,6 +1572,7 @@ instance_unlink :: proc(s:^Scene_State,index:u32) {
 
 // Replaces a descriptor range, optionally appending or truncating its suffix.
 // A set that skipped invalid meshes must be replaced with scene_set first.
+// False also without memory for the instances it appends: none is changed.
 scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bool=false) -> bool {
     s:=&r.scene
     old:=len(s.instances)
@@ -1539,7 +1581,11 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
     end:=int(first)+len(instances)
     if len(instances)==0 && (!truncate || end==old) {return true}
     spatial,classification,ray_properties:bool
-    if end>old {reserve(&s.translucent,end);reserve(&s.reflective,end);reserve(&s.tlas_nodes,end*2+1)}
+    if end>old && !instances_reserve(s,end) {
+        set_error(r,"scene of %d instances: out of memory",end)
+        return false
+    }
+    written:=true
     for given,at in instances {
         desc:=given
         desc.transform=origin_matrix(given.transform,r.origin-given.anchor)
@@ -1559,7 +1605,8 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             }
             instance_unlink(s,index)
         } else {append(&s.desc_instance,i32(index))}
-        instance_write(r,index,desc,previous,given)
+        // Only an instance past the old ones takes room, and it was reserved.
+        if !instance_write(r,index,desc,previous,given) {pop(&s.desc_instance);written=false;break}
         instance_changed_near(s,&s.instances[index])
         if int(index)<old {
             mesh:=s.instances[index].meta.x&INSTANCE_MESH_MASK
@@ -1581,8 +1628,8 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             if mesh_displaced(s,s.instances[index].meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
             instance_unlink(s,u32(index))
         }
-        resize(&s.instances,end);resize(&s.instance_next,end);resize(&s.instance_prev,end);resize(&s.overlays,end)
-        resize(&s.instance_keys,end);resize(&s.tlas_items,end);resize(&s.hw_instances,end);resize(&s.desc_instance,end)
+        base.truncate(&s.instances,end);base.truncate(&s.instance_next,end);base.truncate(&s.instance_prev,end);base.truncate(&s.overlays,end)
+        base.truncate(&s.instance_keys,end);base.truncate(&s.tlas_items,end);base.truncate(&s.hw_instances,end);base.truncate(&s.desc_instance,end)
         for i:=len(s.touched)-1;i>=0;i-=1 {if int(s.touched[i])>=end {unordered_remove(&s.touched,i)}}
     }
     if len(s.instances)!=old {
@@ -1592,7 +1639,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         s.tlas_moved||=spatial
     }
     s.tlas_dirty||=spatial || ray_properties || len(s.instances)!=old
-    return true
+    return written
 }
 
 // The light changes around an instance that comes, goes or shows something
@@ -1623,10 +1670,14 @@ instance_lit_same :: proc(a, b: Gpu_Instance) -> bool {
 // Geometry stays resident; previous instances are matched by object and
 // rendered-copy identity to produce motion vectors, and the light changes
 // only around those that come, go or show something else (scene_set_lights
-// marks the lights, the sun and the environment that change).
-scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) {
+// marks the lights, the sun and the environment that change). False without
+// memory for the instances or the lights: the scene stays as it was.
+scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
 	s := &r.scene
-	reserve(&s.translucent,len(instances));reserve(&s.reflective,len(instances));reserve(&s.tlas_nodes,len(instances)*2+1)
+	if !instances_reserve(s, len(instances)) || !lights_reserve(s, len(lights)) {
+		set_error(r, "scene of %d instances and %d lights: out of memory", len(instances), len(lights))
+		return false
+	}
 	// The instances take other indices: what changed before stays as boxes.
 	for &box in s.occluders.boxes[:s.occluders.count] {box.instance=OCCLUDERS_MANY}
 	clear(&s.previous)
@@ -1666,7 +1717,8 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
             delete_key(&s.previous,key)
         }
         motion||=previous!=desc.transform
-        instance_write(r,index,desc,previous,given)
+        // Its room was reserved; without it the instance is left out as one of a mesh that is not there.
+        if !instance_write(r,index,desc,previous,given) {s.desc_instance[len(s.desc_instance)-1]=-1;continue}
         if !found || !instance_lit_same(before,s.instances[index]) {
             instance_changed_near(s,&s.instances[index])
             if found {instance_changed_near(s,&before)}
@@ -1682,10 +1734,11 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	s.instances_dirty = true
 	s.tlas_dirty = true
 	s.motion_pending = motion
-	scene_set_lights(r, lights, sun, environment)
+	lit := scene_set_lights(r, lights, sun, environment)
 	// A world shown again (scene_world) has the light of this scene already.
 	if r.world_kept {s.changes = {}}
 	r.world_kept = false
+	return lit
 }
 
 // Lighting runs in render units: a luminance in nits by the light scale of
@@ -1760,9 +1813,14 @@ LIGHT_RANGES_MAX :: 64
 // scene. While the lights keep their number and each keeps its kind (spot or
 // rectangle, or not; with a place or without one) an index names the same
 // light: the tree is refit, rebuilt only once it costs too much
-// (LIGHT_TREE_REFIT_SLACK), and only what changed goes to the GPU.
-scene_set_lights :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) {
+// (LIGHT_TREE_REFIT_SLACK), and only what changed goes to the GPU. False
+// without memory for the lights and their tree: they stay as they were.
+scene_set_lights :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
 	s := &r.scene
+	if !lights_reserve(s, len(lights)) {
+		set_error(r, "%d lights: out of memory", len(lights))
+		return false
+	}
 	s.lights_changed = true
 	s.light_key = 0
 	for l in lights {s.light_key = max(s.light_key, light_key(l))}
@@ -1809,13 +1867,13 @@ scene_set_lights :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, envi
 		scene_changed(s)
 		r.gi_warm_spread = GI_BLACKOUT_FRAMES
 	}
-	resize(&s.lights, count)
+	base.truncate(&s.lights, count)
 	// An index names the same light only while the set holds.
 	if count == old && same {for light in moved[:moves] {occluder_light_moved(s, light)}}
 	switch {
 	case count != old || !same:
-		s.light_tree_built = light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region)
-		s.light_tree_cost = s.light_tree_built
+		// lights_reserve made the room of the tree.
+		if !light_tree_rebuild(s) {set_error(r, "light tree of %d lights: out of memory", count);return false}
 		s.light_revision += 1
 		s.lights_dirty = true
 	case changes > LIGHT_REFITS_MAX:
@@ -1832,8 +1890,7 @@ scene_set_lights :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, envi
 		}
 	}
 	if changes > 0 && s.light_tree_cost > s.light_tree_built * LIGHT_TREE_REFIT_SLACK {
-		s.light_tree_built = light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region)
-		s.light_tree_cost = s.light_tree_built
+		if !light_tree_rebuild(s) {set_error(r, "light tree of %d lights: out of memory", count);return false}
 		s.lights_dirty = true
 	}
 	if s.lights_dirty {
@@ -1841,21 +1898,42 @@ scene_set_lights :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, envi
 		clear(&s.light_node_ranges)
 	}
 	scene_set_environment(r, sun, environment)
+	return true
+}
+
+// Room for count lights and their tree: with it scene_set_lights does not
+// run out of memory half way. False without memory.
+@(private = "file")
+lights_reserve :: proc(s: ^Scene_State, count: int) -> bool {
+	return reserve(&s.lights, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count, s.light_region)
+}
+
+// Builds the tree of the lights again. False without memory: it stays as it was.
+@(private = "file")
+light_tree_rebuild :: proc(s: ^Scene_State) -> bool {
+	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region) or_return
+	s.light_tree_built, s.light_tree_cost = built, built
+	return true
 }
 
 // Takes the room for lights on the GPU the extensions asked for since the
 // last frame (lights_ask): another size builds the tree again. A room no pass
 // wrote in the frame before goes back to the root of the scene alone, and
-// its part without shadows to none.
+// its part without shadows to none. False without memory for the tree of
+// another room: the room stays as it was.
 @(private)
-scene_light_region :: proc(r: ^Renderer) {
+scene_light_region :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	asked := light_region_of(r.lights_asked, r.shadowless_asked)
 	r.lights_asked, r.shadowless_asked = 0, 0
 	if asked != s.light_region {
+		previous := s.light_region
 		s.light_region = asked
-		s.light_tree_built = light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region)
-		s.light_tree_cost = s.light_tree_built
+		if !light_tree_rebuild(s) {
+			s.light_region = previous
+			set_error(r, "light tree with room for %d lights of the passes: out of memory", asked.lights + asked.shadowless)
+			return false
+		}
 		s.light_revision += 1
 		s.lights_dirty = true
 		clear(&s.light_ranges)
@@ -1865,6 +1943,7 @@ scene_light_region :: proc(r: ^Renderer) {
 		if root := light_region_shadowless(s.light_region); root > 0 {range_add(&s.light_node_ranges, {root, 1})}
 	}
 	s.light_region_written = false
+	return true
 }
 
 // The light scale for the local lights of the scene with a sun and an
@@ -1944,7 +2023,10 @@ scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
 ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	d := r.device
-	if len(s.materials) == 0 {materials_changed(s, materials_grow(r, 1))}
+	if len(s.materials) == 0 {
+		changes := materials_grow(r, 1) or_return
+		materials_changed(s, changes)
+	}
 	if len(s.materials) > s.material_capacity || s.material_buffer == 0 {
 		capacity := max(len(s.materials) + len(s.materials) / 2, 32)
 		if s.material_buffer != 0 {rhi.buffer_destroy(d, s.material_buffer)}
@@ -2095,7 +2177,7 @@ touched_settle :: proc(s: ^Scene_State) {
 		s.touched[kept] = index
 		kept += 1
 	}
-	resize(&s.touched, kept)
+	base.truncate(&s.touched, kept)
 }
 
 // Records uploads of dirty scene data and the hardware TLAS build.

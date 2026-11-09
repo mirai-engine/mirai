@@ -651,10 +651,11 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	device, width, height, settings, assets := desc.device, desc.width, desc.height, desc.settings, desc.shaders
 	r.device = device
 	r.allocator = desc.allocator if desc.allocator.procedure != nil else context.allocator
-	scene_init(r)
+	scene_ready := scene_init(r)
 	r.scene.pages.jobs = desc.jobs
 	if desc.pipeline_thread {pipeline_thread_start(r)}
 	textures_init(r)
+	if !scene_ready {set_error(r, "scene tables: out of memory");return false}
 	if assets!=nil && assets.owned {
 		r.shader_assets=assets^;r.shader_codes=assets.codes;assets^={}
 	} else {

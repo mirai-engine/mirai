@@ -1,5 +1,6 @@
 package render
 
+import "base:runtime"
 import "core:testing"
 import "core:mem"
 import "mirai:core"
@@ -551,4 +552,77 @@ the_meshes_of_a_body_are_marked_with_the_local_player_whose_view_hides_it :: pro
     testing.expect(t,extras[0].layers==1<<15 && extras[0].owner==3,"what replaces a mesh is in its layers and of its body")
     testing.expect(t,extras[1].layers==0 && extras[1].owner==0,"a copy that does not replace it keeps its own")
     testing.expect(t,extras[2].layers==2 && extras[2].owner==3,"layers a replacement gives stay")
+}
+
+// What render_sync asks memory for to make the scene, with the memory ending
+// at each request in turn: a scene it has no memory for is empty and is made
+// again by a later frame, and with memory enough it holds every instance.
+@(test)
+a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
+    settings:=gpu.DEFAULT_SETTINGS
+    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
+    testing.expect_value(t,error,host.App_Error.None)
+    if app==nil {return}
+    defer host.app_destroy(app)
+    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
+    worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
+    meshes:core.Table(Mesh_Renderer);core.table_init(&meshes,"Mesh_Renderer");defer core.table_destroy(&meshes)
+    tints:core.Table(Tint);core.table_init(&tints,"Tint");defer core.table_destroy(&tints)
+    hidden:core.Table(Hidden);core.table_init(&hidden,"Hidden");defer core.table_destroy(&hidden)
+    elsewhere:core.Table(Drawn_Elsewhere);core.table_init(&elsewhere,"Drawn_Elsewhere");defer core.table_destroy(&elsewhere)
+    parents:core.Table(core.Parent);core.table_init(&parents,"Parent");defer core.table_destroy(&parents)
+    suns:core.Table(Sun);points:core.Table(Point_Light);spots:core.Table(Spot_Light);rects:core.Table(Rect_Light)
+    defer {core.table_destroy(&suns);core.table_destroy(&points);core.table_destroy(&spots);core.table_destroy(&rects)}
+    emissions:core.Table(Light_Emission);defer core.table_destroy(&emissions)
+    posts:core.Table(View_Volume);defer core.table_destroy(&posts)
+    overrides:core.Table(Material_Override);core.table_init(&overrides,"Material_Override");defer core.table_destroy(&overrides)
+    highlights:core.Table(Highlight);defer core.table_destroy(&highlights)
+    offsets:core.Table(Draw_Offset);core.table_init(&offsets,"Draw_Offset");defer core.table_destroy(&offsets)
+    layers:core.Table(Layers);core.table_init(&layers,"Layers");defer core.table_destroy(&layers)
+    skies:core.Table(Sky);core.table_init(&skies,"Sky");defer core.table_destroy(&skies)
+    {sky_entity:=core.create(&es);core.add(&skies,sky_entity,SKY_DEFAULT);core.table_settle(&skies,&es)}
+    view:=core.VIEW_DEFAULT
+    view.position,view.rotation,view.size={0,0,8},1,{160,120}
+    cube :: proc(es:^core.Entities,worlds:^core.Table(core.World_Transform),meshes:^core.Table(Mesh_Renderer),tints:^core.Table(Tint),x:f32) -> core.Entity {
+        e:=core.create(es)
+        place:=mm.TRANSFORM_IDENTITY
+        place.position.x=x
+        core.add(worlds,e,core.World_Transform{place,place})
+        core.add(meshes,e,Mesh_Renderer{shape=.Cube})
+        core.add(tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
+        return e
+    }
+    a:=cube(&es,&worlds,&meshes,&tints,-2.5)
+    _=cube(&es,&worlds,&meshes,&tints,0)
+    core.table_settle(&worlds,&es);core.table_settle(&meshes,&es);core.table_settle(&tints,&es)
+    outlines:core.Table(Outline);defer core.table_destroy(&outlines)
+    outline_styles:=OUTLINE_STYLES_DEFAULT
+    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{memory_limit_proc,&limit}
+    sync:Render_Sync
+    defer {context.allocator=limited;sync_free(&sync)}
+    done,refused:=false,false
+    for served in 0..<128 {
+        host.app_frame_begin(app)
+        // An instance of the application drawn in place of the first cube.
+        extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1}})
+        testing.expect(t,usable)
+        extra.object_id,extra.replace_source=u64(a),true
+        testing.expect(t,host.app_instance_add(app,extra))
+        host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
+        {
+            context.allocator=limited
+            limit.remaining=served
+            render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&worlds),core.read(&meshes),core.read(&tints),core.read(&hidden),core.read(&elsewhere),core.read(&parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&overrides),core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{})
+            limit.remaining=max(int)
+        }
+        host.app_frame_end(app)
+        if done=sync.synced;done {break}
+        refused=true
+        testing.expectf(t,len(app.renderer.scene.instances)==0,"a scene refused with %d requests served is empty",served)
+    }
+    testing.expect(t,done && refused,"refused without memory, and with it it is made")
+    testing.expect_value(t,len(app.renderer.scene.instances),3)
+    testing.expect_value(t,rhi.device_validation_errors(app.device),0)
 }
