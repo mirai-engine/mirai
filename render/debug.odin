@@ -94,33 +94,6 @@ debug_sphere :: proc(lines:^Debug_Lines,center:Vec3,radius:f32,color:Vec4,segmen
     for axis in ([3]Vec3{{1,0,0},{0,1,0},{0,0,1}}) {debug_circle(lines,center,axis,radius,color,segments)}
 }
 
-// A capsule between the centers of its two end spheres.
-debug_capsule :: proc(lines:^Debug_Lines,from,to:Vec3,radius:f32,color:Vec4,segments:=32) {
-    span:=to-from
-    axis:=linalg.normalize(span) if linalg.length(span)>1e-6 else Vec3{0,1,0}
-    u:=linalg.normalize(linalg.cross(axis,Vec3{1,0,0} if abs(axis.x)<0.9 else Vec3{0,1,0}))
-    v:=linalg.cross(axis,u)
-    debug_circle(lines,from,axis,radius,color,segments)
-    debug_circle(lines,to,axis,radius,color,segments)
-    half:=max(segments/2,2)
-    for side in ([2]Vec3{u,v}) {
-        debug_line(lines,from+side*radius,to+side*radius,color)
-        debug_line(lines,from-side*radius,to-side*radius,color)
-        // Half circles over each end, in the plane of the axis and this side.
-        for end in 0..<2 {
-            center:=to if end==1 else from
-            out:=axis if end==1 else -axis
-            previous:=center+side*radius
-            for i in 1..=half {
-                angle:=f32(i)/f32(half)*math.PI
-                point:=center+(side*math.cos(angle)+out*math.sin(angle))*radius
-                debug_line(lines,previous,point,color)
-                previous=point
-            }
-        }
-    }
-}
-
 // The axes of a transform: x red, y green, z blue.
 debug_axes :: proc(lines:^Debug_Lines,transform:Mat4,size:f32=1) {
     origin:=(transform*Vec4{0,0,0,1}).xyz
@@ -128,22 +101,6 @@ debug_axes :: proc(lines:^Debug_Lines,transform:Mat4,size:f32=1) {
     for color,axis in colors {
         direction:=Vec3{transform[0,axis],transform[1,axis],transform[2,axis]}
         debug_line(lines,origin,origin+direction*size,color)
-    }
-}
-
-// The volume a view-projection matrix sees, from its inverse.
-debug_frustum :: proc(lines:^Debug_Lines,inverse_view_projection:Mat4,color:Vec4) {
-    corners:[8]Vec3
-    for &corner,i in corners {
-        // Reversed depth: 1 is the near plane.
-        clip:=inverse_view_projection*Vec4{1 if i&1!=0 else -1,1 if i&2!=0 else -1,1 if i&4==0 else 1e-4,1}
-        corner=clip.xyz/clip.w
-    }
-    for i in 0..<8 {
-        for axis in 0..<3 {
-            bit:=1<<uint(axis)
-            if i&bit==0 {debug_line(lines,corners[i],corners[i|bit],color)}
-        }
     }
 }
 
