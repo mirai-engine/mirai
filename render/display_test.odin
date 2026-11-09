@@ -23,6 +23,7 @@ the_display_lut_holds_the_aces_2_output_transform :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	if !renderer_init(r, {device = device, width = 8, height = 8}) {testing.expect(t, false, r.error); return}
 	defer renderer_destroy(r)
+	testing.expect(t, renderer_set_display_transform(r, .ACES_2), r.error)
 	N :: DISPLAY_LUT_SIZE
 	lut := make([]f16, N * N * N * 4, context.temp_allocator)
 	if !testing.expect(t, rhi.texture_read(device, r.display_lut, ([^]u8)(raw_data(lut))[:len(lut) * 2]), rhi.device_error(device)) {return}

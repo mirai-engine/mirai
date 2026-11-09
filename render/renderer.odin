@@ -700,8 +700,8 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	white := [4]u8{255, 255, 255, 255}
 	if !renderer_set_font(r, white[:], 1, 1) {return false}
 	if !extension_counters_init(r) || !ui_offscreen_init(r) {return false}
-	// ACES 2.0, the transform EXPOSURE_BIAS and the test exposures are calibrated to, until a project chooses.
-	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR, .ACES_2) {return false}
+	// Neutral, the default of a project: only one that chooses another bakes it again.
+	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR, .Neutral) {return false}
 	r.hardware_rt = info.features.ray_query && r.settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	if info.features.ray_query {
 		verified, note := hardware_rt_self_test(r)
