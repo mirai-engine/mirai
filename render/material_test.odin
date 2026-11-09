@@ -610,6 +610,7 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 	}
 	last := Texture_Handle(texture_count(r))
 	testing.expect_value(t, texture_index(r, last), u32(TEXTURE_RESERVED + rhi.TEXTURE_TABLE_FIRST))
+	testing.expect_value(t, u32(sky_map(r, last, false).x), texture_index(r, last))
 	testing.expect(t, texture_capacity(r) == rhi.texture_table_limit(f.device) - TEXTURE_RESERVED && texture_capacity(r) > rhi.TEXTURE_TABLE_FIRST)
 	// A material that names a texture that does not exist renders without it.
 	material := DEFAULT_MATERIAL

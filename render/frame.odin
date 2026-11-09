@@ -694,10 +694,10 @@ frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, sc
 @(private)
 sky_map :: proc(r: ^Renderer, texture: Texture_Handle, atmosphere: bool) -> Vec4 {
 	if atmosphere && r.air.built {return {0, 1, 0, 0}}
-	index := int(texture) - 1
-	if index < 0 || index >= r.textures.count || r.textures.textures[index] == 0 {return {}}
-	size := r.textures.sizes[index]
-	return {f32(index), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
+	entry := texture_index(r, texture)
+	if entry == max(u32) {return {}}
+	size := r.textures.sizes[texture - 1]
+	return {f32(entry), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
 }
 
 // The constants of the view and what it decides for all its passes.
