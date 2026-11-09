@@ -216,7 +216,7 @@ failed_tick_preparation_retires_previous_root_delta_and_markers_while_preserving
     requests:Animation_Requests;defer delete(requests.seeks.items);defer delete(requests.distances.items)
     core.push(&requests.seeks,Animation_Seek{entity=entity,time=.7})
     events:Animation_Events;defer delete(events.items);core.push(&events.queue,Animation_Marker{entity=entity,marker=1})
-    assets:host.Assets;app:=host.App{assets=&assets,allocator=runtime.nil_allocator()}
+    app:=host.App{allocator=runtime.nil_allocator()}
     _,valid:=animation_root_delta(&playback,entity);testing.expect(t,valid)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     animation_tick({},nil,{},{},{},&requests,&events,{},{},&playback,&app,{dt=1.0/60,playing=true},{},nil,nil)

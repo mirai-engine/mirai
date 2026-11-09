@@ -12,6 +12,7 @@ Authoring_Write_Result :: struct {
     asset:base.Asset_Id,
     path:[1024]u8 `mirai:"text"`,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
+    replaced:bool `mirai:"optional,label=The path already held one: it was replaced whole, keeping its id"`,
 }
 Authoring_Page :: struct($T:typeid) {index:u32,value:T}
 
@@ -42,12 +43,11 @@ authoring_failure :: proc(call:^api.Call,path,code,expected,actual,message:strin
 @(private)
 authoring_fix :: proc(code,path,expected:string) -> string {
     switch code {
-    case "Invalid_Mode": return "Stop Play or Simulation with play.stop, or pass dry_run to only validate"
     case "Runtime_Required": return "Start Play or Simulation, or use animation.preview on a copy"
     case "Missing_Entity": return "Use an id from scene.inspect"
     case "Missing_Component": return "Assign playback first with animation.play"
-    case "Invalid_Asset","Missing_Asset": return "Use an asset id from asset.list of the expected kind"
-    case "Already_Exists": return "Choose another path, or edit the existing asset with its set method"
+    case "Invalid_Asset","Missing_Asset": return "Use the path or the id of an asset of the expected kind"
+    case "Already_Exists": return "Choose another path, or edit the existing asset"
     case "Missing_Part": return "Detect the body with skeleton.body.detect or set the part with skeleton.body.set"
     case "Missing_Clip": return "Use a clip name from animation.asset.inspect with section clips"
     }

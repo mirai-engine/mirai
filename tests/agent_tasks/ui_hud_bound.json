@@ -1,0 +1,10 @@
+{
+  "project": "game",
+  "prompt": "Write a new interface for this game from nothing, the file hud/score.ui of its assets: a box named score that holds a text named label that says Hits and a text named value that shows the hits of the Status component of the game. Save it. Leave the scene and the other interfaces as they are.",
+  "checks": [
+    {"file": "assets/hud/score.ui"},
+    {"ui": "hud/score.ui", "nodes": {"score": {"kind": "Box"}, "label": {"kind": "Text", "text": "Hits", "parent": "score"}, "value": {"kind": "Text", "bind_text": "Status.hits", "parent": "score"}}},
+    {"ui": "hud/hud.ui", "nodes": {"hits": {"bind_text": "Status.hits"}}},
+    {"unchanged": {}}
+  ]
+}

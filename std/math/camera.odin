@@ -3,7 +3,7 @@ package mirai_math
 import "core:math"
 import "core:math/linalg"
 
-// Cameras look down their -Z with +Y up. Clip space has Y up and depth from 0
+// Everything looks down its -Z with +Y up: cameras, lights, bodies. Clip space has Y up and depth from 0
 // to 1, reversed: the near plane is at depth 1 and the far one at 0, which
 // spends the precision of floats where a perspective needs it. Screen points
 // are pixels from the top left corner of the viewport, Y down.
@@ -89,7 +89,7 @@ screen_ray :: proc "contextless" (screen,viewport:Vec2,view,projection:Mat4) -> 
         direction=linalg.normalize0(Vec3{(x+projection[0,2])/projection[0,0],(y+projection[1,2])/projection[1,1],-1})
     } else {
         origin={(x-projection[0,3])/projection[0,0],(y-projection[1,3])/projection[1,1],(1-projection[2,3])/projection[2,2]}
-        direction={0,0,-1}
+        direction=FORWARD
     }
     // The inverse of a rigid view: its rotation transposed.
     offset:=origin-Vec3{view[0,3],view[1,3],view[2,3]}

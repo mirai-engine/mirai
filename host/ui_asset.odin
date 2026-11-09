@@ -1,5 +1,6 @@
 package host
 
+import "core:fmt"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:ui"
@@ -11,6 +12,7 @@ import "mirai:ui"
 // would refuse: what is written always loads. imports: the records of the
 // widgets its components name, as ui.tree_link takes them.
 ui_tree_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,imports:[]ui.Tree_Data={},allocator:=context.allocator) -> asset.Error {
+    for component in data.components {if component.widget=={} {return .Invalid}}
     linked,linked_ok:=ui.tree_link(data,imports)
     if !linked_ok {return .Invalid}
     textures:=make([]u32,len(linked.images),context.temp_allocator)
@@ -31,7 +33,6 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLES,data.styles) or_return
     asset.document_put(doc,types,asset.UI_TABLE_VARIANTS,data.variants) or_return
     asset.document_put(doc,types,asset.UI_TABLE_COMPONENTS,data.components) or_return
-    asset.document_put(doc,types,asset.UI_TABLE_COMPONENT_NODES,data.component_nodes,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_OVERRIDES,data.overrides) or_return
     asset.document_put(doc,types,asset.UI_TABLE_IMAGES,data.images) or_return
     asset.document_put(doc,types,asset.UI_TABLE_ANIMS,data.anims) or_return
@@ -43,6 +44,9 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLE_INFOS,data.style_infos) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TRANSLATIONS,data.translations,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_GRID_TRACKS,data.grid_tracks) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKENS,data.tokens) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKEN_USES,data.token_uses) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_PARAMS,data.params) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk},.LZ) or_return
     return .None
 }
@@ -75,7 +79,6 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.styles=rows(a,types,asset.UI_TABLE_STYLES,ui.Node_Style) or_return
     data.variants=rows(a,types,asset.UI_TABLE_VARIANTS,ui.Tree_Style_Variant) or_return
     data.components=rows(a,types,asset.UI_TABLE_COMPONENTS,ui.Tree_Component) or_return
-    data.component_nodes=rows(a,types,asset.UI_TABLE_COMPONENT_NODES,ui.Tree_Node) or_return
     data.overrides=rows(a,types,asset.UI_TABLE_OVERRIDES,ui.Tree_Override) or_return
     data.images=rows(a,types,asset.UI_TABLE_IMAGES,ui.Tree_Image) or_return
     data.anims=rows(a,types,asset.UI_TABLE_ANIMS,ui.Tree_Anim) or_return
@@ -87,6 +90,9 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.style_infos=rows(a,types,asset.UI_TABLE_STYLE_INFOS,ui.Tree_Style_Info) or_return
     data.translations=rows(a,types,asset.UI_TABLE_TRANSLATIONS,ui.Tree_Translation) or_return
     data.grid_tracks=rows(a,types,asset.UI_TABLE_GRID_TRACKS,ui.Grid_Tracks) or_return
+    data.tokens=rows(a,types,asset.UI_TABLE_TOKENS,ui.Tree_Token) or_return
+    data.token_uses=rows(a,types,asset.UI_TABLE_TOKEN_USES,ui.Tree_Token_Use) or_return
+    data.params=rows(a,types,asset.UI_TABLE_PARAMS,ui.Tree_Param) or_return
     data.text=rows(a,types,asset.UI_TABLE_TEXT,u8) or_return
     return data,.None
 }
@@ -112,6 +118,12 @@ ui_tree_imports_of :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_S
     for component,row in data.components {
         id:=component.widget
         if id=={} {continue}
+        // Several components of a file read it once.
+        seen:=false
+        for earlier,i in data.components[:row] {
+            if earlier.widget==id {imports[row]=imports[i];seen=true;break}
+        }
+        if seen {continue}
         for open in stack[:depth] {if open==id {return nil,false}}
         record,found:=asset.registry_find(&a.registry,id)
         if !found || record.kind!=asset.KIND_UI {return nil,false}

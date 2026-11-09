@@ -19,7 +19,7 @@ import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
 PHYSICS_GALLERY_SCENE :: "physics_gallery/physics.scene"
-PHYSICS_GALLERY_BURST :: base.Asset_Id{0x6d697261695f7068,0x79735f6275727374}
+PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.prefab"
 
 @(component)
 Physics_Gallery :: struct {
@@ -45,7 +45,7 @@ Physics_Gallery_Motion :: struct {origin:mm.Vec3,axis:mm.Vec3,amplitude,frequenc
 
 @(step="input")
 physics_gallery_reset :: proc(views:core.Read(Physics_Gallery_View),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
-    if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_path(scenes,PHYSICS_GALLERY_SCENE)}
+    if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_restart(scenes)}
 }
 
 @(step="fixed")
@@ -87,7 +87,7 @@ physics_gallery_actions :: proc(
             else {destruct.strain(requests,item.target,point,4,1)}
         case 12,14:
             if on,_,found:=core.raw_state(core.raw(field_configs),item.field);found {
-                if on {core.disable(field_configs,item.field)} else {core.enable(field_configs,item.field)}
+                core.set_on(field_configs,item.field,!on)
             }
         case 17:
             cache.play(caches,item.target,1 if item.activations%2==1 else -1,restart=true)
@@ -123,9 +123,12 @@ physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),transfo
     }
 }
 
+// Where the burst of a station shows, over the point of the event and toward the player.
+physics_gallery_burst_at :: proc(point:mm.Vec3) -> mm.Vec3 {return point+mm.Vec3{0,.5,.8}}
+
 @(step="fixed",stage="react",after="destruct_step")
-physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physics_Gallery_Events,events:core.Ref(destruct.Destruct_Events),spawns:^scene.Spawns,bodies:^phys.Body_Requests) {
-    current:=core.entity_at(stations,0) if core.count(stations)>0 else core.NONE
+physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physics_Gallery_Events,events:core.Ref(destruct.Destruct_Events),spawner:scene.Spawner,bodies:^phys.Body_Requests) {
+    current,_:=core.first(stations)
     if current!=counts.scene {counts^=Physics_Gallery_Events{scene=current}}
     for event in events.fractured.items {
         if event.kind==.Remove {continue}
@@ -138,7 +141,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
             }
             if item.station<PHYSICS_GALLERY_STATIONS {counts.counts[item.station]+=1}
             if item.station==10 {
-                core.push(&spawns.queue,scene.Spawn{prefab=PHYSICS_GALLERY_BURST,transform={event.point+mm.Vec3{0,.5,.8},1,{1,1,1}},transient=true})
+                scene.spawn(spawner,PHYSICS_GALLERY_BURST,{position=physics_gallery_burst_at(event.point)},transient=true)
             }
         }
     }

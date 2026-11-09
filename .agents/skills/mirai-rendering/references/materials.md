@@ -191,8 +191,8 @@ A texture of an asset resides with the levels that the distance of what shows it
   rows name it in a map. A texture of a Surface program, whose uv its source decides, asks for all
   its levels while something shows it. One that nothing in the scene shows (particles, UI, sky,
   decals, previews) keeps the levels it has unless the pool asks for them.
-- **From where.** The views of the last frame that the window showed (not captures or offscreen
-  frames) and the
+- **From where.** The views of the last frame that the window showed (not offscreen frames, except
+  those of a capture that waits for its textures, `Frame_Desc.streamed`) and the
   [streaming sources](../../mirai-gameplay/references/libraries.md#sources-and-residency)
   of the drawn world with their advanced point (`texture_sources`), seen as from the perspective
   view of the largest scale.
@@ -361,7 +361,7 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
 - A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
-  `editor.capture` and `app_capture_world` draw one more frame if the last one drew a program as
+  `capture` and `app_capture_world` draw one more frame if the last one drew a program as
   its row (`renderer_pipelines_pending`, `renderer_pipelines_wait`); the editor images are drawn
   again when pipelines arrive (`renderer_pipelines_made`).
 - Extensions ask for a program's with `Stage_Pipeline_Desc.program` or

@@ -60,6 +60,11 @@ CONTEXT_CAPACITY :: 16
 // The context of the actions that name none, which every seat is always in.
 @(name="base") CONTEXT_BASE : Input_Context : 0
 
+// The context of an action that reads input whatever a seat is in, under what
+// a higher layer takes: the menu of the game, which a modal context must not
+// silence. Its value is reserved.
+@(name="always") CONTEXT_ALWAYS : Input_Context : CONTEXT_CAPACITY-1
+
 CHORD_CAPACITY :: si.CHORD_CAPACITY
 
 // How a player looks around (Axis2: x right, y up, in points of mouse
@@ -381,6 +386,10 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
     result.built=true
     names:=core.names_of(info,Action)
     for entry in core.names_of(info,Input_Context) {
+        if entry.value==i64(CONTEXT_ALWAYS) && entry.name!="always" {
+            input_report(problems,"input.context_value","the input context %q (%s:%d) has the value %d, which CONTEXT_ALWAYS reserves: give it a free one",entry.name,entry.file,entry.line,entry.value)
+            continue
+        }
         if entry.value<CONTEXT_CAPACITY {continue}
         input_report(problems,"input.context_value","the input context %q (%s:%d) has the value %d; contexts take values below %d: give it a free one",entry.name,entry.file,entry.line,entry.value,CONTEXT_CAPACITY)
     }
@@ -638,6 +647,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
     }
     layer :: proc "contextless" (m:^Input_Map,binding:^Input_Binding,layers:^[CONTEXT_CAPACITY]u8,floor:u8) -> u8 {
         c:=m.contexts[binding.action]
+        if c==CONTEXT_ALWAYS {return 1}
         if int(c)>=CONTEXT_CAPACITY || layers[c]<floor {return 0}
         return layers[c]
     }
@@ -721,7 +731,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
     for hold in holds {
         a:=int(hold.action)
         if a>=count || m.declared&action_bit(hold.action)==0 {continue}
-        if c:=m.contexts[a];int(c)>=CONTEXT_CAPACITY || layers[c]<floor {continue}
+        if c:=m.contexts[a];c!=CONTEXT_ALWAYS && (int(c)>=CONTEXT_CAPACITY || layers[c]<floor) {continue}
         si.input_feed_action(&state,si.Action(a+1),hold.value.x!=0,hold.value.x,hold.value)
     }
 
@@ -891,6 +901,17 @@ input_binding_parse :: proc(o:json.Object) -> (binding:Input_Binding,error:Input
         binding.chord_count=u8(len(chord))
     }
     return binding,.None,""
+}
+
+// Whether a binding of an action reads the movement of the mouse.
+action_reads_mouse :: proc "contextless" (m:^Input_Map,action:Action) -> bool {
+    for &binding in m.bindings[:m.binding_count] {
+        if binding.action!=action {continue}
+        for code in binding.codes[:min(int(binding.count),4)] {
+            if code.device==.Mouse_Axis {return true}
+        }
+    }
+    return false
 }
 
 // Whether a binding suits an action of a kind, as input_map_bind takes it.

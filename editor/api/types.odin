@@ -18,7 +18,10 @@ import "mirai:std/serial"
 // min and max, which also bound each element of an array field. A result a
 // handler writes itself describes a list of any length with an array tagged
 // `list`, any JSON value with a field tagged `any`, and a key that cannot be
-// the name of a field (an Odin keyword such as where) with `key=where`.
+// the name of a field (an Odin keyword such as where) with `key=where`. A
+// param tagged `any` takes any JSON too; its handler reads it from Call.raw.
+// An integer param that only bounds how much a method answers is tagged
+// `clamp`: past its max it takes the max and the answer says so in _clamped.
 
 DEFAULT_PORT :: 7940
 
@@ -63,7 +66,9 @@ METHOD_NOT_FOUND  :: -32601
 INVALID_PARAMS    :: -32602
 INTERNAL_ERROR    :: -32603
 SERVER_ERROR      :: -32000 // a handler failed without a code of its own
-CLOSED            :: -32096 // client side: the editor closed the connection without a byte of answer: it ended or restarted, perhaps after running the call
+CANCELLED         :: -32094 // the client cancelled the call; it stopped at a safe point
+HUNG              :: -32095 // client side: the process of the editor is alive and has used no CPU for a while: it will not answer
+CLOSED            :: -32096 // the editor closed the connection without a byte of answer, or is ending during a _wait_until: it ended or restarted, perhaps after running the call
 TIMEOUT           :: -32097 // client side: no answer in time
 BAD_RESPONSE      :: -32098 // client side: the answer is not a JSON-RPC response
 UNREACHABLE       :: -32099 // client side: nobody listens
@@ -78,7 +83,7 @@ Method_Flag :: enum u8 {
     Read_Only,
     Destructive,
     Idempotent,
-    Core,      // tools/list gives it always: the basics of a scene; the rest go through the tool call
+    Core,      // tools/list gives it always: what agents use most, as each costs its schema every turn; the rest go through the tool call
     Turn,      // only for the turn of an agent of the editor: tools/list does not give it to another request
 }
 Method_Flags :: bit_set[Method_Flag;u8]
@@ -98,7 +103,6 @@ Method_Desc :: struct {
     handler:Handler,
     user:rawptr,
     flags:Method_Flags,
-    mcp_content:bool,     // result is an MCP content envelope instead of JSON text
     writes_result:bool,   // the handler writes the result as JSON into call.out; result only gives its schema
 }
 
@@ -113,12 +117,12 @@ Method :: struct {
     handler:Handler,
     user:rawptr,
     flags:Method_Flags,
-    mcp_content:bool,
     writes_result:bool,
+    clamps:bool, // a field of its params is tagged clamp
 }
 
 // What the tag of a field tells the API beyond std/serial.
-Field_Tag :: enum u8 {Optional,List,Any}
+Field_Tag :: enum u8 {Optional,List,Any,Clamp}
 Field_Tags :: bit_set[Field_Tag;u8]
 
 Call :: struct {
@@ -158,6 +162,7 @@ Init_Error :: enum u8 {
 Server_Desc :: struct {
     port:int,                    // 0: the system picks one
     name,version,instructions:string,
+    docs_root:string,            // the engine whose game documentation the MCP tool docs reads; "": no such tool
     max_methods:int,             // 256
     max_connections:int,         // 8
     max_request:int,             // body bytes: 256 KiB
@@ -193,6 +198,8 @@ Conn :: struct {
     reject_message:string,
     started:time.Tick,
     drained:int,
+    keep:bool, // Connection: keep-alive: a request after another on the same connection
+    stream:bool, // Accept: text/event-stream: its tools/call may answer as a stream
     client_tag:[64]u8,
     client_name:[CLIENT_NAME_BYTES]u8,
     plugins:[512]u8, // X-Mirai-Plugins: the plugins whose tools tools/list adds to those of the editor
@@ -200,7 +207,7 @@ Conn :: struct {
 
 Server :: struct {
     allocator:runtime.Allocator,
-    name,version,instructions:string,
+    name,version,instructions,docs_root:string,
     listener:net.TCP_Socket,
     listening:bool,
     port:int,
@@ -225,8 +232,14 @@ Server :: struct {
     client_name:string,
     client_plugins:string, // of the request that runs
     image:string,          // Call.image of the call that ran last; in its scratch
+    running:Running,       // the tools/call that holds the server
+    instance:Instance,     // which editor this is
+    clamped:string,        // what the params read last asked past a maximum, as members of _clamped; in its scratch
     plugins:[]Plugin,
     guides:[]Guide,
+    assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
+    pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
+    user:rawptr,                             // of pause
 }
 
 // A plugin the project finds; active: the project uses it.
@@ -246,6 +259,13 @@ method_find :: proc(s:^Server,name:string) -> ^Method {
         if method.name_hash==hash && method.name==name {return &method}
     }
     return nil
+}
+
+// A reader of text that came with a call: asset fields take a path as well as an id.
+call_reader_init :: proc(call:^Call,r:^serial.Text_Reader,text:string) {
+    serial.text_reader_init(r,text,call.allocator)
+    r.loose_names=true
+    if call.server!=nil {r.assets=call.server.assets}
 }
 
 call_params :: #force_inline proc(call:^Call,$T:typeid) -> ^T {

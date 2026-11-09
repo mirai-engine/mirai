@@ -325,7 +325,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
             _=engine_stamp_write(paths.stamp,stamp)
         }
         stage_changed:=changed.stage
-        if entry_write(paths.stage_runtime,"__mirai_runtime",runtime_packages[:]) {stage_changed=true}
+        if changed,_:=entry_write(paths.stage_runtime,"__mirai_runtime",entry_imports("mirai",runtime_packages[:])[:]);changed {stage_changed=true}
         // The stage may declare the same while the compiler or the flags moved:
         // the library is compiled again anyway.
         if engine_library_compile(desc.force,library_present(paths.runtime,paths.runtime_import),stage_changed,plan.tools_changed) {
@@ -351,7 +351,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
             stamp.programs=0
             _=engine_stamp_write(paths.stamp,stamp)
         }
-        entry_write(paths.stage_editor,"__mirai_editor",editor_packages[:])
+        entry_write(paths.stage_editor,"__mirai_editor",entry_imports("mirai",editor_packages[:])[:])
         if !library_compile(&result,compiler,root,paths.stage_editor,"__mirai_editor",paths.editor,"mirai-editor",plan.flags[:],"editor library") {return}
         stamp.editor=plan.editor
         _=engine_stamp_write(paths.stamp,stamp)
@@ -637,17 +637,25 @@ engine_sources :: proc(root:string,packages:[]string,files:..string) -> []string
     return list[:]
 }
 
-// The package a library is built from: it imports the others, and their
-// exports go into the library.
+// The package a library is built from: it imports the others, each with its
+// collection (entry_imports), and their exports go into the library.
 @(private)
-entry_write :: proc(stage,name:string,packages:[]string,collection:="mirai") -> bool {
+entry_write :: proc(stage,name:string,imports:[]string) -> (changed,written:bool) {
     folder:=project.path(stage,name,allocator=context.temp_allocator)
-    _=os.make_directory_all(folder)
+    if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return}
     b:=strings.builder_make(context.temp_allocator)
     fmt.sbprintfln(&b,"package %s\n",name)
-    for path in packages {fmt.sbprintfln(&b,"import _ \"%s:%s\"",collection,path)}
-    changed,_:=write_changed(project.path(folder,"library.odin",allocator=context.temp_allocator),strings.to_string(b))
-    return changed
+    for path in imports {fmt.sbprintfln(&b,"import _ \"%s\"",path)}
+    wrote,error:=write_changed(project.path(folder,"library.odin",allocator=context.temp_allocator),strings.to_string(b))
+    return wrote,error==nil
+}
+
+// The packages of a collection as a library imports them.
+@(private)
+entry_imports :: proc(collection:string,packages:[]string) -> [dynamic]string {
+    imports:=make([dynamic]string,0,len(packages),context.temp_allocator)
+    for path in packages {append(&imports,fmt.tprintf("%s:%s",collection,path))}
+    return imports
 }
 
 // A library is compiled again when it is missing, its stage moved, or the

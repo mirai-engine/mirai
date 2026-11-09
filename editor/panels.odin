@@ -781,7 +781,6 @@ panel_writes :: proc(s:^Session,w:core.World_Ref,b:^Panel_Button) -> (writes:[dy
 @(private)
 panel_press :: proc(s:^Session,p:^Project_Panel,button:int) -> (changed:int,problem:string) {
     if button<0 || button>=p.button_count {return 0,"no such button"}
-    if playing(s) {return 0,"Buttons change the scene: stop the game first"}
     b:=&p.buttons[button]
     w:=edited_world(s)
     writes,message:=panel_writes(s,w,b)
@@ -868,7 +867,6 @@ panel_forget :: proc(panels:^Project_Panels,key:u64) {
 panel_restore :: proc(s:^Session,p:^Project_Panel) -> (restored:int,problem:string) {
     panels:=s.panels
     if panels==nil {return}
-    if playing(s) {return 0,"Restore changes the scene: stop the game first"}
     key:=base.name_hash(base.text_get(p.id[:]))
     w:=edited_world(s)
     opened,ready:=false,true

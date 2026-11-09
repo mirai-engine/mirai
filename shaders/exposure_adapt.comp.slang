@@ -40,7 +40,7 @@ struct Params_Block {
     float light_scale;  // render units per nit
     uint generation;    // of the discontinuities of the view
     uint speed;         // render.Exposure_Adaptation.Speed
-    uint pad0;
+    float bias;         // render.display_exposure_bias: EV above the meter under the display transform
     uint pad1;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
@@ -111,7 +111,7 @@ void main(uint index : SV_GroupIndex) {
         }
     }
     s.ev100 = ev100;
-    s.exposure = MIDDLE_GRAY * (100.0 / 12.5) * exp2(EXPOSURE_BIAS + params.compensation - ev100) / params.light_scale;
+    s.exposure = MIDDLE_GRAY * (100.0 / 12.5) * exp2(params.bias + params.compensation - ev100) / params.light_scale;
     s.valid = 1u;
     s.generation = params.generation;
     state[0] = s;

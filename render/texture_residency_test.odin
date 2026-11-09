@@ -144,6 +144,18 @@ the_uv_density_of_a_mesh_is_by_entry_of_its_materials :: proc(t: ^testing.T) {
 	testing.expect_value(t, density[0][1], density[0][0]) // without a set of its own, uv1 is uv
 }
 
+@(test)
+an_image_sky_is_read_from_the_entry_of_its_texture :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	textures_init(r)
+	defer textures_destroy(r)
+	append(&r.textures.textures, rhi.Texture(1))
+	append(&r.textures.sizes, [2]int{1024, 512})
+	r.textures.count = 1
+	testing.expect_value(t, sky_map(r, 1, false), Vec4{f32(texture_entry(0)), 0, 10, 1})
+}
+
 // The textures that need more levels go first, the farthest from their target
 // first, unless the pool is past its room; those being read are left out.
 @(test)
@@ -204,4 +216,10 @@ the_detail_camera_sees_the_textures_of_the_views_of_the_window :: proc(t: ^testi
 		testing.expectf(t, seen[0].position == (game.position if on else editor.position), "the window sees from the game camera: %v", on)
 		testing.expect(t, seen[1].position == editor.position, "a view into a texture sees from its own")
 	}
+	// An offscreen frame leaves what the window sees unless it asks for its textures to stream.
+	textures_views_record(r, {camera = editor, views = views[:1]})
+	textures_views_record(r, {camera = game, offscreen = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.views[0].position == editor.position, "a preview does not move what textures are seen from")
+	textures_views_record(r, {camera = game, offscreen = true, streamed = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.view_count == 1 && r.textures.residency.views[0].position == game.position, "a capture that waits for its textures is seen from its camera")
 }

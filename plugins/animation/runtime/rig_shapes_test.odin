@@ -55,12 +55,12 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     testing.expect_value(t,read,asset.Error.None)
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
-    // A profile of the version before curve poses, drives and materials reads them empty; one of
-    // the current version without them is incomplete, and one older than the oldest is refused.
+    // A profile of the current version without curve poses, drives and materials is incomplete,
+    // and one older than the oldest is refused.
     for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([3]u16{POSE_OLDEST,POSE_VERSION,POSE_OLDEST-1}) {
+    for version,i in ([2]u16{POSE_VERSION,POSE_OLDEST-1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
@@ -69,9 +69,8 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
         defer asset.asset_close(&old)
         migrated,error:=pose_profile_view(&old,&types)
         switch i {
-        case 0: testing.expect(t,error==.None && len(migrated.curve_poses)==0 && len(migrated.curve_drives)==0 && len(migrated.follow)==1 && migrated.follow[0].target.kind==.Socket,"a profile of the version before reads with no curves")
-        case 1: testing.expect_value(t,error,asset.Error.Not_Found)
-        case 2: testing.expect_value(t,error,asset.Error.Version)
+        case 0: testing.expect_value(t,error,asset.Error.Not_Found)
+        case 1: testing.expect_value(t,error,asset.Error.Version)
         }
     }
     nan:=f32(0);nan/=nan
@@ -305,13 +304,14 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     }
     if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true}) && modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true}))
+    modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})
+    modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true})
+    modifier_goal(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true})
     modifier_take(&modifiers,&requests,core.read(&configs),&problems)
     testing.expect(t,len(modifiers.goals)==2 && modifiers.look.values[0].weight==.25)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head"))
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head"))
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head")
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands")
     // The profile reorders its looks and effectors: what was asked by slot goes; by name, follows.
     hands.effectors[0],hands.effectors[1]=hands.effectors[1],hands.effectors[0]
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes,head},multi_ik={hands}}),asset.Error.None)
@@ -326,7 +326,8 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     testing.expect(t,modifiers.look.values[0].target.position=={} && modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && modifiers.look.values[1].weight==.6)
     testing.expect(t,modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
     controls:Modifier_Requests;defer delete(controls.controls.items)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands") && modifier_control_named(&controls,&modifiers,{rig=rig,kind=.Look,weight=0},"head"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
+    modifier_control_named(&controls,&modifiers,{rig=rig,kind=.Look,weight=0},"head")
     hands.effector_count=1
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes},multi_ik={hands}}),asset.Error.None)
     record.time+=1;assets.revision+=1

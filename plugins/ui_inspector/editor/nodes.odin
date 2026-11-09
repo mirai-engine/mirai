@@ -90,6 +90,7 @@ Ux :: struct {
     combo_open:[64]bool,          // by Style_States: the fold of that rule of several states is open
     combo_shown:ui.Style_States,  // of those, the one opened last: Edit shows the node in it
     sound:Sound_Choice,
+    style_layout_open:bool, // the rows of the layout of a style in the Style card are open
 }
 
 // A node of a document closed in the hierarchy, or a widget instance opened.
@@ -141,11 +142,11 @@ ux_sync :: proc(u:^Ui_Inspector) {
 }
 
 // The rows of the tree chosen: those chosen together while they hold the
-// node chosen, else that node alone. Templates choose one node.
+// node chosen, else that node alone.
 chosen_rows :: proc(u:^Ui_Inspector) -> []int {
     rows:=make([dynamic]int,context.temp_allocator)
     if u.selected<0 || u.selected>=len(scope_nodes(u)) {return rows[:]}
-    if u.scope<0 {
+    {
         held:=false
         for row in u.ux.picked {if row==u.selected {held=true;break}}
         if held {
@@ -225,11 +226,22 @@ widget_records :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> ^Reco
     return &last.records if last.ok else nil
 }
 
+// Whether a .ui has the one root a use of it needs: a file lent for its styles
+// may have none.
+@(private)
+widget_one_root :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> bool {
+    r:=widget_records(u,a,id)
+    if r==nil {return false}
+    roots:=0
+    for &n in r.nodes {roots+=int(n.parent<0)}
+    return roots==1
+}
+
 // The widget a node of the tree is an instance of; none for another node.
 @(private)
 node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {
-    if n.kind!=.Component || n.component==0 || int(n.component)>len(r.templates) {return {}}
-    return r.templates[n.component-1].component.widget
+    if n.kind!=.Component || n.component==0 || int(n.component)>len(r.components) {return {}}
+    return r.components[n.component-1].widget
 }
 
 // Whether a widget of the project holds the document, itself or inside the
@@ -238,13 +250,11 @@ node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {
 widget_holds_document :: proc(u:^Ui_Inspector,a:^host.Assets,widget:base.Asset_Id) -> bool {
     Reach :: struct {u:^Ui_Inspector,a:^host.Assets}
     reach:=Reach{u,a}
-    return widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id {
+    return widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
         reach:=(^Reach)(user)
-        held:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        if r:=widget_records(reach.u,reach.a,id);r!=nil {
-            for &template in r.templates {if template.component.widget!={} {append(&held,template.component.widget)}}
-        }
-        return held[:]
+        r:=widget_records(reach.u,reach.a,id)
+        if r==nil {return}
+        return r.components[:],true
     },&reach)
 }
 
@@ -267,7 +277,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 if !editor.contains_fold(labels[kind],needle) {continue}
                 shown:=ui.Tree_Node{kind=kind,layout={direction=.Column}}
                 if ui.menu_item(ctx,ui.id(ctx,"kind",int(kind)+1),labels[kind],{icon=node_icon(&shown)}) {
-                    if row:=records_insert(r,-1,parent,kind);row>=0 {
+                    if row:=records_insert(r,parent,kind);row>=0 {
                         choose_rows(u,{row})
                         changed(u,"Add node")
                     } else {editor.notify(s,"That node holds no other node: choose a container")}
@@ -286,7 +296,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 }
                 if ui.menu_item(ctx,ui.id(ctx,"widget",i+1),path,{icon=.Prefab}) {
                     name:=path[strings.last_index_byte(path,'/')+1:]
-                    if row:=records_widget(r,-1,parent,file.id,name);row>=0 {
+                    if row:=records_widget(r,parent,file.id,name,name);row>=0 {
                         choose_rows(u,{row})
                         changed(u,"Add widget")
                     } else {editor.notify(s,"That node holds no other node: choose a container")}
@@ -379,7 +389,6 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
     th:=&ctx.theme
     r:=&u.records
     x:=&u.ux
-    u.scope=-1
     ux_sync(u)
     list:=r.nodes[:]
     selected:=u.selected if u.selected>=0 && u.selected<len(list) else -1
@@ -429,10 +438,10 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
             n:=&list[i]
             name:=serial.text_field(n.name[:])
             kind:=labels[n.kind]
-            if n.kind==.Component && n.component>0 && int(n.component)<=len(r.templates) {
-                template:=&r.templates[n.component-1]
-                kind=serial.text_field(template.component.name[:])
-                if template.component.widget!={} {kind=editor.asset_name_of(a,template.component.widget,"missing")}
+            if n.kind==.Component && n.component>0 && int(n.component)<=len(r.components) {
+                template:=&r.components[n.component-1]
+                kind=serial.text_field(template.name[:])
+                if template.widget!={} {kind=editor.asset_name_of(a,template.widget,"missing")}
             }
             row_id:=ui.id(ctx,"node",i+1)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(NODE_ROW),align_y=.Center}) {
@@ -680,8 +689,8 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
         }
     case .Paste:
         clip:=&u.clip.records
-        for &template in clip.templates {
-            if template.component.widget==u.id {
+        for &template in clip.components {
+            if template.widget==u.id {
                 editor.notify(s,"An interface does not hold an instance of itself")
                 return
             }
@@ -692,7 +701,7 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
         } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
     case .Duplicate:
         if row>=0 {
-            if copies:=records_duplicate_rows(r,-1,rows);len(copies)>0 {
+            if copies:=records_duplicate_rows(r,rows);len(copies)>0 {
                 choose_rows(u,copies)
                 changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
             }
@@ -705,19 +714,19 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
     case .Delete:
         if row>=0 {
             first:=selection_roots(r.nodes[:],rows)[0]
-            records_delete_rows(r,-1,rows)
+            records_delete_rows(r,rows)
             choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
             changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
         }
     }
 }
 
-// A node renamed in Properties keeps a name no other node of its scope has,
+// A node renamed in Properties keeps a name no other node has,
 // and what named it follows: here at once and, for the tree, in the .ui that
 // instance this one when it is written.
 node_renamed :: proc(u:^Ui_Inspector,from:string) {
-    name:=records_rename(&u.records,u.scope,u.selected,from)
-    if u.scope<0 && from!="" && name!=from && u.rename_count<len(u.renames) {
+    name:=records_rename(&u.records,u.selected,from)
+    if from!="" && name!=from && u.rename_count<len(u.renames) {
         rename:=&u.renames[u.rename_count]
         ui.tree_text_set(rename.from[:],from)
         ui.tree_text_set(rename.to[:],name)
@@ -762,10 +771,10 @@ make_widget :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.A
     if written {
         root:=r.nodes[row]
         parent:=int(root.parent)
-        records_remove(r,-1,row)
+        records_remove(r,row)
         // The instance keeps the name of the box, which the focus of other nodes may name.
         box:=serial.text_field(root.name[:])
-        at:=records_widget(r,-1,parent,id,box if box!="" else name)
+        at:=records_widget(r,parent,id,box if box!="" else name,name)
         // In the place of the box, laid out as it was.
         if at>=0 && at!=row && row<len(r.nodes) && int(r.nodes[row].parent)==parent {at=records_place(r,at,parent,row)}
         if at>=0 {

@@ -181,6 +181,8 @@ keeps `Renderer_Desc.worlds` (edit and play).
   it; a world that returns recovers its own and its `scene_set` marks no changes. Beyond the
   capacity, the one displayed longest ago loses its own. `render_sync` calls it when the
   `World_Id` changes or when it rebuilds the scene in a frame whose view is cut.
+- A world not shown that takes another scene (a document opened right after Play) drops what was
+  kept of it with `world_light_forget`: when it returns it starts without light and warms up.
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
 - **Warm-up.** The frame that shows a world without light (and the one that follows

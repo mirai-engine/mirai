@@ -64,7 +64,7 @@ mirai_steps :: proc(frames:[][]mm.Transform,times:[]f32,left,right:int) -> (mark
         now:=left if pose[left].position.y<pose[right].position.y else right
         if frame>0 {
             previous:=frames[frame-1][now].position.z
-            advance+=max(0,previous-pose[now].position.z)
+            advance+=max(0,pose[now].position.z-previous)
             if now!=lower {append(&list,asset.Animation_Marker_Desc{times[frame],"left_step" if now==left else "right_step"})}
         }
         lower=now
@@ -112,7 +112,7 @@ mirai_wave :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,idle:asset.Anima
     world:=rig.rest_world
     upper:=linalg.normalize(world[fore].position-world[arm].position)
     side:=f32(1) if upper.x>=0 else -1
-    raise:=mm.quat_between(upper,linalg.normalize(mm.Vec3{side*.55,.82,.12}))
+    raise:=mm.quat_between(upper,linalg.normalize(mm.Vec3{side*.55,.82,-.12}))
     parent:=world[rig.parents[arm]].rotation
     arm_rotation:=mm.quat_inverse(parent)*raise*parent*rig.rest[arm].rotation
     arm_world:=raise*world[arm].rotation
@@ -126,7 +126,7 @@ mirai_wave :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,idle:asset.Anima
     for i in 0..<count {
         t:=f32(i)*.125
         angle:=.1+.38*math.sin(t*2*math.PI)
-        swing:=mm.quat_between(lower,linalg.normalize(mm.Vec3{side*math.sin(angle),math.cos(angle),.15}))
+        swing:=mm.quat_between(lower,linalg.normalize(mm.Vec3{side*math.sin(angle),math.cos(angle),-.15}))
         arm_keys[i]={time=t,value=lib.quat_vec4(arm_rotation),interpolation=.Linear}
         fore_keys[i]={time=t,value=lib.quat_vec4(mm.quat_inverse(arm_world)*swing*arm_world*rig.rest[fore].rotation),interpolation=.Linear}
     }
@@ -158,7 +158,7 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
         if track.target!=path || track.property!=.Position {continue}
         keys:=make([]lib.Keyframe,len(track.keys),context.temp_allocator);copy(keys,track.keys)
         for &key in keys {
-            placed:=mm.transform_point(parent,key.value.xyz)+mm.Vec3{0,0,advance*key.time/duration}
+            placed:=mm.transform_point(parent,key.value.xyz)+mm.Vec3{0,0,-advance*key.time/duration}
             point:=mm.transform_inverse_point(parent,placed)
             key.value={point.x,point.y,point.z,0}
         }
@@ -173,14 +173,14 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
 // pulse curve, a faster jog, a wave and the stride that root motion moves.
 @(private)
 mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride,stride_time:f32) {
-    id=id_of("animation","mirai_gallery")
+    id=asset.content_id(PROJECT,"animation","mirai_gallery")
     rig,valid:=mirai_rig(model)
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
     walk,has_walk:=mirai_clip_find(locomotion,"walk")
     left,right:=mirai_bone(model,"LeftFoot"),mirai_bone(model,"RightFoot")
-    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.failed=true;return}
+    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.content.failed=true;return}
     frames,times,sampled:=mirai_clip_frames(rig,walk,60)
-    if !sampled {o.failed=true;return}
+    if !sampled {o.content.failed=true;return}
     steps,advance:=mirai_steps(frames,times,left,right)
     duration:=times[len(times)-1]
     walk.markers=steps
@@ -190,11 +190,11 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     walk.tracks=tracks
     wave,waved:=mirai_wave(model,rig,idle)
     stride_clip,strode:=mirai_stride(model,rig,walk,advance)
-    if !waved || !strode {o.failed=true;return}
+    if !waved || !strode {o.content.failed=true;return}
     clips:=[]asset.Animation_Clip_Desc{idle,walk,mirai_clip_scaled(walk,"jog",.72,1.2),wave,stride_clip}
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/characters/mirai/mirai_gallery.anim"
-    check(o,file,asset.animation_save(path(o,file),&o.types,{id=id,clips=clips}))
+    asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
     // What the stride covers and how long it lasts: the window of its warp (mirai_reach.motion).
     return id,advance,duration
 }

@@ -24,7 +24,7 @@ FORMAT :: importer.Format{
     name="FBX",
     extensions={0=".fbx"},
     version=1,
-    space={meters_per_unit=0.01,axes={.X,.Y,.Z},v_origin=.Bottom}, // what FBX means when a file does not say
+    space={meters_per_unit=0.01,axes=importer.FACING_PLUS_Z,v_origin=.Bottom}, // what FBX means when a file does not say
     sniff=sniff,
     read=read,
 }
@@ -134,6 +134,8 @@ fbx_space :: proc(r:^importer.Reader,scene:^ufbx.Scene) -> bool {
     if known {
         table:=AXES
         for axis,i in axes {space.axes[i]=table[axis]}
+        // What FBX calls front looks at who sees the model: the engine's -Z, and its right turns with it.
+        space.axes[0],space.axes[2]=importer.axis_opposite(space.axes[0]),importer.axis_opposite(space.axes[2])
     }
     return importer.source_space(r,space)
 }

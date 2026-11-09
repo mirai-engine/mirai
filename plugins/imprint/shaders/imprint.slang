@@ -81,7 +81,7 @@ void stamp(Mirai_Vfx_Cell cell, Parameters p) {
         // How far the cell is from the stamp, in radii: 1 at its edge.
         float reach;
         if (b.values.z > 0.5) {
-            float2 forward = dot(b.velocity.xz, b.velocity.xz) > 1e-8 ? normalize(b.velocity.xz) : float2(0.0, 1.0);
+            float2 forward = dot(b.velocity.xz, b.velocity.xz) > 1e-8 ? normalize(b.velocity.xz) : float2(0.0, -1.0);
             float2 d = cell.position.xz - b.position.xz;
             float along = dot(d, forward) / max(0.5 * b.values.w, radius);
             float across = dot(d, float2(forward.y, -forward.x)) / radius;

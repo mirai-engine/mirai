@@ -29,8 +29,7 @@ Motion_Window_Params :: struct {
 }
 Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key,animation:base.Asset_Id `mirai:"optional"`}
 Motion_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .motion; exclusive with asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
+    path:[1024]u8 `mirai:"text,label=Ending in .motion: what is there is replaced keeping its id"`,
     pose:Motion_Pose_Params `mirai:"optional,label=Pose warping: the pelvis; spine and IK legs"`,
     windows:[anim.MOTION_WINDOWS]Motion_Window_Params `mirai:"optional,label=Warp windows: each names its source clip and the target it reaches; omitted is none"`,
     distances:[anim.MOTION_WINDOWS]Motion_Distance_Params `mirai:"optional,label=Tracks of strictly monotonic distance and time keys; omitted is none"`,
@@ -66,7 +65,7 @@ motion_authoring_definition :: proc(call:^api.Call,p:^Motion_Write_Params) -> (p
     if window_count>anim.MOTION_WINDOWS || distance_count>anim.MOTION_WINDOWS {authoring_failure(call,"windows/distances","Capacity","at most 64 entries","too many entries","Motion capacity exceeded");return}
     pose:=p.pose
     spine,legs:=0,0
-    if text,present:=authoring_json_field(call.raw,"pose",call.allocator);present {nested:=api.Call{raw=text,allocator=call.allocator};spine,_=api.params_array_count(&nested,"spine");legs,_=api.params_array_count(&nested,"legs")}
+    if text:=api.json_member(call.raw,"pose");text!="" {nested:=api.Call{raw=text,allocator=call.allocator};spine,_=api.params_array_count(&nested,"spine");legs,_=api.params_array_count(&nested,"legs")}
     if spine>16 || legs>16 {authoring_failure(call,"pose","Capacity","at most 16 spine bones and legs","too many entries","Pose warping capacity exceeded");return}
     profile.info.pose={pelvis=pose.pelvis,spine=pose.spine,spine_count=u8(spine),legs=pose.legs,count=u8(legs),min_stride=pose.min_stride,max_stride=pose.max_stride,max_angle=pose.max_angle,weight=pose.weight,orientation=pose.orientation,stride=pose.stride}
     profile.windows=make([]anim.Motion_Window,window_count,call.allocator)
@@ -74,7 +73,7 @@ motion_authoring_definition :: proc(call:^api.Call,p:^Motion_Write_Params) -> (p
     profile.keys=make([]lib.Distance_Key,anim.MOTION_KEYS,call.allocator)
     if window_count>0 && profile.windows==nil || distance_count>0 && profile.distances==nil || profile.keys==nil {authoring_failure(call,"definition","Out_Of_Memory","memory for motion tables","allocation failed","The motion definition could not be allocated",api.SERVER_ERROR);return}
     for &window,i in p.windows[:window_count] {profile.windows[i]={clip=window.clip,name=window.name,start=window.start,end=window.end,translation=window.translation,rotation=window.rotation,axes=window.axes,weight=window.weight,animation=window.animation}}
-    tracks_text,_:=authoring_json_field(call.raw,"distances",call.allocator)
+    tracks_text:=api.json_member(call.raw,"distances")
     reader:serial.Text_Reader;serial.text_reader_init(&reader,tracks_text,call.allocator);defer serial.text_reader_destroy(&reader)
     if distance_count>0 && !serial.text_expect(&reader,'[') {return}
     key_count:=0
@@ -97,7 +96,7 @@ authoring_motion_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Motion_Write_Params)
     if !authoring_editable(s,call) {return}
     file:Authoring_File;defer asset.asset_close(&file.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),p.asset,anim.MOTION_KIND,".motion",&file);if !ok {return}
+    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.MOTION_KIND,".motion",&file);if !ok {return}
     profile,valid:=motion_authoring_definition(call,p);if !valid {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
     if error:=anim.motion_profile_document(&doc,&s.app.assets.types,id,profile,s.app.allocator);error!=.None {authoring_failure(call,"definition","Prepare_Failed","a valid serializable motion profile",fmt.tprintf("%v",error),"The motion profile could not be prepared",api.SERVER_ERROR);return}
@@ -154,9 +153,9 @@ authoring_motion_distance :: proc(s:^editor.Session,call:^api.Call) {
 
 @(private)
 authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.id,p.entity);if !ok {return}
+    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
     instance,ready:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity)
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,p.id)
+    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
     api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,instance.profile);serial.write_u8(call.out,'"')
     api.write_bool(call.out,"ready",ready);api.write_int(call.out,"window",i64(instance.window));api.write_key(call.out,"error");authoring_write_value(call,&instance.error,type_info_of(anim.Motion_Error))
     api.write_key(call.out,"remaining_error");api.write_number(call.out,instance.remaining_error);api.write_numbers(call.out,"source_velocity",instance.source_velocity)
@@ -170,7 +169,7 @@ authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
-        if id,found:=core.get(core.read(ids),target.target.entity);found {named.entity=id.value}
+        if id,found:=core.get(core.read(ids),target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
         api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
         api.write_numbers(call.out,"world_position",target.world.position)
         rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))

@@ -47,7 +47,7 @@ corner_drag_move :: proc(s:^editor.Session,drag:^Corner_Drag,to:[2]f32) -> shape
     t:=drag.shape
     if error:=shapes.shape_vertex_move(&t,drag.vertex,to);error!=.None {return error}
     if t.points[drag.vertex]==drag.shape.points[drag.vertex] {return .None}
-    w:=editor.shown_world(s)
+    w:=editor.editing_world(s)
     _,info:=core.world_table(w,shapes.Shape)
     if info==nil {return .Invalid}
     if !drag.opened {
@@ -66,7 +66,7 @@ corner_drag_end :: proc(s:^editor.Session,drag:^Corner_Drag) {
 }
 
 corner_drag_cancel :: proc(s:^editor.Session,drag:^Corner_Drag) {
-    if drag.opened {editor.edits_cancel(s.edits,editor.shown_world(s))}
+    if drag.opened {editor.edits_cancel(s.edits,editor.editing_world(s))}
     drag^={}
 }
 
@@ -74,7 +74,7 @@ corner_drag_cancel :: proc(s:^editor.Session,drag:^Corner_Drag) {
 // step that is open or in one of its own named label. index: the corner, or
 // the edge by its first corner for an insertion; at: in the local XY.
 corner_edit :: proc(s:^editor.Session,e:core.Entity,op:Corner_Op,index:int,at:[2]f32,label:string) -> shapes.Shape_Error {
-    w:=editor.shown_world(s)
+    w:=editor.editing_world(s)
     _,info:=core.world_table(w,shapes.Shape)
     shape,found:=editor.entity_get(w,e,shapes.Shape)
     if info==nil || !found || shape.kind!=.Outline {return .Invalid}

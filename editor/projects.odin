@@ -478,7 +478,7 @@ projects_create :: proc(s:^Session) -> string {
     if p.template<0 || p.template>=p.template_count {return "Choose a template"}
     folder:=project.path(location,name,allocator=context.temp_allocator)
     template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
-    switch build.project_create(template,folder,name) {
+    switch build.project_create(template,folder,name,s.engine_root) {
     case .None:
     case .Template_Missing: return "The template has no project.mirai"
     case .Folder_Not_Empty: return fmt.tprintf("%s is not an empty folder",folder)

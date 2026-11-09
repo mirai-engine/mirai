@@ -20,16 +20,16 @@ animate_sequences_pause_seek_restart_reverse_and_skip_unchanged_transforms :: pr
     keyframe_path_evaluate(&animations,&states,&transforms,&requests,{dt=1})
     core.table_settle(&states,&entities)
     testing.expect(t,transforms.values[0].position.x==12)
-    testing.expect(t,keyframe_path_request(&requests,entity,.Pause))
+    keyframe_path_request(&requests,entity,.Pause)
     keyframe_path_evaluate(&animations,&states,&transforms,&requests,{dt=1})
     testing.expect(t,transforms.values[0].position.x==12)
     stamp:=transforms.version
     keyframe_path_evaluate(&animations,&states,&transforms,&requests,{dt=1})
     testing.expect_value(t,transforms.version,stamp)
-    testing.expect(t,keyframe_path_request(&requests,entity,.Seek,2.5))
+    keyframe_path_request(&requests,entity,.Seek,2.5)
     keyframe_path_evaluate(&animations,&states,&transforms,&requests,{dt=1})
     testing.expect(t,transforms.values[0].position.x==14 && states.values[0].time==2.5)
-    testing.expect(t,keyframe_path_request(&requests,entity,.Speed,-1) && keyframe_path_request(&requests,entity,.Restart))
+    keyframe_path_request(&requests,entity,.Speed,-1);keyframe_path_request(&requests,entity,.Restart)
     keyframe_path_evaluate(&animations,&states,&transforms,&requests,{dt=0.5})
     testing.expect(t,states.values[0].time==3 && !states.values[0].ended)
     saved_context:=context
@@ -51,11 +51,13 @@ animate_sequences_pause_seek_restart_reverse_and_skip_unchanged_transforms :: pr
 
 @(test)
 animate_request_capacity_and_invalid_frames_do_not_write_transforms :: proc(t:^testing.T) {
-    requests:Keyframe_Path_Requests
-    testing.expect(t,!keyframe_path_request(nil,core.Entity(1),.Play))
-    testing.expect(t,!keyframe_path_request(&requests,core.NONE,.Play))
-    for _ in 0..<KEYFRAME_PATH_REQUESTS {testing.expect(t,keyframe_path_request(&requests,core.Entity(1),.Play))}
-    testing.expect(t,!keyframe_path_request(&requests,core.Entity(1),.Play) && requests.count==KEYFRAME_PATH_REQUESTS)
+    requests:Keyframe_Path_Requests;defer delete(requests.queue.items)
+    reserve(&requests.queue.items,4)
+    keyframe_path_request(nil,core.Entity(1),.Play)
+    keyframe_path_request(&requests,core.NONE,.Play)
+    testing.expect_value(t,requests.queue.refused,1)
+    for _ in 0..=cap(requests.queue.items) {keyframe_path_request(&requests,core.Entity(1),.Play)}
+    testing.expect_value(t,requests.queue.dropped,1)
     value:=keyframe_path_default();value.count=255
     testing.expect_value(t,len(keyframe_path_frames(&value)),0)
     value.count=0;testing.expect_value(t,len(keyframe_path_frames(&value)),0)

@@ -3,6 +3,8 @@ package gui
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:strings"
+import masset "mirai:asset"
 import "mirai:core"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
@@ -109,6 +111,10 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Re
             entity=c.entity,instance=index,content=content,order=c.screen.order,player=int(c.screen.player),input=c.screen.input,
             input_context=c.screen.input_context,hiding=c.hiding,back=c.screen.back,variant=ui.style_variant(base.text_get(c.screen.variant[:])),mesh=-1,
         })
+        gui.pausing||=screen_pauses(c.screen,c.hiding)
+        if c.screen.pause && c.screen.input!=.Modal {
+            core.report(problems,c.entity,"gui.pause_modal","its UI_Screen.pause does nothing: only a Modal screen stops the clock; set UI_Screen.input to Modal, or turn pause off")
+        }
     }
     stack_resolve(gui.plan[:])
     for entry in gui.plan {
@@ -202,11 +208,12 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
         // say, and its text is rasterized for the texels of its texture.
         facing,density:=widget.facing,f32(0)
         if widget.target==.Mesh {facing,density=.Fixed,widget.pixels>0?widget.pixels:MESH_TEXELS}
+        rotation:=panel_rotation(transform.rotation)
         append(&gui.plan,Planned{
             entity=c.entity,instance=index,content=content,player=c.player,world=true,passive=true,interactive=widget.input==.Interactive,
             mesh=mesh,variant=ui.style_variant(base.text_get(widget.variant[:])),
             panel={
-                position=transform.position,rotation=transform.rotation,size=widget.size,facing=facing,sizing=widget.sizing,
+                position=transform.position,rotation=rotation,size=widget.size,facing=facing,sizing=widget.sizing,
                 unit=widget_unit(&gui.views[c.player],widget,gui.settings,gui.preferences.scale) if widget.target==.Overlay else widget.scale,pivot=widget.pivot,density=density,depth_test=widget.depth_test,passive=widget.passive,offscreen=widget.target==.Mesh,
             },
         })
@@ -215,6 +222,13 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
         gui.dropped_widgets+=u64(dropped)
         core.report(problems,left,"gui.widgets","%d World_Widgets in sight were not built in a frame: a local player sees at most %d at once and %d on meshes, and the nearest win; give fewer entities a World_Widget, or hide those that are far",dropped,WIDGET_CAPACITY,MESH_CAPACITY)
     }
+}
+
+// The rotation of the panel of an entity: its face shows toward the forward
+// of the entity (-Z), and a panel has its face toward its own +Z.
+@(private)
+panel_rotation :: #force_inline proc "contextless" (entity:quaternion128) -> quaternion128 {
+    return entity*quaternion(w=0,x=0,y=1,z=0)
 }
 
 // By context, then nearest first.
@@ -282,6 +296,57 @@ storage_named :: proc(world:core.World_Ref,name:string) -> ^core.Storage_Info {
         if s.place==world.place && !s.by_world && s.name==name {return &s}
     }
     return nil
+}
+
+// Says once what a name a step asked of a screen that does not have it is:
+// the screen, and what it does have.
+@(private)
+asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
+    for &asked in gui.names_asked[:gui.names_asked_count] {
+        if asked.checked {continue}
+        found:=false
+        slots:=core.entity_map_get(&gui.index,asked.entity)
+        if slots==nil {continue}
+        any:=false
+        for slot in slots^ {
+            if slot==0 {continue}
+            content:=host.content_ui(app,gui.instances[slot-1].asset)
+            if content==nil || gui.instances[slot-1].failed {continue}
+            any=true
+            for &node in content.tree.nodes[:content.tree.node_count] {
+                if node.name==asked.name {found=true;break}
+            }
+            if found {break}
+        }
+        if !any {continue}
+        asked.checked=true
+        if !found {asked_report(gui,app,&asked,slots,problems)}
+    }
+}
+
+// The problem of a name no interface of the entity has.
+@(private)
+asked_report :: proc(gui:^Gui,app:^host.App,asked:^Asked_Name,slots:^Instance_Slots,problems:^core.Problems) {
+    screen:[base.ASSET_ID_TEXT]u8
+    title:=""
+    has:=make([dynamic]string,context.temp_allocator)
+    for slot in slots^ {
+        if slot==0 {continue}
+        id:=gui.instances[slot-1].asset
+        if title=="" {title=host.assets_name(app.assets,id,&screen)}
+        file:masset.Asset
+        if host.assets_file(app.assets,id,masset.KIND_UI,&file)!=.None {continue}
+        defer masset.asset_close(&file)
+        data,error:=host.ui_tree_view(&file,&app.assets.types)
+        if error!=.None {continue}
+        for &n in data.nodes {
+            #partial switch n.kind {
+            case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio,.Component,.Tabs:
+                if text:=string(cstring(&n.name[0]));text!="" {append(&has,text)}
+            }
+        }
+    }
+    core.report(problems,asked.entity,"gui.names","a step asks interface %s for '%s', which it does not have, so that event never comes; its nodes of events are: %s",title,base.text_get(asked.text[:]),strings.join(has[:],", ",context.temp_allocator))
 }
 
 // The instance of the interface of a screen or a widget, made again when its
@@ -377,7 +442,7 @@ bind_host :: proc(b:^Bind) -> ui.Bind_Host {
         clear(&gui.sources)
         clear(&gui.source_index)
     }
-    return {user=b,schema=&gui.schema,source=bind_source,fetch=bind_fetch,rows=bind_rows}
+    return {user=b,schema=&gui.schema,source=bind_source,fetch=bind_fetch,rows=bind_rows,commits=bind_commits}
 }
 
 // The component or the storage of the world called by name, its type added
@@ -394,7 +459,7 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     }
     if !ok {
         for &s in world.info.storages {
-            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true},true;break}
+            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true,setting=s.setting!=.None},true;break}
         }
     }
     if !ok {return nil}
@@ -404,6 +469,12 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     append(&gui.sources,found)
     gui.source_index[name]=len(gui.sources)-1
     return &gui.sources[len(gui.sources)-1]
+}
+
+@(private)
+bind_commits :: proc(user:rawptr,name:u64) -> bool {
+    source:=bind_named((^Bind)(user),name)
+    return source!=nil && source.setting
 }
 
 @(private)
@@ -469,9 +540,10 @@ values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,instance:^Ins
 
 // Builds the tree of an interface where the UI is, with the copy of what it
 // binds, and queues what its widgets did: what they bind is of the game,
-// which writes what they ask for.
+// which writes what they ask for, except a setting, which a control bound to
+// it writes itself. The event is queued all the same.
 @(private)
-screen_build :: proc(gui:^Gui,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
+screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
     content:=entry.content
     focus_restore(ctx,instance,entry.top)
     requests_apply(gui,ctx,instance,content,problems)
@@ -491,12 +563,18 @@ screen_build :: proc(gui:^Gui,ctx:^ui.Context,s:^Surface,instance:^Instance,entr
     if built.dropped>0 {
         core.report(problems,entry.entity,"gui.events","%d events of the interface of this entity were lost in a frame: its widgets gave more than %d at once; give the interface fewer widgets that change in one frame",built.dropped,EVENT_BATCH)
     }
+    bind:=Bind{gui=gui,app=app,world=world}
+    host_of:=bind_host(&bind)
     for event in events[:built.count] {
         append(&gui.pending,event_of(entry.entity,event,1 if entry.world else ctx.scale))
-        if event.kind==.Changed {instance.edited,instance.edited_at=true,gui.deliveries}
+        if event.kind==.Changed {
+            instance.edited,instance.edited_at=true,gui.deliveries
+            ui.tree_commit_event(&instance.instance,event,&host_of)
+        }
     }
     if entry.top && entry.back && !ctx.escape_used && (.Escape in ctx.input.keys_pressed || .Cancel in ctx.input.pad) {
         append(&gui.pending,UI_Event{entity=entry.entity,kind=.Back,item=-1,from_item=-1})
+        ctx.escape_used=true
     }
 }
 

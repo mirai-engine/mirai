@@ -18,12 +18,12 @@ imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.
     defer os.walker_destroy(&walker)
     for entry in os.walker_walk(&walker) {
         if entry.type!=.Regular || strings.has_prefix(entry.name,".") {continue}
-        header,info,imported,error:=asset.import_peek(entry.fullpath,&o.types)
+        header,info,imported,error:=asset.import_peek(entry.fullpath,&o.content.types)
         if error==.None && imported && header.kind==kind && base.text_get(info.name[:])==name && base.text_get(info.source[:])==source {return header.id}
     }
     known,_:=asset.kind_info(kind)
     fmt.eprintfln("demo_content: the import of %s wrote no %s named %s",source,known.name,name)
-    o.failed=true
+    o.content.failed=true
     return {}
 }
 
@@ -31,10 +31,10 @@ imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.
 @(private)
 asset_at :: proc(o:^Out,file:string) -> (header:asset.Header,info:asset.Import_Info) {
     error:asset.Error
-    header,info,_,error=asset.import_peek(path(o,file),&o.types)
+    header,info,_,error=asset.import_peek(path(o,file),&o.content.types)
     if error!=.None {
         fmt.eprintfln("demo_content: %s: %v",file,error)
-        o.failed=true
+        o.content.failed=true
     }
     return
 }

@@ -119,10 +119,10 @@ Texture_Upload :: struct {
 // or its camera alone, before their places become relative to the origin.
 // A view that moved TEXTURE_VIEW_MOVE, or sees at another scale, marks the
 // estimate. An offscreen frame (a capture, a preview of another world) does
-// not move what the window shows.
+// not move what the window shows, unless it asks for it (Frame_Desc.streamed).
 @(private)
 textures_views_record :: proc(r: ^Renderer, frame: Frame_Desc) {
-	if frame.ui_only || frame.offscreen {return}
+	if frame.ui_only || frame.offscreen && !frame.streamed {return}
 	t := &r.textures.residency
 	count := 0
 	add :: proc(t: ^Texture_Residency, count: ^int, camera: Camera, width, height: i32) {

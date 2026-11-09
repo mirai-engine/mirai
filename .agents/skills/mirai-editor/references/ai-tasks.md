@@ -99,7 +99,7 @@ Mirai signs in to no agent and stores no credentials: it uses the user's program
    followed by the [reference images](#reference-images). The message is written to the turn's
    folder on sending and read on starting: the editor's state keeps no copy, and its only cap is
    that of the field that edits it (`AI_MESSAGE_BYTES`). What the user saw is not attached: the
-   delta gives the immutable id of the message's snapshot for `view_viewport`.
+   delta names `view_viewport`, which knows the turn of the caller.
 6. A free worker takes the turn; what exceeds the workers stays queued and starts on the active
    document. A conversation does not receive another turn while the previous one continues.
 
@@ -285,7 +285,7 @@ without panels and at half the drawable's pixels (`ai_half_pixels`), written by 
   API. One that is no longer in the registry is not named.
 - A range chosen on a time strip goes the same way: a chip, `Ai_Task.range`, `range` in
   `context.json` (what Copy range says) and a line of the delta; for a Play, it reads the ticks
-  with `play.history` and `run`.
+  with `play.history`.
 
 ### Reference images
 
@@ -300,10 +300,10 @@ without panels and at half the drawable's pixels (`ai_half_pixels`), written by 
   there are. An agent whose `promptCapabilities.image` is false does not receive them: the turn
   fails and says so.
 
-`view_viewport` (`view.viewport` through MCP) answers the image saved for the message that
-`request` names; it does not recapture the current camera nor depend on the cache, and an absent
-capture or one too large for the MCP response is a tool error. The agent receives it only if it
-asks.
+`view_viewport` (`view.viewport` through MCP) answers the image saved for the message of the
+caller's turn (`request` names an older one); it does not recapture the current camera nor depend
+on the cache, and an absent capture or one too large for the MCP response is a tool error. The
+agent receives it only if it asks.
 
 ### Context of a document
 

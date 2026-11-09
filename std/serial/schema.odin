@@ -70,8 +70,11 @@ Field :: struct {
     bits:u8,       // replication width of an integer; 0 sends it whole
     label,unit:string,
     description:string, // what the comment on the line of the field says; not in the binary schema
+    asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
+    any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
+    entity_name:bool, // a text that names an entity: the API says so in its schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -105,7 +108,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
 
 schema_destroy :: proc(s:^Schema) {
     for type in s.types {delete(type.name,s.allocator)}
-    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator)}
+    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator);delete(field.asset_kinds,s.allocator)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
     delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
@@ -331,18 +334,10 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             return schema_fail(s,path,info)
         }
         fields:=make([dynamic]Field,0,int(variant.field_count),context.temp_allocator)
-        for i in 0..<int(variant.field_count) {
-            field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
-            field_type,ok:=schema_add_info(s,variant.types[i],field_path)
-            if !ok {
-                for added in fields {delete(added.name,s.allocator);delete(added.label,s.allocator);delete(added.unit,s.allocator)}
-                delete(type.name,s.allocator)
-                return TYPE_NONE,false
-            }
-            field:=Field{name=strings.clone(variant.names[i],s.allocator),name_hash=base.name_hash(variant.names[i]),type=field_type,offset=u32(variant.offsets[i])}
-            if _,is_quaternion:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Quaternion);is_quaternion {field.flags+={.Rotation}}
-            schema_field_tag(s,&field,variant.tags[i])
-            append(&fields,field)
+        if !schema_fields_add(s,variant,0,path,&fields) {
+            for added in fields {delete(added.name,s.allocator);delete(added.label,s.allocator);delete(added.unit,s.allocator)}
+            delete(type.name,s.allocator)
+            return TYPE_NONE,false
         }
         type.kind=.Struct
         type.first,type.count=u32(len(s.fields)),u32(len(fields))
@@ -352,6 +347,41 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
         return schema_fail(s,path,info)
     }
     return schema_push(s,info.id,type)
+}
+
+// A field tagged inline holds a struct whose fields stand in place of it, as
+// if they were declared there: what an API answers flat and shares with other
+// answers. No struct with saved data is tagged: its fields would move.
+field_inlined :: proc(variant:runtime.Type_Info_Struct,i:int) -> (nested:runtime.Type_Info_Struct,inlined:bool) {
+    options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(variant.tags[i]),"mirai")
+    if !found {return}
+    rest:=options
+    for option in strings.split_iterator(&rest,",") {
+        if strings.trim_space(option)=="inline" {
+            nested,inlined=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
+            return
+        }
+    }
+    return
+}
+
+// The fields of a struct at offset of the one that holds them, in order.
+@(private)
+schema_fields_add :: proc(s:^Schema,variant:runtime.Type_Info_Struct,offset:uintptr,path:string,fields:^[dynamic]Field) -> bool {
+    for i in 0..<int(variant.field_count) {
+        at:=offset+variant.offsets[i]
+        if nested,inlined:=field_inlined(variant,i);inlined {
+            schema_fields_add(s,nested,at,path,fields) or_return
+            continue
+        }
+        field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
+        field_type:=schema_add_info(s,variant.types[i],field_path) or_return
+        field:=Field{name=strings.clone(variant.names[i],s.allocator),name_hash=base.name_hash(variant.names[i]),type=field_type,offset=u32(at)}
+        if _,is_quaternion:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Quaternion);is_quaternion {field.flags+={.Rotation}}
+        schema_field_tag(s,&field,variant.tags[i])
+        append(fields,field)
+    }
+    return true
 }
 
 @(private)
@@ -375,8 +405,9 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim) and
-// of key=value pairs (min, max, step, precision, bits, label, unit).
+// list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
+// of key=value pairs (min, max, step, precision, bits, label, unit, name: the
+// key of a param whose word is reserved in Odin).
 @(private)
 schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
@@ -394,13 +425,20 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
+        case "any":       field.any_value=true
+        case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
         case "max":       field.max,field.has_max=strconv.parse_f64(value)
         case "step":      field.step,_=strconv.parse_f64(value)
         case "precision": precision,_:=strconv.parse_f64(value);field.precision=f32(precision)
         case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
         case "label":     field.label=strings.clone(value,s.allocator)
+        case "name":
+            if value=="" {continue} // a comma inside a label
+            delete(field.name,s.allocator)
+            field.name,field.name_hash=strings.clone(value,s.allocator),base.name_hash(value)
         case "unit":      field.unit=strings.clone(value,s.allocator)
+        case "kind":      field.asset_kinds=strings.clone(value,s.allocator)
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}
         }
     }

@@ -2,7 +2,7 @@
 
 `mirai image` measures PNG captures without opening the editor and writes JSON to stdout. Code in
 `cook/image` and `tools/mirai/image.odin` (each subcommand, with its `*_USAGE`); `mirai capture`
-uses the same measures ([capture](api.md#mirai-capture)) and `editor.capture` the same crop
+uses the same measures ([capture](api.md#mirai-capture)) and `capture` the same crop
 ([region](methods.md#editor-and-viewport)).
 
 - `mirai image diff <a.png> <b.png>`: requires the same size.

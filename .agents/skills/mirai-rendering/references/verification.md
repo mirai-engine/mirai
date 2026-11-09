@@ -122,7 +122,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
   references), `MIRAI_GI_DUMP=<folder>`, `MIRAI_GI_CASES`, `MIRAI_GI_SETTINGS=name=value,...` and
   `MIRAI_GI_WINDOW=from,to` for ablations.
 - Blotches in an editor scene: the deviation of the luminance against its blur on a smooth wall,
-  in `mirai capture` or in `editor.capture` with `ui` after hundreds of frames: they measure the
+  in `mirai capture` or in `capture` with `ui` after hundreds of frames: they measure the
   same.
 
 ## Render check
@@ -204,6 +204,9 @@ machine with no other GPU load.
   `engine.status`); past `RENDER_MEMORY_SHARE` of the budget, the system evicts GPU memory, the
   passes that read what was evicted cost several times more and the view warns that its cost does
   not count. With an open `mirai session` of the project it does not start.
+- **Settings**: the editors of a check read no file of the machine
+  (`project.SETTINGS_NO_MACHINE_ENV`): both builds measure what the project asks for, whatever
+  preset was chosen on this computer.
 - **Quality only** (`--quality`): without `profile.capture`, without the `mirai measure` turn and
   without waiting for the other programs, with the captures at the same frames as the full check.
   It asserts nothing about cost; a saved base of the full one serves it, and one of its own does

@@ -18,23 +18,23 @@ Behavior_Api :: struct {provider:editor.Api_Provider}
 BEHAVIOR_API_DEFAULT :: Behavior_Api{provider={register=register}}
 
 Entity_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 Query_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The querier"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The querier"`,
     layout:behavior.Place_Layout `mirai:"optional"`,
-    around:base.Entity_Id `mirai:"optional,label=Around this entity; omitted: around the querier, or point"`,
+    around:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Around this entity; omitted: around the querier, or point"`,
     point:[3]f32 `mirai:"optional"`,
     inner:f32 `mirai:"optional,min=0,unit=m"`,
     outer:f32 `mirai:"optional,min=0,unit=m"`,
     rings:u8 `mirai:"optional,min=1,max=16"`,
     per_ring:u8 `mirai:"optional,min=1,max=64"`,
     spacing:f32 `mirai:"optional,min=0.1,unit=m"`,
-    entities:[behavior.PLACE_ENTITIES]base.Entity_Id `mirai:"optional,label=The candidates of the layout Entities"`,
+    entities:[behavior.PLACE_ENTITIES]editor.Api_Entity_Text `mirai:"text,entity,optional,label=The candidates of the layout Entities"`,
     teams:behavior.Teams `mirai:"optional,label=The teams whose Perceivables are the candidates of the layout Perceivables"`,
     use:behavior.Smart_Use `mirai:"optional,label=The use whose offers of smart objects are the candidates of the layout Offers"`,
-    from:base.Entity_Id `mirai:"optional,label=Whom the tests measure from; omitted: the querier"`,
+    from:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Whom the tests measure from; omitted: the querier"`,
     nearer:bool `mirai:"optional,label=Prefer places nearer to the querier"`,
     hidden:bool `mirai:"optional,label=Prefer places 'from' does not see (cover by a ray)"`,
     seen:bool `mirai:"optional,label=Prefer places 'from' sees"`,
@@ -80,12 +80,12 @@ influence_of :: proc(s:^editor.Session,world:core.World_Ref) -> ^behavior.Influe
 }
 
 @(private)
-entity_of :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,$T:typeid,what:string) -> (w:core.World_Ref,e:core.Entity,table:^core.Table(T),ok:bool) {
+entity_of :: proc(s:^editor.Session,call:^api.Call,named:[]u8,$T:typeid,what:string) -> (w:core.World_Ref,e:core.Entity,table:^core.Table(T),ok:bool) {
     w=editor.shown_world(s)
-    e=core.entity_of(core.world_entities(w),id)
+    e=editor.api_call_entity(call,w,named,game=s.mode!=.Edit) or_return
     table=core.world_table_of(w,T)
-    if e==core.NONE || table==nil || !core.has(core.read(table),e) {
-        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a %s in the shown world",id,what)
+    if table==nil || !core.has(core.read(table),e) {
+        api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a %s in the shown world",base.text_get(named),what)
         return
     }
     return w,e,table,true
@@ -144,9 +144,9 @@ minds :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,_,agents,ok:=entity_of(s,call,p.id,behavior.Mind_Agent,"Mind_Agent")
+    world,agent_entity,agents,ok:=entity_of(s,call,p.entity[:],behavior.Mind_Agent,"Mind_Agent")
     if !ok {return}
-    agent:=&agents.values[core.row_of(agents,core.entity_of(core.world_entities(world),p.id))]
+    agent:=&agents.values[core.row_of(agents,agent_entity)]
     entry:=behavior.mind_of(minds_of(s),agent.mind)
     w:=call.out
     serial.text_write_raw(w,"{")
@@ -212,7 +212,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 perception :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,e,_,ok:=entity_of(s,call,p.id,behavior.Perceiver,"Perceiver")
+    world,e,_,ok:=entity_of(s,call,p.entity[:],behavior.Perceiver,"Perceiver")
     if !ok {return}
     w:=call.out
     serial.text_write_raw(w,`{"remembers":[`)
@@ -239,7 +239,7 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 offers :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
-    world,e,objects,ok:=entity_of(s,call,p.id,behavior.Smart_Object,"Smart_Object")
+    world,e,objects,ok:=entity_of(s,call,p.entity[:],behavior.Smart_Object,"Smart_Object")
     if !ok {return}
     object,_:=core.get(core.read(objects),e)
     state:behavior.Smart_State
@@ -299,29 +299,29 @@ influence :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
-    world,e,_,ok:=entity_of(s,call,p.id,core.World_Transform,"place in the world")
+    world,e,_,ok:=entity_of(s,call,p.entity[:],core.World_Transform,"place in the world")
     if !ok {return}
-    entities:=core.world_entities(world)
     q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,spacing=p.spacing,teams=p.teams,use=p.use,keep=p.keep}
-    for id in p.entities {
-        if id==0 {continue}
-        candidate:=core.entity_of(entities,id)
-        if candidate==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"entities: %x is not an entity of the shown world",id);return}
+    for &text,i in p.entities {
+        if text[0]==0 {continue}
+        candidate,named:=editor.api_call_entity(call,world,text[:],fmt.tprintf("entities[%d]",i),s.mode!=.Edit)
+        if !named {return}
         q.entities[q.entity_count]=candidate
         q.entity_count+=1
     }
     switch {
-    case p.around!=0:
-        q.center,q.target=.Target,core.entity_of(entities,p.around)
-        if q.target==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"around %x is not an entity of the shown world",p.around);return}
+    case p.around[0]!=0:
+        around,named:=editor.api_call_entity(call,world,p.around[:],"around",s.mode!=.Edit)
+        if !named {return}
+        q.center,q.target=.Target,around
     case p.point!={}:
         q.center,q.point=.Point,p.point
     }
     from:=behavior.Place_Context.Querier
     from_entity:=core.NONE
-    if p.from!=0 {
-        from_entity=core.entity_of(entities,p.from)
-        if from_entity==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"from %x is not an entity of the shown world",p.from);return}
+    if p.from[0]!=0 {
+        named:bool
+        if from_entity,named=editor.api_call_entity(call,world,p.from[:],"from",s.mode!=.Edit);!named {return}
         from=.Target
     }
     if p.layout==.Offers && p.use==behavior.USE_NONE {api.call_fail(call,api.INVALID_PARAMS,"the layout Offers needs the use whose offers it lays out: pass use");return}

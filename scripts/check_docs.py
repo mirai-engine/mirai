@@ -10,7 +10,9 @@
 No Markdown file links to a path that the repository does not track or to a heading that the
 linked file does not have. Every skill opens with YAML frontmatter whose name
 is its folder and whose description an agent can trigger on, and .claude/skills is the symlink that
-lets Claude Code find them.
+lets Claude Code find them. A file of docs/game, tracked or still being written, links only inside
+docs/game, opens with frontmatter when it is a topic and stays within the line cap of its kind: the
+engine serves that folder to projects, where the rest of the repository does not exist.
 
 Usage: uv run scripts/check_docs.py
 """
@@ -27,6 +29,10 @@ import yaml
 
 SKILLS = ".agents/skills/"
 SKILLS_LINK = ".claude/skills"
+GAME_DOCS = "docs/game/"
+GAME_TOPIC_LINES = 80
+GAME_TASK_LINES = 120
+LINE_WIDTH = 100
 DESCRIPTION_MAX = 1024
 FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
@@ -77,8 +83,7 @@ def anchors(text: str) -> set[str]:
     return found
 
 
-def skill_errors(p: str, text: str) -> list[str]:
-    folder = posixpath.basename(posixpath.dirname(p))
+def frontmatter_errors(p: str, text: str, name: str, source: str) -> list[str]:
     if not text.startswith("---\n"):
         return [f"{p}: the first line must be --- to open the YAML frontmatter"]
     end = text.find("\n---\n", 4)
@@ -91,20 +96,55 @@ def skill_errors(p: str, text: str) -> list[str]:
     if not isinstance(fields, dict):
         return [f"{p}: the frontmatter must be a mapping with name and description"]
     errors: list[str] = []
-    if fields.get("name") != folder:
-        errors.append(f"{p}: name must be {folder!r}, the name of its folder")
+    if fields.get("name") != name:
+        errors.append(f"{p}: name must be {name!r}, the name of its {source}")
     description = fields.get("description")
     if not isinstance(description, str) or not description.strip():
-        errors.append(f"{p}: description is missing; say what the skill covers and when to use it")
+        errors.append(f"{p}: description is missing; say what it covers and when to use it")
     elif len(description) > DESCRIPTION_MAX:
         errors.append(f"{p}: description has {len(description)} characters; keep {DESCRIPTION_MAX}")
+    return errors
+
+
+def resolve_link(p: str, target: str) -> tuple[str, str]:
+    """The repository path a link of the file p points to, and its fragment."""
+    path, _, fragment = unquote(target.split("?", 1)[0]).partition("#")
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(p), path)) if path else p
+    return resolved, fragment
+
+
+def game_doc_files(root: Path) -> set[str]:
+    return {f.relative_to(root).as_posix() for f in (root / GAME_DOCS).rglob("*.md")}
+
+
+def game_doc_errors(p: str, text: str) -> list[str]:
+    errors: list[str] = []
+    for target in links(text):
+        if EXTERNAL.match(target):
+            continue
+        resolved, _ = resolve_link(p, target)
+        if not resolved.startswith(GAME_DOCS):
+            errors.append(f"{p}: links to {target}, outside {GAME_DOCS}; a project gets only that")
+    depth = p.count("/") - GAME_DOCS.count("/")
+    if depth > 1:
+        return errors + [f"{p}: a task file goes straight under its topic: {GAME_DOCS}<topic>/<task>.md"]
+    if depth == 0:
+        errors += frontmatter_errors(p, text, posixpath.basename(p)[: -len(".md")], "file")
+    cap = GAME_TASK_LINES if depth else GAME_TOPIC_LINES
+    lines = text.splitlines()
+    if len(lines) > cap:
+        errors.append(f"{p}: has {len(lines)} lines; keep {cap}")
+    for number, line in enumerate(lines, 1):
+        if len(line) > LINE_WIDTH and " " in line.strip():
+            errors.append(f"{p}:{number}: has {len(line)} characters; keep {LINE_WIDTH}")
     return errors
 
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     files = tracked_files(root)
-    present = {p for p in files if (root / p).exists()}
+    game_docs = game_doc_files(root)
+    present = {p for p in files if (root / p).exists()} | game_docs
     folders = {posixpath.dirname(p) for p in present}
     for p in list(folders):
         while p:
@@ -117,12 +157,10 @@ def main() -> int:
 
     headings: dict[str, set[str]] = {}
     for p, text in texts.items():
-        here = posixpath.dirname(p)
         for target in links(text):
             if EXTERNAL.match(target):
                 continue
-            path, _, fragment = unquote(target.split("?", 1)[0]).partition("#")
-            resolved = posixpath.normpath(posixpath.join(here, path)) if path else p
+            resolved, fragment = resolve_link(p, target)
             if resolved.startswith(".."):
                 continue
             if resolved not in present and resolved not in folders:
@@ -134,10 +172,13 @@ def main() -> int:
                 if fragment.lower() not in headings[resolved]:
                     errors.append(f"{p}: links to {target}, but {resolved} has no such heading")
 
+    for p in sorted(game_docs):
+        errors += game_doc_errors(p, texts[p])
+
     skills = sorted(p for p in present if p.startswith(SKILLS) and p.count("/") == 3)
     for p in skills:
         if posixpath.basename(p) == "SKILL.md":
-            errors += skill_errors(p, texts[p])
+            errors += frontmatter_errors(p, texts[p], posixpath.basename(posixpath.dirname(p)), "folder")
     if SKILLS_LINK not in tracked_symlinks(root):
         errors.append(f"{SKILLS_LINK}: must be a symlink to ../{SKILLS.rstrip('/')} in git")
     elif not (root / SKILLS_LINK).is_symlink():

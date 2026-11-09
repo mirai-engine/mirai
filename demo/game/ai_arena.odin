@@ -132,18 +132,7 @@ ZOMBIE_BITERS :: 3 // zombies that bite the same target at once; the rest circle
 // What the actions of the arenas work on: the world the arena function received.
 @(private)
 Arena_Tick :: struct {
-    using act:behavior.Act_World,
-    smart:behavior.Smart_View,
-    worlds:core.Read(core.World_Transform),
-    perceptions:core.Read(behavior.Perception),
-    perceivables:core.Read(behavior.Perceivable),
-    agents:core.Read(nav.Nav_Agent),
-    links:core.Read(nav.Nav_Link),
-    places:^behavior.Place_Requests,
-    results:core.Read(behavior.Place_Result),
-    uses:^behavior.Smart_Uses,
-    noises:^behavior.Noises,
-    influence:^behavior.Influence,
+    using tick:behavior.Mind_Tick,
     placer:core.Placer,
     zombies:^core.Table(Zombie),
     soldiers:^core.Table(Soldier),
@@ -202,7 +191,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act)) {
     ai.propose(t,.Chase,0.5)
     distance:=linalg.length(arena_position(w,subject)-arena_position(w,w.entity))
     if distance>4 {return}
-    if distance<1.8 && ai.reserve_free(t.reservations,{u64(subject),0},t.holder,ZOMBIE_BITERS,t.tick) {
+    if distance<1.8 && ai.reserve_free(t,subject,ZOMBIE_BITERS) {
         ai.propose(t,.Bite,1)
     } else {
         ai.propose(t,.Circle,0.7)
@@ -298,7 +287,7 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act)) {
     if sees {
         if _,ok:=behavior.smart_nearest(&w.smart,USE_ALARM,here,25,user);ok {ai.propose(t,.Alarm,0.75)}
         if _,ok:=behavior.smart_nearest(&w.smart,USE_TURRET,here,15,user);ok {ai.propose(t,.Man_Turret,0.72)}
-        if s.ammo>0 && ai.reserve_free(t.reservations,{u64(subject),0},t.holder,SOLDIER_SHOOTERS,t.tick) {ai.propose(t,.Fire,0.7)}
+        if s.ammo>0 && ai.reserve_free(t,subject,SOLDIER_SHOOTERS) {ai.propose(t,.Fire,0.7)}
         ai.propose(t,.Take_Cover,0.55)
     } else if confidence>0 {
         ai.propose(t,.Advance,0.3)
@@ -329,16 +318,14 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
     switch a.phase {
     case .Enter:
         subject,_,_:=arena_seen(w,e)
-        request:=u32(w.smart.tick)
-        a.memory[0]=u64(request)
         mine:=arena_user(w,e).team
-        q:=behavior.Place_Query{querier=e,request=request,center=.Querier,layout=.Offers,use=USE_COVER,outer=14,keep=1}
+        q:=behavior.Place_Query{querier=e,center=.Querier,layout=.Offers,use=USE_COVER,outer=14,keep=1}
         falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
         q.tests[0]={measure=.Visible,from=.Target if subject!=core.NONE else .Querier,target=subject,min=0,max=1,response=falling}
         q.tests[1]={measure=.Path,from=.Querier,min=0,max=30,response=falling}
         q.tests[2]={measure=.Influence,teams=behavior.Teams(1<<u32(TEAM_RED+TEAM_BLUE-mine)),min=0,max=2,response={kind=.Linear,slope=-0.5,shift_y=1}}
         q.test_count=3
-        behavior.place_query(w.places,q)
+        a.memory[0]=u64(behavior.place_query(w.places,q))
         return .Running
     case .Update:
         switch ai.stage(a) {
@@ -801,12 +788,12 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     // An id, so the API can name the agent while the arena runs.
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
-    core.commands_add(c,e,phys.character_default())
+    core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character())
-    walk:=phys.WALK_DEFAULT
+    walk:=core.default(c,phys.Walk)
     walk.max_speed=speed
     core.commands_add(c,e,walk)
-    core.commands_add(c,e,nav.NAV_AGENT_DEFAULT)
+    core.commands_add_default(c,e,nav.Nav_Agent)
     look:=core.commands_create(c)
     core.commands_add(c,look,core.Transform{{0,0.9,0},1,{0.6,0.9,0.6}})
     core.commands_add(c,look,core.Parent{entity=e})
@@ -901,7 +888,7 @@ horde_spot :: proc(origin:mm.Vec3,i:int) -> mm.Vec3 {
 arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forget:f32=8) {
     core.commands_add(c,e,Zombie{})
     core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("zombie")})
-    core.commands_add(c,e,behavior.MIND_PRESENTATION_DEFAULT)
+    core.commands_add_default(c,e,behavior.Mind_Presentation)
     perceiver:=behavior.PERCEIVER_DEFAULT
     perceiver.notices=behavior.Teams(1<<u32(TEAM_RUNNER))
     perceiver.sight,perceiver.hearing,perceiver.forget=sight,hearing,forget
@@ -934,7 +921,7 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
                 e:=arena_body(c,origin+{f32(i)*2.5-f32(count)*1.25,0.05,side*18},{0.9,0.3,0.25,1} if team==0 else {0.3,0.45,0.9,1},4.5)
                 core.commands_add(c,e,Soldier{health=100,ammo=SOLDIER_MAG,reserve=SOLDIER_MAG,ahead=-side})
                 core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("soldier")})
-                core.commands_add(c,e,behavior.MIND_PRESENTATION_DEFAULT)
+                core.commands_add_default(c,e,behavior.Mind_Presentation)
                 mine,theirs:=TEAM_RED,TEAM_BLUE
                 if team==1 {mine,theirs=TEAM_BLUE,TEAM_RED}
                 perceiver:=behavior.PERCEIVER_DEFAULT
@@ -950,7 +937,7 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
         boss:=arena_body(c,origin+{0,0.05,-6},{0.6,0.15,0.6,1},3)
         core.commands_add(c,boss,Boss{health=BOSS_HEALTH,hero=hero})
         core.commands_add(c,boss,behavior.Mind_Agent{mind=behavior.mind_name("boss")})
-        core.commands_add(c,boss,behavior.MIND_PRESENTATION_DEFAULT)
+        core.commands_add_default(c,boss,behavior.Mind_Presentation)
     case .Swarm:
         arena_target(c,origin+{-22,0,-22},TEAM_RUNNER)
         for i in 0..<count {arena_zombie(c,arena_drone(c,origin+{f32(i%8)*4-14,4+f32((i/8)%3)*3,8+f32(i/24)*3}),30)}
@@ -959,12 +946,12 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
         points:=[4][3]f32{origin+{-15,0,-10},origin+{-7,3.5,1},origin+{17,0,10},origin+{17,0,-10}}
         for i in 0..<max(count,1) {
             e:=arena_body(c,origin+{-15+f32(i%4)*1.5,0.05,-12+f32(i/4)*1.5},{0.85,0.75,0.3,1},3.5)
-            agent:=nav.NAV_AGENT_DEFAULT
+            agent:=core.default(c,nav.Nav_Agent)
             agent.abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_LADDER))
             core.commands_add(c,e,agent)
             core.commands_add(c,e,Arena_Patrol{points=points,next=i32(i%4)})
             core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("guard")})
-            core.commands_add(c,e,behavior.MIND_PRESENTATION_DEFAULT)
+            core.commands_add_default(c,e,behavior.Mind_Presentation)
         }
     case .Senses:
         // Bells ring in turn behind the walls; listeners that barely see go to what they hear and forget it.
@@ -989,13 +976,13 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     e:=core.commands_create(c)
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
-    character:=phys.character_default()
+    character:=core.default(c,phys.Character)
     character.mode=phys.MODE_FLYING
     core.commands_add(c,e,character)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
-    core.commands_add(c,e,phys.WALK_DEFAULT)
+    core.commands_add_default(c,e,phys.Walk)
     core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})
-    core.commands_add(c,e,nav.NAV_AGENT_DEFAULT)
+    core.commands_add_default(c,e,nav.Nav_Agent)
     look:=core.commands_create(c)
     core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
     core.commands_add(c,look,core.Parent{entity=e})
@@ -1067,22 +1054,14 @@ arena_targets :: proc(
 // after a while.
 @(step="fixed",server)
 arena_think :: proc(
-    minds:^behavior.Minds,agents:^core.Table(behavior.Mind_Agent),shows:^core.Table(behavior.Mind_Presentation),
-    zombies:^core.Table(Zombie),soldiers:^core.Table(Soldier),bosses:^core.Table(Boss),patrols:^core.Table(Arena_Patrol),flights:core.Read(phys.Fly),
-    perceptions:core.Read(behavior.Perception),perceivables:core.Read(behavior.Perceivable),worlds:core.Read(core.World_Transform),
-    paths:core.Read(nav.Nav_Path),fars:core.Read(nav.Nav_Far),nav_agents:core.Read(nav.Nav_Agent),links:core.Read(nav.Nav_Link),
-    requests:^nav.Nav_Requests,places:^behavior.Place_Requests,results:core.Read(behavior.Place_Result),
-    objects:core.Read(behavior.Smart_Object),offered:core.Read(behavior.Smart_State),claims:^behavior.Claims,uses:^behavior.Smart_Uses,
-    noises:^behavior.Noises,influence:core.Ref(behavior.Influence),placer:core.Placer,
-    physics:core.Ref(phys.Physics_State),state:^Arena_State,time:core.Time,problems:^core.Problems,
+    world:behavior.Mind_World,zombies:^core.Table(Zombie),soldiers:^core.Table(Soldier),bosses:^core.Table(Boss),patrols:^core.Table(Arena_Patrol),
+    flights:core.Read(phys.Fly),placer:core.Placer,physics:core.Ref(phys.Physics_State),state:^Arena_State,
 ) {
+    minds,agents,time,problems:=world.minds,world.agents,world.time,world.problems
     if !time.playing || time.dt<=0 || core.count(agents)==0 {return}
     if !state.seeded {state.rng,state.seeded=mm.rng_make(17),true}
     w:=Arena_Tick{
-        act={requests=requests,paths=paths,fars=fars,presentations=shows},
-        smart={objects=objects,states=offered,worlds=worlds,claims=claims,time=time.seconds,tick=time.tick},
-        worlds=worlds,perceptions=perceptions,perceivables=perceivables,agents=nav_agents,links=links,places=places,results=results,
-        uses=uses,noises=noises,influence=influence.ptr,placer=placer,
+        tick=behavior.mind_tick(world),placer=placer,
         zombies=zombies,soldiers=soldiers,bosses=bosses,patrols=patrols,flights=flights,physics=physics,rng=&state.rng,
     }
     for row in 0..<core.count(bosses) {
@@ -1098,7 +1077,7 @@ arena_think :: proc(
             if time.tick%180==0 {b.staggered=true}
         }
     }
-    ctx:=ai.Mind_Context{user=&w,keep=0.05,reservations=&claims.reservations}
+    ctx:=ai.Mind_Context{user=&w,keep=0.05,reservations=&world.claims.reservations}
     behavior.minds_tick(minds,agents,"zombie",&ZOMBIE_ACTS,zombie_think,&ctx,&w.act,time,problems)
     behavior.minds_tick(minds,agents,"soldier",&SOLDIER_ACTS,soldier_think,&ctx,&w.act,time,problems)
     behavior.minds_tick(minds,agents,"boss",&BOSS_ACTS,boss_think,&ctx,&w.act,time,problems)

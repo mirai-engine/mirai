@@ -308,7 +308,8 @@ game_checkbox :: proc(ctx:^Context,id:Id,value:^bool,c:Game_Control={}) -> (chan
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
     if it.clicked {value^=!value^;changed=true}
     w,h,side:=game_side(ctx,id,c,style)
-    paint:=paint_add(ctx,{kind=.Box,fill=style.fill,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,center=true,
+    paint:=paint_add(ctx,{kind=.Box,fill=style.fill,fill2=style.fill2,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,center=true,
+        shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,
         icon=.Check if value^ else .None,icon_color=style.mark,icon_size=side*0.75})
     element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
     return
@@ -349,13 +350,14 @@ game_selector :: proc(ctx:^Context,id:Id,options:Options,current:^int,c:Game_Con
     text_style.align_x,text_style.align_y=.Center,.Center
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center},custom=paint_add(ctx,game_background(style))}) {
         if game_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=1}
-        shown:=option(options,clamp(current^,0,count-1)) if count>0 else ""
+        shown:=option(options,current^) if count>0 && current^>=0 else ""
         element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=text_style})})
         if game_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=1}
     }
     element_close(ctx)
     if it.clicked && ctx.activate==id {next+=1}
     if count==0 || next==current^ {return}
+    if current^<0 && next<current^ {next=count-1} // on none of the options: left takes the last
     next=(next%count+count)%count
     if next!=current^ {current^,changed=next,true}
     return
@@ -536,7 +538,25 @@ option :: proc(o:Options,index:int) -> string {
     rest:=o.joined
     for i:=0;;i+=1 {
         bar:=strings.index_byte(rest,'|')
-        if i==index {return rest if bar<0 else rest[:bar]}
+        if i==index {
+            entry:=rest if bar<0 else rest[:bar]
+            if equal:=strings.index_byte(entry,'=');equal>=0 {return strings.trim_space(entry[:equal])}
+            return entry
+        }
+        if bar<0 {return ""}
+        rest=rest[bar+1:]
+    }
+}
+// The value of the option at index of a text "Label=Value|...": empty without one.
+option_value :: proc(text:string,index:int) -> string {
+    rest:=text
+    for i:=0;;i+=1 {
+        bar:=strings.index_byte(rest,'|')
+        entry:=rest if bar<0 else rest[:bar]
+        if i==index {
+            equal:=strings.index_byte(entry,'=')
+            return strings.trim_space(entry[equal+1:]) if equal>=0 else ""
+        }
         if bar<0 {return ""}
         rest=rest[bar+1:]
     }

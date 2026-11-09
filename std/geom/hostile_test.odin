@@ -298,6 +298,19 @@ hostile_parameters_through_the_primitives :: proc(t:^testing.T) {
         plane_build(&out,{size.x,size.y},hostile_int(&h,40)-4,hostile_int(&h,40)-4)
         torus_build(&out,hostile_f32(&h),hostile_f32(&h),count,hostile_int(&h,40)-4)
         _=mesh_is_valid(mesh_buffer_view(&out))
+        path:=[3]Vec3{hostile_vec3(&h,true),hostile_vec3(&h,true),hostile_vec3(&h,true)}
+        tube_build(&out,path[:hostile_int(&h,4)],{hostile_f32(&h),hostile_f32(&h)},count,hostile_int(&h,20)-4)
+        profile:=[3]Vec2{{hostile_f32(&h),hostile_f32(&h)},{hostile_f32(&h),hostile_f32(&h)},{hostile_f32(&h),hostile_f32(&h)}}
+        lathe_build(&out,profile[:hostile_int(&h,4)],count)
+        extrude_build(&out,profile[:hostile_int(&h,4)],hostile_f32(&h))
+        blade:=Blade{hostile_f32(&h),hostile_f32(&h),hostile_f32(&h),hostile_f32(&h),hostile_f32(&h),hostile_f32(&h),hostile_int(&h,20)-4}
+        blade_build(&out,hostile_vec3(&h,true),hostile_vec3(&h,true),blade)
+        fan_build(&out,hostile_vec3(&h,true),hostile_int(&h,8)-2,blade,hostile_f32(&h),u32(hostile_next(&h)))
+        blob_build(&out,size,hostile_int(&h,4)-1,hostile_f32(&h),u32(hostile_next(&h)))
+        mesh_buffer_paint(&out,{1,1,1,1})
+        mesh_buffer_place(&out,hostile_int(&h,1<<20)-512,hostile_vec3(&h,true),hostile_f32(&h),size)
+        if hostile_int(&h,4)==0 {append(&out.indices,u32(hostile_next(&h)))}
+        mesh_buffer_flatten(&out)
     }
 }
 

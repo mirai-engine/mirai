@@ -378,7 +378,10 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
   resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
-  writes it; they show what was asked until the game has had a tick to write it. A `Selector` or a
+  writes it; they show what was asked until the game has had a tick to write it. A control bound to
+  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A `Selector` or a
+  `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
+  enum, a text for a text field), not its index. A `Selector` or a
   `Dropdown` with `bind_items` takes its options from a game array.
 - **Containers.**
   - A `Scroll` scrolls horizontally if its direction is `Row` and downward if it is another; with
@@ -465,29 +468,47 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
   wildcard, and then the last row.
-- With `Node_Style.transition`, a node's colors go from the style it showed to the new one when its
-  state or variant changes; a change under way starts from where it was and a transparent end only
-  fades.
+- With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
+  the style it showed to the new one when its state or variant changes; a change under way starts
+  from where it was and a transparent end only fades.
+- `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
+  the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
+  does not lose it.
+- A shadow without blur and with an offset is a solid copy of its shape; without blur or offset, the
+  theme's default shadow.
+- `tree_settle` (`tree_names.odin`) is where the names of a `.ui` resolve: what a token gives, what
+  a style with `extends` takes (`Tree_Style_Info.sets` says what it sets itself), what a state with
+  `extends` starts from, and the layout a node takes from its style (`Tree_Node.layout_own` says
+  what is its own) at load. The file keeps the names in `Tree_Style_Info`, `Tree_Token_Use`,
+  `Tree_Token` and `Tree_Param`; the frame reads the flat tables, and each name resolves when the
+  file is written or links another (`tree_link`), so changing a token or a style reaches what names
+  it without touching the frame. Game documentation: `docs/game/ui/styles.md`.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
-### Authoring components
+### Widgets
 
-- A component is a range of `component_nodes` with a single root `Box`; a `Component` node
-  instantiates it, and one with `widget` takes its template from another `.ui` (`tree_link` expands
-  it with its styles, variants, images, fonts and animations before loading).
-- `tree_load` expands the components during the load into the same flat arrays: the frame neither
-  interprets templates nor allocates. There is no inheritance or virtual objects per widget.
-- The instance name is mandatory and gives the root (`menu`); local nodes become `menu/action` and
-  nested ones `menu/nested/action`, the name that identifies elements and events. The template's
-  paths read the sources of the interface that uses it; those that start with `@`, what the
-  instance's `data` names.
-- `component_fields` chooses properties of the instance that replace the template's root, and the
-  overrides change fields of a node by its local name. The load validates ranges, preorder, depth,
-  cycles (also in unused templates), override targets and the `TREE_EXPANDED_NODES` budget; errors
-  leave the tree empty.
-- Examples: the interfaces in `demo/assets/interface/` (HUD variants, a button from another file
-  with overrides, controls, grid list with drag, localized texts).
+- A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
+  `Tree_Component.widget` names the file and its name is the name of the file. A file that no node
+  uses only lends its styles and tokens (`use` without a use); a style row with `from` is a named
+  style of that file, copied into the row at link.
+- `tree_link` expands each use into `component_nodes` (with the styles, variants, images, fonts
+  and animations of the file, once per file) and `tree_load` into the flat arrays: the frame
+  neither interprets uses nor allocates. There is no inheritance or virtual objects per widget.
+- A file holds no `component_nodes`; `first,count` exist only once linked.
+- `params` of a file: a name and a `node.field`, `field` of its root, or `node.param`, a parameter
+  of the widget that a use it holds uses. `tree_link` makes them flat, a path and a field, as an
+  override reaches them, and a use writes them as overrides.
+- A node flagged `Slot`, the last of the file, holds what a use holds.
+- The name of a use is mandatory and gives the root (`menu`); inner nodes become `menu/action` and
+  nested ones `menu/nested/action`, the name that identifies elements and events. Paths of the
+  widget read the sources of the interface that uses it; those that start with `@`, what the use's
+  `data` names.
+- `component_fields` chooses properties of the use that replace the root of its widget, and the
+  overrides change fields of a node by its path. The load validates rows, preorder, depth, cycles,
+  override targets and the `TREE_EXPANDED_NODES` budget; errors leave the tree empty.
+- Examples: `templates/game/assets/menu/` (`panel.ui`, `select_row.ui`, `check_row.ui`, `button.ui`)
+  and the interfaces in `demo/assets/interface/`.
 
 ### World panels
 

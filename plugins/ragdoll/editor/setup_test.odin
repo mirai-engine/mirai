@@ -63,16 +63,16 @@ setup_test_settle :: proc(data,shared,ed:rawptr) {
     core.entities_settle(&w.entities)
 }
 
-// A standing figure facing +Z with its left at +X, with three spine bones and a bone outside the body.
+// A standing figure facing -Z with its left at -X, with three spine bones and a bone outside the body.
 @(private)
 setup_test_bones :: proc() -> []aa.Skeleton_Bone {
     Row :: struct {name:string,parent:i32,at:[3]f32}
     rows:=[?]Row{
         {"root",-1,{}},{"pelvis",0,{0,1,0}},{"spine_01",1,{0,1.12,0}},{"spine_02",2,{0,1.25,0}},{"spine_03",3,{0,1.38,0}},{"neck_01",4,{0,1.5,0}},{"head",5,{0,1.6,0}},
-        {"clavicle_l",4,{.05,1.45,0}},{"upperarm_l",7,{.2,1.45,0}},{"lowerarm_l",8,{.45,1.45,-.02}},{"hand_l",9,{.7,1.45,0}},
-        {"clavicle_r",4,{-.05,1.45,0}},{"upperarm_r",11,{-.2,1.45,0}},{"lowerarm_r",12,{-.45,1.45,-.02}},{"hand_r",13,{-.7,1.45,0}},
-        {"thigh_l",1,{.1,.95,0}},{"calf_l",15,{.1,.5,.02}},{"foot_l",16,{.1,.08,0}},{"ball_l",17,{.1,.02,.12}},
-        {"thigh_r",1,{-.1,.95,0}},{"calf_r",19,{-.1,.5,.02}},{"foot_r",20,{-.1,.08,0}},{"ball_r",21,{-.1,.02,.12}},
+        {"clavicle_l",4,{-.05,1.45,0}},{"upperarm_l",7,{-.2,1.45,0}},{"lowerarm_l",8,{-.45,1.45,.02}},{"hand_l",9,{-.7,1.45,0}},
+        {"clavicle_r",4,{.05,1.45,0}},{"upperarm_r",11,{.2,1.45,0}},{"lowerarm_r",12,{.45,1.45,.02}},{"hand_r",13,{.7,1.45,0}},
+        {"thigh_l",1,{-.1,.95,0}},{"calf_l",15,{-.1,.5,-.02}},{"foot_l",16,{-.1,.08,0}},{"ball_l",17,{-.1,.02,-.12}},
+        {"thigh_r",1,{.1,.95,0}},{"calf_r",19,{.1,.5,-.02}},{"foot_r",20,{.1,.08,0}},{"ball_r",21,{.1,.02,-.12}},
         {"ik_hand_root",0,{}},
     }
     bones:=make([]aa.Skeleton_Bone,len(rows),context.temp_allocator)
@@ -196,7 +196,7 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"humanoid") {return};defer setup_test_destroy(f)
     w:=&f.world
-    result,text:=setup_test_call(f,`{"id":"11","mass":70}`)
+    result,text:=setup_test_call(f,`{"entity":"0000000000000011","mass":70}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     bodies:=setup_test_bodies(f,f.figure)
     testing.expect_value(t,len(bodies),16)
@@ -261,36 +261,34 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
 }
 
 @(test)
-ragdoll_setup_without_a_body_map_fails_with_how_to_detect_it_and_changes_nothing :: proc(t:^testing.T) {
+ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_as_it_is :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"no-body") {return};defer setup_test_destroy(f)
-    result,_:=setup_test_call(f,`{"id":"12"}`)
-    testing.expect_value(t,result.code,api.INVALID_PARAMS)
-    testing.expectf(t,strings.contains(result.data,`"code":"Missing_Body_Map"`) && strings.contains(result.data,"skeleton.body.detect"),"%s",result.data)
-    testing.expect(t,len(f.world.bones.values)==0 && len(f.world.rigids.values)==0 && !core.has(&f.world.configs,f.plain))
-    testing.expect_value(t,f.edits.cursor,0)
+    result,_:=setup_test_call(f,`{"entity":"0000000000000012"}`)
+    if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
+    testing.expect_value(t,len(setup_test_bodies(f,f.plain)),16)
+    testing.expect(t,core.has(&f.world.configs,f.plain))
+    testing.expect_value(t,f.edits.cursor,1)
+    testing.expect_value(t,len(host.assets_unsaved(&f.assets)),0)
     core.remove(&f.world.animations,f.figure);setup_test_settle(&f.world,nil,nil)
-    result,_=setup_test_call(f,`{"id":"11"}`)
+    result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))
     f.session.mode=.Play
-    result,_=setup_test_call(f,`{"id":"11"}`)
-    testing.expect(t,result.code==api.SERVER_ERROR && strings.contains(result.data,"play.stop"))
-    testing.expect_value(t,f.edits.cursor,0)
+    result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`),"the document is what it validates while a game plays")
+    testing.expect_value(t,f.edits.cursor,1)
 }
 
 @(test)
-ragdoll_setup_refuses_a_rig_with_a_ragdoll_unless_replace_removes_its_bodies :: proc(t:^testing.T) {
+ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"replace") {return};defer setup_test_destroy(f)
     w:=&f.world
-    result,_:=setup_test_call(f,`{"id":"11"}`)
+    result,_:=setup_test_call(f,`{"entity":"0000000000000011"}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     first:=setup_test_bodies(f,f.figure)
-    result,_=setup_test_call(f,`{"id":"11","mode":"Driven"}`)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Ragdoll_Exists"`) && strings.contains(result.data,"replace"))
-    testing.expect(t,len(w.bones.values)==16 && core.get(&w.configs,f.figure).mode==.Simulated && f.edits.cursor==1)
     text:string
-    result,text=setup_test_call(f,`{"id":"11","mode":"Driven","replace":true,"mass":80}`)
+    result,text=setup_test_call(f,`{"entity":"0000000000000011","mode":"Driven","mass":80}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expectf(t,strings.contains(strings.join(strings.fields(text,context.temp_allocator),"",context.temp_allocator),`"removed":16`),"%s",text)
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}

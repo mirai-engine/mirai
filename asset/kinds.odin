@@ -37,25 +37,26 @@ Kind_Info :: struct {
     version:u16, // the kind_version this build writes (kind_check); 0 for a kind whose plugin keeps it
     oldest:u16,  // the oldest kind_version it reads, migrating it
     presentation:bool, // only shown or heard: a dedicated server, which has neither renderer nor mixer, ships none
+    merged:bool,       // a document of rows that are edited: git merges it row by row and diffs its values (mirai asset merge, dump); false: bulk an import, a bake or a recording makes, which git keeps whole
 }
 
 KINDS :: [?]Kind_Info{
-    {KIND_MESH,".mesh","mesh",MESH_VERSION,MESH_OLDEST,false},
-    {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,TEXTURE_OLDEST,true},
-    {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,MATERIAL_OLDEST,false},
-    {KIND_SCENE,".scene","scene",SCENE_VERSION,SCENE_OLDEST,false},
-    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,SCENE_OLDEST,false},
-    {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,ANIMATION_OLDEST,false},
-    {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,SKELETON_OLDEST,false},
-    {KIND_SOUND,".sound","sound",SOUND_VERSION,SOUND_OLDEST,true},
-    {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,SOUND_SET_OLDEST,true},
-    {KIND_UI,".ui","ui",UI_VERSION,UI_OLDEST,true},
-    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,FRACTURE_OLDEST,false},
-    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,0,false},
-    {KIND_FONT,".font","font",FONT_VERSION,FONT_OLDEST,true},
-    {KIND_STRINGS,".strings","strings",STRINGS_VERSION,STRINGS_OLDEST,false},
-    {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,PROMPTS_OLDEST,true},
-    {KIND_RECORDS,".records","records",RECORDS_VERSION,RECORDS_OLDEST,false},
+    {KIND_MESH,".mesh","mesh",MESH_VERSION,MESH_OLDEST,false,false},
+    {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,TEXTURE_OLDEST,true,false},
+    {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,MATERIAL_OLDEST,false,true},
+    {KIND_SCENE,".scene","scene",SCENE_VERSION,SCENE_OLDEST,false,true},
+    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,SCENE_OLDEST,false,true},
+    {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,ANIMATION_OLDEST,false,false},
+    {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,SKELETON_OLDEST,false,true},
+    {KIND_SOUND,".sound","sound",SOUND_VERSION,SOUND_OLDEST,true,false},
+    {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,SOUND_SET_OLDEST,true,true},
+    {KIND_UI,".ui","ui",UI_VERSION,UI_OLDEST,true,true},
+    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,FRACTURE_OLDEST,false,false},
+    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,0,false,false},
+    {KIND_FONT,".font","font",FONT_VERSION,FONT_OLDEST,true,false},
+    {KIND_STRINGS,".strings","strings",STRINGS_VERSION,STRINGS_OLDEST,false,true},
+    {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,PROMPTS_OLDEST,true,true},
+    {KIND_RECORDS,".records","records",RECORDS_VERSION,RECORDS_OLDEST,false,true},
 }
 
 kind_of_extension :: proc(path:string) -> (kind:Fourcc,found:bool) {

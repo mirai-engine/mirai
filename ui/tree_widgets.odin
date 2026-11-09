@@ -11,6 +11,26 @@ import "mirai:std/base"
 // controls are those of a game (game.odin), in the parts of the style the
 // node resolves to.
 
+// A Text: what its style fills, strokes or shades goes behind it as on a Box, a
+// box of the size of the node with its padding around the text.
+@(private)
+tree_build_text :: proc(ctx:^Context,node:^Node,style:^Node_Style,node_id:Id,content:string,reveal:f32) {
+    width,height:=node.layout.width,node.layout.height
+    if style.fill[3]==0 && style.fill2[3]==0 && style.stroke[3]==0 && !style.shadow {
+        text(ctx,content,style.text,width,height,node_id,reveal)
+        return
+    }
+    box:=tree_box(node,style,node_id)
+    box.float={}
+    padding:=node.layout.padding
+    if width.kind==.Fixed {width=fixed(max(width.value-padding[0]-padding[2],0))} else if width.kind!=.Fit {width=GROW}
+    if height.kind==.Fixed {height=fixed(max(height.value-padding[1]-padding[3],0))} else if height.kind!=.Fit {height=GROW}
+    widget_add(ctx,node_id,{.Passive})
+    box_begin(ctx,box)
+    text(ctx,content,style.text,width,height,0,reveal)
+    box_end(ctx,box)
+}
+
 @(private)
 tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,variant:u64,image_ref:Node_Image,content:string,selected,disabled:bool,anim:^Anim_Value) {
     tree,instance:=b.tree,b.instance
@@ -22,12 +42,18 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio:focusable=true
     }
     if focusable && .Focus_First in node.flags && !b.desc.passive && !disabled {
-        if _,held:=widget_rect(ctx,ctx.focus);ctx.focus==0 || !held {ctx.focus,ctx.focus_ring=node_id,true}
+        if _,held:=widget_rect(ctx,ctx.focus);ctx.focus==0 || !held || b.turned {
+            ctx.focus,ctx.focus_ring=node_id,true
+            b.turned=false
+            b.animating=true // this frame built it without its focus: the next shows it
+        }
     }
     if .Draggable in node.flags {tree_drag_source(ctx,b,node,index,node_id,item)}
     defer if .Draggable in node.flags {tree_drag_ghost(ctx,b,node,index,node_id,values,slot-int(instance.slots[index]),item)}
-    changed :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index:int,item:i32,style:^Node_Style,value:f64,on:=false) {
-        tree_emit(b,{name=node.name,node=i32(index),kind=.Changed,item=item,value=value,on=on})
+    changed :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index:int,item:i32,style:^Node_Style,value:f64,on:=false,text:="") {
+        event:=Tree_Event{name=node.name,node=i32(index),kind=.Changed,item=item,value=value,on=on}
+        base.text_set(event.text[:],text)
+        tree_emit(b,event)
         tree_sound(ctx,style,.Change)
     }
     control:=Game_Control{style=style,width=node.layout.width,height=node.layout.height,disabled=disabled}
@@ -37,7 +63,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     reveal:=anim.reveal if anim!=nil && .Reveal in anim.set else 1
     #partial switch node.kind {
     case .Text:
-        text(ctx,content,style.text,node.layout.width,node.layout.height,node_id,reveal)
+        tree_build_text(ctx,node,style,node_id,content,reveal)
     case .Image:
         image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size})
     case .Progress:
@@ -72,15 +98,26 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         tree_field(ctx,b,node,index,node_id,values,item,base_style,control)
     case .Selector,.Dropdown:
         options:=tree_options(b,index,values,content)
-        chosen:=int(current) if bound.value.bound else int(instance.slot[slot].held)
+        spec:=string(tree.strings[node.text_offset:][:node.text_length])
+        valued:=bound.value.bound && !bound.options.bound && strings.index_byte(spec,'=')>=0
+        chosen:=tree_option_chosen(values,bound.value,spec) if valued else int(current) if bound.value.bound else int(instance.slot[slot].held)
         next:=chosen
         if node.kind==.Selector {game_selector(ctx,node_id,options,&next,control)} else {
             game_dropdown(ctx,node_id,options,&next,control)
             if popup_is_open(ctx,id_derive(ctx,node_id,"list")) {b.animating=true}
         }
         if next!=chosen {
-            if bound.value.bound {bound_write(values,bound.value,f64(next))} else {instance.slot[slot].held=f32(next)}
-            changed(ctx,b,node,index,item,base_style,f64(next))
+            written,text:=f64(next),""
+            if valued {
+                value:=option_value(spec,next)
+                if bound.value.text {text=value} else {written=bound_option_number(bound.value,value)}
+            }
+            switch {
+            case bound.value.text:  bound_write_text(values,bound.value,text)
+            case bound.value.bound: bound_write(values,bound.value,written)
+            case:                   instance.slot[slot].held=f32(next)
+            }
+            changed(ctx,b,node,index,item,base_style,written,text=text)
         }
     case .Radio:
         chosen:=bound.value.bound && int(current)==int(node.choice) || !bound.value.bound && selected
@@ -121,7 +158,7 @@ tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Op
     o:=&b.instance.bounds[index].options
     if !o.bound {return {joined=content}}
     options:=Options{array=rawptr(uintptr(values)+uintptr(o.offset)),count=int(o.count),stride=int(o.stride)}
-    if o.elem==.Enum {options.size,options.names,options.joined=int(o.stride),o.choices,content}
+    if o.elem==.Enum {options.size,options.names,options.joined=int(o.stride),bound_choices(o^),content}
     return options
 }
 

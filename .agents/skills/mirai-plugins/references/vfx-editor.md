@@ -145,7 +145,7 @@ without `file`) it is the default effect. They are stored in `.mirai/thumbs` lik
   (unwritten values like those of an instance, framing). The rows that write through `write`:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`).
 - In an open editor with `vfx` enabled (the demo): `editor.document` with `Open` and the path of a
-  `.particle`, `editor.capture` with the UI and the content browser filtered by Particle,
+  `.particle`, `capture` with the UI and the content browser filtered by Particle,
   `particle.inspect` and `particle.instance.inspect`. The preview (document and thumbnails) is
   only seen there, with validation: an effect with a Vfx program, the time strip backward and
   forward, and a document frame without changes that does not draw. A project without `vfx` (the

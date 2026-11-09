@@ -55,7 +55,7 @@ Place_Test :: struct {
 
 Place_Query :: struct {
     querier:core.Entity,
-    request:u32,          // given back in the result
+    request:u32,          // place_query writes it: given back in the result
     center:Place_Context, // around whom: the querier, the target or the point
     target:core.Entity,
     point:[3]f32,
@@ -75,10 +75,18 @@ Place_Query :: struct {
 @(storage,queue)
 Place_Requests :: struct {
     using queue:core.Queue(Place_Query),
+    last:u32, // of the requests asked for so far: never 0
 }
 
-// Asks for places for the querier; its Place_Result answers with `request`.
-place_query :: proc(r:^Place_Requests,query:Place_Query) {core.push(&r.queue,query)}
+// Asks for places for the querier: the number its Place_Result answers with.
+place_query :: proc(r:^Place_Requests,query:Place_Query) -> u32 {
+    r.last+=1
+    if r.last==0 {r.last=1}
+    query:=query
+    query.request=r.last
+    core.push(&r.queue,query)
+    return r.last
+}
 
 Place_Status :: enum u8 {None,Waiting,Found,Empty}
 
@@ -295,7 +303,7 @@ place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querie
     case .Distance:
         return linalg.length(candidate-from.position)
     case .Facing:
-        forward:=mm.quat_rotate(from.rotation,mm.Vec3{0,0,1})
+        forward:=mm.quat_forward(from.rotation)
         to:=candidate-from.position
         to.y,forward.y=0,0
         if linalg.length(to)<1e-4 || linalg.length(forward)<1e-4 {return 1}

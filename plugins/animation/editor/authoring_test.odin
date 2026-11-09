@@ -92,7 +92,7 @@ skeleton_authoring_preserves_identity_and_validates_sockets :: proc(t:^testing.T
     authoring_test_register(f,t,"socket",Socket_Set_Params,authoring_socket_set,&defaults)
     inspect:=Authoring_Inspect_Params{limit=1}
     authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,authoring_skeleton_inspect,&inspect)
-    result:=authoring_test_execute(f,"create",`{"path":"rig.skeleton","bones":[{"name":"root","path":"root","parent":-1,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}]}`)
+    result:=authoring_test_execute(f,"create",`{"path":"rig.skeleton","bones":[{"name":"root","path":"root","position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}]}`)
     if !testing.expect_value(t,result.code,0) {return}
     id:=authoring_test_id(f,"rig.skeleton");testing.expect(t,id!={})
     revision:=authoring_test_revision(f,"rig.skeleton")
@@ -110,7 +110,7 @@ skeleton_authoring_preserves_identity_and_validates_sockets :: proc(t:^testing.T
     testing.expect_value(t,result.code,0)
     f.session.mode=.Play
     result=authoring_test_execute(f,"socket",fmt.tprintf(`{{"asset":"%s","name":"hand","bone":"root"}}`,authoring_test_id_text(id)))
-    testing.expect_value(t,result.code,api.SERVER_ERROR)
+    testing.expect_value(t,result.code,0)
 }
 
 @(test)
@@ -122,7 +122,7 @@ skeleton_authoring_defaults_reference_poses_to_identity_and_rejects_invalid_rota
     authoring_test_register(f,t,"create",Skeleton_Create_Params,authoring_skeleton_create,create)
     authoring_test_register(f,t,"bone",Skeleton_Bone_Set_Params,authoring_bone_set,&bone)
     authoring_test_register(f,t,"socket",Socket_Set_Params,authoring_socket_set,&socket)
-    result:=authoring_test_execute(f,"create",`{"path":"rig.skeleton","bones":[{"name":"root","path":"root","parent":-1},{"name":"hand","path":"root/hand","parent":0,"position":[0,1,0]}]}`)
+    result:=authoring_test_execute(f,"create",`{"path":"rig.skeleton","bones":[{"name":"root","path":"root"},{"name":"hand","path":"root/hand","parent":"root","position":[0,1,0]}]}`)
     if !testing.expect_value(t,result.code,0) {return}
     id:=authoring_test_id(f,"rig.skeleton");identity:=authoring_test_id_text(id)
     result=authoring_test_execute(f,"socket",fmt.tprintf(`{{"asset":"%s","name":"weapon","bone":"root/hand"}}`,identity))
@@ -139,7 +139,7 @@ skeleton_authoring_defaults_reference_poses_to_identity_and_rejects_invalid_rota
         testing.expect_value(t,view.sockets[0].offset,mm.TRANSFORM_IDENTITY)
     }
     asset.asset_close(&file)
-    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","index":1,"bone":{{"name":"palm"}}}}`,identity))
+    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","path":"root/hand","bone":{{"name":"palm"}}}}`,identity))
     if !testing.expect_value(t,result.code,0) {return}
     if !testing.expect_value(t,authoring_test_load(f,"rig.skeleton",&file),asset.Error.None) {return};defer asset.asset_close(&file)
     view,error=asset.skeleton_view(&file,&f.assets.types)
@@ -152,15 +152,18 @@ skeleton_authoring_defaults_reference_poses_to_identity_and_rejects_invalid_rota
         testing.expect_value(t,view.bones[1].parent,i32(0))
     }
     revision:=authoring_test_revision(f,"rig.skeleton")
-    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","index":1,"bone":{{"name":"palm","rotation":[0,0,0,2]}}}}`,identity))
+    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","path":"root/hand","bone":{{"name":"palm","rotation":[0,0,0,2]}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.skeleton"),revision)
-    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","index":1,"bone":{{"name":"palm","path":"root/hand","parent":0}}}}`,identity))
+    result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","path":"root/hand","bone":{{"name":"palm","path":"root/hand","parent":"root"}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.skeleton"),revision)
     schema:=authoring_result_schema(Skeleton_Bone_Set_Params,type_info_of(Skeleton_Bone_Set_Params),context.temp_allocator)
-    testing.expect(t,!strings.contains(schema,`"path"`) && !strings.contains(schema,`"parent"`))
-    result=authoring_test_execute(f,"create",`{"path":"invalid.skeleton","bones":[{"name":"root","path":"root","parent":-1,"rotation":[0,0,0,2]}]}`)
+    testing.expect(t,!strings.contains(schema,`"parent"`))
+    result=authoring_test_execute(f,"create",`{"path":"invalid.skeleton","bones":[{"name":"root","path":"root","rotation":[0,0,0,2]}]}`)
     testing.expect_value(t,result.code,api.INVALID_PARAMS)
     testing.expect(t,!authoring_test_exists(f,"invalid.skeleton"))
+    result=authoring_test_execute(f,"create",`{"path":"orphan.skeleton","bones":[{"name":"root","path":"root","parent":"missing"}]}`)
+    testing.expect_value(t,result.code,api.INVALID_PARAMS)
+    testing.expect(t,!authoring_test_exists(f,"orphan.skeleton"))
 }
 
 @(test)
@@ -182,19 +185,34 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     params:=fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","keys":[{{"time":0,"value":[0,0,0,0]}},{{"time":1,"value":[1,0,0,0],"interpolation":"Cubic_Spline","tangents":true,"in_slope":[1,0,0,0],"out_slope":[1,0,0,0]}}]}}`,identity)
     if !testing.expect_value(t,authoring_test_execute(f,"track",params).code,0) {return}
     unchanged:=authoring_test_revision(f,"clip.anim")
-    result:=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","track":0,"index":1,"key":{{"time":-1,"value":[2,0,0,0]}}}}`,identity))
+    result:=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":-1,"key":{{"value":[2,0,0,0]}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"clip.anim"),unchanged)
-    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","track":0,"index":1,"key":{{"time":1,"value":[2,0,0,0],"interpolation":"Cubic_Spline"}}}}`,identity))
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":1,"key":{{"value":[2,0,0,0],"interpolation":"Cubic_Spline"}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"clip.anim"),unchanged)
-    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","track":0,"index":2,"key":{{"time":2,"value":[2,0,0,0]}}}}`,identity))
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":2,"key":{{"value":[2,0,0,0]}}}}`,identity))
     testing.expect_value(t,result.code,0)
-    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","index":0,"marker":{{"time":0.5,"name":"step"}}}}`,identity))
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","time":0.5}}`,identity))
+    testing.expect_value(t,result.code,0)
+    // A marker is named; the key at a time is replaced, another goes in order.
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","time":0.75}}`,identity))
+    testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","time":0.5,"add":true}}`,identity))
+    testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","time":0.6}}`,identity))
+    testing.expect_value(t,result.code,api.INVALID_PARAMS)
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","at":0.5,"remove":true}}`,identity))
+    testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":0.5,"key":{{"value":[3,0,0,0]}}}}`,identity))
+    testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":0.5,"key":{{"value":[4,0,0,0]}}}}`,identity))
+    testing.expect_value(t,result.code,0)
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":0.5,"remove":true}}`,identity))
     testing.expect_value(t,result.code,0)
     result=authoring_test_execute(f,"clip",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"stride","root":{{"bone":"root","translation":true,"rotation":false}}}}`,identity))
     testing.expect_value(t,result.code,0)
-    result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","clip":"stride","track":0}}`,identity))
+    result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","clip":"stride","target":"pulse","property":"Float"}}`,identity))
     testing.expect_value(t,result.code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"keys_total":3`) && strings.contains(text,`"index":1`) && strings.contains(text,`"interpolation": "Cubic_Spline"`))
+    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"keys_total":3`) && strings.contains(text,`"interpolation": "Cubic_Spline"`))
     file:asset.Asset
     testing.expect_value(t,authoring_test_load(f,"clip.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&f.assets.types)
@@ -208,7 +226,7 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     saved,written:=editor.assets_save_all(&f.session)
     testing.expect(t,written && saved==1 && os.exists(disk) && !editor.asset_unsaved(&f.session,id))
     kept:=authoring_test_revision(f,"clip.anim")
-    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"stride","index":1,"marker":{{"time":0.25,"name":"lift"}}}}`,identity))
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"stride","name":"lift","time":0.25}}`,identity))
     testing.expect_value(t,result.code,0)
     testing.expect(t,authoring_test_revision(f,"clip.anim")!=kept && editor.asset_unsaved(&f.session,id))
     testing.expect_value(t,editor.assets_discard(&f.session,editor.assets_unsaved_paths(&f.session)),1)
@@ -225,16 +243,16 @@ pose_profile_authoring_edits_typed_rows_independently_and_rejects_invalid_values
     authoring_test_register(f,t,"inspect",Profile_Inspect_Params,authoring_profile_inspect,&inspect)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"rig.pose"}`).code,0) {return}
     id:=authoring_test_id(f,"rig.pose");identity:=authoring_test_id_text(id)
-    result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","index":0,"look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":0.8,"enabled":true}}}}`,identity))
+    result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":0.8,"enabled":true}}}}`,identity))
     testing.expect(t,result.code==0,result.message)
     revision:=authoring_test_revision(f,"rig.pose")
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","index":0}}`,identity))
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.pose"),revision)
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","index":0,"look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":-1,"enabled":true}}}}`,identity))
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":-1,"enabled":true}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.pose"),revision)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,identity))
     testing.expect_value(t,result.code,0);testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"weight": 0.8`))
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","index":0,"remove":true}}`,identity))
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":0.8,"enabled":true}},"remove":true}}`,identity))
     testing.expect_value(t,result.code,0);testing.expect_value(t,authoring_test_id(f,"rig.pose"),id)
 }
 
@@ -248,7 +266,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     authoring_test_register(f,t,"profile",Authoring_Create_Params,authoring_profile_create)
     poses:=Profile_Poses_Params{tolerance=PROFILE_POSES_TOLERANCE}
     authoring_test_register(f,t,"poses",Profile_Poses_Params,authoring_profile_poses,&poses)
-    json:=`{"path":"face.skeleton","bones":[{"name":"root","path":"root","parent":-1,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]},{"name":"jaw","path":"root/jaw","parent":0,"position":[0,1,0],"rotation":[0,0,0,1],"scale":[1,1,1]}]}`
+    json:=`{"path":"face.skeleton","bones":[{"name":"root","path":"root","position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]},{"name":"jaw","path":"root/jaw","parent":"root","position":[0,1,0],"rotation":[0,0,0,1],"scale":[1,1,1]}]}`
     if !testing.expect_value(t,authoring_test_execute(f,"skeleton",json).code,0) {return}
     if !testing.expect_value(t,authoring_test_execute(f,"clip",`{"path":"poses.anim","name":"poses"}`).code,0) {return}
     if !testing.expect_value(t,authoring_test_execute(f,"profile",`{"path":"face.pose"}`).code,0) {return}
@@ -281,7 +299,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     testing.expect(t,error==.None && len(view.curve_poses)==1 && view.curve_poses[0].full && mm.quat_angle(view.curve_poses[0].delta.rotation,open)<1e-4 && view.curve_poses[0].delta.position==mm.Vec3{0,1,0})
     asset.asset_close(&file)
     // Without a list the markers are the poses, and the Float curves at their frames the drives they bring.
-    json=fmt.tprintf(`{{"asset":"%s","clip":"poses","index":0,"marker":{{"time":1,"name":"jaw_open"}}}}`,clip)
+    json=fmt.tprintf(`{{"asset":"%s","clip":"poses","name":"jaw_open","time":1}}`,clip)
     if !testing.expect_value(t,authoring_test_execute(f,"marker",json).code,0) {return}
     json=fmt.tprintf(`{{"asset":"%s","clip":"poses","target":"jawOpen","property":"Float","keys":[{{"time":0,"value":[0,0,0,0],"interpolation":"Step"}},{{"time":1,"value":[0.8,0,0,0],"interpolation":"Step"}},{{"time":2,"value":[0,0,0,0],"interpolation":"Step"}}]}}`,clip)
     if !testing.expect_value(t,authoring_test_execute(f,"track",json).code,0) {return}
@@ -319,7 +337,7 @@ retarget_bake_api_publishes_a_new_valid_clip_and_keeps_its_sources :: proc(t:^te
     authoring_test_register(f,t,"mapping",Profile_Set_Params,authoring_profile_set,&profile)
     authoring_test_register(f,t,"bake",Retarget_Bake_Params,authoring_retarget_bake,&bake)
     for name in ([2]string{"source","destination"}) {
-        json:=fmt.tprintf(`{{"path":"%s.skeleton","bones":[{{"name":"root","path":"root","parent":-1,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}}]}}`,name)
+        json:=fmt.tprintf(`{{"path":"%s.skeleton","bones":[{{"name":"root","path":"root","position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}}]}}`,name)
         if !testing.expect_value(t,authoring_test_execute(f,"skeleton",json).code,0) {return}
     }
     if !testing.expect_value(t,authoring_test_execute(f,"clip",`{"path":"source.anim","name":"walk"}`).code,0) {return}
@@ -330,7 +348,7 @@ retarget_bake_api_publishes_a_new_valid_clip_and_keeps_its_sources :: proc(t:^te
     mapping:=authoring_test_id_text(authoring_test_id(f,"mapping.pose"))
     json:=fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"root","property":"Position","keys":[{{"time":0,"value":[0,0,0,0]}},{{"time":1,"value":[1,0,0,0]}}]}}`,clip)
     if !testing.expect_value(t,authoring_test_execute(f,"track",json).code,0) {return}
-    json=fmt.tprintf(`{{"asset":"%s","table":"Retarget","index":0,"retarget":{{"source_bone":{{"path":""}},"target_bone":{{"path":""}},"mode":"Paths","translation":"Scaled","enabled":true}}}}`,mapping)
+    json=fmt.tprintf(`{{"asset":"%s","table":"Retarget","retarget":{{"source_bone":{{"path":""}},"target_bone":{{"path":""}},"mode":"Paths","translation":"Scaled","enabled":true}}}}`,mapping)
     if !testing.expect_value(t,authoring_test_execute(f,"mapping",json).code,0) {return}
     revision:=authoring_test_revision(f,"source.anim")
     json=fmt.tprintf(`{{"animation":"%s","source_skeleton":"%s","target_skeleton":"%s","profile":"%s","path":"baked.anim"}}`,clip,source,destination,mapping)
@@ -364,10 +382,10 @@ timeline_key_pages_fit_api_scratch_and_refuse_oversized_arrays :: proc(t:^testin
     serial.text_write_raw(&request,"]}")
     if !testing.expect_value(t,authoring_test_execute(f,"track",string(serial.writer_bytes(&request))).code,0) {return}
     revision:=authoring_test_revision(f,"capacity.anim")
-    json:=fmt.tprintf(`{{"asset":"%s","clip":"curve","track":0}}`,id)
+    json:=fmt.tprintf(`{{"asset":"%s","clip":"curve","target":"pulse","property":"Float"}}`,id)
     testing.expect_value(t,authoring_test_execute(f,"inspect",json).code,0)
     testing.expect(t,api.json_valid(context.temp_allocator,string(serial.writer_bytes(&f.out))))
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"index":511`))
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"keys_total":512`))
     request.count=end
     serial.text_write_raw(&request,`,{"time":512,"value":[512,0,0,0]}]}`)
     testing.expect_value(t,authoring_test_execute(f,"track",string(serial.writer_bytes(&request))).code,api.INVALID_PARAMS)
@@ -379,9 +397,9 @@ clip_authoring_appends_to_existing_assets_and_preserves_clips :: proc(t:^testing
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"append-clip") {return};defer authoring_test_destroy(f)
     authoring_test_register(f,t,"create",Clip_Create_Params,authoring_clip_create)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"library.anim","name":"idle"}`).code,0) {return}
-    id:=authoring_test_id(f,"library.anim");identity:=authoring_test_id_text(id)
+    id:=authoring_test_id(f,"library.anim")
     revision:=authoring_test_revision(f,"library.anim")
-    json:=fmt.tprintf(`{{"asset":"%s","name":"walk"}}`,identity)
+    json:=`{"path":"library.anim","name":"walk"}`
     if !testing.expect_value(t,authoring_test_execute(f,"create",json).code,0) {return}
     changed:=authoring_test_revision(f,"library.anim")
     testing.expect(t,changed!=revision && authoring_test_id(f,"library.anim")==id)
@@ -390,11 +408,7 @@ clip_authoring_appends_to_existing_assets_and_preserves_clips :: proc(t:^testing
     view,error:=asset.animation_view(&file,&f.assets.types)
     testing.expect_value(t,error,asset.Error.None);testing.expect_value(t,len(view.clips),2)
     testing.expect(t,base.text_get(view.clips[0].name[:])=="idle" && base.text_get(view.clips[1].name[:])=="walk")
-    json=fmt.tprintf(`{{"asset":"%s","name":"walk"}}`,identity)
     testing.expect_value(t,authoring_test_execute(f,"create",json).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"library.anim"),changed)
-    json=fmt.tprintf(`{{"asset":"%s","path":"other.anim","name":"run"}}`,identity)
-    testing.expect_value(t,authoring_test_execute(f,"create",json).code,api.INVALID_PARAMS)
-    testing.expect(t,!authoring_test_exists(f,"other.anim"))
     testing.expect_value(t,authoring_test_execute(f,"create",`{"name":"run"}`).code,api.INVALID_PARAMS)
 }

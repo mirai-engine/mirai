@@ -54,9 +54,9 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     st:=collab_state(s)
     if st==nil {return}
     r.role,r.phase=st.role,st.phase
-    api_text_put(r.invite[:],string(st.code[:st.code_length]))
-    api_text_put(r.lan_invite[:],string(st.lan_code[:st.lan_length]))
-    api_text_put(r.reason[:],st.reason)
+    base.text_set(r.invite[:],string(st.code[:st.code_length]))
+    base.text_set(r.lan_invite[:],string(st.lan_code[:st.lan_length]))
+    base.text_set(r.reason[:],st.reason)
     r.port=st.port
     for &peer,i in st.peers {
         if !peer.used {continue}
@@ -67,7 +67,7 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
             offer:[COLLAB_OFFER_BYTES]u8
             r.peers[r.count].serving=collab_offer(s,offer[:])>0
         }
-        api_text_put(r.peers[r.count].name[:],string(peer.name[:peer.name_length]))
+        base.text_set(r.peers[r.count].name[:],string(peer.name[:peer.name_length]))
         r.count+=1
     }
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops

@@ -100,6 +100,9 @@ Run :: struct {
     frame_dt:f64,               // >0: the step asked for is a frame that lasts this long, as a recording advances it
     history:^Run_History,       // its past, once it kept a copy
     history_off:bool,           // it keeps none: its ring could not be made
+    document:u64,               // edits_scene_state of the document it copied
+    quit_asked:bool,            // the game asked to quit since what holds it last looked
+    quit_held:bool,             // a plugin drives it: asking to quit does not end it
 }
 
 @(private)
@@ -174,7 +177,7 @@ Session :: struct {
     events_turns:u64,             // the turns of the history whose steps were noted
     editor_world:rawptr,
     mode:Mode,
-    edit_relative_mouse,play_relative_mouse:bool,
+    edit_relative_mouse:bool,
     play_input_released,play_capture_click:bool,
     play_stepped:bool, // paused by play.step or play.record: the viewport keeps the view of the game
     camera_run:Camera_Preview_Run,
@@ -268,6 +271,13 @@ shown_world :: proc(s:^Session) -> core.World_Ref {
 
 // The World of the document: what undo, scenes and Build work on.
 edited_world :: proc(s:^Session) -> core.World_Ref {return core.world_ref(s.edit_world,s.info)}
+
+// The world an edit writes: the document inside a transaction, which a call
+// of the API holds on it whatever plays, and otherwise what the view shows.
+editing_world :: proc(s:^Session) -> core.World_Ref {
+    if s.edits!=nil && s.edits.open {return edited_world(s)}
+    return shown_world(s)
+}
 
 playing :: proc "contextless" (s:^Session) -> bool {return s.mode!=.Edit}
 
@@ -460,7 +470,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     if scene=="" && options.restore=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
     switch {
     case options.documents!="":
-        if !documents_restore(s,options.documents) {log.error("The document tabs could not all be restored; the recovery files were kept")}
+        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be restored; the recovery files were kept: %s",why)}
     case options.restore!="":
         if error:=document_restore(s,options.restore,options.scene,options.dirty);error!=.None {
             log.errorf("the restarted scene could not be read: %s",document_error_text(error))
@@ -549,8 +559,8 @@ close :: proc(s:^Session) -> int {
     preferences_close(s)
     services_close(s)
     // A normal end leaves no chain; one for the GPU kept what it needs.
-    recovery_chains_close(s,!s.recovery.pending && s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned && !s.recovery.pending {os.remove_all(recovery_assets_folder(s))}
+    recovery_chains_close(s,s.gpu_failure!=.Ended)
+    if s.recovery.assets_owned {os.remove_all(recovery_assets_own(s))}
     recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world
@@ -568,7 +578,6 @@ close :: proc(s:^Session) -> int {
 // user goes on as it was, without input. What a run that is not shown adds to
 // the frame (layers of its UI, views) is dropped. A game of the user that
 // quits stops the Play.
-@(private)
 game_frame :: proc(s:^Session) {
     app:=s.app
     phases:=host.ALL_PHASES-{.Render}
@@ -593,7 +602,8 @@ game_frame :: proc(s:^Session) {
         if r.world!=shown {extras_drop(app,kept)}
         if app.quit {
             app.quit=false
-            if s.mode!=.Watch {s.requests+={.Stop}}
+            r.quit_asked=true
+            if s.mode!=.Watch && !r.quit_held {s.requests+={.Stop}}
         }
     }
     blocked:=app.game_input_blocked
@@ -602,6 +612,7 @@ game_frame :: proc(s:^Session) {
         if r.world==nil || r.owner==0 {continue}
         kept:=extras_mark(app)
         game_tick(s,&r,phases)
+        if app.quit {r.quit_asked,app.quit=true,false}
         if r.world!=shown {extras_drop(app,kept)}
     }
     app.game_input_blocked=blocked
@@ -636,9 +647,10 @@ run_input_give :: proc(s:^Session,r:^Run) {
 }
 
 // The UI of the game of a turn sees only what its steps give, never the
-// window of the user; that of the user once a step placed the pointer.
+// window of the user; that of the user in the frames a step gave input to, and
+// from the moment one placed the pointer.
 @(private)
-run_ui_scripted :: proc "contextless" (r:^Run) -> bool {return r.owner!=0 || r.pointer_set}
+run_ui_scripted :: proc "contextless" (r:^Run) -> bool {return r.owner!=0 || r.pointer_set || r.has_input}
 
 // What the UI of the game of a run sees in its next frame: what its steps
 // gave, over the surface of the window.
@@ -673,10 +685,11 @@ game_tick :: proc(s:^Session,r:^Run,phases:core.Phases) {
     }
     r.step=false
     history_before(s,r)
+    scripted:=run_ui_scripted(r)
     run_input_give(s,r)
     record:host.Frame_Record
     window:=app.ui_input
-    if run_ui_scripted(r) {app.ui_input=run_ui_input(r,window)}
+    if scripted {app.ui_input=run_ui_input(r,window)}
     if r.frame_dt>0 {
         // A frame of a recording: what the window does reaches no game.
         blocked:=app.game_input_blocked
@@ -734,8 +747,12 @@ requests_run :: proc(s:^Session) {
     if .Prefab_Place in requests {prefab_place_run(s)}
     if .Prefab_Action in requests {prefab_action_run(s,s.prefab_action)}
     if .Variant_Create in requests {variant_prompt_run(s)}
-    if .Recover in requests {recovery_resolve(s,false)}
-    if .Discard_Recovery in requests {recovery_resolve(s,true)}
+    if .Recover in requests {
+        if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
+    }
+    if .Discard_Recovery in requests {
+        if _,why:=recovery_resolve(s,true);why!="" {notify(s,why)}
+    }
     if .Stop in requests {
         switch {
         case s.mode==.Watch:   watch_stop(s)
@@ -805,7 +822,6 @@ open_run :: proc(s:^Session) {
 play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
     asked:=owner==0 && !simulate?s.play_asked:{}
     if owner==0 {s.play_asked={}}
-    if s.recovery.pending {return false}
     if run_find(s,owner)!=nil {return owner!=0}
     host.load_open(s.app,.Play,document_path(s.document))
     stopping:=host.load_phase_begin(s.app,.Editor)
@@ -881,7 +897,7 @@ play_view_enter :: proc(s:^Session,simulate:bool) {
 // frame it was at: its past can be looked at and played on from there. False
 // without one, or while the editor shows another game.
 play_review :: proc(s:^Session) -> bool {
-    if s.mode!=.Edit || s.replay.world==nil || s.recovery.pending {return false}
+    if s.mode!=.Edit || s.replay.world==nil {return false}
     r:^Run
     for &place in s.runs {
         if place.world==nil {r=&place;break}
@@ -914,7 +930,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     simulation_settle(s,edited_world(s))
     if !s.info.copy(world,s.edit_world) {host.app_world_free(s.app,world);return nil}
     s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player}
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=edits_scene_state(s.edits)}
     return r
 }
 
@@ -941,6 +957,7 @@ play_stop :: proc(s:^Session,force:=false) {
     if (s.mode==.Play || s.mode==.Paused) && r.history!=nil && r.history.count>0 {
         eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app)
         replay_free(s)
+        run_tell_ended(s,r)
         s.replay=r^
         r^={}
     } else {
@@ -965,6 +982,7 @@ run_stop :: proc(s:^Session,owner:int) {
 
 @(private)
 run_free :: proc(s:^Session,r:^Run) {
+    run_tell_ended(s,r)
     history_free(s,r)
     host.app_world_free(s.app,r.world)
     r^={}

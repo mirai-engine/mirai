@@ -33,6 +33,8 @@ Document_Error :: enum u8 {
     Not_A_Scene, // unreadable, or not a scene nor a prefab
     Rejected,    // the World could not take it
     Write_Failed,
+    Out_Of_Memory, // the World could not be copied out to be written
+    Capture_Failed,
     Bad_Path,    // rooted without a drive on Windows: it names no folder
     Importing,   // an import writes assets now
 }
@@ -54,6 +56,17 @@ Document :: struct {
 document_path :: proc(d:^Document) -> string {return string(d.path[:d.path_length])}
 document_file :: proc(d:^Document) -> string {return string(d.file[:d.file_length])}
 
+// The folder of the file of the open scene, absolute: a new asset of the scene
+// goes beside it, so assets stay together by what they belong to. otherwise
+// while the scene has no file.
+scene_folder :: proc(s:^Session,otherwise:string) -> string {
+    if s.document!=nil {
+        file:=document_file(s.document)
+        if at:=strings.last_index_byte(file,'/');at>0 {return file[:at]}
+    }
+    return otherwise
+}
+
 document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || edits_scene_state(s.edits)!=s.document.saved}
 
 // The name a person reads for the scene.
@@ -73,6 +86,8 @@ document_error_text :: proc(error:Document_Error) -> string {
     case .Not_A_Scene:  return "not a scene nor a prefab"
     case .Rejected:     return "the world could not take it"
     case .Write_Failed: return "the file could not be written"
+    case .Out_Of_Memory: return "there is not enough memory to copy the scene out of the World; the file was not changed"
+    case .Capture_Failed: return "the scene could not be copied out of the World: engine.diagnostics says why; the file was not changed"
     case .Bad_Path:     return "the path has a root and no drive, so it names no folder; write it with its drive, as C:/..."
     case .Importing:    return "an import writes assets now; save when it ends (asset.import_status)"
     }
@@ -165,7 +180,7 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     file:=scene_file(s,target)
     if file=="" {return .Bad_Path}
     if !strings.has_suffix(file,SCENE_EXTENSION) && !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,document_is_prefab(s)?PREFAB_EXTENSION:SCENE_EXTENSION},context.temp_allocator)}
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return .Rejected}
+    if !edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
     // A section that could not be written keeps the document unsaved.
@@ -189,14 +204,14 @@ document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recov
     if a==nil {return .No_Assets}
     if error:=prefab_observe(s);error!=.None {
         log.errorf("the overrides of the prefab instances could not be marked: %s",prefab_error_text(error))
-        return .Write_Failed
+        return .Capture_Failed
     }
     if _,error:=scene.capture(edited_world(s),captured,&a.types,{previous=s.document.previous,id=id},allocator);error!=.None {
         log.errorf("the scene could not be captured: %s",scene.error_text(error))
-        return .Write_Failed
+        return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
     if recovery!=nil {
-        if _,error:=asset.document_put_row(&captured.doc,&a.types,RECOVERY_TABLE,recovery);error!=.None {asset.scene_destroy(captured);return .Write_Failed}
+        if _,error:=asset.document_put_row(&captured.doc,&a.types,RECOVERY_TABLE,recovery);error!=.None {asset.scene_destroy(captured);return .Capture_Failed}
     }
     return .None
 }
@@ -541,6 +556,8 @@ document_opened :: proc(s:^Session) {
     s.viewport.exposure={}
     if s.viewport.exposure_source==.Camera {s.viewport.exposure_source=.Scene}
     s.view_cut=true
+    // Opened with another world on screen, what was kept of this one's light is not of this scene.
+    erender.world_light_forget(s.app,host.app_world_id(s.app,w.data))
     document_source_stamp(s)
     // What Play will play compresses meanwhile.
     play_animations_load(s,wait=false)

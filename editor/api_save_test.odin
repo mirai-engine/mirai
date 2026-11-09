@@ -40,7 +40,8 @@ save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^
     testing.expect(t,os.write_entire_file(broken,transmute([]u8)string("not a save"))==nil)
     testing.expect(t,os.write_entire_file(strings.concatenate({dir,"/notes.txt"},context.temp_allocator),{1})==nil)
 
-    _,list:=save_api_call(&session,api_save_list,(^struct{})(nil),Api_Save_List)
+    every:Api_Save_List_Params
+    _,list:=save_api_call(&session,api_save_list,&every,Api_Save_List)
     testing.expect_value(t,base.text_get(list.folder[:]),dir)
     testing.expect_value(t,base.text_get(list.slots[0].name[:]),"broken")
     testing.expect_value(t,base.text_get(list.slots[0].error[:]),save.error_text(.Corrupt))
@@ -48,10 +49,12 @@ save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^
 
     params:Api_Save_Slot_Params
     base.text_set(params.slot[:],"broken")
-    call,_:=save_api_call(&session,api_save_inspect,&params,Api_Save_Slot)
-    testing.expect(t,call.failed && strings.contains(call.error.message,"save.delete"))
-    base.text_set(params.slot[:],"con")
-    call,_=save_api_call(&session,api_save_inspect,&params,Api_Save_Slot)
+    one:Api_Save_List_Params
+    base.text_set(one.slot[:],"broken")
+    call,_:=save_api_call(&session,api_save_list,&one,Api_Save_List)
+    testing.expect(t,!call.failed)
+    base.text_set(one.slot[:],"con")
+    call,_=save_api_call(&session,api_save_list,&one,Api_Save_List)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
 
     base.text_set(params.slot[:],"broken")

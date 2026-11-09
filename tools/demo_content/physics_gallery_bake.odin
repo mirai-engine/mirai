@@ -1,5 +1,6 @@
 package main
 
+import "mirai:asset"
 import "core:fmt"
 import "mirai:core"
 import game "mirai:demo/game"
@@ -47,12 +48,12 @@ physics_bake_free :: proc(w:^Physics_Bake) {
 
 @(private)
 physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id {
-    id:=id_of("physics_cache","recorded")
+    id:=asset.content_id(PROJECT,"physics_cache","recorded")
     assets:host.Assets
-    if !host.assets_init(&assets,{root=path(o,"assets"),capacity=128}) {o.failed=true;return id}
+    if !host.assets_init(&assets,{root=path(o,"assets"),capacity=128}) {o.content.failed=true;return id}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    if !jobs.system_init(&app.jobs,{threads=0}) {o.failed=true;return id}
+    if !jobs.system_init(&app.jobs,{threads=0}) {o.content.failed=true;return id}
     defer jobs.system_destroy(&app.jobs)
     world:Physics_Bake;core.entities_init(&world.entities);defer physics_bake_free(&world)
     tables:=[3]core.Table_Info{
@@ -65,7 +66,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=128,256,1024,1
     wd.hull_capacity=128
     wd.gravity={}
-    if !sim.world_init(&physics.world,wd) {o.failed=true;return id}
+    if !sim.world_init(&physics.world,wd) {o.content.failed=true;return id}
     physics.ready=true;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
     fracture_settings:=destruct.Destruct_Settings{destructibles=1,pieces=128,connections=512}
@@ -84,7 +85,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     config.interior=game.material_asset("Cobblestone");core.add(&world.configs,owner,config);core.add(&world.colliders,owner,destruct.collider_fracture())
     physics_bake_settle(&world,nil,nil)
     record:cache.Cache_Recorder
-    if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.failed=true;return id}
+    if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.content.failed=true;return id}
     defer cache.record_destroy(&record)
     source:=[1]cache.Capture_Source{{entity=owner,object=1}}
     source[0].materials[0],source[0].materials[1]=game.material_asset("Bricks"),game.material_asset("Cobblestone")
@@ -115,9 +116,9 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
         physics_bake_settle(&world,nil,nil)
         if frame==15 || frame==30 {sim.world_apply_radial(&physics.world,{0,2.5,0},4,.6,.Constant,true,true)}
         error:=cache.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
-        if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.failed=true;return id}
+        if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.content.failed=true;return id}
         if frame<150 {sim.world_step(&physics.world,1.0/30)}
     }
-    check(o,"recorded.physics_cache",cache.cache_save(path(o,"assets/physics_gallery/recorded.physics_cache"),&o.types,id,cache.record_view(&record)))
+    asset.content_check(&o.content,"recorded.physics_cache",cache.cache_save(path(o,"assets/physics_gallery/recorded.physics_cache"),&o.content.types,id,cache.record_view(&record)))
     return id
 }

@@ -18,7 +18,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 
 ## Map
 
-- Functions, requests, events, playable template: [game.md](references/game.md).
+- Writing a game: [the docs games read](../../../docs/game/core.md), and the requests and events
+  of each library: [game.md](references/game.md).
 - `scene`, `render`, `input`, `audio`, `gui`, `save`:
   [libraries.md](references/libraries.md).
 - Per-zone values (`Volume`, `Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and
@@ -45,13 +46,13 @@ the same attributes and no private paths. Declaration and parameter binding:
   no state machines, trees or planners.
 - Mining, craters and excavation (digging deeper gives another material, veins, caves, debris):
   a Volume with an [interior](../mirai-plugins/references/terrain.md#volume-interior), the
-  game that calls `terrain.request_edit` and adds up `terrain.Terrain_Digs`, and the dust, pieces
+  game that calls `terrain.dig` and adds up `terrain.Terrain_Digs`, and the dust, pieces
   and drops per layer
   ([what digging leaves](../mirai-plugins/references/terrain.md#what-digging-leaves)); the example
   is the `dig` scene of the [demo](references/demo.md#code-demogame).
 - Testing that the game plays as it should (walk there, press that, the door opens) in a file
   played again after each change and in CI:
-  [scenarios](../mirai-agent-api/references/methods.md#scenarios), written as the
+  [scenarios](../../../docs/game/testing/scenario.md), written as the
   [player plays](../mirai-agent-api/SKILL.md#testing-like-a-player).
 - Demo, templates, generated content, portal game: [demo.md](references/demo.md).
 - Physics and destruction: [mirai-physics](../mirai-physics/SKILL.md). Networking:
@@ -67,7 +68,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    is `transient` (not saved or replicated); what must not travel over the network is `local`.
 3. The signature declares what the function reads and writes. A table owned by someone else that
    is not `shared` is not written: a request is sent to its owner (`core.place`,
-   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.Spawns`,
+   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.spawn`,
    `multiplayer.send`).
 4. Phase of the function: simulation in `fixed`, camera and presentation in `late`, own interfaces
    in `ui`, reading to draw in `render`.
@@ -87,12 +88,12 @@ the same attributes and no private paths. Declaration and parameter binding:
    sound, a message) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`,
    `multiplayer.send(&outbox, time, ...)`), which does nothing while a rollback replays the tick
    (`time.resimulating`); the game does not ask.
-7. Runtime prefab: `scene.Spawns` (request) or `scene.spawn(commands, app, ...)` with
-   `core.Commands`; its rows wait until the end of the function and are finished with
+7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
+   until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
-8. Assets are named by `base.Asset_Id`. An id that only code refers to (a prefab that gets
-   instantiated) goes as a root in `cook.mirai` so that `mirai build game` ships it.
+8. Game code names a prefab or a scene by its path in the assets; data fields hold its
+   `base.Asset_Id`.
 
 ## Invariants
 
@@ -111,7 +112,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   kind and default bindings (`[E]inp.Action_Default`), read by member through `inp.Input_Of(E)`;
   nobody writes an action's number. `input.mirai` is not
   written by hand: it holds only what Project Settings > Input, `input.set` or the player changed.
-  Reading raw `core.Input` is for cases like Escape.
+  The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
+  the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
   without telling them apart; it drives a body with `Drivable` and carries its actions. Locomotion
   turns the body's `Move_Input` into movement: the seat writes it according to `move_relative_to`,

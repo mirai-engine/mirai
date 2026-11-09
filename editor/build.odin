@@ -54,6 +54,8 @@ Build_State :: struct {
     sources:u64,        // code_fingerprint of what the library loaded was built from
     started_sources:u64, // of the build that runs
     play:Build_Play,
+    play_error:[256]u8, // why the Play that waited for the build did not start; empty when it did
+    shader_sources:u64, // shaders_fingerprint of what was last published or seen on disk
     reload:bool,        // the library built waits to be loaded (build_reload)
     probing:bool,       // a check or a run of the tests (code_probe)
 }
@@ -228,11 +230,13 @@ code_fingerprint :: proc(root:string) -> u64 {
     return hash
 }
 
-// Every file under the shaders of a project: what programs_publish_request publishes.
+// Every file under the shaders of a project and the Slang sources of its
+// plugins: what programs_publish_request publishes.
 shaders_fingerprint :: proc(root:string) -> u64 {
     names:=project.FOLDER_NAMES
     hash:u64
     files_fingerprint(project.path(root,names[.Shaders],allocator=context.temp_allocator),"",&hash,0)
+    files_fingerprint(project.path(root,names[.Plugins],allocator=context.temp_allocator),".slang",&hash,0)
     return hash
 }
 
@@ -287,7 +291,8 @@ build_reload :: proc(s:^Session) {
         b.reload=false
         b.play={}
         ai_resume_native_mark(s)
-        s.requests+={.Restart}
+        // A call that waits for this build answers first.
+        if st:=api_state(s);st!=nil && st.waiting>0 {st.restart=true} else {s.requests+={.Restart}}
     case .Reloaded:
         b.reload=false
         b.sources=b.started_sources
@@ -310,6 +315,7 @@ play_build_first :: proc(s:^Session,play:Build_Play) -> bool {
     }
     b.play=play
     b.play.pending=true
+    b.play_error={}
     return true
 }
 
@@ -324,6 +330,7 @@ build_play_resume :: proc(s:^Session) {
         return
     }
     if error:=play_begin(s,play.owner,play.players,play.online,play.ping_ms,play.saved_only);error!="" {
+        base.text_set(s.build.play_error[:],error)
         log.errorf("the game did not start after the build: %s",error)
         notify(s,"The game could not start")
     }
@@ -345,7 +352,7 @@ code_probe :: proc(s:^Session,action:build.Action,test_package:string,test_names
     job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test_names=test_names})
     started:=time.tick_now()
     for !build.job_poll(job) {
-        if time.duration_seconds(time.tick_since(started))>seconds || api_frames(s,1,0)==0 {
+        if time.duration_seconds(time.tick_since(started))>seconds || api_stop_asked(s) || api_frames(s,1,0)==0 {
             build.job_cancel(job)
             break
         }

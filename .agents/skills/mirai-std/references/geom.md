@@ -139,6 +139,10 @@ surfaces (an interior cavity has opposite orientation).
 
 - The `*_build` of `primitives.odin` fit, with their default arguments, in the centered unit cube
   with +Y up, and are closed by position except the plane.
+- The shapes of `shapes.odin` (`tube_build`, `lathe_build`, `extrude_build`, `blade_build`,
+  `fan_build`, `blob_build`) append to the same `Mesh_Buffer`, closed except the blade, whose
+  triangles face their normals; `mesh_buffer_paint` colors what has none yet, `mesh_buffer_place`
+  moves a part and `mesh_buffer_flatten` gives every triangle its own vertices.
 - `polygon_triangulate` leaves each loop edge in exactly one triangle and always terminates;
   `delaunay_triangulate` omits repeated points and gives no triangles with collinear or non-finite
   points.
@@ -232,6 +236,7 @@ decomposition.
 
 ## Verification
 
+- `shapes_test.odin`: the shapes of props are closed and face outwards; blades, fans and parts.
 - `hostile_test.odin` calls each public function with random inputs
   (`-define:GEOM_HOSTILE_ROUNDS=n`; 20,000 with `--release` when changing validation).
 - When changing an algorithm, keep the walk order and the tie-breaks: they are part of the

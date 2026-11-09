@@ -17,14 +17,10 @@ Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP 
 ([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)), and
 the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
 
-The assets of `templates/game` are written by its `tools/content`, from the project folder. It does
-not go into the game: only `game/`, `editor/` and the plugins are compiled.
-
-```sh
-odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins \
-  -collection:project=. -custom-attribute:<attributes>
-```
-
+The scene, the prefab and the `.ui` of `templates/game` are its source: files kept in the
+repository and written through the API. Its `tools/content` writes only what code generates (the
+badge and the hum); `mirai content <project>` runs it. It does not go into the game: only `game/`,
+`editor/` and the plugins are compiled.
 ## Demo
 
 [`demo/`](../../../../demo) is a complete project:
@@ -100,7 +96,7 @@ Scenes:
 - **`game.odin`**: the demo's actions (`Action`, `@(actions)`) with their default bindings
   (`Demo_Actions`), and the components of the scenes.
   - `game_use` reads the actions of the body's seat: opens doors, changes the material sample and
-    throws a cube with `scene.Spawns`.
+    throws a cube with `scene.spawn`.
   - `game_projectiles` (`stage="react"`, `before="destruct_step"`) damages with `destruct.damage`
     what the cube touches, and destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
@@ -134,7 +130,7 @@ Scenes:
   (`door_opened`).
 - **`dig_site.odin`**: `Dig_Site` (on the terrain: how many balls it digs by itself and every how
   many ticks) and `dig_site` (`stage="react"`, nothing on a client), which requests the balls with
-  `terrain.request_edit`, adds to `Dig_Inventory` the cubic meters per material of
+  `terrain.dig`, adds to `Dig_Inventory` the cubic meters per material of
   `terrain.Terrain_Digs` and picks up the `Dig_Pickup`s that a `Player` touches; `dig_hud` shows
   the inventory. It is the game's rule: the engine has no inventory.
 - **`horror.odin`**: `Light_Switch`, `House_Lamp` (its `Point_Light` gives its intensity while its
@@ -233,11 +229,10 @@ Play, F1 releases the mouse and the click that returns it chooses who receives k
 run:
 
 ```sh
-odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins \
-  -ignore-unknown-attributes -- .
+mirai content demo
 ```
 
-A `--<part>-only` flag after the path regenerates only one part
+A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
 - `--prefabs-only`: `Player.prefab`, `Person.prefab`, `Dog.prefab` and `Thrown cube.prefab`.
@@ -249,13 +244,12 @@ A `--<part>-only` flag after the path regenerates only one part
   `church_fog`, with the meshes of the render plugins' scenes.
 - `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
 - `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, its `.ui` with their English texts and their Spanish
+- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and their Spanish
   translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
   of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
 - `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
   locomotion and gallery clips of Mirai and their programs, the taller
-  Mirai and its baked clips, the spider, the rig chains, the morph jellies, the plaque and panel
-  `.ui` and the scene `animation`. Contracts: [animation
+  Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene `animation`. Contracts: [animation
   plugin](../../mirai-animation/references/animation.md).
 
 Content:
@@ -294,7 +288,7 @@ Content:
   Re-importing keeps the ids
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
-  on its own uses `base.asset_id_named`. What did not change is kept
+  on its own uses `asset.content_id`. What did not change is kept
   ([cache](../../mirai-imports/references/imports.md#import-cache)).
 - **Prefabs** (`prefabs.odin`): `Player`, `Person`, `Dog` (with `Replicate`) and `Thrown cube`; the
   scenes name them from their spawn points.

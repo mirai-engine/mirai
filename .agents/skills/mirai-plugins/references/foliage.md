@@ -249,9 +249,9 @@ What the game removes (felled, harvested, burned) does not change the source: it
 like the [tombstones](../../mirai-gameplay/references/libraries.md#scene-references) of what
 is destroyed in a section (`removal.odin`).
 
-- `foliage_remove(requests, foliage, coord, instance)` requests it with the cell and the id of the
-  instance (`Placed.id`), those given by a pick of its batches or `foliage_hit` from the body and
-  shape of a `physics.Hit`.
+- `foliage_remove(requests, plant)` requests it with a `Foliage_Plant` (its Foliage, cell and id,
+  `Placed.id`), as a pick of its batches gives it or `hit_of(foliage_physics, physics, hit)` from
+  a `physics.Hit`.
 - `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
   nothing), once per instance that the cell shows, grouped **by cell**: an entity with
   `Foliage_Removed` (`replicated`) hanging from the `Foliage` stores the cell, the count and the
@@ -344,8 +344,11 @@ the registry's memory as a file of the undo step that creates it.
   (`Foliage_Tool`).
 - `foliage_cells` inspection mode (Advanced → Foliage): the outline of each cell near the view over
   its ground, green the one that generates and yellow the one that only has manual instances.
-- **API** (`foliage_api.odin`): `foliage.create`, `foliage.type_add`, `foliage.type_set` (the
-  values it receives; the others stay), `foliage.type_remove`, `foliage.paint` (a paint, erase,
+- **API** (`foliage_api.odin`): `foliage.create` (with `name`, for its entity and file beside the
+  scene), `foliage.type_add` (a type by its mesh with
+  the values it receives; its name is unique), `foliage.type_set` (the type by its name, the
+  values it receives; the others stay; a rule's `layers` are materials of the terrain under it, as
+  `Ground_Owner.layers` lists them), `foliage.type_remove`, `foliage.paint` (a paint, erase,
   reapply, generate or ungenerate stroke from `at` to `to`), `foliage.place` and `foliage.query`
   (types with their instances and instances inside a box), each change an undo step.
 - In the content browser, `Foliage_Kinds` and `Foliage_Thumbnails` list the `.foliage` and show

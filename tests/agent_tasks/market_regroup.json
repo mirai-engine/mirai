@@ -1,0 +1,16 @@
+{
+  "project": "empty",
+  "scene": "town",
+  "prompt": "In the group Market: make a new group named Fruit row inside Market and move Fruit stall 1, Fruit stall 2 and Fruit stall 3 into it, keeping where they are in the world; delete Old stall with everything under it; and rename Fish stall to Seafood stall.",
+  "checks": [
+    {"entity": "Market/Fruit row"},
+    {"entity": "Market/Fruit row/Fruit stall 1", "world_position": [0, 0.75, -20]},
+    {"entity": "Market/Fruit row/Fruit stall 2", "world_position": [3, 0.75, -20]},
+    {"entity": "Market/Fruit row/Fruit stall 3", "world_position": [6, 0.75, -20]},
+    {"gone": "Market/Old stall"},
+    {"gone": "Market/Fish stall"},
+    {"entity": "Market/Seafood stall", "position": [9, 0.75, 0]},
+    {"count": {}, "equals": 61},
+    {"unchanged": {"except": ["Market/Fruit stall 1", "Market/Fruit stall 2", "Market/Fruit stall 3", "Market/Old stall", "Market/Fish stall"]}}
+  ]
+}

@@ -24,8 +24,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
 - `Character`: moves the entity's `Capsule` `Collider` like the solver's
   [physical character](character.md), which supports itself, climbs steps and pushes.
   - Its `Transform` is the position of the feet and the rotation, whose +Y is its
-    [vertical](character.md#the-vertical) and whose +Z faces the yaw of its move, its look (-Z at
-    yaw 0); the capsule rests on the feet (the controller sets its `center` and its surface).
+    [vertical](character.md#the-vertical) and whose -Z faces the yaw of its move, its look; the
+    capsule rests on the feet (the controller sets its `center` and its surface).
   - `up_speed` (degrees per second): how fast its vertical turns toward the opposite of its
     gravity, to walk around a planet; with 0 it stays fixed. Changing it does not recreate the
     character.
@@ -51,7 +51,7 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   supported and the ground that the end of the step found (walkable, distance, normal, velocity and
   `ground_turn`), which is the one the next step will use, the normal of the wall it leans on
   (`wall_normal`, zero without one), and how much it is in a fluid (`fluid`, `submersion`,
-  `head_depth`, `depth` and the current). Only the simulation writes them; a save
+  `head_depth`, `depth` and the current), and its `velocity`. Only the simulation writes them; a save
   restores them. Whoever writes the `Character_Move` adds `ground_turn` (how much the ground turned
   the character) to the yaw every step.
 - `core.Vertical`: the vertical frame of each character, for whoever reads it outside physics (the
@@ -317,7 +317,8 @@ zone; `gravity.odin` applies it to the simulation.
 `^phys.Body_Requests` is taken at the start of the next step:
 
 - `move_kinematic` gives the body the velocity that takes it to the pose in one tick, and pushes
-  what it touches. `launch` adds velocity to a character or replaces its own.
+  what it touches. On a character `set_velocity` replaces its own velocity and `apply_impulse`
+  adds impulse / mass.
 - **Teleporting is only `core.place`**
   ([requested places](../../mirai-core/references/core.md#requested-places)), also for the game:
   `physics_places` takes the requests on an entity with `Rigid_Body`, `Character` or proxy and
@@ -325,7 +326,7 @@ zone; `gravity.odin` applies it to the simulation.
   caring about physics. It is a jump: the drawing does not interpolate the path (`core.jump`,
   [transform and hierarchy](../../mirai-core/references/core.md#transform-and-hierarchy)).
 - A request that does nothing (non-finite values, without a body of its own, kinematic or
-  manipulation of a character, `launch` to a body) is a `physics.request_*` problem of its entity.
+  manipulation of a character) is a `physics.request_*` problem of its entity.
 - Forces: `apply_force` and `apply_torque` accumulate during one tick; the area ones
   (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
   [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a

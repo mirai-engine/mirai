@@ -14,6 +14,7 @@ SCENE_PATH_CAPACITY :: 256
 Scene_Request :: struct {
     scene:base.Asset_Id,
     path:[SCENE_PATH_CAPACITY]u8 `mirai:"text"`,
+    restart:bool, // the scene the world is now (Scene_Root), when it is served
 }
 
 Scene_Result :: struct {
@@ -42,13 +43,17 @@ request :: proc(requests:^Scene_Requests,scene:base.Asset_Id) {
     core.push(&requests.queue,Scene_Request{scene=scene})
 }
 
-// False when the path does not fit SCENE_PATH_CAPACITY.
-request_path :: proc(requests:^Scene_Requests,path:string) -> bool {
+// One that names no scene, or does not fit SCENE_PATH_CAPACITY, is served as a
+// scene that is not there: its result and a problem say so.
+request_path :: proc(requests:^Scene_Requests,path:string) {
     r:Scene_Request
-    if path=="" || len(path)>=SCENE_PATH_CAPACITY {return false}
     base.text_set(r.path[:],path)
     core.push(&requests.queue,r)
-    return true
+}
+
+// Loads again the scene the world is, as it is in the assets.
+request_restart :: proc(requests:^Scene_Requests) {
+    core.push(&requests.queue,Scene_Request{restart=true})
 }
 
 // The result of a request for this scene in the frame, by id or by path.
@@ -63,16 +68,12 @@ result_of :: proc(results:^Scene_Results,scene:base.Asset_Id,path:string="") -> 
 // at a time and in phases (loading.odin): a request waits while another loads.
 // Its result comes in the frame the scene replaces the world.
 @(step="input",loops="game editor")
-scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,problems:^core.Problems) {
+scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,root:core.Ref(Scene_Root),problems:^core.Problems) {
     core.queue_clear(&results.queue)
     launched:=!launch.taken && app.launch.scene!=""
     if launched {
         launch.taken=true
-        if !request_path(requests,app.launch.scene) {
-            fmt.eprintfln("mirai: could not load the scene %s: its path has %d characters or more",app.launch.scene,SCENE_PATH_CAPACITY)
-            host.app_exit(app,host.PLAYER_SCENE)
-            return
-        }
+        request_path(requests,app.launch.scene)
     }
     // The load under way goes on; once done, the scene is the world.
     if loads!=nil && loads.job!=nil {
@@ -97,6 +98,14 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
     core.queue_clear(&requests.queue)
     for k in kept {core.push(&requests.queue,k)}
     launch.first=launched
+    if r.restart {
+        if root.ptr!=nil {r.scene=root.scene}
+        if r.scene=={} {
+            core.push(&results.queue,Scene_Result{error=.Not_Found})
+            core.report(problems,core.NONE,"scene.restart","there is no scene to restart: the world did not come from a scene of the assets; load one with request or request_path first")
+            return
+        }
+    }
     id:=r.scene
     error:Error
     if id=={} {
@@ -152,7 +161,7 @@ load_report :: proc(app:^host.App,r:Scene_Request,error:Error,launched:bool,resu
 load_fix :: proc(error:Error) -> string {
     #partial switch error {
     case .No_Assets:     return "run the game from a project with an assets folder"
-    case .Not_Found:     return "ask for a .scene of the assets by its id or path, or import or create it"
+    case .Not_Found:     return "ask for a .scene of the assets by its id or by a path shorter than SCENE_PATH_CAPACITY, or import or create it"
     case .Invalid:       return "ask for a .scene, not another kind of asset"
     case .Corrupt:       return "open the scene in the editor and save it again"
     case .Out_Of_Memory: return "free memory or make the scene smaller"

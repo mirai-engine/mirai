@@ -130,3 +130,62 @@ the_profile_names_a_storage_it_cannot_hold :: proc(t:^testing.T) {
     testing.expect_value(t,profile_read(core.world_ref(&w,&info),&app,&state,&problems),Error.None)
     testing.expect_value(t,w.kept.level,i32(2))
 }
+
+// The profile is written by itself once its value rests: not while it keeps
+// changing, unless it never rests, and at the latest when the world goes. A
+// world that changed nothing writes nothing.
+@(test)
+the_profile_is_written_by_itself_when_it_rests_and_when_the_world_goes :: proc(t:^testing.T) {
+    directory,_:=os.temp_directory(context.temp_allocator)
+    root:=fmt.tprintf("%s/mirai-engine-save-profile-kept-%d",directory,os.get_pid())
+    os.remove_all(root)
+    defer os.remove_all(root)
+    app:host.App
+    state:Save_State
+    defer delete(state.folder)
+    app.allocator=context.allocator
+    folder_set(&state,&app,fmt.tprintf("%s/saves",root))
+    path,_:=profile_path(&state,&app)
+    storages:[1]core.Storage_Info
+    w:Profile_World
+    info:=profile_info(&storages,Progress,offset_of(Profile_World,progress))
+    ref:=core.world_ref(&w,&info)
+    work:Save_Work
+    problems:core.Problems
+    written :: proc(ref:core.World_Ref,app:^host.App,state:^Save_State) -> i32 {
+        w:=(^Profile_World)(ref.data)
+        kept:=w.progress
+        defer w.progress=kept
+        w.progress={}
+        if profile_read(ref,app,state)!=.None {return -1}
+        return w.progress.level
+    }
+
+    kept_watch(&work,ref,&app,&state,nil,0,&problems)
+    kept_watch(&work,ref,&app,&state,nil,KEPT_LOOK,&problems)
+    testing.expect(t,!os.is_file(path),"nothing changed: nothing is written")
+
+    w.progress.level=1
+    kept_watch(&work,ref,&app,&state,nil,KEPT_LOOK/2,&problems)
+    testing.expect(t,!os.is_file(path),"before the next look")
+    kept_watch(&work,ref,&app,&state,nil,KEPT_LOOK/2,&problems)
+    testing.expect(t,!os.is_file(path),"the look that sees the change waits for it to rest")
+    kept_watch(&work,ref,&app,&state,nil,KEPT_LOOK,&problems)
+    testing.expect_value(t,written(ref,&app,&state),i32(1))
+
+    for look in 0..<KEPT_LOOKS {
+        w.progress.level=i32(10+look)
+        kept_watch(&work,ref,&app,&state,nil,KEPT_LOOK,&problems)
+    }
+    testing.expect_value(t,written(ref,&app,&state),i32(10+KEPT_LOOKS-1))
+
+    w.progress.level=77
+    kept_flush(&work,ref,&app,&state,nil,&problems)
+    testing.expect_value(t,written(ref,&app,&state),i32(77))
+    testing.expect_value(t,problems.count,0)
+
+    other:Save_Work
+    w.progress.level=88
+    kept_flush(&other,ref,&app,&state,nil,&problems)
+    testing.expect_value(t,written(ref,&app,&state),i32(77))
+}

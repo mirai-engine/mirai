@@ -228,7 +228,13 @@ Api_Project :: struct {
     file:[256]u8 `mirai:"text,label=The project.mirai it reads and writes"`,
     manifest:u8 `mirai:"any,label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
     plugins:[1]Api_Project_Plugin `mirai:"list,label=Every plugin the project can see"`,
-    building:bool `mirai:"label=A build of the project started: the plugins or the options of the build changed"`,
+}
+
+// What project.set writes.
+Api_Project_Changed :: struct {
+    building:bool `mirai:"label=A build of the project still runs: the plugins or the options of the build changed and its wait ran out"`,
+    build_error:[512]u8 `mirai:"text,label=Empty; or the first error of the build the change started and that failed"`,
+    active_plugins:[1][64]u8 `mirai:"text,list,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
 }
 
 @(private)
@@ -245,14 +251,14 @@ API_PROJECT_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"proper
 @(private)
 project_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,writes_result=true,flags={.Read_Only},run=api_project_get})
-    api_register(s,st,{name="project.set",params_schema=API_PROJECT_SET_SCHEMA,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor.",result=Api_Project,writes_result=true,run=api_project_set})
+    api_register(s,st,{name="project.set",params_schema=API_PROJECT_SET_SCHEMA,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,writes_result=true,run=api_project_set})
 }
 
 @(private)
-api_project_get :: proc(s:^Session,call:^api.Call) {api_project_write(s,call,false)}
+api_project_get :: proc(s:^Session,call:^api.Call) {api_project_write(s,call)}
 
 @(private)
-api_project_write :: proc(s:^Session,call:^api.Call,building:bool) {
+api_project_write :: proc(s:^Session,call:^api.Call) {
     if !s.has_project {
         api.call_fail(call,api.SERVER_ERROR,"There is no project: open a folder with a project.mirai")
         return
@@ -288,7 +294,7 @@ api_project_write :: proc(s:^Session,call:^api.Call,building:bool) {
         serial.text_write_string(out,base.text_get(plugin.manifest.version[:]))
         serial.write_u8(out,'}')
     }
-    serial.text_write_raw(out,fmt.tprintf(`], "building": %v}`,building))
+    serial.text_write_raw(out,"]}")
 }
 
 // The fields of project.mirai of the params, as an object of its own, and
@@ -376,6 +382,45 @@ api_project_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
-    api_project_write(s,call,building)
+    build_error:string
+    if building {building,build_error=api_project_build_wait(s)}
+    api_project_set_write(s,call,building,build_error)
+}
+
+// The build a change of the project started, waited for as build.start waits:
+// whether it still runs when the wait is over, and what failed when it ended
+// failing, so that whoever changed the project hears it in the answer.
+@(private)
+api_project_build_wait :: proc(s:^Session) -> (building:bool,error:string) {
+    running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
+    api_wait(s,API_BUILD_SECONDS,nil,running)
+    return api_project_build_state(s)
+}
+
+@(private)
+api_project_build_state :: proc(s:^Session) -> (building:bool,error:string) {
+    b:=s.build
+    if b.phase==.Running || b.reload {return true,""}
+    if b.phase==.Failed {return false,api_build_first_error(s)}
+    return false,""
+}
+
+// What project.set answers: whether a build still runs, what failed and which plugins are on.
+@(private)
+api_project_set_write :: proc(s:^Session,call:^api.Call,building:bool,build_error:string) {
+    opened,error:=project.open(s.project_root,s.engine_root,context.temp_allocator)
+    if error.code!=.None {
+        api.call_fail(call,api.SERVER_ERROR,project.error_text(s.project_root,error,context.temp_allocator))
+        return
+    }
+    out:=call.out
+    serial.text_write_raw(out,fmt.tprintf(`{{"building": %v, "build_error": `,building))
+    serial.text_write_string(out,build_error)
+    serial.text_write_raw(out,`, "active_plugins": [`)
+    for index,i in opened.active {
+        if i>0 {serial.text_write_raw(out,", ")}
+        serial.text_write_string(out,base.text_get(opened.plugins[index].manifest.name[:]))
+    }
+    serial.text_write_raw(out,"]}")
 }
 

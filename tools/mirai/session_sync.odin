@@ -3,7 +3,6 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "mirai:editor/api"
 import "mirai:project"
 
 // mirai session sync <copy> <path>...: brings the files named from the
@@ -12,13 +11,12 @@ import "mirai:project"
 // path is relative to the project, with forward slashes; one gone from the
 // project is deleted from the copy. When code or the manifest changed the
 // session of the copy is restarted (built and opened again with its
-// arguments); when only assets changed its editor reads them again
-// (asset.reload). --no-build copies and does neither.
+// arguments); assets its editor reads again by itself at its next call.
+// --no-build copies and does not restart it.
 
 // What a sync copies, deletes and then does.
 Session_Sync :: struct {
     copy,delete:[dynamic]string, // relative paths, in the temp allocator
-    assets:[dynamic]string,      // of those, the ones under the assets folder, relative to it
     rebuild:bool,                // something other than assets changed
 }
 
@@ -27,7 +25,6 @@ Session_Sync :: struct {
 session_sync_plan :: proc(folder,copy:string,paths:[]string) -> (plan:Session_Sync,problem:string) {
     plan.copy=make([dynamic]string,context.temp_allocator)
     plan.delete=make([dynamic]string,context.temp_allocator)
-    plan.assets=make([dynamic]string,context.temp_allocator)
     assets_folder:=project.FOLDER_NAMES[.Assets]
     for given in paths {
         relative,_:=strings.replace_all(given,"\\","/",context.temp_allocator)
@@ -45,7 +42,7 @@ session_sync_plan :: proc(folder,copy:string,paths:[]string) -> (plan:Session_Sy
         if os.is_file(source) {append(&plan.copy,relative)} else if os.is_file(project.path(copy,relative,allocator=context.temp_allocator)) {append(&plan.delete,relative)} else {
             return {},fmt.tprintf("%s is neither in the project nor in the copy",given)
         }
-        if inside,_,rest:=strings.partition(relative,"/");inside==assets_folder && rest!="" {append(&plan.assets,rest)} else {plan.rebuild=true}
+        if inside,_,rest:=strings.partition(relative,"/");inside!=assets_folder || rest=="" {plan.rebuild=true}
     }
     if len(paths)==0 {return {},"name the files to bring into the copy"}
     return plan,""
@@ -85,19 +82,6 @@ session_sync :: proc(root,copy:string,args:[]string) -> int {
     if problem!="" {fmt.eprintfln("mirai session sync: %s",problem);return 2}
     if problem=session_sync_apply(folder,copy,plan);problem!="" {fmt.eprintfln("mirai session sync: %s",problem);return 1}
     fmt.printfln("Copied %d and deleted %d files into %s.",len(plan.copy),len(plan.delete),copy)
-    if no_build {return 0}
-    if plan.rebuild {return cmd_session(root,{"restart",copy})}
-    file,alive:=session_find(copy)
-    if !alive || !session_answers(file.port) {return 0}
-    params:=strings.builder_make(context.temp_allocator)
-    strings.write_string(&params,`{"assets":[`)
-    for path,i in plan.assets {
-        if i>0 {strings.write_byte(&params,',')}
-        strings.write_quoted_string(&params,path)
-    }
-    strings.write_string(&params,`]}`)
-    result,err,called:=api.rpc_call(file.port,"asset.reload",strings.to_string(params),1,30000,context.temp_allocator)
-    if !called {fmt.eprintfln("mirai session sync: the editor of the copy did not read the assets again: %s",err.message);return 1}
-    fmt.println(result)
+    if !no_build && plan.rebuild {return cmd_session(root,{"restart",copy})}
     return 0
 }

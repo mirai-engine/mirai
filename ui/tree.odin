@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:hash"
 import "core:math"
 import "core:mem"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -24,12 +25,12 @@ Node_Kind :: enum u8 {
     Spacer,
     Component, // authoring only: expanded into a Box subtree at load
     Scroll,   // a container whose content moves with the wheel when it does not fit
-    Switcher, // a container that builds one of the nodes it holds: the one its bound value says, or index
+    Switcher, // a container that builds one of the nodes it holds: bound to an enum or a text, the one of that name; bound to a number, the one at that position; else index
     List,     // a container that builds the one node it holds once per element of the array bind_items names
     Prompt,   // the prompts of its action, as the device the player holds shows them
     Slider,   // edits its bound number between range[0] and range[1], in steps of range[2]
     Field,    // edits its bound text, as an ASCII keyboard types it, with its own text as the placeholder; Enter reports Submitted
-    Selector, // steps through its options (bind_items, or its text separated by '|'); its bound value is the index
+    Selector, // steps through its options (bind_items, or its text separated by '|'): its bound value is the index, or, for options written Label=Value, the value of the one chosen (a number, the name of a member of an enum, or a text for a text field)
     Dropdown, // picks one of its options, as a Selector has them, from a list that opens under it
     Radio,    // selected while its bound value equals choice; choosing it writes choice there
     Tooltip,  // a container built next to the node that holds it while that one is hovered or focused
@@ -59,7 +60,7 @@ Node_Flag :: enum u8 {
     Localized,   // its text, and each of its options, has translations in its tree, by text_id
     Draggable,   // the pointer drags it: Dragged, and Dropped on the node it is let go over
     Drop,        // takes what is let go over it
-    Focus_First, // takes the focus when its tree takes input and nothing there has it
+    Focus_First, // takes the focus when its tree takes input and nothing there has it, or when the page of a Switcher that had it gives way to its own
     Wrap_X,      // a container: the focus that leaves it by a side comes back by the other
     Wrap_Y,
     Skip,        // navigation passes over it
@@ -67,6 +68,7 @@ Node_Flag :: enum u8 {
     Invisible,   // it keeps its room but draws nothing and takes no input; with a Visible binding, what false does
     Multiline,   // a Field: its text keeps line breaks and wraps
     Password,    // a Field: shows a mark for each character
+    Slot,        // a template: what its instance holds goes in this node, the last of the template
 }
 Node_Flags :: bit_set[Node_Flag;u16]
 
@@ -100,7 +102,9 @@ Node_Style :: struct {
     program:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a ui program that colors the fill
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
-    transition:f32, // seconds its colors take to go from one state to the next
+    transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
+    scale:f32,      // drawn this size around its center, as move; 0: 1
 }
 // How an image takes the rectangle of its node.
 Image_Fit :: enum u8 {
@@ -174,6 +178,7 @@ Widget_Tree :: struct {
     grid_tracks:[]Grid_Tracks,grid_track_count:int,
     anim_names:[]u64,  // name_hash of each animation, by Anim minus one: what tree_play finds
     programs:[]u32,    // of each style: the ui program of its fill; 0: none
+    pages_focused:bool, // tree_pages_focus went over its nodes: the first build does it
     allocator:runtime.Allocator,
 }
 Widget_Tree_Desc :: struct {
@@ -344,6 +349,8 @@ TREE_TAB_PADDING :: [4]f32{10,4,10,4} // around the text of a tab of a Tabs
 Slot :: struct {
     shown,hovered,focused,latched:bool,
     armed:bool,         // a Button saw its action up: the press that showed it does not click it
+    page:i32,           // 1 + the node a Switcher built
+    page_focused:bool,  // the focus was on a widget of that node
     held:f32,           // seconds its action or the pointer has held a Button
     tip:f32,            // seconds the pointer or the focus has been in it: what its Tooltip waits
     played:Anim_Player, // what tree_play started
@@ -464,7 +471,8 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o:[Binding]bool
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
-        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),.Entity if node.kind==.View else .Number)
+        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
         b.disabled,o[.Disabled]=tree_bind_field(instance,scope,name(tree,&node,.Disabled),.Number)
@@ -570,11 +578,11 @@ Tree_Event :: struct {
     kind:Tree_Event_Kind,
     on:bool,   // Changed: what a checkbox holds now
     item:i32,  // the element of the List the node is in; -1: in none
-    value:f64, // Changed: the number written, or the index of the option chosen
+    value:f64, // Changed: the number written, or the index of the option chosen (of one written Label=Value: its value)
     from:u64,  // Dropped: the name of the node dragged; Finished: of the animation
     from_item:i32,
     from_owner:u64, // Dropped: Context.owner while the tree of the node dragged was built
-    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds
+    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds; Changed by an option of a text field: its value
     rect:Rect, // where the node was laid out in the last frame, in layout units of its surface; zero before
 }
 TREE_EVENT_TEXT :: 256
@@ -618,7 +626,7 @@ tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
 }
 @(private)
 tree_box :: proc(node:^Node,style:^Node_Style,id:Id) -> Box {
-    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
+    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width if style.stroke_width>0 || style.stroke[3]==0 else 1,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
 }
 
 @(private)
@@ -631,6 +639,7 @@ Tree_Build :: struct {
     count,dropped:int,
     floor:int, // the layer the tree is built in
     built:int, // nodes built
+    turned:bool, // a Switcher left the page with the focus for this one: its Focus_First takes it
     animating:bool,
     ghost:int, // the node built under the pointer for a drag, whatever it shows; -1: none
     tracks,tracks_end:int, // the rows of the grid tracks of the frame its own start after, and where they end
@@ -646,6 +655,10 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     for g in tree.grid_tracks[:tree.grid_track_count] {if grid_tracks_add(ctx,g)==0 {break}}
     b.tracks_end=ctx.layout.track_count
     instance.bar_next_count=0
+    if !tree.pages_focused {
+        tree_pages_focus(tree.nodes[:tree.node_count])
+        tree.pages_focused=true
+    }
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}
@@ -853,6 +866,15 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
     style:=&resolved
+    // A style moves what its node draws, not where the layout or the pointer find it.
+    moved:=false
+    if style.move!={} || style.scale!=0 && style.scale!=1 {
+        look:=ANIM_IDENTITY
+        look.offset=style.move
+        if style.scale!=0 {look.scale={style.scale,style.scale}}
+        moved=animated_begin(ctx,node_id,look,still=true)
+    }
+    defer if moved {animated_end(ctx)}
     image_ref:Node_Image
     if node.image!=0 && int(node.image)<=tree.image_count {image_ref=tree.images[node.image-1]}
     if bound.image.bound && ctx.game.texture!=nil {
@@ -952,8 +974,18 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
     }
     #partial switch node.kind {
     case .Switcher:
-        shown:=int(bound_number(values,instance.bounds[index].value)) if instance.bounds[index].value.bound else int(node.index)
+        shown:=tree_switcher_page(tree,node,index,next,instance.bounds[index].value,values)
+        state:=&instance.slot[slot]
+        outer:=b.turned
+        b.turned||=state.page_focused && state.page!=i32(shown+1)
+        state.page=i32(shown+1)
+        first:=ctx.widget_count
         tree_build_child(ctx,b,index,next,shown,values,copy,item)
+        b.turned=outer
+        state.page_focused=false
+        for &w in ctx.widgets[first:ctx.widget_count] {
+            if w.id==ctx.focus {state.page_focused=true;break}
+        }
     case .List:
         tree_build_list(ctx,b,node,index,slot,values,copy,axis,virtual,items,area)
     case .Tabs:
@@ -974,6 +1006,34 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         scroll_end(ctx,area,&instance.scrolls[slot])
     }
     box_end(ctx,box^)
+}
+
+// What the bound value of a node of this kind must hold.
+@(private)
+tree_value_want :: proc "contextless" (kind:Node_Kind) -> Bound_Want {
+    #partial switch kind {
+    case .View:              return .Entity
+    case .Switcher:          return .Shown
+    case .Selector,.Dropdown:return .Option
+    }
+    return .Number
+}
+
+// The position of the node a Switcher builds: by name when it binds an enum or
+// a text (the child called as its value; -1, none, when it has no such child),
+// else by index.
+@(private)
+tree_switcher_page :: proc(tree:^Widget_Tree,node:^Node,index,next:int,bound:Bound,values:rawptr) -> int {
+    if !bound.bound {return int(node.index)}
+    if bound.choices_of==nil && !bound.text {return int(bound_number(values,bound))}
+    name:=bound_name(values,bound)
+    if name=="" {return -1}
+    wanted:=base.name_hash(name)
+    for child,i:=index+1,0;child<next;i+=1 {
+        if tree.nodes[child].name==wanted {return i}
+        child+=int(tree.nodes[child].subtree)+1
+    }
+    return -1
 }
 
 // Builds the node held at position at of the node at index, and no other.

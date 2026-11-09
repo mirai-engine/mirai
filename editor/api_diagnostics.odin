@@ -23,7 +23,7 @@ API_DIAGNOSTICS_BUILD_TEXT :: 4096
 Api_Diagnostics_Params :: struct {
     since:u64 `mirai:"optional,label=Lists the console entries written after this serial; 0: from the oldest"`,
     min_level:Console_Level `mirai:"optional,label=Lowest level of the console entries listed"`,
-    limit:int `mirai:"optional,min=1,max=500,label=Most console entries listed: the newest ones"`,
+    limit:int `mirai:"optional,min=1,max=500,clamp,label=Most console entries listed: the newest ones"`,
 }
 
 @(private) API_DIAGNOSTICS_RESULT :: `{"type":"object","properties":{` +
@@ -167,7 +167,7 @@ api_problems_write :: proc(w:core.World_Ref,problems:^core.Problems,out:^serial.
         named:=p.entity!=core.NONE
         serial.write_u8(out,'{')
         api.write_key(out,"id",true)
-        if id:=api_entity_id(w,p.entity);named && id!=0 {api_write_id(out,id)} else {serial.text_write_raw(out,"null")}
+        if id:=api_entity_id(w,p.entity);named && id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
         api.write_key(out,"entity")
         if named {serial.write_u8(out,'"');serial.text_write_hex(out,u64(p.entity));serial.write_u8(out,'"')} else {serial.text_write_raw(out,"null")}
         api.write_text(out,"name",entity_name(w,p.entity) if named else "")

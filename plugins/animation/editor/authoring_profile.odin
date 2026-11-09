@@ -21,12 +21,11 @@ Profile_Inspect_Params :: struct {
     asset:base.Asset_Id,
     table:Profile_Table,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
 }
 Profile_Set_Params :: struct {
     asset:base.Asset_Id,
-    table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts"`,
-    index:u32 `mirai:"label=Existing row or the row count of the table to append; a table holds 256 rows; Curve_Pose, Curve_Drive and Curve_Material 4096; Grounding one rig of up to 16 legs"`,
+    table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts. A row with the key of that value is replaced or removed and otherwise appended: end for IK and Contact; bone for Look and Limit; name for the tables that name rows; target_bone and mode for Retarget; curve and bone for Curve_Pose; from with and to for Curve_Drive; curve parameter and slot for Curve_Material; Grounding is the one rig. A table holds 256 rows; Curve_Pose, Curve_Drive and Curve_Material 4096; Grounding one rig of up to 16 legs"`,
     ik:anim.IK_Constraint `mirai:"optional"`,
     look:anim.Look_Constraint `mirai:"optional"`,
     limit:anim.Rotation_Constraint `mirai:"optional"`,
@@ -58,7 +57,7 @@ authoring_profile_register :: proc(s:^editor.Session) {
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
     authoring_method_register(s,{name="pose.profile.create",summary="Creates an empty .pose profile of rig operations; pose.profile.set fills its tables.",params=Authoring_Create_Params,params_info=type_info_of(Authoring_Create_Params),run=authoring_profile_create},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="pose.profile.set",summary="Replaces, appends or removes one row of a table of a .pose profile.",params=Profile_Set_Params,params_info=type_info_of(Profile_Set_Params),defaults=set,run=authoring_profile_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    authoring_method_register(s,{name="pose.profile.set",summary="Replaces or appends the row of a table of a .pose profile that has the key of the value, or removes it.",params=Profile_Set_Params,params_info=type_info_of(Profile_Set_Params),defaults=set,run=authoring_profile_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
     authoring_method_register(s,{name="pose.profile.poses",summary="Makes the curve poses of a .pose from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",params=Profile_Poses_Params,params_info=type_info_of(Profile_Poses_Params),defaults=poses,run=authoring_profile_poses},Profile_Poses_Result,type_info_of(Profile_Poses_Result))
 }
 
@@ -101,6 +100,15 @@ authoring_profile_inspect :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,"}")
 }
 
+// rows with value in the place of the row with its key, or after them; with
+// remove, without that row. False with no such row to remove or no room.
+@(private)
+profile_row :: proc(rows:[]$T,value:T,same:proc(a,b:T) -> bool,remove:bool,capacity:int,allocator:=context.temp_allocator) -> (result:[]T,ok:bool) {
+    at:=len(rows)
+    for &row,i in rows {if same(row,value) {at=i;break}}
+    return authoring_replace_row(rows,at,value,remove,capacity,allocator)
+}
+
 @(private)
 authoring_profile_save :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,id:base.Asset_Id,profile:anim.Pose_Profile) {
     doc:asset.Document;defer asset.document_destroy(&doc)
@@ -120,29 +128,30 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Profile_Set_Params)
     if !authoring_editable(s,call) {return}
     fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Contact="contact",.Grounding="grounding",.Retarget="retarget",.Chain_IK="chain_ik",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Chain_Retarget="retarget_chain",.Spline_IK="spline_ik",.Corrective="corrective",.Follow="follow",.Curve_Pose="curve_pose",.Curve_Drive="curve_drive",.Curve_Material="curve_material"}
-    if p.table>max(Profile_Table) || !p.remove && !authoring_field_present(call,fields[p.table]) {authoring_failure(call,"table","Required","the constraint field selected by table","missing or invalid table","Supply the constraint field selected by table");return}
+    if p.table>max(Profile_Table) || !(p.remove && p.table==.Grounding) && !authoring_field_present(call,fields[p.table]) {authoring_failure(call,"table","Required","the constraint field selected by table","missing or invalid table","Supply the constraint field selected by table");return}
     file:Authoring_File;defer asset.asset_close(&file.file)
     profile,ok:=authoring_profile_open(s,call,p.asset,&file);if !ok {return}
     replaced:=false
+    capacity:=anim.POSE_CONSTRAINTS
     switch p.table {
-    case .IK: profile.ik,replaced=authoring_replace_row(profile.ik,int(p.index),p.ik,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Look: profile.look,replaced=authoring_replace_row(profile.look,int(p.index),p.look,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Limit: profile.limits,replaced=authoring_replace_row(profile.limits,int(p.index),p.limit,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Contact: profile.contacts,replaced=authoring_replace_row(profile.contacts,int(p.index),p.contact,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Grounding: profile.grounding,replaced=authoring_replace_row(profile.grounding,int(p.index),profile_grounding_value(call,p.grounding),p.remove,1,call.allocator)
-    case .Retarget: profile.retarget,replaced=authoring_replace_row(profile.retarget,int(p.index),p.retarget,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Chain_IK: profile.chain_ik,replaced=authoring_replace_row(profile.chain_ik,int(p.index),profile_chain_value(call,p.chain_ik),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Twist: profile.twist,replaced=authoring_replace_row(profile.twist,int(p.index),profile_twist_value(call,p.twist),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Spring: profile.springs,replaced=authoring_replace_row(profile.springs,int(p.index),profile_spring_value(call,p.spring),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Multi_IK: profile.multi_ik,replaced=authoring_replace_row(profile.multi_ik,int(p.index),profile_multi_value(call,p.multi_ik),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Chain_Retarget: profile.retarget_chains,replaced=authoring_replace_row(profile.retarget_chains,int(p.index),p.retarget_chain,p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Spline_IK: profile.spline_ik,replaced=authoring_replace_row(profile.spline_ik,int(p.index),profile_spline_value(p.spline_ik),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Corrective: profile.correctives,replaced=authoring_replace_row(profile.correctives,int(p.index),profile_corrective_value(call,p.corrective),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Follow: profile.follow,replaced=authoring_replace_row(profile.follow,int(p.index),profile_follow_value(p.follow),p.remove,anim.POSE_CONSTRAINTS,call.allocator)
-    case .Curve_Pose: profile.curve_poses,replaced=authoring_replace_row(profile.curve_poses,int(p.index),p.curve_pose,p.remove,anim.POSE_CURVE_ROWS,call.allocator)
-    case .Curve_Drive: profile.curve_drives,replaced=authoring_replace_row(profile.curve_drives,int(p.index),p.curve_drive,p.remove,anim.POSE_CURVE_ROWS,call.allocator)
-    case .Curve_Material: profile.curve_materials,replaced=authoring_replace_row(profile.curve_materials,int(p.index),p.curve_material,p.remove,anim.POSE_CURVE_ROWS,call.allocator)
+    case .IK: profile.ik,replaced=profile_row(profile.ik,p.ik,proc(a,b:anim.IK_Constraint) -> bool {return a.end==b.end},p.remove,capacity,call.allocator)
+    case .Look: profile.look,replaced=profile_row(profile.look,p.look,proc(a,b:anim.Look_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
+    case .Limit: profile.limits,replaced=profile_row(profile.limits,p.limit,proc(a,b:anim.Rotation_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
+    case .Contact: profile.contacts,replaced=profile_row(profile.contacts,p.contact,proc(a,b:anim.Foot_Contact_Constraint) -> bool {return a.end==b.end},p.remove,capacity,call.allocator)
+    case .Grounding: profile.grounding,replaced=profile_row(profile.grounding,profile_grounding_value(call,p.grounding),proc(a,b:anim.Foot_Grounding) -> bool {return true},p.remove,1,call.allocator)
+    case .Retarget: profile.retarget,replaced=profile_row(profile.retarget,p.retarget,proc(a,b:anim.Retarget_Mapping) -> bool {return a.mode==b.mode && a.target_bone==b.target_bone},p.remove,capacity,call.allocator)
+    case .Chain_IK: profile.chain_ik,replaced=profile_row(profile.chain_ik,profile_chain_value(call,p.chain_ik),proc(a,b:anim.Chain_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Twist: profile.twist,replaced=profile_row(profile.twist,profile_twist_value(call,p.twist),proc(a,b:anim.Twist_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Spring: profile.springs,replaced=profile_row(profile.springs,profile_spring_value(call,p.spring),proc(a,b:anim.Spring_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Multi_IK: profile.multi_ik,replaced=profile_row(profile.multi_ik,profile_multi_value(call,p.multi_ik),proc(a,b:anim.Multi_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Chain_Retarget: profile.retarget_chains,replaced=profile_row(profile.retarget_chains,p.retarget_chain,proc(a,b:anim.Chain_Retarget_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Spline_IK: profile.spline_ik,replaced=profile_row(profile.spline_ik,profile_spline_value(p.spline_ik),proc(a,b:anim.Spline_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Corrective: profile.correctives,replaced=profile_row(profile.correctives,profile_corrective_value(call,p.corrective),proc(a,b:anim.Pose_Corrective) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Follow: profile.follow,replaced=profile_row(profile.follow,profile_follow_value(p.follow),proc(a,b:anim.Follow_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Curve_Pose: profile.curve_poses,replaced=profile_row(profile.curve_poses,p.curve_pose,proc(a,b:anim.Curve_Pose) -> bool {return a.curve==b.curve && a.bone==b.bone},p.remove,anim.POSE_CURVE_ROWS,call.allocator)
+    case .Curve_Drive: profile.curve_drives,replaced=profile_row(profile.curve_drives,p.curve_drive,proc(a,b:anim.Curve_Drive) -> bool {return a.from==b.from && a.with==b.with && a.to==b.to},p.remove,anim.POSE_CURVE_ROWS,call.allocator)
+    case .Curve_Material: profile.curve_materials,replaced=profile_row(profile.curve_materials,p.curve_material,proc(a,b:anim.Curve_Material) -> bool {return a.curve==b.curve && a.parameter==b.parameter && a.slot==b.slot && a.every==b.every},p.remove,anim.POSE_CURVE_ROWS,call.allocator)
     }
-    if !replaced {authoring_failure(call,"index","Invalid_Edit","an existing constraint or append after the last row",fmt.tprintf("%d; remove=%t",p.index,p.remove),"The constraint edit cannot be prepared within capacity");return}
+    if !replaced {authoring_failure(call,"table","Invalid_Edit","a row of that key to remove, or room for another row",fmt.tprintf("%v; remove=%t",p.table,p.remove),"The row is not in the table, or the table has no room for another",fix="animation.asset.inspect with the table lists its rows");return}
     authoring_profile_save(s,call,file,p.asset,profile)
 }

@@ -5,7 +5,7 @@ import "core:math/linalg"
 import "core:testing"
 import mm "mirai:std/math"
 
-// A person of boxes 1.8 m tall facing +Z: legs, torso, head and two arms of
+// A person of boxes 1.8 m tall facing -Z: legs, torso, head and two arms of
 // six segments that leave the shoulders at `down` radians below the
 // horizontal. A skirt joins the legs from the hips to the knees.
 @(private="file")
@@ -23,7 +23,7 @@ boxes :: proc(down:f32,skirt:bool) -> Mesh {
     }
     box(&positions,&indices,{0.1,0.43,0},{0.07,0.43,0.08})
     box(&positions,&indices,{-0.1,0.43,0},{0.07,0.43,0.08})
-    box(&positions,&indices,{0,0.03,0.12},{0.18,0.03,0.04})
+    box(&positions,&indices,{0,0.03,-0.12},{0.18,0.03,0.04})
     box(&positions,&indices,{0,1.12,0},{0.17,0.27,0.11})
     box(&positions,&indices,{0,1.44,0},{0.05,0.05,0.05})
     box(&positions,&indices,{0,1.62,0},{0.1,0.13,0.11})
@@ -56,10 +56,10 @@ the_fit_finds_the_parts_of_a_person_in_any_arm_pose_and_says_what_it_assumed :: 
             testing.expectf(t,f.confidence[.Crotch]==1 && abs(f.crotch-0.86)<0.04,"%v: the crotch is where the legs part: %.3f",c,f.crotch)
         }
         hand:=f.joints[bone_index("hand_l")]
-        tip:=mm.Vec3{0.17,1.35,0}+mm.quat_rotate(mm.quat_axis_angle({0,0,1},-c.down),{0.72,0,0})
-        testing.expectf(t,linalg.length(hand-tip)<0.3 && hand.x>0.4,"%v: the left hand is toward the end of the left arm: %v",c,hand)
+        tip:=mm.Vec3{-0.17,1.35,0}+mm.quat_rotate(mm.quat_axis_angle({0,0,1},c.down),{-0.72,0,0})
+        testing.expectf(t,linalg.length(hand-tip)<0.3 && hand.x< -0.4,"%v: the left hand is toward the end of the left arm: %v",c,hand)
         foot:=f.joints[bone_index("foot_r")]
-        testing.expectf(t,foot.x<0 && foot.y<0.2,"%v: the right foot is low on the right: %v",c,foot)
+        testing.expectf(t,foot.x>0 && foot.y<0.2,"%v: the right foot is low on the right: %v",c,foot)
         testing.expect_value(t,len(made.skins),1)
         for skin in made.skins[0] {
             sum:=0

@@ -51,7 +51,7 @@ nodes_chosen_together_are_deleted_and_duplicated_together :: proc(t:^testing.T) 
     r:Records
     if !ux_sample(t,&r) {return}
     defer records_destroy(&r)
-    copies:=records_duplicate_rows(&r,-1,{2,4})
+    copies:=records_duplicate_rows(&r,{2,4})
     testing.expect_value(t,len(copies),2)
     names:=ux_names(r.nodes[:])
     // bar and fuel are copied after fuel; menu after menu, two rows further.
@@ -62,7 +62,7 @@ nodes_chosen_together_are_deleted_and_duplicated_together :: proc(t:^testing.T) 
     testing.expect_value(t,copies[1],7)
     testing.expect_value(t,names[7],"menu1")
     testing.expect(t,ux_loads(&r))
-    records_delete_rows(&r,-1,{copies[0],copies[1],5})
+    records_delete_rows(&r,{copies[0],copies[1],5})
     testing.expect_value(t,len(r.nodes),7)
     testing.expect(t,ux_loads(&r))
 }
@@ -179,11 +179,11 @@ a_widget_that_holds_the_document_is_not_offered :: proc(t:^testing.T) {
     a,b,c,d:=base.Asset_Id{1,0},base.Asset_Id{2,0},base.Asset_Id{3,0},base.Asset_Id{4,0}
     edges:=[][2]base.Asset_Id{{a,b},{b,c},{c,b},{d,a}}
     graph:=Graph{edges}
-    children :: proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id {
+    children :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
         g:=(^Graph)(user)
-        held:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        for e in g.edges {if e[0]==id {append(&held,e[1])}}
-        return held[:]
+        held:=make([dynamic]ui.Tree_Component,context.temp_allocator)
+        for e in g.edges {if e[0]==id {append(&held,ui.Tree_Component{widget=e[1]})}}
+        return held[:],true
     }
     testing.expect(t,widget_reaches(a,c,children,&graph))  // a holds b, which holds c
     testing.expect(t,widget_reaches(d,c,children,&graph))

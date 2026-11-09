@@ -56,6 +56,7 @@ UI_Screen :: struct {
     player:u8 `mirai:"max=4"`, // 0: the window; n: the part of local player n
     variant:[VARIANT_CAPACITY]u8 `mirai:"text"`, // of the styles of its nodes that choose none
     back:bool,           // Escape, or East of a gamepad, reports Back while it is on top
+    pause:bool,          // Modal: while it shows, the clock of the world stops, unless the game plays in a network session
 }
 
 // What a World_Widget takes from the player that points at it.
@@ -80,7 +81,7 @@ World_Widget :: struct {
     size:[2]f32 `mirai:"min=0"`, // of its surface, in layout units
     sizing:ui.World_Sizing,      // Meters: scale is meters per layout unit. Screen: window points per layout unit at any distance, times the scale of the screens (UI_Settings.reference)
     scale:f32 `mirai:"min=0"`,   // 0: a centimeter, or a point
-    facing:ui.World_Facing,      // Fixed follows the rotation of the entity
+    facing:ui.World_Facing,      // Fixed follows the rotation of the entity and shows its face toward its forward (-Z)
     pivot:ui.Anchor,             // the point of the panel that sits at the entity
     depth_test:bool,             // the scene in front of it hides it, and the ray does not reach it through the scene
     passive:bool,                // the pointer goes through it
@@ -180,6 +181,7 @@ UI_Event_Kind :: enum u8 {
     Closed,
     Link,      // a link of a rich text: from is its name
     Back,      // Escape or East on the screen on top, when it reports it; name is 0
+    Menu,      // the player pressed the Menu action and no interface used it; entity and name are 0
 }
 #assert(int(UI_Event_Kind.Clicked)==int(ui.Tree_Event_Kind.Clicked) && int(UI_Event_Kind.Changed)==int(ui.Tree_Event_Kind.Changed))
 #assert(int(UI_Event_Kind.Submitted)==int(ui.Tree_Event_Kind.Submitted) && int(UI_Event_Kind.Hovered)==int(ui.Tree_Event_Kind.Hovered))
@@ -187,7 +189,7 @@ UI_Event_Kind :: enum u8 {
 #assert(int(UI_Event_Kind.Unfocused)==int(ui.Tree_Event_Kind.Unfocused) && int(UI_Event_Kind.Dragged)==int(ui.Tree_Event_Kind.Dragged))
 #assert(int(UI_Event_Kind.Dropped)==int(ui.Tree_Event_Kind.Dropped) && int(UI_Event_Kind.Finished)==int(ui.Tree_Event_Kind.Finished))
 #assert(int(UI_Event_Kind.Right_Clicked)==int(ui.Tree_Event_Kind.Right_Clicked) && int(UI_Event_Kind.Link)==int(ui.Tree_Event_Kind.Link))
-#assert(len(UI_Event_Kind)==len(ui.Tree_Event_Kind)+1)
+#assert(len(UI_Event_Kind)==len(ui.Tree_Event_Kind)+2)
 
 // What a widget of a UI_Screen or a World_Widget did.
 UI_Event :: struct {
@@ -215,7 +217,20 @@ UI_Events :: struct {
     using queue:core.Queue(UI_Event),
     pointer_consumed:bool,  // the pointer was over the UI or held by a widget
     keyboard_consumed:bool, // a field, a popup or the navigation focus had the keyboard
+    asked:[EVENT_ASKS]Asked_Name, // the names steps asked of it, which the frame checks against the screen
+    asked_count:int,
 }
+
+// What the game asked an interface by name: gui_frame_begin says once what a
+// name a screen does not have is.
+Asked_Name :: struct {
+    entity:core.Entity,
+    name:u64,
+    text:[ui.TREE_NAME_CAPACITY]u8,
+    checked:bool,
+}
+EVENT_ASKS :: 16
+GUI_ASKS :: 128
 
 // The particle effects the interfaces show in this frame, each drawn into
 // the effect view of its texture (render.Effect_View) by the plugin that
@@ -282,6 +297,7 @@ Bound_Source :: struct {
     info:^runtime.Type_Info,
     index:serial.Type_Index,
     storage:bool,
+    setting:bool, // a setting (@(storage,setting)): a control bound to it writes it
 }
 
 Action_Name :: struct {hash:u64,action:inp.Action}
@@ -313,6 +329,8 @@ Gui :: struct {
     deliveries:u64,            // times the events of a frame went to the game: what a widget wrote waits for one past it
     frame_tick:u64,            // Time.tick at the last frame phase: no tick ran while it holds
     pending:[dynamic]UI_Event, // of the frame drawn, until the next fixed tick
+    arrived:UI_Events,         // what reached the game since the last frame phase: events_this_frame
+    arrived_read:bool,         // the frame phase went by: what arrived starts again
     delivered:[DELIVERED_CAPACITY]Delivered_Event, // a ring, in the order of the ticks that took them
     delivered_count:int,
     requests:[dynamic]UI_Request, // taken, until the interface they name builds
@@ -323,7 +341,12 @@ Gui :: struct {
     actions:[dynamic]Action_Name, // the input actions by the name_hash of their names
     actions_ready:bool,
     pointer_consumed,keyboard_consumed:bool,
-    released_mouse:bool,       // a Modal let the relative mouse go: it comes back when none is on top
+    names_asked:[GUI_ASKS]Asked_Name, // what steps asked by name, each checked once against the screen that shows
+    names_asked_count:int,
+    pausing:bool,              // a Modal screen with pause shows this frame
+    clock_held:bool,           // it stopped the clock, and gives it back when none shows
+    modal_up:bool,             // a Modal is on top this frame
+    escape_used:bool,          // an interface used the Escape of this frame
     cursor:ui.Cursor,          // the last one given to the window
     skipped:u64,               // frames of a context that showed its last one again
     kept:u64,                  // screens drawn again from what they drew, without being built
@@ -345,27 +368,53 @@ gui_consumed :: proc "contextless" (events:^UI_Events) -> (pointer,keyboard:bool
     return events.pointer_consumed,events.keyboard_consumed
 }
 
+// Every helper below takes the events of a tick (the UI_Events storage) or
+// those of a frame (events_this_frame).
+
 // The last event of a kind of the node called name of an interface of the
 // entity: of several in one frame, the one that came last says what the
 // widget asks for now. Every helper below reads that one.
 ui_event :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
-    event:=event_find(events,entity,name,kind)
+    event:=event_asked(events,entity,name,kind)
     if event==nil {return}
     return event^,true
 }
 
 @(private)
-event_find :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
+event_find :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
     hash:=name!=""?base.name_hash(name):0
-    #reverse for &event in events.items {
+    #reverse for &event in events {
         if event.entity==entity && event.name==hash && event.kind==kind {return &event}
     }
     return nil
 }
 
+// The event a step asks for, whose name the frame then checks against the
+// screen. Without a Gui there are no events.
+@(private)
+event_asked :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
+    if events==nil {return nil}
+    asked_add(events.asked[:],&events.asked_count,entity,name)
+    return event_find(events.items[:],entity,name,kind)
+}
+
+// A name a step asked: an unnamed event, one the frame already knows and one
+// that does not fit go by without work; the frame checks the rest.
+@(private)
+asked_add :: proc "contextless" (list:[]Asked_Name,count:^int,entity:core.Entity,name:string) {
+    if name=="" || entity==core.NONE {return}
+    hash:=base.name_hash(name)
+    for &a in list[:count^] {if a.entity==entity && a.name==hash {return}}
+    if count^>=len(list) {return}
+    a:=&list[count^]
+    count^+=1
+    a^={entity=entity,name=hash}
+    ui.tree_text_set(a.text[:],name)
+}
+
 // Whether the node called name of an interface of the entity was clicked.
 clicked :: proc(events:^UI_Events,entity:core.Entity,name:string) -> bool {
-    return event_find(events,entity,name,.Clicked)!=nil
+    return event_asked(events,entity,name,.Clicked)!=nil
 }
 
 // Which element of its list a button that was clicked is in.
@@ -390,7 +439,7 @@ changed_value :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (valu
 // The text a field called name asks for as it is typed in: the game writes
 // it to the field the node binds. Valid while the events are.
 changed_text :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_find(events,entity,name,.Changed)
+    event:=event_asked(events,entity,name,.Changed)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
@@ -398,7 +447,7 @@ changed_text :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:
 // The text a field called name holds when Enter was pressed in it. Valid
 // while the events are.
 submitted :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_find(events,entity,name,.Submitted)
+    event:=event_asked(events,entity,name,.Submitted)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
@@ -411,6 +460,7 @@ dropped :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (event:UI_E
 
 // Whether the animation anim that play_animation started on node ended.
 finished :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool {
+    if events==nil {return false}
     for event in events.items {
         if event.entity==entity && event.kind==.Finished && event.name==base.name_hash(node) && event.from==base.name_hash(anim) {return true}
     }
@@ -419,7 +469,35 @@ finished :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool 
 
 // Whether the screen of the entity reported Back.
 back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
-    return event_find(events,entity,"",.Back)!=nil
+    return event_asked(events,entity,"",.Back)!=nil
+}
+
+// Whether the player pressed the Menu action (Menu_Action: Escape, Start of a
+// gamepad, rebound like any action) and no interface used that Escape. What a
+// game does with it is its own: open or close a menu.
+menu_pressed :: proc(events:^UI_Events) -> bool {return event_asked(events,core.NONE,"",.Menu)!=nil}
+
+// The events that reached the game in this frame, each once: read them from a
+// frame step, not a fixed one, and the ticks of the frame (none while the clock
+// is stopped, or several) make no difference. Valid until the next frame phase.
+events_this_frame :: proc(gui:^Gui) -> ^UI_Events {
+    return gui!=nil?&gui.arrived:nil
+}
+
+@(private)
+events_arrive :: proc(gui:^Gui) {
+    if gui.arrived_read {
+        clear(&gui.arrived.items)
+        gui.arrived_read=false
+    }
+    append(&gui.arrived.items,..gui.pending[:])
+}
+
+// What the steps asked of these events joins what the frame checks.
+@(private)
+asked_merge :: proc(gui:^Gui,events:^UI_Events) {
+    for &a in events.asked[:events.asked_count] {asked_add(gui.names_asked[:],&gui.names_asked_count,a.entity,base.text_get(a.text[:]))}
+    events.asked_count=0
 }
 
 // The events of the last frame become those of the tick, once; a tick that
@@ -428,6 +506,7 @@ back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
 gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     clear(&events.items)
     if gui==nil {return}
+    asked_merge(gui,events)
     events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
     first:=max(gui.delivered_count-DELIVERED_CAPACITY,0)
     if time.resimulating {
@@ -438,6 +517,7 @@ gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     }
     // The clock went back, as a save loads: the ticks kept are of another run.
     if gui.delivered_count>0 && gui.delivered[(gui.delivered_count-1)%DELIVERED_CAPACITY].tick>=time.tick {gui.delivered_count=0}
+    events_arrive(gui)
     if len(gui.pending)==0 {return}
     append(&events.items,..gui.pending[:])
     for event in gui.pending {
@@ -453,9 +533,12 @@ gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
 @(step="frame",stage="input")
 gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
     if gui==nil {return}
+    asked_merge(gui,events)
+    defer gui.arrived_read=true
     ticked:=time.tick!=gui.frame_tick
     gui.frame_tick=time.tick
     if ticked {return}
+    events_arrive(gui)
     clear(&events.items)
     events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
     if len(gui.pending)==0 {return}
@@ -504,7 +587,10 @@ frame_begin :: proc(
 ) {
     if gui==nil {return}
     if effects!=nil {clear(&effects.items)}
+    asked_merge(gui,&gui.arrived)
+    asked_check(gui,app,problems)
     gui.frame+=1
+    gui.pausing=false
     gui.settings,gui.preferences=settings,preferences
     gui.prompts=base.hash64(mem.slice_to_bytes(gui.settings.prompt_images[:]),base.hash64(mem.ptr_to_bytes(&gui.settings.prompts)))
     for &s in gui.surfaces {s.open,s.skipped=false,false}
@@ -565,18 +651,18 @@ frame_begin :: proc(
 
 // Builds what gui_frame_begin planned in the contexts it opened.
 @(step="ui")
-gui_widgets :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
-    widgets_build(gui,app,problems)
+gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
+    widgets_build(world,gui,app,problems)
 }
 
 @(step="ui",loops="editor",after="gui_preview_begin")
-gui_preview_widgets :: proc(gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
+gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
-    widgets_build(gui,app,problems)
+    widgets_build(world,gui,app,problems)
 }
 
 @(private)
-widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
+widgets_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
     if gui==nil {return}
     for &s,p in gui.surfaces {
         if !s.open {continue}
@@ -601,7 +687,7 @@ widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
                 if !entry.top && instance.top && ctx.focus==instance.focus {ui.focus_set(ctx,0)}
                 if !ui.world_panel_begin(ctx,id,entry.panel) {continue}
                 ui.id_push(ctx,id)
-                screen_build(gui,ctx,&s,instance,&entry,problems)
+                screen_build(world,gui,app,ctx,&s,instance,&entry,problems)
                 ui.id_pop(ctx)
                 ui.world_panel_end(ctx)
                 continue
@@ -626,7 +712,7 @@ widgets_build :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
             } else {
                 ui.box_begin(ctx,root)
                 // What floats on the screen or its safe area floats on the part of its player.
-                screen_build(gui,ctx,&s,instance,&entry,problems,root.id,{s.rect.x/scale,s.rect.y/scale,s.rect.z/scale,s.rect.w/scale})
+                screen_build(world,gui,app,ctx,&s,instance,&entry,problems,root.id,{s.rect.x/scale,s.rect.y/scale,s.rect.z/scale,s.rect.w/scale})
                 ui.box_end(ctx,root)
                 if retain {ui.retained_end(ctx,retained)}
             }
@@ -683,12 +769,14 @@ frame_end :: proc(
     if gui==nil {return}
     gui.wanted,gui.asked=gui.asked,false
     gui.pointer_consumed,gui.keyboard_consumed=false,false
+    gui.escape_used=false
     cursor:=ui.Cursor.Default
     for i in 1..=CONTEXT_CAPACITY {
         p:=i%CONTEXT_CAPACITY
         s:=&gui.surfaces[p]
         if s.open {
             s.open=false
+            gui.escape_used||=s.ctx.escape_used
             frame:=ui.frame_end(s.ctx)
             s.pointer,s.keyboard,s.cursor=frame.pointer_consumed,frame.keyboard_consumed,s.ctx.cursor
             host.app_ui_font_sync(app,s.ctx)
@@ -713,17 +801,10 @@ frame_end :: proc(
         meshes_sweep(gui,app)
         return
     }
-    modal:=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
+    gui.modal_up=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
     if app.platform!=nil {
-        if modal && platform.window_relative_mouse(app.platform) {
-            platform.window_set_relative_mouse(app.platform,false)
-            gui.released_mouse=true
-        } else if !modal && gui.released_mouse {
-            platform.window_set_relative_mouse(app.platform,true)
-            gui.released_mouse=false
-        }
         // The player's: in the editor, the cursor is that of the editor.
-        if app.world!=nil && (cursor!=gui.cursor || modal) {
+        if app.world!=nil && (cursor!=gui.cursor || gui.modal_up) {
             CURSORS :: [ui.Cursor]platform.Cursor{.Default=.Default,.Text=.Text,.Resize_Horizontal=.Resize_Horizontal}
             cursors:=CURSORS
             platform.window_set_cursor(app.platform,cursors[cursor])
@@ -742,6 +823,7 @@ gui_release :: proc(gui:^Gui,app:^host.App) {
     if gui==nil {return}
     instances_clear(gui)
     clear(&gui.pending)
+    clear(&gui.arrived.items)
     for view in gui.views_shown {render.view_texture_remove(app,view.texture)}
     clear(&gui.views_shown)
     for &shown in gui.particles {if shown.texture!=0 {render.ui_texture_remove(app,shown.texture)};shown={}}
@@ -765,7 +847,7 @@ gui_free :: proc(gui:^Gui) {
         free(s.ctx,a)
         delete(s.draws,a);delete(s.panels,a);delete(s.offscreen,a);delete(s.offscreen_draws,a)
     }
-    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending)
+    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending);delete(gui.arrived.items)
     delete(gui.requests);delete(gui.unblock);delete(gui.views_shown);delete(gui.actions)
     core.entity_map_destroy(&gui.index)
     if gui.schema_ready {serial.schema_destroy(&gui.schema)}

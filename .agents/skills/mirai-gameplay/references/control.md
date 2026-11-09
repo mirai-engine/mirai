@@ -195,8 +195,8 @@ requested point, the points are used in turn in table order; a game with another
 distance) picks the point and passes it.
 
 - Requests in `^spawn.Spawn_Requests`, which `spawn_step` (`fixed`, `input`) takes before driving.
-- `spawn(r, seat, prefab={}, point=NONE)`: takes the requested point or the next one with a prefab,
-  instantiates the requested prefab, the point's or `Spawn_Settings.prefab` (the project's player
+- `spawn(r, seat, path="", point=NONE)`: takes the requested point or the next one with a prefab,
+  instantiates the prefab at `path`, the point's or `Spawn_Settings.prefab` (the project's player
   body) with its world transform (`scene.spawn`, `transient`) and asks the seat to drive it, in the
   same tick. In the editor's Play, a scene without points makes it appear at the editor camera
   (`scene.Play_Origin`, which the editor fills when Play starts). With Play from here or from
@@ -208,7 +208,7 @@ distance) picks the point and passes it.
   the collider of its root on what is below, without burying it; from inside something, or with
   nothing below within reach, it stays where the editor put it. Up to `SPAWN_CAPACITY` bodies per
   tick (`spawn.spawns_full`). Without a point with a prefab it is the problem
-  `spawn.no_spawn_point` of the seat; a prefab that does not appear, `spawn.spawn_prefab` of the
+  `spawn.no_spawn_point` of the seat; a prefab that does not appear, `scene.spawn` of the
   point. On a client it is rejected (`spawn.client_spawn`): the server decides.
 - A body given to a seat carries `Seat_Body`: `spawn_seat_bodies` (`fixed`, `input`) destroys it
   when its seat no longer exists (a player who left). A body given by the game does not carry it,

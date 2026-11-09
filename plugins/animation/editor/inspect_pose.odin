@@ -76,23 +76,23 @@ pose_query :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Enti
 @(private)
 instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_Query) {
     if query.rows==nil {
-        authoring_failure(call,"id","Missing_Skeleton","a rig with a skeleton","none","The entity has no skeleton to place bones on",fix="Give it a mesh with a skeleton and play it")
+        authoring_failure(call,"entity","Missing_Skeleton","a rig with a skeleton","none","The entity has no skeleton to place bones on",fix="Give it a mesh with a skeleton and play it")
         return
     }
     playback:=core.world_storage_of(w,anim.Playback)
     if query.skeleton=={} {
-        authoring_failure(call,"id","Not_Posed","a rig animated in the last tick","not animated","The entity has not posed a skeleton yet",api.SERVER_ERROR,fix="Run the world (play.start, play.step) or animation.preview so a tick poses it; a mesh that shares the pose of a rig of its skeleton through Pose_Source is asked on that rig")
+        authoring_failure(call,"entity","Not_Posed","a rig animated in the last tick","not animated","The entity has not posed a skeleton yet",fix="Run the world (play.start, play.step) or animation.preview so a tick poses it; a mesh that shares the pose of a rig of its skeleton through Pose_Source is asked on that rig")
         return
     }
     actor,placed:=core.world_of(core.read(core.world_table_of(w,core.Transform)),core.read(core.world_table_of(w,core.Parent)),e)
-    if !placed {authoring_failure(call,"id","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
+    if !placed {authoring_failure(call,"entity","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
     pose,posed:=anim.pose_space(playback,e,call.allocator)
     out:=call.out
     serial.text_write_raw(out,"{");api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,query.skeleton);serial.write_u8(out,'"')
     api.write_key(out,"transforms");serial.text_write_raw(out,"[")
     for &row,i in query.rows {
         space,placed:=lib.skeleton_socket(pose,row.bone+1,row.offset)
-        if !posed || !placed {authoring_failure(call,"id","Not_Posed","a pose of the rig in its last tick that has these bones","not posed","The pose of the rig cannot place a bone",api.SERVER_ERROR,fix="Run a tick of the world again; a pose with a value that is not finite is reported by engine.diagnostics");return}
+        if !posed || !placed {authoring_failure(call,"entity","Not_Posed","a pose of the rig in its last tick that has these bones","not posed","The pose of the rig cannot place a bone",api.SERVER_ERROR,fix="Run a tick of the world again; a pose with a value that is not finite is reported by engine.diagnostics");return}
         value:=Instance_Pose_Transform{kind=row.kind,bone=row.path,world=mm.transform_compose(actor,space),entity=space}
         copy(value.name[:len(value.name)-1],row.name)
         if i>0 {serial.write_u8(out,',')}

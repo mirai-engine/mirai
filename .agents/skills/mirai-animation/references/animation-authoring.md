@@ -21,12 +21,12 @@ libraries.
 
 ## Files and history
 
-- Writing assets requires Edit; `dry_run` (in every `create`, `set`, `patch`, bake and edit)
-  validates and answers in any mode without writing.
-- `path` is relative to the assets folder. `create` does not overwrite; `set` keeps the identity of
-  the asset and validates the whole definition before publishing. The files use the [asset
+- `dry_run` (in every `create`, `set`, `patch`, bake and edit) validates and answers without
+  writing.
+- `path` is relative to the assets folder. `create` does not overwrite; `set` on a path that has one
+  replaces it keeping its id (`replaced:true`) and validates the whole definition before publishing. The files use the [asset
   container](../../mirai-assets/references/formats.md), without opaque JSON.
-- A `set` with `asset` replaces the whole file and the last one wins
+- A `set` over an existing asset replaces the whole file and the last one wins
   ([concurrency](../../mirai-agent-api/references/api.md#concurrency-transactions-and-undo)). The
   response is built before writing; if it does not fit, nothing is written.
 - Each write is a step of the [editor history](../../mirai-editor/SKILL.md) with the rest of the
@@ -45,11 +45,16 @@ libraries.
 
 ## Skeleton body
 
-- `skeleton.body.detect` stores in the `.skeleton` the parts and the axes of the body
+- `skeleton.body.detect` stores in the `.skeleton` the parts and the up of the body
   ([detection](../../mirai-std/references/anim-body.md#body-map-bodyodin)) and returns the
-  confidence of each part, those that are missing and a `fix`. Import already detects it.
-- `skeleton.body.set` sets parts and axes by hand: they stay `manual` and survive detection and
-  reimport. An unknown bone suggests those with a similar name.
+  confidence of each part, those that are missing and a `fix`. Import already detects it. Without
+  one stored, `animation.clip.edit`, `animation.analyze`, `animation.character.setup` and
+  `ragdoll.setup` detect it in memory for the call and leave the `.skeleton` as it is.
+- `skeleton.body.set` sets parts by hand: they stay `manual` and survive detection and reimport.
+  A rig faces -Z and the `.skeleton` stores no forward: the import turns a rig whose body faces
+  another axis, and `front` of `asset.import` states it for one the import does not turn
+  ([front](../../mirai-imports/references/imports.md#front)). An unknown bone suggests those with
+  a similar name.
 
 ## Clips: verbs and metrics
 
@@ -72,7 +77,7 @@ libraries.
 
 `animation.character.setup` builds a character from the saved body of the skeleton of its rig (or a
 detected unsaved one) and a clip library (by default, the one it plays). With `skeleton` instead of
-`id` it needs `library`, only writes the assets and returns them, and changes no entity.
+`entity` it needs `library`, only writes the assets and returns them, and changes no entity.
 
 - It classifies the clips by the words of their name: idle, stand, walk, jog, run and sprint serve
   the walking mode (with start, stop, turn or pivot they do not loop); fall, air or a looping jump,
@@ -125,12 +130,12 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 
 ## Clips and timeline
 
-- `animation.clip.create` adds a clip to a new (`path`) or existing (`asset`) `.anim`: exactly one
-  of the two. Its result gives the id that the following calls use; duplicate names are rejected.
+- `animation.clip.create` adds a clip to the `.anim` at `path`, new or not. Its result gives the id that the following calls use; duplicate names are rejected.
   `clip.set` changes name and root without touching tracks or markers.
 - `animation.track.set` creates, replaces or removes a whole track by `(target,property,slot)`, with
-  the clip by name and the destination by canonical path or curve name. `key.set` and `marker.set`
-  edit one row (`index` equal to the count appends at the end), also in tracks longer than the
+  the clip by name and the destination by canonical path or curve name. `key.set` replaces
+  the key of a track at `time` or inserts one in order; `marker.set` changes a marker by `name`
+  (`at` the time among several of the name, `add` one more). Both work on tracks longer than the
   capacity of `track.set`.
 - Times in seconds; keys and markers keep the order of the clip. `Rotation` is a finite, non-zero
   XYZW quaternion
@@ -144,8 +149,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 - `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone, graph,
   modifiers, actions, motion and morphs; `diagnostics` adds solver and fades). A part that does not
   apply answers `{available:false, code, reason}` without failing the call; a graph that does not
-  evaluate gives `Program_Error`. In Play or Simulate `entity` names a rig by the handle
-  `play.inspect` gives, the only name of one the game made; in Edit it takes `id`.
+  evaluate gives `Program_Error`. `entity` also takes, in Play or Simulate, the handle
+  `play.inspect` gives, the only name of an entity the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
   forced search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps
@@ -161,7 +166,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 - The skeleton defines paths, hierarchy, reference, sockets and body. The skin is the static link of
   the mesh ([assets](../../mirai-assets/references/formats.md#asset-types)): these methods do not
   edit joints or weights.
-- `skeleton.create` asks for parents before children (`-1` is root; identity TRS if omitted).
+- `skeleton.create` asks for parents before children, by canonical path (empty is a root;
+  identity TRS if omitted); `skeleton.bone.set` addresses a bone by `path`.
   `skeleton.bone.set` changes name and reference, not path or parent. `skeleton.bone.add` adds a
   bone under a parent (by path) after the others, so meshes and indices keep theirs; with `clips`,
   the tracks of those `.anim` whose target ends in a node of the bone's name under another path take
@@ -169,7 +175,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   the body does not weight). Removing or reparenting a bone is creating another skeleton.
 - Sockets belong to the shared skeleton, not to a clip or to the equipped entity, which carries
   `Bone_Attachment` with its own offset.
-- `pose.profile.set` replaces, adds or removes a row of a table of the `.pose`. Targets are written
+- `pose.profile.set` replaces or appends the row with the key of its value (bone, name, curve and
+  bone, from and to: `engine.describe` lists them per table), or removes it. Targets are written
   as `Spatial_Target` without an entity (`{"position":[x,y,z]}`,
   `{"kind":"Socket","socket":"grip"}`); the entity arrives with the `goals` of `animation.request`.
   The definition stores bones and configuration; targets and fades belong to the instance. The
@@ -192,12 +199,12 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   `animation.asset.inspect` describes it with its clips, the names of its modes and its entry, the
   clips and samples of each blend, and
   for each already loaded skeleton the rows, the bytes and the error of its database.
-- `animation.blend_space.set` (with `path` or `asset`) builds the geometry of an aim offset or
+- `animation.blend_space.set` builds the geometry of an aim offset or
   additive from axes and samples; `sample` gives clips and weights at a position without advancing
   the world. Each clip exists in the `.anim` of its sample or of the blend space; two axes with the
   same name, duplicate positions and degenerate geometry are rejected. A `.blend` as the asset of
   `animation.play` is `Additive_Space`.
-- `animation.graph.set` (with `path` or `asset`) receives the whole graph with unique names per
+- `animation.graph.set` receives the whole graph with unique names per
   table: nodes in any order (the editor orders dependencies), without indices, sentinels or
   `*_count`, and its `output`. A `Blend_Space` that is not the `right` of an `Additive` is
   `Additive_Only`, with where it ended up and how to fix it.

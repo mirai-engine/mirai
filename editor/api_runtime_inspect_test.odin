@@ -25,6 +25,28 @@ Inspect_World :: struct {
 @(private="file") Inspect_Editor :: struct {api:Api}
 
 @(test)
+a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
+    tables:=[]core.Table_Info{{name="Point_Light",place=.World},{name="Spot_Light",place=.World},{name="Hidden_State",place=.Editor}}
+    info:=core.World_Info{tables=tables}
+    w:=core.World_Ref{info=&info,place=.World}
+    cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
+        {"Point_Light",&tables[0],""},
+        {"PointLight",&tables[0],""},
+        {"spot light",&tables[1],""},
+        {"Hidden_State",nil,`"Hidden_State" is not a component of the world`},
+        {"Light",nil,`"Light" is not a component of the world; the nearest are Spot_Light, Point_Light`},
+    }
+    for c in cases {
+        found,problem:=api_component_named(w,c.name)
+        testing.expectf(t,found==c.found && strings.has_prefix(problem,c.says),"%s: %s",c.name,problem)
+    }
+    key,known:=api_key_from_name("left-control")
+    testing.expect(t,known && key==.Left_Control)
+    _,known=api_key_from_name("Return")
+    testing.expect(t,!known)
+}
+
+@(test)
 api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: proc(t:^testing.T) {
     world:Inspect_World
     core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
@@ -103,9 +125,32 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     core.get(&running.state,entity).ticks=42
     session.mode=.Play
     session.runs[0]={world=&running}
-    params:=Api_Inspect_Params{components=true,include_runtime=true,limit=1}
+    params:=Api_Inspect_Params{include_runtime=true,limit=1}
     method:=api.Method{params_id=Api_Inspect_Params}
-    call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    selections:=[]struct{raw,has,lacks,fails:string}{
+        {`{"components":true}`,`"ticks": 42`,"",""},
+        {`{}`,`"components":["`,`"ticks"`,""},
+        {`{"components":false}`,"","","components must be true"},
+        {`{"components":["inspect config"]}`,`"speed"`,`"ticks"`,""},
+        {`{"components":"Inspect_Runtime"}`,`"ticks": 42`,`"speed"`,""},
+        {`{"components":["Inspect"]}`,"","",`"Inspect" is not a component of the world; the nearest are Inspect_Config, Inspect_Runtime`},
+        {`{"components":["Transform"]}`,"","","Transform has no values"},
+        {`{"components":7}`,"","","components must be true"},
+    }
+    for selection in selections {
+        call:=api.Call{method=&method,raw=selection.raw,params=&params,out=&out,allocator=context.temp_allocator}
+        out.count=0
+        api_play_inspect(&session,&call)
+        text:=string(serial.writer_bytes(&out))
+        if selection.fails!="" {
+            testing.expectf(t,call.failed && strings.contains(call.error.message,selection.fails),"%s: %s",selection.raw,call.error.message)
+            continue
+        }
+        testing.expectf(t,!call.failed,"%s: %s",selection.raw,call.error.message)
+        testing.expectf(t,strings.contains(text,selection.has),"%s: %s",selection.raw,text)
+        testing.expectf(t,selection.lacks=="" || !strings.contains(text,selection.lacks),"%s: %s",selection.raw,text)
+    }
+    call:=api.Call{method=&method,raw=`{"components":true}`,params=&params,out=&out,allocator=context.temp_allocator}
     out.count=0
     api_play_inspect(&session,&call)
     testing.expect(t,!call.failed,call.error.message)
@@ -224,32 +269,41 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expect_value(t,number(result["total"]),5)
     _,result,_=inspect(state,&out,"scene.inspect",`{"name":"*a*e*3"}`)
     testing.expect_value(t,names(result),"crate 3")
-    _,result,_=inspect(state,&out,"scene.inspect",`{"name":"*Camera","summary":true}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"name":"*Camera"}`)
     testing.expect_value(t,names(result),"Main Camera")
-    error,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera","summary":true}`)
+    error,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera"}`)
     testing.expect_value(t,names(result),"Main Camera")
-    testing.expectf(t,strings.contains(text,`"parent":"0x0000000000000001","components":["Camera"]}`),"the summary names the components: %s",text)
-    testing.expectf(t,!strings.contains(text,"position") && !strings.contains(text,"near"),"without the place or the values: %s",text)
-    _,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera"}`)
-    testing.expect(t,strings.contains(text,`"components":{"Camera":{`) && strings.contains(text,`"position"`),"the values when not summarized")
+    testing.expectf(t,strings.contains(text,`"parent":"0x0000000000000001","position":[`) && strings.contains(text,`"components":["Camera"]}`),"the place and the names of the components: %s",text)
+    testing.expectf(t,!strings.contains(text,"near"),"without the values: %s",text)
+    _,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera","components":true}`)
+    testing.expect(t,strings.contains(text,`"components":{"Camera":{`) && strings.contains(text,`"near"`),"the values when it asks for them")
     error,_,text=inspect(state,&out,"scene.inspect",`{"component":"Light"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expect(t,strings.contains(error.message,"component.list"),"the error says where the components are")
-    _,result,_=inspect(state,&out,"scene.inspect",`{"summary":true,"limit":2,"offset":1}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"limit":2,"offset":1}`)
     testing.expect_value(t,names(result),"Main Camera,Crate 1")
     testing.expect_value(t,[3]int{number(result["shown"]),number(result["matched"]),number(result["omitted"])},[3]int{2,5,2})
     _,result,_=inspect(state,&out,"scene.inspect",`{"name":"Crate*","offset":1}`)
     testing.expect_value(t,names(result),"Crate 2")
     testing.expect_value(t,number(result["omitted"]),0)
-    _,result,_=inspect(state,&out,"scene.inspect",`{"id":"0000000000000003","name":"Crate 2"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"entity":"0000000000000003","name":"Crate 2"}`)
     testing.expect_value(t,number(result["matched"]),0)
 
     session.mode=.Play
     session.runs[0]={world=&running}
-    _,result,text=inspect(state,&out,"play.inspect",`{"summary":true}`)
-    testing.expect_value(t,[3]int{number(result["shown"]),number(result["matched"]),number(result["omitted"])},[3]int{256,300,44})
-    testing.expectf(t,len(text)<128*256,"a summary stays small: %d bytes",len(text))
-    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body 29*","summary":true}`)
+    _,result,text=inspect(state,&out,"play.inspect",`{}`)
+    testing.expect_value(t,[3]int{number(result["shown"]),number(result["matched"]),number(result["omitted"])},[3]int{API_INSPECT_BRIEF,300,300-API_INSPECT_BRIEF})
+    testing.expectf(t,len(text)<256*API_INSPECT_BRIEF,"with no filter it stays small: %d bytes",len(text))
+    testing.expectf(t,strings.contains(result["left_out"].(string),"more entities"),"it says what it left out: %s",text)
+    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body*"}`)
+    testing.expect_value(t,number(result["shown"]),API_INSPECT_DEFAULT)
+    _,result,text=inspect(state,&out,"component.list",`{}`)
+    testing.expectf(t,strings.contains(text,`"name":"Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
+    _,result,text=inspect(state,&out,"component.list",`{"name":"Camera"}`)
+    testing.expectf(t,strings.contains(text,`"default"`) && strings.contains(text,`"fields"`) && !strings.contains(text,`"left_out"`),"one whole: %s",text)
+    _,result,text=inspect(state,&out,"component.list",`{"names":["Camera","Transform"]}`)
+    testing.expectf(t,strings.count(text,`"fields"`)==2,"several in one call: %s",text)
+    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body 29*"}`)
     testing.expect_value(t,number(result["matched"]),11)
     testing.expect_value(t,result["entities"].(json.Array)[0].(json.Object)["name"].(string),"Body 29")
 }

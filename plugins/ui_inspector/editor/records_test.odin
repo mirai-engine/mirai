@@ -48,21 +48,21 @@ inserted_and_deleted_nodes_keep_the_records_in_pre_order :: proc(t:^testing.T) {
     testing.expect_value(t,records_depth(r.nodes[:],3),2)
 
     // Inside a box: after what it already holds, before the next root.
-    row:=records_insert(&r,-1,0,.Text)
+    row:=records_insert(&r,0,.Text)
     testing.expect_value(t,row,4)
     testing.expect_value(t,r.nodes[row].parent,i32(0))
     testing.expect_value(t,serial.text_field(r.nodes[row].name[:]),"text1")
     testing.expect_value(t,r.nodes[5].parent,i32(-1))
     testing.expect(t,records_load_as_tree(&r))
-    testing.expect_value(t,records_insert(&r,-1,1,.Text),-1) // a Text holds nothing
+    testing.expect_value(t,records_insert(&r,1,.Text),-1) // a Text holds nothing
 
-    root:=records_insert(&r,-1,-1,.Box)
+    root:=records_insert(&r,-1,.Box)
     testing.expect_value(t,root,len(r.nodes)-1)
     testing.expect_value(t,r.nodes[root].float.to,ui.Float_To.Safe)
     testing.expect(t,records_load_as_tree(&r))
 
     // The bar and its progress go; the rows after them point at their boxes again.
-    records_delete(&r,-1,2)
+    records_delete(&r,2)
     testing.expect_value(t,len(r.nodes),5)
     testing.expect_value(t,serial.text_field(r.nodes[2].name[:]),"text1")
     testing.expect_value(t,r.nodes[2].parent,i32(0))
@@ -88,10 +88,10 @@ a_duplicate_has_its_own_names_image_animations_and_the_overrides_of_its_instance
     defer records_destroy(&r)
     records_image(&r,&r.nodes[3])
     records_anim_set(&r,&r.nodes[3])
-    card:=records_widget(&r,-1,2,base.Asset_Id{7,7},"card")
+    card:=records_widget(&r,2,base.Asset_Id{7,7},"card","card")
     testing.expect_value(t,card,4)
     append(&r.overrides,ui.Tree_Override{instance=u32(card)})
-    copy:=records_duplicate(&r,-1,2)
+    copy:=records_duplicate(&r,2)
     testing.expect_value(t,copy,5)
     names:=names_of(r.nodes[:])
     testing.expect(t,names[5]=="bar1" && names[6]=="fuel1" && names[7]=="card1")
@@ -114,10 +114,10 @@ overrides_follow_the_rows_of_their_instances :: proc(t:^testing.T) {
     r:Records
     if !testing.expect(t,records_load(&r,{text=texts[:],nodes=nodes,styles={{}},overrides={{instance=0},{instance=1}}},context.allocator)) {return}
     defer records_destroy(&r)
-    testing.expect_value(t,records_insert(&r,-1,0,.Spacer),1)
+    testing.expect_value(t,records_insert(&r,0,.Spacer),1)
     testing.expect_value(t,r.overrides[0].instance,u32(0))
     testing.expect_value(t,r.overrides[1].instance,u32(2))
-    records_delete(&r,-1,0)
+    records_delete(&r,0)
     testing.expect_value(t,len(r.overrides),1)
     testing.expect_value(t,r.overrides[0].instance,u32(0))
 }
@@ -127,11 +127,11 @@ a_widget_of_another_file_makes_its_component_once :: proc(t:^testing.T) {
     r:Records
     if !records_sample(t,&r) {return}
     defer records_destroy(&r)
-    a:=records_widget(&r,-1,0,base.Asset_Id{7,7},"button")
-    b:=records_widget(&r,-1,0,base.Asset_Id{7,7},"button")
+    a:=records_widget(&r,0,base.Asset_Id{7,7},"button","button")
+    b:=records_widget(&r,0,base.Asset_Id{7,7},"button","button")
     testing.expect(t,a>=0 && b>=0)
-    testing.expect_value(t,len(r.templates),1)
-    testing.expect_value(t,r.templates[0].component.widget,base.Asset_Id{7,7})
+    testing.expect_value(t,len(r.components),1)
+    testing.expect_value(t,r.components[0].widget,base.Asset_Id{7,7})
     testing.expect(t,serial.text_field(r.nodes[a].name[:])!=serial.text_field(r.nodes[b].name[:]))
     data:=records_data(&r)
     testing.expect_value(t,data.components[0].count,u32(0))
@@ -311,9 +311,17 @@ an_override_saves_into_its_style_and_goes :: proc(t:^testing.T) {
     // The title overrides it, with its variant.
     changed:=r.styles[shared]
     changed.radius=9
-    override:=records_style_add(&r,changed,records_style_variants(&r,shared),{base=u16(shared+1)})
+    info:ui.Tree_Style_Info
+    ui.tree_text_set(info.extends[:],"Label")
+    override:=records_style_add(&r,changed,records_style_variants(&r,shared),info)
     r.nodes[1].style=u16(override)
     testing.expect_value(t,records_style_base(&r,override),shared)
+    // It says what differs, and follows the style in the rest.
+    records_override_own(&r,override)
+    testing.expect(t,r.style_infos[override].sets=={.Radius} && len(records_style_variants(&r,override))==0)
+    r.styles[shared].stroke_width=2
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    testing.expect(t,r.styles[override].stroke_width==2 && r.styles[override].radius==9)
     testing.expect_value(t,len(records_style_variants(&r,override)),1)
     if !testing.expect(t,records_load_as_tree(&r)) {return}
     // Saving writes it into the shared style, which both use again.
@@ -346,8 +354,8 @@ rows_nothing_uses_go_when_the_records_are_written :: proc(t:^testing.T) {
     r.nodes[0].image=0
     records_image(&r,&r.nodes[3])
     r.images[r.nodes[3].image-1].texture={3,3}
-    records_widget(&r,-1,0,base.Asset_Id{7,7},"card")
-    records_delete(&r,-1,4)
+    records_widget(&r,0,base.Asset_Id{7,7},"card","card")
+    records_delete(&r,4)
     records_tidy(&r)
     testing.expect_value(t,len(r.styles),3)
     testing.expect(t,int(r.nodes[2].style)!=lost && r.styles[r.nodes[2].style].radius[0]==3,"The rows after the ones that went follow")
@@ -356,7 +364,8 @@ rows_nothing_uses_go_when_the_records_are_written :: proc(t:^testing.T) {
     testing.expect_value(t,records_style_name(&r,1),"Kept")
     testing.expect_value(t,len(r.images),1)
     testing.expect_value(t,r.images[r.nodes[3].image-1].texture,base.Asset_Id{3,3})
-    testing.expect_value(t,len(r.templates),0)
+    testing.expect_value(t,len(r.components),1)
+    testing.expect(t,records_use_remove(&r,0))
     testing.expect(t,records_load_as_tree(&r))
     // A named style no node uses goes when asked.
     testing.expect(t,records_style_delete(&r,1))
@@ -371,20 +380,20 @@ an_undo_chooses_the_node_it_changed :: proc(t:^testing.T) {
     defer records_destroy(&before)
     if !testing.expect(t,records_load(&after,records_data(&before),context.allocator)) {return}
     defer records_destroy(&after)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),-1)
+    testing.expect_value(t,records_changed_row(&before,&after,0),-1)
     ui.tree_text_set(after.nodes[3].name[:],"tank")
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),3)
+    testing.expect_value(t,records_changed_row(&before,&after,0),3)
     after.nodes[3]=before.nodes[3]
     // A style that changed chooses the node chosen when it takes it, the first that does otherwise.
     append(&before.styles,ui.Node_Style{})
     append(&after.styles,ui.Node_Style{radius=4})
     before.nodes[2].style,before.nodes[4].style=1,1
     after.nodes[2].style,after.nodes[4].style=1,1
-    testing.expect_value(t,records_changed_row(&before,&after,-1,4),4)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),2)
+    testing.expect_value(t,records_changed_row(&before,&after,4),4)
+    testing.expect_value(t,records_changed_row(&before,&after,0),2)
     // A node taken away chooses the row it left.
-    records_delete(&after,-1,4)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),3)
+    records_delete(&after,4)
+    testing.expect_value(t,records_changed_row(&before,&after,0),3)
 }
 
 @(test)
@@ -395,14 +404,14 @@ a_copy_of_a_localized_node_is_another_text_and_a_deleted_one_takes_its_translati
     menu:=&r.nodes[4]
     node_text_set(&r,menu,4,.Spanish,.English,"Menú")
     testing.expect(t,.Localized in menu.flags && menu.text_id!=0,"A translation makes the node localized, with an id")
-    copy:=records_duplicate(&r,-1,4)
+    copy:=records_duplicate(&r,4)
     testing.expect_value(t,copy,5)
     testing.expect(t,r.nodes[5].text_id!=0 && r.nodes[5].text_id!=r.nodes[4].text_id,"The copy has an id of its own")
     testing.expect_value(t,node_text_in(&r,&r.nodes[5],.Spanish,.English),"Menú")
     node_text_set(&r,&r.nodes[5],5,.Spanish,.English,"Opciones")
     testing.expect_value(t,node_text_in(&r,&r.nodes[4],.Spanish,.English),"Menú")
     testing.expect(t,records_load_as_tree(&r))
-    records_delete(&r,-1,5)
+    records_delete(&r,5)
     testing.expect_value(t,len(r.translations),1)
 }
 
@@ -414,13 +423,13 @@ a_renamed_node_keeps_a_name_of_its_own_and_what_named_it_follows :: proc(t:^test
     ui.tree_text_set(r.nodes[4].nav[0][:],"title")
     ui.tree_text_set(r.nodes[0].ghost[:],"title")
     ui.tree_text_set(r.nodes[1].name[:],"menu")
-    testing.expect_value(t,records_rename(&r,-1,1,"title"),"menu1")
+    testing.expect_value(t,records_rename(&r,1,"title"),"menu1")
     testing.expect_value(t,serial.text_field(r.nodes[4].nav[0][:]),"menu1")
     testing.expect_value(t,serial.text_field(r.nodes[0].ghost[:]),"menu1")
     ui.tree_text_set(r.nodes[1].name[:],"heading")
-    testing.expect_value(t,records_rename(&r,-1,1,"menu1"),"heading")
+    testing.expect_value(t,records_rename(&r,1,"menu1"),"heading")
     // What named a node that went names nothing.
-    records_delete(&r,-1,1)
+    records_delete(&r,1)
     testing.expect_value(t,serial.text_field(r.nodes[3].nav[0][:]),"")
     testing.expect_value(t,serial.text_field(r.nodes[0].ghost[:]),"")
     field:[ui.TREE_NAME_CAPACITY]u8
@@ -463,7 +472,7 @@ a_field_an_override_turns_on_takes_what_the_node_of_the_widget_has :: proc(t:^te
     r:Records
     if !records_sample(t,&r) {return}
     defer records_destroy(&r)
-    instance:=records_widget(&r,-1,0,base.Asset_Id{7,7},"card")
+    instance:=records_widget(&r,0,base.Asset_Id{7,7},"card","card")
     o:=records_override(&r,instance,"label",{})
     records_override_field(&r,o,.Style,true,&widget,widget.nodes[1])
     records_override_field(&r,o,.Text,true,&widget,widget.nodes[1])
@@ -500,6 +509,7 @@ a_check_reports_each_path_the_game_lacks_and_why_records_do_not_load :: proc(t:^
     count:=bind_check(&types,context.allocator,nil,nil,records_data(&r),nil,true,found[:])
     if !testing.expect_value(t,count,2) {return}
     testing.expect(t,found[0].row==1 && found[0].fault==.Path && serial.text_field(found[0].path[:])=="trips")
+    testing.expect_value(t,serial.text_field(found[0].name[:]),serial.text_field(r.nodes[1].name[:]))
     testing.expect(t,found[1].row==3 && found[1].binding==.Value && serial.text_field(found[1].path[:])=="fuel")
     // An override of a node its template does not have.
     texts:=make([dynamic]u8,context.temp_allocator)

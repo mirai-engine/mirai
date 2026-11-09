@@ -104,11 +104,11 @@ session_record_follow :: proc(s:^Session,pid:int) {
 }
 
 // What keeps the worlds from migrating now: a call of the API that runs
-// frames holds them on its stack, and a scene or a section that loads fills
-// one over frames.
+// frames holds them on its stack (one in api_wait does not), and a scene or a
+// section that loads fills one over frames.
 @(private)
 library_busy :: proc(s:^Session) -> bool {
-    if st:=api_state(s);st!=nil && (st.in_call>0 || st.stepping) {return true}
+    if st:=api_state(s);st!=nil && st.waiting==0 && (st.in_call>0 || st.stepping) {return true}
     app:=s.app
     if loads:=core.world_storage_of(core.world_ref(app.shared,s.info,.Shared),scene.Scene_Loads);loads!=nil && loads.job!=nil {return true}
     for slot in app.worlds {

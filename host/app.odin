@@ -186,7 +186,6 @@ App :: struct {
     // The part of the drawable the camera draws in, in pixels: what is not
     // always covered (the editor leaves out its bars). Zero: all of it.
     scene:[4]i32,
-    scene_view_width:i32, // of the whole view scene is the visible part of, in pixels; 0: the width of scene
     scene_shift:[2]f32, // where the center of the view of the camera is, in halves of scene: what surrounds scene is part of the view, not drawn
     time:f32,                 // seconds of the world the next frame shows: the render library sets it
     views:[render.VIEW_CAPACITY]render.Frame_View,
@@ -227,6 +226,7 @@ App :: struct {
     has_script_input:bool,
     script_devices:bool, // script_input holds the pointer, the gamepads and the device: they replace those of the window
     game_input_blocked:bool, // the pointer is on the editor: the game gets no input this frame
+    game_mouse_off:bool,     // the editor has the mouse (Play paused or released, Simulate, Watch): the game does not capture it
     game_input_excluded:core.Keys,
 }
 

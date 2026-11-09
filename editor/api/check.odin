@@ -17,6 +17,7 @@ Checker :: struct {
     path:[128]u8,
     path_len:int,
     message:string,
+    clamped:string, // what the params asked past a maximum, as members of _clamped
 }
 
 @(private)
@@ -139,24 +140,29 @@ load_f64 :: proc(bytes:[]u8) -> f64 {
     return intrinsics.unaligned_load((^f64)(raw_data(bytes)))
 }
 
+// An integer tagged clamp comes with its bytes: past its max it takes the max.
 @(private)
-check_bounds :: proc(c:^Checker,value:f64,field:^serial.Field) -> bool {
+check_bounds :: proc(c:^Checker,value:f64,field:^serial.Field,clamp:[]u8=nil) -> bool {
     if field==nil {return true}
     if field.has_min && value<field.min {return check_fail(c,"must be at least %v",field.min)}
-    if field.has_max && value>field.max {return check_fail(c,"must be at most %v",field.max)}
+    if field.has_max && value>field.max {
+        if clamp==nil {return check_fail(c,"must be at most %v",field.max)}
+        serial.scalar_store(clamp,transmute(u64)i64(field.max),field.max<0)
+        c.clamped=format_text(c.allocator,`%s%s%q:{{"asked":%v,"used":%v}}`,c.clamped,c.clamped!=""?",":"",string(c.path[:c.path_len]),i64(value),i64(field.max))
+    }
     return true
 }
 
 @(private)
-check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.Field) -> bool {
+check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.Field,clamp:=false) -> bool {
     s:=c.schema
     type:=s.types[index]
     switch type.kind {
     case .Bool,.Entity,.Entity_Id,.Asset:
     case .Int:
-        if type.size<=8 {return check_bounds(c,f64(load_i64(bytes)),field)}
+        if type.size<=8 {return check_bounds(c,f64(load_i64(bytes)),field,clamp?bytes:nil)}
     case .Uint:
-        if type.size<=8 {return check_bounds(c,f64(load_u64(bytes)),field)}
+        if type.size<=8 {return check_bounds(c,f64(load_u64(bytes)),field,clamp?bytes:nil)}
     case .Float:
         value:=load_f64(bytes)
         if math.is_nan(value) || math.is_inf(value) {return check_fail(c,"must be finite")}
@@ -173,11 +179,11 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
         for choice in s.choices[type.first:][:type.count] {mask|=1<<uint(choice.value)}
         if load_u64(bytes)&~mask!=0 {return check_fail(c,"has bits that are not members of its set")}
     case .Struct:
-        for &f in s.fields[type.first:][:type.count] {
+        for &f,i in s.fields[type.first:][:type.count] {
             if !field_visible(&f) {continue}
             mark:=c.path_len
             path_name(c,f.name)
-            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f)
+            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f,c.server!=nil && .Clamp in c.server.tags[int(type.first)+i])
             c.path_len=mark
             if !ok {return false}
         }
@@ -187,7 +193,7 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
         for i in 0..<int(type.count) {
             mark:=c.path_len
             path_index(c,i)
-            ok:=check_value(c,type.elem,bytes[i*elem:][:elem],field)
+            ok:=check_value(c,type.elem,bytes[i*elem:][:elem],field,clamp)
             c.path_len=mark
             if !ok {return false}
         }

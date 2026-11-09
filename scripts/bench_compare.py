@@ -387,9 +387,8 @@ def memory_add(b: Bench, prefix: str, metrics: dict):
 
 
 def configure(b: Bench):
-    rpc(b, "graphics.set", {"preset": b.preset.capitalize()})
-    rpc(b, "graphics.set", {"option": "Frame limit", "choice": 5})
-    rpc(b, "graphics.set", {"option": "VSync", "choice": 0})
+    rpc(b, "settings.set", {"graphics_preset": b.preset.capitalize(),
+                            "settings": {"Graphics_Settings": {"frame_limit": 0, "vsync": False}}})
 
 
 def moved_entity(b: Bench):
@@ -560,7 +559,7 @@ def grid_operations(b: Bench, first: int) -> list[dict]:
 def delete_roots(b: Bench):
     for entity in rpc(b, "scene.inspect")["entities"]:
         if entity.get("parent") is None:
-            rpc(b, "scene.delete", {"id": entity["id"]})
+            rpc(b, "scene.delete", {"entity": entity["id"]})
 
 
 def grid_new(b: Bench, path: Path):
@@ -838,13 +837,13 @@ def scenario_simulation(b: Bench):
         rpc(b, "scene.add", {"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
             "Rigid_Body": {"type": "Dynamic", "mass": 1, "gravity_scale": 1}, **box}})
         rpc(b, "play.start", {"simulate": True})
-        rpc(b, "play.step", {"ticks": 90})
+        rpc(b, "play.step", {"for": 90})
         for phase in ("resting", "moving"):
             frames, game, gpu, record, wait, table = [], [], [], [], [], {}
             for i in range(1, 91):
                 if phase == "moving":
                     rpc(b, "simulation.move", {"id": wall["id"], "position": [-2 + i / 30, 1, 0]})
-                rpc(b, "play.step", {"ticks": 1})
+                rpc(b, "play.step", {"for": 1})
                 status = rpc(b, "engine.status")
                 frames.append(cpu_field(status, "app_ms"))
                 game.append(cpu_field(status, "game_ms"))
@@ -941,7 +940,7 @@ def scenario_fade(b: Bench):
             for i in range(args.samples + 16):
                 if phase == "fade":
                     alpha = 0.25 if i % 2 == 0 else 0.75
-                    rpc(b, "scene.set", {"id": entity, "components": {"Tint": {"color": [0.7, 0.7, 0.7, alpha]}}})
+                    rpc(b, "scene.set", {"entity": entity, "components": {"Tint": {"color": [0.7, 0.7, 0.7, alpha]}}})
                 step(b, 1)
                 status = rpc(b, "engine.status")
                 if i < 16:
@@ -1005,7 +1004,7 @@ def main():
     root = Path(args.engine_root).resolve() if args.engine_root else Path(__file__).resolve().parent.parent
     b = Bench(args=args, root=root, variant=args.variant or root.name, preset=args.preset)
     # configure keeps its graphics in the settings of the demo through
-    # graphics.set: they go back to what they were however the run ends.
+    # settings.set: they go back to what they were however the run ends.
     settings = root / "demo" / "settings.mirai"
     before = settings.read_bytes() if settings.is_file() else None
     try:

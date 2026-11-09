@@ -260,7 +260,7 @@ program_representative :: proc(group:^Program_Group,content:^host.Content_Animat
 // The program an Animation plays this tick: that of a .match or an .agraph. A .blend is refused
 // with Additive_Space: it plays only under an Additive node of a graph. problems: where what a
 // .match cannot do is reported.
-program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:^Blend_Assets,graphs:^Graph_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},plays:[]Match_Play={},facing:=mm.Vec3{0,0,1}) -> (output:^Program_Output,programmed,ok:bool) {
+program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:^Blend_Assets,graphs:^Graph_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},plays:[]Match_Play={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
     if app==nil || app.assets==nil {return nil,false,false}
     runtime:=&state.program
     runtime.error=.None

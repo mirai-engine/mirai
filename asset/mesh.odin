@@ -47,7 +47,7 @@ import "mirai:std/serial"
 // Skin vertices are immutable bind-space geometry. The palette transforms them
 // by inverse(mesh_node_world) * joint_world * inverse_bind.
 
-MESH_VERSION :: 10
+MESH_VERSION :: 11
 MESH_OLDEST :: MESH_VERSION
 MESH_MAX_SLOTS :: 32
 MESH_MAX_LEVELS :: 32

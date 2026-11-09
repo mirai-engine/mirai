@@ -72,13 +72,13 @@ import_texture :: proc(o:^Out,file:string) {
     }
     if folder=="" {
         fmt.eprintfln("demo_content: %s: no folder for its texture",source)
-        o.failed=true
+        o.content.failed=true
         return
     }
     report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/%s",folder)),texture_options(o,file))
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s: %s",source,error.message)
-        o.failed=true
+        o.content.failed=true
         return
     }
     defer importer.report_destroy(&report)
@@ -104,13 +104,13 @@ import_model :: proc(o:^Out,file:string) {
     }
     if folder=="" {
         fmt.eprintfln("demo_content: %s: no folder for its import",source)
-        o.failed=true
+        o.content.failed=true
         return
     }
     report,error:=sources.import_source(path(o,source),path(o,fmt.tprintf("assets/%s",folder)),{root=fmt.tprintf("%s/demo",o.root),texture_cache=texture_cache(o)})
     if error.code!=.None {
         fmt.eprintfln("demo_content: %s: %s",source,error.message)
-        o.failed=true
+        o.content.failed=true
         return
     }
     defer importer.report_destroy(&report)

@@ -19,13 +19,13 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
    downloaded from the pinned commit to `<project>/.mirai/library/mesh2motion/<rig>` (`--list` names
    them) and joined into `<rig>.glb`. Importing it with `asset.import` gives an `.anim` with all of
    them and the `.skeleton` that animates them, the origin of the bake.
-3. **The character.** `asset.import` with `rig`, and `asset.import_status --wait-until
-   importing=false`: `warnings` says what the fit assumed.
+3. **The character.** `asset.import` with `rig`: `warnings` of its answer says what the fit
+   assumed.
    - Humanoid: a crotch covered by clothing or a neck that was not found are corrected by importing
      again with `rig_crotch` or `rig_neck` (heights in meters in the model); arms stuck to the body
      have no fix by adjustment: the mesh has to separate them.
    - Animal: poor coverage says the template did not take the shape of the mesh; another family is
-     tried, or the mesh is reoriented (on +Y, facing +Z).
+     tried, or the mesh is reoriented (on +Y, facing -Z once imported).
    - Importing the same source again writes where the first time did, even if `folder` changes.
 4. **Placing it.** `prefab.instantiate` of the character prefab gives the rig entity. Its rest pose
    is that of the template with the lengths of the character.
@@ -50,7 +50,7 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
   leaves the pose the clip asks for without correcting the arm angle of the mesh.
 - Correcting a joint is reimporting with what is known about the body: `skeleton.bone.set` changes
   the rest, not where the skin was bound.
-- The model is on +Y and faces +Z, like the templates. A humanoid, standing and with the arms
+- The model is on +Y and faces -Z once imported, like the templates: a source that faces its +Z arrives so. A humanoid, standing and with the arms
   separated from the torso.
 
 ## Verification

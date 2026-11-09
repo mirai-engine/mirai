@@ -48,7 +48,7 @@ test_dynamic_box :: proc(w:^World,half,position:Vec3,mass:f32,friction:f32=0.6) 
 test_character :: proc(w:^World,position:Vec3,desc:=Character_Desc{}) -> Character_Handle {
     d:=desc
     if d.radius==0 {d=CHARACTER_DESC_DEFAULT}
-    return character_create(w,d,position,HALF_TURN)
+    return character_create(w,d,position)
 }
 
 // The move of a walk at 5 m/s toward `move`, in the axes of the yaw of the character: along the ground it
@@ -320,7 +320,7 @@ a_character_rides_a_platform_that_moves_and_turns :: proc(t:^testing.T) {
     testing.expect(t,body_position(&w,platform).x>4)
     testing.expectf(t,near(character_state(&w,ch).ground_turn,0.8/60,1e-4),"turn %v",character_state(&w,ch).ground_turn)
     testing.expectf(t,near(character_move(&w,ch).yaw,0.8*150.0/60,0.01),"yaw %v",character_move(&w,ch).yaw)
-    facing:=q_rotate(body_transform(&w,character_body(&w,ch)).q,{0,0,1})
+    facing:=q_rotate(body_transform(&w,character_body(&w,ch)).q,{0,0,-1})
     testing.expectf(t,length(facing-q_rotate(q_axis_angle(UP,character_move(&w,ch).yaw),{0,0,-1}))<1e-4,"facing %v",facing)
     testing.expect(t,test_standing(&w,ch))
     // Walking on it is relative to it, in the axes of the yaw.

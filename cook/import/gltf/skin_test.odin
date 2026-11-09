@@ -17,20 +17,20 @@ skinned_meshes_preserve_bind_geometry_and_the_mesh_basis :: proc(t:^testing.T) {
     testing.expect_value(t,len(model.meshes),1)
     testing.expect_value(t,len(model.nodes),4)
     mesh_node:=find_node(&model,"mesh")
-    testing.expect(t,mesh_node>=0 && model.nodes[mesh_node].mesh==0 && close_to(model.nodes[mesh_node].transform.position,{3,0,0}),"the node keeps the transform of the mesh node")
+    testing.expect(t,mesh_node>=0 && model.nodes[mesh_node].mesh==0 && close_to(model.nodes[mesh_node].transform.position,{-3,0,0}),"the node keeps the transform of the mesh node")
     testing.expect(t,find_node(&model,"root bone")>=0,"joint entities preserve the source hierarchy and target identity")
     mesh:=&model.meshes[0]
     testing.expect_value(t,len(mesh.joints),2)
     testing.expect_value(t,len(mesh.skin),len(mesh.vertices))
     testing.expect_value(t,triangle_count(mesh),4)
-    testing.expect(t,close_to(triangle_positions(mesh,1)[1],{1,1,0}),"blended vertices remain in bind space")
-    testing.expect(t,close_to(triangle_positions(mesh,3)[1],{1,2,0}),"joint rotation does not deform imported vertices")
-    testing.expect(t,close_to(triangle_positions(mesh,0)[0],{-1,0,0}),"the mesh node transform is not applied twice")
+    testing.expect(t,close_to(triangle_positions(mesh,1)[1],{-1,1,0}),"blended vertices remain in bind space")
+    testing.expect(t,close_to(triangle_positions(mesh,3)[1],{-1,2,0}),"joint rotation does not deform imported vertices")
+    testing.expect(t,close_to(triangle_positions(mesh,0)[0],{1,0,0}),"the mesh node transform is not applied twice")
     for vertex in mesh.vertices {
         n:=unpacked_normal(vertex)
         testing.expectf(t,abs(n.x*n.x+n.y*n.y+n.z*n.z-1)<1e-3,"bind normals stay unit length: %v",n)
     }
-    testing.expect(t,mesh.bounds_max.y>1.9 && mesh.bounds_min.x< -0.9,"bounds describe the bind geometry")
+    testing.expect(t,mesh.bounds_max.y>1.9 && mesh.bounds_max.x>0.9,"bounds describe the bind geometry")
     bones:=model.skeletons[mesh.skeleton].bones
     world:=make([]mm.Mat4,len(bones),context.temp_allocator)
     for node,i in bones {
@@ -47,7 +47,7 @@ skinned_meshes_preserve_bind_geometry_and_the_mesh_basis :: proc(t:^testing.T) {
         joint:=mesh.joints[mesh.skin[vertex].joints[i]]
         posed+=mm.mat4_point(mesh_inverse*world[joint.node]*joint.inverse_bind,mesh.vertices[vertex].position)*f32(weight)/255
     }
-    testing.expectf(t,close_to(posed,{.5,1.5,0},0.01),"evaluating the palette once reproduces the authored rest pose, within 8-bit weights: %v",posed)
+    testing.expectf(t,close_to(posed,{-.5,1.5,0},0.01),"evaluating the palette once reproduces the authored rest pose, within 8-bit weights: %v",posed)
     // An unused influence may name a joint outside the rig: glTF only recommends 0.
     for influence in mesh.skin {
         for weight,i in influence.weights {

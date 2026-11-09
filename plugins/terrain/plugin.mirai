@@ -2,5 +2,6 @@
   "name": "terrain",
   "version": "0.1.0",
   "dependencies": ["physics"],
-  "parts": ["Runtime", "Editor", "Shaders", "Assets"]
+  "parts": ["Runtime", "Editor", "Shaders", "Assets"],
+  "asset_kinds": [{"extension": ".terrain"}]
 }

@@ -1,7 +1,9 @@
 package host
 
+import "base:runtime"
 import "core:c"
 import "core:log"
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
@@ -164,12 +166,24 @@ app_exit :: proc(app:^App,code:int) {
     app.quit,app.exit_code=true,code
 }
 
+// What a script of the player adds to the input of the UI of a frame, once the
+// frame has built it from the devices.
+Frame_Script :: struct {
+    input:core.Input,
+    pointer:[2]f32,
+    points:bool, // pointer is a place of the script
+}
+
 // The player's frame, with the phases of the game loop it runs. False once
 // the application was asked to end.
-app_frame :: proc(app:^App,phases:=ALL_PHASES) -> bool {
+app_frame :: proc(app:^App,phases:=ALL_PHASES,script:^Frame_Script=nil) -> bool {
     if !app_frame_begin(app) {
         profile_frame_close(app)
         return false
+    }
+    if script!=nil {
+        player_script_ui(&app.ui_input,script.input,script.pointer,script.points)
+        if script.points {ui_input_camera(&app.ui_input,app.camera,app_scene_points(app))}
     }
     if app.world!=nil {app_game_frame(app,app.world,phases)}
     app_frame_end(app)
@@ -501,7 +515,6 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
     if app.view_count==0 && app.scene.z>0 && app.scene.w>0 {
         app.views[0]={camera=app.camera,camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,rect=app.scene}
         app.views[0].camera.shift+=app.scene_shift
-        app.views[0].view_width=app.scene_view_width
         app.view_count=1
     }
     started:=time.tick_now()
@@ -762,8 +775,10 @@ app_capture :: proc(app:^App,path:string) -> bool {
 // into an image of that size, with the inspection its render phase asks for:
 // no screen UI, world panels, debug lines or outlines. editor is the World of
 // the editor when its loop is the one that draws world, as the window does.
-// Between frames.
-app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
+// wait above 0: its frames stream the textures of what it sees and it goes on
+// past frames, up to that long, while one is pending, then frames more for
+// them to settle. False: app_draw_problem says why. Between frames.
+app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     r:=app.renderer
     if r==nil || world==nil || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
     ui_only:=app.ui_only
@@ -782,7 +797,13 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     extras:=&app.extras
     drawn:=false
     count:=max(frames,1)
+    started:=time.tick_now()
     for frame:=0;frame<count;frame+=1 {
+        if wait>0 {
+            // Its frames are frames of the budget the loads share.
+            app.stats.frames+=1
+            app_textures_stream(app)
+        }
         if !alone {run_phase(app,loop,.Ui,{.Ui},world,editor)}
         offscreen_origin(app,ref)
         run_phase(app,loop,.Render,{.Render},world,editor)
@@ -790,7 +811,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
             camera=app.camera,ui=extras.layers[:extras.layer_count],camera_cut=frame==0,inspection=app.inspection,time=app.time,
             views=app.views[:app.view_count],panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
             ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
-            offscreen=true,detail=app.detail,
+            offscreen=true,streamed=wait>0,detail=app.detail,
         }
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
         if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,nil}
@@ -802,6 +823,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         app.inspection={}
         app.view_count=0
         if !drawn {break}
+        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
         if frame==count-1 && render.renderer_pipelines_pending(r) {
             render.renderer_pipelines_wait(r)
@@ -812,6 +834,26 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     if !drawn {return}
     if alone {return render.view_texture_capture(r,texture,allocator)}
     return render.renderer_capture(r,allocator)
+}
+
+// The frames a capture draws in all after frame: settle more after the last
+// that still found textures pending, while its wait lasts.
+@(private)
+capture_frames_streaming :: proc "contextless" (count,frame,settle,pending:int,waited,wait:time.Duration) -> int {
+    if pending==0 || waited>=wait {return count}
+    return max(count,frame+1+settle)
+}
+
+// Why the renderer drew nothing or an image could not be read, for whoever
+// just saw it fail.
+app_draw_problem :: proc(app:^App) -> string {
+    if app.renderer==nil {return "the application has no renderer"}
+    if _,text:=app_gpu_failure(app);text!="" {return text}
+    if window:=platform.input_frame(app.platform).window;window.minimized || window.pixel_size.x<=0 || window.pixel_size.y<=0 || app.drawable.x<=0 || app.drawable.y<=0 {
+        return "the window is minimized or has no size, so nothing is drawn"
+    }
+    if app.renderer.error!="" {return app.renderer.error}
+    return "the renderer skipped the frame without saying why"
 }
 
 // Draws a world the window does not show into a texture of
@@ -857,11 +899,11 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
 // that a frame would wait for it. The pixels belong to the write until it is
 // collected.
 Png_Write :: struct {
-    path:cstring,
+    path:string,
     pixels:[]u8, // RGBA8, of the allocator of the application
     width,height:int,
     quality:int, // above 0: a JPEG of that quality, from 1 to 100, without its alpha
-    written:bool,
+    error:os.Error, // why the file is not there; none once it is
     busy:bool,
     counter:jobs.Counter,
 }
@@ -869,35 +911,58 @@ Png_Write :: struct {
 // Starts writing pixels, allocated with the allocator of the application, as
 // the PNG at path, or the JPEG of quality; the write takes them.
 app_png_write_start :: proc(app:^App,w:^Png_Write,path:string,pixels:[]u8,width,height:int,quality:=0) {
-    w^={path=strings.clone_to_cstring(path,app.allocator),pixels=pixels,width=width,height=height,quality=quality,busy=true}
+    w^={path=strings.clone(path,app.allocator),pixels=pixels,width=width,height=height,quality=quality,busy=true}
     jobs.run(&app.jobs,jobs.OWNER,png_write,w,&w.counter)
+}
+
+@(private="file")
+Png_File :: struct {
+    file:^os.File,
+    error:os.Error,
+}
+
+@(private="file")
+png_file_write :: proc "c" (out,data:rawptr,size:c.int) {
+    context=runtime.default_context()
+    file:=(^Png_File)(out)
+    if file.error==nil {_,file.error=os.write(file.file,([^]u8)(data)[:size])}
 }
 
 @(private)
 png_write :: proc(w:^Png_Write,worker:int) {
+    file,opened:=os.open(w.path,{.Write,.Create,.Trunc})
+    if opened!=nil {w.error=opened;return}
+    out:=Png_File{file=file}
+    encoded:c.int
     if w.quality>0 {
-        w.written=stbi.write_jpg(w.path,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(clamp(w.quality,1,100)))!=0
-        return
+        encoded=stbi.write_jpg_to_func(png_file_write,&out,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(clamp(w.quality,1,100)))
+    } else {
+        encoded=stbi.write_png_to_func(png_file_write,&out,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(w.width*4))
     }
-    w.written=stbi.write_png(w.path,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(w.width*4))!=0
+    if closed:=os.close(file);out.error==nil {out.error=closed}
+    // stb fails only without memory for the image it compresses.
+    if encoded==0 && out.error==nil {out.error=runtime.Allocator_Error.Out_Of_Memory}
+    w.error=out.error
+    if w.error!=nil {os.remove(w.path)}
 }
 
 // Whether the write ended; then it is collected: its pixels are freed and
-// written says whether the file is there. Without worker threads the job runs here.
-app_png_write_poll :: proc(app:^App,w:^Png_Write) -> (finished,written:bool) {
-    if !w.busy {return true,w.written}
+// error says why the file is not there, none when it is. Without worker
+// threads the job runs here.
+app_png_write_poll :: proc(app:^App,w:^Png_Write) -> (finished:bool,error:os.Error) {
+    if !w.busy {return true,w.error}
     if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&w.counter)}
-    if jobs.pending(&w.counter) {return false,false}
+    if jobs.pending(&w.counter) {return false,nil}
     delete(w.pixels,app.allocator);delete(w.path,app.allocator)
-    w.pixels,w.path,w.busy=nil,nil,false
-    return true,w.written
+    w.pixels,w.path,w.busy=nil,"",false
+    return true,w.error
 }
 
-// Waits for the write to end and collects it.
-app_png_write_wait :: proc(app:^App,w:^Png_Write) -> bool {
+// Waits for the write to end and collects it: why the file is not there, or none.
+app_png_write_wait :: proc(app:^App,w:^Png_Write) -> os.Error {
     if w.busy {jobs.wait(&app.jobs,jobs.OWNER,&w.counter)}
-    _,written:=app_png_write_poll(app,w)
-    return written
+    _,error:=app_png_write_poll(app,w)
+    return error
 }
 
 // The pixels of the last frame drawn; the caller frees them with the allocator.

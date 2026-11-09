@@ -192,7 +192,7 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
     a:=ai.Act(Count_Act){ctx=&ctx,frame=&agents.values[0].state.main}
     ctx.tick,ctx.holder,ctx.lease=100,u64(far),31
     testing.expect(t,ai.claim(&a,7,1,1))
-    testing.expect(t,!ai.reserve_free(&claims.reservations,{7,1},u64(near),1,130) && ai.reserve_free(&claims.reservations,{7,1},u64(near),1,132))
+    testing.expect(t,!ai.reserve_open(&claims.reservations,{7,1},u64(near),1,130) && ai.reserve_open(&claims.reservations,{7,1},u64(near),1,132))
 }
 
 @(private="file")
@@ -279,17 +279,17 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     f:Sight_Test
     sight_init(&f)
     defer sight_destroy(&f)
-    // A guard at the origin looking down +Z (its front), noticing team 1.
+    // A guard at the origin looking down -Z (its front), noticing team 1.
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
     watch.notices=Teams(1<<1)
     watch.forget=2
     core.add(&f.perceivers,guard,watch)
-    ahead:=placed(&f,{0,0,5})
+    ahead:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,ahead,Perceivable{team=1,point=1})
-    friend:=placed(&f,{1,0,5})
+    friend:=placed(&f,{1,0,-5})
     core.add(&f.perceivables,friend,Perceivable{team=2,point=1})
-    behind:=placed(&f,{0,0,-5})
+    behind:=placed(&f,{0,0,5})
     core.add(&f.perceivables,behind,Perceivable{team=1,point=1})
     sight_tick(&f,0) // gives the guard its Perception
     sight_tick(&f,0.1)
@@ -297,14 +297,14 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
-    noise(&f.noises,{0,0,-4},10,behind)
-    noise(&f.noises,{0,0,-40},10,friend)
+    noise(&f.noises,{0,0,4},10,behind)
+    noise(&f.noises,{0,0,40},10,friend)
     sight_tick(&f,0.2)
     mine=core.get(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
     testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
     // What it no longer perceives is forgotten after `forget` seconds.
-    core.get(&f.worlds,ahead).position={0,0,50}
+    core.get(&f.worlds,ahead).position={0,0,-50}
     sight_tick(&f,1.2)
     sight_tick(&f,2.5)
     mine=core.get(&f.perceptions,guard)
@@ -326,7 +326,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     watch:=PERCEIVER_DEFAULT
     watch.forget=100
     core.add(&f.perceivers,guard,watch)
-    seen:=placed(&f,{0,0,5})
+    seen:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,seen,Perceivable{point=1})
     sight_tick(&f,0)
     noise(&f.noises,{3,0,0},10)
@@ -336,7 +336,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     core.destroy(&f.es,seen)
     core.table_settle(&f.perceivables,&f.es);core.table_settle(&f.worlds,&f.es)
     core.entities_settle(&f.es)
-    again:=placed(&f,{0,0,50})
+    again:=placed(&f,{0,0,-50})
     sight_tick(&f,0.2)
     mine=core.get(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(seen))==nil,"the destroyed subject is forgotten")
@@ -358,7 +358,7 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
         g=placed(&f,{f32(i)*2,0,0})
         core.add(&f.perceivers,g,PERCEIVER_DEFAULT)
     }
-    target:=placed(&f,{2,0,6})
+    target:=placed(&f,{2,0,-6})
     core.add(&f.perceivables,target,Perceivable{point=1})
     sight_tick(&f,0)
     for tick in 1..=3 {sight_tick(&f,f64(tick)*0.1)}
@@ -381,7 +381,7 @@ every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
         watch.forget=1
         core.add(&f.perceivers,g,watch)
     }
-    target:=placed(&f,{3,0,6})
+    target:=placed(&f,{3,0,-6})
     core.add(&f.perceivables,target,Perceivable{point=1})
     sight_tick(&f,0)
     for tick in 1..=4 {sight_tick(&f,f64(tick)*0.1)}
@@ -422,11 +422,11 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     defer {delete(requests.queue.items);places_free(&places)}
     settings:=Behavior_Settings{queries=1}
     // Near the point (3,0,0): of a grid around the querier, the best is that point.
-    q:=Place_Query{querier=a,request=7,center=.Querier,layout=.Grid,outer=4,spacing=1,keep=3}
+    q:=Place_Query{querier=a,center=.Querier,layout=.Grid,outer=4,spacing=1,keep=3}
     q.tests[0]={measure=.Distance,from=.Point,point={3,0,0},min=0,max=8,response={kind=.Linear,slope=-1,shift_y=1}}
     q.test_count=1
     place_query(&requests,q)
-    q.querier,q.request=b,8
+    q.querier=b
     place_query(&requests,q)
     navigation:nav.Navigation
     physics:phys.Physics_State
@@ -435,19 +435,18 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     core.table_settle(&results,&es)
     first,_:=core.get(core.read(&results),a)
     second,_:=core.get(core.read(&results),b)
-    testing.expect(t,first.status==.Found && first.request==7 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
-    testing.expect(t,second.status==.Waiting && second.request==8)
+    testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
+    testing.expect(t,second.status==.Waiting && second.request==2)
     places_run(&requests,&places,&results,core.ref(&settings),core.read(&worlds),core.read(&perceivers),{},core.read(&paths),core.read(&agents),core.read(&walks),core.read(&swims),core.ref(&navigation),core.ref(&physics),{},{},nil,{},{},&problems)
     second,_=core.get(core.read(&results),b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
-    q.querier,q.request=a,9
+    q.querier=a
     place_query(&requests,q)
-    q.request=10
     place_query(&requests,q)
     places_run(&requests,&places,&results,core.ref(&settings),core.read(&worlds),core.read(&perceivers),{},core.read(&paths),core.read(&agents),core.read(&walks),core.read(&swims),core.ref(&navigation),core.ref(&physics),{},{},nil,{},{},&problems)
     first,_=core.get(core.read(&results),a)
-    testing.expect(t,first.status==.Found && first.request==10)
+    testing.expect(t,first.status==.Found && first.request==4)
 }
 
 @(private="file")
@@ -489,13 +488,13 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     for e,i in ([]core.Entity{querier,target,gone}) {core.add(&f.worlds,e,core.World_Transform{transform={position={f32(i)*5,0,0},rotation=1,scale=1}})}
     core.table_settle(&f.worlds,&f.es)
     f.settings=Behavior_Settings{queries=1}
-    around:=Place_Query{querier=querier,request=1,center=.Target,target=target,layout=.Grid,outer=2,spacing=1,keep=1}
+    around:=Place_Query{querier=querier,center=.Target,target=target,layout=.Grid,outer=2,spacing=1,keep=1}
     around.tests[0]={measure=.Distance,from=.Querier,min=0,max=10,response={kind=.Linear,slope=-1,shift_y=1}}
     around.test_count=1
-    from:=Place_Query{querier=querier,request=2,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
+    from:=Place_Query{querier=querier,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     from.tests[0]={measure=.Distance,from=.Target,target=target,min=0,max=10,response={kind=.Linear,slope=-1,shift_y=1}}
     from.test_count=1
-    orphan:=Place_Query{querier=gone,request=3,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
+    orphan:=Place_Query{querier=gone,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     run :: proc(f:^Places_Test) {
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),{},core.read(&f.paths),
             core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),core.read(&f.objects),core.read(&f.states),&f.claims,{},{},&f.problems)
@@ -513,11 +512,11 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     place_query(&f.requests,around)
     run(&f)
     result,_=core.get(core.read(&f.results),querier)
-    testing.expectf(t,result.request==1 && result.status==.Empty,"around a target that is gone: %v",result)
+    testing.expectf(t,result.request==3 && result.status==.Empty,"around a target that is gone: %v",result)
     place_query(&f.requests,from)
     run(&f)
     result,_=core.get(core.read(&f.results),querier)
-    testing.expectf(t,result.request==2 && result.status==.Empty,"measured from a target that is gone: %v",result)
+    testing.expectf(t,result.request==4 && result.status==.Empty,"measured from a target that is gone: %v",result)
     testing.expect_value(t,len(f.places.waiting),0)
     testing.expect_value(t,core.count(&f.results),1)
 }

@@ -19,6 +19,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
+    gpu.renderer_set_display_transform(app.renderer,.ACES_2) // the pixels below are calibrated to it
     es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
     worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
     meshes:core.Table(Mesh_Renderer);defer core.table_destroy(&meshes)
@@ -83,7 +84,8 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         for at in 0..<len(pixels)/4 {
             color:=pixels[at*4:][:3]
             if int(color[0])>20 && int(color[0])>2*max(int(color[1]),int(color[2])) {red+=1}
-            if int(color[1])>20 && int(color[1])>2*max(int(color[0]),int(color[2])) {green+=1}
+            // ACES 2.0 takes a bright pure green toward white: it stays the strongest channel by half.
+            if int(color[1])>20 && 2*int(color[1])>3*max(int(color[0]),int(color[2])) {green+=1}
         }
         testing.expectf(t,alpha==0?red==0:red>100,"alpha %f draws the fading entity (%d red pixels)",alpha,red)
         testing.expect(t,green>100,"the unchanged entity remains visible")

@@ -61,6 +61,9 @@ keeps its default; one the struct does not have is an error.
 - `test_dependencies`: plugins that its tests import besides its dependencies; they are never
   activated with it
   ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
+- `asset_kinds`: the kinds of asset a plugin adds, each by its extension and whether it is a
+  document git merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)):
+  what the CLI, the cook and the editor know of them without loading the plugin.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.
@@ -401,11 +404,12 @@ tools come from `.deps`, also from a worktree.
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
 | Build only the engine | `mirai build engine [--dev\|--release] [--force]` |
 | Generate the world without building | `mirai generate [project]` |
+| Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
-| Check types | `mirai check <package> [-flag...]` |
-| Run tests | `mirai test <package> [test...] [--list\|--failed\|--quiet] [-flag...]` |
+| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins |
+| Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
-| Call the editor API | `mirai rpc <method> [json] [--select c] [--wait-until c=v] [--project P]` |
+| Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |
@@ -414,6 +418,7 @@ tools come from `.deps`, also from a worktree.
 | See who is building or measuring | `mirai locks` |
 | Search the code | `rg <pattern> [folder]` |
 | Check the machine and a project | `mirai doctor [project]` |
+| Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
 
 - `edit` and `play` without a flag compile with `--release`, because a person uses them; an agent
@@ -439,7 +444,12 @@ tools come from `.deps`, also from a worktree.
 ### Project
 
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
-  empty; `--list` gives the first line of the `README.md` of each template.
+  empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
+  and so is no template; `--list` gives the first line of the `README.md` of each template. It
+  writes the project's `.gitattributes`, which no template carries
+  ([git and assets](../../mirai-assets/references/cli.md#git)).
+- `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
+  of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
   the first build. It copies nothing: `.deps` and the caches (engine binaries, C libraries, shader
   stages) are those of the main checkout ([dependencies](build.md#dependencies-and-worktrees)).
@@ -450,6 +460,9 @@ tools come from `.deps`, also from a worktree.
 
 ### Tool and machine
 
+- `mirai setup git [folder]` wires the clone the folder is in, once per clone
+  ([git and assets](../../mirai-assets/references/cli.md#git)); `mirai doctor` reports a clone
+  whose `.gitattributes` names the drivers and whose configuration lacks them.
 - `mirai setup path` puts the `bin/` of this copy of the engine first in the user's `PATH` and
   removes that of another copy; it is run once per copy, because a build replaces `bin/mirai` in
   place. `mirai setup rg` installs the pinned ripgrep in `.deps` and puts it in the `PATH`: it is
@@ -461,9 +474,10 @@ tools come from `.deps`, also from a worktree.
   is none, that of the main checkout) and in the `PATH`. It compiles aside and puts the executable
   in place by renaming the one in use (an open `mirai mcp` does not block it); if it does not
   compile, it continues with the previous one.
-- `mirai.cmd`, for PowerShell and cmd, runs the launcher with the `bash.exe` of Git for Windows, not
-  with the `bash` of the `PATH`, which on Windows is usually WSL's; without Git Bash it fails and
-  says what to install.
+- `mirai.cmd`, for PowerShell, cmd and Python `subprocess` (by its absolute path: `cmd` takes a
+  relative `./mirai.cmd` for a switch), runs the launcher with the `bash.exe` of Git for Windows,
+  not with the `bash` of the `PATH`, which on Windows is usually WSL's; without Git Bash it fails
+  and says what to install. The extensionless `mirai` is a shell script Windows cannot run.
 - **Tool refresh.** On start, the tool compares those sources (without the `*_test.odin`) with its
   executable and, if any changed, it recompiles itself and runs the command with the new one. It
   compiles with `-ignore-unknown-attributes` and without `-custom-attribute`: the new sources may

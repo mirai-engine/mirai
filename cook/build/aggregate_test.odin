@@ -43,12 +43,12 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
     runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
     errors,_:=declare({root=root,packages=runtime_packages[:],binary="mirai",library=project.path(folder,"runtime.lib"),stage=stage_runtime,decl=decl})
     if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
-    entry_write(stage_runtime,"__mirai_runtime",runtime_packages[:])
+    entry_write(stage_runtime,"__mirai_runtime",entry_imports("mirai",runtime_packages[:])[:])
     if !ir(t,root,compiler,project.path(stage_runtime,"__mirai_runtime"),project.path(folder,"ir/runtime"),flags[:],fmt.tprintf("-collection:mirai=%s",stage_runtime)) {return}
     if !testing.expect(t,os.copy_directory_all(stage_editor,decl)==nil) {return}
     errors,_=declare({root=root,packages=editor_packages[:],binary="mirai",library=project.path(folder,"editor.lib"),stage=stage_editor,decl=decl})
     if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
-    entry_write(stage_editor,"__mirai_editor",editor_packages[:])
+    entry_write(stage_editor,"__mirai_editor",entry_imports("mirai",editor_packages[:])[:])
     if !ir(t,root,compiler,project.path(stage_editor,"__mirai_editor"),project.path(folder,"ir/editor"),flags[:],fmt.tprintf("-collection:mirai=%s",stage_editor)) {return}
 
     p,open_error:=project.open(project.path(root,"demo"),root)

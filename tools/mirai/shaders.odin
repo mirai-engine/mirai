@@ -11,20 +11,7 @@ import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
 
-// The value of `--name value` or `--name=value` at args[index^]; advances the index past it.
-@(private="file")
-option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
-    argument:=args[index^]
-    if argument==name {
-        if index^+1>=len(args) {return "",true,false}
-        index^+=1
-        return args[index^],true,true
-    }
-    if strings.has_prefix(argument,name) && len(argument)>len(name) && argument[len(name)]=='=' {return argument[len(name)+1:],true,true}
-    return "",false,false
-}
-
-SHADERS_EDITOR_MS :: 610_000 // the 600 s build.shaders waits by default, and the answer
+SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
 SHADERS_USAGE :: "shaders [--project <path> [--whole]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"
 
@@ -96,7 +83,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
 // others go on compiling in the editor. --whole generates them all here.
 @(private="file")
 shaders_publish_editor :: proc(folder:string,port:int) -> int {
-    result,err,called:=api.rpc_call(port,"build.shaders","{}",1,SHADERS_EDITOR_MS,context.temp_allocator)
+    result,err,called:=api.rpc_call(port,"build.start",`{"target":"shaders"}`,1,SHADERS_EDITOR_MS,context.temp_allocator)
     if !called || err.code!=0 {
         fmt.eprintfln("mirai shaders: the editor of %s did not publish them: %s",folder,err.message!=""?err.message:"it did not answer")
         return 1
@@ -186,10 +173,11 @@ engine_shaders_report :: proc(result:shaders.Result,out:=os.stdout) -> bool {
     return true
 }
 
-SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path"
+SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path | setup git [folder]"
 
 cmd_setup :: proc(root:string,args:[]string) -> int {
     if len(args)==1 && args[0]=="path" {return setup_path(root)}
+    if len(args)>0 && args[0]=="git" {return setup_git(root,args[1:])}
     if len(args)==0 || args[0]!="slang" && args[0]!="rg" && args[0]!="ripgrep" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
     archive:string
     for i:=1;i<len(args);i+=1 {

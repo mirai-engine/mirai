@@ -72,7 +72,7 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         testing.expect_value(t,len(w.colliders.values),16)
         testing.expect_value(t,resident.stats.built,u64(16))
         before:[16]base.Asset_Id;pipeline_meshes(&resident,before[:])
-        testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1}))
+        dig(&w.requests,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1},owner)
         pipeline_tick(&w,&resident,&app)
         now:[16]base.Asset_Id;pipeline_meshes(&resident,now[:])
         testing.expect(t,now==before,"the tick of the edit keeps what every chunk showed")
@@ -87,9 +87,9 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         testing.expect(t,ok && abs(hit.point.y-1)<1e-4)
         // Out of Play, an edit of the frame changes the source while the job of the fixed call reads it.
         stale:=resident.stats.stale
-        testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1}))
+        dig(&w.requests,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1},owner)
         pipeline_tick(&w,&resident,&app,playing=false)
-        testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1}))
+        dig(&w.requests,{kind=.Raise,center={-12,0,-12},radius=0.4,amount=1},owner)
         pipeline_tick(&w,&resident,&app,phase=.Frame,playing=false)
         pipeline_tick(&w,&resident,&app,playing=false)
         testing.expect_value(t,resident.stats.stale,stale+1)
@@ -213,7 +213,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         _,ok=phys.raycast({&w.physics},{100,20,100},{0,-1,0})
         testing.expect(t,!ok,"far from the viewer there is no collider")
         // Excavate near the viewer.
-        testing.expect(t,request_edit(&w.requests,owner,{kind=.Lower,center=near,radius=0.4,amount=2}))
+        dig(&w.requests,{kind=.Lower,center=near,radius=0.4,amount=2},owner)
         for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
         hit,ok=phys.raycast({&w.physics},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y+2)<1e-4)
@@ -251,7 +251,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         height,known=terrain_height({&w.data},id,near.x,near.z)
         testing.expect(t,known && abs(height+2)<1e-4)
         // Saving writes every page, those in memory and those in blocks.
-        testing.expect(t,request_save(&w.requests,owner,fmt.tprintf("%s/saved.terrain",root)))
+        request_save(&w.requests,owner,fmt.tprintf("%s/saved.terrain",root))
         pipeline_tick(&w,&resident,&app,settings)
         saved:Source;defer source_destroy(&saved)
         _,loaded:=source_load(&saved,fmt.tprintf("%s/saved.terrain",root),&assets.types)
@@ -292,7 +292,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         _,ok=phys.raycast({&w.physics},{50,20,50},{0,-1,0})
         testing.expect(t,!ok,"far from the viewer there is no collider")
         // Excavate near the viewer.
-        testing.expect(t,request_edit(&w.requests,owner,{kind=.Remove,center=near,radius=2,amount=1}))
+        dig(&w.requests,{kind=.Remove,center=near,radius=2,amount=1},owner)
         for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
         hit,ok=phys.raycast({&w.physics},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y< -1.5,"the excavation: %v",hit.point)
@@ -323,7 +323,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         testing.expectf(t,ok && hit.point.y==excavated,"reading the zone again keeps its edits (%d threads): %v",threads,hit.point)
         testing.expect_value(t,source_value(&w.data.entries[0].source,at),dug)
         // Saving writes every block, those in memory and those in blocks of their own or in the file.
-        testing.expect(t,request_save(&w.requests,owner,fmt.tprintf("%s/saved.terrain",root)))
+        request_save(&w.requests,owner,fmt.tprintf("%s/saved.terrain",root))
         pipeline_tick(&w,&resident,&app,settings)
         saved:Source;defer source_destroy(&saved)
         _,loaded:=source_load(&saved,fmt.tprintf("%s/saved.terrain",root),&assets.types)

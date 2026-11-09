@@ -355,7 +355,8 @@ no GOAP. What those models gave is written this way, without implementing them o
   another releases the previous one, and its `Exit` releases it.
 - The mind renews the lease of what it holds on each tick; whoever stops running loses it `lease`
   ticks later (far agents, until their next decision). `think` reads without taking with
-  `reserve_free`; `reserve_count` and `reserve_holds` say who holds what. Without room it adds to
+  `reserve_free(t, target, N)` (`reserve_open` from outside a think); `reserve_count` and
+  `reserve_holds` say who holds what. Without room it adds to
   `failed`.
 
 ### Trace

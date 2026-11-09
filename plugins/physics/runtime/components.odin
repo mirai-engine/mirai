@@ -238,6 +238,7 @@ Character_State :: struct {
     fluid_velocity:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // the current around it
     height:f32 `mirai:"transient,readonly,hidden,unit=m"`, // of its capsule now, from the feet to the top of the head
     cramped:bool `mirai:"transient,readonly"`,             // shorter than the height its Character_Move asks: what is over it keeps it down
+    velocity:[3]f32 `mirai:"transient,readonly,unit=m/s"`, // of the character itself after the last step, vertical speed included
 }
 
 character_state_of :: proc "contextless" (found:sim.Character_State) -> Character_State {

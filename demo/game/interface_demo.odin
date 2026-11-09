@@ -2,10 +2,9 @@ package game
 
 import "core:math"
 import "mirai:core"
-import eaudio "mirai:engine/audio"
 import "mirai:engine/gui"
+import render "mirai:engine/render"
 import inp "mirai:engine/input"
-import "mirai:engine/save"
 import "mirai:std/base"
 
 // The scene assets/interface/interface.scene: a HUD whose style H changes
@@ -81,7 +80,6 @@ Interface_Demo :: struct {
     seconds:f32,                     // played
     cooldown:f32 `mirai:"min=0,max=1"`, // of the ability the HUD shows as a ring
     style:i32,                       // of INTERFACE_STYLES
-    volume:f32 `mirai:"min=0,max=1"`,
     quality:i32,
     subtitles:bool,
     language:i32,                    // of INTERFACE_LANGUAGES
@@ -107,17 +105,17 @@ Interface_Demo :: struct {
 // that goes by.
 @(step="fixed",stage="react")
 interface_demo :: proc(
-    demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),
+    demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:core.Read(render.Hidden),shows:^Show_Requests,
     names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
-    ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,volumes:^eaudio.Audio_Volumes,saves:^save.Save_Requests,
+    ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),problems:^core.Problems,
 ) {
-    if core.count(demos)==0 {return}
+    holder,found:=core.sole(demos)
+    if !found {return}
     events:=ui_events.ptr
-    holder:=core.entity_at(demos,0)
     demo:=core.get(demos,holder)
-    hud,menu,inventory:=entity_named(names,INTERFACE_HUD),entity_named(names,INTERFACE_MENU),entity_named(names,INTERFACE_INVENTORY)
-    dialogue:=entity_named(names,INTERFACE_DIALOGUE)
+    hud,menu,inventory:=core.entity_named(names,INTERFACE_HUD),core.entity_named(names,INTERFACE_MENU),core.entity_named(names,INTERFACE_INVENTORY)
+    dialogue:=core.entity_named(names,INTERFACE_DIALOGUE)
     dt:=f32(time.dt)
     demo.seconds+=dt
     demo.health=demo.most*(0.55+0.4*math.sin(demo.seconds*0.6))
@@ -125,32 +123,18 @@ interface_demo :: proc(
     demo.cooldown=math.mod(demo.seconds,4)/4
     if math.mod(demo.seconds,2)<dt {demo.coins+=1}
 
-    // A screen shows while its UI_Screen is on.
-    show :: proc(screens:^core.Table(gui.UI_Screen),e:core.Entity,shown:bool) {
-        if e==core.NONE {return}
-        if shown {core.enable(screens,e)} else {core.disable(screens,e)}
-    }
-    shown :: proc(screens:^core.Table(gui.UI_Screen),e:core.Entity) -> bool {return core.get(screens,e)!=nil}
+    // A screen shows while it has no Hidden.
     styles:=INTERFACE_STYLES
     if inp.pressed(actions,.Hud_Style) {demo.style=(demo.style+1)%%i32(len(styles))}
-    // Whether the menu stays open after this tick: showing and hiding apply when the function ends.
-    menu_was:=shown(screens,menu)
-    menu_open:=menu_was
-    if inp.pressed(actions,.Menu) {menu_open=!menu_open;show(screens,menu,menu_open)}
-    if inp.pressed(actions,.Inventory) {show(screens,inventory,!shown(screens,inventory))}
+    menu_was:=!core.has(hidden,menu)
+    if inp.pressed(actions,.Interface_Menu) {ask_hidden(shows,menu,menu_was)}
+    if inp.pressed(actions,.Inventory) {ask_hidden(shows,inventory,!core.has(hidden,inventory))}
 
     // The menu: what its controls wrote, and the buttons that close it.
-    if value,ok:=gui.changed_value(events,menu,"volume");ok {
-        demo.volume=f32(value)
-        eaudio.audio_volume_set(volumes,eaudio.BUS_MASTER,demo.volume<1?eaudio.volume_db(demo.volume):0)
-    }
     if value,ok:=gui.changed_value(events,menu,"quality");ok {demo.quality=i32(value)}
     languages:=INTERFACE_LANGUAGES
     if value,ok:=gui.changed_value(events,menu,"language");ok {preferences.language=languages[clamp(int(value),0,len(languages)-1)]}
     // The menu shows the options of the player, also those a run before saved.
-    master:=f32(1)
-    for entry in volumes.buses {if entry!={} && entry.bus==eaudio.BUS_MASTER {master=eaudio.db_volume(entry.volume)}}
-    if demo.volume!=master {demo.volume=master}
     for language,i in languages {if language==preferences.language && demo.language!=i32(i) {demo.language=i32(i)}}
     for style in ([]string{"classic","minimal","neon"}) {
         if value,ok:=gui.changed_value(events,menu,style);ok {demo.style=i32(value)}
@@ -158,11 +142,9 @@ interface_demo :: proc(
     if on,ok:=gui.changed(events,menu,"subtitles");ok {demo.subtitles=on}
     if text,ok:=gui.submitted(events,menu,"name");ok {base.text_set(demo.player[:],text)}
     // Its buttons are the button of another .ui: their names are under their instances.
-    if gui.clicked(events,menu,"resume/button") || gui.back(events,menu) {menu_open=false;show(screens,menu,false)}
-    if gui.clicked(events,menu,"inventory/button") {menu_open=false;show(screens,menu,false);show(screens,inventory,true)}
-    // Closing the menu keeps what the player chose for the next time it plays.
-    if menu_was && !menu_open {save.request_options_save(saves)}
-    if gui.back(events,inventory) || gui.clicked(events,inventory,"close") {show(screens,inventory,false)}
+    if gui.clicked(events,menu,"resume/button") || gui.back(events,menu) {ask_hidden(shows,menu,true)}
+    if gui.clicked(events,menu,"inventory/button") {ask_hidden(shows,menu,true);ask_hidden(shows,inventory,false)}
+    if gui.back(events,inventory) || gui.clicked(events,inventory,"close") {ask_hidden(shows,inventory,true)}
 
     // The inventory: an item let go over a slot of the same item tops up its
     // stack, up to what its row lets a slot hold; over another slot it swaps
@@ -191,7 +173,7 @@ interface_demo :: proc(
     if inp.pressed(actions,.Talk) && demo.talk!={} && demo.line=={} {
         demo.line,demo.flags=demo.talk,{}
         demo.shown={}
-        show(screens,dialogue,true)
+        ask_hidden(shows,dialogue,false)
     }
     if demo.line!={} {
         at:=demo.line
@@ -206,7 +188,7 @@ interface_demo :: proc(
         }
         if gui.back(events,dialogue) {demo.line={}}
         if demo.line!=at {demo.shown={}}
-        if demo.line=={} {show(screens,dialogue,false)}
+        if demo.line=={} {ask_hidden(shows,dialogue,true)}
     }
 
     // The HUD shows the style chosen.

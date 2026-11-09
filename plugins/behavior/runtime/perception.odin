@@ -141,7 +141,7 @@ perception_update :: proc(
         // Only those whose turn came look and forget: the others keep what they could not look at.
         turn:=rays>0 || !sighted
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
-        forward:=mm.quat_rotate(pose.rotation,mm.Vec3{0,0,1})
+        forward:=mm.quat_forward(pose.rotation)
         for target in 0..<core.count(perceivables) {
             if rays<=0 {break}
             subject:=core.entity_at(perceivables,target)
@@ -184,7 +184,7 @@ perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Per
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
-        forward:=mm.quat_rotate(pose.rotation,mm.Vec3{0,0,1})
+        forward:=mm.quat_forward(pose.rotation)
         for target in 0..<len(perceivables.table.entities) {
             subject:=perceivables.table.entities[target]
             if subject==e || target>=core.count(perceivables) && !far_of(fars,subject) {continue}

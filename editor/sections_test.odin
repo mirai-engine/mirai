@@ -254,13 +254,13 @@ an_entity_of_a_section_reads_only_on_every_path_with_an_error_that_names_the_sec
     testing.expect(t,!edits_commit(&f.edits,w,&f.selection) && len(f.edits.steps)==0)
     // scene.set and scene.delete fail saying it is of a section.
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    call:=api.Call{raw=fmt.tprintf(`{{"id":"0x%016x","position":[1,2,3]}}`,u64(SECTIONS_TEST_LOCAL)),out=&out,allocator=context.temp_allocator}
+    call:=api.Call{raw=fmt.tprintf(`{{"entity":"0x%016x","position":[1,2,3]}}`,u64(SECTIONS_TEST_LOCAL)),out=&out,allocator=context.temp_allocator}
     a:Rpc_Args
     rpc_init(&a,&call,call.raw)
     _,applied:=api_set_apply(s,&a,w)
     testing.expect(t,!applied && call.failed && strings.contains(call.error.message,"section Layer") && !strings.contains(call.error.message,"prefab"),call.error.message)
     removal:=api.Call{out=&out,allocator=context.temp_allocator}
-    testing.expect(t,!api_delete_apply(s,&removal,w,SECTIONS_TEST_LOCAL) && strings.contains(removal.error.message,"section"),removal.error.message)
+    testing.expect(t,!api_delete_apply(s,&removal,w,api_entity(w,SECTIONS_TEST_LOCAL)) && strings.contains(removal.error.message,"section"),removal.error.message)
     testing.expect_value(t,entity_local(w,f.c).position,[3]f32{1,0,0})
     // Edited in its world, the section is edited and the rest reads only; what is added goes inside it.
     section_edit_set(s,f.r)
@@ -392,7 +392,7 @@ the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_v
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     server:=api.Server{max_response=1<<16}
     method:=api.Method{params_id=Api_Section_View_Params}
-    params:=Api_Section_View_Params{id=2}
+    params:Api_Section_View_Params;copy(params.entity[:],"0000000000000002")
     base.text_set(params.state[:],"Off")
     call:=api.Call{server=&server,method=&method,params=&params,out=&out,allocator=context.temp_allocator}
     api_section_view(s,&call)

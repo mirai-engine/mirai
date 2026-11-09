@@ -15,6 +15,7 @@ physics_places :: proc(places:^core.Places,requests:^Body_Requests,state:core.Re
         l:=state.ready?link_find(state.ptr,e):nil
         if core.has(rigids,e) || core.has(characters,e) || l!=nil && l.kind==.Proxy {
             core.push(&requests.queue,Body_Request{entity=e,kind=.Teleport,position=request.position,rotation=request.rotation})
+            if request.at_rest {core.push(&requests.queue,Body_Request{entity=e,kind=.Velocity})}
         } else {
             asked[left]=request
             left+=1

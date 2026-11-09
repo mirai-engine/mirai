@@ -27,8 +27,9 @@ bone_references_reject_overflow_embedded_zero_and_unterminated_storage_without_t
     testing.expect(t,root_ok && bone_resolve(&state,root)==0)
     testing.expect_value(t,bone_resolve(&state,bone_ref("foot")),1)
     requests:Animation_Requests;defer delete(requests.poses.items)
-    testing.expect(t,!animation_pose(&requests,core.entity_make(1,1),invalid,mm.TRANSFORM_IDENTITY))
+    animation_pose(&requests,core.entity_make(1,1),invalid,mm.TRANSFORM_IDENTITY)
     testing.expect_value(t,len(requests.poses.items),0)
+    testing.expect_value(t,requests.poses.refused,1)
     library:lib.Library
     testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{bone=invalid,translation=true},1),ROOT_DELTA_DEFAULT)
 }

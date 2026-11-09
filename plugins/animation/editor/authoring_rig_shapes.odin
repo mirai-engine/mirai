@@ -2,6 +2,7 @@ package animation_editor
 
 import "core:fmt"
 import "mirai:core"
+import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -37,7 +38,7 @@ Profile_Follow_Params :: struct {
 // A target as an agent names it: an entity by id.
 Spatial_Target_Params :: struct {
     kind:anim.Spatial_Target_Kind `mirai:"optional"`,
-    entity:base.Entity_Id `mirai:"optional,label=Entity: itself; Bone and Socket: the rig"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Entity: itself; Bone and Socket: the rig"`,
     bone:anim.Bone_Ref `mirai:"optional"`,
     socket:[64]u8 `mirai:"optional,text"`,
     position:mm.Vec3 `mirai:"optional,unit=m,label=World: in the world; the others: in the space of what they name"`,
@@ -60,13 +61,16 @@ profile_corrective_value :: proc(call:^api.Call,p:Profile_Corrective_Params) -> 
 // The target of a goal in a world, or a failure that says what is wrong with it.
 @(private)
 spatial_target_value :: proc(call:^api.Call,world:core.World_Ref,p:Spatial_Target_Params,path:string) -> (target:anim.Spatial_Target,ok:bool) {
+    p:=p
     target=anim.SPATIAL_TARGET_DEFAULT
     target.kind,target.bone,target.socket=p.kind,p.bone,p.socket
     target.position,target.rotation,target.scale=p.position,p.rotation,p.scale
     if p.kind!=.World {
-        if p.entity==0 {authoring_failure(call,fmt.tprintf("%s.entity",path),"Required","the id of the entity, or of the rig of a bone or socket","zero","An Entity, Bone or Socket target names an entity");return}
-        target.entity=find_entity(world,p.entity)
-        if target.entity==core.NONE {authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity id in the selected world",fmt.tprintf("%x",p.entity),"The target entity does not exist");return}
+        if p.entity[0]==0 {authoring_failure(call,fmt.tprintf("%s.entity",path),"Required","the entity, or of the rig of a bone or socket","zero","An Entity, Bone or Socket target names an entity");return}
+        problem:string
+        if target.entity,problem=editor.api_entity_select(world,base.text_get(p.entity[:]),"entity",false,call.allocator);problem!="" {
+            authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity in the selected world",base.text_get(p.entity[:]),"The target entity does not exist",fix=problem);return
+        }
     }
     if !anim.spatial_target_valid(target) {authoring_failure(call,path,"Invalid_Target","a finite transform with a unit rotation, and the bone or socket its kind names",fmt.tprintf("%v",p.kind),"Fix the target's transform or name");return}
     return target,true

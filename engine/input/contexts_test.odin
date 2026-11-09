@@ -27,6 +27,29 @@ menu_bindings :: proc() -> (m:Input_Map) {
     return
 }
 
+// An action of the always context reads under a modal context, and a context
+// that reads its input still takes it.
+@(test)
+the_always_context_reads_under_a_modal_one :: proc(t:^testing.T) {
+    PAUSE :: Action(18)
+    m:=menu_bindings()
+    input_map_action(&m,PAUSE,.Button)
+    input_map_bind(&m,PAUSE,binding_key(.Escape))
+    m.contexts[PAUSE]=CONTEXT_ALWAYS
+    device:=core.Input{keys_down={.Escape},keys_pressed={.Escape}}
+    modal:=Context_Stack{layers={0=MENU},count=1,modal=1}
+    actions:Actions
+    actions_update(&actions,&m,&device,&modal)
+    testing.expect(t,action(&actions,PAUSE).pressed,"a modal context does not silence it")
+    actions={}
+    actions_update(&actions,&m,&device)
+    testing.expect(t,action(&actions,PAUSE).pressed,"without a seat in a context, it reads too")
+    input_map_bind(&m,CONFIRM,binding_key(.Escape))
+    actions={}
+    actions_update(&actions,&m,&device,&modal)
+    testing.expect(t,action(&actions,CONFIRM).pressed && !action(&actions,PAUSE).down,"the context that reads Escape keeps it")
+}
+
 // A context takes from those under it the inputs its actions read, and a
 // modal one takes everything; outside it, its actions read nothing.
 @(test)

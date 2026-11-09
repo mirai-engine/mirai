@@ -43,7 +43,8 @@ names the Surface program of a water without its own material (empty or unknown:
   light, a repetition of the waves per texture. `water_light.comp` adds to the direct light
   (`Direct`) of what is under a surface the part of the pattern where its light crossed the
   surface, before the fog: over waves, the depth and the crossing are those of the surface with
-  waves.
+  waves. It reads the pattern twice, turned apart and chosen in patches narrower than a repeat,
+  so the repeat of the waves does not show as a tile over a wide shallow floor.
 - **Over the glass** (`water_over`, `Blend` stage, in front of the glass): the line of the surface
   over the lens where the near plane crosses it, over the waves. It only runs if the view's near
   plane can cross a surface.
@@ -123,7 +124,7 @@ from `tools/demo_content`.
   `mirai test plugins/physics/runtime the_waves_of_a_plane_are_its_own_and_the_sea_of_the_wind`.
 - `mirai test render how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light` and
   `mirai test engine/audio the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb`.
-- In the demo editor, `raft` scene, with validation: `editor.capture` from above, at water level,
+- In the demo editor, `raft` scene, with validation: `capture` from above, at water level,
   from below and crossing the surface, and inside and outside the dry box that crosses the sea; in
   Play, a falling box splashes, what floats follows the waves, the swimmer bubbles and sees
   suspended particles under the water, and what leaves the water looks dark and shiny for a few

@@ -39,7 +39,7 @@ Error :: enum u8 {
 // deformation covers most shapes, so the kind of animal is the caller's.
 COVERAGE_POOR :: 0.04
 
-// The humanoid rig of meshes, in the space of the model: +Y up, facing +Z.
+// The humanoid rig of meshes, in the space of the model: +Y up, facing -Z.
 humanoid :: proc(meshes:[]Mesh,hints:Hints={},allocator:=context.allocator) -> (rig:Rig,error:Error) {
     f,ok:=fit(meshes,hints,allocator)
     if !ok {return {},.Empty}
@@ -62,14 +62,14 @@ humanoid :: proc(meshes:[]Mesh,hints:Hints={},allocator:=context.allocator) -> (
 }
 
 // The rig of an animal of Mesh2Motion fitted to meshes, in the space of the
-// model: +Y up, facing +Z, as the template stands.
+// model: +Y up, facing -Z, as the template stands.
 animal :: proc(meshes:[]Mesh,kind:Animal,allocator:=context.allocator) -> (rig:Rig,error:Error) {
     template:=ANIMALS[kind]
     registered,ok:=register(template,meshes,allocator)
     if !ok {return {},.Empty}
     rig_build(&rig,meshes,template.root,template.bones,registered.joints,nil,allocator)
     warnings:=make([dynamic]string,allocator)
-    if registered.coverage>COVERAGE_POOR {append(&warnings,fmt.aprintf("rig: the %v template covers the mesh poorly (%.1f%% of its size apart): check that it is that animal, standing on +Y and facing +Z like the template",kind,registered.coverage*100,allocator=allocator))}
+    if registered.coverage>COVERAGE_POOR {append(&warnings,fmt.aprintf("rig: the %v template covers the mesh poorly (%.1f%% of its size apart): check that it is that animal, standing on +Y and facing -Z like the template",kind,registered.coverage*100,allocator=allocator))}
     rig.warnings=warnings[:]
     return rig,.None
 }

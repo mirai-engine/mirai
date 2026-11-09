@@ -20,36 +20,36 @@ SKY_SCENE_MOUNTAINS :: [?][4]f32{
 // few things near the eye and mountains from 3 to 20 km, where the air
 // lays its haze. How the sky changes over a day shows by turning the sun.
 write_sky_scene :: proc(o:^Out) {
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","sky"))
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","sky"))
     sky:=render.SKY_DEFAULT
     sky.atmosphere,sky.use_background=true,false
     sky_set(&s,&sky)
     sun:=render.Sun{color={1,1,1},illuminance=NOON,disc=true}
-    sun_entity:=entity(&s,"Sun",{0,10,0})
+    sun_entity:=asset.builder_entity(&s,"Sun",{position={0,10,0}})
     pose:=sun_pose(SKY_SCENE_SUN,{0,10,0})
-    put(&s,sun_entity,"Transform",&pose)
-    put(&s,sun_entity,"Sun",&sun)
-    ground:=entity(&s,"Ground",{0,-0.5,0},{60000,1,60000})
-    put(&s,ground,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
+    asset.builder_set(&s,sun_entity,pose)
+    asset.builder_set(&s,sun_entity,sun)
+    ground:=asset.builder_entity(&s,"Ground",{position={0,-0.5,0},scale={60000,1,60000}})
+    asset.builder_set(&s,ground,render.Mesh_Renderer{shape=.Cube})
     tinted(&s,ground,{0.22,0.26,0.16})
-    near:=entity(&s,"Near")
+    near:=asset.builder_entity(&s,"Near")
     for i in 0..<5 {
         x:=-6+f32(i)*3
-        post:=entity(&s,fmt.tprintf("Post %d",i),{x,1,-10-f32(i%2)*4},{0.8,2,0.8},near)
-        put(&s,post,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cube})
+        post:=asset.builder_entity(&s,fmt.tprintf("Post %d",i),{position={x,1,-10-f32(i%2)*4},scale={0.8,2,0.8}},near)
+        asset.builder_set(&s,post,render.Mesh_Renderer{shape=.Cube})
         tinted(&s,post,{0.8,0.8,0.8})
     }
-    ball:=entity(&s,"Ball",{2,0.75,-5},{1.5,1.5,1.5},near)
-    put(&s,ball,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Sphere})
-    mountains:=entity(&s,"Mountains")
+    ball:=asset.builder_entity(&s,"Ball",{position={2,0.75,-5},scale={1.5,1.5,1.5}},near)
+    asset.builder_set(&s,ball,render.Mesh_Renderer{shape=.Sphere})
+    mountains:=asset.builder_entity(&s,"Mountains")
     for m,i in SKY_SCENE_MOUNTAINS {
-        mountain:=entity(&s,fmt.tprintf("Mountain %d",i),{m[0],m[3]*0.5,m[1]},{m[2],m[3],m[2]},mountains)
-        put(&s,mountain,"Mesh_Renderer",&render.Mesh_Renderer{shape=.Cone})
+        mountain:=asset.builder_entity(&s,fmt.tprintf("Mountain %d",i),{position={m[0],m[3]*0.5,m[1]},scale={m[2],m[3],m[2]}},mountains)
+        asset.builder_set(&s,mountain,render.Mesh_Renderer{shape=.Cone})
         tinted(&s,mountain,{0.3,0.3,0.27})
     }
     eye:=[3]f32{0,2,8}
     camera:=placed(&s,"Camera",eye,mm.quat_look({0,-0.02,-1},{0,1,0}),{1,1,1})
-    put(&s,camera,"Camera",&render.Camera{fov=60*mm.RAD_PER_DEG,near=0.1,active=true})
+    asset.builder_set(&s,camera,render.Camera{fov=60*mm.RAD_PER_DEG,near=0.1,active=true})
     feature_scene_end(&s,o,"sky")
 }

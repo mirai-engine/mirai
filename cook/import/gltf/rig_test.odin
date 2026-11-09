@@ -168,13 +168,13 @@ a_humanoid_rig_fits_a_person_whose_arms_hang :: proc(t:^testing.T) {
     side_of:=make([]f32,len(bones),context.temp_allocator)
     for &bone,i in bones {
         name:=base.text_get(bone.name[:])
-        if strings.has_prefix(name,"upperarm_") {side_of[i]=1 if strings.has_suffix(name,"_l") else -1}
+        if strings.has_prefix(name,"upperarm_") {side_of[i]=-1 if strings.has_suffix(name,"_l") else 1}
         if bone.parent>=0 && side_of[i]==0 {side_of[i]=side_of[bone.parent]}
     }
     DOWN :: 0.75
     lowered :: proc(bones:[]asset.Skeleton_Bone,truth:[]mm.Transform,side:f32,p:mm.Vec3) -> mm.Vec3 {
         if side==0 {return p}
-        shoulder:=truth[bone_named(bones,"upperarm_l" if side>0 else "upperarm_r")].position
+        shoulder:=truth[bone_named(bones,"upperarm_l" if side<0 else "upperarm_r")].position
         return shoulder+mm.quat_rotate(mm.quat_axis_angle({0,0,1},-side*DOWN),p-shoulder)
     }
     positions:=make([][3]f32,len(mesh.vertices),context.temp_allocator)

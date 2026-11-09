@@ -102,6 +102,11 @@ A game is a struct in memory and a list of functions that transform it
 
 ## Invariants
 
+- **One coordinate convention for the whole engine:** right-handed, +Y up, +X right, -Z forward for
+  every entity (bodies, characters, cameras, lights, spawn points, input axes, view space).
+  Models reach it at import. A world panel or screen (`World_Widget`) is placed with that same
+  forward and the engine resolves the side it shows; a game never adds a half turn. A portal or a
+  mirror shows its face toward +Z.
 - The generator does not detect mutable package variables: check for them when reading.
 - **One table per component, not archetypes.** The world stores a dense table per component, without
   a query engine, and `core.changes` makes each reader process only what changed.
@@ -152,6 +157,9 @@ A game is a struct in memory and a list of functions that transform it
 - **The clock of a world is `core.Time`**, the only one: it is copied with it, so a Play and a
   rollback carry it with the copy, and a save stores its tick and its seconds. `core.time_advance`
   advances it after each tick; there is no other per-world clock in `host`.
+- **Outside `fixed` the input of the tick is stale, and frame events do not reach `fixed`.** In the
+  game loop `core.Input` and `Input_Of` outside `fixed`, and a `fixed` reader of an `events` storage
+  only other phases fill, are generator errors.
 - **What belongs to the frame is not simulation and is not copied.** `core.Frame_Time` and
   `core.Frame_Input` are `copy=false`: a Play, a correction and opening a document do not overwrite
   them, and nobody saves them or restores them by hand. A function reads `Time` to simulate and

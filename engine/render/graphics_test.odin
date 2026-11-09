@@ -18,7 +18,10 @@ graphics_default_is_medium_on_a_gpu_without_hardware_ray_tracing_or_integrated :
     testing.expect_value(t,medium.frame_limit,GRAPHICS_SETTINGS_DEFAULT.frame_limit)
     // Frame generation takes memory the low presets do not give it.
     presets:=GRAPHICS_PRESETS
-    for preset in Graphics_Preset {testing.expect_value(t,presets[preset].frame_generation,preset>=.High)}
+    for preset in Graphics_Quality {
+        if preset==.Custom {continue}
+        testing.expect_value(t,presets[preset].frame_generation,preset>=.High)
+    }
     testing.expect(t,!medium.frame_generation && GRAPHICS_SETTINGS_DEFAULT.frame_generation)
 }
 
@@ -52,18 +55,69 @@ graphics_default_without_a_device_is_the_high_preset :: proc(t:^testing.T) {
 }
 
 @(test)
-resolution_is_a_budget_of_pixels_under_one_per_point :: proc(t:^testing.T) {
+a_scale_set_by_hand_is_used_as_it_is_and_zero_follows_the_target_of_the_preset :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
     settings.render_scale=0.5
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==1 && s.render_megapixels==2.0736)
-    g.render_megapixels=0
-    testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_megapixels,f32(0))
+    testing.expect(t,s.render_scale==1 && s.render_height==1080)
+    g.render_scale=0.5
+    s=graphics_render_settings(settings,g,{type=.Discrete})
+    testing.expect(t,s.render_scale==0.5 && s.render_height==0)
+    testing.expect(t,s.sun_shadows)
+    g.sun_shadows=false
+    testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
     presets:=GRAPHICS_PRESETS
-    for preset in Graphics_Preset {
-        if preset>.Low {testing.expect(t,presets[preset].render_megapixels>=presets[preset-Graphics_Preset(1)].render_megapixels)}
+    for preset in Graphics_Quality {
+        if preset>.Low && preset!=.Custom {testing.expect(t,presets[preset].preset_height>=presets[Graphics_Quality(int(preset)-1)].preset_height)}
     }
+}
+
+@(test)
+a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^testing.T) {
+    presets:=GRAPHICS_PRESETS
+    sync:=new(Render_Sync);defer free(sync)
+    app:=new(host.App);defer free(app)
+    g:=GRAPHICS_SETTINGS_DEFAULT
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
+    // A preset named over a scale set by hand: it follows the target of the preset again.
+    graphics_apply(&g,sync,app)
+    g.render_scale,g.quality=0.5,.Low
+    graphics_apply(&g,sync,app)
+    testing.expect(t,g.quality==.Low && g.render_scale==0 && g.preset_height==presets[.Low].preset_height && g.reflections==.Off)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
+    // A field changed by hand: the preset the fields are at is Custom; the input stays and so does the field.
+    g.reflections=.Traced
+    graphics_apply(&g,sync,app)
+    testing.expect(t,g.quality==.Low && g.reflections==.Traced && g.preset_height==presets[.Low].preset_height)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
+    // A control reaches the preset named before, which no write of quality alone could.
+    graphics_preset_apply(&g,.Low)
+    testing.expect(t,g.reflections==.Off)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
+    // Custom names none: the fields stay where they are.
+    g.quality=.Custom
+    graphics_apply(&g,sync,app)
+    testing.expect(t,g.reflections==.Off)
+}
+
+@(test)
+the_first_read_keeps_the_fields_of_a_project_over_the_default_and_applies_a_preset_it_names :: proc(t:^testing.T) {
+    app:=new(host.App)
+    defer free(app)
+    own:=GRAPHICS_SETTINGS_DEFAULT
+    own.shadowed_lights,own.glass_shadows,own.glass_layers=16,true,2
+    sync:=new(Render_Sync)
+    defer free(sync)
+    graphics_apply(&own,sync,app)
+    testing.expect(t,own.shadowed_lights==16 && own.glass_shadows && own.glass_layers==2)
+    testing.expect_value(t,graphics_quality_of(own),Graphics_Quality.Custom)
+    named:=GRAPHICS_SETTINGS_DEFAULT
+    named.quality=.Low
+    other:=new(Render_Sync)
+    defer free(other)
+    graphics_apply(&named,other,app)
+    testing.expect(t,named.quality==.Low && named.reflections==.Off)
 }
 
 @(test)
@@ -97,7 +151,7 @@ memory_chosen_in_megabytes_replaces_the_automatic_pools_and_no_preset_touches_it
     s=graphics_render_settings(settings,g,{type=.Discrete})
     testing.expect_value(t,s.texture_pool_megabytes,gpu.DEFAULT_SETTINGS.texture_pool_megabytes)
     g.texture_memory,g.geometry_memory=1500,512
-    for preset in Graphics_Preset {
+    for preset in Graphics_Quality {
         graphics_preset_apply(&g,preset)
         testing.expect(t,g.texture_memory==1500 && g.geometry_memory==512)
     }
@@ -116,4 +170,16 @@ display_settings_left_at_zero_are_the_window_the_project_opened :: proc(t:^testi
     testing.expect(t,mode==.Fullscreen && size==platform.WINDOW_SIZE_DEFAULT)
     mode,_=display_target({},{})
     testing.expect_value(t,mode,Display_Mode.Windowed)
+}
+
+@(test)
+a_preset_keeps_a_pixel_per_point_within_the_lines_of_its_target :: proc(t:^testing.T) {
+    presets:=GRAPHICS_PRESETS
+    // At the window of the render check the presets it runs draw every pixel, as before.
+    for preset in ([]Graphics_Quality{.Medium,.High,.Ultra}) {
+        testing.expect_value(t,gpu.views_render_scale(1,presets[preset].preset_height,900,1),f32(1))
+    }
+    testing.expect_value(t,gpu.views_render_scale(1,presets[.Low].preset_height,900,1),f32(0.8))
+    testing.expect_value(t,gpu.views_render_scale(1,presets[.High].preset_height,2160,1),f32(0.5))
+    testing.expect_value(t,gpu.views_render_scale(0.5,0,2160,1),f32(0.5))
 }

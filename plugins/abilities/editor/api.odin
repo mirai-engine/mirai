@@ -16,11 +16,11 @@ Abilities_Api :: struct {provider:editor.Api_Provider}
 ABILITIES_API_DEFAULT :: Abilities_Api{provider={register=register}}
 
 Inspect_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 Use_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     ability:[ab.ABILITY_NAME]u8 `mirai:"text,label=The name of an Ability row"`,
     table:[1024]u8 `mirai:"text,optional,label=The .records path when two tables have a row of that name"`,
 }
@@ -79,10 +79,11 @@ row_write :: proc(w:^serial.Writer,key:string,rows:core.Records(ab.Ability),ref:
 inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Inspect_Params)
     world:=editor.shown_world(s)
-    e:=core.entity_of(core.world_entities(world),p.id)
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=s.mode!=.Edit)
+    if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if e==core.NONE || users==nil || !core.has(core.read(users),e) {
-        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the shown world: add one, or pick another entity",p.id)
+    if users==nil || !core.has(core.read(users),e) {
+        api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the shown world: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }
     u,_:=core.get(core.read(users),e)
@@ -272,14 +273,15 @@ check :: proc(s:^editor.Session,call:^api.Call) {
 use :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Use_Params)
     if !editor.playing(s) {
-        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: start Play or Simulate, then ask again")
+        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: play.start first")
         return
     }
     world:=editor.shown_world(s)
-    e:=core.entity_of(core.world_entities(world),p.id)
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
+    if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if e==core.NONE || users==nil || !core.has(core.read(users),e) {
-        api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with an Ability_User in the running game: add one, or pick another entity",p.id)
+    if users==nil || !core.has(core.read(users),e) {
+        api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the running game: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }
     abilities,_:=sets(s)
@@ -301,10 +303,11 @@ use :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     requests:=core.world_storage_of(world,ab.Ability_Requests)
-    if requests==nil || !ab.ability_use(requests,e,found) {
-        api.call_failf(call,api.SERVER_ERROR,"the requests of abilities are full: step the game and ask again")
+    if requests==nil || len(requests.queue.items)>=cap(requests.queue.items) {
+        api.call_failf(call,api.SERVER_ERROR,"the requests of abilities are full: step the game and ask again, or raise Ability_Settings.requests")
         return
     }
+    ab.ability_use(requests,e,found)
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_text(w,"ability",name,true)

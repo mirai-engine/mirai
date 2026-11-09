@@ -214,7 +214,7 @@ appearance_read :: proc(s:^Session,w:core.World_Ref,e:core.Entity,mesh:erender.M
 // Gives the entity a value of its own for the material of a slot.
 @(private)
 override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,value:[4]f32) -> bool {
-    next,_:=entity_get(shown_world(s),e,erender.Material_Override)
+    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
     if !erender.material_override_value_set(&next,slot,name,value) {
         notify(s,fmt.tprintf("An entity changes up to %d values of its material",erender.MATERIAL_OVERRIDE_CAPACITY))
         return false
@@ -225,7 +225,7 @@ override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,value:[4]f32) 
 // What an entity changes of its material, as one step: no component when it changes nothing.
 @(private)
 override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Override,label:string) -> bool {
-    w:=shown_world(s)
+    w:=editing_world(s)
     table:=core.world_table_of(w,erender.Material_Override)
     if table==nil || !entity_alive(w,e) {return false}
     opened,edit_ready:=edit_open(s,label)
@@ -244,7 +244,7 @@ override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Override,lab
 // of the material of a slot, or takes it away (put false).
 @(private)
 texture_override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,texture:base.Asset_Id,put:=true) -> bool {
-    next,_:=entity_get(shown_world(s),e,erender.Material_Override)
+    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
     if !override_texture_put(&next,slot,name,texture,put) {
         notify(s,fmt.tprintf("An entity changes up to %d textures of its material",erender.MATERIAL_OVERRIDE_TEXTURES))
         return false
@@ -255,7 +255,7 @@ texture_override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,textur
 // Writes the color or the emission of the Tint of the entity.
 @(private)
 tint_store :: proc(s:^Session,e:core.Entity,emission:bool,value:[3]f32) -> bool {
-    w:=shown_world(s)
+    w:=editing_world(s)
     table:=core.world_table_of(w,erender.Tint)
     if table==nil || !entity_alive(w,e) {return false}
     next:=erender.TINT_DEFAULT
@@ -272,7 +272,7 @@ tint_store :: proc(s:^Session,e:core.Entity,emission:bool,value:[3]f32) -> bool 
 // a mesh of one slot: the value is stored whole and the tint stops changing it.
 @(private)
 material_color_store :: proc(s:^Session,e:core.Entity,slot:int,emission:bool,value:[3]f32) -> bool {
-    w:=shown_world(s)
+    w:=editing_world(s)
     opened,edit_ready:=edit_open(s,"Material")
     if !edit_ready {return false}
     defer edit_close(s,opened)
@@ -287,7 +287,7 @@ material_color_store :: proc(s:^Session,e:core.Entity,slot:int,emission:bool,val
 // Gives back to the material of a slot every value the entity had for it.
 @(private)
 material_revert :: proc(s:^Session,e:core.Entity,slot:int) -> bool {
-    override,overridden:=entity_get(shown_world(s),e,erender.Material_Override)
+    override,overridden:=entity_get(editing_world(s),e,erender.Material_Override)
     if !overridden {return false}
     _,rest:=override_split(&override,slot)
     return override_put(s,e,rest,"Revert material")
@@ -299,7 +299,7 @@ material_revert :: proc(s:^Session,e:core.Entity,slot:int) -> bool {
 // Apply. One step.
 @(private)
 material_apply :: proc(s:^Session,e:core.Entity,slot:int) -> (material:base.Asset_Id,message:string) {
-    w:=shown_world(s)
+    w:=editing_world(s)
     override,_:=entity_get(w,e,erender.Material_Override)
     mesh,meshed:=entity_get(w,e,erender.Mesh_Renderer)
     if !meshed || s.app.assets==nil {return {},"The entity shows no mesh"}
@@ -880,7 +880,7 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
     desc:=asset.Material_Desc{id=owner,info=info,imported=based?&base_values:nil,parameters=parameters[:],imported_parameters=base_parameters,overlays=overlays,hidden=hidden,source=imported?&source:nil}
     bytes,bytes_error:=asset.material_bytes(&a.types,desc,context.temp_allocator)
     if bytes_error!=.None || !file_write(s,path,bytes,"Material") {return false}
-    if users:=material_users(s,shown_world(s),owner);users>1 {notify(s,fmt.tprintf("%s changed for the %d objects that show it",asset_name(relative),users))}
+    if users:=material_users(s,editing_world(s),owner);users>1 {notify(s,fmt.tprintf("%s changed for the %d objects that show it",asset_name(relative),users))}
     return true
 }
 
@@ -986,7 +986,7 @@ parameter_value_set :: proc(parameters:^[dynamic]asset.Material_Parameter,name:s
 // or the material's. owner: that material.
 @(private)
 overlays_of :: proc(s:^Session,e:core.Entity) -> (layers:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay,count:int,owner:base.Asset_Id,ok:bool) {
-    w:=shown_world(s)
+    w:=editing_world(s)
     mesh,meshed:=entity_get(w,e,erender.Mesh_Renderer)
     if !meshed {return}
     owner=appearance_read(s,w,e,mesh).material
@@ -1002,7 +1002,7 @@ overlays_of :: proc(s:^Session,e:core.Entity) -> (layers:[asset.MATERIAL_MAX_OVE
 // The layers of the entity in place of those of its material.
 @(private)
 overlays_store :: proc(s:^Session,e:core.Entity,layers:[]asset.Material_Overlay,own:=true) -> bool {
-    next,_:=entity_get(shown_world(s),e,erender.Material_Override)
+    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
     next.own_overlays,next.overlay_count,next.overlays=own,u32(len(layers)),{}
     copy(next.overlays[:],layers)
     return override_put(s,e,next,"Overlays")
@@ -1145,7 +1145,7 @@ asset_list_shown :: proc(s:^Session,t:^core.Table_Info,offset:int) -> bool {
 
 @(private)
 asset_list_table :: proc(s:^Session,t:^core.Table_Info) -> int {
-    for &candidate,index in shown_world(s).info.tables {
+    for &candidate,index in editing_world(s).info.tables {
         if &candidate==t {return index}
     }
     return -1

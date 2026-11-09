@@ -122,14 +122,14 @@ Agent runs:
 - `game_frame` advances the user's game first, with the window's input, and then the ticks asked
   for by the turns, with input blocked except that of each `play.step` (`run_input_give`). The UI
   of a turn's game takes `Run.ui` and `Run.pointer` (`run_ui_input`) instead of the window's
-  input, also when drawn with `play.capture`.
+  input, also when drawn with `capture`.
 - A turn acts only on its own run: it reads the user's Play it started in, but does not pause,
   advance or stop it. If the user leaves that Play and the turn has no run of its own, the run
   passes to the agent: view, camera and selection return to Edit and the user can open another
   Play.
 - A turn's run ends with the turn; all end with a document change (`runs_stop`).
 - Turn runs are not drawn in the window unless the user [watches](#watching-another-run) them;
-  `play.capture` from a turn draws its own off screen (`host.app_capture_world`).
+  `capture` from a turn draws its own off screen (`host.app_capture_world`).
 - A game that asks to quit (`app.quit`) stops the Play, not the editor; while the user watches
   another run the request is discarded. What a run that is not shown adds to the frame (UI layers,
   panels, lines, instances, views) is discarded after its loop (`extras_mark`, `extras_drop`).
@@ -268,7 +268,7 @@ Screen and input of the processes:
 A turn plays with online players inside the editor (`Play_Provider.turn`): the plugin creates a
 run per player (`Run.player` from 1), without compiling or opening processes; `play.step` advances
 them together and gives the input to that of `player`, which `play.inspect`, `play.player` and
-`play.capture` read.
+`capture` read.
 
 In a shared session, the host's presence carries what its plugin offers of the game it serves
 (`Play_Provider.offer`, opaque to the editor), and the menu of its figure, the plugin's rows for a
@@ -355,11 +355,11 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
 `prefab.list` and the selectors omit them (`asset.registry_listed`): they are not dragged into a
 scene nor enter a game. An open session does not reload them if they change.
 
-La fuente `editor/assets/presence/source/pup.glb` se prepara en Blender como una sola malla,
-de 0,9 m de alto, con origen entre los ojos y mirando hacia -Z. Sus primitivas 0 a 5 son,
-respectivamente, pelaje, arnés, franja, pantalla, lentes y estrellas; las siguientes conservan
-las piezas neutras. La fuente no se guarda en git. `mirai import` con `--root editor/assets` usa
-los ajustes junto a ella y escribe los assets del editor, reduciendo la malla a `max_triangles`.
+The source `editor/assets/presence/source/pup.glb` is prepared in Blender as a single mesh, 0.9 m
+tall, with its origin between the eyes and facing +Z of the file, which the import turns to -Z. Its
+primitives 0 to 5 are fur, harness, stripe, screen, lenses and stars; the following ones keep the
+neutral pieces. The source is not kept in git. `mirai import` with `--root editor/assets` uses the
+settings next to it and writes the assets of the editor, reducing the mesh to `max_triangles`.
 
 ### Pings
 

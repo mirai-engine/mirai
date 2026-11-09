@@ -201,7 +201,7 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     testing.expect_value(t,bone_resolve(state,bone_ref("missing")),-1)
     core.get(&w.ik,helper).enabled=false
     authored:=mm.Transform{position={0,2,0},rotation=mm.quat_axis_angle({0,1,0},0.4),scale={1,1,1}}
-    testing.expect(t,animation_pose(&w.requests,rig,bone_ref("upper"),authored))
+    animation_pose(&w.requests,rig,bone_ref("upper"),authored)
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     testing.expect_value(t,state.local[1],authored)
     testing.expect_value(t,w.problems.count,0)
@@ -378,8 +378,8 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
         animation_sample(core.read(&w.animations),&progress,core.read(configs),core.read(attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,requests,modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT)
         animation_advance(core.read(configs),&w.transforms,core.read(&w.parents),core.read(&w.worlds),requests,modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
     }
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true}))
+    modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
+    modifier_goal(&requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true})
     step(&w,&app,&configs,&attachments,&cache,&modifiers,&requests)
     testing.expect_value(t,len(modifiers.ik.values),2)
     testing.expect_value(t,len(w.playback.states[0].local),4)
@@ -391,7 +391,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     before:=w.playback.binding_revision
     geometry:=w.constraints.revision
     version:=modifiers.ik.version
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true}))
+    modifier_goal(&requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true})
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     step(&w,&app,&configs,&attachments,&cache,&modifiers,&requests)
     context=saved
@@ -399,8 +399,8 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,modifiers.ik.values[1].target.position,mm.Vec3{.6,.2,0})
     testing.expect(t,modifiers.ik.version>version)
     testing.expect_value(t,w.constraints.revision,geometry)
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1}))
+    modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1})
+    modifier_control(&requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1})
     saved=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     for _ in 0..<8 {step(&w,&app,&configs,&attachments,&cache,&modifiers,&requests)}
     context=saved
@@ -483,8 +483,8 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
     for iteration in 0..<4 {
         a:=mm.Transform{{2+f32(iteration),3,0},mm.quat_axis_angle({0,0,1},.5),{1,1,1}}
         b:=mm.Transform{{4+f32(iteration),1,0},mm.quat_axis_angle({0,1,0},.25),{1,1,1}}
-        testing.expect(t,animation_pose_final(&w.requests,foot,b))
-        testing.expect(t,animation_pose_final(&w.requests,upper,a))
+        animation_pose_final(&w.requests,foot,b)
+        animation_pose_final(&w.requests,upper,a)
         failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=0};previous_context:=context;previous_allocator:=app.allocator
         if iteration>0 {context.allocator={runtime_failure_allocator,&failure};context.temp_allocator=context.allocator;app.allocator=context.allocator}
         rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
@@ -501,11 +501,12 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
         testing.expect(t,ok && count==4 && revision==upper.revision && linalg.length(sampled[foot.index].position-b.position)>1)
     }
     stale:=upper;stale.revision+=1
-    testing.expect(t,animation_pose_final(&w.requests,stale,mm.TRANSFORM_IDENTITY))
+    animation_pose_final(&w.requests,stale,mm.TRANSFORM_IDENTITY)
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     stale_problem:=core.problem_find(&w.problems,rig,"animation.final_pose_binding")
     testing.expect(t,stale_problem!=nil && strings.contains(core.problem_text(stale_problem),"bind the bone again"),"a final pose through a stale handle is reported on its rig with the fix")
-    testing.expect(t,!animation_pose_final(&w.requests,rig,bone_ref("upper"),mm.Transform{}))
+    animation_pose_final(&w.requests,rig,bone_ref("upper"),mm.Transform{})
+    testing.expect_value(t,w.requests.final_poses.refused,1)
 }
 
 @(test)
@@ -531,11 +532,11 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
     target_parent.position+={10,0,0};target_child.position+={10,0,0}
     for reversed in ([2]bool{false,true}) {
         if reversed {
-            testing.expect(t,animation_pose_final(&w.requests,child,target_child,.5))
-            testing.expect(t,animation_pose_final(&w.requests,parent,target_parent,.5))
+            animation_pose_final(&w.requests,child,target_child,.5)
+            animation_pose_final(&w.requests,parent,target_parent,.5)
         } else {
-            testing.expect(t,animation_pose_final(&w.requests,parent,target_parent,.5))
-            testing.expect(t,animation_pose_final(&w.requests,child,target_child,.5))
+            animation_pose_final(&w.requests,parent,target_parent,.5)
+            animation_pose_final(&w.requests,child,target_child,.5)
         }
         rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
         a,_:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
@@ -545,8 +546,8 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
         testing.expect(t,abs(linalg.length(b.position-a.position)-linalg.length(original_child.position-original_parent.position))<.001)
     }
     target_child.position={999,999,999}
-    testing.expect(t,animation_pose_final(&w.requests,parent,target_parent))
-    testing.expect(t,animation_pose_final(&w.requests,child,target_child,0))
+    animation_pose_final(&w.requests,parent,target_parent)
+    animation_pose_final(&w.requests,child,target_child,0)
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     zero,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
     testing.expect(t,linalg.length(zero.position-original_child.position-{10,0,0})<.001)
@@ -555,8 +556,8 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
     target_parent.rotation=turn*original_parent.rotation
     target_child.rotation=turn*original_child.rotation
     target_child.position=original_parent.position+mm.quat_rotate(turn,original_child.position-original_parent.position)
-    testing.expect(t,animation_pose_final(&w.requests,child,target_child,.5))
-    testing.expect(t,animation_pose_final(&w.requests,parent,target_parent,.5))
+    animation_pose_final(&w.requests,child,target_child,.5)
+    animation_pose_final(&w.requests,parent,target_parent,.5)
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     rotated,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
     expected:=mm.transform_interpolate(original_child,target_child,.5)
@@ -651,7 +652,7 @@ body_labels_name_the_parts_and_regions_the_skeleton_keeps :: proc(t:^testing.T) 
     testing.expect(t,branch.bone==hand && bone_selected(state,branch,hand) && !bone_selected(state,branch,figure_bone(bones,"lowerarm_l")))
     _,unknown:=bone_select(state,base.name_hash("@tail"));testing.expect(t,!unknown)
     // A final pose asked for a part moves its bone.
-    testing.expect(t,animation_pose_final(&w.requests,rig,bone_ref("@hand_l"),{position={2,3,4},rotation=1,scale={1,1,1}}))
+    animation_pose_final(&w.requests,rig,bone_ref("@hand_l"),{position={2,3,4},rotation=1,scale={1,1,1}})
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     moved,posed:=animation_bone_transform(&w.playback,rig,bone_ref("@hand_l"))
     testing.expect(t,posed && linalg.length(moved.position-mm.Vec3{2,3,4})<0.001)
@@ -718,7 +719,7 @@ body_labels_of_a_skeleton_without_body_say_how_to_give_it_one :: proc(t:^testing
     testing.expect_value(t,bone_resolve(state,bone_ref("@hand_l")),-1)
     testing.expect_value(t,bone_resolve(state,bone_ref("hand_l")),figure_bone(bones,"hand_l"))
     testing.expect(t,len(state.regions)==0 && state.body=={})
-    testing.expect(t,animation_pose(&w.requests,rig,bone_ref("@hand_l"),core.to_math(core.TRANSFORM_IDENTITY)))
+    animation_pose(&w.requests,rig,bone_ref("@hand_l"),core.to_math(core.TRANSFORM_IDENTITY))
     rig_world_advance(&w,&app,{dt=1.0/60,playing=true})
     problems:=core.problems_list(&w.problems)
     if !testing.expect_value(t,len(problems),1) {return}

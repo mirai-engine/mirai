@@ -120,7 +120,7 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
 ## Verification
 
 - Thumbnails (`plugins/previews/editor`, CPU): `thumbnails_show_the_model_an_animation_moves`;
-  its image, `editor.capture` with the UI and the content browser filtered by Animation.
+  its image, `capture` with the UI and the content browser filtered by Animation.
 - `preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_poses`
   (`plugins/previews/editor`): bones, mesh index order, inverse bind, framing, rest,
   `Pose_Source` and authored poses intact.
@@ -135,7 +135,7 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
 - The rows over a panel's values:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`).
 - The documents in an open editor: `editor.document` with `Open` and the asset path, and
-  `editor.capture` with the UI next to the prototype. The sound ones have no prototype:
+  `capture` with the UI next to the prototype. The sound ones have no prototype:
   `audio.play` and `sound_set.inspect` check what they do.
 
 [render-verif]: ../../mirai-rendering/references/verification.md#gpu-environment

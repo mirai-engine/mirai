@@ -99,7 +99,7 @@ description: Mirai standard library for games, with the packages std/base, jobs,
   needs `core:math` gives another name to one of the two.
 - TRS composition is `transform_compose`: do not replace it with a product of affine matrices
   (it introduces shear) or reorder it (it is not associative: the world is composed from the root).
-- Conventions: right-handed, Y up, radians, column vectors; the camera looks toward −Z; inverted
+- Conventions: right-handed, Y up, radians, column vectors; everything looks toward −Z; inverted
   depth from 1 (near) to 0 (far); Euler is applied X, then Y, then Z.
 - What a seed reproduces (`Rng`, distributions, lattice noise, Euler to quaternion) uses only
   arithmetic, square root and the software functions of `core` (`sincos`, `ln`, `atan2`), never

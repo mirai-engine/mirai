@@ -91,7 +91,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
         if !exists || !core.has(configs,bone.rig) {ragdoll_release(state,entity,bodies,joints,joint_rows);core.remove(states,entity)}
     }
     if time.dt<=0 || !time.playing || core.count(configs)==0 {return}
-    if !anim.animation_requests_reserve(poses,final_poses=max(anim.REQUEST_CAPACITY,core.count(bones))) {
+    if !anim.animation_requests_reserve(poses,core.count(bones)) {
         core.report(problems,core.NONE,"ragdoll.memory","out of memory for the poses ragdolls send to animation, for %d bones: some bodies may not move their bones; free memory",core.count(bones))
     }
     // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
@@ -205,9 +205,7 @@ ragdoll_pose :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),st
         world:=body
         world.rotation=body.rotation*mm.quat_inverse(bone.offset.rotation)
         world.position=body.position-mm.quat_rotate(world.rotation,body.scale*bone.offset.position)
-        if !anim.animation_pose_final(requests,state.binding,world,config.weight) {
-            core.report(problems,entity,"ragdoll.requests","the pose of this body was not sent to animation: Animation_Requests holds no more final poses in this tick; free memory, or use fewer ragdoll bones")
-        }
+        anim.animation_pose_final(requests,state.binding,world,config.weight)
     }
 }
 

@@ -84,8 +84,8 @@ wind_variants :: proc "contextless" (t:Foliage_Type) -> u32 {
 // whose turn about up is nearest the turn of its forward.
 wind_variant :: proc "contextless" (rotation:mm.Quat,count:u32) -> u32 {
     if count<=1 {return 0}
-    forward:=mm.quat_rotate(rotation,{0,0,1})
-    turn:=math.atan2(forward.x,forward.z)
+    forward:=mm.quat_forward(rotation)
+    turn:=mm.yaw_of_direction(forward)
     step:=2*math.PI/f32(count)
     at:=int(math.round(turn/step))%int(count)
     return u32(at+int(count) if at<0 else at)

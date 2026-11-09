@@ -74,7 +74,7 @@ terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
 }
 
 @(private)
-terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false,ground:=core.NONE) -> (made:core.Entity) {
+terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false,ground:=core.NONE,name:="") -> (made:core.Entity) {
     a:=app.assets;terrains:=core.world_table_of(world,terrain.Terrain);meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     if a==nil || terrains==nil || meshes==nil {editor.notify(s,"The project has no terrain library");return}
     source:terrain.Source
@@ -107,7 +107,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     } else if tool.create_kind!=.Volume && tool.create_source==.Heightmap {
         path:=string(tool.heightmap_path[:tool.heightmap_length])
         bytes,error:=serial.file_read(path,app.allocator,limit=64*1024*1024)
-        if error!=.None {editor.notify(s,"The heightmap could not be read");return}
+        if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return}
         defer delete(bytes,app.allocator)
         heightmap,decode:=textures.heightmap_decode(bytes,tool.create_kind==.Mesh?terrain.MESH_SAMPLES_MAX:terrain.HEIGHT_SAMPLES_MAX,app.allocator)
         if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
@@ -130,8 +130,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         source,mesh=mesh,source
     }
     if !terrain_budget(s,world,&source) {return}
-    prefix:=terrain_kind_name(source.kind);label,path:="",""
-    for number:=1;;number+=1 {label=number==1?prefix:fmt.tprintf("%s %d",prefix,number);path=fmt.tprintf("%s/terrain/%s%s",a.registry.root,label,terrain.EXTENSION);if !editor.file_exists(s,path) {break}}
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.EXTENSION,name!="")
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
     bytes,error:=terrain.source_bytes(&source,id,&a.types,app.allocator)
@@ -139,7 +138,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     defer delete(bytes,app.allocator)
     // The new file is part of the step: undo takes it away, and it stays in
     // the memory of the registry until it is saved.
-    editor.edits_begin(s.edits,s.selection,converted!=core.NONE?"Convert to terrain":"Add terrain")
+    editor.edits_begin(s.edits,editor.document_selection(s),converted!=core.NONE?"Convert to terrain":"Add terrain")
     if !editor.file_write(s,path,bytes,"Add terrain") {editor.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
     e:=converted
     if e==core.NONE {
@@ -153,7 +152,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         core.remove(meshes,e)
     }
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
-    editor.edits_end(s.edits);editor.selection_set(s.selection,{e})
+    editor.edits_end(s.edits);editor.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})
     stroke_free(tool)
     return e
@@ -241,7 +240,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     static,found:=core.get(core.read(meshes),operand)
     placed,positioned:=core.get(core.read(worlds),operand)
     if !found || !positioned {editor.notify(s,"Select the terrain and a closed mesh operand");return}
-    if editor.prefab_member_locked(s,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
+    if editor.prefab_member_locked(s,world,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
     if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil && core.has(core.read(terrains),operand) {editor.notify(s,"The operand must be a static mesh");return}
     if parents:=core.world_table_of(world,core.Parent);parents!=nil {
         for parent in parents.values {if parent.entity==operand {editor.notify(s,"The mesh operand must have no children");return}}

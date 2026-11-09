@@ -17,7 +17,7 @@ import "mirai:std/serial"
 // the same ticks every time.
 //
 //   {"scene": "scenes/main.scene", "start": {"players": 1}, "steps": [
-//     {"name": "walk", "method": "play.step", "params": {"seconds": 1, "keys": ["W"]}},
+//     {"name": "walk", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
 //     {"method": "play.check", "params": {"conditions": [...]}}]}
 //
 // A step fails when its call fails, when its result says passed false (the
@@ -28,9 +28,9 @@ import "mirai:std/serial"
 
 SCENARIO_FOLDER :: "tests/scenarios"
 SCENARIO_EXTENSION :: ".mirai"
-API_SCENARIO_STEPS :: 256
+API_SCENARIO_STEPS :: 2048
 API_SCENARIO_FILES :: 256
-API_SCENARIO_FILE_BYTES :: 256<<10
+API_SCENARIO_FILE_BYTES :: 1<<20
 API_SCENARIO_TEXT :: 512
 
 Api_Play_Scenario_Params :: struct {
@@ -76,7 +76,7 @@ Scenario_Step :: struct {
 
 @(private)
 api_play_scenario_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, play.capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
+    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
 }
 
 // The keys of a JSON object in values, in the order of keys; problem names a
@@ -120,8 +120,8 @@ scenario_parse :: proc(text:string,allocator:=context.allocator) -> (sc:Scenario
         if !strings.has_prefix(values[1],"{") {return {},"start: give the params of play.start as an object, as {\"players\": 1}"}
         sc.start=values[1]
     }
-    count:=api_list_count(values[2])
-    if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"ticks": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
+    count:=api.json_count(values[2])
+    if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"for": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
     if count>API_SCENARIO_STEPS {return {},fmt.aprintf("steps: %d steps, and a scenario takes %d at most: split it into several files",count,API_SCENARIO_STEPS,allocator=allocator)}
     items:=make([]string,count,allocator)
     api_list_items(values[2],items)
@@ -153,7 +153,7 @@ scenario_method_refusal :: proc(name:string) -> string {
     switch {
     case name=="play.start" || name=="play.stop": return "the scenario starts the game before its steps and stops it after them: leave it out (start takes the params of play.start)"
     case strings.has_prefix(name,"play.scenario."): return "a scenario does not run scenarios"
-    case !strings.has_prefix(name,"play."): return "a scenario plays the game: its steps are play methods (play.input, play.step, play.check, play.spawn, play.set, play.capture...)"
+    case !strings.has_prefix(name,"play.") && name!="capture": return "a scenario plays the game: its steps are play methods and capture (play.input, play.step, play.check, play.spawn, play.set...)"
     }
     return ""
 }
@@ -167,14 +167,14 @@ api_scenario_check :: proc(server:^api.Server,sc:^Scenario,allocator:=context.al
         if method==nil {return fmt.aprintf("steps[%d].method: %q is not a method of this editor; engine.describe lists them",i,step.method,allocator=allocator)}
         if refusal:=scenario_method_refusal(step.method);refusal!="" {return fmt.aprintf("steps[%d].method: %s: %s",i,step.method,refusal,allocator=allocator)}
         mark:=base.arena_mark(&server.scratch)
-        _,error,read:=api.params_read(server,method,step.params)
+        _,_,error,read:=api.params_read(server,method,step.params)
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("steps[%d].params: %s",i,error.message,allocator=allocator)}
         if method.params==serial.TYPE_NONE && !api.json_valid(allocator,step.params) {return fmt.aprintf("steps[%d].params: not valid JSON",i,allocator=allocator)}
     }
     if start:=api.method_find(server,"play.start");start!=nil {
         mark:=base.arena_mark(&server.scratch)
-        _,error,read:=api.params_read(server,start,sc.start)
+        _,_,error,read:=api.params_read(server,start,sc.start)
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("start: %s",error.message,allocator=allocator)}
     }
@@ -190,7 +190,7 @@ scenario_files :: proc(root,path:string,allocator:=context.allocator) -> (files:
         if root=="" {return nil,"path: give the scenario file or folder; the editor has no project to look in"}
         given=SCENARIO_FOLDER
     }
-    file,wrong:=api_output_path(root,given,allocator)
+    file,wrong:=api_file_path(root,given,allocator)
     if wrong!="" {return nil,wrong}
     if !os.is_dir(file) {
         if !os.is_file(file) {return nil,fmt.aprintf("%s is not there: write the scenario there, or give the path of one",file,allocator=allocator)}
@@ -267,7 +267,6 @@ api_scenario_play :: proc(s:^Session,call:^api.Call,file:string,out:^serial.Writ
 
 // Runs a method of the API inside this call with params as JSON, answering
 // into a writer of its own; what it answered, kept in buffer.
-@(private)
 api_scenario_call :: proc(server:^api.Server,name,params:string,buffer:[]u8) -> (answer:string,error:api.Error,ok:bool) {
     method:=api.method_find(server,name)
     if method==nil {return "",{api.METHOD_NOT_FOUND,fmt.tprintf("%s is not a method of this editor",name),""},false}
@@ -283,16 +282,18 @@ api_scenario_call :: proc(server:^api.Server,name,params:string,buffer:[]u8) -> 
 
 // Whether a step whose method answered held: not when its answer says passed
 // false (the conditions of play.check), nor when play.step with until ran out
-// of its ticks before they held; why not.
+// of its ticks before they hold, nor when a drive ended without arriving; why not.
 @(private)
 scenario_step_held :: proc(params,answer:string) -> (held:bool,why:string) {
-    values:[2]string
-    api.object_values(context.temp_allocator,answer,{"passed","met"},values[:])
-    until:[1]string
-    api.object_values(context.temp_allocator,params,{"until"},until[:])
+    values:[3]string
+    api.object_values(context.temp_allocator,answer,{"passed","met","drive"},values[:])
+    asked:[2]string
+    api.object_values(context.temp_allocator,params,{"until","drive"},asked[:])
     switch {
-    case values[0]=="false":                return false,"did not hold"
-    case until[0]!="" && values[1]=="false": return false,"until did not hold within its ticks"
+    case values[0]=="false":                 return false,"did not hold"
+    case asked[1]!="":
+        if !api_drive_held(values[2]) {return false,fmt.tprintf("the drive did not arrive: %s",values[2])}
+    case asked[0]!="" && values[1]=="false": return false,"until did not hold within its ticks"
     }
     return true,""
 }
@@ -322,20 +323,17 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Wr
             path:serial.Writer
             serial.writer_init(&path,0,context.temp_allocator)
             serial.text_write_raw(&path,`{"path":`);serial.text_write_string(&path,target);serial.write_u8(&path,'}')
-            if _,error,ok:=api_scenario_call(server,"scene.load",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
+            if _,error,ok:=api_scenario_call(server,"scene.open",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
                 return fmt.bprintf(buffer,"scene: %s could not be opened: %s",sc.scene,error.message),0
             }
         }
     }
-    started,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
+    _,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
     if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0}
-    building:[1]string
-    api.object_values(context.temp_allocator,started,{"building"},building[:])
-    if building[0]=="true" {
-        return fmt.bprintf(buffer,"play.start: Odin sources changed since the last build, which runs now: run the scenario again once build.status says it stands"),0
-    }
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
     for &step,i in sc.steps {
+        if api_stop_asked(s) {return fmt.bprintf(buffer,"cancelled"),0}
+        api.server_progress(server,fmt.tprintf("step %d of %d: %s",i+1,len(sc.steps),step.name!=""?step.name:step.method),i,len(sc.steps))
         method:=api.method_find(server,step.method)
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')

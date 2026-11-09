@@ -158,15 +158,14 @@ action_content :: proc(cache:^Actions_Assets,app:^host.App,id:base.Asset_Id,hint
 Action_Request :: struct {entity:core.Entity,kind:Action_Request_Kind,action,section:[64]u8 `mirai:"text"`}
 @(storage,queue)
 Action_Requests :: struct {queue:core.Queue(Action_Request)}
-action_request :: proc(requests:^Action_Requests,entity:core.Entity,kind:Action_Request_Kind,name:string,section:string="") -> bool {
-    if requests==nil || entity==core.NONE || kind>max(Action_Request_Kind) || name=="" || len(name)>=64 || len(section)>=64 || kind==.Section && section=="" {return false}
-    if !program_array_reserve(&requests.queue.items,REQUEST_CAPACITY) {return false}
-    if len(requests.queue.items)>=REQUEST_CAPACITY {return false}
-    value:=Action_Request{entity=entity,kind=kind};base.text_set(value.action[:],name);base.text_set(value.section[:],section);core.push(&requests.queue,value);return true
+action_request :: proc(requests:^Action_Requests,entity:core.Entity,kind:Action_Request_Kind,name:string,section:string="") {
+    if requests==nil {return}
+    if entity==core.NONE || kind>max(Action_Request_Kind) || name=="" || len(name)>=64 || len(section)>=64 || kind==.Section && section=="" {core.refuse(&requests.queue);return}
+    value:=Action_Request{entity=entity,kind=kind};base.text_set(value.action[:],name);base.text_set(value.section[:],section);core.offer(&requests.queue,value)
 }
-action_fire :: proc(requests:^Action_Requests,entity:core.Entity,name:string,section:string="") -> bool {return action_request(requests,entity,.Fire,name,section)}
-action_cancel :: proc(requests:^Action_Requests,entity:core.Entity,name:string) -> bool {return action_request(requests,entity,.Cancel,name)}
-action_section :: proc(requests:^Action_Requests,entity:core.Entity,name,section:string) -> bool {return action_request(requests,entity,.Section,name,section)}
+action_fire :: proc(requests:^Action_Requests,entity:core.Entity,name:string,section:string="") {action_request(requests,entity,.Fire,name,section)}
+action_cancel :: proc(requests:^Action_Requests,entity:core.Entity,name:string) {action_request(requests,entity,.Cancel,name)}
+action_section :: proc(requests:^Action_Requests,entity:core.Entity,name,section:string) {action_request(requests,entity,.Section,name,section)}
 Action_Event :: struct {entity:core.Entity,action,section,window:u64,kind:Action_Event_Kind,time,weight:f32,layer:u8}
 Action_Plan :: struct {asset:base.Asset_Id,revision:u64,profile:Action_Profile}
 Action_Playing :: struct {

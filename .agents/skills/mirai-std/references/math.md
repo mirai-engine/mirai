@@ -5,7 +5,8 @@ types and procedures; this holds the conventions and the contracts that cross fi
 
 - The types (`Vec2`…`Vec4`, `Quat`, `Mat3`, `Mat4`) are aliases of the native Odin ones, so
   `core:math/linalg` operates on them without conversion.
-- Right-handed, Y up, meters, seconds, radians, column vectors.
+- Right-handed, Y up, +X right, -Z forward, meters, seconds, radians, column vectors. Code names
+  the forward `FORWARD`, `quat_forward` and `yaw_of_direction`, never `{0,0,-1}` or `atan2(-x,-z)`.
 
 ## Transform and TRS composition (`transform.odin`, `types.odin`)
 
@@ -35,7 +36,7 @@ applied X, then Y, then Z (R = Rz·Ry·Rx).
 
 ## Cameras (`camera.odin`)
 
-- The camera looks toward −Z with +Y up. Clip space has Y up and an inverted depth from 0 to 1 (near
+- Everything looks toward −Z with +Y up. Clip space has Y up and an inverted depth from 0 to 1 (near
   at 1, far at 0).
 - Screen points are pixels from the top-left corner of the viewport, Y downward.
 - `frustum_from_matrix` gives six inward-normalized planes, in the order `Left, Right, Bottom, Top,

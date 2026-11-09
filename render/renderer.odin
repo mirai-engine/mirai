@@ -31,6 +31,7 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:std/jobs"
+import mm "mirai:std/math"
 import "mirai:rhi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
@@ -42,7 +43,7 @@ Settings :: struct {
 	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
 	render_scale:         f32,    // internal 3D resolution relative to the window
-	render_megapixels:    f32,    // the most pixels the views of the window take in all, in millions: it lowers render_scale where they have more (0: no limit)
+	render_height:        u32,    // the lines the views of the window aim for together; while it is over 0 it stands for render_scale, up to one pixel per point (0: render_scale)
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	occlusion_culling:    bool,   // two-phase depth pyramid occlusion culling
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
@@ -64,6 +65,7 @@ Settings :: struct {
 	reflection_half_resolution: bool, // surfaces from REFLECTION_SHARED_ROUGHNESS trace one ray per block of 2x2 pixels
 	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
 	reflection_detail_roughness: f32, // reflections sharper than this show the glass their rays cross and the gloss of what they find (0: none)
+	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
 	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
@@ -95,7 +97,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 1, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, light_budget = 8,
+	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
@@ -122,7 +124,7 @@ REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 CPU_DEVICE_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 0.5, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
-	gi_max_distance = 1e4, light_budget = 4,
+	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4,
 	firefly_clamp = 20, texture_max_size = 1024,
 	texture_compression = true, texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
 	reflections = false, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 4,
@@ -194,9 +196,9 @@ AUTO_EXPOSURE_RANGE :: [2]f32{-6, 18}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
 MIDDLE_GRAY :: f32(0.18)
-// EV every view is exposed above what its meter or its camera gives, as Unreal's default exposure
-// bias: the display transform (ACES 2.0) shows a middle gray at the meter's value dim on an SDR
-// display.
+// EV a view is exposed above what its meter or its camera gives under ACES 2.0, as Unreal's default
+// exposure bias: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
+// transform calibrates to it (display_exposure_bias).
 EXPOSURE_BIAS :: f32(1)
 
 // The EV100 of a camera: an f-number, a shutter time in seconds and an ISO.
@@ -204,9 +206,9 @@ ev100_of :: proc "contextless" (aperture, shutter, iso: f32) -> f32 {
 	return math.log2(aperture * aperture / max(shutter, 1e-9) * 100 / max(iso, 1e-9))
 }
 
-// The scene-linear value of one nit at an exposure value, with EXPOSURE_BIAS.
-exposure_of_ev100 :: proc "contextless" (ev100: f32) -> f32 {
-	return MIDDLE_GRAY * 100 / LIGHT_METER_K * math.pow(2, EXPOSURE_BIAS - ev100)
+// The scene-linear value of one nit at an exposure value, with the bias of a transform.
+exposure_of_ev100 :: proc "contextless" (ev100: f32, bias: f32 = EXPOSURE_BIAS) -> f32 {
+	return MIDDLE_GRAY * 100 / LIGHT_METER_K * math.pow(2, bias - ev100)
 }
 
 // The manual exposure at which a render unit becomes one scene-linear unit, whatever the image
@@ -429,6 +431,9 @@ Frame_Desc :: struct {
 	// not shown: nothing reaches the window, and the probe volume keeps the
 	// light of the world that is.
 	offscreen: bool,
+	// With offscreen: textures stream for what this frame sees, as for the
+	// views of the window, until the next frame the window shows.
+	streamed: bool,
 	// A texture the finished image is also copied into, the size of the
 	// frame: the shared texture of a player another process shows.
 	output: rhi.Texture,
@@ -446,7 +451,6 @@ Frame_View :: struct {
 	camera:Camera,
 	camera_cut:bool,
 	rect:[4]i32, // where in the drawable; for a view into a texture, z and w are its size
-	view_width:i32, // of the whole view rect is the visible part of, for the pixels of the settings; 0: the width of rect
 	disabled:bool,
 	texture:Texture_Handle, // of view_texture_add: the view is drawn into it, before those of the window
 	pipeline:Render_Pipeline_Handle, // 0: the main pipeline of the frame for a view of the window, Full for one drawn into a texture
@@ -538,7 +542,8 @@ Renderer :: struct {
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
-	display_lut:     rhi.Texture, // the display transform (display.odin)
+	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
+	display_transform: Display_Transform, // how the passes encode; Neutral is the default of a project
 	font:            rhi.Texture,
 	font_size:       [2]int,
 	font_pending:    rhi.Texture_Region, // texels of the atlas the next frame copies; zero: none
@@ -706,7 +711,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.scene.tlas_off = r.hardware_rt
 	r.window_width = max(width, 1)
 	r.window_height = max(height, 1)
-	if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_width) * f32(r.window_height)), true) {return false}
+	if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	r.scene.instances_dirty = true
 	r.scene.lights_dirty = true
 	r.scene.tlas_dirty = true
@@ -1303,7 +1308,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // Changes settings between frames. Returns false (and keeps the old settings)
 // when the request is invalid.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.render_scale < 0.25 || settings.render_scale > 2 || !(settings.render_megapixels >= 0) || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	if settings.render_scale < 0.25 || settings.render_scale > 2 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if !(settings.reflection_detail_roughness >= 0 && settings.reflection_detail_roughness <= 1) {return false}
@@ -1319,12 +1324,12 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	}
 	r.settings = settings
 	r.textures.residency.stale = true
-	if old.reference_lights != settings.reference_lights {r.targets.shadow.valid = false}
+	if old.reference_lights != settings.reference_lights || old.sun_shadows != settings.sun_shadows {r.targets.shadow.valid = false}
 	if old.reference_gi != settings.reference_gi {r.targets.gi_reference_valid = false}
-	if old.colored_shadows != settings.colored_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness {
+	if old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness {
 		r.targets.reflect_valid, r.targets.gi_reference_valid, r.targets.taa_valid = false, false, false
 		r.targets.glass_valid = false
-		if old.colored_shadows != settings.colored_shadows {ddgi_release(r)}
+		if old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows {ddgi_release(r)}
 	}
 	if old.glass_layers != settings.glass_layers {
 		rhi.device_wait_idle(r.device)
@@ -1357,9 +1362,9 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	// A mesh registered while rays were traced by software has no native structure yet: the next publication builds it.
 	if r.hardware_rt {r.scene.geometry_dirty = true}
 	if r.hardware_rt {r.scene.tlas_dirty = true; r.scene.instance_capacity = 0}
-	if old.render_scale != settings.render_scale || old.render_megapixels != settings.render_megapixels {
+	if old.render_scale != settings.render_scale || old.render_height != settings.render_height {
 		destroy_targets(r, &r.main.targets)
-		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_width) * f32(r.window_height)), true) {return false}
+		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	}
 	if old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget {
 		ddgi_release(r)
@@ -1543,18 +1548,21 @@ ui_layer_targets :: proc(r: ^Renderer, layers, blur: []rhi.Texture, width, heigh
 	return false
 }
 
-// Of the device pixels of the window, what its views are drawn at: the render
-// scale, relative to window points, lowered so that the views, which show
-// that many pixels in all, take at most render_megapixels; never below the
-// least render scale.
+// Of the device pixels of the window, what its views are drawn at. height: the
+// device pixels the views span from top to bottom.
 @(private)
-window_render_scale :: proc(r: ^Renderer, pixels: f32) -> f32 {
-	density := pixel_density(r)
-	scale := clamp(r.settings.render_scale, 0.25, 2) / density
-	if r.settings.render_megapixels > 0 && pixels > 0 {
-		scale = min(scale, max(math.sqrt(r.settings.render_megapixels * 1e6 / pixels), 0.25 / density))
+window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
+	return views_render_scale(r.settings.render_scale, r.settings.render_height, height, pixel_density(r))
+}
+
+// The render scale relative to window points; a target of lines replaces it,
+// as a fraction of height, never over one pixel per point nor under the
+// least render scale.
+views_render_scale :: proc "contextless" (render_scale: f32, render_height: u32, height, density: f32) -> f32 {
+	if render_height > 0 && height > 0 {
+		return min(max(f32(render_height) / height, 0.25 / density), 1 / density)
 	}
-	return scale
+	return clamp(render_scale, 0.25, 2) / density
 }
 
 @(private)
@@ -1627,7 +1635,7 @@ renderer_resize :: proc(r: ^Renderer, requested_width, requested_height: u32, ui
 	rhi.device_wait_idle(r.device)
 	destroy_view_targets(r)
 	destroy_targets(r, &r.main.targets)
-	create_targets(r, &r.main, width, height, window_render_scale(r, f32(width) * f32(height)), true)
+	create_targets(r, &r.main, width, height, window_render_scale(r, f32(height)), true)
 	rhi.swapchain_resize(r.device, width, height)
 }
 
@@ -1651,11 +1659,8 @@ clear_textures :: proc(cmd: ^rhi.Command_List, textures: ..rhi.Texture) {
 camera_matrices :: proc(c: Camera, aspect: f32, reach: f32 = 0) -> (view, proj: Mat4, forward: Vec3) {
 	// Degenerate cameras (target on the eye, forward parallel to up) would
 	// produce NaN matrices that poison every temporal history.
-	forward = linalg.normalize(c.forward) if linalg.length(c.forward) > 1e-6 else Vec3{0, 0, -1}
-	up_hint := c.up if linalg.length(c.up) > 1e-6 else Vec3{0, 1, 0}
-	right := linalg.cross(forward, up_hint)
-	if linalg.length(right) < 1e-5 {right = linalg.cross(forward, Vec3{0, 0, 1} if abs(forward.y) > 0.9 else Vec3{0, 1, 0})}
-	right = linalg.normalize(right)
+	_, right, along := mm.look_basis(c.forward, c.up)
+	forward = along
 	up := linalg.cross(right, forward)
 	view = Mat4(1)
 	for i in 0 ..< 3 {

@@ -52,21 +52,21 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
     }
     s:=editor.Session{edit_world=&document,info=&info,mode=.Play}
     s.runs[0]={world=&play_world}
-    p:=request_defaults();p.id=17;p.stop=true
+    p:=request_defaults();copy(p.entity[:],"0000000000000011");p.stop=true
     out:serial.Writer;serial.writer_init(&out,4096);defer serial.writer_destroy(&out)
     method:=api.Method{params_id=Request_Params}
-    call:=api.Call{method=&method,params=p,raw=`{"id":"11","stop":true}`,out=&out,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,params=p,raw=`{"entity":"0000000000000011","stop":true}`,out=&out,allocator=context.temp_allocator}
     request(&s,&call)
     testing.expect(t,!call.failed && !play_world.animations.values[0].playing && document.animations.values[0].playing)
-    p=request_defaults();p.id=17;p.seek=1.25
-    call=api.Call{method=&method,params=p,raw=`{"id":"11","seek":1.25}`,out=&out,allocator=context.temp_allocator}
+    p=request_defaults();copy(p.entity[:],"0000000000000011");p.seek=1.25
+    call=api.Call{method=&method,params=p,raw=`{"entity":"0000000000000011","seek":1.25}`,out=&out,allocator=context.temp_allocator}
     request(&s,&call)
     testing.expect(t,!call.failed && len(play_world.requests.seeks.items)==1 && len(document.requests.seeks.items)==0)
     s.mode=.Edit
     s.runs[0]={}
     call.failed=false
     request(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.seeks.items)==0)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.seeks.items)==0)
 }
 
 @(test)

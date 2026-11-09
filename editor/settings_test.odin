@@ -62,12 +62,19 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
         return error
     }
 
+    running:Layer_World
+    session.runs[0].world=&running
+    defer session.runs[0]={}
     error:=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":3,"scale":2}}}`)
+    testing.expect(t,running.setting==Layer_Setting{quality=3,scale=2},"the game that plays takes the sections it changes")
     testing.expect_value(t,error.code,0)
+    testing.expect(t,!strings.contains(string(serial.writer_bytes(&out)),`"Layer_Rule"`),string(serial.writer_bytes(&out)))
     testing.expect_value(t,world.setting,Layer_Setting{quality=3,scale=2})
     text:=layer_text(.Engine,root,engine)
     testing.expect(t,strings.contains(text,`"quality": 3`) && strings.contains(text,`"scale": 2`),text)
     error=execute(state,&out,"settings.set",`{"settings":{"Layer_Setting":{"scale":5}}}`)
+    testing.expect_value(t,running.setting.scale,5)
+    testing.expect_value(t,running.rule.count,0)
     testing.expect_value(t,error.code,0)
     text=layer_text(.Project,root,engine)
     testing.expect(t,strings.contains(text,`"scale": 5`) && !strings.contains(text,`"quality"`),text)
@@ -85,10 +92,28 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,world.rule,Layer_Rule{count=2})
     testing.expect(t,strings.contains(string(session.toast[:session.toast_length]),"Layer_Rule"))
 
+    // A process that reads no file of the machine, as mirai render check, has what the code and the project say.
+    testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layer_Setting": {"quality": 3, "scale": 2}, "Layer_Rule": {"count": 8}}`)==nil)
+    settings_load(&session)
+    testing.expect_value(t,world.setting,Layer_Setting{quality=3,scale=5})
+    session.toast_length=0
+    os.set_env(project.SETTINGS_NO_MACHINE_ENV,"1")
+    settings_load(&session)
+    os.unset_env(project.SETTINGS_NO_MACHINE_ENV)
+    testing.expect_value(t,world.setting,Layer_Setting{quality=1,scale=5})
+    testing.expect_value(t,session.toast_length,0)
+
     error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":4,"scale":7}}}`)
     testing.expect_value(t,error.code,0)
     testing.expect_value(t,world.setting,Layer_Setting{quality=4,scale=5})
     testing.expect(t,strings.contains(layer_text(.Engine,root,engine),`"Layer_Rule": {"count": 8}`))
+
+    error=execute(state,&out,"settings.get",`{"sections":["Layer_Rule"]}`)
+    testing.expect_value(t,error.code,0)
+    text=string(serial.writer_bytes(&out))
+    testing.expect(t,strings.contains(text,`"Layer_Rule"`) && !strings.contains(text,`"machine"`) && !strings.contains(text,`"Layer_Setting"`),text)
+    error=execute(state,&out,"settings.get",`{"sections":["Nope"]}`)
+    testing.expect(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,"Layer_Setting"),error.message)
 
     error=execute(state,&out,"settings.get","{}")
     testing.expect_value(t,error.code,0)
@@ -215,4 +240,12 @@ advanced_settings_go_last_under_a_fold_the_search_opens :: proc(t:^testing.T) {
     }
     frame(t,&s,input)
     testing.expect(t,shown(&s,POOL) && !shown(&s,BUDGET),"the fold keeps that it was opened")
+}
+
+// settings.set with a preset answers the section it changed, which its params do not name.
+@(test)
+settings_touched_counts_what_a_preset_changes :: proc(t:^testing.T) {
+    list:=[?]project.Setting{{name="Graphics_Settings"},{name="Other"}}
+    keep:=settings_touched(list[:],`{}`,"Graphics_Settings")
+    testing.expect(t,keep[0] && !keep[1])
 }

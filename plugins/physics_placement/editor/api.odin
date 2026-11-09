@@ -78,7 +78,8 @@ placement_api_run :: proc(s:^editor.Session,call:^api.Call,tool:^Physics_Placeme
             return
         }
     }
-    if !editor.api_guard_edit(s,call) {return}
+    if editor.playing(s) {api.call_fail(call,api.SERVER_ERROR,"placement.drop simulates on the document, whose physics runs only in Edit: play.stop first");return}
+    if !editor.api_guard(s,call) {return}
     previous,keys:=s.viewport.plugin_tool,s.viewport.plugin_keys
     defer {
         placement_cancel(tool)

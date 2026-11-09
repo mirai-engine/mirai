@@ -112,17 +112,21 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **No decision records.** Docs do not record rejected alternatives, past measurements or what was
   tried: skills and code say how things work. A rule the user decided is one line in the
   invariants of the owning skill.
+- `docs/game` is the documentation for writing games, owned by the engine and served by `mirai docs`
+  and the MCP tool `docs`, so projects keep no copy; `mirai-*` skills may link to it, it never links
+  out.
 - `docs/`: [architecture](docs/ARCHITECTURE.md),
-  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md) and the `PLAN_*.md` of work in
-  progress. Third-party code and assets that ship with the engine are listed in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md), `game/` (above) and the
+  `PLAN_*.md` of work in progress. Third-party code and assets that ship with the engine are listed
+  in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - Contracts are checked against the code: `engine.describe` reports the methods and schemas of an
   open build and `mirai asset` inspects binary assets.
 
 ## Common commands
 
-Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, and in
-PowerShell `mirai.cmd` hands it to Git Bash. The compiler, Slang and the tools come from `.deps`.
+Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, in
+PowerShell `mirai.cmd` hands it to Git Bash, and from Python `subprocess` it is the absolute path
+of `mirai.cmd` (the file `mirai` is a script: `not a valid Win32 application`). The compiler, Slang and the tools come from `.deps`.
 The command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
@@ -148,7 +152,7 @@ Verify in steps and stop at the first one that is enough for what changed:
    real call per touched method or flow, in a session.
 4. If the change is visible: a capture without validation errors compared with its reference. For
    rendering or importing, `mirai capture` from the reference camera with `--reference` and an SSIM
-   threshold; for editor UI, `editor.capture` with the UI. At most two capture iterations of your
+   threshold; for editor UI, `capture` with `ui`. At most two capture iterations of your
    own before showing the user the image and the doubt; in a visual review with the user, each
    round is shown to them. Crops, zoom and pixels with `mirai image`, not with scripts. Looking at
    how something looks does not require removing the frame limit or VSync.
@@ -197,7 +201,7 @@ load.
   `material.program.edit`, another shader of the project or of a plugin with
   `mirai shaders --project P`, which asks the open editor for it; both publish first what the
   viewport draws. An engine shader (`shaders/`) needs `mirai build editor` and restarting the
-  session. Then `editor.capture` or `mirai capture` and `mirai image`. No `render check` or
+  session. Then `capture` or `mirai capture` and `mirai image`. No `render check` or
   `--release` builds per round: the check runs once at the end and only if the change is global; a
   quality one does not measure cost.
 - **New tests.** Before adding one, look for the one that already covers that behavior and extend

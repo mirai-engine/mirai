@@ -550,6 +550,7 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	renderer_set_display_transform(r, .ACES_2)
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {20, 0.2, 40}), tint = {0.6, 0.55, 0.45}},
 		{object_id = 2, mesh = f.cube, transform = trs({-0.15, 0.45, -8}, {0.14, 0.9, 0.14}), tint = {0.3, 0.3, 0.3}},
@@ -752,7 +753,7 @@ render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_pixel_budget_lowers_the_views_of_the_window_together :: proc(t:^testing.T) {
+a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) {
     f:Fixture
     settings:=test_settings()
     settings.gi_enabled=false
@@ -761,38 +762,32 @@ a_pixel_budget_lowers_the_views_of_the_window_together :: proc(t:^testing.T) {
     r:=f.renderer
     scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({0,0,0},{1,1,1}),tint={1,1,1}}},nil,{},{use_background=true})
     camera:=Camera{position={0,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    budget:=proc(t:^testing.T,r:^Renderer,settings:^Settings,megapixels:f32) {
-        settings.render_megapixels=megapixels
+    target:=proc(t:^testing.T,r:^Renderer,settings:^Settings,lines:u32) {
+        settings.render_height=lines
         testing.expect(t,renderer_apply_settings(r,settings^))
     }
-    // Within the budget the scene keeps a pixel per point.
-    budget(t,r,&settings,0.02)
+    // A target over the lines of the window keeps a pixel per point.
+    target(t,r,&settings,200)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==200 && r.targets.height==100)
-    // Past it both sides shrink alike, to as many pixels as it has.
-    budget(t,r,&settings,0.005)
+    // Under them both sides shrink alike.
+    target(t,r,&settings,50)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50 && r.targets.output_width==200)
-    // Two views of the window share it; one alone over half the window has it all.
+    // Views side by side span the height of the window, and share its scale.
     views:=[2]Frame_View{{camera=camera,rect={0,0,100,100}},{camera=camera,rect={100,0,100,100}}}
     for _ in 0..<2 {testing.expect(t,renderer_frame(r,{views=views[:]}),r.error)}
     for view in r.views[:2] {testing.expect(t,view.targets.width==50 && view.targets.height==50 && view.targets.output_width==100)}
-    testing.expect(t,renderer_frame(r,{views=views[:1]}),r.error)
-    testing.expect_value(t,r.views[0].targets.width,u32(71))
-    // The visible part of a wider view has the scale of the whole: it draws fewer pixels.
-    part:=[1]Frame_View{{camera=camera,rect={100,0,100,100},view_width=200}}
-    testing.expect(t,renderer_frame(r,{views=part[:]}),r.error)
-    testing.expect_value(t,r.views[0].targets.width,u32(50))
     // Never below the least render scale.
-    budget(t,r,&settings,0.0001)
+    target(t,r,&settings,1)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==50 && r.targets.height==25)
     // Nor above a pixel per point on a 2x drawable.
-    budget(t,r,&settings,1)
+    target(t,r,&settings,1000)
     renderer_resize(r,200,100,2,2)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50)
-    settings.render_megapixels=-1
+    settings.render_scale=-1
     testing.expect(t,!renderer_apply_settings(r,settings))
 }
 

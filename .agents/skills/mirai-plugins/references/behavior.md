@@ -22,7 +22,8 @@ reservations) belongs to
 - `Mind_Agent` carries the name and the `ai.Mind` of the agent, which is copied with the world. It
   is shared: each library that runs minds writes those of its agents.
 - Before each tick, `w.entity` is the agent and `ctx.holder` too, owner of what it reserves.
-  `Act_World` is the start of the actions' context (the game puts it first with `using`):
+  `Act_World` is the start of the actions' context (the game puts `Mind_Tick`, which holds it and
+  what minds read, first with `using`, from the `Mind_World` params of its loop function):
   `move_act`, `follow_act`, `path_status` and `agent_path` request paths from `navigation` and
   read `Nav_Path`.
 - What those actions request goes on when the agent's section unloads
@@ -111,7 +112,7 @@ what it perceives; `think` only reads and proposes, and the actions write.
   forgetting time, and the teams (`Team`, named id) that it notices. `Perceivable`: its team and
   the height of the point that is looked at.
 - `perception_update` (`fixed`, `input`, `server`) adds `Perception` to each `Perceiver` and is
-  its sole writer. Sight sees what is in its cone, around the perceiver's +Z (its front), if a
+  its sole writer. Sight sees what is in its cone, around the perceiver's -Z (its front), if a
   physics ray from the eyes does not hit something else first; the rays of a tick (`Behavior_Settings.rays`) are shared among the
   perceivers in turns. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look

@@ -36,7 +36,8 @@ a_place_writes_a_free_transform_and_asks_the_owner_of_a_locked_one :: proc(t:^te
     testing.expect(t,len(jumps.queue.items)==1 && jumps.queue.items[0].entity==free_one && jumps.queue.items[0].by.position==[3]f32{0,5,0},"a teleport is drawn as coming from where it is put")
 
     testing.expect(t,place(p,held,{4,5,6}))
-    testing.expect(t,len(places.queue.items)==1 && places.queue.items[0].entity==held,"a Transform another component owns is asked of it")
+    testing.expect(t,len(places.queue.items)==1 && places.queue.items[0].entity==held && !places.queue.items[0].at_rest,"a Transform another component owns is asked of it")
+    testing.expect(t,place(p,held,{4,5,6},at_rest=true) && len(places.queue.items)==2 && places.queue.items[1].at_rest)
     testing.expect(t,!place(p,bare,{}),"an entity without Transform has no place")
 
     places_drop(&places,&problems)

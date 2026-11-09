@@ -112,16 +112,16 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     bare:=removal_foliage(&r,0)
     // A client asks nothing.
     r.network.role=.Client
-    testing.expect(t,foliage_remove(&r.requests,wood,coord,MANUAL|u64(manual)))
+    foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
     testing.expect_value(t,core.count(core.read(&r.w.removed)),0)
     r.network.role=.Server
-    testing.expect(t,foliage_remove(&r.requests,wood,coord,MANUAL|u64(manual)))
-    testing.expect(t,foliage_remove(&r.requests,wood,coord,MANUAL|u64(manual)))
-    testing.expect(t,foliage_remove(&r.requests,wood,{0,0},generated))
-    testing.expect(t,foliage_remove(&r.requests,wood,{0,0},generated_id(tree.id,9999)))
-    testing.expect(t,foliage_remove(&r.requests,wood,{5,5},MANUAL|u64(manual)))
-    testing.expect(t,foliage_remove(&r.requests,bare,coord,MANUAL|u64(manual)))
+    foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
+    foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
+    foliage_remove(&r.requests,{wood,{0,0},generated})
+    foliage_remove(&r.requests,{wood,{0,0},generated_id(tree.id,9999)})
+    foliage_remove(&r.requests,{wood,{5,5},MANUAL|u64(manual)})
+    foliage_remove(&r.requests,{bare,coord,MANUAL|u64(manual)})
     removal_step(&r)
     removed:=core.read(&r.w.removed)
     testing.expect_value(t,core.count(removed),2)
@@ -135,13 +135,13 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     testing.expect(t,r.problems.count>0,"a Foliage without an Id says why it cannot")
     // The same again writes nothing.
     version:=core.version(core.read(&r.w.removed))
-    testing.expect(t,foliage_remove(&r.requests,wood,coord,MANUAL|u64(manual)))
+    foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
     testing.expect_value(t,core.version(core.read(&r.w.removed)),version)
     // Another of the generated cell goes to its entity, and the other cell keeps its hash.
     gone:=removed_owner(&r.removals,wood)
     _,manual_hash:=removed_cell(gone,coord)
-    testing.expect(t,foliage_remove(&r.requests,wood,{0,0},other))
+    foliage_remove(&r.requests,{wood,{0,0},other})
     removal_step(&r)
     removal_step(&r)
     testing.expect_value(t,core.count(core.read(&r.w.removed)),2)
@@ -170,8 +170,8 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     // A hit on a shape names the instance it is.
     for cell in fp.cells {
         if cell.body=={} || cell.count==0 {continue}
-        e,at,instance,found:=foliage_hit(&fp,&w_sim,cell.body,fp.shapes[cell.first])
-        testing.expect(t,found && e==wood && at==cell.coord && instance!=generated && instance!=other)
+        hit,found:=shape_instance(&fp,&w_sim,cell.body,fp.shapes[cell.first])
+        testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
     }
     // Taking the entity of a cell away puts its instances back.
     removed=core.read(&r.w.removed)
@@ -202,16 +202,18 @@ thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^te
     meadow:=removal_foliage(&r,700)
     work:Build_Work
     defer build_work_destroy(&work)
-    all:=make([dynamic]Foliage_Remove,context.temp_allocator)
+    all:=make([dynamic]Foliage_Plant,context.temp_allocator)
     for coord in cells {
         cell_build(s,source_cell(s,coord),{},&work)
-        for p in work.placed {append(&all,Foliage_Remove{meadow,coord,p.id})}
+        for p in work.placed {append(&all,Foliage_Plant{meadow,coord,p.id})}
     }
     if !testing.expect(t,len(all)>2500) {return}
-    // Cells interleaved, as a game harvests them, REMOVES_MAX at a time.
-    slice.sort_by(all[:],proc(a,b:Foliage_Remove) -> bool {return a.instance%7<b.instance%7 || a.instance%7==b.instance%7 && a.instance<b.instance})
-    for start:=0;start<len(all);start+=REMOVES_MAX {
-        for request in all[start:min(start+REMOVES_MAX,len(all))] {testing.expect(t,foliage_remove(&r.requests,request.foliage,request.coord,request.instance))}
+    // Cells interleaved, as a game harvests them, a tick's room at a time.
+    slice.sort_by(all[:],proc(a,b:Foliage_Plant) -> bool {return a.instance%7<b.instance%7 || a.instance%7==b.instance%7 && a.instance<b.instance})
+    room:=int(FOLIAGE_SETTINGS_DEFAULT.removes)
+    reserve(&r.requests.removes.items,room)
+    for start:=0;start<len(all);start+=room {
+        for request in all[start:min(start+room,len(all))] {foliage_remove(&r.requests,request)}
         removal_step(&r)
     }
     removal_step(&r)
@@ -248,7 +250,7 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     _,cut:=source_instance_add(s,0,{4,0,4},rotation,{1,1})
     source_instance_add(s,0,{6,0,6},rotation,{1,1})
     wood:=removal_foliage(&r,500)
-    testing.expect(t,foliage_remove(&r.requests,wood,{0,0},MANUAL|u64(cut)))
+    foliage_remove(&r.requests,{wood,{0,0},MANUAL|u64(cut)})
     removal_step(&r)
     if !testing.expect_value(t,core.count(core.read(&r.w.removed)),1) {return}
     // What the saved game keeps: the entity's component, written as a row of a document. The level is its asset.

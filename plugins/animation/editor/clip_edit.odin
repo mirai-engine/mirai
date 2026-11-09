@@ -44,7 +44,7 @@ Clip_Edit_Params :: struct {
     asset:base.Asset_Id `mirai:"label=The .anim with the clip"`,
     clip:[64]u8 `mirai:"text,optional,label=Its clip; empty is the first"`,
     skeleton:base.Asset_Id `mirai:"optional,label=Its skeleton; or id"`,
-    id:base.Entity_Id `mirai:"optional,label=An entity whose rig gives the skeleton"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=An entity whose rig gives the skeleton"`,
     edits:[CLIP_EDIT_STEPS]Clip_Edit_Step `mirai:"optional,label=Applied in order; empty copies the clip with its keys as they are"`,
     name:[64]u8 `mirai:"text,optional,label=Name of the new clip; empty keeps the clip's in another .anim and adds ' edited' in asset"`,
     path:[1024]u8 `mirai:"text,optional,label=The .anim it goes into: a new one, or one whose clips move the same skeleton; empty is asset"`,
@@ -57,7 +57,7 @@ Analyze_Params :: struct {
     asset:base.Asset_Id `mirai:"optional,label=An .anim to measure a clip of; with skeleton or id"`,
     clip:[64]u8 `mirai:"text,optional"`,
     skeleton:base.Asset_Id `mirai:"optional"`,
-    id:base.Entity_Id `mirai:"optional,label=A rig whose skeleton to measure on"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=A rig whose skeleton to measure on"`,
     rate:f32 `mirai:"optional,min=1,max=240"`,
     loop:Clip_Loop `mirai:"optional"`,
     contacts:u32 `mirai:"optional,max=64,label=How many foot contacts to list"`,
@@ -90,7 +90,7 @@ Clip_Edit_Result :: struct {
 clip_edit_register :: proc(s:^editor.Session) {
     edit:=Clip_Edit_Params{rate=60}
     analyze:=Analyze_Params{rate=60,contacts=16}
-    authoring_method_register(s,{name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. Needs the body of the skeleton (skeleton.body.detect).",params=Clip_Edit_Params,params_info=type_info_of(Clip_Edit_Params),defaults=&edit,run=clip_edit},Clip_Edit_Result,type_info_of(Clip_Edit_Result))
+    authoring_method_register(s,{name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. The body of the skeleton is the one it stores, or one found in memory for the call.",params=Clip_Edit_Params,params_info=type_info_of(Clip_Edit_Params),defaults=&edit,run=clip_edit},Clip_Edit_Result,type_info_of(Clip_Edit_Result))
     authoring_method_register(s,{name="animation.analyze",summary="Measures a clip on its skeleton (travel, foot contacts and slide, penetration, jerk, loop seam and joint limits) and suggests the clip edits that fix what it finds.",params=Analyze_Params,params_info=type_info_of(Analyze_Params),defaults=&analyze,flags={.Read_Only},run=clip_analyze},Metrics_Result,type_info_of(Metrics_Result))
 }
 
@@ -109,10 +109,10 @@ Clip_Sampled :: struct {
 
 // The skeleton of a call: the asset, or the one the rig of id shows.
 @(private)
-clip_skeleton :: proc(s:^editor.Session,call:^api.Call,skeleton:base.Asset_Id,id:base.Entity_Id,file:^Authoring_File) -> (view:aa.Skeleton_View,ok:bool) {
+clip_skeleton :: proc(s:^editor.Session,call:^api.Call,skeleton:base.Asset_Id,named:[]u8,file:^Authoring_File) -> (view:aa.Skeleton_View,ok:bool) {
     skeleton:=skeleton
-    if skeleton=={} && id!=0 {
-        w,e,found:=subject(s,call,id);if !found {return}
+    if skeleton=={} && len(named)>0 && named[0]!=0 {
+        w,e,found:=subject(s,call,named);if !found {return}
         skeleton=rig_skeleton(s,w,e)
     }
     if skeleton=={} {authoring_failure(call,"skeleton","Required","a skeleton asset, or id of a rig that shows one","none","The clip needs a skeleton to be measured",fix="Pass skeleton, or id of an entity with a skinned mesh");return}
@@ -240,7 +240,7 @@ clip_analyze :: proc(s:^editor.Session,call:^api.Call) {
     file,skeleton_file:Authoring_File;defer aa.asset_close(&file.file);defer aa.asset_close(&skeleton_file.file)
     animation,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,animation,base.text_get(p.clip[:]));if !found {return}
-    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.id,&skeleton_file);if !has {return}
+    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.entity[:],&skeleton_file);if !has {return}
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
     if !metrics_write(call.out,"",sampled.rig,skeleton.bones,sampled.frames,int(p.contacts)) {authoring_failure(call,"clip","Unmeasured","frames that compose on the skeleton","metrics failed","The clip could not be measured",api.SERVER_ERROR)}
 }
@@ -248,7 +248,7 @@ clip_analyze :: proc(s:^editor.Session,call:^api.Call) {
 // The lib edit of a step, after checking that it names what its verb needs.
 @(private)
 clip_step :: proc(call:^api.Call,step:Clip_Edit_Step,raw:string,index:int) -> (edit:lib.Clip_Edit,ok:bool) {
-    has :: proc(raw,field:string) -> bool {_,found:=authoring_json_field(raw,field);return found}
+    has :: proc(raw,field:string) -> bool {return api.json_member(raw,field)!=""}
     path:=fmt.tprintf("edits[%d]",index)
     need :: proc(call:^api.Call,raw,path,field,expected:string) -> bool {
         if has(raw,field) {return true}
@@ -327,11 +327,11 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
     file,skeleton_file:Authoring_File;defer aa.asset_close(&file.file);defer aa.asset_close(&skeleton_file.file)
     animation,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,animation,base.text_get(p.clip[:]));if !found {return}
-    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.id,&skeleton_file);if !has {return}
+    skeleton,has:=clip_skeleton(s,call,p.skeleton,p.entity[:],&skeleton_file);if !has {return}
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
     steps,_:=api.params_array_count(call,"edits")
     steps=min(steps,CLIP_EDIT_STEPS)
-    edits_raw,_:=authoring_json_field(call.raw,"edits",call.allocator)
+    edits_raw:=api.json_member(call.raw,"edits")
     max_frames:=aa.ANIMATION_MAX_KEYS/max(len(skeleton.bones)*3,1)
     frames:=sampled.frames
     markers:=sampled.markers
@@ -362,7 +362,7 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
             // What the record says is copied: opening an asset may add files to the registry and
             // move its records.
             kind,there:=record.kind,record.id
-            if kind!=aa.KIND_ANIMATION {authoring_failure(call,"path","Invalid_Asset","a new path, or an .anim",fmt.tprintf("kind %v",kind),"The path holds another kind of asset",fix="Pass a new path ending in .anim, or the path of an .anim");return}
+            if kind!=aa.KIND_ANIMATION {authoring_failure(call,"path","Invalid_Asset","a new path, or an .anim",authoring_kind_text(kind),"The path holds another kind of asset",fix="Pass a new path ending in .anim, or the path of an .anim");return}
             if there!=p.asset {
                 view,opened:=authoring_clip_open(s,call,there,&other);if !opened {return}
                 if !clip_same_skeleton(call,view,skeleton) {return}

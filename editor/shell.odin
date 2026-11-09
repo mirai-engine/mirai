@@ -1565,8 +1565,9 @@ modal_build :: proc(s:^Session) {
                     ui.label(ctx,path!=""?filepath.base(path):"Untitled",th.font_small,th.text_muted)
                 }
             }
-            if s.recovery.assets {ui.label(ctx,"Assets with unsaved changes",th.font_small,th.text_muted)}
+            if len(s.recovery.assets)>0 {ui.label(ctx,"Assets with unsaved changes",th.font_small,th.text_muted)}
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
+                if ui.button(ctx,shell_id(g,"recovery_later"),{label="Later",style=.Field,width=92,height=28,center=true}).clicked {g.modal=.None}
                 if ui.button(ctx,shell_id(g,"recover"),{label="Recover",style=.Accent,width=92,height=28,center=true}).clicked {s.requests+={.Recover}}
                 if ui.button(ctx,shell_id(g,"discard_recovery"),{label="Discard",style=.Field,width=92,height=28,center=true}).clicked {s.requests+={.Discard_Recovery}}
             }

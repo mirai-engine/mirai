@@ -54,7 +54,7 @@ ui_create :: proc(s:^editor.Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 
     return bytes if error==.None else nil
 }
 
-Section :: enum u8 {Node,Layout,Floating,Focus,Style,Events,Image,Animations,Component,Fonts,Styles}
+Section :: enum u8 {Node,Layout,Floating,Focus,Style,Events,Image,Animations,Component,Parameters,Fonts,Styles}
 
 @(storage,free="ui_inspector_free")
 Ui_Inspector :: struct {
@@ -68,8 +68,7 @@ Ui_Inspector :: struct {
     pending:bool,          // the records changed and the file does not have it yet
     label:[LABEL_CAPACITY]u8, // the step of history the change becomes
     change:u64,            // advances with every change of the records
-    scope:Scope,           // the tree, or the template edited
-    selected:int,          // row of the scope; -1: none
+    selected:int,          // row of the nodes; -1: none
     preview:Preview,
     stage:Stage,
     nodes_scroll,properties_scroll,add_scroll:[2]f32,
@@ -211,17 +210,13 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
     inspector_commit(s,u,a,d)
 }
 
-// The nodes of the scope edited.
-scope_nodes :: proc(u:^Ui_Inspector) -> []ui.Tree_Node {
-    list:=records_list(&u.records,u.scope)
-    return list[:] if list!=nil else nil
-}
+// The nodes of the document.
+scope_nodes :: proc(u:^Ui_Inspector) -> []ui.Tree_Node {return u.records.nodes[:]}
 
 // The node chosen; nil for none.
 selected_node :: proc(u:^Ui_Inspector) -> ^ui.Tree_Node {
-    list:=records_list(&u.records,u.scope)
-    if list==nil || u.selected<0 || u.selected>=len(list) {return nil}
-    return &list[u.selected]
+    if u.selected<0 || u.selected>=len(u.records.nodes) {return nil}
+    return &u.records.nodes[u.selected]
 }
 
 // The records changed: they go to the file once nothing holds them, as a
@@ -239,7 +234,7 @@ inspector_sync :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,id:base.
         records_destroy(&u.records)
         preview_free(&u.preview)
         u.id,u.read,u.failed,u.pending,u.rename_count=id,false,false,false,0
-        u.scope,u.anim=-1,-1
+        u.anim=-1
         u.editing={}
         u.texts.open=false
         view_take(u)
@@ -257,13 +252,12 @@ inspector_sync :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,id:base.
     // What an undo or a redo changed is chosen, as in a scene; records read
     // from the file, as these are, compare byte by byte.
     if !first {
-        if row:=records_changed_row(&u.records,&records,u.scope,u.selected);row>=0 {u.selected=row}
+        if row:=records_changed_row(&u.records,&records,u.selected);row>=0 {u.selected=row}
     }
     records_destroy(&u.records)
     u.records=records
     u.read,u.failed,u.stamp,u.cursor,u.rename_count=true,false,stamp,cursor,0
     u.change+=1
-    if records_list(&u.records,u.scope)==nil {u.scope=-1}
     if first && u.selected<0 && len(u.records.nodes)>0 {u.selected=0}
     u.selected=min(u.selected,len(scope_nodes(u))-1)
     u.anim=min(u.anim,len(u.records.anims)-1)
@@ -350,13 +344,14 @@ inspector_write :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^edit
     if !found {return false}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     records_tidy(&u.records)
-    data:=records_data(&u.records)
-    imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
+    params:=widget_params(a,u.id)
+    imports,imported:=imports_cached(&u.imports,a,records_data(&u.records),u.allocator)
     bytes:[]u8
     error:=asset.Error.Invalid
-    if imported {bytes,error=host.ui_tree_bytes(&a.types,u.id,data,imports,context.temp_allocator)}
+    if imported {bytes,error=records_commit(&a.types,u.id,&u.records,imports)}
+    data:=records_data(&u.records)
     if error!=.None {
-        why:=load_why(a,data,imports) if imported else WIDGET_MISSING
+        why:=load_why(a,data,imports) if imported else widget_why(a,data)
         editor.notify(s,fmt.tprintf("That change leaves an interface that does not load (%s): it was undone",why) if error==.Invalid else fmt.tprintf("The interface could not be written: %v",error))
         u.read=false
         return false
@@ -367,10 +362,137 @@ inspector_write :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^edit
     u.stamp,u.cursor=file_stamp(a,u.id),d.history.cursor
     u.change+=1
     for &rename in renames[:count] {widget_rename_follow(s,u.id,serial.text_field(rename.from[:]),serial.text_field(rename.to[:]))}
+    widget_params_follow(s,a,u.id,params_changes(params,data_params(data,imports)),0)
     return true
 }
 
 // ---------------------------------------------------------------- widgets
+
+// The parameters of a .ui as its file has them now, flat; none when it does not read.
+widget_params :: proc(a:^host.Assets,id:base.Asset_Id) -> []ui.Tree_Param {
+    lib,ok:=doc_lib_read(a,id,context.temp_allocator)
+    return lib.linked.params if ok else nil
+}
+
+// The parameters of records, linked with the widgets they use: flat.
+data_params :: proc(data:ui.Tree_Data,imports:[]ui.Tree_Data) -> []ui.Tree_Param {
+    linked,ok:=ui.tree_link(data,imports)
+    return linked.params if ok else data.params
+}
+
+// A parameter of a widget that went somewhere else, or went: after is empty.
+Param_Change :: struct {before,after:ui.Tree_Param}
+
+// What changed between two versions of the flat parameters of a widget. One
+// that has another name now and goes to the same place changed nothing: a use
+// says it by its name, read from the widget.
+params_changes :: proc(before,after:[]ui.Tree_Param) -> []Param_Change {
+    changes:=make([dynamic]Param_Change,context.temp_allocator)
+    for &old in before {
+        now:^ui.Tree_Param
+        same_place:=false
+        for &p in after {
+            if p.name==old.name {now=&p;break}
+            if p.node==old.node && p.field==old.field {same_place=true}
+        }
+        if now==nil {
+            if !same_place {append(&changes,Param_Change{before=old})}
+            continue
+        }
+        if now.node!=old.node || now.field!=old.field {append(&changes,Param_Change{before=old,after=now^})}
+    }
+    return changes[:]
+}
+
+// What the uses of a widget gave follows where its parameters go now, in the
+// .ui of the project and, past a parameter of a widget that goes to the use,
+// the uses of that one: one step of history for each file changed.
+widget_params_follow :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,changes:[]Param_Change,depth:int) {
+    if len(changes)==0 || depth>=ui.TREE_DEPTH {return}
+    for &file in a.registry.files {
+        if file.kind!=asset.KIND_UI || file.id=={} || file.id==id {continue}
+        records:Records
+        if !records_read(a,file.id,&records,context.temp_allocator) {continue}
+        derived:=records_params_follow(a,&records,id,changes)
+        if !derived.changed {continue}
+        records_write(s,file.id,&records,"Follow widget")
+        widget_params_follow(s,a,file.id,derived.through[:],depth+1)
+    }
+}
+
+// What a file does when the parameters of a widget it uses change.
+Param_Follow :: struct {
+    changed:bool,
+    through:[dynamic]Param_Change, // of its own parameters, the ones that go to those uses
+}
+
+// Moves what the uses of widget in records give; gone, it is taken away.
+records_params_follow :: proc(a:^host.Assets,records:^Records,widget:base.Asset_Id,changes:[]Param_Change) -> (follow:Param_Follow) {
+    follow.through=make([dynamic]Param_Change,context.temp_allocator)
+    lib,lib_ok:=doc_lib_read(a,widget,context.temp_allocator)
+    if !lib_ok {return}
+    node_at :: proc(lib:^Doc_Lib,path:string) -> (node:ui.Tree_Node,source:^Records) {
+        source=new(Records,context.temp_allocator)
+        records_load(source,lib.linked,context.temp_allocator)
+        expanded,ok:=ui.tree_expand(lib.linked,context.temp_allocator)
+        if ok {for &e in expanded {if serial.text_field(e.name[:])==path {return e,source}}}
+        return {},source
+    }
+    w:=Doc_Write{r=records,list=records.nodes[:]}
+    for &n,row in records.nodes {
+        if n.kind!=.Component || int(n.component)==0 || int(n.component)>len(records.components) || records.components[n.component-1].widget!=widget {continue}
+        name:=serial.text_field(n.name[:])
+        for &c in changes {
+            if value,has:=doc_param_value(&w,row,&c.before);has {
+                follow.changed=true
+                records_param_clear(records,row,&c.before,lib.linked.params)
+                if c.after.name!={} {
+                    node,source:=node_at(&lib,serial.text_field(c.after.node[:]))
+                    records_param_give(a,records,row,&c.after,value,source,node)
+                }
+            }
+            // A parameter of this file that goes to this one, through this use.
+            for &p in records.params {
+                if serial.text_field(p.node[:])!=name || serial.text_field(p.param[:])!=serial.text_field(c.before.name[:]) {continue}
+                outer:=Param_Change{before=p}
+                flatten :: proc(flat:^ui.Tree_Param,use:string,inner:^ui.Tree_Param) {
+                    flat.param,flat.field={},inner.field
+                    ui.tree_text_set(flat.node[:],strings.join({use,serial.text_field(inner.node[:])},"/",context.temp_allocator) if inner.node[0]!=0 else use)
+                }
+                flatten(&outer.before,name,&c.before)
+                if c.after.name!={} {
+                    outer.after=p
+                    flatten(&outer.after,name,&c.after)
+                }
+                append(&follow.through,outer)
+            }
+        }
+    }
+    return
+}
+
+// Takes away of the use at row the value a parameter gave, unless another
+// parameter of the widget goes to the same part of the same node.
+records_param_clear :: proc(r:^Records,row:int,p:^ui.Tree_Param,all:[]ui.Tree_Param) {
+    group:=doc_param_group(p.field)
+    keep:=false
+    for &other in all {if other.name!=p.name && other.node==p.node && doc_param_group(other.field)==group {keep=true}}
+    node:=serial.text_field(p.node[:])
+    if node=="" {
+        if !keep {r.nodes[row].component_fields-={group}} else if slot:=doc_param_slot(&r.nodes[row],p.field);slot!=nil {ui.tree_text_set(slot,"")}
+        return
+    }
+    for i:=len(r.overrides)-1;i>=0;i-=1 {
+        o:=&r.overrides[i]
+        if int(o.instance)!=row || serial.text_field(o.node[:])!=node || group not_in o.fields {continue}
+        if keep {
+            if slot:=doc_param_slot(&o.values,p.field);slot!=nil {ui.tree_text_set(slot,"")}
+        } else {
+            o.fields-={group}
+            if o.fields=={} {ordered_remove(&r.overrides,i)}
+        }
+    }
+}
 
 // The widgets the records of the document name, as host.ui_tree_imports read
 // them, while their files keep their stamps: they are read again when one
@@ -451,19 +573,15 @@ override_nodes :: proc(u:^Ui_Inspector,a:^host.Assets,instance:int) -> (data:ui.
     r:=&u.records
     if instance<0 || instance>=len(r.nodes) || r.nodes[instance].kind!=.Component {return}
     c:=int(r.nodes[instance].component)-1
-    if c<0 || c>=len(r.templates) {return}
-    if r.templates[c].component.widget=={} {
-        data=records_data(r)
-        return data,data_template(data,c+1),true
-    }
+    if c<0 || c>=len(r.components) {return}
     imports,imported:=imports_cached(&u.imports,a,records_data(r),u.allocator)
     if !imported || c>=len(imports) {return}
     return imports[c],imports[c].nodes,true
 }
 
 // The names an override of an instance of the tree can reach: the nodes of
-// its widget or template and, past an instance of another widget there, the
-// nodes of that one.
+// its widget and, past an instance of another widget there, the nodes of
+// that one.
 override_targets :: proc(u:^Ui_Inspector,a:^host.Assets,instance:int) -> []string {
     names:=make([dynamic]string,context.temp_allocator)
     data,nodes,ok:=override_nodes(u,a,instance)
@@ -500,7 +618,7 @@ override_field_set :: proc(u:^Ui_Inspector,a:^host.Assets,override:int,field:ui.
         return
     }
     source:^Records
-    if r.templates[int(r.nodes[o.instance].component)-1].component.widget!={} {
+    if r.components[int(r.nodes[o.instance].component)-1].widget!={} {
         source=new(Records,context.temp_allocator)
         if !records_load(source,data,context.temp_allocator) {return}
     }
@@ -531,8 +649,8 @@ widget_rename_follow :: proc(s:^editor.Session,id:base.Asset_Id,from,to:string) 
 records_rename_follow :: proc(a:^host.Assets,records:^Records,id:base.Asset_Id,from,to:string) -> (count:int) {
     for &o in records.overrides {
         c:=int(records.nodes[o.instance].component)-1 if int(o.instance)<len(records.nodes) else -1
-        if c<0 || c>=len(records.templates) {continue}
-        count+=int(override_rename(a,o.node[:],records.templates[c].component.widget,id,from,to))
+        if c<0 || c>=len(records.components) {continue}
+        count+=int(override_rename(a,o.node[:],records.components[c].widget,id,from,to))
     }
     return
 }
@@ -553,7 +671,7 @@ override_rename :: proc(a:^host.Assets,field:[]u8,widget,id:base.Asset_Id,from,t
         next:base.Asset_Id
         for &n in records.nodes {
             if serial.text_field(n.name[:])!=path[start:end] || n.kind!=.Component {continue}
-            if c:=int(n.component)-1;c>=0 && c<len(records.templates) {next=records.templates[c].component.widget}
+            if c:=int(n.component)-1;c>=0 && c<len(records.components) {next=records.components[c].widget}
             break
         }
         w,start=next,end+1

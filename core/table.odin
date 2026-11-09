@@ -167,6 +167,20 @@ table_entity_at :: #force_inline proc "contextless" (t:^Table($T),row:int) -> En
 read_entity_at :: #force_inline proc "contextless" (r:Read($T),row:int) -> Entity {return r.table.entities[row]}
 entity_at :: proc{table_entity_at,read_entity_at}
 
+// The entity of the first row on; false without rows.
+table_first :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on>0?t.entities[0]:NONE,t.on>0
+}
+read_first :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_first(r.table)}
+first :: proc{table_first,read_first}
+
+// The entity of the only row on; false without rows or with several.
+table_sole :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on==1?t.entities[0]:NONE,t.on==1
+}
+read_sole :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_sole(r.table)}
+sole :: proc{table_sole,read_sole}
+
 table_stamp :: #force_inline proc "contextless" (t:^Table($T),row:int) -> u64 {return t.stamps[row]}
 read_stamp :: #force_inline proc "contextless" (r:Read($T),row:int) -> u64 {return r.table.stamps[row]}
 stamp :: proc{table_stamp,read_stamp}
@@ -204,6 +218,26 @@ staged :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {
     return table_get(t,e)
 }
 
+// Whether the entity will have the component on at the end of the function,
+// counting what this table waits for: what has answers after the settle. Of a
+// single table it says whether the row of the entity is turned on; which row
+// stays on is decided as the table settles.
+staged_has :: proc "contextless" (t:^Table($T),e:Entity) -> bool {
+    row:=raw_row(raw(t),e)
+    present,off:=row>=0,row>=0 && t.off[row]
+    off_with_entity:=present && row>=t.on && !off
+    for p in t.pending {
+        if p.entity!=e {continue}
+        switch p.value {
+        case PENDING_REMOVE: present,off=false,false
+        case PENDING_OFF:    off=present
+        case PENDING_ON:     off=false
+        case:                present=true
+        }
+    }
+    return present && !off && !off_with_entity
+}
+
 // Turns the component of an entity off at the end of the function: its row
 // keeps its value, and no function sees it until enable. The base of an
 // entity does not turn off: Disabled turns the whole entity off.
@@ -213,6 +247,11 @@ disable :: proc(t:^Table($T),e:Entity) {raw_disable(raw(t),e)}
 // entity is disabled it stays off with it. In a single table it is the one on
 // from then, and the one that was on waits behind it.
 enable :: proc(t:^Table($T),e:Entity) {raw_enable(raw(t),e)}
+
+// Turns the component of an entity on or off at the end of the function.
+set_on :: proc(t:^Table($T),e:Entity,on:bool) {
+    if on {enable(t,e)} else {disable(t,e)}
+}
 
 // What a reader saw of a table, for changes.
 Seen :: struct {

@@ -58,6 +58,24 @@ level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
 
 // Without a Volume the value rules the world; a box replaces it inside and
 // fades over its blend; a smaller box of the same priority goes on top.
+// What the shapes make, and an Unbounded volume with extents is a problem once.
+@(test)
+the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_reported :: proc(t:^testing.T) {
+    testing.expect_value(t,box({1,2,3},0.5),Volume{shape=.Box,extents={1,2,3},blend=0.5})
+    testing.expect_value(t,sphere(4),Volume{shape=.Sphere,extents={4,0,0}})
+    testing.expect_value(t,world(),Volume{})
+    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    check:Volume_Check
+    problems:core.Problems
+    place(&f,1,box({1,1,1}))
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    testing.expect_value(t,problems.count,0)
+    e:=place(&f,2,Volume{extents={4,4,4}})
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    testing.expect(t,problems.count==1 && core.problem_find(&problems,e,"volume.unbounded_extents")!=nil && problems.entries[0].count==1)
+}
+
 @(test)
 a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
     f:Fixture;fixture_init(&f);defer fixture_destroy(&f)

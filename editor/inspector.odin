@@ -530,7 +530,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
         ui.spacer(ctx,4,1)
         {
             // The icon of the entity in the color of what holds it: a prefab instance, a section.
-            links:=prefab_links(s)
+            links:=prefab_links(s,w)
             icon,color:=entity_icon(s,w,e)
             holder:=container_kind(links,w,e)
             if holder==.None {holder=container_kind(links,w,container_of(links,w,e))}
@@ -634,7 +634,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     card(s)
-    links:=prefab_links(s)
+    links:=prefab_links(s,w)
     ins:=s.inspector
     buttons:=[1]Section_Button{{icon=ui.icon_user(u8(User_Icon.List)),on=ins.hierarchy_tree}}
     pressed:int

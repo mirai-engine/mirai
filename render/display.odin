@@ -1,15 +1,22 @@
 package mirai_render
 
+import "core:math"
 import "mirai:rhi"
 
-// The display transform (display.slang): the ACES 2.0 Output Transform of a
-// display, baked once when the renderer starts into a LUT of
-// DISPLAY_LUT_SIZE³ that the tonemap, the UI and the previews read.
+// The display transform (display.slang) the tonemap and the UI encode with.
+// PBR Neutral is computed in the pass; ACES 2.0 is baked when the renderer
+// starts into a LUT of DISPLAY_LUT_SIZE³ that they read.
 
 // DISPLAY_LUT_SIZE of display.slang.
 DISPLAY_LUT_SIZE :: 65
 // ACES_HUES of aces.slang.
 DISPLAY_HUES :: 360
+
+// How the exposed image goes to the display.
+Display_Transform :: enum u32 {
+	Neutral, // Khronos PBR Neutral: colors come out as authored up to their highlights
+	ACES_2,  // the ACES 2.0 Output Transform: a filmic image with smooth highlights
+}
 
 // A display: the luminance of its white, nits, and the chromaticities of its
 // primaries and white. It shows sRGB.
@@ -21,7 +28,36 @@ Display_Desc :: struct {
 // An SDR display of Rec.709 primaries, as the sRGB of a monitor.
 DISPLAY_SDR :: Display_Desc{peak = 100, red = {0.64, 0.33}, green = {0.3, 0.6}, blue = {0.15, 0.06}, white = {0.3127, 0.329}}
 
-// The tables of hue of the transform for the display, then the LUT from them.
+// The linear light ACES 2.0 shows on DISPLAY_SDR for a card its meter takes as
+// average, exposed with EXPOSURE_BIAS: what the other transforms calibrate to,
+// so that choosing one changes the color of a scene and not how bright it is.
+DISPLAY_ACES_GRAY :: f32(0.20894)
+// What PBR Neutral takes from a midtone (pbr_neutral of display.slang).
+DISPLAY_NEUTRAL_OFFSET :: f32(0.04)
+
+// The EV a view is exposed above what its meter or its camera gives under a
+// transform. Neutral shows a midtone less its offset, so the card has to be
+// exposed to the light ACES 2.0 shows plus that offset.
+display_exposure_bias :: proc "contextless" (transform: Display_Transform) -> f32 {
+	switch transform {
+	case .ACES_2:  return EXPOSURE_BIAS
+	case .Neutral: return math.log2((DISPLAY_ACES_GRAY + DISPLAY_NEUTRAL_OFFSET) / MIDDLE_GRAY)
+	}
+	return EXPOSURE_BIAS
+}
+
+// The transform the frames after this one encode with.
+renderer_set_display_transform :: proc(r: ^Renderer, transform: Display_Transform) {
+	r.display_transform = transform
+}
+
+// What tells the passes of a frame how to encode (display_encode).
+@(private)
+display_frame_flags :: proc(r: ^Renderer) -> u32 {
+	return FRAME_FLAG_NEUTRAL if r.display_transform == .Neutral else 0
+}
+
+// The LUT of ACES 2.0 for the display, from its tables of hue.
 @(private)
 display_build :: proc(r: ^Renderer, display: Display_Desc) -> bool {
 	d := r.device

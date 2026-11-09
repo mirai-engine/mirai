@@ -7,11 +7,12 @@ import "core:mem"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// A filmstrip of play.capture: the game stepped as play.step steps it and
+// A filmstrip of capture: the game stepped as play.step steps it and
 // drawn before the first tick and every some ticks, a cell of each drawing
 // (around where an entity shows, a fixed region or the whole image) put in
 // one grid with its tick in its corner.
@@ -27,6 +28,7 @@ Api_Filmstrip_Cell :: struct {
 Api_Filmstrip :: struct {
     run:Api_Step_Run,
     frames,count,columns:int,
+    ticks:[]int,        // of each cell, how many ticks of the run it comes after; nil: whenever it is taken
     follow:core.Entity, // NONE: the region, or the whole image without one
     size:[2]f32,        // of a cell around follow, in window points
     region:[4]f32,      // in points of the image; no width: the whole image
@@ -34,49 +36,136 @@ Api_Filmstrip :: struct {
     sheet:img.Sheet,
     cells:[]Api_Filmstrip_Cell,
     taken:int,
+    counted:Api_Capture_Seen, // of the last cell, with the most textures any cell found pending
 }
 
-// The filmstrip play.capture asks for, checked; nil when it asks for one image.
+@(private) FILMSTRIP_PAST_AROUND :: u64(60) // ticks a filmstrip of the past shows on each side of its tick
+@(private) FILMSTRIP_PAST_CELLS :: 9
+@(private) FILMSTRIP_PAST_FRAMES :: 2       // frames drawn per cell
+
+// Writes to path a filmstrip of the ticks a run keeps around one, played again
+// on the World of the run, which is put back after; what it answers as JSON,
+// or "" after failing the call.
+api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:string) -> string {
+    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return ""}
+    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return ""}
+    h:=r.history
+    oldest,newest,_,_,_:=history_span(h)
+    from:=tick>oldest+FILMSTRIP_PAST_AROUND?tick-FILMSTRIP_PAST_AROUND:oldest
+    to:=min(tick+FILMSTRIP_PAST_AROUND,newest)
+    first:=history_frame_for(h,from)
+    if first==0 {api_history_older(call,h,from);return ""}
+    file,writable:=api_output_file(s,call,path,call.allocator)
+    if !writable {return ""}
+    span:=to>from?to-from:0
+    every:=max(span/(FILMSTRIP_PAST_CELLS-1),1)
+    strip:=new(Api_Filmstrip,call.allocator)
+    strip^={frames=FILMSTRIP_PAST_FRAMES,count=int(span/every)+1}
+    strip.run={owner=r.owner,player=r.player}
+    strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
+    defer img.sheet_destroy(&strip.sheet)
+    saved,copied:=history_save(s,r)
+    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return ""}
+    problem:string
+    {
+        kept:=extras_mark(s.app)
+        defer extras_drop(s.app,kept)
+        problem=api_filmstrip_past_cells(s,r,strip,first,to,every)
+    }
+    history_restore(s,r,&saved)
+    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
+    sheet:=strip.sheet
+    strip.sheet={}
+    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
+    return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator,strip.counted)
+}
+
 @(private)
-api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play_Capture_Params) -> (strip:^Api_Filmstrip,ok:bool) {
-    keys:=[?]string{"every","count","columns","segments","follow","follow_id","follow_entity","size","region"}
+api_filmstrip_past_cells :: proc(s:^Session,r:^Run,strip:^Api_Filmstrip,first,to,every:u64) -> string {
+    h:=r.history
+    if !history_seek(s,r,first).ok {return "No memory to go back to that tick"}
+    if problem:=api_filmstrip_take(s,strip,0);problem!="" {return problem}
+    walk:=history_walk(h,first,to,every)
+    for _,due in history_walk_next(&walk) {
+        if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
+        if !due {continue}
+        if problem:=api_filmstrip_take(s,strip,0);problem!="" {return problem}
+    }
+    return ""
+}
+
+// Whether a call gives segments and how many cells spread over them.
+@(private)
+api_filmstrip_spread :: proc(call:^api.Call,p:^Api_Capture_Params) -> bool {
+    if p.count==0 {return false}
+    values:[1]string
+    api.object_values(call.allocator,call.raw,{"segments"},values[:])
+    return values[0]!=""
+}
+
+// How many ticks after the start each cell of a filmstrip comes when
+// segments ran given ticks: every (with count, as far as they last) or, with
+// no every, count cells spread evenly from the first tick to the last.
+// Without segments (given<0), every apart. A filmstrip holds at most limit.
+@(private)
+api_filmstrip_ticks :: proc(given,every,count,limit:int,allocator:mem.Allocator) -> []int {
+    cells:=count
+    switch {
+    case given<0: cells=max(count,1)
+    case every==0:
+        if given+1<cells {cells=given+1}
+    case cells==0: cells=given/every+1
+    case: cells=min(cells,given/every+1)
+    }
+    cells=min(cells,limit)
+    ticks:=make([]int,cells,allocator)
+    for &tick,i in ticks {
+        switch {
+        case every>0:  tick=i*every
+        case cells>1: tick=int(math.round(f64(i)*f64(given)/f64(cells-1)))
+        }
+    }
+    return ticks
+}
+
+// The filmstrip capture asks for, checked; nil when it asks for one image.
+@(private)
+api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capture_Params) -> (strip:^Api_Filmstrip,ok:bool) {
+    keys:=[?]string{"every","count","columns","segments","follow","size","region"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
-    if p.every==0 {
-        for value,i in values[1:] {
-            if value!="" {api.call_failf(call,api.INVALID_PARAMS,"%s is of a filmstrip: give it with every (the ticks between two cells) and count, or leave it out",keys[i+1]);return}
+    every:=0
+    if p.every[0]!=0 {
+        every=api_call_duration(call,p.every[:],"every",s.app.tick_dt,0,API_STEP_LIMIT) or_return
+    }
+    spread:=values[3]!="" && p.count>0
+    if every==0 && !spread {
+        for value,i in values[1:len(keys)-1] {
+            if value!="" {api.call_failf(call,api.INVALID_PARAMS,"%s is of a filmstrip: give it with every (the ticks between two cells) and count or segments, or leave it out",keys[i+1]);return}
         }
         return nil,true
     }
-    if p.count==0 {api.call_fail(call,api.INVALID_PARAMS,"count: give the cells of the filmstrip with every; 1 to 64");return}
-    total:=p.every*(p.count-1)
-    if total>API_STEP_LIMIT {
-        api.call_failf(call,api.INVALID_PARAMS,"the filmstrip runs every times count less one ticks (%d) and a call runs at most %d: lower every or count",total,API_STEP_LIMIT)
+    if p.count==0 && values[3]=="" {api.call_fail(call,api.INVALID_PARAMS,"count: give the cells of the filmstrip with every, or segments to run; 1 to 64");return}
+    if values[3]=="" && every*(p.count-1)>API_STEP_LIMIT {
+        api.call_failf(call,api.INVALID_PARAMS,"the filmstrip runs every times count less one ticks (%d) and a call runs at most %d: lower every or count",every*(p.count-1),API_STEP_LIMIT)
         return
     }
     if !own {api_play_refused(call);return}
     w:=run_ref(s,r)
     strip=new(Api_Filmstrip,call.allocator)
-    strip^={frames=p.frames,count=p.count,columns=p.columns,size=p.size,window=p.ui}
-    named:=int(values[4]!="")+int(p.follow_id!=0)+int(values[6]!="")
+    strip^={frames=p.frames>0?p.frames:API_CAPTURE_SETTLE,columns=p.columns,size=p.size,window=p.ui}
+    followed:=values[4]!=""
     switch {
-    case named>1:
-        api.call_fail(call,api.INVALID_PARAMS,"name the entity to follow once: by follow or follow_id or follow_entity");return
-    case named==1 && values[8]!="":
+    case followed && values[6]!="":
         api.call_fail(call,api.INVALID_PARAMS,"give an entity to follow or a region, not both");return
-    case named==0 && values[7]!="":
-        api.call_fail(call,api.INVALID_PARAMS,"size is the cell around a followed entity: give follow (or follow_id or follow_entity) too, or region in its place");return
+    case !followed && values[5]!="":
+        api.call_fail(call,api.INVALID_PARAMS,"size is the cell around a followed entity: give follow too, or region in its place");return
     }
-    if name:=base.text_get(p.follow[:]);name!="" {
-        for e in api_entities_ordered(w) {
-            if entity_name(w,e)==name {strip.follow=e;break}
-        }
-        if strip.follow==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"follow %q names no entity of the game: play.inspect lists them",name);return}
-    } else if named==1 {
-        problem:string
-        if strip.follow,problem=api_play_entity(w,base.text_get(p.follow_entity[:]),p.follow_id,"follow_entity");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    if followed {
+        known:bool
+        if strip.follow,known=api_call_entity(call,w,p.follow[:],"follow",game=true);!known {return}
     }
-    if values[8]!="" {
+    if values[6]!="" {
         q:=p.region
         if !rpc_finite(q.x) || !rpc_finite(q.y) || !(q.z>=1 && q.z<=4096) || !(q.w>=1 && q.w<=4096) || abs(q.x)>4096 || abs(q.y)>4096 {
             api.call_fail(call,api.INVALID_PARAMS,"region takes x y width height in window points: finite with x and y within 4096 of the corner and a width and a height from 1 to 4096")
@@ -87,50 +176,50 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Play
     steps:[]Api_Step_Input
     if values[3]!="" {
         steps=api_segments_read(call,p.segments[:],values[3],s.app.tick_dt) or_return
-        if problem:=run_script_blocks(s,run_player(s,r.owner,p.player));problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     }
-    given:=api_timeline_ticks(steps)
-    if given>total {
-        api.call_failf(call,api.INVALID_PARAMS,"segments run %d ticks and the filmstrip %d (every times count less one): shorten them or raise every or count",given,total)
-        return
+    timeline:=steps
+    if values[3]=="" {
+        timeline=make([]Api_Step_Input,1,call.allocator)
+        timeline[0]={ticks=every*(p.count-1)}
     }
-    timeline:=make([]Api_Step_Input,len(steps)+1,call.allocator)
-    copy(timeline,steps)
-    timeline[len(steps)]={ticks=total-given}
-    if total==given {timeline=timeline[:len(steps)]}
+    strip.ticks=api_filmstrip_ticks(values[3]!=""?api_timeline_ticks(steps):-1,every,p.count,API_FILMSTRIP_CELLS,call.allocator)
     if r.owner==0 && simulating(s) && api_timeline_input(timeline) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-    strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler={every=p.every,take=api_filmstrip_take,data=strip}}
-    strip.cells=make([]Api_Filmstrip_Cell,p.count,call.allocator)
+    strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler=strip,every=1}
+    strip.count=len(strip.ticks)
+    strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
     return strip,true
 }
 
 // Steps the game, takes the cells and writes the filmstrip at path.
 @(private)
-api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string) {
+api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string,shown:bool) {
     defer img.sheet_destroy(&strip.sheet)
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
     if strip.run.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
-    if problem:=api_filmstrip_take(s,strip,run_ref(s,r),0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
-    if _,_,problem:=api_step_run(s,&strip.run,api_step_frame);problem!="" {
+    if problem:=api_filmstrip_take(s,strip,0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    ran,_,problem:=api_step_run(s,&strip.run,api_step_frame)
+    if problem!="" {
         api.call_failf(call,api.SERVER_ERROR,"%s, after %d cells",problem,strip.taken)
         return
     }
     sheet:=strip.sheet
     // The write takes the pixels.
     strip.sheet={}
-    if !api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height) {api.call_fail(call,api.SERVER_ERROR,"The filmstrip could not be written");return}
-    api_png_content(call,path,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator))
+    if problem:=api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    serial.text_write_raw(call.out,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator,strip.counted,ran))
+    if shown {api.call_image(call,path)}
 }
 
 // What a filmstrip answers besides its image: where it is, its grid and the tick of each cell.
 @(private)
-api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator) -> string {
+api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator,counted:=Api_Capture_Seen{},ticks:=-1) -> string {
     out:serial.Writer
     serial.writer_init(&out,1024,allocator)
     serial.text_write_raw(&out,`{"path":`);serial.text_write_string(&out,path)
     api.write_int(&out,"width",i64(sheet.image.width));api.write_int(&out,"height",i64(sheet.image.height))
     api.write_int(&out,"columns",i64(sheet.columns));api.write_int(&out,"rows",i64(sheet.rows))
+    if ticks>=0 {api.write_int(&out,"ticks",i64(ticks))}
     api.write_key(&out,"cell");serial.write_u8(&out,'[')
     serial.text_write_int(&out,i64(sheet.tile.x));serial.write_u8(&out,',');serial.text_write_int(&out,i64(sheet.tile.y))
     serial.write_u8(&out,']')
@@ -144,26 +233,30 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
         }
         serial.write_u8(&out,'}')
     }
-    serial.text_write_raw(&out,"]}")
+    serial.write_u8(&out,']')
+    api_capture_seen_write(&out,counted)
+    serial.write_u8(&out,'}')
     return string(serial.writer_bytes(&out))
 }
 
 // A cell of the filmstrip: the game drawn now, the part of it it shows put
 // in the grid with the tick in its corner.
 @(private)
-api_filmstrip_take :: proc(s:^Session,data:rawptr,_:core.World_Ref,ran:int) -> string {
-    strip:=cast(^Api_Filmstrip)data
-    if strip.taken>=strip.count {return ""}
+api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
+    if strip.taken>=strip.count || strip.ticks!=nil && ran!=strip.ticks[strip.taken] {return ""}
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {return "The game ended"}
     pixels,width,height,drawn:=api_play_pixels(s,r,strip.frames,strip.window)
-    if !drawn {return "The game could not be drawn"}
+    if !drawn {return fmt.tprintf("The game could not be drawn: %s",host.app_draw_problem(s.app))}
     defer delete(pixels,s.app.allocator)
     w:=run_ref(s,r)
     density:=s.app.ui_input.scale>0?s.app.ui_input.scale:1
     view:=[4]f32{0,0,f32(width),f32(height)}
     if r.owner==0 && strip.window && s.viewport.size.x>0 && s.viewport.size.y>0 {view={s.viewport.origin.x*density,s.viewport.origin.y*density,s.viewport.size.x*density,s.viewport.size.y*density}}
     cell:=&strip.cells[strip.taken]
+    counted:=api_capture_seen(s.app)
+    counted.textures_pending=max(counted.textures_pending,strip.counted.textures_pending)
+    strip.counted=counted
     if t:=core.world_storage_of(w,core.Time);t!=nil {cell.tick=t.tick}
     region:img.Region
     switch {
@@ -208,7 +301,6 @@ api_view_project :: proc(view:core.View,rect:[4]f32,point:[3]f32) -> (at:[2]f32,
 // Where an entity is seen to be, not its origin at the feet of a character:
 // the center of mass of a body, or the middle of what hangs from it. The box
 // of a skinned mesh is that of its bind pose.
-@(private)
 api_entity_middle :: proc(w:core.World_Ref,e:core.Entity) -> [3]f32 {
     placed:=entity_world(w,e)
     if motions:=core.world_table_of(w,core.Motion);motions!=nil {

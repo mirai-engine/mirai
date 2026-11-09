@@ -48,6 +48,13 @@ TINT_DEFAULT :: Tint{color={1,1,1,1}}
 @(component,description="Hides this entity and its descendants from rendering.")
 Hidden :: struct {}
 
+// Hides the entity and what hangs from it, or shows them again, at the end of
+// the function. A UI_Screen is shown and hidden this way.
+set_hidden :: proc(table:^core.Table(Hidden),e:core.Entity,hidden:bool) {
+    if e==core.NONE || core.has(table,e)==hidden {return}
+    if hidden {core.add(table,e,Hidden{})} else {core.remove(table,e)}
+}
+
 // Its mesh is drawn by something else: the pieces of a broken destructible.
 // The library that draws it instead adds and removes it.
 @(component,description="The mesh is rendered by another system, such as destructible fragments.")
@@ -289,7 +296,7 @@ MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Diffuse_Transmission="maps.diffuse_transmission",.Diffuse_Transmission_Color="maps.diffuse_transmission_color",
 }
 
-// Toward the sun of the editor's presets and its previews, a morning one.
+// Toward the sun of the editor's presets, a morning one behind who looks along -Z.
 SUN_DIRECTION :: [3]f32{0.45,0.85,0.30}
 SPOT_MIN :: 1*mm.RAD_PER_DEG
 SPOT_MAX :: 89*mm.RAD_PER_DEG
@@ -440,6 +447,12 @@ view_of_camera :: proc(view:^core.View,cameras:core.Read(Camera),exposures:core.
     view.cut=pose==nil && (previous!=view.camera || cut)
     view.carried={}
 }
+// The world id took another scene: the light the renderer kept for it, if it
+// is not the one shown, is of the scene before.
+world_light_forget :: proc(app:^host.App,id:core.World_Id) {
+    if app.renderer!=nil {gpu.world_light_forget(app.renderer,world_key(id))}
+}
+
 // The world into the renderer. The camera and the time of the frame are
 // those of the View, the Time and the Frame_Time of this world: host reads them. Another
 // world, or this one replaced by another scene (rebuilt in a frame whose view
@@ -584,7 +597,8 @@ render_sync :: proc(
     if core.count(emissions)>0 && (extras_changed || local_changes) {lights_seen=~sync.lights_seen}
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
     if !sky_found {sky_entity,sky,sky_found=sky_active(skies,hidden,parents)}
-    environment:=sky_environment(sky_entity,sky,sky_found,worlds,a)
+    _,_,sunlit:=sun_on(worlds,lights,hidden,parents)
+    environment:=sky_environment(sky_entity,sky,sky_found,sunlit,worlds,a)
     looked:=view.position
     if preview.ptr!=nil && preview.section!=core.NONE {
         if at,placed:=core.get(worlds,preview.section);placed {looked=at.position}
@@ -1194,6 +1208,25 @@ lights_version :: proc(l:Lights) -> u64 {
     return core.version(l.suns)+core.layout(l.suns)+core.version(l.points)+core.layout(l.points)+core.version(l.spots)+core.layout(l.spots)+core.version(l.rects)+core.layout(l.rects)
 }
 
+// The sun that lights the world: the one previewed, or else the first not hidden.
+@(private)
+sun_on :: proc(worlds:core.Read(core.World_Transform),lights:Lights,hidden:core.Read(Hidden),parents:core.Read(core.Parent)) -> (sun:Sun,direction:[3]f32,found:bool) {
+    if lights.preview!=core.NONE && lights.suns.table!=nil {
+        if row:=core.raw_row(core.raw(lights.suns.table),lights.preview);row>=0 {
+            if world,placed:=core.get(worlds,lights.preview);placed {
+                return lights.suns.table.values[row],mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+            }
+        }
+    }
+    for row in 0..<core.count(lights.suns) {
+        e:=core.entity_at(lights.suns,row)
+        world,placed:=core.get(worlds,e)
+        if !placed || is_hidden(hidden,parents,e) {continue}
+        return core.at(lights.suns,row),mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+    }
+    return
+}
+
 @(private)
 lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32) {
     clear(&sync.lights)
@@ -1204,24 +1237,9 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         sync.sun_factor=sun_height_factor(sync.sun_fade,height)
         sync.sun.illuminance*=sync.sun_factor
     }
-    if lights.preview!=core.NONE && lights.suns.table!=nil {
-        if row:=core.raw_row(core.raw(lights.suns.table),lights.preview);row>=0 {
-            if world,placed:=core.get(worlds,lights.preview);placed {
-                sun:=lights.suns.table.values[row]
-                sync.sun={direction=mm.quat_rotate(world.rotation,[3]f32{0,0,1}),color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
-                sync.sun_fade=sun.height_fade
-            }
-        }
-    }
-    for row in 0..<core.count(lights.suns) {
-        if sync.sun.enabled {break}
-        e:=core.entity_at(lights.suns,row)
-        world,placed:=core.get(worlds,e)
-        if !placed || is_hidden(hidden,parents,e) {continue}
-        sun:=core.at(lights.suns,row)
-        sync.sun={direction=mm.quat_rotate(world.rotation,[3]f32{0,0,1}),color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
+    if sun,direction,found:=sun_on(worlds,lights,hidden,parents);found {
+        sync.sun={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
         sync.sun_fade=sun.height_fade
-        break
     }
     for row in 0..<core.count(lights.points) {
         e:=core.entity_at(lights.points,row)
@@ -1236,7 +1254,7 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         if !placed || is_hidden(hidden,parents,e) {continue}
         spot:=core.at(lights.spots,row)
         desc:=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
-        desc.direction,desc.cone=mm.quat_rotate(world.rotation,[3]f32{0,0,-1}),spot.angle
+        desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
         append(&sync.lights,desc)
     }
     for row in 0..<core.count(lights.rects) {
@@ -1273,7 +1291,7 @@ sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radi
 rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc {
     return {
         position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,
-        direction=mm.quat_rotate(world.rotation,[3]f32{0,0,-1}),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
+        direction=mm.quat_forward(world.rotation),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
         size={abs(world.scale.x),abs(world.scale.y)},
     }
 }

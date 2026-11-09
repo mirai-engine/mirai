@@ -385,7 +385,7 @@ view, the plugin requests no passes.
   where the view is, a [volume](../../mirai-gameplay/references/libraries.md#volume) value that
   blends numbers by their weight and takes the switches past the half. `lens_render` resolves it
   for the frame's view and for each local view (`camera.Local_Views`); each pass takes that of its
-  `Camera.slot`. A texture view (a monitor, `editor.capture` without UI) takes that of the frame's
+  `Camera.slot`. A texture view (a monitor, `capture` without UI) takes that of the frame's
   view.
 - **Consistent with exposure.** The aperture (f-number) and the shutter time are those of the
   `Exposure` that exposes the view: that of the camera, or that of the `View_Volume` where it is
@@ -432,7 +432,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   the editor without a window with validation (`--headless --validation --api-port`): zero
   validation errors in all of them.
 - The cards: `scene.add` (`preset` `decal`, `screen`, `portal` or `mirror`), `scene.set` to give
-  the slot and `editor.capture` with the entity selected.
+  the slot and `capture` with the entity selected.
 - What to look at per scene:
   - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two
     overlapping ones; the one that emits; edges up close.
@@ -457,7 +457,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   blend and the circle of confusion) and, in `lights/night.scene` with a `Lens_Volume`, a capture
   per effect against the same view without it (`--reference`) and `--repeat` (the image does not
   change between frames). Motion blur is captured by flying with `editor.input` (right button and
-  a key held) and `editor.capture` with UI before releasing them.
+  a key held) and `capture` with UI before releasing them.
 - Walking, turning fast while looking at a door and looking at a monitor are tested by the user.
 
 [ext]: ../../mirai-rendering/references/views.md#views-cameras-and-extensions

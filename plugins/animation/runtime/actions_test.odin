@@ -104,7 +104,7 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
     requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
     events:Animation_Events;defer delete(events.items)
-    testing.expect(t,action_fire(&requests,entity,"attack"))
+    action_fire(&requests,entity,"attack")
     if !testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)) {return}
     actions_sample(&actions,state,&description,.2,nil,&content);layers_advance(&playback,state,&content,description,&events,.2,nil);actions_layer_finish(&actions,state)
     state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,state,description)
@@ -130,7 +130,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
     requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
     problems:core.Problems
-    testing.expect(t,action_fire(&requests,entity,"attack"))
+    action_fire(&requests,entity,"attack")
     initial_request:=requests.queue.items[0];initial_context:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
     prepared:=actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)
     context=initial_context;app.allocator=initial_context.allocator;actions.allocator=initial_context.allocator
@@ -148,13 +148,14 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     copied.states[0].layers[0].time=7;copied.plans[0].profile.actions[0].priority=99
     testing.expect(t,actions.states[0].layers[0].time!=7 && actions.plans[0].profile.actions[0].priority!=99)
     cache.contents[0].profile.actions[0].cancel=.Finish_Section;actions.plans[0].profile.actions[0].cancel=.Finish_Section
-    testing.expect(t,action_cancel(&requests,entity,"attack"));testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil))
+    action_cancel(&requests,entity,"attack");testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
     okay:=actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)
     actions_sample(&actions,&state,&description,.5,nil,&content);layers_advance(&playback,&state,&content,description,&events,.5,nil);actions_layer_finish(&actions,&state)
     context=saved;cache.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,okay && actions.states[0].layers[0].finishing && actions.events.items[len(actions.events.items)-1].kind==.Interrupted)
-    testing.expect(t,!action_fire(nil,entity,"attack") && !action_fire(&requests,core.NONE,"attack") && !action_section(&requests,entity,"attack",""))
+    action_fire(nil,entity,"attack");action_fire(&requests,core.NONE,"attack");action_section(&requests,entity,"attack","")
+    testing.expect_value(t,requests.queue.refused,2)
     cache.contents[0].revision+=1
     before:=actions.states[0].layers[0];revision:=actions.plans[0].revision
     saved=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
@@ -163,10 +164,10 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,okay && len(actions.states)==1 && actions.states[0].layers[0]==before && actions.plans[0].revision==revision)
     cache.contents[0].revision=revision
     reserve_description:=core.free(&descriptions,entity);reserve_description.layers[0].clip=base.name_hash("wave")
-    clear(&requests.queue.items);testing.expect(t,action_fire(&requests,entity,"attack"));testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
+    clear(&requests.queue.items);action_fire(&requests,entity,"attack");testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
     refused:=core.problem_find(&problems,entity,"animation.action_layer")
     testing.expect(t,refused!=nil && strings.contains(core.problem_text(refused),"action 'attack' cannot play: its layer 1 holds a clip of animation_play") && actions.states[0].layers[0]==before)
-    clear(&requests.queue.items);for _ in 0..<REQUEST_CAPACITY {testing.expect(t,action_fire(&requests,entity,"attack"))};testing.expect(t,!action_fire(&requests,entity,"attack"))
+    clear(&requests.queue.items);for _ in 0..=cap(requests.queue.items) {action_fire(&requests,entity,"attack")};testing.expect_value(t,requests.queue.dropped,1)
 }
 
 @(test)
@@ -281,7 +282,7 @@ actions_preserve_the_previous_asset_state_when_appending_a_replacement_plan_fail
     append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true},Action_Content{id={5,6},checked=1,revision=1,profile=action_test_profile(),valid=true})
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
     playback:Playback;defer playback_free(&playback);requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
-    testing.expect(t,action_fire(&requests,entity,"attack"));if !testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)) {return}
+    action_fire(&requests,entity,"attack");if !testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)) {return}
     previous:=actions.states[0].layers;previous_plan:=actions.plans[0]
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100};failing:=runtime.Allocator{procedure=runtime_failure_allocator,data=&failure}
     limited:=make([dynamic]Action_Plan,1,1,failing);limited[0]=actions.plans[0];delete(actions.plans);actions.plans=limited
@@ -317,7 +318,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
             actions_sample(actions,state,&sampled,dt,nil,content,playback,events);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
         }
-        testing.expect(t,action_fire(&requests,entity,"attack"))
+        action_fire(&requests,entity,"attack")
         if !testing.expect(t,tick(&actions,&requests,&cache,&descriptions,&playback,&app,&content,&events,.1) && state.layers[0].weight==1) {continue}
         if change=="another asset" {core.free(&descriptions,entity).actions={5,6}} else {cache.contents[0].revision+=1}
         weights:[dynamic]f32;defer delete(weights)
@@ -351,7 +352,7 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,empty && len(actions.states)==0 && cap(actions.events.items)==0)
     core.get(&descriptions,first).actions={3,4};core.get(&descriptions,second).actions={3,5}
-    testing.expect(t,action_fire(&requests,first,"attack"))
+    action_fire(&requests,first,"attack")
     observed:=actions.animation_version
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)
@@ -385,7 +386,8 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
     cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache);append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true})
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator};playback:Playback;defer playback_free(&playback)
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Action_Requests;defer delete(requests.queue.items)
-    testing.expect(t,actions_discover(&actions,core.read(&descriptions),false,nil) && action_fire(&requests,entity,"attack"))
+    testing.expect(t,actions_discover(&actions,core.read(&descriptions),false,nil))
+    action_fire(&requests,entity,"attack")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
@@ -404,21 +406,25 @@ action_playing_answers_while_an_action_plays_and_animation_stop_frees_a_layer_th
     _,_,playing:=action_playing({&actions},entity,"attack");testing.expect(t,!playing)
     // A pose faded out to weight 0 keeps its clip, so the layer stays taken.
     testing.expect(t,animation_play(core.get(&descriptions,entity),"wave",layer=1) && animation_weight(core.get(&descriptions,entity),1,0))
-    testing.expect(t,action_fire(&requests,entity,"attack") && actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
+    action_fire(&requests,entity,"attack")
+    testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
     _,_,playing=action_playing({&actions},entity,"attack")
     testing.expect(t,core.problem_find(&problems,entity,"animation.action_layer")!=nil && !playing)
     // animation_stop frees it in the same tick.
     core.problems_clear(&problems)
     testing.expect(t,animation_stop(core.get(&descriptions,entity),1,.3) && core.get(&descriptions,entity).layers[0].fade==.3)
-    testing.expect(t,action_fire(&requests,entity,"attack") && actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
+    action_fire(&requests,entity,"attack")
+    testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
     time,section,ok:=action_playing({&actions},entity,"attack")
     testing.expect(t,core.problem_find(&problems,entity,"animation.action_layer")==nil && ok && time==0 && section==base.name_hash("windup"))
     _,_,playing=action_playing({&actions},entity,"interrupt");testing.expect(t,!playing)
     _,_,playing=action_playing({&actions},core.NONE,"attack");testing.expect(t,!playing)
-    testing.expect(t,action_section(&requests,entity,"attack","recover") && actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
+    action_section(&requests,entity,"attack","recover")
+    testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
     time,section,ok=action_playing({&actions},entity,"attack");testing.expect(t,ok && time==1 && section==base.name_hash("recover"))
     // Cancelled, it fades out and no longer plays.
-    testing.expect(t,action_cancel(&requests,entity,"attack") && actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
+    action_cancel(&requests,entity,"attack")
+    testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,&problems))
     _,_,playing=action_playing({&actions},entity,"attack");testing.expect(t,!playing && actions.states[0].layers[0].finishing)
 }
 
@@ -435,7 +441,7 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
         playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
         requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
-        testing.expect(t,action_fire(&requests,entity,"attack"))
+        action_fire(&requests,entity,"attack")
         testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&descriptions),&playback,&app,nil))
         // A tick of 0.2 s of the world while the entity runs at half pace: 0.1 s of its own time.
         actions_sample(&actions,&state,&description,.1,nil,&content,&playback,&events,pace=.5)

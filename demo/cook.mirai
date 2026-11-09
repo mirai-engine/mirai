@@ -1,7 +1,5 @@
 {
   "roots": [
-    "characters/player/Thrown cube.prefab",
-    "physics_gallery/physics_burst.prefab",
     "surfaces/metal/Chrome.mat",
     "surfaces/metal/Satin metal.mat",
     "surfaces/metal/Brushed steel.mat",

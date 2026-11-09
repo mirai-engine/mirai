@@ -83,6 +83,7 @@ struct Nested_View {
 #define LIGHT_MOVES_MAX 16
 #define OCCLUDERS_MANY 0xFFFFFFFFu
 #define MOVED_SUN 1u
+#define SUN_UNSHADOWED 2.0
 #define MOVED_LIGHTS_ALL 2u
 
 // The air of an atmosphere (render.Gpu_Air), in metres. Its density falls
@@ -107,7 +108,7 @@ struct Frame_Data {
     float4x4 view_proj_unjittered; // current frame without the TAA sub-pixel jitter
     float4 camera_position;   // xyz, w = near plane
     float4 camera_forward;    // xyz, w = far plane
-    float4 sun_direction;     // xyz towards the sun, w = 1 if the sun is active
+    float4 sun_direction;     // xyz towards the sun, w = 0 no sun, 1 active, SUN_UNSHADOWED active and no ray goes to it
     float4 sun_color;         // rgb its illuminance over pi, render units (above the air of an atmosphere: sun_light), w = the angular radius of its disc in the sky; 0: it is not seen
     float4 sky_color;         // rgb the luminance of the sky, render units, w = the light scale: render units per nit
     float4 background;        // rgb luminance shown where no geometry is visible, render units, w = 1 to use it instead of the sky
@@ -177,6 +178,7 @@ struct Frame_Data {
 #define FRAME_FLAG_STUDIO      8u // a preview lit by the analytic studio
 #define FRAME_FLAG_GRID       16u
 #define FRAME_FLAG_GLASS      32u // some instance has blended triangles
+#define FRAME_FLAG_NEUTRAL    128u // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 #define FRAME_FLAG_REFLECTANCE 64u // the G-buffer keeps what each pixel reflects (surface_specular)
 
 // ---------------------------------------------------------------- scene data

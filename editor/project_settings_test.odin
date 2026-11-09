@@ -76,15 +76,19 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     error:=api_test_execute(state,&out,"project.set",`{"version":"1.2.3","identifier":"com.studio.game","icon":"icon.png","start_scene":"scenes/main.scene","window":{"mode":"Fullscreen"},"plugins":{"beta":true}}`)
     testing.expect_value(t,error.code,0)
     text:=strings.clone(string(serial.writer_bytes(&out)),context.temp_allocator)
-    api_result_shape_expect(t,text,Api_Project)
+    api_result_shape_expect(t,text,Api_Project_Changed)
+    testing.expect(t,strings.contains(text,`"building": false`) && strings.contains(text,`"beta"`) && !strings.contains(text,"manifest"),text)
     written:=read(file)
     testing.expect_value(t,base.text_get(written.version[:]),"1.2.3")
     testing.expect_value(t,base.text_get(written.identifier[:]),"com.studio.game")
     testing.expect_value(t,written.window.mode,project.Window_Mode.Fullscreen)
     testing.expect_value(t,written.window.width,i32(1280))
     testing.expect_value(t,base.text_get(written.plugins[0][:]),"beta")
+    error=api_test_execute(state,&out,"project.get",`{}`)
+    testing.expect_value(t,error.code,0)
+    text=strings.clone(string(serial.writer_bytes(&out)),context.temp_allocator)
+    api_result_shape_expect(t,text,Api_Project)
     testing.expect(t,strings.contains(text,`"name": "alpha", "active": true, "named": false, "needed_by": "beta"`),text)
-    testing.expect(t,strings.contains(text,`"building": false`),text)
 
     // Each of these is refused with what is wrong and how to fix it, and leaves the file as it is.
     refusals:=[?]struct{params,says:string}{
@@ -104,6 +108,17 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
         testing.expectf(t,strings.contains(error.message,refusal.says),"%s: %s",refusal.params,error.message)
         testing.expect(t,read(file)==written)
     }
+
+    // What a change that started a build says of it: still running, or the first error once it failed.
+    building.phase=.Running
+    still,failed:=api_project_build_state(&session)
+    testing.expect(t,still && failed=="")
+    building.phase=.Failed
+    defer delete(building.diagnostics)
+    append(&building.diagnostics,Build_Diagnostic{.Error,"game/game.odin",3,9,"could not find the plugin spawn"})
+    still,failed=api_project_build_state(&session)
+    testing.expect(t,!still && strings.contains(failed,"could not find the plugin spawn") && strings.contains(failed,"game/game.odin"),failed)
+    building.phase=.Idle
 
     error=api_test_execute(state,&out,"project.set",`{"plugins":{"beta":false}}`)
     testing.expect_value(t,error.code,0)

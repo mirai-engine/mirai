@@ -5,8 +5,6 @@
 
 // render.MIDDLE_GRAY: the reflectance of the card a meter takes as average.
 #define MIDDLE_GRAY 0.18
-// render.EXPOSURE_BIAS: EV every view is exposed above its meter or its camera.
-#define EXPOSURE_BIAS 1.0
 
 // Bins of log2 of a luminance in nits, from EXPOSURE_LOG_MIN to
 // EXPOSURE_LOG_MAX: a sixth of a stop to a third of one each.

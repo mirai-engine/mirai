@@ -25,7 +25,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
     game gives the interface).
   - Data tree: `tree.odin` (instance and construction), `tree_widgets.odin` (each node type),
     `tree_bind.odin` (paths, copy plan and templates), `tree_data.odin` (records and loading),
-    `component.odin` (component expansion), `tree_link.odin` (widgets from another `.ui`).
+    `component.odin` (how a use expands), `tree_link.odin` (what comes from the `.ui` it uses),
+    `tree_names.odin` (what the names of a `.ui` leave in its records: `tree_settle`).
 - How a game shows `.ui` interfaces (`UI_Screen`, `World_Widget`) and draws its own:
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
@@ -94,6 +95,22 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   atlas grows only between frames. An added font or face is not removed.
 - **The editor theme is not changed for a game**: a game passes its own `Theme` or uses the widgets
   with their own style (`text`, `image`, `skin_button`, game controls, tree nodes).
+- **A `.ui` is written by names**, by one route: the document `ui.inspect` gives and `ui.write`
+  takes; the human edits the same file in the visual editor and neither regenerates over the other.
+  Tokens, `extends`, states that extend states, the layout of a style and the parameters of a
+  widget live in the file and resolve when it is written and linked (`tree_settle`,
+  `tree_nodes_take_styles`, `tree_link`, at load): a stable frame reads the flat `Tree_Node`,
+  `Node_Style` and `Tree_Style_Variant` rows as ever.
+- **A component is a widget: a `.ui` of its own**, one root, with its `params` and its `slot`, used
+  by `use` and named by its file. A local form does not exist; `component_nodes` and `first,count`
+  are only what `tree_link` expands uses into, and no file holds them.
+- **One component row per file a `.ui` uses**, whether nodes are uses of it or styles and tokens
+  come from it; a file stays in `use` until someone removes it, also after its last use is removed.
+- **The override of a style by a node is an unnamed style with `extends`**: it says what differs
+  and follows later changes of the style in the rest.
+- **The first control of each page takes the focus** when it shows (a flag set the first time a
+  tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
+  `Focus_First`.
 
 ## Verification
 
@@ -110,7 +127,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - Layout and scroll: `layout_flow_test.odin` (wrap, stack, own alignment, aspect, weights, tracks
   and span, floats inside the surface) and `scroll_axes_test.odin`.
 - Game interfaces: `tree_kinds_test.odin`, `tree_containers_test.odin`, `tree_game_test.odin`,
-  `tree_controls_test.odin`, `game_controls_test.odin` and `retain_test.odin`. Paths:
+  `tree_controls_test.odin`, `game_controls_test.odin`, `tree_names_test.odin` (tokens, extends,
+  states, layouts of styles, the first control of a page) and `retain_test.odin`. Paths:
   `paths_reach_components_through_entities_and_copy_only_what_is_read`,
   `a_widget_reads_with_at_the_data_its_instance_gives_it` and, in `engine/gui`,
   `paths_read_the_components_and_storages_of_the_world_by_name`.
@@ -121,6 +139,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   `a_number_shows_that_it_drags_and_a_double_click_places_the_caret`,
   `paragraph_height_matches_the_lines_the_layout_wraps`,
   `rows_of_different_heights_build_only_those_in_sight_and_keep_the_range`.
+- The document of a `.ui` (`ui.inspect`, `ui.write`, tokens, roundtrip):
+  `plugins/ui_inspector/editor/api_document_test.odin`; widgets (use, params, reach through,
+  slot, follow, cycles, Make widget): `project_files_test.odin` in that package.
 - `.ui` file, in `host` (`ui_check_test.odin`):
   `ui_records_come_back_from_their_file_row_by_row` (roundtrip of `host.ui_tree_document` and
   `ui_tree_view`), `ui_check_refuses_what_tree_load_refuses_case_by_case` and

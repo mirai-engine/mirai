@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -520,7 +521,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     document_activate(s,1)
     document_close_active(s)
     testing.expect_value(t,s.active_document,0)
-    testing.expect(t,documents_restore(s,saved_tabs))
+    testing.expect_value(t,documents_restore(s,saved_tabs),"")
     testing.expect_value(t,len(s.documents),2)
     testing.expect_value(t,s.active_document,1)
     testing.expect(t,!viewport.preview_sun)
@@ -1242,8 +1243,8 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     core.world_settle(w)
     edits_reset(&f.edits,w)
     prefabs_follow(s,&f.prefabs)
-    id,located:=prefab_locate(s,"lamp",{})
-    if !testing.expect_value(t,located,Prefab_Error.None) {return}
+    id,problem:=asset_resolve(s,"lamp",".prefab")
+    if !testing.expect_value(t,problem,"") {return}
     placed,placed_error:=prefab_instantiate(s,id,{})
     if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
     prefabs_follow(s,&f.prefabs)
@@ -1384,4 +1385,39 @@ prefab_edits_of_another_editor_mark_overrides :: proc(t:^testing.T) {
     testing.expect(t,len(fields)>0)
     for override in fields {testing.expect_value(t,override.entity,a_id)}
     testing.expect(t,len(f.prefabs.remote)==0 && !f.prefabs.remote_places)
+}
+
+// One resolver names an asset for every method: a path with or without its
+// extension or an id, and a miss lists what is near.
+@(test)
+an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"asset-resolve")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    root:=entity_create(s,{name="Crate",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    prefabs_follow(s,&f.prefabs)
+    crate,created:=prefab_create(s,root,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    _=asset.registry_scan(&f.assets.registry)
+    b:=strings.builder_make(context.temp_allocator)
+    fmt.sbprintf(&b,"%016x%016x",crate[0],crate[1])
+    id:=strings.to_string(b)
+    cases:=[?]struct{name,kinds,says:string}{
+        {"crate.prefab",".prefab",""},
+        {"crate",".prefab",""},
+        {"crate","",""},
+        {id,".prefab",""},
+        {"crat",".prefab","crate.prefab"},
+        {"prefabs/crat",".prefab","crate.prefab"},
+        {"crate",".mesh","no .mesh"},
+    }
+    for c in cases {
+        got,problem:=asset_resolve(s,c.name,c.kinds)
+        testing.expectf(t,(c.says=="")==(problem=="") && strings.contains(problem,c.says),"%s: %s",c.name,problem)
+        if c.says=="" {testing.expect_value(t,got,crate)}
+    }
 }

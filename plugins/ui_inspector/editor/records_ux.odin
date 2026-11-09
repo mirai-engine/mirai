@@ -1,6 +1,8 @@
 package ui_inspector_editor
 
+import "core:fmt"
 import "core:slice"
+import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -31,17 +33,15 @@ selection_roots :: proc(nodes:[]ui.Tree_Node,rows:[]int,allocator:=context.temp_
 }
 
 // Removes the nodes of rows and what they hold.
-records_delete_rows :: proc(r:^Records,scope:Scope,rows:[]int) {
-    list:=records_list(r,scope)
-    if list==nil {return}
-    roots:=selection_roots(list[:],rows)
-    #reverse for row in roots {records_delete(r,scope,row)}
+records_delete_rows :: proc(r:^Records,rows:[]int) {
+    roots:=selection_roots(r.nodes[:],rows)
+    #reverse for row in roots {records_delete(r,row)}
 }
 
 // Copies each node of rows with what it holds right after it; returns the
 // copies, in the order of their originals.
-records_duplicate_rows :: proc(r:^Records,scope:Scope,rows:[]int,allocator:=context.temp_allocator) -> []int {
-    list:=records_list(r,scope)
+records_duplicate_rows :: proc(r:^Records,rows:[]int,allocator:=context.temp_allocator) -> []int {
+    list:=&r.nodes
     if list==nil {return nil}
     roots:=selection_roots(list[:],rows)
     copies:=make([]int,len(roots),allocator)
@@ -49,7 +49,7 @@ records_duplicate_rows :: proc(r:^Records,scope:Scope,rows:[]int,allocator:=cont
     for row,i in roots {sizes[i]=records_subtree(list[:],row)+1}
     // From the last: a copy does not move the rows before it.
     for i:=len(roots)-1;i>=0;i-=1 {
-        copies[i]=records_duplicate(r,scope,roots[i])
+        copies[i]=records_duplicate(r,roots[i])
         if copies[i]<0 {return copies[i:i]}
     }
     // Each copy moved by the copies made before it.
@@ -116,7 +116,7 @@ records_paste_rows :: proc(r:^Records,row:int,clip:^Clip_Nodes,allocator:=contex
             append(&overrides,moved)
         }
         if merge_put(&m,nodes,overrides[:],at,parent)<0 {break}
-        for i in at..<at+count {records_name_free(r,-1,i)}
+        for i in at..<at+count {records_name_free(r,i)}
         append(&pasted,at)
         at+=count
     }
@@ -146,14 +146,14 @@ records_place_rows :: proc(r:^Records,rows:[]int,parent,before:int,allocator:=co
         if held-moved_in+len(roots)>1 {return nil}
     }
     blocks:=make([]Block,len(roots),context.temp_allocator)
-    for row,i in roots {blocks[i]=records_block(r,-1,row)}
+    for row,i in roots {blocks[i]=records_block(r,row)}
     // From the last: the rows before a removed block stay where they are.
     // Moving keeps translations and what names the nodes.
     parent,before:=parent,before
     for i:=len(roots)-1;i>=0;i-=1 {
         row:=roots[i]
         count:=len(blocks[i].nodes)
-        records_remove(r,-1,row)
+        records_remove(r,row)
         if parent>row {parent-=count}
         if before>row {before-=count}
     }
@@ -161,7 +161,7 @@ records_place_rows :: proc(r:^Records,rows:[]int,parent,before:int,allocator:=co
     if at<0 {at=len(r.nodes) if parent<0 else parent+records_subtree(r.nodes[:],parent)+1}
     placed:=make([]int,len(roots),allocator)
     for &block,i in blocks {
-        if !records_block_put(r,-1,block,at,parent) {return nil}
+        if !records_block_put(r,block,at,parent) {return nil}
         placed[i]=at
         at+=len(block.nodes)
     }
@@ -170,11 +170,10 @@ records_place_rows :: proc(r:^Records,rows:[]int,parent,before:int,allocator:=co
 
 // ---------------------------------------------------------------- grid columns
 
-// How many nodes of the file, its templates and the overrides of its
+// How many nodes of the file and the overrides of its
 // instances name a row of grid_tracks.
 records_grid_tracks_users :: proc(r:^Records,row:int) -> (users:int) {
     for &n in r.nodes {users+=int(int(n.layout.tracks)==row+1)}
-    for &template in r.templates {for &n in template.nodes {users+=int(int(n.layout.tracks)==row+1)}}
     for &o in r.overrides {users+=int(.Layout in o.fields && int(o.values.layout.tracks)==row+1)}
     return
 }
@@ -217,7 +216,6 @@ records_grid_tracks_drop :: proc(r:^Records,node:^ui.Tree_Node) {
     ordered_remove(&r.grid_tracks,at)
     shift :: proc(tracks:^u16,at:int) {if int(tracks^)>at+1 {tracks^-=1}}
     for &n in r.nodes {shift(&n.layout.tracks,at)}
-    for &template in r.templates {for &n in template.nodes {shift(&n.layout.tracks,at)}}
     for &o in r.overrides {shift(&o.values.layout.tracks,at)}
 }
 
@@ -258,14 +256,7 @@ records_anim_remove :: proc(r:^Records,anim:int) {
     if anim<0 || anim>=len(r.anims) {return}
     a:=r.anims[anim]
     if a.kind==.Clip {
-        for t:=int(a.first+a.count)-1;t>=int(a.first);t-=1 {
-            track:=r.tracks[t]
-            records_keys_remove(r,int(track.first_key),int(track.key_count))
-        }
-        remove_range(&r.tracks,int(a.first),int(a.first+a.count))
-        for &other,i in r.anims {
-            if i!=anim && other.kind==.Clip && other.first>=a.first+a.count {other.first-=a.count}
-        }
+        records_anim_contents_drop(r,anim)
     } else {
         for part:=int(a.count)-1;part>=0;part-=1 {records_part_remove(r,anim,part)}
     }
@@ -291,22 +282,178 @@ records_anim_remove :: proc(r:^Records,anim:int) {
 
 // ---------------------------------------------------------------- widgets
 
-// Whether the widget from reaches target through the widgets it holds, the
-// widgets those hold and so on: putting from inside target would make a
-// widget that holds itself. children: the widgets a .ui holds.
-widget_reaches :: proc(from,target:base.Asset_Id,children:proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id,user:rawptr) -> bool {
-    if from==target {return true}
-    seen:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    queue:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    append(&queue,from)
-    for len(queue)>0 {
-        id:=pop(&queue)
-        if slice.contains(seen[:],id) {continue}
-        append(&seen,id)
-        for child in children(user,id) {
-            if child==target {return true}
-            if !slice.contains(seen[:],child) {append(&queue,child)}
-        }
+// The components a .ui names; false when its file does not read.
+Widget_Uses :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool)
+
+// A walk of the .ui that others use, depth first: what it found when it ended.
+Widget_Walk :: struct {
+    uses:Widget_Uses,
+    user:rawptr,
+    target:base.Asset_Id, // none: it only looks for what fails
+    chain:[dynamic]base.Asset_Id, // the files open, from the first; when it reached target, the way there
+    seen:[dynamic]base.Asset_Id,
+    reached:bool,
+    broken:ui.Tree_Component, // the first component that does not read or that closes a cycle
+    cycle:bool,
+}
+
+// Walks what used names, from the file from (none: from records of no file).
+widget_walk :: proc(used:[]ui.Tree_Component,from,target:base.Asset_Id,uses:Widget_Uses,user:rawptr) -> (w:Widget_Walk) {
+    w.uses,w.user,w.target=uses,user,target
+    w.chain,w.seen=make([dynamic]base.Asset_Id,context.temp_allocator),make([dynamic]base.Asset_Id,context.temp_allocator)
+    if from!={} {
+        append(&w.chain,from)
+        append(&w.seen,from)
+    }
+    widget_walk_down(&w,used)
+    return
+}
+
+// True when it reached target, with the chain left as it was.
+@(private)
+widget_walk_down :: proc(w:^Widget_Walk,used:[]ui.Tree_Component) -> bool {
+    broke :: proc(w:^Widget_Walk,component:ui.Tree_Component,cycle:bool) {
+        if w.broken.widget=={} {w.broken,w.cycle=component,cycle}
+    }
+    for component in used {
+        id:=component.widget
+        if id=={} {continue}
+        if id==w.target {w.reached=true;return true}
+        if slice.contains(w.chain[:],id) {broke(w,component,true);continue}
+        if slice.contains(w.seen[:],id) {continue}
+        append(&w.seen,id)
+        held,read:=w.uses(w.user,id)
+        if !read {broke(w,component,false);continue}
+        append(&w.chain,id)
+        if widget_walk_down(w,held) {return true}
+        pop(&w.chain)
     }
     return false
 }
+
+// The components of a .ui, read from its file. user: the ^host.Assets.
+widget_uses_of_file :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
+    records:Records
+    if !records_read((^host.Assets)(user),id,&records,context.temp_allocator) {return}
+    return records.components[:],true
+}
+
+// Whether the widget from reaches target through the widgets it holds, the
+// widgets those hold and so on: putting from inside target would make a
+// widget that holds itself.
+widget_reaches :: proc(from,target:base.Asset_Id,uses:Widget_Uses,user:rawptr) -> bool {
+    if from==target {return true}
+    used,read:=uses(user,from)
+    return read && widget_walk(used,from,target,uses,user).reached
+}
+
+// Takes away the tracks and keys of an animation, or its parts: the row stays
+// for the events that play it, with nothing in it.
+records_anim_contents_drop :: proc(r:^Records,anim:int) {
+    if anim<0 || anim>=len(r.anims) {return}
+    a:=r.anims[anim]
+    if a.kind==.Clip {
+        for t:=int(a.first+a.count)-1;t>=int(a.first);t-=1 {
+            track:=r.tracks[t]
+            records_keys_remove(r,int(track.first_key),int(track.key_count))
+        }
+        remove_range(&r.tracks,int(a.first),int(a.first+a.count))
+        for &other,i in r.anims {
+            if i!=anim && other.kind==.Clip && other.first>=a.first+a.count {other.first-=a.count}
+        }
+    } else {
+        for part:=int(a.count)-1;part>=0;part-=1 {records_part_remove(r,anim,part)}
+    }
+    r.anims[anim].first,r.anims[anim].count=0,0
+}
+
+// ---------------------------------------------------------------- what a widget takes
+
+// Whether the document can be a widget: one root, what a use names as its
+// parts and where what it holds goes.
+widget_declares :: proc(u:^Ui_Inspector) -> bool {
+    roots:=0
+    for &n in u.records.nodes {roots+=int(n.parent<0)}
+    return roots==1
+}
+
+// The node of the file called name; nil: none.
+records_node_named :: proc(r:^Records,name:string) -> ^ui.Tree_Node {
+    if name=="" {return nil}
+    for &n in r.nodes {if serial.text_field(n.name[:])==name {return &n}}
+    return nil
+}
+
+// Why a parameter cannot have the name its row has; empty: it can.
+records_param_valid_name :: proc(r:^Records,row:int) -> string {
+    p:=&r.params[row]
+    name:=serial.text_field(p.name[:])
+    if name=="" || name=="children" {return "A parameter needs a name of its own"}
+    reserved:=DOCUMENT_NODE_KEYS
+    _,is_node:=doc_instance_field(name)
+    if slice.contains(reserved[:],name) || is_node {return "A node has a key of that name"}
+    for &other,i in r.params {if i!=row && other.name==p.name {return "The widget has a parameter of that name"}}
+    return ""
+}
+
+// A new parameter, called param and a number no other has, going to the text of its root.
+records_param_add :: proc(r:^Records) -> int {
+    append(&r.params,ui.Tree_Param{})
+    at:=len(r.params)-1
+    for n in 1..=at+1 {
+        ui.tree_text_set(r.params[at].name[:],fmt.tprintf("param%d",n))
+        if records_param_valid_name(r,at)=="" {break}
+    }
+    return at
+}
+
+// Where a parameter goes: a field of a node (node empty: the root), or param
+// of the use at node.
+records_param_target :: proc(r:^Records,row:int,node:string,field:ui.Tree_Param_Field,param:string) {
+    p:=&r.params[row]
+    ui.tree_text_set(p.node[:],node)
+    p.field=field
+    ui.tree_text_set(p.param[:],param)
+}
+
+// Whether a node of the file holds what a use holds, the Slot, the last of
+// its file: one node at most. Why it cannot be; empty: done.
+records_slot_set :: proc(r:^Records,row:int,on:bool) -> string {
+    if row<0 || row>=len(r.nodes) {return "Choose a node"}
+    n:=&r.nodes[row]
+    if !on {n.flags-={.Slot};return ""}
+    if !ui.node_kind_holds(n.kind) {return "Only what holds nodes takes the Slot"}
+    if row+records_subtree(r.nodes[:],row)!=len(r.nodes)-1 {return "The Slot is the last node of the widget: move it after the others first"}
+    for &other in r.nodes {other.flags-={.Slot}}
+    r.nodes[row].flags+={.Slot}
+    return ""
+}
+
+// What a widget made of a part of another file takes: for each named node of
+// its nodes that shows a text or binds one, a parameter of that name, so a
+// use names only what differs.
+records_widget_params :: proc(r:^Records) {
+    for &n,row in r.nodes {
+        name:=serial.text_field(n.name[:])
+        if row==0 || name=="" || n.kind==.Component {continue}
+        fields:ui.Tree_Param_Field
+        ok:=false
+        switch {
+        case serial.text_field(n.bind_text[:])!="":  fields,ok=.Bind_Text,true
+        case serial.text_field(n.bind_value[:])!="": fields,ok=.Bind_Value,true
+        case records_text(r,n.text)!="":             fields,ok=.Text,true
+        }
+        if !ok || len(r.params)>=WIDGET_MADE_PARAMS {continue}
+        append(&r.params,ui.Tree_Param{field=fields})
+        at:=len(r.params)-1
+        ui.tree_text_set(r.params[at].name[:],name)
+        ui.tree_text_set(r.params[at].node[:],name)
+        if records_param_valid_name(r,at)!="" {
+            ui.tree_text_set(r.params[at].name[:],fmt.tprintf("%s_%s",name,fields==.Text ? "text" : "value"))
+            if records_param_valid_name(r,at)!="" {ordered_remove(&r.params,at)}
+        }
+    }
+}
+
+// Parameters Make widget declares by itself at most.
+@(private) WIDGET_MADE_PARAMS :: 8

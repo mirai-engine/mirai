@@ -465,21 +465,27 @@ ground in the color of the level it shows, a coarser node one.
 
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
 `terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
-world, each change an unsaved undo step like a stroke. A Volume's interior is edited in Paint,
+world on the entity they name (no selection needed), each change an unsaved undo step like a
+stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named by its material
+(`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same). A Volume's interior is edited in Paint,
 under its layers: its rows hold what is changed until Apply. `terrain.edit` is a stroke of a brush
 by its name from `at` to `to`, touching every quarter of the radius with what a pass does; a ramp
 or a shape is a touch from `at` to `to`. A brush that the representation does not have, a layer
 that does not exist, removing the only layer or an alpha that is not there answer what they take;
 an error of the operation, that of the panel. While a game of the caller runs, `terrain.edit` and
-`terrain.layer` are requests of that game (`request_edit`, `request_layer`) that it applies on its
+`terrain.layer` are requests of that game (`terrain.dig`, `request_layer`) that it applies on its
 next tick, without undo: an alpha-less stroke whose touches fit in a tick's queue.
 
 ## Editing during play
 
 - `terrain_update` writes the resident sources and consumes the requests before physics in Fixed;
   the editor also loads and publishes in Frame.
-- `request_edit(requests,owner,Brush)` returns false if it did not fit; center, normal, radius and
-  distances are local. `Brush.amount` is a delta in meters for Raise and Lower and a fraction for
+- `terrain.dig(requests,Brush,owner)` asks for an edit, in the world: `terrain_replay` and
+  `terrain_update` resolve the owner first (given, or the terrain the brush touches: the nearest
+  to the center, then the smallest footprint) and hand the brush on in its space, so networking
+  keys edits by that owner. Request procs return nothing; `terrain_requests_serve` keeps the room
+  of `Terrain_Settings.requests` and reports what was dropped or refused. `Brush.amount` is a
+  delta in meters for Raise and Lower and a fraction for
   what interpolates (for continuous response, `1−exp(−strength*dt)`); Refine and the booleans
   require a positive amount and Hole and Fill do not read it. `falloff` and `hardness` give the
   falloff; Smooth averages the neighbors of a box that grows with the radius (`SMOOTH_REACH`).
@@ -520,7 +526,7 @@ next tick, without undo: an alpha-less stroke whose touches fit in a tick's queu
 ## What digging leaves
 
 `Terrain_Digs` (a world event that `terrain_replay` empties on each tick of a world that plays)
-says what each `request_edit` edit or replica removed: the center in the world, a reach, the volume
+says what each `terrain.dig` edit or replica removed: the center in the world, a reach, the volume
 and the cubic meters and material of each layer. In a Volume it is the part of each sample's cell
 that stopped being solid, with its weights; in a Heightfield, the height that went down per cell,
 with the weights of its column. `terrain` stores none of that: the game uses it (an inventory,
@@ -547,7 +553,7 @@ other; authority, prediction and rollback for the rest belong to the
 - **A routed tick** (`Terrain_Replays.routed`, which the bridge requests on each tick of a session)
   applies in `terrain_replay`, before `terrain_update`, the replicas in their order (a brush, a
   layer change, a whole page of a grid, a whole section of a Mesh or the head of a base) and then
-  the `request_edit` and `request_layer` requests, which `terrain_update` no longer sees. Each
+  the `terrain.dig` and `request_layer` requests, which `terrain_update` no longer sees. Each
   result says its error, the region that changed and its check: the hash of the values of all the
   grids in that region (of a Mesh's sections and its weights around them), or of the layers of a
   layer change, whose region is the whole source. What `terrain_replay` applies does not move
@@ -840,6 +846,6 @@ terrain): `terrains_of_a_shared_source_keep_one_set_of_pieces_each_across_world_
   raster and in rays; its image, the joins between levels and the holes need a GPU capture.
 - By API and captures: preview, file and revision until confirming, cancellation, undo/redo and
   entities that share a source. Unsaved: `editor.input` creates and sculpts, `asset.unsaved` and
-  the disk do not change, `play.inspect` and `play.capture` see it, `asset.save` writes and
+  the disk do not change, `play.inspect` and `capture` see it, `asset.save` writes and
   `asset.discard` returns to the disk. Direct gestures are tested by the user; a Darwin ARM64 check
   only verifies types.

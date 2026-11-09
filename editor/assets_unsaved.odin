@@ -1,6 +1,7 @@
 package editor
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -74,26 +75,34 @@ unsaved_changed :: proc(s:^Session,path:string) {
 // nothing unsaved is skipped. Returns how many it wrote, and false when one
 // could not be written: it stays unsaved.
 assets_save :: proc(s:^Session,paths:[]string) -> (saved:int,ok:bool) {
+    failures:string
+    saved,failures=assets_write(s,paths)
+    return saved,failures==""
+}
+
+// assets_save that says which files could not be written and why, as text in
+// the temporary allocator; "" when all were.
+assets_write :: proc(s:^Session,paths:[]string) -> (saved:int,failures:string) {
     if busy:=import_busy(s);busy!="" && len(paths)>0 {
         notify(s,busy)
-        return 0,false
+        return 0,busy
     }
-    ok=true
     if s.app==nil || s.app.assets==nil {return}
     r:=&s.app.assets.registry
+    failed:=make([dynamic]string,context.temp_allocator)
     for path in paths {
         if _,found:=asset.registry_memory_find(r,path);!found {continue}
         // Writing frees the entry the path may belong to.
         relative:=strings.clone(path,context.temp_allocator)
-        if asset.registry_memory_write(r,relative)!=.None {
-            ok=false
+        if error:=asset.registry_memory_write(r,relative);error!=.None {
+            append(&failed,fmt.tprintf("%s: %v",unsaved_name(s,relative),error))
             continue
         }
         // A program published as it was held: its file now holds the same.
         if !asset.registry_outside(relative) {host.app_asset_changed(s.app,relative)}
         saved+=1
     }
-    return
+    return saved,strings.join(failed[:],"; ",context.temp_allocator)
 }
 
 assets_save_all :: proc(s:^Session) -> (saved:int,ok:bool) {return assets_save(s,assets_unsaved_paths(s))}
@@ -219,6 +228,23 @@ assets_unsaved_store :: proc(s:^Session,folder:string) -> bool {
 // Whether folder keeps unsaved assets (assets_unsaved_store).
 assets_unsaved_kept :: proc(folder:string) -> bool {
     return os.exists(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator))
+}
+
+// A file folder keeps that this editor holds unsaved as well; "" when none is.
+assets_unsaved_conflict :: proc(s:^Session,folder:string) -> string {
+    if s.app==nil || s.app.assets==nil {return ""}
+    data,read:=os.read_entire_file(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
+    if read!=nil {return ""}
+    manifest:Unsaved_Manifest
+    if json.unmarshal(data,&manifest,allocator=context.temp_allocator)!=nil {return ""}
+    r:=&s.app.assets.registry
+    for path in manifest.assets {
+        if _,held:=asset.registry_memory_find(r,path);held {return path}
+    }
+    for path in manifest.removed {
+        if _,held:=asset.registry_memory_find(r,path);held {return path}
+    }
+    return ""
 }
 
 // Puts back in memory the unsaved assets folder keeps and removes it.

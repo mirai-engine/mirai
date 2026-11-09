@@ -75,7 +75,7 @@ horror_switches :: proc(
 horror_lights :: proc(
     lamps:^core.Table(House_Lamp),switches:core.Read(Light_Switch),points:^core.Table(render.Point_Light),
     flashlights:core.Read(Flashlight),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:core.Read(Player),moves:core.Read(inp.Move_Input),worlds:core.Read(core.World_Transform),time:core.Time,
+    players:core.Read(Player),moves:core.Read(inp.Move_Input),drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),time:core.Time,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
@@ -93,13 +93,13 @@ horror_lights :: proc(
         intensity:=on?lamp.intensity:0
         if light.intensity!=intensity {light.intensity=intensity}
     }
-    if core.count(players)==0 {return}
-    player:=core.entity_at(players,0)
-    body,has_body:=core.get(worlds,player)
+    player,found:=core.first(players)
+    if !found {return}
+    origin,_,aimed:=inp.aim(drivables,worlds,player)
     move,has_move:=core.get(moves,player)
-    if !has_body || !has_move {return}
+    if !aimed || !has_move {return}
     turn:=mm.quat_from_euler({move.look_pitch,move.look_yaw,0})
-    eye:=body.position+[3]f32{0,EYE_HEIGHT,0}+mm.quat_rotate(turn,FLASHLIGHT_OFFSET)
+    eye:=origin+mm.quat_rotate(turn,FLASHLIGHT_OFFSET)
     for row in 0..<core.count(flashlights) {
         e:=core.entity_at(flashlights,row)
         flashlight:=core.at(flashlights,row)

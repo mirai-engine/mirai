@@ -20,7 +20,7 @@ import "mirai:ui"
 Ui_Capture_Background :: enum u8 {Scene,Checker,Color}
 Ui_Capture_Params :: struct {
     asset:base.Asset_Id,
-    path:[editor.API_PATH_BYTES]u8 `mirai:"text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made"`,
+    path:[editor.API_PATH_BYTES]u8 `mirai:"text,optional,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made. Omitted: .mirai/captures/ui.png of the project"`,
     size:[2]f32 `mirai:"optional,min=0,max=8192,label=Layout units the game lays it out in; zeros: the reference of Project Settings > UI, or 1920 by 1080 without one. The image has that many pixels times the density of the editor"`,
     background:Ui_Capture_Background `mirai:"optional,label=Scene: what the camera of the viewport sees, as the game shows it over its world; Checker; or Color"`,
     color:ui.Color `mirai:"optional,label=Of background Color, in display values"`,
@@ -39,7 +39,7 @@ UI_CAPTURE_SIZE :: [2]f32{1920,1080} // without a reference of the project
 @(private)
 capture_api_register :: proc(s:^editor.Session) {
     defaults:=Ui_Capture_Params{seconds=1}
-    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=Ui_Capture_Params,params_info=type_info_of(Ui_Capture_Params),result=editor.Api_Capture_Result,result_info=type_info_of(editor.Api_Capture_Result),defaults=&defaults,flags={.Read_Only},run=api_ui_capture})
+    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=Ui_Capture_Params,params_info=type_info_of(Ui_Capture_Params),result=editor.Api_Capture_Result,result_info=type_info_of(editor.Api_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only},run=api_ui_capture})
 }
 
 @(private)
@@ -56,7 +56,7 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         for language in gui.Language {if fmt.tprintf("%v",language)==name {stage.language,stage.chosen=language,true}}
         if !stage.chosen {api.call_failf(call,api.INVALID_PARAMS,"language '%s' is none of the gui.Language names (English, Spanish, ...)",name);return}
     }
-    file,writable:=editor.api_output_file(s,call,serial.text_field(p.path[:]),app.allocator)
+    file,writable:=editor.api_capture_file(s,call,serial.text_field(p.path[:]),"ui.png",app.allocator)
     if !writable {return}
     defer delete(file,app.allocator)
     api_flush(s)
@@ -64,7 +64,7 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     if !records_read(a,p.asset,&records,context.temp_allocator) {api.call_failf(call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the id of a .ui of the project (asset.list kind ui)",fmt.tprintf("%016x%016x",p.asset[0],p.asset[1]));return}
     data:=records_data(&records)
     imports,imported:=host.ui_tree_imports(a,data)
-    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",WIDGET_MISSING);return}
+    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",widget_why(a,data));return}
     preview:Preview
     defer preview_free(&preview)
     if !preview_load(&preview,app,data,imports,app.allocator) {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",load_why(a,data,imports));return}

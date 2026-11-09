@@ -5,7 +5,6 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
 KEYFRAME_PATH_FRAMES :: 16
-KEYFRAME_PATH_REQUESTS :: 128
 
 @(component,description="Moves the entity transform along a sequence of timed keyframes.")
 Keyframe_Path :: struct {
@@ -35,14 +34,12 @@ Keyframe_Path_Command_Kind :: enum u8 {Play,Pause,Restart,Seek,Speed}
 Keyframe_Path_Command :: struct {entity:core.Entity,kind:Keyframe_Path_Command_Kind,value:f32}
 
 @(storage,queue)
-Keyframe_Path_Requests :: struct {items:[KEYFRAME_PATH_REQUESTS]Keyframe_Path_Command,count:u32}
+Keyframe_Path_Requests :: struct {queue:core.Queue(Keyframe_Path_Command)}
 
-// False when the request was not made: an invalid one, or KEYFRAME_PATH_REQUESTS already wait.
-keyframe_path_request :: proc(requests:^Keyframe_Path_Requests,entity:core.Entity,kind:Keyframe_Path_Command_Kind,value:f32=0) -> bool {
-    if requests==nil || entity==core.NONE || kind<.Play || kind>.Speed || !(abs(value)<=max(f32)) || requests.count>=KEYFRAME_PATH_REQUESTS {return false}
-    requests.items[requests.count]={entity,kind,value}
-    requests.count+=1
-    return true
+keyframe_path_request :: proc(requests:^Keyframe_Path_Requests,entity:core.Entity,kind:Keyframe_Path_Command_Kind,value:f32=0) {
+    if requests==nil {return}
+    if entity==core.NONE || kind<.Play || kind>.Speed || !(abs(value)<=max(f32)) {core.refuse(&requests.queue);return}
+    core.offer(&requests.queue,Keyframe_Path_Command{entity,kind,value})
 }
 
 keyframe_path_frames :: proc(value:^Keyframe_Path) -> []lib.Transform_Frame {
@@ -60,7 +57,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
         state,exists:=core.get(core.read(progress),e)
         fresh:=!exists || !state.ready
         requested:=false
-        for command in requests.items[:min(requests.count,KEYFRAME_PATH_REQUESTS)] {if command.entity==e {requested=true;break}}
+        for command in requests.queue.items {if command.entity==e {requested=true;break}}
         changed:=fresh || state.version!=core.stamp(animations,row)
         if !changed && !requested && (!value.playing || value.speed==0 || state.ended) {continue}
         frames:=keyframe_path_frames(&value)
@@ -71,7 +68,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
         }
         speed,playing:=value.speed,value.playing
         sought:=false
-        for command in requests.items[:min(requests.count,KEYFRAME_PATH_REQUESTS)] {
+        for command in requests.queue.items {
             if command.entity!=e {continue}
             switch command.kind {
             case .Play: playing=true
@@ -106,7 +103,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
         if result!=local {if written:=core.free(transforms,e);written!=nil {written^=result}}
         if !exists {core.add(progress,e,state)} else {old,_:=core.get(core.read(progress),e);if state!=old {core.get(progress,e)^=state}}
     }
-    requests.count=0
+    core.queue_clear(&requests.queue)
     for e in progress.entities[:core.count(progress)] {if !core.has(animations,e) {core.remove(progress,e)}}
 }
 

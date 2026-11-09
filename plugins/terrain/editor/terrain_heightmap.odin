@@ -48,15 +48,14 @@ terrain_heightmap_dialogs :: proc(s:^editor.Session,tool:^Terrain_Tool,world:cor
     }
 }
 
-// The heights of a heightmap in the selected Heightfield as one step of undo:
+// The heights of a heightmap in the Heightfield of the stroke as one step of undo:
 // one of another size gives the terrain its size, with its layers and without
 // what was painted or cut.
 heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,path:string) -> bool {
     stroke:=&tool.stroke
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to import its heightmap");return false}
     bytes,error:=serial.file_read(path,context.temp_allocator,limit=64*1024*1024)
-    if error!=.None {editor.notify(s,"The heightmap could not be read");return false}
+    if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return false}
     heightmap,decode:=textures.heightmap_decode(bytes,terrain.HEIGHT_SAMPLES_MAX,context.temp_allocator)
     if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
@@ -136,7 +135,6 @@ resize_even :: proc "contextless" (wanted,current:int) -> int {
 terrain_resize :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,samples:[2]int) -> bool {
     stroke:=&tool.stroke
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to resize it");return false}
     next:terrain.Source
     defer terrain.source_destroy(&next)
     if !terrain.source_resize(&next,&stroke.source,samples,stroke.source.allocator) {editor.notify(s,"The terrain cannot take that size: an even number of samples more or less on each side, within the budget");return false}

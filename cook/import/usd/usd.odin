@@ -20,7 +20,7 @@ FORMAT :: importer.Format{
     name="USD",
     extensions={0=".usd",1=".usda",2=".usdc"},
     version=1,
-    space={meters_per_unit=0.01,axes={.X,.Y,.Z},v_origin=.Bottom},
+    space={meters_per_unit=0.01,axes=importer.FACING_PLUS_Z,v_origin=.Bottom},
     sniff=sniff,
     read=read,
 }
@@ -216,8 +216,8 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
     }
     if property,found:=parser.metadata["upAxis"];found {
         axis:=usd_string(property)
-        // +Z up keeps the front of a model toward -Y.
-        if axis=="Z" {space.axes={.X,.Z,.Negative_Y}} else if axis!="Y" {return importer.fail(r,.Malformed,"upAxis of the USD file must be Y or Z")}
+        // +Z up: the front of a model is toward -Y.
+        if axis=="Z" {space.axes={.Negative_X,.Z,.Y}} else if axis!="Y" {return importer.fail(r,.Malformed,"upAxis of the USD file must be Y or Z")}
     }
     importer.source_space(r,space) or_return
     u:=Usd_Import{r=r,prims=parser.prims[:],composed=composed}
@@ -225,8 +225,6 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
     for prim,i in parser.prims {u.paths[prim.path]=i}
     prim_nodes:=make([]int,len(parser.prims),context.temp_allocator)
     shading:=make([]bool,len(parser.prims),context.temp_allocator)
-    // A light shines toward -Z of its prim; its node and its children take the turn that keeps it so in the engine.
-    frame:=importer.light_frame(r.basis)
     for &prim,i in parser.prims {
         // Materials and what they hold are not nodes of the hierarchy.
         shading[i]=prim.type_name=="Material" || prim.type_name=="Shader" || prim.type_name=="NodeGraph" || (prim.parent>=0 && shading[prim.parent])
@@ -238,12 +236,10 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
         if prim.parent>=0 {parent_world=parser.prims[prim.parent].world}
         if !prim_transform(r,&prim,parent_world) {return false}
         local:=prim.local
-        if light_type(prim.type_name) {local=local*frame}
-        if prim.parent>=0 && light_type(parser.prims[prim.parent].type_name) {
+        if prim.parent>=0 {
             switch parser.prims[prim.parent].type_name {
             case "RectLight","DiskLight": return importer.fail(r,.Unsupported,"%s: a prim under the %s %s, which its scale sizes; move it out of the light",prim.path,parser.prims[prim.parent].type_name,parser.prims[prim.parent].path)
             }
-            local=linalg.transpose(frame)*local
         }
         bottom:=abs(local[3,0])+abs(local[3,1])+abs(local[3,2])+abs(local[3,3]-1)
         transform,decomposed:=mm.transform_from_matrix(local)

@@ -103,7 +103,7 @@ glb_morphs_decode_sparse_accessors :: proc(t:^testing.T) {
     model,ok:=import_ok(t,file);defer importer.model_destroy(&model)
     if !ok {return}
     testing.expect_value(t,len(model.meshes[0].morph_deltas),2)
-    testing.expect_value(t,model.meshes[0].morph_deltas[0].position,[3]f32{2,0,0})
+    testing.expect_value(t,model.meshes[0].morph_deltas[0].position,[3]f32{-2,0,0})
 }
 
 // Two panels: the first without normals, the second with them and a normal target.
@@ -139,7 +139,7 @@ gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: 
         mesh:=model.meshes[0]
         testing.expect_value(t,len(mesh.indices),12)
         testing.expect(t,mesh.indices[0]!=mesh.indices[3] && mesh.indices[2]!=mesh.indices[4],"flat corners of coplanar faces that morph stay apart")
-        faces:=[2][2][3]f32{{linalg.normalize([3]f32{0,-1,1}),linalg.normalize([3]f32{-1,0,1})},{linalg.normalize([3]f32{-1,1,1}),{0,0,1}}}
+        faces:=[2][2][3]f32{{linalg.normalize([3]f32{0,-1,-1}),linalg.normalize([3]f32{1,0,-1})},{linalg.normalize([3]f32{1,1,-1}),{0,0,-1}}}
         weights:=[5][2]f32{{0,0},{1,0},{0,1},{.35,.65},{-1,.5}}
         for face in 0..<2 {
             for vertex in mesh.indices[face*3:][:3] {
@@ -147,13 +147,13 @@ gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: 
                 a,b:=morph_delta(mesh,0,vertex),morph_delta(mesh,1,vertex)
                 for weight in weights {
                     actual:=linalg.normalize(rest+a.normal*weight[0]+b.normal*weight[1])
-                    expected:=linalg.normalize([3]f32{0,0,1}*(1-weight[0]-weight[1])+faces[0][face]*weight[0]+faces[1][face]*weight[1])
+                    expected:=linalg.normalize([3]f32{0,0,-1}*(1-weight[0]-weight[1])+faces[0][face]*weight[0]+faces[1][face]*weight[1])
                     testing.expect(t,linalg.length(actual-expected)<1e-4)
                 }
             }
         }
         for vertex in mesh.indices[6:] {
-            testing.expect_value(t,morph_delta(mesh,0,vertex).normal,[3]f32{.2,0,0})
+            testing.expect_value(t,morph_delta(mesh,0,vertex).normal,[3]f32{-.2,0,0})
             testing.expect_value(t,morph_delta(mesh,1,vertex).normal,[3]f32{})
         }
     }

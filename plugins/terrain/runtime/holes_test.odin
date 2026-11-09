@@ -106,7 +106,7 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0)
     _,hit:=phys.raycast({&w.physics},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Hole,center={28.5,0,28.5},radius=0.6}))
+    dig(&w.requests,{kind=.Hole,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     chunk:=resident.sources[0].chunks[far]
     testing.expect_value(t,chunk.built.lod.level,u8(0))
@@ -115,7 +115,7 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     testing.expect(t,!hit,"the collider has the hole")
     _,hit=phys.raycast({&w.physics},{27.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Fill,center={28.5,0,28.5},radius=0.6}))
+    dig(&w.requests,{kind=.Fill,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     _,hit=phys.raycast({&w.physics},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)

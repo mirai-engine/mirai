@@ -70,7 +70,8 @@ a row moves another into its place, with its stamp, without mixing the two secti
   the old one.
 - **What waits is finished in the function.** `added(t, e)` gives the value of the last pending
   `add` to write (valid until the next `add` to the table) and `staged`, that or the enabled row: a
-  function finishes what it created without settling the world.
+  function finishes what it created without settling the world. `staged_has` says whether the entity
+  will have the row on, with what waits counted.
 - `version` and `layout` only grow, also after `table_copy` and `table_swap`: a reader never sees a
   repeated stamp.
 - The `base` tables (the components of `core`) follow their entity even when it is disabled;
@@ -133,6 +134,9 @@ write: a prefab, a piece of terrain, a piece of something broken.
 ## Queues and references
 
 - `Queue(T)`: `take` returns what was accumulated and empties it, valid until the next `push`.
+  A request queue of a library has fixed room: its procs `offer` (or `refuse` what is invalid) and
+  return nothing, and the owner's `queue_serve` step keeps the room from its settings and reports
+  once what was dropped or refused.
 - In a **request** (`@(storage,queue)`) many push and one library takes; in an **event**
   (`@(storage,events)`) the owning library empties it and fills it every tick and the others read.
   Any other storage is written by a single library, except `@(storage,shared)`.
@@ -272,7 +276,7 @@ with its `World_Ref`.
 
 ### Requested places
 
-`place(placer, e, position, rotation, teleport=true)` is the only public way to place an entity
+`place(placer, e, position, rotation, teleport=true, at_rest=false)` is the only public way to place an entity
 without knowing who owns its `Transform`: a free one is written immediately, under its parents; an
 owned one is requested in the `Places` queue. `core.Placer` is a
 [parameter group](generator.md#parameter-groups) with what that needs.
@@ -282,6 +286,8 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 - The owning library takes its requests in `fixed` with `before="places_drop"` and leaves the
   others. `places_drop` (`simulate`) reports what nobody took as the problem `core.place`; what is
   requested afterwards waits for the next tick.
+- `at_rest` stops what the owner moves (a respawn, a reset); the owner takes it from the request.
+  The default keeps the velocity, which a portal needs.
 - This is how the `spawn` plugin, portals and cinematics place things without importing physics.
 
 ### The `Hierarchy`

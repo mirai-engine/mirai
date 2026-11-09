@@ -82,6 +82,6 @@ its side plus how far the view moves away from its center) so that it is at leve
 
 - `mirai test plugins/imprint/runtime`: a stamp presses less the higher it is; a step leaves
   alternating footprints every `stride`.
-- In the editor, with validation: with a body rolling on the ground, `editor.capture` shows the
+- In the editor, with validation: with a body rolling on the ground, `capture` shows the
   furrow with its shadow and its edge; `profile.capture` gives the time of `imprint` in the
   `Geometry` stage.

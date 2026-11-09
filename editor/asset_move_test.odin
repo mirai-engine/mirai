@@ -146,11 +146,6 @@ moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T)
     last:=move_test_last_file(m)
     testing.expect_value(t,last,moved)
 
-    // Nothing moves while the user plays, nor a file of a plugin.
-    s.mode=.Play
-    _,message=asset_move(s,MOVE_TEST_USER,"Moved","")
-    testing.expect(t,message!="" && move_test_path(m,MOVE_TEST_USER)=="user.mat")
-    s.mode=.Edit
 }
 
 @(private="file")
@@ -306,10 +301,10 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
         call.method,call.result=nil,nil
         return
     }
-    rename:Api_Asset_Rename_Params
+    rename:Api_Asset_Move_Params
     base.text_set(rename.asset[:],"Rocks/rock.tex")
     base.text_set(rename.name[:],"granite")
-    result,call:=run(s,api_asset_rename,&rename)
+    result,call:=run(s,api_asset_move,&rename)
     testing.expect(t,!call.failed,call.error.message)
     testing.expect_value(t,base.text_get(result.path[:]),"Rocks/granite.tex")
     id_text:[base.ASSET_ID_TEXT]u8
@@ -327,15 +322,35 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
     result,call=run(s,api_asset_move,&move)
     testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone" && base.text_get(result.id[:])=="",call.error.message)
 
-    duplicate:Api_Asset_Duplicate_Params
+    // No folder keeps the one it is in, and / is the root.
+    move={}
+    base.text_set(move.asset[:],"Nature/Stone/granite.tex")
+    base.text_set(move.folder[:],"/")
+    result,call=run(s,api_asset_move,&move)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="granite.tex",call.error.message)
+    base.text_set(move.asset[:],"granite.tex")
+    base.text_set(move.folder[:],"Nature/Stone")
+    result,call=run(s,api_asset_move,&move)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone/granite.tex",call.error.message)
+
+    duplicate:Api_Asset_Move_Params
+    duplicate.copy=true
     base.text_set(duplicate.asset[:],"Nature/Stone/granite.tex")
-    result,call=run(s,api_asset_duplicate,&duplicate)
+    result,call=run(s,api_asset_move,&duplicate)
     testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone/granite 2.tex",call.error.message)
     testing.expect(t,base.text_get(result.id[:])!="" && base.text_get(result.id[:])!=base.asset_id_format(MOVE_TEST_TEXTURE,id_text[:]))
+    base.text_set(duplicate.folder[:],"Copies")
+    base.text_set(duplicate.name[:],"basalt")
+    result,call=run(s,api_asset_move,&duplicate)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="Copies/basalt.tex",call.error.message)
+    nothing:Api_Asset_Move_Params
+    base.text_set(nothing.asset[:],"Copies/basalt.tex")
+    result,call=run(s,api_asset_move,&nothing)
+    testing.expect(t,call.failed && strings.contains(call.error.message,"changes nothing"),call.error.message)
 
     // What it cannot find, or cannot do, it says.
     base.text_set(rename.asset[:],"Nowhere/missing.tex")
-    result,call=run(s,api_asset_rename,&rename)
+    result,call=run(s,api_asset_move,&rename)
     testing.expect(t,call.failed && strings.contains(call.error.message,"asset.list"),call.error.message)
     base.text_set(move.asset[:],"Nature")
     base.text_set(move.folder[:],"Nature/Stone")

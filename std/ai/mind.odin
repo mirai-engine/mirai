@@ -361,8 +361,20 @@ reserve_count :: proc "contextless" (r:^Reservations,key:Reservation_Key,tick:u6
     return count
 }
 
+// Whether the agent that thinks holds the token of subject or could take it,
+// as one of limit: what a think proposes an attack on (ai.token_take takes it).
+reserve_free :: proc{reserve_free_subject,reserve_free_key}
+
+reserve_free_subject :: proc "contextless" (t:^Think($A),subject:$T,limit:int) -> bool where intrinsics.type_is_integer(T) {
+    return reserve_open(t.reservations,{u64(subject),0},t.holder,limit,t.tick)
+}
+
+reserve_free_key :: proc "contextless" (t:^Think($A),key:Reservation_Key,limit:int) -> bool {
+    return reserve_open(t.reservations,key,t.holder,limit,t.tick)
+}
+
 // Whether `holder` holds `key` or could take it as one of `limit`.
-reserve_free :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64) -> bool {
+reserve_open :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64) -> bool {
     if r==nil || key.target==0 || holder==0 {return false}
     s:=reserve_slot(r,key)
     if s==nil {return limit>0}

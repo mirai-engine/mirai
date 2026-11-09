@@ -396,6 +396,7 @@ present_blit :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: rhi.Texture, 
 // swapchain recreation) or failed; r.error says which.
 renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     d:=r.device
+    r.error=""
     started:=time.tick_now()
     texture_uploads_install(r)
     geometry_uploads_install(r)
@@ -443,7 +444,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
         if ddgi_ensure(r) {ddgi_place(r,focus)}
     } else if !r.settings.gi_enabled && r.ddgi.valid {ddgi_release(r)}
-    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_width)*f32(r.window_height)),true) {return false}
+    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
     alone:=frame.offscreen && len(frame.views)>0
@@ -458,7 +459,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     }
     prepared:=time.tick_now()
     cmd,began:=rhi.frame_begin(d,!frame.offscreen)
-    if !began {return false}
+    if !began {
+        set_error(r,"the device gave no frame to draw: %s",rhi.device_error(d)!=""?rhi.device_error(d):"the window is being resized or its image is not ready")
+        return false
+    }
     begun:=time.tick_now()
     slot:=int(rhi.frame_number(d)%rhi.MAX_FRAMES_IN_FLIGHT)
     read_stats(r,slot)
@@ -574,6 +578,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 
 	r.frame += 1
 	update_stats(r)
+	if !ok {set_error(r, "the frame was not submitted: %s", rhi.device_error(d))}
 	return ok && recorded_ok
 }
 
@@ -671,11 +676,11 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
 // the air of an atmosphere, the sun is as bright above it as it has to be to
 // give its illuminance on the ground when it stands overhead.
 @(private)
-frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air: bool) {
+frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air, shadows: bool) {
 	if sun.enabled {
 		light := sun.color * (sun.illuminance / math.PI * scale)
 		if air && environment.sky_atmosphere {light *= air_overhead(environment.air)}
-		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1}
+		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1 if shadows else SUN_UNSHADOWED}
 		f.sun_color = {light.x, light.y, light.z, disc if sun.disc else 0}
 	}
 	sky := environment.sky * scale
@@ -693,7 +698,7 @@ sky_map :: proc(r: ^Renderer, texture: Texture_Handle, atmosphere: bool) -> Vec4
 	index := int(texture) - 1
 	if index < 0 || index >= r.textures.count || r.textures.textures[index] == 0 {return {}}
 	size := r.textures.sizes[index]
-	return {f32(index), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
+	return {f32(texture_entry(index)), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
 }
 
 // The constants of the view and what it decides for all its passes.
@@ -773,7 +778,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		if length > 1e-8 {f.frustum[5] = camera.clip_plane / length}
 	}
 	scale := s.light_scale if s.light_scale > 0 else 1
-	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built)
+	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
 	air_view(p, &f)
@@ -854,6 +859,7 @@ frame_constants_write :: proc(p: ^Pass) {
 @(private)
 frame_constants_fill :: proc(r: ^Renderer, to: rawptr, frame: ^Gpu_Frame) {
 	layout := &r.frame_layout
+	frame.flags |= display_frame_flags(r)
 	mem.copy(to, frame, size_of(Gpu_Frame))
 	if layout.size > size_of(Gpu_Frame) {mem.zero(rawptr(uintptr(to) + size_of(Gpu_Frame)), layout.size - size_of(Gpu_Frame))}
 	if layout.nested {
@@ -1805,17 +1811,31 @@ update_stats :: proc(r: ^Renderer) {
 
 renderer_stats :: proc(r: ^Renderer) -> ^Stats {return &r.stats}
 
+// Stats with the counters of the last frame, which it reads back by the time
+// a later frame needs its slot: for whoever has just read an image of that
+// frame (renderer_capture, view_texture_capture), so the GPU is idle.
+renderer_stats_of_last_frame :: proc(r: ^Renderer) -> ^Stats {
+	if r.frame > 0 {read_stats(r, int((rhi.frame_number(r.device) + rhi.MAX_FRAMES_IN_FLIGHT - 1) % rhi.MAX_FRAMES_IN_FLIGHT))}
+	return &r.stats
+}
+
 // Reads back the last presented LDR image (RGBA8, window resolution). Blocks
 // until the GPU is idle; call between frames. The caller owns the pixels.
 renderer_capture :: proc(r: ^Renderer, allocator := context.allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if r.frame == 0 {return nil, 0, 0, false}
+	if r.frame == 0 {
+		set_error(r, "capture: no frame has been drawn")
+		return nil, 0, 0, false
+	}
 	return targets_capture(r, &r.main.targets, allocator)
 }
 
 // Reads back the image the window showed before the last presented one, which
 // frame generation drew (Stats.generated); false when the last frame drew none.
 renderer_capture_generated :: proc(r: ^Renderer, allocator := context.allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if !r.stats.generated {return nil, 0, 0, false}
+	if !r.stats.generated {
+		set_error(r, "capture: the last frame generated no image")
+		return nil, 0, 0, false
+	}
 	t := r.main.targets
 	t.ldr = t.generated
 	return targets_capture(r, &t, allocator)
@@ -1823,7 +1843,10 @@ renderer_capture_generated :: proc(r: ^Renderer, allocator := context.allocator)
 
 @(private)
 targets_capture :: proc(r: ^Renderer, t: ^Targets, allocator: mem.Allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if t.ldr == 0 {return nil, 0, 0, false}
+	if t.ldr == 0 {
+		set_error(r, "capture: the view has no image yet")
+		return nil, 0, 0, false
+	}
 	width, height = int(t.output_width), int(t.output_height)
 	memory: mem.Allocator_Error
 	pixels, memory = make([]u8, width * height * 4, allocator)

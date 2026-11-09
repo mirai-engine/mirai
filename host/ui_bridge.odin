@@ -1,6 +1,7 @@
 package host
 
 import "core:math/linalg"
+import "mirai:core"
 import "mirai:platform"
 import render "mirai:render"
 import "mirai:std/base"
@@ -231,6 +232,18 @@ ui_frame_convert :: proc(frame:ui.Frame,draws:[]render.Ui_Draw,panels:[]render.W
 UI_KEYS :: [ui.Key]platform.Key{
     .Left=.Left,.Right=.Right,.Up=.Up,.Down=.Down,.Home=.Home,.End=.End,.Page_Up=.Page_Up,.Page_Down=.Page_Down,
     .Backspace=.Backspace,.Delete=.Delete,.Enter=.Enter,.Escape=.Escape,.Tab=.Tab,.Space=.Space,.A=.A,.C=.C,.V=.V,.X=.X,
+}
+
+// The input of a tick as the frame of a window that held it, for what reads the
+// UI of a game without a window: a script of the player or a step of the API.
+input_frame_of :: proc "contextless" (given:core.Input) -> (frame:platform.Input_Frame) {
+    frame.keys_down,frame.keys_pressed,frame.keys_released=given.keys_down,given.keys_pressed,given.keys_released
+    frame.keys_repeated=given.keys_pressed
+    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=given.mouse_down,given.mouse_pressed,given.mouse_released
+    if .Left in given.mouse_pressed {frame.mouse_clicks[.Left]=1}
+    frame.mouse_position,frame.mouse_inside,frame.wheel=given.mouse_position,true,given.wheel
+    frame.gamepads=given.gamepads
+    return
 }
 
 // The input of a drawn frame as a UI surface that covers the window sees it.

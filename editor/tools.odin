@@ -1,5 +1,7 @@
 package editor
 
+import "core:path/filepath"
+import "mirai:project"
 import "core:math"
 import "core:strings"
 import "mirai:asset"
@@ -35,21 +37,20 @@ tools_popups :: proc(s:^Session,w:core.World_Ref) {
 
 // ---------------------------------------------------------------- API
 
+API_IMPORT_SECONDS :: 1800
+
 Import_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a table of texts (CSV) that becomes .strings; a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
-    into:[base.ASSET_ID_TEXT+1]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
-    profile:bool `mirai:"optional,label=Records where its time goes: asset.import_status gives the seconds of each zone once it ends"`,
-    rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing +Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
+    into:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
+    profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
+    seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
+    rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing -Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
     rig_crotch:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the crotch in the model, where a skirt or a coat hides it; 0 is where the fit finds it"`,
     rig_neck:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the neck in the model; 0 is where the fit finds it"`,
-    skeleton:[base.ASSET_ID_TEXT+1]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
+    skeleton:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
+    front:[16]u8 `mirai:"text,optional,label=Of a model: where it stands facing once imported, when that is not the -Z every model faces: z, x or negative_x turn it about +Y to -Z with all its file holds; negative_z keeps it as read; auto turns a file that is a rig (all it draws is skinned) from where the body of its skeleton is found facing, and keeps any other as read. Of a source in the project the choice stays in its settings. Empty: what they say"`,
     image:[24]u8 `mirai:"text,optional,label=Of an image: what it holds; color (sRGB) or data (linear: a packed metallic-roughness or occlusion or a mask) or normal or normal_green_down (DirectX). Of a source in the project the choice stays in its settings. Empty: what they say or else what its name says"`,
-}
-
-Import_Result :: struct {
-    importing:bool `mirai:"label=It started: asset.import_status says when it ends and what it wrote"`,
-    message:[IMPORT_MESSAGE_BYTES]u8 `mirai:"text"`,
 }
 
 Import_Status_Result :: struct {
@@ -85,16 +86,17 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    render_megapixels:f32,
+    render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
+    preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
-    antialiasing_choices:[192]u8 `mirai:"text,label=The choices of Antialiasing in order"`,
+    options:[len(GRAPHICS_OPTION_LABELS)]Api_Graphics_Option `mirai:"label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
 }
 
-Graphics_Params :: struct {
-    preset:[16]u8 `mirai:"optional,text,label=Low Medium High or Ultra"`,
-    option:[16]u8 `mirai:"optional,text,label=Resolution; Antialiasing; Frame generation; Indirect light; Light probes; Reflections; Shadowed lights; Glass shadows; Glass layers; Textures; Detail; Frame limit; VSync or Show FPS"`,
-    choice:int `mirai:"optional,min=0,max=7,label=The choice of the option from its first"`,
+Api_Graphics_Option :: struct {
+    name:[16]u8 `mirai:"text,label=The option as the graphics popup names it"`,
+    choice:[32]u8 `mirai:"text,label=Its choice now; empty when its values are none of the choices"`,
+    choices:[8][32]u8 `mirai:"text,trim,label=The choices of the option"`,
 }
 
 @(private)
@@ -110,16 +112,24 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     records_api_register(s,st)
     programs_api_register(s,st)
     material_document_register(s,st)
-    api_register(s,st,{name="asset.import",flags={.Core},summary="Starts importing a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. asset.import_status says when it ends and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Result,run=api_asset_import})
+    import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
+    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
     api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,writes_result=true,flags={.Read_Only},run=api_asset_import_status})
-    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with, the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
-    api_register(s,st,{name="graphics.set",summary="Applies a graphics preset, or one choice of one option, as the Graphics popup does. The settings are kept as the popup keeps them.",params=Graphics_Params,flags={.Idempotent},result=Graphics_Status,run=api_graphics_set})
+    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
+}
+
+// A source is absolute or relative to the project, not to where the editor runs.
+@(private)
+asset_import_source :: proc(s:^Session,path:string) -> string {
+    native,ok:=project.path_native(path)
+    if !ok || native=="" || filepath.is_abs(native) || s.project_root=="" {return path}
+    return project.path(s.project_root,native,allocator=context.temp_allocator)
 }
 
 @(private)
 api_asset_import :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Import_Params)
-    path,into_text:=base.text_get(params.path[:]),base.text_get(params.into[:])
+    path,into_text:=asset_import_source(s,base.text_get(params.path[:])),base.text_get(params.into[:])
     folder:=base.text_get(params.folder[:])
     if folder!="" {
         r:=files_registry(s)
@@ -135,9 +145,9 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
     }
     into:base.Asset_Id
     if into_text!="" {
-        parsed:bool
-        if into,parsed=base.asset_id_parse(into_text);!parsed || into=={} {
-            api.call_failf(call,api.INVALID_PARAMS,"into %q is not an id: give the 32 hex digits of the prefab, texture or sound of the import to update, as asset.list lists them",into_text)
+        problem:string
+        if into,problem=asset_resolve(s,into_text,"");problem!="" {
+            api.call_failf(call,api.INVALID_PARAMS,"into: %s",problem)
             return
         }
     }
@@ -165,25 +175,36 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
     }
     skeleton:base.Asset_Id
     if text:=base.text_get(params.skeleton[:]);text!="" {
-        parsed:bool
-        if skeleton,parsed=base.asset_id_parse(text);!parsed || skeleton=={} {
-            api.call_failf(call,api.INVALID_PARAMS,"skeleton %q is not an id: give the 32 hex digits of a .skeleton, as asset.list lists them",text)
+        problem:string
+        if skeleton,problem=asset_resolve(s,text,".skeleton");problem!="" {
+            api.call_failf(call,api.INVALID_PARAMS,"skeleton: %s",problem)
             return
         }
     }
-    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton) {
+    front:Maybe(importer.Front)
+    if text:=base.text_get(params.front[:]);text!="" {
+        stated,known:=importer.front_from_name(text)
+        if !known {
+            api.call_failf(call,api.INVALID_PARAMS,"front %q: give z, x or negative_x for where the model stands facing once imported, negative_z to keep it as read, or auto to turn a rig from where its body faces",text)
+            return
+        }
+        front=stated
+    }
+    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton,front) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }
-    result:=api.call_result(call,Import_Result)
-    result.importing=true
-    api_text_put(result.message[:],string(s.importer.message[:s.importer.message_length]))
+    importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
+    api_wait(s,f64(params.seconds),nil,importing,"importing")
+    api_import_status_write(s,call.out)
 }
 
 @(private)
-api_asset_import_status :: proc(s:^Session,call:^api.Call) {
+api_asset_import_status :: proc(s:^Session,call:^api.Call) {api_import_status_write(s,call.out)}
+
+@(private)
+api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
     status:=&s.importer.status
-    w:=call.out
     serial.text_write_raw(w,`{"importing":`);serial.text_write_raw(w,status.importing?"true":"false")
     api.write_key(w,"ok");serial.text_write_raw(w,status.ok?"true":"false")
     api.write_key(w,"path");serial.text_write_string(w,base.text_get(status.path[:]))
@@ -222,17 +243,25 @@ api_asset_import_status :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_graphics_fill :: proc(s:^Session,result:^Graphics_Status) {
-    g:=graphics_settings(s)
+api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
-    preset_labels:=GRAPHICS_PRESET_LABELS
-    preset,found:=graphics_preset(graphics_choices(g^))
-    api_text_put(result.preset[:],found?preset_labels[preset]:"Custom")
-    result.frame_limit,result.vsync,result.render_megapixels=g.frame_limit,g.vsync,g.render_megapixels
+    base.text_set(result.preset[:],graphics_quality_label(erender.graphics_quality_of(g^)))
+    result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
-    api_text_put(result.antialiasing[:],base.text_get(technique[:]))
-    api_text_put(result.antialiasing_choices[:],strings.join(graphics_labels(.Antialiasing,erender.antialiasing_offered(s.app)),", ",context.temp_allocator))
+    base.text_set(result.antialiasing[:],base.text_get(technique[:]))
+    option_labels:=GRAPHICS_OPTION_LABELS
+    offered:=erender.antialiasing_offered(s.app)
+    choices:=graphics_choices(g^,offered)
+    at:=0
+    for option in Graphics_Option {
+        row:=&result.options[at]
+        at+=1
+        base.text_set(row.name[:],option_labels[option])
+        labels:=graphics_labels(option,offered)
+        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {base.text_set(row.choice[:],labels[choice])}
+        for label,i in labels[:min(len(labels),len(row.choices))] {base.text_set(row.choices[i][:],label)}
+    }
     result.fps=s.app.stats.fps
     if s.app.renderer!=nil {
         stats:=gpu.renderer_stats(s.app.renderer)
@@ -242,55 +271,11 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status) {
 
 @(private)
 api_graphics_status :: proc(s:^Session,call:^api.Call) {
-    api_graphics_fill(s,api.call_result(call,Graphics_Status))
-}
-
-@(private)
-api_graphics_set :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Graphics_Params)
-    current:=graphics_settings(s)
-    if current==nil {
-        api.call_fail(call,api.SERVER_ERROR,"The project has no graphics settings")
-        return
+    g:=graphics_settings(s)
+    if r,_:=api_play_run(s,call);r!=nil {
+        if played:=core.world_storage_of(run_ref(s,r),erender.Graphics_Settings);played!=nil {g=played}
     }
-    settings:=current^
-    preset_name,option_name:=base.text_get(params.preset[:]),base.text_get(params.option[:])
-    switch {
-    case preset_name!="":
-        labels:=GRAPHICS_PRESET_LABELS
-        found:=false
-        for label,preset in labels {
-            if strings.equal_fold(label,preset_name) {
-                erender.graphics_preset_apply(&settings,preset)
-                found=true
-            }
-        }
-        if !found {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not a preset: Low, Medium, High or Ultra",preset_name)
-            return
-        }
-    case option_name!="":
-        labels:=GRAPHICS_OPTION_LABELS
-        found:=false
-        for label,option in labels {
-            if !strings.equal_fold(label,option_name) {continue}
-            found=true
-            offered:=erender.antialiasing_offered(s.app)
-            if !graphics_choose(&settings,option,params.choice,offered) {
-                api.call_failf(call,api.INVALID_PARAMS,"%s has no choice %d; its choices, from 0: %s",label,params.choice,strings.join(graphics_labels(option,offered),", ",context.temp_allocator))
-                return
-            }
-        }
-        if !found {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not an option of the graphics settings",option_name)
-            return
-        }
-    case:
-        api.call_fail(call,api.INVALID_PARAMS,"give a preset, or an option and its choice")
-        return
-    }
-    graphics_commit(s,settings)
-    api_graphics_fill(s,api.call_result(call,Graphics_Status))
+    api_graphics_fill(s,api.call_result(call,Graphics_Status),g)
 }
 
 // The pointer for a tool of the viewport in a frame: whether the tool is on,
@@ -339,7 +324,7 @@ selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:
 }
 
 // The outline of a face of side 1 on the XY plane of placed, an ellipse or a
-// rectangle, and the arrow of its front (+Z).
+// rectangle, and the arrow of the side it shows (+Z).
 gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color:[4]f32) {
     SEGMENTS :: 32
     if ellipse {
@@ -356,6 +341,6 @@ gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color
             gpu.debug_line(lines,mm.transform_point(placed,corner),mm.transform_point(placed,corners[(i+1)%4]),color)
         }
     }
-    front:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
-    gpu.debug_arrow(lines,placed.position,placed.position+front*0.75,color)
+    shown:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
+    gpu.debug_arrow(lines,placed.position,placed.position+shown*0.75,color)
 }

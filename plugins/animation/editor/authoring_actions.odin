@@ -14,8 +14,7 @@ import anim "plugins:animation/runtime"
 Action_Section_Params :: struct {action,name:[64]u8 `mirai:"text"`,start,end:f32 `mirai:"min=0,unit=s"`,next:[64]u8 `mirai:"text,optional,label=The section of the same action that follows in any row; empty completes the action"`}
 Action_Window_Params :: struct {action,name:[64]u8 `mirai:"text"`,start,end:f32 `mirai:"min=0,unit=s"`}
 Action_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,optional,label=To create one: a new path ending in .action; exclusive with asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=To replace an existing one keeping its id; exclusive with path"`,
+    path:[1024]u8 `mirai:"text,label=Ending in .action: what is there is replaced keeping its id"`,
     animation:base.Asset_Id,
     actions:[anim.ACTION_CAPACITY]anim.Action_Definition `mirai:"label=Actions on one layer share over; mode; reference; curves; root_motion and body_move. A root action is a full-body Override of a clip with root motion; with body_move its root motion moves the Character of its entity"`,
     sections:[anim.ACTION_ROWS]Action_Section_Params `mirai:"optional"`,
@@ -98,7 +97,7 @@ action_authoring_prepare :: proc(s:^editor.Session,call:^api.Call,p:^Action_Writ
 authoring_action_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Action_Write_Params);if !authoring_editable(s,call) {return}
     file:Authoring_File;defer asset.asset_close(&file.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),p.asset,anim.ACTION_KIND,".action",&file);if !ok {return}
+    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.ACTION_KIND,".action",&file);if !ok {return}
     profile,valid:=action_authoring_prepare(s,call,p);defer anim.action_profile_free(&profile,call.allocator);if !valid {return}
     doc:asset.Document
     if anim.action_profile_document(&doc,&s.app.assets.types,id,profile,call.allocator)!=.None {authoring_failure(call,"definition","Invalid_Profile","a serializable action profile","invalid","The action profile could not be serialized");return};defer asset.document_destroy(&doc)
@@ -126,10 +125,10 @@ action_control_policy :: proc(call:^api.Call,definition:anim.Action_Definition,d
     return false
 }
 authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.id,p.entity);if !ok {return}
-    description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"id","Missing_Component","an Animation component","none","The entity has no Animation component");return}
+    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+    description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","none","The entity has no Animation component");return}
     runtime:=core.world_storage_of(w,anim.Action_Runtime);playback:=core.world_storage_of(w,anim.Playback)
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id);api.write_key(out,"profile");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.actions);serial.write_u8(out,'"')
+    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e));api.write_key(out,"profile");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.actions);serial.write_u8(out,'"')
     problems:[PREVIEW_PROBLEMS]Problem_Result
     shown,_:=entity_problems(s.app,w,e,"animation.action",problems[:])
     serial.text_write_raw(out,",\"problems\":[")

@@ -13,7 +13,7 @@ import "plugins:vfx/runtime/effect"
 // effect, an asset (.particle) as a material is: the entities that show it name it, and
 // a Particle_Override (values of the effect) and Particle_Parameters (of its
 // Vfx program) give one of them values of its own. Effects of several
-// emitters are prefabs, spawned with scene.Spawns.
+// emitters are prefabs, spawned with scene.spawn.
 //
 // The clock of each emitter is part of the world (Particle_Clocks): where it
 // is in the cycle of its effect and the births it started, numbered, in

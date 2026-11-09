@@ -80,8 +80,10 @@ Sky :: struct {
     arrival_rate:f32 `mirai:"local,transient,hidden"`,      // what arrival loses a second
 }
 
-// A clear sky lit by the sun of the editor's preset (100000 lux), and a dark backdrop.
-SKY_DEFAULT :: Sky{luminance={5000,5000,5000},background={27,37,64},use_background=true,air=AIR_DEFAULT}
+// The air lit by the Sun, so that a Sky and a Sun alone are a clear day at any
+// direction of the sun. Without a Sun on, what a world with no sun has always
+// had: the light of a clear sky (under 100000 lux) and a dark backdrop.
+SKY_DEFAULT :: Sky{luminance={5000,5000,5000},background={27,37,64},use_background=true,atmosphere=true,air=AIR_DEFAULT}
 
 // The sky and the sun the editor draws instead of those on, off or not, and
 // the look of the view as inside the box of the section: the environment of a
@@ -173,12 +175,14 @@ sky_look_now :: proc(sky:Sky) -> Sky_Look {
 
 // What the renderer draws of the sky on: luminance, image and the turn of
 // its entity, mixed with what it arrives or changes from. Without one, black.
-sky_environment :: proc(e:core.Entity,sky:Sky,found:bool,worlds:core.Read(core.World_Transform),a:^host.Assets) -> gpu.Environment {
+sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:core.Read(core.World_Transform),a:^host.Assets) -> gpu.Environment {
     if !found {return {use_background=true}}
-    environment:=gpu.Environment{sky=sky.luminance,background=sky.background,use_background=sky.use_background}
+    // The air shows only when lit, and then nothing shows behind it.
+    atmosphere:=sky.atmosphere && sunlit
+    environment:=gpu.Environment{sky=sky.luminance,background=sky.background,use_background=sky.use_background && !atmosphere}
     if world,ok:=core.get(worlds,e);ok {environment.sky_orientation=world.rotation}
     environment.sky_texture=sky_texture(a,sky.image)
-    environment.sky_atmosphere=sky.atmosphere
+    environment.sky_atmosphere=atmosphere
     environment.air=air_metres(sky.air)
     switch {
     case sky.arrival>0:

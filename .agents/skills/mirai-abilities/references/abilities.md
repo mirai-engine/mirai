@@ -121,10 +121,10 @@ reports for each ability of the kit.
 - Authoring is `records.*` on the `Ability` and `Ability_Kit` tables, by row and field names.
 - `abilities.check`: every row checked as the game runs it, with table, row and how to fix it;
   also references to rows that no table has (`next`, an effect's `use`, a kit's abilities).
-- `abilities.inspect {id}`: kit, running ability, seconds (`own_seconds` of the user's own time)
+- `abilities.inspect {entity}`: kit, running ability, seconds (`own_seconds` of the user's own time)
   and open windows, statuses, attributes with base and value, buffer (`waits_for_running` on an
   entry kept by its run), cooldowns, timers and what blocks each ability of the kit.
-- `abilities.use {id, ability, table?}`: in Play, asks a user to start an ability by row name.
+- `abilities.use {entity, ability, table?}`: in Play, asks a user to start an ability by row name.
 
 ## Verification
 

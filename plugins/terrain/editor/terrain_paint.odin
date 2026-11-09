@@ -168,7 +168,6 @@ LAYERS_SLOT :: -1
 terrain_material_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,slot:int,material:base.Asset_Id) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || slot<LAYERS_SLOT || slot==0 || slot>len(stroke.source.slots) {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to change its materials");return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     if slot==LAYERS_SLOT {stroke.source.layers_material=material} else {stroke.source.slots[slot-1]=material}
     stroke.changed=true;stroke.dirty_all=true
@@ -212,12 +211,11 @@ terrain_interior_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.
     return true
 }
 
-// Sets, adds or removes a layer of the selected terrain as one step of undo.
+// Sets, adds or removes a layer of the terrain of the stroke as one step of undo.
 @(private)
 terrain_layer_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,index:int,layer:terrain.Terrain_Layer,remove:bool) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to change its layers");return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     done:=remove?terrain.source_layer_remove(&stroke.source,index):terrain.source_layer_set(&stroke.source,index,layer)
     if !done {editor.notify(s,remove?"A terrain keeps one layer at least":"The terrain layer is invalid");return false}

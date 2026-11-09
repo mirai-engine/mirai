@@ -236,9 +236,10 @@ It needs no component or configuration.
 - The `.navmesh` of a section stores the tiles and zones that touch its box; that of the scene
   that contains it, those that the boxes of its sections do not cover and the whole coarse graph.
   Those at the border are in both and are read once.
-- `nav.bake` creates it next to the scene, or the scene of the section edited in its world, in an
-  undo step; afterwards the editor rewrites in memory that of each `Navigation_Bake` of the edited
-  world every time the meshes settle, and it is saved with the scene.
+- `nav.bake` makes it next to the scene, or the scene of the section edited in its world, in an
+  undo step and in the memory of the registry; afterwards the editor rewrites in memory that of
+  each `Navigation_Bake` of the edited world every time the meshes settle. Only saving the scene
+  writes it to disk (its field is `owned`).
 - A world that loads the scene starts with those tiles and only builds those that changed. A file
   from another version or a damaged one is the `navigation.bake` problem and the mesh is built
   whole.
@@ -257,13 +258,9 @@ It needs no component or configuration.
   `nav.status` counts the tiles waiting for their collision (`unloaded`), those that left with
   their section or, in a running world, with the unloaded terrain (`dropped`) and the regions and
   portals of the coarse graph.
-- `play.walk` (registered by this plugin): the body of a seat of the caller's run walks as a
-  seated agent, which the call adds for the walk (and takes away after, unless it ends in a
-  crossing) or makes seated while it lasts. It pauses the game and runs fixed ticks one at a time,
-  as `play.step` without devices, so the same call on the same run walks the same; holds of
-  `play.input` act meanwhile. It ends `Arrived`, `Failed`, `Stopped` (the game stopped the agent),
-  `Stuck` (moving without getting anywhere for `WALK_STUCK_SECONDS`) or `Timeout`. Not on a
-  client run: navigation decides on the server.
+- The `drive` of `play.step` takes its next point from this plugin (`editor.Route_Provider`),
+  by the class of its body and what it can cross, so it goes around what the meshes go around
+  and, where they end, by itself. In a game just started it waits a moment for the meshes.
 
 ## Verification
 
@@ -285,7 +282,7 @@ It needs no component or configuration.
   away and appears when its section loads, one that receives requests far away, one that flies far
   away along the air path of the unloaded section and the tiles over a far section in a column.
   `mirai test std/ai` builds and walks the coarse graph. `mirai test plugins/navigation/editor`
-  says what an agent does far away (`nav.agent`) and how a `play.walk` ends, and
+  says what an agent does far away (`nav.agent`) and the next point of a drive, and
   `mirai test plugins/navigation_terrain/runtime` extracts the unloaded boxes of a terrain.
 - In a demo session: `nav.status` until no tiles are left waiting, `nav.path` between two points
   and, in Play, `nav.agent` of an agent that walks; the `Swarm` arena for the air.

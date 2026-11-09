@@ -12,7 +12,6 @@ import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
-import "mirai:platform"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -31,7 +30,6 @@ import "mirai:ui"
 // their values. The prefabs of the player and of the thrown cube are written
 // by tools/demo_content.
 
-EYE_HEIGHT :: f32(1.6)
 WALK_SPEED :: f32(4)
 LOOK_SPEED :: inp.LOOK_SPEED
 PITCH_LIMIT :: phys.PITCH_LIMIT_DEFAULT
@@ -48,8 +46,19 @@ BARK_GLOW :: [3]f32{64,25,4.8}
 // The materials a Swatch walks through.
 SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
 
-PLAYER_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x706c617965720001}
-THROWN_CUBE :: base.Asset_Id{0x6d69726169646d6f,0x7468726f776e0002}
+THROWN_CUBE :: "characters/player/Thrown cube.prefab"
+
+// Hidden has one writer: the scenes ask for it here.
+@(storage,queue)
+Show_Requests :: struct {queue:core.Queue(Show_Request)}
+Show_Request :: struct {entity:core.Entity,hidden:bool}
+
+ask_hidden :: proc(shows:^Show_Requests,e:core.Entity,hidden:bool) {core.push(&shows.queue,Show_Request{e,hidden})}
+
+@(step="fixed",stage="end")
+shows_apply :: proc(shows:^Show_Requests,hidden:^core.Table(render.Hidden)) {
+    for show in core.take(&shows.queue) {render.set_hidden(hidden,show.entity,show.hidden)}
+}
 THROWN_CUBE_SIZE :: f32(0.25) // m, the side of a thrown cube
 
 // On a body that opens doors, changes samples and throws cubes.
@@ -133,9 +142,7 @@ Palette :: struct {
 
 @(storage)
 Game :: struct {
-    mouse_set:bool,
-    captured:bool,
-    mouse_focus:core.Entity,
+    left:core.Entity, // the body the Menu action let go of
 }
 
 SPIN_DEFAULT :: Spin{degrees_per_second={0,90,0}}
@@ -152,28 +159,16 @@ material_asset :: proc(name:string) -> base.Asset_Id {
     return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
 }
 
-aim_of :: proc "contextless" (yaw,pitch:f32) -> [3]f32 {
-    return mm.quat_rotate(mm.quat_from_euler({pitch,yaw,0}),[3]f32{0,0,-1})
-}
-
-// The look yaw of an upright character body: where its front, +Z, heads.
+// The look yaw of an upright character body: where its front, -Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    ahead:=mm.quat_rotate(rotation,[3]f32{0,0,1})
-    return math.atan2(-ahead.x,-ahead.z)
+    ahead:=mm.quat_forward(rotation)
+    return mm.yaw_of_direction(ahead)
 }
 
 player_walk :: proc "contextless" () -> phys.Walk {
     walk:=phys.WALK_DEFAULT
     walk.max_speed=WALK_SPEED
     return walk
-}
-
-entity_named :: proc(names:core.Read(core.Name),text:string) -> core.Entity {
-    for row in 0..<core.count(names) {
-        name:=core.at(names,row)
-        if base.text_equal(name.text[:],text) {return core.entity_at(names,row)}
-    }
-    return core.NONE
 }
 
 // The actions the game reads, bound by Demo_Actions, those of interface_demo.odin too; move and
@@ -183,7 +178,7 @@ Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
     Gallery_Previous,Gallery_Next,Gallery_Overview,Physics_Reset,
     Portal_Blue,Portal_Orange,Grab,Camera_Mode,Aim,
-    Hud_Style,Menu,Inventory,Talk,
+    Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
 // The bindings of the actions of the demo. The editor (Project Settings > Input), input.set and
@@ -213,27 +208,27 @@ demo_actions_default :: proc "contextless" () -> Demo_Actions {
         .Camera_Mode=inp.action_default(.Button,key(.C),pad(.Left_Stick)),
         .Aim=inp.action_default(.Button,mouse(.Right),trigger(.Left_Trigger)),
         .Hud_Style=inp.action_default(.Button,key(.H),pad(.Dpad_Up)),
-        .Menu=inp.action_default(.Button,key(.M),pad(.Start)),
+        .Interface_Menu=inp.action_default(.Button,key(.M),pad(.Dpad_Down)),
         .Inventory=inp.action_default(.Button,key(.I),pad(.Back)),
         .Talk=inp.action_default(.Button,key(.T),pad(.Right_Stick)),
     }}
 }
 
-// Keeps the mouse for the camera until Escape frees it; the animation gallery frees it while its
-// player adjusts a panel.
-@(step="input")
-game_mouse :: proc(game:^Game,app:^host.App,input:core.Input,gallery_players:core.Read(Gallery_Player)) {
-    if app.platform==nil {return}
-    focus:=core.NONE
-    gallery:=core.count(gallery_players)>0
-    if gallery {focus=core.at(gallery_players,0).focus}
-    if !game.mouse_set || gallery && game.mouse_focus!=focus {
-        game.mouse_set,game.mouse_focus=true,focus
-        game.captured=focus==core.NONE
-        platform.window_set_relative_mouse(app.platform,game.captured)
-    } else if core.key_pressed(input,.Escape) {
-        game.captured=!game.captured
-        platform.window_set_relative_mouse(app.platform,game.captured)
+// The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
+// the body back. The animation gallery lets go too while its player adjusts a panel.
+@(step="frame")
+game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+    if !gui.menu_pressed(gui.events_this_frame(g)) {return}
+    seat:=inp.focused(state.ptr,seats)
+    if seat==core.NONE {return}
+    if body:=inp.body_of(drivables,seat);body!=core.NONE {
+        game.left=body
+        inp.release(requests,seat)
+        // Nobody writes the Move_Input of a body no seat drives: it would keep walking.
+        if move:=core.get(moves,body);move!=nil {move.move,move.buttons={},{}}
+    } else if game.left!=core.NONE {
+        inp.drive(requests,seat,game.left)
+        game.left=core.NONE
     }
 }
 
@@ -248,7 +243,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:core.Read(inp.Move_Input),
-    actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawns:^scene.Spawns,
+    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -269,11 +264,10 @@ game_use :: proc(
                 if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
             }
         }
-        if inp.pressed(actions,e,.Throw) {
-            aim:=aim_of(input.look_yaw,input.look_pitch)
-            from:=feet+[3]f32{0,EYE_HEIGHT,0}+aim*0.8
+        if origin,aim,aimed:=inp.aim(drivables,worlds,e);aimed && inp.pressed(actions,e,.Throw) {
+            from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
-            core.push(&spawns.queue,scene.Spawn{prefab=THROWN_CUBE,transform={from,turn,THROWN_CUBE_SIZE},transient=true})
+            scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
             core.at(players,row).thrown+=1
         }
     }
@@ -430,7 +424,7 @@ game_projectiles :: proc(
             if projectile.launched {
                 projectile.velocity=state.linear
             } else if local,placed:=core.get(transforms,e);placed {
-                projectile.velocity=mm.quat_rotate(local.rotation,[3]f32{0,0,-1})*projectile.speed
+                projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
                 phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
                 projectile.launched=true
             }

@@ -193,29 +193,32 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     r:=&u.records
-    names:=make([]string,len(r.templates),context.temp_allocator)
-    for &template,i in r.templates {
-        names[i]=serial.text_field(template.component.name[:])
-        if template.component.widget!={} {names[i]=fmt.tprintf("%s (%s)",names[i],editor.asset_name_of(a,template.component.widget,"missing"))}
+    // The widgets it can be a use of: a file it uses for its styles has no one root.
+    names:=make([dynamic]string,context.temp_allocator)
+    rows:=make([dynamic]int,context.temp_allocator)
+    for &component,i in r.components {
+        if !widget_one_root(u,a,component.widget) {continue}
+        append(&names,editor.asset_name_of(a,component.widget,"missing"));append(&rows,i)
     }
-    chosen:=int(n.component)-1
+    picked:=-1
+    for row,i in rows {if row==int(n.component)-1 {picked=i}}
     if row(p,"Of") {
-        if ui.dropdown(ctx,ui.id(ctx,"component"),names,&chosen,{width=-1}) {n.component=u16(chosen+1);changed(u,"Component")}
+        if ui.dropdown(ctx,ui.id(ctx,"component"),names[:],&picked,{width=-1}) {n.component=u16(rows[picked]+1);changed(u,"Component")}
     }
-    if chosen<0 || chosen>=len(r.templates) {return}
+    if picked<0 {return}
+    chosen:=rows[picked]
+    if !p.readonly {param_rows(p,a,n,chosen)}
     if advanced(p) {component_fields_rows(p,n)}
-    template:=&r.templates[chosen]
+    component:=&r.components[chosen]
     bind_only(p,"Data",n.data[:],.Data,"What the paths of its widget that start with @ read: a struct or an entity of the game, so one widget shows the health of the player in one place and of an enemy in another")
-    if template.component.widget!={} {
-        if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,template.component.widget,"missing")),style=.Ghost,height=th.row}).clicked {
-            editor.asset_document_open(s,template.component.widget)
-        }
+    if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,component.widget,"missing")),style=.Ghost,height=th.row}).clicked {
+        editor.asset_document_open(s,component.widget)
     }
-    if u.scope>=0 || p.readonly {return}
+    if p.readonly {return}
     open:=!u.overrides_closed
     defer u.overrides_closed=!open
     if !subsection(p,ui.id(ctx,"overrides"),"Overrides",&open) {return}
-    // The names an override can reach: the nodes of its widget or template.
+    // The names an override can reach: the nodes of its widget.
     targets:=override_targets(u,a,u.selected)
     removed:=-1
     for row in records_overrides(r,u.selected) {
@@ -251,6 +254,105 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     if ui.dropdown(ctx,ui.id(ctx,"override_add"),targets,&added,{width=-1,empty="Override a node",disabled=len(targets)==0}) {
         records_override(r,u.selected,targets[added],{})
         changed(u,"Add override")
+    }
+}
+
+// The parameters of the widget a use says by name, each a row with what it
+// gives: changing one writes where the widget says it goes.
+@(private)
+param_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node,component:int) {
+    u:=p.u
+    r:=&u.records
+    data:=records_data(r)
+    imports,_:=imports_cached(&u.imports,a,data,u.allocator)
+    if component>=len(imports) {return}
+    linked:=imports[component]
+    name:=editor.asset_name_of(a,r.components[component].widget,"missing")
+    for &param in linked.params {
+        label:=serial.text_field(param.name[:])
+        w:=Doc_Write{r=r,list=r.nodes[:]}
+        current,_:=doc_param_value(&w,u.selected,&param)
+        buffer,zero:[TEXT_EDIT]u8
+        ui.tree_text_set(buffer[:],current)
+        if !value_row(p,label,Text_Value,&buffer,zero,fmt.tprintf("A parameter of %s: it goes to %s",name,serial.text_field(param.node[:]))) {continue}
+        // What the widget has at the node it goes to, with the rows it names copied here.
+        node:ui.Tree_Node
+        source:=new(Records,context.temp_allocator)
+        records_load(source,linked,context.temp_allocator)
+        expanded,expanded_ok:=ui.tree_expand(linked,context.temp_allocator)
+        if expanded_ok {for &e in expanded {if serial.text_field(e.name[:])==serial.text_field(param.node[:]) {node=e;break}}}
+        if records_param_give(a,r,u.selected,&param,serial.text_field(buffer[:]),source,node) {changed(u,"Parameter")}
+    }
+}
+
+// What a widget a person edits says of what its uses take: a row per
+// parameter, with its name, the node it goes to and which field of that
+// node, and which node takes what a use holds.
+@(private)
+section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
+    s:=p.s
+    u:=p.u
+    ctx:=s.gui.ctx
+    th:=&ctx.theme
+    r:=&u.records
+    fields:=DOC_PARAM_FIELDS
+    slot:=.Slot in n.flags
+    if !p.readonly && value_row(p,"Slot",Flag_Value,&slot,false,"This node takes what a use of the widget holds") {
+        if why:=records_slot_set(r,u.selected,slot);why!="" {editor.notify(s,why)} else {changed(u,"Slot")}
+    }
+    nodes:=make([dynamic]string,context.temp_allocator)
+    append(&nodes,"Root")
+    for &each in r.nodes[1:] {if name:=serial.text_field(each.name[:]);name!="" {append(&nodes,name)}}
+    removed:=-1
+    for &param,i in r.params {
+        ui.id_push(ctx,ui.id(ctx,"param",i+1))
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
+                before:=param.name
+                if value_row(p,"Name",Name_Value,&param.name,before,"What a use says by name") {
+                    if why:=records_param_valid_name(r,i);why!="" {param.name=before;editor.notify(s,why)} else {changed(u,"Parameter")}
+                }
+            }
+            if !p.readonly && ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove parameter",style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+        }
+        node_name:=serial.text_field(param.node[:])
+        chosen:=0
+        for name,j in nodes {if name==node_name {chosen=j}}
+        if row(p,"Node","The node it goes to; Root: the root of the widget") {
+            if ui.dropdown(ctx,ui.id(ctx,"node"),nodes[:],&chosen,{width=-1}) {
+                records_param_target(r,i,nodes[chosen] if chosen>0 else "",ui.Tree_Param_Field.Text,"")
+                changed(u,"Parameter")
+            }
+        }
+        // A use it goes to offers the parameters of its widget beside the fields of a node.
+        names:=make([dynamic]string,context.temp_allocator)
+        for f in ui.Tree_Param_Field {append(&names,fields[f])}
+        field_count:=len(names)
+        if target:=records_node_named(r,serial.text_field(param.node[:]));target!=nil && target.kind==.Component {
+            data:=records_data(r)
+            imports,_:=imports_cached(&u.imports,a,data,u.allocator)
+            if c:=int(target.component)-1;c>=0 && c<len(imports) {
+                for &inner in imports[c].params {append(&names,serial.text_field(inner.name[:]))}
+            }
+        }
+        picked:=int(param.field)
+        if name:=serial.text_field(param.param[:]);name!="" {for option,j in names {if j>=field_count && option==name {picked=j}}}
+        if row(p,"Field","Which field of the node it gives, or a parameter of the widget that node uses") {
+            if ui.dropdown(ctx,ui.id(ctx,"field"),names[:],&picked,{width=-1}) {
+                if picked<field_count {
+                    records_param_target(r,i,serial.text_field(param.node[:]),ui.Tree_Param_Field(picked),"")
+                } else {
+                    records_param_target(r,i,serial.text_field(param.node[:]),ui.Tree_Param_Field.Text,names[picked])
+                }
+                changed(u,"Parameter")
+            }
+        }
+        ui.id_pop(ctx)
+    }
+    if removed>=0 {ordered_remove(&r.params,removed);changed(u,"Remove parameter")}
+    if !p.readonly && ui.button(ctx,ui.id(ctx,"param_add"),{label="Add parameter",icon=.Plus,style=.Ghost,height=th.row}).clicked {
+        records_param_add(r)
+        changed(u,"Add parameter")
     }
 }
 

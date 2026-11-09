@@ -103,8 +103,8 @@ context_request_apply :: proc(es:^core.Entities,seats:^core.Table(Seat),state:^I
     case int(r.input_context)>=CONTEXT_CAPACITY:
         core.report(problems,r.owner,"input.context_value","a seat was asked to enter the input context of value %d; contexts take values below %d: declare it as a free one",r.input_context,CONTEXT_CAPACITY)
         return
-    case r.input_context==CONTEXT_BASE:
-        core.report(problems,r.owner,"input.context_base","a seat was asked to enter the base input context, which every seat is always in; enter a context of the actions to take, or leave the one entered")
+    case r.input_context==CONTEXT_BASE || r.input_context==CONTEXT_ALWAYS:
+        core.report(problems,r.owner,"input.context_base","a seat was asked to enter the %s input context, which every seat is always in; enter a context of the actions to take, or leave the one entered",r.input_context==CONTEXT_BASE?"base":"always")
         return
     case r.seat!=core.NONE && !(core.alive(es,r.seat) && core.has(seats,r.seat)):
         core.report(problems,r.owner,"input.context_seat","entity 0x%016x was asked to enter an input context and is not a live Seat; ask with the seat of a player (local_seat), or none for every local seat",u64(r.seat))

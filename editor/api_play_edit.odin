@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import scene "mirai:engine/scene"
@@ -20,8 +21,7 @@ import "mirai:std/serial"
 API_PLAY_PUSH_LIMIT :: 64
 
 Api_Play_Entity_Params :: struct {
-    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle in hexadecimal as play.inspect gives it; give entity or id"`,
-    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene; give entity or id"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
@@ -30,9 +30,8 @@ Api_Play_Destroy_Result :: struct {
 }
 
 Api_Play_Spawn_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The prefab by its file; give path or asset"`,
-    asset:base.Asset_Id `mirai:"optional,label=The prefab by its id; give path or asset"`,
-    parent:[16]u8 `mirai:"optional,text,label=The handle of the entity it hangs from; none: a root"`,
+    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The prefab: its file, a path inside the assets folder or its asset id"`,
+    parent:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=The entity it hangs from by its name or a path Parent/Child or its id or its handle; none: a root"`,
     position:[3]f32 `mirai:"optional,label=Of its root: in the world or local to parent"`,
     rotation_deg:[3]f32 `mirai:"optional,label=Of its root: in the world or local to parent"`,
     scale:[3]f32 `mirai:"optional,min=0,label=Of its root"`,
@@ -40,12 +39,12 @@ Api_Play_Spawn_Params :: struct {
 }
 
 Api_Play_Spawn_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the root of what it placed"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the root of what it placed"`,
     entities:int `mirai:"label=Entities it placed"`,
 }
 
 Api_Play_Set_Result :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
     teleported:bool `mirai:"label=A teleport was asked: a free Transform holds it now; one a library owns (a body of physics) jumps there in the next tick"`,
 }
 
@@ -65,39 +64,16 @@ api_play_edit_register :: proc(s:^Session,st:^Api_State) {
 
 // The run of the caller that a method of the game changes; false after
 // failing the call.
-@(private)
 api_play_own_run :: proc(s:^Session,call:^api.Call,player:int) -> (r:^Run,ok:bool) {
     own:bool
     r,own=api_play_run(s,call,player)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
+    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
     case !own:   api_play_refused(call)
     case:        return r,true
     }
     return nil,false
 }
-
-// The live entity of a run named by its handle, or by its id in the scene.
-@(private)
-api_play_entity :: proc(w:core.World_Ref,handle:string,id:base.Entity_Id,what:="entity") -> (e:core.Entity,problem:string) {
-    switch {
-    case handle!="" && id!=0: return core.NONE,fmt.tprintf("give %s or id, not both",what)
-    case handle!="":
-        value,parsed:=serial.text_parse_hex(handle)
-        if !parsed {return core.NONE,fmt.tprintf("%s %q is not a handle: give the 16 hexadecimal digits play.inspect writes as entity",what,handle)}
-        e=core.Entity(value)
-        if !core.alive(core.world_entities(w),e) {return core.NONE,fmt.tprintf("%s %s is not alive in the game: play.inspect lists those that are",what,handle)}
-    case id!=0:
-        e=api_entity(w,id)
-        if e==core.NONE {return core.NONE,fmt.tprintf("id 0x%016x is not an entity of the game: play.inspect lists them, and those the game made have only a handle",u64(id))}
-    case:
-        return core.NONE,fmt.tprintf("give %s (its handle) or id",what)
-    }
-    return e,""
-}
-
-@(private)
-api_handle_put :: proc(buffer:[]u8,e:core.Entity) {copy(buffer,fmt.tprintf("%016x",u64(e)))}
 
 // The value of a component of a running world with the JSON object at r
 // over it: Entity fields hold handles of live entities.
@@ -124,7 +100,7 @@ api_play_component_read :: proc(s:^Session,w:core.World_Ref,t:^core.Table_Info,e
     for offset in entity_offsets(t.info) {
         named:=core.Entity((cast(^u64)&bytes[offset])^)
         if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-            return fmt.aprintf("%s names %016x, which is not alive in the game: Entity fields of play.set hold handles as play.inspect gives them",path,u64(named),allocator=allocator),false
+            return fmt.aprintf("%s names 0x%016x, which is not alive in the game: Entity fields of play.set hold handles as play.inspect gives them",path,u64(named),allocator=allocator),false
         }
     }
     return "",true
@@ -140,9 +116,8 @@ Api_Play_Change :: struct {
 api_play_set :: proc(s:^Session,call:^api.Call) {
     a:Rpc_Args
     rpc_init(&a,call,call.raw)
-    handle:[16]u8
-    handle_text,components:string
-    id:base.Entity_Id
+    selector:[API_ENTITY_TEXT]u8
+    selected,components:string
     player:int
     position,rotation_deg:[3]f32
     has_position,has_rotation:bool
@@ -150,8 +125,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
     if !rpc_object_begin(&a,"params") {return}
     for key in rpc_next(&a,&object) {
         switch key {
-        case "entity":       handle_text,_=rpc_text(&a,key,handle[:])
-        case "id":           id,_=rpc_id(&a,key)
+        case "entity":       selected,_=rpc_text(&a,key,selector[:])
         case "player":
             value,_:=rpc_unsigned(&a,key)
             if value>3 {rpc_fail(&a,"player is 0 to 3")}
@@ -159,14 +133,14 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         case "position":     has_position=rpc_vector(&a,key,position[:])
         case "rotation_deg": has_rotation=rpc_vector(&a,key,rotation_deg[:])
         case "components":   components,_=rpc_raw(&a)
-        case:                rpc_fail(&a,"unknown field %q: play.set takes entity or id, position, rotation_deg, components and player",key)
+        case:                rpc_fail_type(&a,"unknown field %q: play.set takes entity, position, rotation_deg, components and player",key)
         }
     }
     if a.failed {return}
     r,ok:=api_play_own_run(s,call,player)
     if !ok {return}
     w:=run_ref(s,r)
-    e,problem:=api_play_entity(w,handle_text,id)
+    e,problem:=api_entity_select(w,selected,game=true,allocator=call.allocator)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     if !has_position && !has_rotation && components=="" {
         api.call_fail(call,api.INVALID_PARAMS,"nothing to change: give position, rotation_deg or components")
@@ -181,7 +155,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         if !rpc_object_begin(&c,"components") {return}
         for key in rpc_next(&c,&values) {
             name:=strings.clone(key,call.allocator)
-            t:=component_table(s,name)
+            t,_:=api_component_named(shown_world(s),name)
             if t==nil || t.place!=.World || api_state(s).types[api_table_index(s,t)]==serial.TYPE_NONE {rpc_fail(&c,"components: %q is not a component of the game; play.inspect names those of an entity",name);break}
             if !api_component_listed(s,t,true) {rpc_fail(&c,"components: %s is not changed as a component: position and rotation_deg teleport the entity",name);break}
             if serial.text_keyword(&c.r,"null") {append(&changes,Api_Play_Change{t,nil});continue}
@@ -208,6 +182,7 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
         if change.bytes==nil {core.raw_remove(table,e)} else {core.raw_add(table,change.table.info,e,raw_data(change.bytes))}
     }
     core.world_settle(w)
+    run_tell_call(s,r,"play.set",call.raw)
     result:=api.call_result(call,Api_Play_Set_Result)
     if has_position || has_rotation {
         if !core.place(placer,e,target,turn) {
@@ -223,28 +198,24 @@ api_play_set :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_spawn :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Spawn_Params)
-    path:=base.text_get(params.path[:])
-    if (path=="") == (params.asset=={}) {
-        api.call_fail(call,api.INVALID_PARAMS,"give the prefab by path or by asset, one of them")
-        return
-    }
     r,ok:=api_play_own_run(s,call,params.player)
     if !ok {return}
     w:=run_ref(s,r)
-    id,locate_error:=prefab_locate(s,path,params.asset)
-    if locate_error!=.None {api_prefab_fail(call,locate_error);return}
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    if !located {return}
     spawned:=scene.Spawn{prefab=id}
-    if parent:=base.text_get(params.parent[:]);parent!="" {
-        problem:string
-        if spawned.parent,problem=api_play_entity(w,parent,0,"parent");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    if base.text_get(params.parent[:])!="" {
+        known:bool
+        if spawned.parent,known=api_call_entity(call,w,params.parent[:],"parent",game=true);!known {return}
     }
     spawned.transform={position=params.position,rotation=mm.quat_from_euler(params.rotation_deg*mm.RAD_PER_DEG),scale=params.scale}
-    report,error:=scene.spawn(core.commands_of(w),s.app,spawned)
+    report,error:=scene.spawn_prefab(core.commands_of(w),s.app,spawned)
     core.world_settle(w)
     if error!=.None {
         api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %v",error)
         return
     }
+    run_tell_call(s,r,"play.spawn",call.raw)
     result:=api.call_result(call,Api_Play_Spawn_Result)
     api_handle_put(result.entity[:],report.root)
     result.entities=report.entities
@@ -256,8 +227,9 @@ api_play_destroy :: proc(s:^Session,call:^api.Call) {
     r,ok:=api_play_own_run(s,call,params.player)
     if !ok {return}
     w:=run_ref(s,r)
-    e,problem:=api_play_entity(w,base.text_get(params.entity[:]),params.id)
-    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    e,known:=api_call_entity(call,w,params.entity[:],game=true)
+    if !known {return}
+    run_tell_call(s,r,"play.destroy",call.raw)
     before:=core.world_entities(w).alive
     core.world_destroy_tree(w,e)
     core.world_settle(w)
@@ -272,7 +244,7 @@ api_queue_of :: proc(info:^runtime.Type_Info) -> (offset:uintptr,item:^runtime.T
         named,is_named:=s.types[i].variant.(runtime.Type_Info_Named)
         if !is_named || !strings.has_prefix(named.name,"Queue") {continue}
         q,is_struct:=runtime.type_info_base(s.types[i]).variant.(runtime.Type_Info_Struct)
-        if !is_struct || q.field_count!=1 || q.names[0]!="items" {continue}
+        if !is_struct || q.field_count==0 || q.names[0]!="items" {continue}
         items,dynamic_array:=runtime.type_info_base(q.types[0]).variant.(runtime.Type_Info_Dynamic_Array)
         if !dynamic_array {continue}
         return s.offsets[i],items.elem,true
@@ -297,7 +269,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
             value,_:=rpc_unsigned(&a,key)
             if value>3 {rpc_fail(&a,"player is 0 to 3")}
             player=int(value)
-        case: rpc_fail(&a,"unknown field %q: play.push takes storage, items and player",key)
+        case: rpc_fail_type(&a,"unknown field %q: play.push takes storage, items and player",key)
         }
     }
     if a.failed {return}
@@ -338,7 +310,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
             for at in entity_offsets(item) {
                 named:=core.Entity((cast(^u64)&bytes[at])^)
                 if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-                    api.call_failf(call,api.INVALID_PARAMS,"%s names %016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
+                    api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
                     return
                 }
             }
@@ -353,8 +325,9 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     for i in 0..<count {
         runtime.__dynamic_array_append(queue,size,item.align,&values[i*size],1)
     }
+    run_tell_call(s,r,"play.push",call.raw)
     api.call_result(call,Api_Play_Push_Result).pushed=count
 }
 
-@(private) API_PLAY_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"entity":{"type":"string","description":"the handle of the entity in hexadecimal as play.inspect gives it; give entity or id"},"id":{"type":"string","description":"the id of the entity in the scene, in hexadecimal; give entity or id"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"where in the world it goes, as a teleport: a body of physics jumps there in the next tick"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"its rotation in the world in degrees, with the teleport"},"components":{"type":"object","description":"by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it","additionalProperties":{"type":["object","null"]}},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`
+@(private) API_PLAY_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entity"],"properties":{"entity":{"type":"string","description":"the entity by its name, a path Parent/Child, its id or its handle; a name several entities have is an error listing them"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"where in the world it goes, as a teleport: a body of physics jumps there in the next tick"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"its rotation in the world in degrees, with the teleport"},"components":{"type":"object","description":"by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it","additionalProperties":{"type":["object","null"]}},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`
 @(private) API_PLAY_PUSH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["storage","items"],"properties":{"storage":{"type":"string","description":"the name of a queue storage of the game: Seat_Requests, Spawns or one of the project"},"items":{"type":"array","maxItems":64,"items":{"type":"object"},"description":"its requests as the schema of the type of its items, with Entity fields holding handles; play.inspect with storages names them"},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`

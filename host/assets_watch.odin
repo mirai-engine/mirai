@@ -70,15 +70,37 @@ app_assets_watch :: proc(app:^App,dt:f32) {
         if quiet==aw.quiet {aw.pass=aw.spent}
         aw.quiet,aw.spent=quiet,0
     }
-    if count==0 {return}
-    if platform.watch_stats(app.platform,aw.watch).untracked>0 {
+    app_assets_watch_apply(app,events[:count])
+}
+
+// Everything that changed in the asset folder until now, without pacing: for
+// an editor whose frames do not run by themselves and for a call that has to
+// see it. The system tells when nothing changed, so a quiet folder costs no
+// walk. Two passes: the first may have begun before the last change.
+app_assets_watch_now :: proc(app:^App) {
+    aw:=&app.assets_watch
+    if app.assets==nil || aw.watch==0 {return}
+    for passes:=0;passes<2; {
+        events:[16]platform.Watch_Event
+        count,complete:=platform.watch_poll(app.platform,aw.watch,max(int),events[:])
+        if count==0 && !complete {return}
+        app_assets_watch_apply(app,events[:count])
+        if complete {passes+=1}
+    }
+}
+
+// The files that changed are refreshed in the registry and reloaded in place.
+@(private)
+app_assets_watch_apply :: proc(app:^App,events:[]platform.Watch_Event) {
+    if len(events)==0 {return}
+    if platform.watch_stats(app.platform,app.assets_watch.watch).untracked>0 {
         assets_scan(app.assets)
     } else {
-        paths:[len(events)]string
-        for event,at in events[:count] {paths[at]=event.path}
-        assets_refresh(app.assets,paths[:count])
+        paths:[16]string
+        for event,at in events {paths[at]=event.path}
+        assets_refresh(app.assets,paths[:len(events)])
     }
-    for event in events[:count] {
+    for event in events {
         if event.kind==.Removed {continue}
         if file,found:=asset.registry_find_path(&app.assets.registry,event.path);found {assets_reload(app.assets,file.id)}
     }

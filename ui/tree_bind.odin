@@ -60,6 +60,9 @@ Bind_Host :: struct {
     // far apart they start, and a stamp that moves when any of them changes
     // or rows come and go (0: they are compared). nil data: no rows.
     rows:proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u64),
+    // Whether a control bound to a field of this storage writes it itself,
+    // instead of asking the game with a Changed event. nil: none does.
+    commits:proc(user:rawptr,name:u64) -> bool,
 }
 
 @(private)
@@ -116,7 +119,15 @@ Bound :: struct {
     count:u32,    // of an array: a color has 4
     elem:serial.Type_Kind,
     stride:u32,   // of an array of options: the size of each
-    choices:[]serial.Choice, // of an enum, or of the enums of an array of options: shown by name
+    // Of an enum, or of the enums of an array of options, shown by name: found
+    // again each time, because the schema moves its choices as it grows.
+    choices_of:^serial.Schema,
+    choices_type:serial.Type_Index,
+}
+
+@(private)
+bound_choices :: proc(b:Bound) -> []serial.Choice {
+    return serial.schema_choices(b.choices_of,b.choices_type) if b.choices_of!=nil else nil
 }
 @(private)
 Node_Bound :: struct {text,value,visible,selected,disabled,image,tint,variant:Bound,options:Bound}
@@ -265,9 +276,10 @@ bind_resolve :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) -> (r
     return
 }
 
-// A field a node shows or reads. want: what it must hold.
+// A field a node shows or reads. want: what it must hold; Option, what a
+// Selector or a Dropdown binds: a number, or an enum or text its options name.
 @(private)
-Bound_Want :: enum u8 {Shown,Number,Asset,Color,Name,Entity}
+Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity}
 @(private)
 tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,want:Bound_Want) -> (bound:Bound,ok:bool) {
     if path=="" {return {},true}
@@ -279,13 +291,13 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     case .Bool,.Int,.Uint,.Float,.Enum:
         if t.kind==.Float && t.size!=4 && t.size!=8 {return {},false}
         if want==.Asset || want==.Color || want==.Entity {return {},false}
-        if t.kind==.Enum && want!=.Number {bound.choices=serial.schema_choices(schema,field_type)}
+        if t.kind==.Enum && want!=.Number {bound.choices_of,bound.choices_type=schema,field_type}
         if want==.Name && t.kind!=.Enum {return {},false}
     case .Array:
         elem:=serial.schema_type(schema,t.elem)
         bound.count,bound.elem=t.count,elem.kind
         switch {
-        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name):
+        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name || want==.Option):
             bound.text=true
         case want==.Color && (t.count==3 || t.count==4) && (elem.kind==.Float && elem.size==4 || elem.kind==.Uint && elem.size==1):
         case:
@@ -300,6 +312,70 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     }
     bind_want(instance,region,offset,t.size) or_return
     return bound,true
+}
+
+// Writes value into the bytes of the text field b, without what it held.
+@(private)
+bound_write_text :: proc(values:rawptr,b:Bound,value:string) {
+    if values==nil || !b.bound || !b.text {return}
+    bytes:=mem.byte_slice(rawptr(uintptr(values)+uintptr(b.offset)),int(b.size))
+    mem.zero_slice(bytes)
+    copy(bytes[:len(bytes)-1],value)
+}
+
+// The number an option named value writes into the field b: of an enum, the
+// value of the member named so when it has one; else value read as a number.
+@(private)
+bound_option_number :: proc(b:Bound,value:string) -> f64 {
+    for choice in bound_choices(b) {
+        if choice.name==value {return f64(choice.value)}
+    }
+    number,_:=strconv.parse_f64(value)
+    return number
+}
+
+// The position in options, "Label=Value|...", of the one whose value the field holds; -1: none.
+@(private)
+tree_option_chosen :: proc(values:rawptr,b:Bound,options:string) -> int {
+    rest:=options
+    for i:=0;;i+=1 {
+        bar:=strings.index_byte(rest,'|')
+        entry:=rest if bar<0 else rest[:bar]
+        if equal:=strings.index_byte(entry,'=');equal>=0 {
+            value:=strings.trim_space(entry[equal+1:])
+            matches:=bound_bytes(values,b)==value if b.text else f32(bound_number(values,b))==f32(bound_option_number(b,value))
+            if matches {return i}
+        }
+        if bar<0 {return -1}
+        rest=rest[bar+1:]
+    }
+}
+
+// Writes what a Changed event of a control asks for into the game, for a node
+// bound to a field of a storage the host writes this way (Bind_Host.commits):
+// the settings of the game. False: the event is for the game to answer.
+tree_commit_event :: proc(instance:^Tree_Instance,event:Tree_Event,host:^Bind_Host) -> bool {
+    if host==nil || host.commits==nil || event.kind!=.Changed || event.node<0 || int(event.node)>=len(instance.bounds) {return false}
+    bound:=instance.bounds[event.node].value
+    if !bound.bound || bound.region<0 {return false}
+    r:=instance.regions[bound.region]
+    if r.kind!=.Source || !r.storage || !host.commits(host.user,r.name) {return false}
+    data,_:=host.fetch(host.user,r.name,0)
+    if data==nil {return false}
+    for range in instance.ranges[r.first:][:r.ranges] {
+        at:=r.dst+range.dst
+        if bound.offset<at || bound.offset+bound.size>at+range.size {continue}
+        in_game:=bound
+        in_game.offset=range.src+bound.offset-at
+        if bound.text {
+            text:=event.text
+            bound_write_text(data,in_game,base.text_get(text[:]))
+        } else {
+            bound_write(data,in_game,event.value)
+        }
+        return true
+    }
+    return false
 }
 
 // The array a Selector or a Dropdown takes its options from: of texts, or
@@ -321,7 +397,7 @@ tree_bind_options :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) 
         bound.text=true
     case .Enum:
         if e.size!=1 && e.size!=2 && e.size!=4 && e.size!=8 {return {},false}
-        bound.choices=serial.schema_choices(schema,t.elem)
+        bound.choices_of,bound.choices_type=schema,t.elem
     case:
         return {},false
     }
@@ -625,7 +701,7 @@ tree_template_parse :: proc(parts:^[dynamic]Template_Part,text:string,instance:^
             part.format,part.spec=.Choice,spec
         case kind==.Enum && strings.index_byte(spec,'=')>=0:
             part.format,part.spec=.Choice,spec
-            if !format_names_valid(spec,part.bound.choices) {return true,false}
+            if !format_names_valid(spec,bound_choices(part.bound)) {return true,false}
         case number && strings.index_byte(spec,'=')>=0:
             part.format,part.spec=.Plural,spec
             if !format_names_valid(spec,nil) {return true,false}
@@ -715,7 +791,7 @@ bound_bytes :: proc(values:rawptr,b:Bound) -> string {
 @(private)
 bound_choice :: proc(values:rawptr,b:Bound) -> string {
     value:=i64(bound_number(values,b))
-    for choice in b.choices {if choice.value==value {return choice.name}}
+    for choice in bound_choices(b) {if choice.value==value {return choice.name}}
     return ""
 }
 
@@ -757,7 +833,7 @@ template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template
         return
     case .Default,.Decimals,.Percent,.Clock,.Clock_Hours:
     }
-    if b.text || b.kind==.Bool || b.kind==.Enum && len(b.choices)>0 && part.format==.Default {
+    if b.text || b.kind==.Bool || b.kind==.Enum && len(bound_choices(b))>0 && part.format==.Default {
         text:string
         switch {
         case b.text:        text=bound_bytes(values,b)
@@ -835,8 +911,13 @@ bound_entity :: proc(values:rawptr,b:Bound) -> base.Entity {
 // The name of the variant a binding chooses: a text, or the name of an enum value.
 @(private)
 bound_variant :: proc(values:rawptr,b:Bound) -> u64 {
-    name:=bound_bytes(values,b) if b.text else bound_choice(values,b)
-    return style_variant(name)
+    return style_variant(bound_name(values,b))
+}
+
+// A text, or the name of an enum value.
+@(private)
+bound_name :: proc(values:rawptr,b:Bound) -> string {
+    return bound_bytes(values,b) if b.text else bound_choice(values,b)
 }
 
 // ---------------------------------------------------------------- formats of a language

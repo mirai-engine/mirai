@@ -22,7 +22,7 @@ blends a local copy of its description.
   policy of its channel.
 - A combo whose parts chain pose to pose is one clip cut in sections: the game jumps to the next
   part with Section when the current one reaches its end section, so nothing crossfades.
-- `animation.action.set` (with `path` or `asset`) resolves names and derives quantities. The `next`
+- `animation.action.set` resolves names and derives quantities. The `next`
   of a section links another of the same clip, regardless of row order, and empty completes the
   action. Without sections the whole clip is played; with them it starts at the first of the action
   or at the one Fire asks for. The ranges, in seconds, are positive and fall inside the clip. Files

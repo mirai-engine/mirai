@@ -12,15 +12,15 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// A standing figure with Unreal names, facing +Z with its left at +X.
+// A standing figure with Unreal names, facing -Z with its left at -X.
 body_test_figure :: proc() -> []aa.Skeleton_Bone {
     Row :: struct {name:string,parent:i32,at:[3]f32}
     rows:=[?]Row{
         {"root",-1,{}},{"pelvis",0,{0,1,0}},{"spine_01",1,{0,1.2,0}},{"neck_01",2,{0,1.5,0}},{"head",3,{0,1.6,0}},
-        {"clavicle_l",2,{.05,1.45,0}},{"upperarm_l",5,{.2,1.45,0}},{"lowerarm_l",6,{.45,1.45,-.02}},{"hand_l",7,{.7,1.45,0}},
-        {"clavicle_r",2,{-.05,1.45,0}},{"upperarm_r",9,{-.2,1.45,0}},{"lowerarm_r",10,{-.45,1.45,-.02}},{"hand_r",11,{-.7,1.45,0}},
-        {"thigh_l",1,{.1,.95,0}},{"calf_l",13,{.1,.5,.02}},{"foot_l",14,{.1,.08,0}},{"ball_l",15,{.1,.02,.12}},
-        {"thigh_r",1,{-.1,.95,0}},{"calf_r",17,{-.1,.5,.02}},{"foot_r",18,{-.1,.08,0}},{"ball_r",19,{-.1,.02,.12}},
+        {"clavicle_l",2,{-.05,1.45,0}},{"upperarm_l",5,{-.2,1.45,0}},{"lowerarm_l",6,{-.45,1.45,.02}},{"hand_l",7,{-.7,1.45,0}},
+        {"clavicle_r",2,{.05,1.45,0}},{"upperarm_r",9,{.2,1.45,0}},{"lowerarm_r",10,{.45,1.45,.02}},{"hand_r",11,{.7,1.45,0}},
+        {"thigh_l",1,{-.1,.95,0}},{"calf_l",13,{-.1,.5,-.02}},{"foot_l",14,{-.1,.08,0}},{"ball_l",15,{-.1,.02,-.12}},
+        {"thigh_r",1,{.1,.95,0}},{"calf_r",17,{.1,.5,-.02}},{"foot_r",18,{.1,.08,0}},{"ball_r",19,{.1,.02,-.12}},
         {"ik_hand_root",0,{}},
     }
     bones:=make([]aa.Skeleton_Bone,len(rows),context.temp_allocator)
@@ -94,13 +94,9 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","parts":[{{"part":"Head","bone":"skull"}}]}}`,identity))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"parts[0].bone"`) && strings.contains(result.data,`"code":"Missing_Bone"`) && strings.contains(result.data,`root/pelvis/spine_01/neck_01/head`))
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","parts":[{{"part":"Tail","bone":"head"}}]}}`,identity))
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"Hand_L"))
-    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","forward":[0,1,0],"up":[0,1,0]}}`,identity))
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Invalid_Axes"`))
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.message,"Tail"))
     f.session.mode=.Play
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))
-    testing.expect(t,result.code!=0 && strings.contains(result.data,`"fix":"Stop Play`))
-    result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s","dry_run":true}}`,identity))
     testing.expect_value(t,result.code,0)
     testing.expect(t,authoring_test_exists(f,"figure.skeleton"))
 }

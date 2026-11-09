@@ -1,6 +1,7 @@
 package serial
 
 import "core:mem"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 
@@ -348,6 +349,21 @@ text_reader_walks_any_json :: proc(t:^testing.T) {
     testing.expect(t,!text_skip(&deep))
     testing.expect_value(t,deep.error.code,Text_Error_Code.Too_Deep)
 
+    // A reader with assets takes a name where an id goes, and says why not.
+    Holder :: struct {mesh:base.Asset_Id `mirai:"kind=.mesh"`}
+    schema:Schema;schema_init(&schema);defer schema_destroy(&schema)
+    holder_type,_:=schema_add_type_info(&schema,type_info_of(Holder))
+    resolve :: proc(user:rawptr,name,kinds:string) -> (id:base.Asset_Id,problem:string) {
+        if name=="cube" && kinds==".mesh" {return {1,2},""}
+        return {},"no such mesh"
+    }
+    found:Holder
+    named:Text_Reader;text_reader_init(&named,`{"mesh": "cube"}`,context.temp_allocator);named.assets={nil,resolve}
+    testing.expect(t,text_read(&named,&schema,holder_type,mem.ptr_to_bytes(&found)) && found.mesh==base.Asset_Id{1,2})
+    missing:Text_Reader;text_reader_init(&missing,`{"mesh": "sphere"}`,context.temp_allocator);missing.assets={nil,resolve}
+    testing.expect(t,!text_read(&missing,&schema,holder_type,mem.ptr_to_bytes(&found)) && missing.error.code==.Unknown_Asset)
+    testing.expect_value(t,text_error_message(&missing,allocator=context.temp_allocator),"mesh: no such mesh")
+
     id,id_ok:=text_parse_asset_id("000000000000000a000000000000000b")
     testing.expect(t,id_ok && id==base.Asset_Id{0xa,0xb})
     _,short:=text_parse_asset_id("abc")
@@ -378,6 +394,41 @@ text_trims_a_tagged_array_after_its_last_element_with_a_byte_set :: proc(t:^test
 @(private="file") Mode :: distinct u16
 @(private="file") Mode_Mask :: distinct u32
 @(private="file") Moving :: struct {mode:Mode,allowed:Mode_Mask}
+
+@(private="file") Loose_Mode :: enum u8 {Walk,Run_Fast}
+@(private="file") Loose_Flag :: enum u8 {Fire,Ice_Cold}
+@(private="file") Loose :: struct {mode:Loose_Mode,flags:bit_set[Loose_Flag;u8],free:u8 `mirai:"any"`,last:u8}
+
+@(test)
+a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does :: proc(t:^testing.T) {
+    s:Schema;schema_init(&s);defer schema_destroy(&s)
+    type,ok:=schema_add(&s,Loose)
+    if !testing.expect(t,ok,s.error) {return}
+    cases:=[]struct{text:string,loose:bool,code:Text_Error_Code,says:string,mode:Loose_Mode,flags:bit_set[Loose_Flag;u8]}{
+        {`{"mode":"Run_Fast"}`,false,.None,"",.Run_Fast,{}},
+        {`{"mode":"run fast","flags":["ICE-COLD"]}`,true,.None,"",.Run_Fast,{.Ice_Cold}},
+        {`{"mode":"runfast"}`,false,.Unknown_Member,`mode: "runfast" is not one of Walk, Run_Fast`,.Walk,{}},
+        {`{"mode":"swim"}`,true,.Unknown_Member,`mode: "swim" is not one of its names`,.Walk,{}},
+        {`{"flags":["Rain"]}`,true,.Unknown_Member,`flags: "Rain" is not one of its names`,.Walk,{}},
+    }
+    for c in cases {
+        value:Loose
+        r:Text_Reader;text_reader_init(&r,c.text,context.temp_allocator)
+        r.loose_names=c.loose
+        if text_read(&r,&s,type,bytes_of(&value)) {text_end(&r)}
+        testing.expectf(t,r.error.code==c.code,"%s: %v",c.text,r.error.code)
+        if c.code!=.None {
+            message:=text_error_message(&r,allocator=context.temp_allocator)
+            testing.expectf(t,strings.has_prefix(message,c.says),"%s: %s",c.text,message)
+            continue
+        }
+        testing.expect(t,value.mode==c.mode && value.flags==c.flags,c.text)
+    }
+    value:=Loose{free=9}
+    r:Text_Reader;text_reader_init(&r,`{"free":[true,{"a":1}],"last":3}`,context.temp_allocator)
+    testing.expect(t,text_read(&r,&s,type,bytes_of(&value)) && text_end(&r),"a field tagged any takes any JSON")
+    testing.expect(t,value.free==9 && value.last==3)
+}
 
 // An integer with names is read and written by them, a number that has none
 // stays a number, a mask names its bits, and the names are not its layout.

@@ -170,19 +170,18 @@ MOTION_LOCOMOTION_DEFAULT :: Motion_Locomotion{weight=1,enabled=true}
 @(storage,queue)
 Motion_Requests :: struct {targets:core.Queue(Motion_Target_Request),locomotion:core.Queue(Motion_Locomotion)}
 
-motion_target :: proc(requests:^Motion_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) -> bool {
-    if requests==nil || rig==core.NONE || len(name)==0 || len(name)>=32 || !spatial_target_valid(target) {return false}
-    for byte in name {if byte==0 {return false}}
-    if !program_array_reserve(&requests.targets.items,REQUEST_CAPACITY) {return false}
-    if len(requests.targets.items)>=REQUEST_CAPACITY {return false}
+motion_target :: proc(requests:^Motion_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) {
+    if requests==nil {return}
+    valid:=rig!=core.NONE && len(name)>0 && len(name)<32 && spatial_target_valid(target)
+    for byte in name {valid&&=byte!=0}
+    if !valid {core.refuse(&requests.targets);return}
     value:=Motion_Target{target=target,enabled=enabled};copy(value.name[:],transmute([]u8)name)
-    core.push(&requests.targets,{rig=rig,target=value});return true
+    core.offer(&requests.targets,Motion_Target_Request{rig=rig,target=value})
 }
-motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) -> bool {
-    if requests==nil || value.rig==core.NONE || !profile_vector(value.velocity) || !profile_vector(value.source_velocity) || !profile_weight(value.weight) {return false}
-    if !program_array_reserve(&requests.locomotion.items,REQUEST_CAPACITY) {return false}
-    if len(requests.locomotion.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.locomotion,value);return true
+motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) {
+    if requests==nil {return}
+    if value.rig==core.NONE || !profile_vector(value.velocity) || !profile_vector(value.source_velocity) || !profile_weight(value.weight) {core.refuse(&requests.locomotion);return}
+    core.offer(&requests.locomotion,value)
 }
 
 Motion_Instance :: struct {

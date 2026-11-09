@@ -156,7 +156,7 @@ or interleave its own passes.
     - `View_Inspection.postprocess` of a view runs only the first effects of each side (the eye of
       the stack inspector); without a limit they all run.
 15. **tonemap + postprocess LDR + ui**
-    - Exposure and a read of the display LUT (ACES 2.0 and sRGB:
+    - Exposure and a read of the display LUT (the project's transform and sRGB:
       [transform](display.md#display-transform)), with triangular dithering of up to one 8-bit
       level on each side, fixed between frames and null at pure black and white.
     - Composes the [outlines](#outlines) layer.

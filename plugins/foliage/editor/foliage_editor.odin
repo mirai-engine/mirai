@@ -538,17 +538,36 @@ head_type :: proc(tool:^Foliage_Tool,id:u32) -> foliage.Foliage_Type {
 
 // A type that shows a mesh, painted by the brush, as a step.
 type_add :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,mesh:base.Asset_Id) -> bool {
-    if mesh=={} {editor.notify(s,"Choose a .mesh for the type: foliage draws meshes of the assets, not primitives");return false}
-    source:=&tool.edit.source
-    if len(source.types)>=foliage.TYPES_MAX {editor.notify(s,"The foliage has as many types as it holds");return false}
-    edit_baseline(tool)
-    name:="Type"
-    if app.assets!=nil {
-        if file,found:=asset.registry_find(&app.assets.registry,mesh);found {name=filepath.stem(filepath.base(file.path))}
-    }
-    t:=foliage.source_type_add(source,name,mesh)
-    type_reveal(tool,t.id)
+    if type_make(s,tool,app,mesh)==nil {return false}
     return edit_commit(s,tool,world,app,"Add foliage type")
+}
+
+// A new type of a name no other has: name, or that of the mesh with none. Nil
+// and a notice when it cannot be made.
+type_make :: proc(s:^editor.Session,tool:^Foliage_Tool,app:^host.App,mesh:base.Asset_Id,name:="") -> ^foliage.Foliage_Type {
+    if mesh=={} {editor.notify(s,"Choose a .mesh for the type: foliage draws meshes of the assets, not primitives");return nil}
+    source:=&tool.edit.source
+    if len(source.types)>=foliage.TYPES_MAX {editor.notify(s,"The foliage has as many types as it holds");return nil}
+    edit_baseline(tool)
+    wanted:=name!=""?name:"Type"
+    if app.assets!=nil && name=="" {
+        if file,found:=asset.registry_find(&app.assets.registry,mesh);found {wanted=filepath.stem(filepath.base(file.path))}
+    }
+    t:=foliage.source_type_add(source,type_name_free(source,wanted),mesh)
+    type_reveal(tool,t.id)
+    return t
+}
+
+// name, with a number after it if another type has it.
+@(private)
+type_name_free :: proc(source:^foliage.Source,name:string) -> string {
+    taken :: proc(source:^foliage.Source,name:string) -> bool {
+        for &t in source.types {if type_name(&t)==name {return true}}
+        return false
+    }
+    free:=name
+    for number:=2;taken(source,free);number+=1 {free=fmt.tprintf("%s %d",name[:min(len(name),len(foliage.Foliage_Type{}.name)-8)],number)}
+    return free
 }
 
 // Another mesh for a type, which keeps its instances and its values, as a
@@ -593,16 +612,11 @@ choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
 // A Foliage with a new .foliage of no types, at the target of the view. The
 // new file is part of the step: undo takes it away, and it stays in the
 // memory of the registry until it is saved.
-foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false) -> core.Entity {
+foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false,name:="") -> core.Entity {
     a:=app.assets
     table:=core.world_table_of(world,foliage.Foliage)
     if a==nil || table==nil {editor.notify(s,"The project has no foliage library");return core.NONE}
-    label,path:="",""
-    for number:=1;;number+=1 {
-        label=number==1?"Foliage":fmt.tprintf("Foliage %d",number)
-        path=fmt.tprintf("%s/foliage/%s%s",a.registry.root,label,foliage.EXTENSION)
-        if !editor.file_exists(s,path) {break}
-    }
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/foliage",a.registry.root),name!=""?name:"Foliage",foliage.EXTENSION,name!="")
     seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Foliage"))}
     source:foliage.Source
@@ -611,13 +625,13 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
     bytes,error:=foliage.source_bytes(&source,id,&a.types,app.allocator)
     if error!=.None {editor.notify(s,"The foliage could not be written");return core.NONE}
     defer delete(bytes,app.allocator)
-    editor.edits_begin(s.edits,s.selection,"Add foliage")
+    editor.edits_begin(s.edits,editor.document_selection(s),"Add foliage")
     if !editor.file_write(s,path,bytes,"Add foliage") {editor.edits_cancel(s.edits,world);editor.notify(s,"The foliage could not be written");return core.NONE}
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     e:=editor.entity_create(s,{preset=.Empty,name=label,transform={position=position,rotation=1,scale={1,1,1}}})
     core.add(table,e,foliage.Foliage{source=id,revision=1})
     editor.edits_end(s.edits)
-    editor.selection_set(s.selection,{e})
+    editor.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=foliage.foliage_stamp(a,id)})
     return e
 }

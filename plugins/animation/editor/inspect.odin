@@ -22,10 +22,12 @@ Asset_Inspect_Params :: struct {
     asset:base.Asset_Id,
     section:Asset_Section `mirai:"optional,label=Track: the keys of a track of an .anim; Body: the body parts of a .skeleton"`,
     clip:[64]u8 `mirai:"text,optional,label=.anim: the clip; empty is the first"`,
-    track:u32 `mirai:"optional,label=.anim with section Track: the track of the clip"`,
+    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim with section Track: the bone path or curve of the track of the clip"`,
+    property:lib.Property `mirai:"optional,label=.anim with section Track: its property"`,
+    slot:u8 `mirai:"optional,label=.anim with section Track: its slot"`,
     table:Profile_Table `mirai:"optional,label=.pose: the table"`,
     offset:u32 `mirai:"optional,label=First row of each long table"`,
-    limit:u32 `mirai:"optional,min=1,max=512,label=Rows of each long table"`,
+    limit:u32 `mirai:"optional,min=1,max=512,clamp,label=Rows of each long table"`,
 }
 // Parts of an animated instance.
 Instance_Part :: enum u8 {Rig,Match,Modifiers,Actions,Motion,Morphs,Pose}
@@ -33,12 +35,11 @@ Instance_Parts :: bit_set[Instance_Part]
 INSTANCE_PARTS_DEFAULT :: Instance_Parts{.Rig,.Match,.Modifiers,.Actions,.Motion,.Morphs}
 POSE_NAMES :: 16
 Instance_Inspect_Params :: struct {
-    id:base.Entity_Id `mirai:"optional,label=The id of the entity as scene.inspect gives it; give id or entity"`,
-    entity:[18]u8 `mirai:"text,optional,label=Play or Simulate: the handle of an entity of the game as play.inspect gives it in entity, also of one the game made, which has no id"`,
+    entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,entity,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as play.inspect gives it"`,
     parts:Instance_Parts `mirai:"optional,label=Omitted is all of them but Pose, which needs names"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Pose: the bones and sockets to place; a bone by path or name or as a part of the body (@hand_r) and a socket by its name"`,
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
     diagnostics:bool `mirai:"optional,label=Solver and fade details of rig operations and morphs"`,
 }
 
@@ -50,18 +51,17 @@ Asset_Inspect_Result :: struct {
     root:aa.Animation_Root `mirai:"optional,label=.anim: the root motion of the clip"`,
     tracks_total,markers_total:u32 `mirai:"optional,label=.anim: of the clip"`,
     tracks:[1]Asset_Clip_Track `mirai:"list,optional,label=.anim: a page of the tracks of the clip"`,
-    markers:[1]Asset_Clip_Marker `mirai:"list,optional,label=.anim: a page of the markers of the clip"`,
+    markers:[1]aa.Animation_Marker `mirai:"list,optional,label=.anim: a page of the markers of the clip"`,
     target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim section Track: the bone path or curve of the track"`,
     property:lib.Property `mirai:"optional"`,
     slot:u8 `mirai:"optional"`,
     keys_total:u32 `mirai:"optional"`,
-    keys:[1]Asset_Track_Key `mirai:"list,optional,label=.anim section Track: a page of the keys"`,
+    keys:[1]lib.Keyframe `mirai:"list,optional,label=.anim section Track: a page of the keys"`,
     bones_total,sockets_total:u32 `mirai:"optional,label=.skeleton"`,
-    bones:[1]Asset_Skeleton_Bone `mirai:"list,optional,label=.skeleton: a page of the bones with their rest pose"`,
+    bones:[1]Authoring_Bone `mirai:"list,optional,label=.skeleton: a page of the bones with their rest pose"`,
     sockets:[1]aa.Skeleton_Socket `mirai:"list,optional,label=.skeleton: a page of the sockets; offsets are local"`,
-    forward,up:mm.Vec3 `mirai:"optional,label=.skeleton section Body: where the body faces at rest"`,
-    axes_confidence:f32 `mirai:"optional,label=0 to 1"`,
-    manual_axes:bool `mirai:"optional,label=Whether a person set the axes"`,
+    up:mm.Vec3 `mirai:"optional,label=.skeleton section Body: the up of the body at rest; it faces -Z"`,
+    axes_confidence:f32 `mirai:"optional,label=0 to 1: how sure detection was of how the body stands"`,
     parts:[1]Body_Part_Result `mirai:"list,optional,label=.skeleton section Body: each part found"`,
     missing:[1]lib.Body_Part `mirai:"list,optional,label=Parts without a bone"`,
     unassigned_total:u32 `mirai:"optional"`,
@@ -122,10 +122,7 @@ Asset_Match_Clip :: struct {
 }
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
 Asset_Match_Database :: struct {rows:u32,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
-Asset_Clip_Track :: struct {index:u32,target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
-Asset_Clip_Marker :: struct {index:u32,marker:aa.Animation_Marker}
-Asset_Track_Key :: struct {index:u32,key:lib.Keyframe}
-Asset_Skeleton_Bone :: struct {index:u32,bone:Authoring_Bone}
+Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
 // A warp window of a .motion or a gameplay window of an .action.
 Asset_Window :: struct {
     name:[64]u8 `mirai:"text"`,
@@ -163,7 +160,7 @@ Instance_Match :: struct {
     search:Instance_Match_Search `mirai:"optional,label=The last search it had to make: entering a mode, starting, stopping, or leaving a clip that ends"`,
 }
 // clips: of a blended sample, each clip with its share; travel: where it goes in the space of the
-// rig (+Z forward).
+// rig (-Z forward).
 Instance_Match_Range :: struct {
     clip:[64]u8 `mirai:"text"`,
     clips:[1]Instance_Match_Member `mirai:"list,optional"`,
@@ -326,7 +323,7 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
     limit:=min(p.limit,256)
     switch record.kind {
     case aa.KIND_ANIMATION:
-        if p.section==.Track {inner:=Track_Inspect_Params{asset=p.asset,clip=p.clip,track=p.track,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,authoring_track_inspect);return}
+        if p.section==.Track {inner:=Track_Inspect_Params{asset=p.asset,clip=p.clip,target=p.target,property=p.property,slot=p.slot,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,authoring_track_inspect);return}
         inner:=Clip_Inspect_Params{asset=p.asset,clip=p.clip,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_clip_inspect)
     case aa.KIND_SKELETON:
         if p.section==.Body {
@@ -359,31 +356,32 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Instance_Inspect_Params)
-    handle:=base.text_get(p.entity[:])
-    w,e,ok:=instance_subject(s,call,p.id,handle);if !ok {return}
+    w:=editor.shown_world(s)
+    e,ok:=editor.api_call_entity(call,w,p.entity[:],game=s.mode!=.Edit);if !ok {return}
+    id:=editor.api_entity_id(w,e)
     parts:=p.parts if authoring_field_present(call,"parts") else INSTANCE_PARTS_DEFAULT
     // Names that do not exist fail the call; a rig without a pose says so in its part.
     query:Pose_Query
     if .Pose in parts {query=pose_query(s,call,w,e,&p.names);if call.failed {return}}
     out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id)
-    if handle!="" {api.write_text(out,"entity",fmt.tprintf("0x%016x",u64(e)))}
+    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,id)
+    if id==0 {api.write_text(out,"entity",fmt.tprintf("0x%016x",u64(e)))}
     for part in parts {
         api.write_key(out,strings.to_lower(fmt.tprintf("%v",part),call.allocator))
         mark:=out.count
         switch part {
-        case .Rig: inner:=Describe_Params{id=p.id,entity=e,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,describe)
+        case .Rig: inner:=Describe_Params{handle=e,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,describe)
         case .Match: instance_match(s,call,w,e)
-        case .Modifiers: inner:=Modifier_Inspect_Params{id=p.id,entity=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,program_modifier_inspect)
-        case .Actions: inner:=Entity_Params{id=p.id,entity=e};inspect_with(s,call,&inner,authoring_action_inspect)
-        case .Motion: inner:=Entity_Params{id=p.id,entity=e};inspect_with(s,call,&inner,authoring_motion_inspect)
-        case .Morphs: inner:=Morph_Inspect_Params{id=p.id,entity=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,morph_inspect)
+        case .Modifiers: inner:=Modifier_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,program_modifier_inspect)
+        case .Actions: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_action_inspect)
+        case .Motion: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_motion_inspect)
+        case .Morphs: inner:=Morph_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,morph_inspect)
         case .Pose: instance_pose(call,w,e,&query)
         }
         // A part the entity lacks says why; the rest stays.
         if call.failed {
             reason,code:=call.error.message,""
-            if value,found:=authoring_json_field(call.error.data,"code",call.allocator);found {code=strings.trim(value,`"`)}
+            if value:=api.json_member(call.error.data,"code");value!="" {code=strings.trim(value,`"`)}
             call.failed,call.error=false,{}
             out.count=mark
             serial.text_write_raw(out,"{");api.write_bool(out,"available",false,true);api.write_text(out,"code",code);api.write_text(out,"reason",reason);serial.text_write_raw(out,"}")
@@ -392,33 +390,14 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,"}")
 }
 
-// The entity animation.inspect names: by its id in the scene, or in Play or Simulate by its handle
-// in the game, which is all those the game made have.
-@(private)
-instance_subject :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,handle:string) -> (w:core.World_Ref,e:core.Entity,ok:bool) {
-    NAMES :: "Give id as scene.inspect gives it or, in Play or Simulate, entity: the handle play.inspect gives in entity"
-    switch {
-    case id!=0 && handle!="": authoring_failure(call,"entity","Ambiguous_Entity","id or entity","both","Give id or entity, not both",fix=NAMES);return
-    case handle=="" && id==0: authoring_failure(call,"id","Missing_Entity","id or entity","neither","Name the entity to inspect",fix=NAMES);return
-    case handle=="": return subject(s,call,id)
-    }
-    if s.mode==.Edit {authoring_failure(call,"entity","Not_Playing","Play or Simulate","Edit","entity is a handle of the game, which runs only in Play or Simulate",fix="In Edit give id as scene.inspect gives it");return}
-    digits:=strings.trim_prefix(handle,"0x")
-    value,parsed:=serial.text_parse_hex(digits)
-    if !parsed || len(digits)!=16 {authoring_failure(call,"entity","Invalid_Handle","the 16 hexadecimal digits play.inspect gives in entity, with or without 0x",handle,"entity is not a handle",fix="Give the handle play.inspect gives in entity");return}
-    w,e=editor.shown_world(s),core.Entity(value)
-    if !core.alive(core.world_entities(w),e) {authoring_failure(call,"entity","Missing_Entity","an entity alive in the game",handle,"The entity is not alive in the game",fix="play.inspect lists the entities alive with their handles");return}
-    return w,e,true
-}
-
 // What the motion matching of an entity plays, the clips of its database and its last search.
 @(private)
 instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) {
     value,present:=editor.entity_get(world,entity,anim.Animation)
-    if !present {authoring_failure(call,"id","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
-    if record,found:=aa.registry_find(&s.app.assets.registry,value.asset);!found || record.kind!=anim.MATCH_KIND {authoring_failure(call,"id","Not_Matching","an Animation.asset that is a .match","another asset" if found else "none","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
+    if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
+    if record,found:=aa.registry_find(&s.app.assets.registry,value.asset);!found || record.kind!=anim.MATCH_KIND {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .match","another asset" if found else "none","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
     result,matching:=preview_match(world,s.app,entity)
-    if !matching {authoring_failure(call,"id","Not_Running","a .match the world plays","not sampled","Matching runs in Play, Simulation, the preview of the editor or animation.preview",api.SERVER_ERROR);return}
+    if !matching {authoring_failure(call,"entity","Not_Running","a .match the world plays","not sampled","Matching runs in Play, Simulation, the preview of the editor or animation.preview");return}
     out:=call.out
     if !authoring_write_value(call,&result,type_info_of(Preview_Match_Result)) || out.count==0 {return}
     // The object goes on past the fields of Preview_Match_Result.

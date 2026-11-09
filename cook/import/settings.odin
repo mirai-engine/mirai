@@ -45,6 +45,25 @@ Rig :: enum u8 {
     Spider, // eight legs
 }
 
+// Of a model: where it stands facing once its space is the engine's, which
+// has every model face -Z. The import turns it about +Y from there to -Z,
+// with all the file holds.
+Front :: enum u8 {
+    Auto,       // a file that is a rig (all it draws is skinned) is turned from where the body of its skeleton is found facing; any other stays as read
+    Negative_Z, // as read: nothing is turned, whatever a body is found facing
+    Z,
+    X,
+    Negative_X,
+}
+
+// The front an import option names: its name in lowercase.
+front_from_name :: proc(name:string) -> (front:Front,ok:bool) {
+    for f in Front {
+        if strings.equal_fold(fmt.tprint(f),name) {return f,true}
+    }
+    return
+}
+
 // The rig an import option names: its name in lowercase.
 rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
     for r in Rig {
@@ -65,6 +84,7 @@ Import_Settings :: struct {
     force_collision:bool,       // the colliders of collision replace those the source gives
     collision_hulls:int,        // of Pieces: the most hulls. 0: geom.DECOMPOSE_DEFAULT_HULLS
     parts:Parts,                // of a model: which of its materials and textures are parts of its prefab (parts.odin)
+    front:Front,
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
     skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
@@ -79,7 +99,7 @@ settings_path :: proc(source:string,allocator:=context.allocator) -> string {
 @(private="file")
 settings_valid :: proc(settings:Import_Settings) -> bool {
     return settings.max_texture_size>=0 && settings.max_triangles>=0 && settings.collision_hulls>=0 && settings.textures<=max(textures.Encoding) && settings.rdo_lambda<=textures.RDO_LAMBDA_MAX &&
-        settings.image<=max(Image_Use) && settings.alpha_coverage>=0 && settings.alpha_coverage<=1 && settings.lods<=max(Lods) && settings.collision<=max(Collision) && settings.parts<=max(Parts) && settings.rig<=max(Rig) &&
+        settings.image<=max(Image_Use) && settings.alpha_coverage>=0 && settings.alpha_coverage<=1 && settings.lods<=max(Lods) && settings.collision<=max(Collision) && settings.parts<=max(Parts) && settings.front<=max(Front) && settings.rig<=max(Rig) &&
         settings.rig_crotch>=0 && settings.rig_neck>=0 && (settings.rig==.Humanoid || settings.rig_crotch==0 && settings.rig_neck==0)
 }
 
@@ -134,13 +154,14 @@ settings_save :: proc(source:string,settings:Import_Settings) -> bool {
 
 // What an asset records in Import_Info.settings_hash is the identity of the
 // settings it is built from, and nothing else: a change of the others keeps
-// it. A mesh is built from its levels and its colliders (mesh_settings_hash);
-// a texture from its build options (textures.settings_hash); materials,
-// skeletons and clips from none of them, and record 0. A rig other than the
-// source's changes the skin of a mesh, so it is part of the mesh's.
+// it. A mesh is built from its levels and its colliders, turned from the
+// front the settings state (mesh_settings_hash); a texture from its build
+// options (textures.settings_hash); materials, skeletons and clips from none
+// of them, and record 0. A rig other than the source's changes the skin of a
+// mesh, so it is part of the mesh's.
 mesh_settings_hash :: proc(settings:Import_Settings) -> u64 {
     hulls:=0
     if settings.collision==.Pieces {hulls=settings.collision_hulls if settings.collision_hulls>0 else geom.DECOMPOSE_DEFAULT_HULLS}
-    built:=[8]u64{u64(settings.lods),u64(settings.collision),u64(hulls),u64(settings.max_triangles),u64(settings.force_collision),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
-    return base.hash64(mem.slice_to_bytes(built[:5] if settings.rig==.Source else built[:]))
+    built:=[9]u64{u64(settings.lods),u64(settings.collision),u64(hulls),u64(settings.max_triangles),u64(settings.force_collision),u64(settings.front),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
+    return base.hash64(mem.slice_to_bytes(built[:6] if settings.rig==.Source else built[:]))
 }

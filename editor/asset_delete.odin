@@ -62,7 +62,6 @@ asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
 asset_delete_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
     if refusal:=asset_owned_refusal(r,file);refusal!="" {return refusal}
     if watching(s) {return "A watcher does not change the files of the host"}
-    if s.mode!=.Edit {return "Stop Play or Simulate first"}
     if busy:=import_busy(s);busy!="" {return busy}
     for at in asset_delete_files(r,file.id) {
         if scene_tab(s,r.files[at].id)>=0 {return "It is open in a tab: close the tab first"}
@@ -192,16 +191,8 @@ api_asset_named :: proc(s:^Session,call:^api.Call,name:string) -> (r:^asset.Regi
         api.call_fail(call,api.SERVER_ERROR,"The editor has no asset folder it can change")
         return
     }
-    is_id:bool
-    id,is_id=serial.text_parse_asset_id(name)
-    if !is_id {
-        file,found:=asset.registry_find_path(r,name)
-        if !found || file.state!=.Asset {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not an asset: give its path under the asset folder or its id, as asset.list lists them",name)
-            return
-        }
-        id=file.id
-    }
+    problem:string
+    if id,problem=asset_resolve(s,name,"");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     if _,found:=asset.registry_find(r,id);!found {
         api.call_failf(call,api.INVALID_PARAMS,"No asset has the id %s: asset.list lists them",name)
         return

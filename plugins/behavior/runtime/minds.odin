@@ -258,6 +258,60 @@ present_animation :: proc(w:^Act_World,animation:u16) {
     presentation_write(w,shown)
 }
 
+// What every mind of a game reads and asks for: a loop function receives it
+// and adds only the tables of the game (mind_tick).
+@(params)
+Mind_World :: struct {
+    minds:^Minds,
+    agents:^core.Table(Mind_Agent),
+    presentations:^core.Table(Mind_Presentation),
+    requests:^nav.Nav_Requests,
+    paths:core.Read(nav.Nav_Path),
+    fars:core.Read(nav.Nav_Far),
+    nav_agents:core.Read(nav.Nav_Agent),
+    links:core.Read(nav.Nav_Link),
+    perceptions:core.Read(Perception),
+    perceivables:core.Read(Perceivable),
+    worlds:core.Read(core.World_Transform),
+    places:^Place_Requests,
+    results:core.Read(Place_Result),
+    objects:core.Read(Smart_Object),
+    states:core.Read(Smart_State),
+    claims:^Claims,
+    uses:^Smart_Uses,
+    noises:^Noises,
+    influence:core.Ref(Influence),
+    time:core.Time,
+    problems:^core.Problems,
+}
+
+// What the actions of a tick read, from a Mind_World. A game makes its context begin with it
+// (using) and adds its own tables.
+Mind_Tick :: struct {
+    using act:Act_World,
+    smart:Smart_View,
+    world:Mind_World,
+    worlds:core.Read(core.World_Transform),
+    perceptions:core.Read(Perception),
+    perceivables:core.Read(Perceivable),
+    agents:core.Read(nav.Nav_Agent),
+    links:core.Read(nav.Nav_Link),
+    places:^Place_Requests,
+    results:core.Read(Place_Result),
+    uses:^Smart_Uses,
+    noises:^Noises,
+    influence:^Influence,
+}
+
+mind_tick :: proc(world:Mind_World) -> Mind_Tick {
+    return {
+        act={requests=world.requests,paths=world.paths,fars=world.fars,presentations=world.presentations},
+        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time.seconds,tick=world.time.tick},
+        world=world,worlds=world.worlds,perceptions=world.perceptions,perceivables=world.perceivables,agents=world.nav_agents,links=world.links,
+        places=world.places,results=world.results,uses=world.uses,noises=world.noises,influence=world.influence.ptr,
+    }
+}
+
 // What the actions of a game usually need of the world, which its context
 // can begin with (using) so the actions below work on it.
 Act_World :: struct {

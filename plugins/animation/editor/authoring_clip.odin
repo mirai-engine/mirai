@@ -2,6 +2,7 @@ package animation_editor
 
 import "base:runtime"
 import "core:fmt"
+import "core:strings"
 import aa "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -20,6 +21,18 @@ Authoring_Keyframe :: struct {
     in_slope,out_slope:mm.Vec4 `mirai:"optional"`,
 }
 
+// What a key holds at its time; animation.key.set names the time apart.
+Authoring_Key_Value :: struct {
+    value:mm.Vec4,
+    ease:mm.Ease `mirai:"optional"`,
+    interpolation:lib.Interpolation `mirai:"optional"`,
+    tangents:bool `mirai:"optional"`,
+    in_slope,out_slope:mm.Vec4 `mirai:"optional"`,
+}
+
+// Seconds within which two times are the same key or marker.
+AUTHORING_TIME_EPSILON :: 1e-4
+
 @(private)
 authoring_keyframe :: proc(value:Authoring_Keyframe) -> lib.Keyframe {
     return {time=value.time,value=value.value,ease=value.ease,interpolation=value.interpolation,tangents=value.tangents,in_slope=value.in_slope,out_slope=value.out_slope}
@@ -28,11 +41,10 @@ Clip_Inspect_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text,optional,label=Clip name; empty selects the first clip"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256"`,
+    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
 }
 Clip_Create_Params :: struct {
-    asset:base.Asset_Id `mirai:"optional,label=Existing .anim asset to append a clip to; mutually exclusive with path"`,
-    path:[1024]u8 `mirai:"text,optional,label=New .anim file; mutually exclusive with asset"`,
+    path:[1024]u8 `mirai:"text,label=An .anim: the clip goes after those of what is there"`,
     name:[64]u8 `mirai:"text"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
@@ -46,9 +58,11 @@ Clip_Set_Params :: struct {
 Track_Inspect_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text"`,
-    track:u32 `mirai:"label=Index within the selected clip"`,
+    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Canonical bone or rigid-node path; scalar curve name for Float/Vector"`,
+    property:lib.Property,
+    slot:u8 `mirai:"optional"`,
     offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=512"`,
+    limit:u32 `mirai:"optional,min=1,max=512,clamp"`,
 }
 Track_Set_Params :: struct {
     asset:base.Asset_Id,
@@ -63,17 +77,21 @@ Track_Set_Params :: struct {
 Key_Set_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text"`,
-    track:u32,
-    index:u32 `mirai:"label=Existing key index or the key count to append"`,
-    key:Authoring_Keyframe `mirai:"optional"`,
-    remove:bool `mirai:"optional"`,
+    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Canonical bone or rigid-node path; scalar curve name for Float/Vector"`,
+    property:lib.Property,
+    slot:u8 `mirai:"optional"`,
+    time:f32 `mirai:"min=0,unit=s,label=The key at this time is replaced or removed; with no key there it is inserted in order"`,
+    key:Authoring_Key_Value `mirai:"optional,label=What the key holds; leave it out only with remove"`,
+    remove:bool `mirai:"optional,label=Removes the key at time"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Marker_Set_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text"`,
-    index:u32 `mirai:"label=Existing marker index or the marker count to append"`,
-    marker:aa.Animation_Marker `mirai:"optional"`,
+    name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,label=The marker by its name"`,
+    time:f32 `mirai:"optional,min=0,unit=s,label=Where it goes; needed unless it is removed"`,
+    at:f32 `mirai:"optional,min=0,unit=s,label=Of a name several markers have: the time of the one to change or remove"`,
+    add:bool `mirai:"optional,label=Adds one more of that name at time instead of changing the one it has"`,
     remove:bool `mirai:"optional"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
@@ -111,6 +129,17 @@ authoring_clip_descs :: proc(view:aa.Animation_View,call:^api.Call) -> (clips:[]
     return
 }
 
+// rows with value put at an index, the ones from there moved one further.
+@(private)
+authoring_insert_row :: proc(rows:[]$T,index:int,value:T,maximum:int,allocator:=context.temp_allocator) -> (result:[]T,ok:bool) {
+    if index<0 || index>len(rows) || len(rows)>=maximum {return}
+    error:runtime.Allocator_Error
+    result,error=make([]T,len(rows)+1,allocator)
+    if error!=nil {return nil,false}
+    copy(result[:index],rows[:index]);result[index]=value;copy(result[index+1:],rows[index:])
+    return result,true
+}
+
 @(private)
 authoring_clip_save :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,id:base.Asset_Id,view:aa.Animation_View,clips:[]aa.Animation_Clip_Desc) {
     doc:aa.Document
@@ -139,8 +168,7 @@ authoring_clip_inspect :: proc(s:^editor.Session,call:^api.Call) {
     start:=min(int(p.offset),len(tracks));end:=min(start+int(p.limit),len(tracks))
     for &track,i in tracks[start:end] {
         if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_int(out,"index",i64(start+i),true)
-        api.write_text(out,"target",base.text_get(track.target[:]))
+        serial.text_write_raw(out,"{");api.write_text(out,"target",base.text_get(track.target[:]),true)
         api.write_key(out,"property");authoring_write_value(call,&track.property,type_info_of(lib.Property))
         api.write_uint(out,"slot",u64(track.slot));api.write_uint(out,"keys_total",u64(track.key_count));serial.text_write_raw(out,"}")
     }
@@ -149,24 +177,23 @@ authoring_clip_inspect :: proc(s:^editor.Session,call:^api.Call) {
     api.write_uint(out,"markers_total",u64(len(markers)))
     api.write_key(out,"markers");serial.text_write_raw(out,"[")
     start=min(int(p.offset),len(markers));end=min(start+int(p.limit),len(markers))
-    for &marker,i in markers[start:end] {if i>0 {serial.text_write_raw(out,",")};serial.text_write_raw(out,"{");api.write_int(out,"index",i64(start+i),true);api.write_key(out,"marker");authoring_write_value(call,&marker,type_info_of(aa.Animation_Marker));serial.text_write_raw(out,"}")}
+    for &marker,i in markers[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&marker,type_info_of(aa.Animation_Marker))}
     serial.text_write_raw(out,"]}")
 }
 
 @(private)
 authoring_clip_create :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Clip_Create_Params)
-    if !authoring_editable(s,call) {return}
     path:=base.text_get(p.path[:])
-    if (p.asset!={})==(path!="") {authoring_failure(call,"asset","Exclusive_Reference","exactly one of asset or path","both supplied or both empty","Supply exactly one of asset or path");return}
+    existing,found,at:=authoring_at(s,call,path,aa.KIND_ANIMATION,".anim");if !at {return}
     clip:=aa.Animation_Clip_Desc{name=base.text_get(p.name[:])}
-    if p.asset!={} {
+    if found {
         target:Authoring_File;defer aa.asset_close(&target.file)
-        view,ok:=authoring_clip_open(s,call,p.asset,&target);if !ok {return}
+        view,ok:=authoring_clip_open(s,call,existing,&target);if !ok {return}
         clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
         updated,appended:=authoring_replace_row(clips,len(clips),clip,false,aa.ANIMATION_MAX_CLIPS,call.allocator)
         if !appended {authoring_failure(call,"clips","Capacity","space for an additional clip","full or allocation failed","The animation asset has no capacity for another clip");return}
-        authoring_clip_save(s,call,target,p.asset,view,updated)
+        authoring_clip_save(s,call,target,existing,view,updated)
         return
     }
     target,id,ok:=authoring_create_target(s,call,path,".anim");if !ok {return}
@@ -192,8 +219,10 @@ authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clip:=view.clips[index]
-    if p.track>=clip.track_count {authoring_failure(call,"track","Out_Of_Range",fmt.tprintf("an index below %d",clip.track_count),fmt.tprintf("%d",p.track),"track is outside the selected clip");return}
-    track:=view.tracks[clip.first_track+p.track]
+    selected:=-1
+    for &each,i in view.tracks[clip.first_track:][:clip.track_count] {if base.text_get(each.target[:])==base.text_get(p.target[:]) && each.property==p.property && each.slot==p.slot {selected=i;break}}
+    if selected<0 {authoring_failure(call,"target","Missing_Track","a track of the clip by target, property and slot",base.text_get(p.target[:]),"The clip has no such track",fix="animation.asset.inspect of the clip lists its tracks");return}
+    track:=view.tracks[clip.first_track+u32(selected)]
     keys:=view.keys[track.first_key:][:track.key_count]
     out:=call.out
     serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
@@ -202,7 +231,7 @@ authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call) {
     api.write_uint(out,"slot",u64(track.slot));api.write_uint(out,"keys_total",u64(len(keys)))
     api.write_key(out,"keys");serial.text_write_raw(out,"[")
     start:=min(int(p.offset),len(keys));end:=min(start+int(p.limit),len(keys))
-    for &key,i in keys[start:end] {if i>0 {serial.text_write_raw(out,",")};serial.text_write_raw(out,"{");api.write_int(out,"index",i64(start+i),true);api.write_key(out,"key");authoring_write_value(call,&key,type_info_of(lib.Keyframe));serial.text_write_raw(out,"}")}
+    for &key,i in keys[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&key,type_info_of(lib.Keyframe))}
     serial.text_write_raw(out,"]}")
 }
 
@@ -236,10 +265,22 @@ authoring_key_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
-    if int(p.track)>=len(clips[index].tracks) {authoring_failure(call,"track","Out_Of_Range",fmt.tprintf("an index below %d",len(clips[index].tracks)),fmt.tprintf("%d",p.track),"track is outside the selected clip");return}
-    track:=&clips[index].tracks[p.track]
-    keys,replaced:=authoring_replace_row(track.keys,int(p.index),authoring_keyframe(p.key),p.remove,aa.ANIMATION_MAX_KEYS,call.allocator)
-    if !replaced {authoring_failure(call,"index","Invalid_Edit",fmt.tprintf("an existing key or append at %d",len(track.keys)),fmt.tprintf("%d; remove=%t",p.index,p.remove),"The key edit cannot be prepared within capacity");return}
+    if !p.remove && !authoring_field_present(call,"key") {authoring_failure(call,"key","Required","the key to write at time, unless it is removed","missing","Supply key, or remove");return}
+    selected:=-1
+    for &each,i in clips[index].tracks {if each.target==base.text_get(p.target[:]) && each.property==p.property && each.slot==p.slot {selected=i;break}}
+    if selected<0 {authoring_failure(call,"target","Missing_Track","a track of the clip by target, property and slot",base.text_get(p.target[:]),"The clip has no such track",fix="animation.track.set creates it");return}
+    track:=&clips[index].tracks[selected]
+    at,exists:=len(track.keys),false
+    for &key,i in track.keys {
+        if abs(key.time-p.time)<=AUTHORING_TIME_EPSILON {at,exists=i,true;break}
+        if key.time>p.time {at=i;break}
+    }
+    if p.remove && !exists {authoring_failure(call,"time","Missing_Key","the time of a key of the track",fmt.tprintf("%f",p.time),"The track has no key at that time",fix="animation.asset.inspect with section Track lists its keys");return}
+    value:=authoring_keyframe({time=p.time,value=p.key.value,ease=p.key.ease,interpolation=p.key.interpolation,tangents=p.key.tangents,in_slope=p.key.in_slope,out_slope=p.key.out_slope})
+    keys:[]lib.Keyframe
+    done:bool
+    if exists || p.remove {keys,done=authoring_replace_row(track.keys,at,value,p.remove,aa.ANIMATION_MAX_KEYS,call.allocator)} else {keys,done=authoring_insert_row(track.keys,at,value,aa.ANIMATION_MAX_KEYS,call.allocator)}
+    if !done {authoring_failure(call,"time","Invalid_Edit","a track with room for the key",fmt.tprintf("%d keys; remove=%t",len(track.keys),p.remove),"The key edit cannot be prepared within capacity");return}
     track.keys=keys
     authoring_clip_save(s,call,file,p.asset,view,clips)
 }
@@ -252,9 +293,26 @@ authoring_marker_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
-    marker:=aa.Animation_Marker_Desc{p.marker.time,base.text_get(p.marker.name[:])}
-    markers,replaced:=authoring_replace_row(clips[index].markers,int(p.index),marker,p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
-    if !replaced {authoring_failure(call,"index","Invalid_Edit",fmt.tprintf("an existing marker or append at %d",len(clips[index].markers)),fmt.tprintf("%d; remove=%t",p.index,p.remove),"The marker edit cannot be prepared within capacity");return}
+    name:=base.text_get(p.name[:])
+    rows:=clips[index].markers
+    if !p.remove && !authoring_field_present(call,"time") {authoring_failure(call,"time","Required","where the marker goes, unless it is removed","missing","Supply time, or remove");return}
+    at:=len(rows)
+    if !p.add {
+        given_at:=authoring_field_present(call,"at")
+        same:=0
+        times:=strings.builder_make(call.allocator)
+        for &row,i in rows {
+            if row.name!=name {continue}
+            fmt.sbprintf(&times,"%s%f",same>0?", ":"",row.time)
+            same+=1
+            if !given_at || abs(row.time-p.at)<=AUTHORING_TIME_EPSILON {at=i}
+        }
+        if given_at && at==len(rows) {authoring_failure(call,"at","Missing_Marker","the time of a marker of that name",strings.to_string(times),"The clip has no marker of that name at that time",fix="animation.asset.inspect of the clip lists its markers");return}
+        if !given_at && same>1 {authoring_failure(call,"name","Ambiguous_Marker","the time of one of them in at, or add true for one more",strings.to_string(times),fmt.tprintf("%d markers are named %s",same,name));return}
+    }
+    if p.remove && at==len(rows) {authoring_failure(call,"name","Missing_Marker","the name of a marker of the clip",name,"The clip has no marker of that name",fix="animation.asset.inspect of the clip lists its markers");return}
+    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
+    if !replaced {authoring_failure(call,"name","Invalid_Edit","a clip with room for the marker",fmt.tprintf("%d markers; remove=%t",len(rows),p.remove),"The marker edit cannot be prepared within capacity");return}
     clips[index].markers=markers
     authoring_clip_save(s,call,file,p.asset,view,clips)
 }

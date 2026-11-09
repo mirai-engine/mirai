@@ -9,7 +9,7 @@ temporal state. The world integration and the authoring are in
 - `Match_Database` is a shared definition: one row of features per frame of each clip at `rate` rows
   per second (position and velocity of the feet, velocity of the hips, velocity of the body, where
   it was `MATCH_PAST` seconds before, position and direction of the trajectory at `MATCH_HORIZON`),
-  in the frame of the character (its place on the ground and its facing, +Z forward), normalized per
+  in the frame of the character (its place on the ground and its facing, -Z forward), normalized per
   type so that each type weighs what its weight says. The present and the past say what the body
   did, the future what it is asked for: a body held still that is asked to walk is not a walk.
   `match_database_build` is a load transaction: it rejects with `Memory_Limit` a database larger

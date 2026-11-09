@@ -57,13 +57,13 @@ material_inherited :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (inheri
 // prefab's, when it gives one, else the material's.
 @(private)
 texture_reference :: proc(s:^Session,e:core.Entity,slot:int,name:u64,material_texture:base.Asset_Id) -> (texture:base.Asset_Id,inherited:bool) {
-    given:=material_inherited(s,shown_world(s),e)
+    given:=material_inherited(s,editing_world(s),e)
     if texture,inherited=erender.material_override_texture(&given,slot,name);inherited {return}
     return material_texture,false
 }
 
 material_reset_button :: proc(s:^Session,p:Material_Color) {
-    w:=shown_world(s)
+    w:=editing_world(s)
     mesh,ok:=entity_get(w,p.entity,erender.Mesh_Renderer)
     if !ok {return}
     a:=appearance_read(s,w,p.entity,mesh,p.slot)

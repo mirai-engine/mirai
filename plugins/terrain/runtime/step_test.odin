@@ -442,6 +442,35 @@ terrain_test_tables :: proc(w:^Terrain_Test_World) -> Chunk_Tables {
 
 // What the tests run with unless they say: every chunk at level 0, so that a
 // count of builds does not follow the levels an edit changes.
+// A dig in the world edits the terrain it touches, in the space of its source;
+// one that touches none asks nothing.
+@(test)
+a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) {
+    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
+    terrains:core.Table(Terrain);core.table_init(&terrains,"Terrain");defer core.table_destroy(&terrains)
+    worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
+    data:Terrain_Data;defer delete(data.entries)
+    append(&data.entries,Data_Source{id={1,0}})
+    testing.expect(t,source_make(&data.entries[0].source,.Heightfield,{33,1,33},1,32));defer source_destroy(&data.entries[0].source)
+    near,far:=core.create(&es),core.create(&es)
+    for e,i in ([2]core.Entity{near,far}) {
+        core.add(&terrains,e,Terrain{source={1,0},solid=true})
+        core.add(&worlds,e,core.World_Transform{transform={position={f32(i)*500,0,0},rotation=1,scale=2}})
+    }
+    core.table_settle(&terrains,&es);core.table_settle(&worlds,&es)
+    brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,normal={0,1,0},rotation=1}
+    resolved,ok:=edit_resolve(Edit_Request{brush=brush},&data,core.read(&terrains),core.read(&worlds))
+    testing.expect(t,ok && resolved.owner==far)
+    testing.expect_value(t,resolved.brush.center,[3]f32{5,0.5,3})
+    testing.expect_value(t,resolved.brush.radius,f32(2))
+    testing.expect_value(t,resolved.brush.amount,f32(0.5))
+    brush.center={1000,0,6}
+    _,ok=edit_resolve(Edit_Request{brush=brush},&data,core.read(&terrains),core.read(&worlds))
+    testing.expect(t,!ok,"a dig that touches no terrain asks nothing")
+    resolved,ok=edit_resolve(Edit_Request{brush=brush,owner=near},&data,core.read(&terrains),core.read(&worlds))
+    testing.expect(t,ok && resolved.owner==near,"a dig that names its terrain is not searched for")
+}
+
 TERRAIN_TEST_SETTINGS :: Terrain_Settings{lod_distance=-1}
 
 terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
@@ -546,7 +575,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect_value(t,w.data.stats.loads,u64(1))
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1}))
+    dig(&w.requests,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1},owner)
     terrain_test_update(w,&resident,&app)
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
@@ -566,7 +595,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect_value(t,resident.stats.built,built);testing.expect_value(t,w.data.stats.loads,u64(1))
     copy_world:=&worlds[1]
     terrain_test_world_copy(copy_world,w)
-    testing.expect(t,request_edit(&copy_world.requests,owner,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1}))
+    dig(&copy_world.requests,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1},owner)
     terrain_test_update(copy_world,&resident,&app)
     testing.expect_value(t,source_value(&w.data.entries[0].source,{2,0,2}),f32(1))
     hit,hit_ok=phys.raycast({&copy_world.physics},{4,20,14},{0,-1,0})
@@ -575,7 +604,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     terrain_test_update(copy_world,&resident,&app)
     hit,hit_ok=phys.raycast({&copy_world.physics},{4,20,14},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-5)<1e-4)
-    testing.expect(t,request_save(&copy_world.requests,owner))
+    request_save(&copy_world.requests,owner)
     terrain_test_update(copy_world,&resident,&app)
     _,loaded=source_load(&disk,path,&types);testing.expect(t,loaded)
     testing.expect_value(t,source_value(&disk,{2,0,2}),f32(1))
@@ -611,14 +640,14 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     testing.expect_value(t,len(w.colliders.values),4)
     identities:[8]core.Entity
     copy(identities[:],resident.owners[0].chunks)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Add,center={0,3,0},radius=1.5,amount=1}))
+    dig(&w.requests,{kind=.Add,center={0,3,0},radius=1.5,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
     hit,ok:=phys.raycast({&w.physics},{0,8,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y-4.5)<1e-3)
     testing.expect(t,len(w.colliders.values)>4)
     for e,i in resident.owners[0].chunks {testing.expect_value(t,e,identities[i])}
     testing.expect_value(t,len(w.digs.digs.items),0)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Remove,center={0,0,0},radius=30,amount=1}))
+    dig(&w.requests,{kind=.Remove,center={0,0,0},radius=30,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
     // What it took is published once: the box of the source and what Add gave it.
     testing.expect_value(t,len(w.digs.digs.items),1)
@@ -694,8 +723,8 @@ terrains_that_cannot_load_or_be_edited_report_their_entity_and_the_fix :: proc(t
     core.add(&w.locals,owner,core.TRANSFORM_IDENTITY);
     core.add(&w.terrains,owner,Terrain{source=missing,solid=true})
     terrain_test_world_settle(&w)
-    testing.expect(t,request_edit(&w.requests,stranger,{kind=.Raise,center={0,0,0},radius=1,amount=1}))
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Raise,center={0,0,0},radius=1,amount=1}))
+    dig(&w.requests,{kind=.Raise,center={0,0,0},radius=1,amount=1},stranger)
+    dig(&w.requests,{kind=.Raise,center={0,0,0},radius=1,amount=1},owner)
     for _ in 0..<3 {terrain_test_update(&w,&resident,&app)}
     unread:=core.problem_find(&w.problems,owner,"terrain.source_unread")
     if testing.expect(t,unread!=nil) {

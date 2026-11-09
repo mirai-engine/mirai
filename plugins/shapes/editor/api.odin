@@ -15,7 +15,7 @@ STAMP_POINTS :: 256
 STAMP_IDS :: 64
 
 Stamp_Params :: struct {
-    id:base.Entity_Id `mirai:"optional,label=A shape whose local XY at z 0 is the plane, and the first an add joins; 0: the plane z 0 of the world"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=A shape whose local XY at z 0 is the plane, and the first an add joins; 0: the plane z 0 of the world"`,
     points:[STAMP_POINTS][3]f32 `mirai:"unit=m,label=World points in order, taken onto the plane: the stamp swept along the path through them"`,
     kind:shapes.Stamp_Kind `mirai:"optional"`,
     size:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Half the width of the square and the radius of the circle; the other kinds reach about as far"`,
@@ -31,7 +31,7 @@ Stamp_Result :: struct {
 }
 
 Corner_Params :: struct {
-    id:base.Entity_Id `mirai:"label=An outline shape"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=An outline shape"`,
     op:Corner_Op,
     at:[3]f32 `mirai:"unit=m,label=World point: the corner nearest it is moved or removed; a corner is inserted at the point of the nearest edge"`,
     to:[3]f32 `mirai:"optional,unit=m,label=Where a moved corner goes, taken onto the plane of the shape"`,
@@ -55,14 +55,13 @@ api_stamp :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Stamp_Params)
     count,_:=api.params_array_count(call,"points")
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"points must list at least one world point of the stroke");return}
-    if editor.playing(s) {api.call_fail(call,api.SERVER_ERROR,"Shapes are stamped from Edit: stop the game or the simulation with play.stop");return}
     w:=editor.edited_world(s)
     if core.world_table_of(w,shapes.Shape)==nil {api.call_fail(call,api.SERVER_ERROR,"The project world has no Shape: enable the shapes plugin");return}
     first:=core.NONE
-    if p.id!=0 {
-        first=core.entity_of(core.world_entities(w),p.id)
-        if first==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.id);return}
-        if !editor.entity_has(w,first,shapes.Shape) {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x has no Shape; give 0 for the plane z 0 of the world",p.id);return}
+    if p.entity[0]!=0 {
+        named:bool
+        if first,named=editor.api_call_entity(call,w,p.entity[:]);!named {return}
+        if !editor.entity_has(w,first,shapes.Shape) {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no Shape; give 0 for the plane z 0 of the world",base.text_get(p.entity[:]));return}
     }
     plane:=plane_of(w,first)
     stroke:Stroke
@@ -92,15 +91,14 @@ api_stamp :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_corner :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Corner_Params)
-    if editor.playing(s) {api.call_fail(call,api.SERVER_ERROR,"Corners are edited from Edit: stop the game or the simulation with play.stop");return}
     w:=editor.edited_world(s)
-    e:=core.entity_of(core.world_entities(w),p.id)
-    if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.id);return}
+    e,named:=editor.api_call_entity(call,w,p.entity[:])
+    if !named {return}
     shape,found:=editor.entity_get(w,e,shapes.Shape)
-    if !found || shape.kind!=.Outline {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x has no outline Shape",p.id);return}
+    if !found || shape.kind!=.Outline {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no outline Shape",base.text_get(p.entity[:]));return}
     if p.op==.Move && !editor.tool_call_given(call,"to") {api.call_fail(call,api.INVALID_PARAMS,"to: a move needs the world point the corner goes to");return}
     t:=editor.entity_world(w,e)
-    if !shapes.scale_usable(t.scale) {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x has a scale with a zero axis",p.id);return}
+    if !shapes.scale_usable(t.scale) {api.call_failf(call,api.INVALID_PARAMS,"entity %s has a scale with a zero axis",base.text_get(p.entity[:]));return}
     at,to:=local_of(t,p.at),local_of(t,p.to)
     index:int
     found_place:bool
@@ -110,7 +108,7 @@ api_corner :: proc(s:^editor.Session,call:^api.Call) {
         edge,point,near:=shapes.shape_edge_near(&shape,at,1e30)
         index,at,found_place=edge,point,near
     }
-    if !found_place {api.call_failf(call,api.INVALID_PARAMS,"id: entity %x has no corners",p.id);return}
+    if !found_place {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners",base.text_get(p.entity[:]));return}
     if p.op==.Move {at=to}
     if !editor.api_edit_begin(s,call,p.op==.Move?"Move corner":p.op==.Insert?"Insert corner":"Remove corner") {return}
     error:=corner_edit(s,e,p.op,index,at,"")
@@ -123,6 +121,6 @@ api_corner :: proc(s:^editor.Session,call:^api.Call) {
     if !editor.api_edit_end(s,call,error==.None) {return}
     now,_:=editor.entity_get(w,e,shapes.Shape)
     out:=api.call_result(call,Corner_Result)
-    out.id,out.corners=p.id,u32(now.point_count)
+    out.id,out.corners=editor.api_entity_id(w,e),u32(now.point_count)
     out.corner=u32(p.op==.Insert?index+1:index)
 }

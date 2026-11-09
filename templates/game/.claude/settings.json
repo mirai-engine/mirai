@@ -1,1 +1,0 @@
-{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"mirai rpc --client claude-code ai.turn_end >/dev/null 2>&1 || true"}]}]}}

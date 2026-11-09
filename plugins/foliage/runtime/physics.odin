@@ -206,13 +206,17 @@ collider_remove :: proc(fp:^Foliage_Physics,w:^sim.World,cell,instance:int) -> b
     return true
 }
 
-// The instance a hit of physics met on the foliage (physics.Hit: its body
-// and shape): its Foliage, its cell and its id, for foliage_remove.
-foliage_hit :: proc(fp:^Foliage_Physics,w:^sim.World,body:sim.Body_Handle,shape:sim.Shape_Handle) -> (foliage:core.Entity,coord:[2]i32,instance:u64,found:bool) {
+// The instance of a Foliage a hit of physics met; false for anything else.
+hit_of :: proc(fp:core.Ref(Foliage_Physics),state:core.Ref(physics.Physics_State),hit:physics.Hit) -> (found:Foliage_Plant,ok:bool) {
+    return shape_instance(fp.ptr,&state.world,hit.body,hit.shape)
+}
+
+@(private)
+shape_instance :: proc(fp:^Foliage_Physics,w:^sim.World,body:sim.Body_Handle,shape:sim.Shape_Handle) -> (found:Foliage_Plant,ok:bool) {
     if body=={} || !sim.shape_valid(w,shape) {return}
     for cell in fp.cells {
         if cell.body!=body {continue}
-        return cell.owner,cell.coord,sim.shape_user_data(w,shape),true
+        return {cell.owner,cell.coord,sim.shape_user_data(w,shape)},true
     }
     return
 }

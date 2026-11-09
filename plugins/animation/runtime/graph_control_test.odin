@@ -113,7 +113,7 @@ mirror_fixture :: proc(t:^testing.T,f:^Mirror_Fixture) -> ^Playing {
     core.entities_init(&f.entities)
     f.rig=core.create(&f.entities)
     core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.table_settle(&f.transforms,&f.entities)
-    f.bones={{parent=-1,translation={0,1,0},rotation=1,scale={1,1,1}},{parent=0,translation={.2,-.1,0},rotation=1,scale={1,1,1}},{parent=0,translation={-.2,-.1,0},rotation=1,scale={1,1,1}}}
+    f.bones={{parent=-1,translation={0,1,0},rotation=1,scale={1,1,1}},{parent=0,translation={-.2,-.1,0},rotation=1,scale={1,1,1}},{parent=0,translation={.2,-.1,0},rotation=1,scale={1,1,1}}}
     names:=[3]string{"pelvis","leg_l","leg_r"};paths:=[3]string{"pelvis","pelvis/leg_l","pelvis/leg_r"}
     for &bone,i in f.bones {base.text_set(bone.name[:],names[i]);base.text_set(bone.path[:],paths[i]);bone.target=base.name_hash(paths[i])}
     pairs,ok:=skeleton_mirror_pairs(f.bones[:])
@@ -140,7 +140,7 @@ mirror_fixture_free :: proc(f:^Mirror_Fixture) {
 @(test)
 mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^testing.T) {
     f:Mirror_Fixture;state:=mirror_fixture(t,&f);defer mirror_fixture_free(&f)
-    testing.expect(t,len(state.mirror_pairs)==4 && state.mirror_pairs[2]==3 && state.mirror_pairs[3]==2 && abs(state.mirror_plane.normal.x-1)<1e-5)
+    testing.expect(t,len(state.mirror_pairs)==4 && state.mirror_pairs[2]==3 && state.mirror_pairs[3]==2 && abs(abs(state.mirror_plane.normal.x)-1)<1e-5)
     events:Animation_Events;defer {delete(events.items);delete(events.plays.items)}
     nodes:=[1]Graph_Node{GRAPH_NODE_DEFAULT};base.text_set(nodes[0].name[:],"kick");base.text_set(nodes[0].clip[:],"kick");nodes[0].loop,nodes[0].sync_mode=false,.Independent
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
@@ -159,7 +159,7 @@ mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^te
     }
     left,right:=poses[1][2],poses[1][3]
     testing.expect(t,abs(abs(linalg.dot(right.rotation,mm.quat_axis_angle({0,0,1},-.5)))-1)<1e-4,"the right leg takes the reflected turn of the left one")
-    testing.expect(t,abs(abs(linalg.dot(left.rotation,mm.Quat(1)))-1)<1e-4 && linalg.length(left.position-mm.Vec3{.2,-.1,0})<1e-4,"the left leg takes the rest of the right one")
+    testing.expect(t,abs(abs(linalg.dot(left.rotation,mm.Quat(1)))-1)<1e-4 && linalg.length(left.position-mm.Vec3{-.2,-.1,0})<1e-4,"the left leg takes the rest of the right one")
     testing.expect(t,abs(poses[1][1].position.x+.5)<1e-4 && abs(poses[0][1].position.x-.5)<1e-4,"the pelvis slides the other way")
     testing.expect(t,abs(motions[0].translation.x-.5)<1e-4 && abs(motions[1].translation.x+.5)<1e-4,"root motion is reflected")
     rig_mirrored:=poses[0]

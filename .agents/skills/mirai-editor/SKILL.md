@@ -197,7 +197,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills`; the steps of the
   agent's tools,
   `ai_codex_models_are_restricted_and_tools_of_the_agent_are_steps_once_they_end`. Its image,
-  `editor.action` `ai_chat` and `editor.capture` with the UI in a session.
+  `editor.action` `ai_chat` and `capture` with the UI in a session.
 - Chat database and its search: the `ai_store_*` tests of `editor/ai_store_test.odin` (reopening,
   search ranked and kept up to date, a corrupt database left alone, the import of the files of
   before it, each table, kinds and parents, a second store on the same project); live,
@@ -235,13 +235,13 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat`,
   `ai_a_subagent_is_inspected_from_its_own_view_and_written_to` and
   `ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents`; its image,
-  `editor.capture` with the UI in a session, also expanded.
+  `capture` with the UI in a session, also expanded.
 - Attribution of the agent's commands: `an_agent_command_is_attributed_to_the_turn_its_agent_runs`
   and, in `tools/mirai`, `the_commands_of_an_agent_call_its_editor_in_its_context`; live, a command
   agent added with `ai.agent.add` whose turn runs `mirai rpc`, then `ai.status` and `ai.revert` of
   that turn.
 - The rail, the left panel and a docked Details: `editor/shell_dock_test.odin`; its image, `preferences.set` of the
-  `Layout` and `editor.capture` with the UI.
+  `Layout` and `capture` with the UI.
 - Project panels: `panels_read_back_what_they_write`,
   `panel_buttons_set_their_fields_as_one_step`,
   `panels_are_kept_in_the_project_and_deleted_with_their_file` and
@@ -262,7 +262,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - Sections: `editor/sections_test.odin` (the view without edits and its returned rule, the lock by
   each path and by `scene.set`, traveling, saving what changed and staying unsaved if one is not
   written, the reference a step makes and what hangs from one that left, the map and its API); its
-  panel, `editor.capture` with the UI in the World tab.
+  panel, `capture` with the UI in the World tab.
 - Picking: `editor/pick_test.odin`; that a click builds only what its ray reaches and the cache
   stays while other meshes change,
   `a_pick_builds_only_what_its_ray_reaches_and_keeps_it_while_other_meshes_change`.
@@ -277,7 +277,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back` (the chain over the saved
   file, a truncated log, the replay by `Id` and the copy that deletes the previous one); one chain
   per tab and all of them at startup,
-  `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; recovery after killing
+  `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; what is offered stays
+  aside while the document is edited and saved,
+  `a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved`; recovery after killing
   the process, by API in an open editor. Prefab records in collaboration:
   `prefab_records_of_one_editor_reach_the_others_in_the_order_of_the_host`.
 - Journal, undo and transactions: `editor/journal_test.odin` (each reader's cursors, steps that
@@ -298,7 +300,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - Thumbnails: the stored view of a scene,
   `the_view_of_a_scene_is_kept_at_each_size_and_shown_where_it_already_is`; those of a plugin, in
   its skill ([previews](../mirai-plugins/references/previews.md#verification)); their image,
-  `editor.capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
+  `capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
 - `edits_sync_initial`, from `plugins/terrain/editor`:
   `terrain_initial_asset_revision_is_the_baseline_of_the_first_undo`. A material imported unsaved
   on reimport:
@@ -314,7 +316,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   receives: `a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was`.
 - Prefabs: `editor/prefabs_test.odin`, with
   `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`. Content
-  browser: `editor/content_test.odin`, and its image with `editor.capture` with the UI and
+  browser: `editor/content_test.odin`, and its image with `capture` with the UI and
   `editor.input` in a session. Create and `asset.create`: `editor/asset_create_test.odin`,
   `content_shows_empty_folders_and_the_line_of_create` and
   `a_right_click_on_a_folder_creates_an_asset_named_in_place`; rename, move and duplicate,
@@ -324,7 +326,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `another_asset_of_the_kind_in_front_takes_its_tab_while_it_has_no_history`,
   `the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_message` and
   `a_value_of_a_variant_is_a_number_a_bool_or_its_components`; their view in an open editor,
-  `editor.document` (`Open` with the asset's path) and `editor.capture` with the UI.
+  `editor.document` (`Open` with the asset's path) and `capture` with the UI.
 - Build and reload, recovery, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:
   [rendering](../mirai-rendering/SKILL.md#verification); protocol:

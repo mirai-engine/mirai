@@ -7,6 +7,13 @@ and their mention in the skills.
 ## Odin
 
 Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
+- **Procedure types in a `foreign` block ignore `default_calling_convention`** (no issue;
+  publishing it requires the user's confirmation).
+  - Defect: in `@(default_calling_convention="odin") foreign x { f :: proc(cb:proc()) --- }` the
+    type of `cb` is `proc "cdecl" ()`, so passing an Odin procedure does not compile.
+  - Workaround: `inner_procs_odin` (`cook/build/declare.odin`) writes those types as
+    `proc "odin" (`.
+  - To test: the example compiles passing an Odin procedure as `cb`.
 - **`-use-separate-modules` objects beyond `MAX_PATH` on Windows** (no issue; publishing it
   requires the user's confirmation).
   - Defect: LLVM writes the object of each module (`<output>-<module>.obj`), but Odin's link fails

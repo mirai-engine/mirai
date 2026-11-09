@@ -77,13 +77,13 @@ terrain_debris :: proc(
             if layer.piece!={} {
                 for _ in 0..<debris_count(&o.pieces[i],taken,layer.piece_volume,&rooms[slot][0]) {
                     direction:=spread(&seed)
-                    root,ok:=debris_spawn(commands,app,layer.piece,dig.center+direction*dig.radius*0.2,dig.owner,problems)
+                    root,ok:=debris_spawn(commands,app,layer.piece,dig.center+direction*dig.radius*0.2,problems)
                     if ok && config.speed>0 {phys.set_velocity(bodies,root,(direction+{0,1,0})*config.speed*0.5)}
                 }
             }
             if layer.drop!={} {
                 for _ in 0..<debris_count(&o.drops[i],taken,layer.drop_volume,&rooms[slot][1]) {
-                    debris_spawn(commands,app,layer.drop,dig.center+spread(&seed)*dig.radius*0.1,dig.owner,problems)
+                    debris_spawn(commands,app,layer.drop,dig.center+spread(&seed)*dig.radius*0.1,problems)
                 }
             }
         }
@@ -133,14 +133,9 @@ spread :: proc "contextless" (seed:^u64) -> [3]f32 {
 }
 
 @(private)
-debris_spawn :: proc(commands:core.Commands,app:^host.App,prefab:base.Asset_Id,at:[3]f32,owner:core.Entity,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
+debris_spawn :: proc(commands:core.Commands,app:^host.App,prefab:base.Asset_Id,at:[3]f32,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
     transform:=core.TRANSFORM_IDENTITY
     transform.position=at
-    report,error:=scene.spawn(commands,app,{prefab=prefab,transform=transform})
-    if error!=.None {
-        name:[base.ASSET_ID_TEXT]u8
-        core.report(problems,owner,"terrain_debris.prefab","the debris prefab %s of this terrain could not spawn (%v): give each layer of Terrain_Debris a .prefab of the assets, or none",host.assets_name(app.assets,prefab,&name),error)
-        return
-    }
-    return report.root,true
+    root=scene.spawn(scene.Spawner{commands,app,problems},prefab,transform)
+    return root,root!=core.NONE
 }

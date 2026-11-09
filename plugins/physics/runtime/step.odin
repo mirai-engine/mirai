@@ -716,14 +716,14 @@ character_shape_same :: proc "contextless" (l:^Link,c:Character,capsule:Collider
 
 @(private)
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    forward:=mm.quat_rotate(rotation,{0,0,-1})
-    return linalg.atan2(-forward.x,-forward.z)
+    forward:=mm.quat_forward(rotation)
+    return mm.yaw_of_direction(forward)
 }
 
-// The look yaw of a character's body rotation (its +Z faces the look) in the frame of the vertical it has, or
+// The look yaw of a character's body rotation (its -Z faces the look) in the frame of the vertical it has, or
 // in the one it takes from its rotation when it is made from the identity.
 look_yaw_of :: proc "contextless" (frame,rotation:mm.Quat) -> f32 {
-    return sim.character_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
+    return sim.up_frame_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
 }
 
 // The frame of the vertical of the character of e: the identity without one.
@@ -1017,11 +1017,11 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 jumped(s,e,from,turned*conj(was),request.position)
                 pose_write(s,l,e,{request.position,turned})
                 state.stats.teleports+=1
-            case .Velocity,.Launch: sim.character_launch(w,l.character,request.linear,request.kind==.Velocity || request.override)
+            case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
             case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
-            case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, launch it or write its Character_Move")
+            case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
             }
             continue
         }
@@ -1088,8 +1088,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 l.hold.release,l.hold.keep_velocity=true,request.override
                 if !s.playing || .Target in l.hold.by || !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {hold_end(w,l,.Manipulation,l.hold.keep_velocity)}
             }
-        case .Launch:
-            request_problem(s,e,request.kind,"physics.request_launch","launch is for a Character","give a body velocity with set_velocity or an impulse")
         }
     }
 }
@@ -1123,6 +1121,7 @@ poses_write :: proc(s:^Sync) {
             if row:=core.row_of(s.character_states,e);row>=0 {
                 next:=character_state_of(sim.character_state(w,l.character))
                 next.height=sim.character_desc(w,l.character).height
+                next.velocity=sim.character_velocity(w,l.character)
                 next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
                 if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
             }

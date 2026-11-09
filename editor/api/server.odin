@@ -43,6 +43,7 @@ server_init :: proc(s:^Server,desc:Server_Desc) -> Init_Error {
     s.name=clone_text(allocator,desc.name!=""?desc.name:"mirai")
     s.version=clone_text(allocator,desc.version!=""?desc.version:"1")
     s.instructions=clone_text(allocator,desc.instructions!=""?desc.instructions:"engine_describe lists the methods and the plugins of the project; the tools of a plugin come with mirai mcp --plugins <names>.")
+    s.docs_root=clone_text(allocator,desc.docs_root)
     serial.writer_init_fixed(&s.out,s.response[HEAD_ROOM:])
     serial.writer_init_fixed(&s.stage,s.staging)
     err:net.Network_Error
@@ -64,7 +65,7 @@ server_destroy :: proc(s:^Server) {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
         delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
     }
-    delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator)
+    delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator);delete(s.docs_root,s.allocator)
     plugins_free(s)
     guides_free(s)
     delete(s.methods,s.allocator);delete(s.conns,s.allocator);delete(s.conn_memory,s.allocator)
@@ -204,7 +205,9 @@ conn_reject :: proc(s:^Server,conn:^Conn,status:int,message:string,now:time.Tick
 
 @(private)
 conn_read :: proc(s:^Server,conn:^Conn,now:time.Tick) {
-    if time.tick_diff(conn.started,now)>s.timeout {s.stats.timeouts+=1;conn_close(conn);return}
+    // A connection a client keeps between requests waits for it without limit.
+    idle:=conn.keep && conn.used==0
+    if !idle && time.tick_diff(conn.started,now)>s.timeout {s.stats.timeouts+=1;conn_close(conn);return}
     for conn.state==.Reading {
         if conn.used>=len(conn.buffer) {conn_reject(s,conn,431,"request header too large",now);return}
         n,err:=net.recv_tcp(conn.socket,conn.buffer[conn.used:])
@@ -297,6 +300,10 @@ head_parse :: proc(s:^Server,conn:^Conn,head:string) -> (status:int,message:stri
             length,has_length=parsed,true
         case strings.equal_fold(name,"transfer-encoding"):
             return 411,"Content-Length is required; chunked bodies are not accepted"
+        case strings.equal_fold(name,"connection"):
+            conn.keep=strings.equal_fold(value,"keep-alive")
+        case strings.equal_fold(name,"accept"):
+            conn.stream=strings.contains(value,"text/event-stream")
         case strings.equal_fold(name,"content-type"):
             kind:=value
             if semicolon:=strings.index_byte(kind,';');semicolon>=0 {kind=strings.trim_space(kind[:semicolon])}
@@ -343,8 +350,20 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
         write_error_envelope(base.arena_allocator(&s.scratch),&s.out,"",{INVALID_REQUEST,conn.reject_message,""})
     } else {
         body:=string(conn.buffer[conn.head:][:conn.length])
+        s.running={conn=index}
         has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]))
+        running_end(s)
         if !has_body {status=202}
+    }
+    if s.running.streamed && has_body {
+        // The answer is the last event of the stream its progress opened.
+        serial.text_write_raw(&s.out,"\n\n")
+        conn.keep=false
+        start:=HEAD_ROOM-len(STREAM_DATA)
+        copy(s.response[start:],STREAM_DATA)
+        s.sending,s.send_at,s.send_end=index,start,HEAD_ROOM+len(serial.writer_bytes(&s.out))
+        conn.started=time.tick_now()
+        return
     }
     body_bytes:=serial.writer_bytes(&s.out)
     if !has_body {body_bytes=nil}
@@ -352,7 +371,9 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
     text:string
     for entry in HTTP_STATUS {if entry.code==status {text=entry.text}}
     allow:=status==405?"Allow: POST\r\n":""
-    head:=fmt.bprintf(head_buffer[:],"HTTP/1.1 %d %s\r\n%sContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",status,text,allow,len(body_bytes))
+    keep:=conn.keep && conn.reject==0 && conn.used==conn.head+conn.length
+    conn.keep=keep
+    head:=fmt.bprintf(head_buffer[:],"HTTP/1.1 %d %s\r\n%sContent-Type: application/json\r\nContent-Length: %d\r\nConnection: %s\r\n\r\n",status,text,allow,len(body_bytes),keep?"keep-alive":"close")
     start:=HEAD_ROOM-len(head)
     copy(s.response[start:],head)
     s.sending=index
@@ -371,6 +392,11 @@ send_progress :: proc(s:^Server,now:time.Tick) {
         if err!=nil || n==0 {conn_close(conn);s.sending=-1;return}
     }
     s.sending=-1
+    if conn.keep {
+        // The next request of the same client: everything per-request starts over.
+        conn^={socket=conn.socket,state=.Reading,buffer=conn.buffer,started=now,keep=true}
+        return
+    }
     if conn.reject!=0 || conn.used>conn.head+conn.length {
         net.shutdown(conn.socket,.Send)
         conn.state=.Draining

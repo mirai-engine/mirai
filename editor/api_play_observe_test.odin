@@ -164,6 +164,24 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
     title,_:=observe_node(screen,"left/title")
     testing.expect_value(t,title["text"].(json.String) or_else "","Inventory")
 
+    // What can be pressed on the screen on top, in the same window points.
+    top,on_top:=play_ui_top(&view,0,false)
+    testing.expect(t,on_top && !top.modal)
+    if testing.expect_value(t,len(top.buttons),2) {
+        testing.expect_value(t,top.buttons[0].name,"left/action")
+        testing.expect(t,top.buttons[0].laid && !top.buttons[0].disabled && top.buttons[0].rect[2]==180)
+        testing.expect(t,top.buttons[1].disabled)
+    }
+
+    // A press goes to the middle of the button it names, by the names shown.
+    center,problem:=api_press_center(&top,"Left/Action")
+    testing.expect_value(t,problem,"")
+    testing.expect(t,top.buttons[0].rect[0]<center.x && center.y==top.buttons[0].rect[1]+top.buttons[0].rect[3]*0.5)
+    _,problem=api_press_center(&top,"right/action")
+    testing.expect(t,strings.contains(problem,"disabled"),problem)
+    _,problem=api_press_center(&top,"nothing")
+    testing.expect(t,strings.contains(problem,"left/action"),problem)
+
     // all lists the screen the frame did not build too, without nodes.
     view.all=true
     serial.writer_init(&w,0,context.temp_allocator)
@@ -227,20 +245,4 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     text=string(serial.writer_bytes(&w))
     api_result_shape_expect(t,text,Api_Play_Audio)
     testing.expect(t,strings.contains(text,`"voices":[]`) && strings.contains(text,`"mixer":{"voices_active":0`))
-}
-
-// Without a game, play.ui and play.audio say how to start one.
-@(test)
-play_ui_and_play_audio_need_a_game :: proc(t:^testing.T) {
-    s:Session
-    ui_params:Api_Play_Ui_Params
-    ui_method:=api.Method{params_id=Api_Play_Ui_Params,result_id=Api_Play_Ui}
-    call:=api.Call{method=&ui_method,params=&ui_params,allocator=context.temp_allocator}
-    api_play_ui(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.message,"play.start"))
-    audio_params:Api_Play_Audio_Params
-    audio_method:=api.Method{params_id=Api_Play_Audio_Params,result_id=Api_Play_Audio}
-    call={method=&audio_method,params=&audio_params,allocator=context.temp_allocator}
-    api_play_audio(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.message,"play.start"))
 }

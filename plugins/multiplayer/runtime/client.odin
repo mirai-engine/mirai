@@ -487,7 +487,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) 
             }
         }
         if e==core.NONE && r.pose.prefab!={} {
-            if report,error:=scene.spawn(core.commands_of(w),app,{prefab=r.pose.prefab,transform=local,transient=true});error==.None {e=report.root}
+            e=scene.spawn(scene.Spawner{core.commands_of(w),app,core.world_storage_of(w,core.Problems)},r.pose.prefab,local,transient=true)
         }
         if e==core.NONE {
             e=core.create(es)

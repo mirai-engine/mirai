@@ -108,6 +108,8 @@ look_begin :: proc(p:^Pane,n:^ui.Tree_Node,states:ui.Style_States) {
     if .Radius not_in f {v.radius=under.radius}
     if .Stroke_Width not_in f {v.stroke_width=under.stroke_width}
     if .Shadow not_in f {v.shadow,v.shadow_color,v.shadow_blur,v.shadow_offset=under.shadow,under.shadow_color,under.shadow_blur,under.shadow_offset}
+    if .Move not_in f {v.move=under.move}
+    if .Scale not_in f {v.scale=under.scale}
     if .Text_Font not_in f {v.text.font=under.text.font}
     if .Text_Size not_in f {v.text.size=under.text.size}
     if .Text_Color not_in f {v.text.color=under.text.color}
@@ -144,6 +146,8 @@ look_changed :: proc(p:^Pane,label:string,field:ui.Style_Field,changes:bool) {
     case .Radius:       differs=v.radius!=w.radius
     case .Stroke_Width: differs=v.stroke_width!=w.stroke_width
     case .Shadow:       differs=v.shadow!=w.shadow || v.shadow_color!=w.shadow_color || v.shadow_blur!=w.shadow_blur || v.shadow_offset!=w.shadow_offset
+    case .Move:         differs=v.move!=w.move
+    case .Scale:        differs=v.scale!=w.scale
     case .Text_Font:    differs=v.text.font!=w.text.font
     case .Text_Size:    differs=v.text.size!=w.text.size
     case .Text_Color:   differs=v.text.color!=w.text.color;look.patch.tokens.text=.Literal

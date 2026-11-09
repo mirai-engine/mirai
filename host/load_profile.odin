@@ -32,7 +32,7 @@ LOAD_FUNCTION_BYTES :: 64
 LOAD_NO_ZONE :: -1 // the worker of a phase inside a loop function: its own zone holds it
 
 Load_Kind :: enum u8 {
-    Scene,   // a scene became the document or the world: scene.load, a scene a game asks for, the start scene of the player
+    Scene,   // a scene became the document or the world: scene.open, a scene a game asks for, the start scene of the player
     Play,    // a Play of the editor started from the document
     Section, // a section joined the world
 }

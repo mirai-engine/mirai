@@ -46,16 +46,14 @@ SLOT_CAPACITY :: 48
 LABEL_CAPACITY :: 64
 EXTENSION :: ".save"
 FOLDER :: "saves"
-VERSION :: u32(5)
-REQUEST_CAPACITY :: 8
+VERSION :: u32(6)
 CHECKPOINT :: "checkpoint" // the slot of the last checkpoint
 
 @(private) MAGIC :: [4]u8{'M','S','A','V'}
 @(private) DOCUMENT :: base.Asset_Id{0x6576617369617269,1}
 
-// Profile writes the profile of the player and Options the options it chose;
 // New starts a game, End ends it and Label names it.
-Op :: enum u8 {Save,Load,Delete,Profile,Options,New,End,Label}
+Op :: enum u8 {Save,Load,Delete,New,End,Label}
 
 Slot_Kind :: enum u8 {Manual,Autosave,Checkpoint}
 
@@ -69,7 +67,7 @@ Error :: enum u8 {
     Version,      // written by another version of the engine
     Failed,       // the world could not be captured, or the slot did not load into it: then it stays as it was
     Write_Failed,
-    Busy,         // too many requests wait for the next frame, or slots to be written
+    Busy,         // WRITES_CAPACITY slots wait to be written
     No_Room,      // THUMBNAIL_TEXTURES thumbnails are held as textures, or the assets or the renderer have no room for another
 }
 
@@ -95,6 +93,7 @@ Request :: struct {
     kind:Slot_Kind,
     slot:[SLOT_CAPACITY]u8 `mirai:"text"`,   // empty for an autosave: the oldest of them
     label:[LABEL_CAPACITY]u8 `mirai:"text"`, // empty: the label of the game (Save_Game)
+    invalid:Error, // what is wrong with what was asked: it is not served, and is a problem
 }
 
 Result :: struct {
@@ -168,57 +167,62 @@ error_text :: proc(error:Error) -> string {
     switch error {
     case .None:         return ""
     case .Invalid_Slot: return "the save slot name is not valid: use up to 47 letters, digits, spaces, '-' or '_', without leading or trailing spaces, and not a device name such as con or com1"
-    case .Invalid_Label: return "the label of the save is too long"
+    case .Invalid_Label: return "the label of the save is too long: keep it under 64 bytes"
     case .Unavailable:  return "a client of a network session does not save: the server does"
     case .Not_Found:    return "no save exists in that slot"
     case .Corrupt:      return "the save is corrupt"
     case .Version:      return "the save was written by another engine version"
     case .Failed:       return "the world could not be captured or restored"
     case .Write_Failed: return "the save file could not be written"
-    case .Busy:         return "too many save or load requests are pending; wait for their results"
+    case .Busy:         return "too many slots are waiting to be written; wait for their results"
     case .No_Room:      return "there is no room for another thumbnail texture: release those no longer shown with thumbnail_release"
     }
     return ""
 }
 
-// Queues saving the world to a slot, with a label or that of the game. The
-// result arrives in Save_Results.
-request_save :: proc(requests:^Save_Requests,slot:string,label:="") -> Error {return request(requests,.Save,slot,label=label)}
+// Requests return nothing: the answer of each is in Save_Results, and a slot
+// or a label that is not valid is also a problem that says how to fix it.
+
+// Queues saving the world to a slot, with a label or that of the game.
+request_save :: proc(requests:^Save_Requests,slot:string,label:="") {request(requests,.Save,slot,label=label)}
 
 // Queues replacing the world with the one of a slot: every entity is destroyed
 // and those of the slot take their place, so handles change and events in
 // flight name entities that are gone.
-request_load :: proc(requests:^Save_Requests,slot:string) -> Error {return request(requests,.Load,slot)}
+request_load :: proc(requests:^Save_Requests,slot:string) {request(requests,.Load,slot)}
 
-request_delete :: proc(requests:^Save_Requests,slot:string) -> Error {return request(requests,.Delete,slot)}
+request_delete :: proc(requests:^Save_Requests,slot:string) {request(requests,.Delete,slot)}
 
 // Queues an autosave: into the oldest of the slots of autosave.
-request_autosave :: proc(requests:^Save_Requests,label:="") -> Error {return request(requests,.Save,"",.Autosave,label)}
+request_autosave :: proc(requests:^Save_Requests,label:="") {request(requests,.Save,"",.Autosave,label)}
 
 // Queues a checkpoint: the world into the slot CHECKPOINT.
-request_checkpoint :: proc(requests:^Save_Requests,label:="") -> Error {return request(requests,.Save,CHECKPOINT,.Checkpoint,label)}
+request_checkpoint :: proc(requests:^Save_Requests,label:="") {request(requests,.Save,CHECKPOINT,.Checkpoint,label)}
 
 // Queues loading the last checkpoint.
-request_load_checkpoint :: proc(requests:^Save_Requests) -> Error {return request(requests,.Load,CHECKPOINT)}
+request_load_checkpoint :: proc(requests:^Save_Requests) {request(requests,.Load,CHECKPOINT)}
 
 // Queues starting a game: no time played, the label given, and autosaves on.
-request_new_game :: proc(requests:^Save_Requests,label:="") -> Error {return request(requests,.New,"",label=label)}
+request_new_game :: proc(requests:^Save_Requests,label:="") {request(requests,.New,"",label=label)}
 
 // Queues ending the game, as a menu does: no autosaves and no time played
 // until a new game or a load.
-request_end_game :: proc(requests:^Save_Requests) -> Error {return request(requests,.End,"")}
+request_end_game :: proc(requests:^Save_Requests) {request(requests,.End,"")}
 
 // Queues naming the game: the label of the slots that are not given one.
-request_label :: proc(requests:^Save_Requests,label:string) -> Error {return request(requests,.Label,"",label=label)}
+request_label :: proc(requests:^Save_Requests,label:string) {request(requests,.Label,"",label=label)}
 
-request :: proc(requests:^Save_Requests,op:Op,slot:string,kind:=Slot_Kind.Manual,label:="") -> Error {
-    if (op==.Save || op==.Load || op==.Delete) && kind!=.Autosave && !slot_valid(slot) {return .Invalid_Slot}
-    if len(requests.queue.items)>=REQUEST_CAPACITY {return .Busy}
-    r:=Request{op=op,kind=kind}
+request :: proc(requests:^Save_Requests,op:Op,slot:string,kind:=Slot_Kind.Manual,label:="") {
+    r:=Request{op=op,kind=kind,invalid=request_error(op,slot,kind,label)}
     base.text_set(r.slot[:],slot)
-    if !base.text_set(r.label[:],label) {return .Invalid_Label}
+    base.text_set(r.label[:],label)
     core.push(&requests.queue,r)
-    return .None
+}
+
+// What is wrong with a request, for who answers at once (an API).
+request_error :: proc(op:Op,slot:string,kind:=Slot_Kind.Manual,label:="") -> Error {
+    if (op==.Save || op==.Load || op==.Delete) && kind!=.Autosave && !slot_valid(slot) {return .Invalid_Slot}
+    return len(label)>=LABEL_CAPACITY?.Invalid_Label:.None
 }
 
 // Where the slots are kept from now on; made when the first one is written.
@@ -326,7 +330,8 @@ delete_slot :: proc(state:^Save_State,app:^host.App,slot:string) -> Error {
 
 // Serves the requests of the tick before, first thing of the frame, and the
 // autosaves that are due. The first time a world runs it reads the profile
-// of the player into it.
+// of the player into it, and from then on it keeps the files of the player
+// up to date (kept_watch).
 @(step="input",loops="game")
 saves_serve :: proc(
     world:core.World_Ref,app:^host.App,requests:^Save_Requests,results:^Save_Results,state:^Save_State,work:^Save_Work,
@@ -353,8 +358,9 @@ saves_serve :: proc(
         result:=Result{op=r.op,kind=r.kind,slot=r.slot}
         queued:=false
         switch {
-        case r.op==.Profile: result.error=profile_write(world,app,state)
-        case r.op==.Options: result.error=options_write(world,app,bindings.ptr)
+        case r.invalid!=.None:
+            result.error=r.invalid
+            core.report(problems,core.NONE,"save.request","the request to %v the slot %s was refused: %s",r.op,base.text_get(r.slot[:]),error_text(r.invalid))
         case r.op==.New:     game^={label=r.label}
         case r.op==.End:     game.off=true
         case r.op==.Label:   game.label=r.label
@@ -375,6 +381,7 @@ saves_serve :: proc(
         if !queued {core.push(&results.queue,result)}
     }
     if work==nil {return}
+    kept_watch(work,world,app,state,bindings.ptr,frame.dt,problems)
     root:scene.Scene_Root
     if r:=core.world_storage_of(world,scene.Scene_Root);r!=nil {root=r^}
     due:=autosave_watch(work,game,settings.ptr^,root,references)

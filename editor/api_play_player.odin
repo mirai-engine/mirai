@@ -28,8 +28,8 @@ Play_Player_Snapshot :: struct {
 @(private)
 play_player_entity :: proc(w:core.World_Ref,e:core.Entity) -> (value:Play_Player_Entity) {
     if !core.alive(core.world_entities(w),e) {return}
-    value.entity=fmt.tprintf("%016x",u64(e))
-    if id:=api_entity_id(w,e);id!=0 {value.id=fmt.tprintf("%016x",u64(id))}
+    value.entity=api_handle_text(e)
+    if id:=api_entity_id(w,e);id!=0 {value.id=fmt.tprintf("0x%016x",u64(id))}
     value.name=entity_name(w,e)
     local:=entity_local(w,e)
     value.position,value.scale=local.position,local.scale
@@ -62,7 +62,7 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Play_Player_Snapshot) {
 @(private)
 api_play_player :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Player_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     bytes,error:=json.marshal(play_player_snapshot(core.world_ref(r.world,s.info)),{},call.allocator)
     if error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The player snapshot could not be serialized");return}
     serial.text_write_raw(call.out,string(bytes))

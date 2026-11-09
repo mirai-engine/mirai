@@ -712,8 +712,6 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
             }
         case "channel":
             channel,_=rpc_text(&a,"channel",channel_text[:])
-        case:
-            rpc_fail(&a,"%s is not a parameter: material, parameters or channel",key)
         }
     }
     if a.failed {return}
@@ -731,7 +729,7 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
     if playing(s) {api.call_fail(call,api.SERVER_ERROR,"A game is playing; the document of a material opens in Edit");return}
     id,found:=asset_named(s,call,name,asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
-    if !asset_document_show(s,id) {api.call_fail(call,api.SERVER_ERROR,"The document of the material could not open");return}
+    if !asset_document_show(s,id) {api.call_failf(call,api.SERVER_ERROR,"The document of %s could not open: %s",name,string(s.toast[:s.toast_length]));return}
     material_document_follow(s)
     w:=&s.materials.document
     w.looked=0
@@ -818,8 +816,6 @@ api_material_variants :: proc(s:^Session,call:^api.Call) {
                 if !labelled {rpc_fail(&a,"a variant needs its label");return}
                 count+=1
             }
-        case:
-            rpc_fail(&a,"%s is not a parameter: material or variants",key)
         }
     }
     if a.failed {return}
@@ -837,7 +833,7 @@ api_material_variants :: proc(s:^Session,call:^api.Call) {
     assets:=s.app.assets
     if assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no assets");return}
     loaded:=host.assets_material(assets,id)
-    if loaded==nil || loaded.failed {api.call_fail(call,api.SERVER_ERROR,"The material could not be loaded");return}
+    if loaded==nil || loaded.failed {api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"material"));return}
     program:=erender.surface_program(assets,host.assets_material_values(assets,loaded.row).program_id)
     if program==nil && loaded.info.program[0]!=0 {api.call_fail(call,api.SERVER_ERROR,"The program of the material is not published yet");return}
     for &v,vi in variants[:count] {

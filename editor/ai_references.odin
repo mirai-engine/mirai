@@ -160,7 +160,7 @@ ai_reference_file :: proc(index:int) -> string {return fmt.tprintf("reference-%d
 @(private)
 ai_references_content :: proc(s:^Session,task:^Ai_Task,content:^[dynamic]acp.Content) -> (problem:string,ok:bool) {
     for i in 0..<task.references {
-        if !host.app_png_write_wait(s.app,&task.reference_writes[i]) && !os.is_file(ai_task_path(s,task,ai_reference_file(i+1))) {return "A reference image could not be written",false}
+        if error:=host.app_png_write_wait(s.app,&task.reference_writes[i]);error!=nil && !os.is_file(ai_task_path(s,task,ai_reference_file(i+1))) {return fmt.tprintf("A reference image could not be written: %s",os.error_string(error)),false}
         data,error:=os.read_entire_file(ai_task_path(s,task,ai_reference_file(i+1)),context.temp_allocator)
         if error!=nil {return "A reference image could not be read",false}
         encoded,encode_error:=base64.encode(data,allocator=context.temp_allocator)

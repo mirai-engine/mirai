@@ -229,8 +229,9 @@ plugin's asset types that the content browser lists (`kinds`, up to `ASSET_KINDS
 - `extension`: that of its files; `asset.list` names the type with it without the dot, and the
   `kind=` tag of a field, with it whole ([inspector](inspector.md#rows-by-reflection)).
 - `field`: a word; an `Asset_Id` field whose name has it takes the type.
-- `merged`: git merges its files field by field (`merge=mirai` in the `.gitattributes` that Init
-  writes).
+- The `asset_kinds` of the plugin's `plugin.mirai` list exactly these extensions
+  ([manifests](../../mirai-projects/references/projects.md#manifests)); a test of the editor part
+  holds it with `editor.asset_kinds_differ`.
 - `clicked` (of the provider): what a click on one's card does, outside Play and with the scene in
   front (assigning it to the selection).
 
@@ -359,6 +360,15 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
   handler validates, queues requests and presents results.
 - [Protocol conventions](../../mirai-agent-api/references/api.md) and
   [animation methods](../../mirai-animation/references/animation-api.md).
+
+## Runs the API drives
+
+An Editor storage whose only field is `editor.Run_Provider` hears the runs the API advances tick by
+tick (`play.step`, a scenario, a filmstrip, `editor.play_tick`): the input of a tick before it runs,
+that it ticked, the methods that changed the run between ticks, a change of focus and that it
+ended. What it keeps of a run goes in a storage of its own, keyed by `Run.id`. `editor.play_tick`
+with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its screen on top shows
+([`playtest`](../../mirai-plugins/references/plugins.md#first-party-plugins)).
 
 ## Importers of a plugin
 

@@ -29,6 +29,7 @@ MAX_PLUGINS :: 32      // plugins a project names; their dependencies come besid
 MAX_DEPENDENCIES :: 16
 MAX_DEFINES :: 16
 MAX_SOURCES :: 16
+MAX_ASSET_KINDS :: 16
 
 Name :: [64]u8
 Path :: [256]u8
@@ -109,6 +110,13 @@ Engine_Range :: struct {
     max:Version `mirai:"text"`,
 }
 
+// A kind of asset a plugin adds, by the extension of its files. It is what
+// says of the kind what is known without loading the plugin.
+Asset_Kind :: struct {
+    extension:[32]u8 `mirai:"text"`, // with the dot, in lowercase: ".particle"
+    merged:bool,                     // a document of rows that are edited, which git merges row by row and diffs by value through mirai, as asset.Kind_Info.merged says of a kind of the engine; false: bulk that an import, a bake or a recording makes, a whole file to git
+}
+
 Plugin_Manifest :: struct {
     name:Name `mirai:"text"`,                       // the name of its folder
     version:Version `mirai:"text"`,                 // major.minor.patch
@@ -119,6 +127,7 @@ Plugin_Manifest :: struct {
     development:bool,                               // a tool for making the game: in the editor and the player, never in a published game
     automatic:bool,                                 // active exactly when all its dependencies are: what joins them; no project names it
     icon:Path `mirai:"text"`,                       // a PNG the lists of plugins of the editor show it with, relative to its folder, with forward slashes, PLUGIN_ICON_MAX wide and tall at most. Empty: the generic one
+    asset_kinds:[MAX_ASSET_KINDS]Asset_Kind `mirai:"trim"`, // the kinds of asset it adds: exactly the ones its editor part registers
 }
 
 Origin :: enum u8 {Project,Engine}
@@ -154,6 +163,7 @@ Error_Code :: enum u8 {
     Automatic_Named,    // the project names subject, an automatic plugin: it is active when its dependencies are
     Automatic_Alone,    // subject is automatic and depends on nothing
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
+    Asset_Kind_Invalid, // the extension subject of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
 }
 
@@ -292,6 +302,17 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
     if error:=names_validate(m.dependencies[:],name);error.code!=.None {return error}
     if error:=names_validate(m.test_dependencies[:],name);error.code!=.None {return error}
     if icon:=base.text_get(m.icon[:]);icon!="" && !png_path_valid(icon) {return error_about(.Icon_Invalid,icon)}
+    for &kind,i in m.asset_kinds {
+        extension:=base.text_get(kind.extension[:])
+        if extension=="" {
+            if kind.merged {return error_about(.Asset_Kind_Invalid,extension)}
+            continue
+        }
+        if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Asset_Kind_Invalid,extension)}
+        for &other in m.asset_kinds[:i] {
+            if other.extension==kind.extension {return error_about(.Asset_Kind_Invalid,extension)}
+        }
+    }
     if m.automatic {
         alone:=true
         for &dependency in m.dependencies {
@@ -407,6 +428,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Automatic_Named:    return fmt.aprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
     case .Automatic_Alone:    return fmt.aprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
     case .Source_Invalid:     return fmt.aprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
+    case .Asset_Kind_Invalid: return fmt.aprintf("%s: the extension '%s' of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice",file,subject)
     case .Schema_Failed:      return fmt.aprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
     }
     return ""

@@ -17,7 +17,7 @@ Api_Ai_Finish_Params :: struct {
 Api_Ai_Finish_Question :: enum u8 {none,text,single,multi,confirm}
 
 AI_QUESTION_OPTION_BYTES :: 96
-Api_Ai_Finish_Result :: struct {id:int,accepted:bool}
+Api_Ai_Finish_Result :: struct {accepted:bool}
 
 @(private)
 api_ai_finish_register :: proc(s:^Session,st:^Api_State) {
@@ -79,6 +79,6 @@ api_ai_finish :: proc(s:^Session,call:^api.Call) {
     ai_stream_add(s,task,response)
     ai_task_dirty(task)
     ai_task_persist(s,task)
-    api.call_result(call,Api_Ai_Finish_Result)^={id=task.id,accepted=true}
+    api.call_result(call,Api_Ai_Finish_Result).accepted=true
 }
 

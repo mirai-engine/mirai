@@ -61,7 +61,6 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
     type_infos_collect(root,&infos)
     for len(s.tags)<len(s.schema.fields) {append(&s.tags,Field_Tags{})}
     for len(s.keys)<len(s.schema.fields) {append(&s.keys,"")}
-    names:=[Field_Tag]string{.Optional="optional",.List="list",.Any="any"}
     for type_id,type_index in s.schema.lookup {
         if int(type_index)<first_type {continue}
         type:=s.schema.types[type_index]
@@ -72,14 +71,8 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
         }
         info,is_struct:=runtime.type_info_base(infos[type_id] or_else type_info_of(type_id)).variant.(runtime.Type_Info_Struct)
         if !is_struct {continue}
-        for i in 0..<int(info.field_count) {
-            tags:Field_Tags
-            for name,tag in names {
-                if tag_has(info.tags[i],name) {tags+={tag}}
-            }
-            s.tags[int(type.first)+i]=tags
-            s.keys[int(type.first)+i]=clone_text(s.allocator,tag_value(info.tags[i],"key"))
-        }
+        at:=int(type.first)
+        field_tags_record(s,info,&at)
     }
     if s.schema.types[index].kind!=.Struct {
         delete(s.schema.error,s.schema.allocator)
@@ -87,6 +80,26 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
         return serial.TYPE_NONE,false
     }
     return index,true
+}
+
+// The tags and keys of the fields of a struct, from the field at; the fields of
+// a field tagged inline stand in its place, as in the schema.
+@(private)
+field_tags_record :: proc(s:^Server,info:runtime.Type_Info_Struct,at:^int) {
+    names:=[Field_Tag]string{.Optional="optional",.List="list",.Any="any",.Clamp="clamp"}
+    for i in 0..<int(info.field_count) {
+        if nested,inlined:=serial.field_inlined(info,i);inlined {
+            field_tags_record(s,nested,at)
+            continue
+        }
+        tags:Field_Tags
+        for name,tag in names {
+            if tag_has(info.tags[i],name) {tags+={tag}}
+        }
+        s.tags[at^]=tags
+        s.keys[at^]=clone_text(s.allocator,tag_value(info.tags[i],"key"))
+        at^+=1
+    }
 }
 
 @(private)
@@ -128,10 +141,11 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     if s.method_count>=len(s.methods) {s.stats.methods_refused+=1;return .Full}
     if method_find(s,desc.name)!=nil || tool_find(s,desc.name)!=nil {return .Duplicate}
     if desc.writes_result && desc.result==nil {return .Invalid_Type}
-    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,mcp_content=desc.mcp_content,writes_result=desc.writes_result}
+    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
     ok:bool
     method.params,ok=schema_register(s,desc.params,desc.params_info)
     if !ok {return .Invalid_Type}
+    method.clamps=type_clamps(s,method.params)
     method.result,ok=schema_register(s,desc.result,desc.result_info)
     if !ok {return .Invalid_Type}
     for pair in ([2]struct{text:string,type:typeid}{{desc.params_schema,desc.params},{desc.result_schema,desc.result}}) {
@@ -153,6 +167,21 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     s.methods[s.method_count]=method
     s.method_count+=1
     return .None
+}
+
+// Whether a field of the type, at any depth, is tagged clamp.
+@(private)
+type_clamps :: proc(s:^Server,index:serial.Type_Index) -> bool {
+    if index==serial.TYPE_NONE {return false}
+    type:=s.schema.types[index]
+    #partial switch type.kind {
+    case .Array: return type_clamps(s,type.elem)
+    case .Struct:
+        for &f,i in s.schema.fields[type.first:][:type.count] {
+            if .Clamp in s.tags[int(type.first)+i] || type_clamps(s,f.type) {return true}
+        }
+    }
+    return false
 }
 
 // The information of every type reachable from info, by typeid: what a

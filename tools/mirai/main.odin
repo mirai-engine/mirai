@@ -35,15 +35,17 @@ COMMANDS :: [?]Command{
     {"image",IMAGE_USAGE,"Compares PNG captures (SSIM, PSNR, MAE, RMSE), measures light mottling, describes them, puts them side by side, crops them, zooms them or reads their pixels",cmd_image},
     {"agent",AGENT_USAGE,"Installs and manages the ACP adapters of the editor in the folder of the user; requires an explicit action",cmd_agent},
     {"shaders",SHADERS_USAGE,"Generates SPIR-V, MSL and Odin tables from Slang",cmd_shaders},
-    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, or adds mirai and ripgrep to the PATH",cmd_setup},
+    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, adds mirai and ripgrep to the PATH, or sets the git of a clone to merge and diff its assets through mirai",cmd_setup},
     {"session",SESSION_USAGE,"Opens a headless editor of the project in the background for rpc, capture and mcp, or closes it",cmd_session},
     {"capture",CAPTURE_USAGE,"Captures the world of the project without the editor UI, with its validation errors and image statistics",cmd_capture},
     {"record",RECORD_USAGE,"Records the game of the project frame after frame at a fixed rate as 16-bit PNG or EXR images and a WAV, with a contact sheet and a manifest of its frames and its validation errors",cmd_record},
     {"render",RENDER_USAGE,"Measures the fixed views of a project as the user sees them (cost per pass, stability, luminance, captures) against the base build",cmd_render},
     {"bench",BENCH_USAGE,"Measures the frame cost of a project against the base build in alternating pairs, alone among the checkouts, and writes the table for a report",cmd_bench},
     {"rpc",RPC_USAGE,"Calls a method of the editor of the project or of the given port, shows fields of the response or waits for a state; describe shows the params of the methods",cmd_rpc},
+    {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
     {"texts",TEXTS_USAGE,"Takes the translatable texts of the project's .ui files to a CSV to translate, and back, through the open editor",cmd_texts},
+    {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> --out <folder> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
 }
 
@@ -228,18 +230,37 @@ executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> 
 // Checks the types of a package with the collections plugins and project it
 // reaches, like mirai test.
 cmd_check :: proc(root:string,args:[]string) -> int {
-    if len(args)==0 {fmt.eprintln("Usage: mirai check <package> [-flag...]");return 2}
+    if len(args)==0 || strings.has_prefix(args[0],"-") {
+        if owner:=project_of(project.path_absolute(".",context.temp_allocator));owner!="" && len(args)==0 {return check_project(root,owner)}
+        fmt.eprintln("Usage: mirai check [<package> [-flag...]]; without a package, inside a project: its game, editor and plugins")
+        return 2
+    }
     if !engine_shaders(root,backends=target_backends(args[1:])) {return 1}
-    command:=odin_command(root,"check",args[0])
+    folder:=package_folder(root,args[0])
+    command:=odin_command(root,"check",folder!=""?folder:args[0])
     // A check is no test build: the tests that run generated shaders are asked for (rhi.TEST_SHADERS).
     append(&command,"-no-entry-point","-define:MIRAI_TEST_SHADERS=true","-ignore-unused-defineables")
-    if folder:=package_folder(root,args[0]);folder!="" {
+    if folder!="" {
         collections,ok:=package_collections(root,folder,args[1:])
         if !ok {return 1}
         append(&command,..collections)
     }
     append(&command,..args[1:])
     return run(root,command[:])
+}
+
+// The code of a project, as build.check checks it: the world generated from
+// it, with its game, editor and plugins.
+@(private="file")
+check_project :: proc(root,folder:string) -> int {
+    opened,error:=project.open(folder,root,context.temp_allocator)
+    if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    defer build.job_destroy(job)
+    for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
+    if job.result.status==.Built {return 0}
+    if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
+    return 1
 }
 
 cmd_deps :: proc(root:string,args:[]string) -> int {

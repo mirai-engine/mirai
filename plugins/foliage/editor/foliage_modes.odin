@@ -156,7 +156,7 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
     radius:=tool.radius/scale
     low,high:=cells_around(center,radius)
     for z in low.y..=high.y {for x in low.x..=high.x {
-        if ground==nil || foliage.ground_tile_find(ground,{x,z})<0 {_=foliage.ground_request(requests,e,{x,z})}
+        if ground==nil || foliage.ground_tile_find(ground,{x,z})<0 {foliage.ground_request(requests,e,{x,z})}
     }}
     ring_draw(s,tool,owner,ground,hit.position,hit.normal,tool.radius,mode_color(mode),dashed=mode==.Generate && .Primary in s.gui.ctx.input.modifiers)
     if mode==.Generate {cells_draw(s,tool,owner,center,radius)}

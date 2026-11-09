@@ -37,10 +37,10 @@ thumbnail_destroy :: proc(device:^rhi.Device,state:^Thumbnail_GPU) {
 // request, or that span nothing.
 @(private)
 thumbnail_view :: proc(r:^Renderer,vertices:[]Thumbnail_Vertex,materials:int,width,height:u32,fit:[2]Vec3,view:=Preview_View{},light:=Preview_Light{},perspective:=false) -> (constants:Gpu_Frame,ok:bool) {
-    toward:=linalg.normalize(Vec3{0.55,0.5,0.75})
+    toward:=linalg.normalize(Vec3{-0.55,0.5,-0.75})
     if view.zoom>0 {
         yaw,elevation:=view.orbit.x,clamp(view.orbit.y,-PREVIEW_ELEVATION,PREVIEW_ELEVATION)
-        toward=Vec3{math.cos(elevation)*math.sin(yaw),math.sin(elevation),math.cos(elevation)*math.cos(yaw)}
+        toward=Vec3{-math.cos(elevation)*math.sin(yaw),math.sin(elevation),-math.cos(elevation)*math.cos(yaw)}
     }
     right:=linalg.normalize(linalg.cross(Vec3{0,1,0},toward))
     up:=linalg.cross(toward,right)
@@ -92,6 +92,7 @@ thumbnail_view :: proc(r:^Renderer,vertices:[]Thumbnail_Vertex,materials:int,wid
     }
     frame_view_constants(&constants,camera,world_view,projection,projection,forward,f32(height))
     preview_lighting(&constants,light)
+    constants.flags|=display_frame_flags(r)
     return constants,true
 }
 
@@ -111,7 +112,7 @@ preview_lighting :: proc(f:^Gpu_Frame,light:Preview_Light) {
         key=max(key,sun.illuminance*luminance_of(sun.color)/math.PI)
     } else {sun.enabled=false}
     scale:=light_scale_of(0,key)
-    frame_sun_sky(f,sun,light.environment,scale,SUN_RADIUS,false)
+    frame_sun_sky(f,sun,light.environment,scale,SUN_RADIUS,false,true)
     if light.environment.ground_grid {f.flags|=FRAME_FLAG_GRID}
     // As the meter of a scene exposes an image half of its background and half
     // a middle gray card under its strongest light: their geometric mean.
@@ -119,7 +120,7 @@ preview_lighting :: proc(f:^Gpu_Frame,light:Preview_Light) {
     behind:=luminance_of(environment.background if environment.use_background else environment.sky)
     metered:=math.sqrt(max(behind,1e-3)*max(MIDDLE_GRAY*key,1e-3))
     ev100:=clamp(math.log2(metered*100/LIGHT_METER_K),AUTO_EXPOSURE_RANGE[0],AUTO_EXPOSURE_RANGE[1])
-    f.exposure=exposure_of_ev100(ev100)/scale
+    f.exposure=exposure_of_ev100(ev100,display_exposure_bias(.Neutral))/scale
 }
 
 @(private)
@@ -314,7 +315,7 @@ PREVIEW_FOV :: f32(30) // degrees, vertical: the lens of the previews
 Preview_View :: struct {
     zoom:f32,
     pan:[2]f32,
-    orbit:[2]f32, // radians: yaw about +Y from +Z, and elevation within ±PREVIEW_ELEVATION
+    orbit:[2]f32, // radians: yaw about +Y from -Z, and elevation within ±PREVIEW_ELEVATION
 }
 PREVIEW_ORBIT :: [2]f32{0.6327488,0.4932758} // the direction of the studio
 PREVIEW_ELEVATION :: f32(1.45)

@@ -246,7 +246,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
 while the setting names it, draws the window views with a pipeline whose passes take the place of
 `Resolve` (`pipeline_main`). Without the plugin, or until its shaders are there, TAA resolves,
 which every name except `off` turns on. Texture views use their own pipeline.
-`antialiasing_offered` lists those of the last frame: the Graphics popup and `graphics.set` offer
+`antialiasing_offered` lists those of the last frame: the Graphics popup offers
 them. The `fsr` plugin is one
 ([render plugins](../../mirai-plugins/references/render-plugins.md#fsr)).
 

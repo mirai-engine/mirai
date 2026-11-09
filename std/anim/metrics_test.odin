@@ -7,7 +7,7 @@ import math "mirai:std/math"
 Body_Test_Walk :: struct {
     root_motion,backward_knees,loop:bool,
     duration:f32, // 1 s when zero: one cycle
-    slide:f32, // m/s the left foot drifts forward while it stands
+    slide:f32, // m/s the left foot drifts toward -Z while it stands
     sink:f32, // m the feet go under the floor while they stand
     jitter:f32, // m of noise on the pelvis
     clearance:f32, // m the foot rises while it swings; 0.1 when zero
@@ -16,7 +16,7 @@ Body_Test_Walk :: struct {
     run:f32,
 }
 
-// The humanoid walking at 0.8 m/s, a cycle a second, its legs posed by IK.
+// The humanoid walking toward -Z at 0.8 m/s, a cycle a second, its legs posed by IK.
 body_test_walk :: proc(rig:Body_Test_Rig,map_:Body_Map,options:Body_Test_Walk) -> (Frames,Body_Rig) {
     rate:=f32(60)
     duration:=options.duration if options.duration>0 else 1
@@ -39,7 +39,7 @@ body_test_walk :: proc(rig:Body_Test_Rig,map_:Body_Map,options:Body_Test_Walk) -
         copy(pose,rig.rest)
         pose[pelvis].position.y-=.05
         if options.jitter>0 {pose[pelvis].position+=math.Vec3{noise(&state),noise(&state),noise(&state)}*options.jitter}
-        travel:=math.Vec3{0,0,speed*t} if options.root_motion else {}
+        travel:=math.Vec3{0,0,-speed*t} if options.root_motion else {}
         pose[root].position=travel
         legs:=[2][3]Body_Part{{.Hip_L,.Knee_L,.Foot_L},{.Hip_R,.Knee_R,.Foot_R}}
         for leg,side in legs {
@@ -51,22 +51,22 @@ body_test_walk :: proc(rig:Body_Test_Rig,map_:Body_Map,options:Body_Test_Walk) -
             if options.run>0 {
                 if phase<.3 {
                     d:=phase-.15
-                    target={rest.x,rest.y+.3*cmath.sqrt(abs(d)/.15),-options.run*d}
+                    target={rest.x,rest.y+.3*cmath.sqrt(abs(d)/.15),options.run*d}
                 } else {
                     s:=(phase-.3)/.7
-                    target={rest.x,rest.y+.3+.1*cmath.sin(cmath.PI*s),options.run*.15*(2*math.smoothstep(0,1,s)-1)}
+                    target={rest.x,rest.y+.3+.1*cmath.sin(cmath.PI*s),-options.run*.15*(2*math.smoothstep(0,1,s)-1)}
                 }
             } else if phase<.5 {
-                target={rest.x,rest.y-options.sink,.2-speed*phase}
-                if side==0 {target.z+=options.slide*phase}
+                target={rest.x,rest.y-options.sink,-.2+speed*phase}
+                if side==0 {target.z-=options.slide*phase}
             } else {
                 s:=(phase-.5)/.5
                 clearance:=options.clearance if options.clearance>0 else .1
-                target={rest.x,rest.y+clearance*cmath.sin(cmath.PI*s),-.2+.4*math.smoothstep(0,1,s)}
+                target={rest.x,rest.y+clearance*cmath.sin(cmath.PI*s),.2-.4*math.smoothstep(0,1,s)}
             }
             target+=travel
             pose_world(rig.parents,pose,world)
-            pole:=world[knee].position+math.Vec3{0,0,-1 if options.backward_knees else 1}
+            pole:=world[knee].position+math.Vec3{0,0,1 if options.backward_knees else -1}
             skeleton_ik(skeleton,pose,world,int(hip),int(knee),int(foot),target,pole)
         }
     }
@@ -95,7 +95,7 @@ clip_metrics_tell_travel_contacts_and_slide_of_a_walk :: proc(t:^testing.T) {
     metrics,ok:=clip_metrics(rig,walk,{contacts=contacts[:]},scratch)
     if !testing.expect(t,ok) {return}
     testing.expect(t,!metrics.in_place)
-    testing.expectf(t,abs(metrics.travel.z-.8)<.01 && abs(metrics.travel.x)<.01,"travel %v",metrics.travel)
+    testing.expectf(t,abs(metrics.travel.z+.8)<.01 && abs(metrics.travel.x)<.01,"travel %v",metrics.travel)
     testing.expect_value(t,test_rig.names[metrics.root],"root")
     testing.expectf(t,metrics.contacts>=2 && metrics.contacts<=4,"contacts %d",metrics.contacts)
     for foot in Foot {testing.expectf(t,metrics.foot_slide[foot].mean<.03,"%v slides %v",foot,metrics.foot_slide[foot])}
@@ -114,14 +114,14 @@ clip_metrics_tell_travel_contacts_and_slide_of_a_walk :: proc(t:^testing.T) {
     in_place,_:=body_test_walk(test_rig,map_,{loop=true})
     metrics=body_test_metrics(rig,in_place)
     testing.expect(t,metrics.in_place)
-    testing.expectf(t,abs(metrics.travel.z-.8)<.05,"travel %v",metrics.travel)
+    testing.expectf(t,abs(metrics.travel.z+.8)<.05,"travel %v",metrics.travel)
     for foot in Foot {testing.expectf(t,metrics.foot_slide[foot].mean<.05,"%v slides %v",foot,metrics.foot_slide[foot])}
     // Retargeting can raise the whole walk above the rest pose; the ground
     // of the animation is still where its own feet reach their lowest point.
     raised,_:=body_test_walk(test_rig,map_,{loop=true})
     for frame in 0..<frames_count(raised) {frames_pose(raised,frame)[map_.bones[.Pelvis]].position.y+=.12}
     metrics=body_test_metrics(rig,raised)
-    testing.expectf(t,abs(metrics.travel.z-.8)<.05 && metrics.contacts>=2,"raised walk: travel %v, contacts %d",metrics.travel,metrics.contacts)
+    testing.expectf(t,abs(metrics.travel.z+.8)<.05 && metrics.contacts>=2,"raised walk: travel %v, contacts %d",metrics.travel,metrics.contacts)
     testing.expectf(t,metrics.penetration.max<.002,"raised walk penetration %v",metrics.penetration)
     still,_:=body_test_walk(test_rig,map_,{loop=true})
     for frame in 1..<frames_count(still) {copy(frames_pose(still,frame),frames_pose(still,0))}
@@ -130,16 +130,16 @@ clip_metrics_tell_travel_contacts_and_slide_of_a_walk :: proc(t:^testing.T) {
     // A foot that swings low passes near the floor, faster than the ground.
     shuffle,_:=body_test_walk(test_rig,map_,{loop=true,clearance=.01})
     metrics=body_test_metrics(rig,shuffle)
-    testing.expectf(t,abs(metrics.travel.z-.8)<.05 && metrics.contacts>=2,"travel %v, %d contacts",metrics.travel,metrics.contacts)
+    testing.expectf(t,abs(metrics.travel.z+.8)<.05 && metrics.contacts>=2,"travel %v, %d contacts",metrics.travel,metrics.contacts)
 
     // A run whose feet touch the floor a frame between flights: the body travels as fast as the
     // foot that touches pushes back, not as far as the feet sweep over the whole cycle.
     run,_:=body_test_walk(test_rig,map_,{loop=true,run=2})
     metrics=body_test_metrics(rig,run)
-    testing.expectf(t,metrics.in_place && metrics.contacts==0 && abs(metrics.travel.z-2)<.1 && abs(metrics.travel.x)<.05,"run: travel %v, %d contacts",metrics.travel,metrics.contacts)
+    testing.expectf(t,metrics.in_place && metrics.contacts==0 && abs(metrics.travel.z+2)<.1 && abs(metrics.travel.x)<.05,"run: travel %v, %d contacts",metrics.travel,metrics.contacts)
     twice,_:=body_test_walk(test_rig,map_,{loop=true,run=2,duration=2})
     metrics=body_test_metrics(rig,twice)
-    testing.expectf(t,abs(metrics.travel.z-2)<.1,"two cycles of a run: travel %v",metrics.travel)
+    testing.expectf(t,abs(metrics.travel.z+2)<.1,"two cycles of a run: travel %v",metrics.travel)
 
     sliding,_:=body_test_walk(test_rig,map_,{root_motion=true,loop=true,slide=.15})
     metrics=body_test_metrics(rig,sliding)
@@ -167,7 +167,7 @@ clip_metrics_measure_jerk_seams_limits_and_goals :: proc(t:^testing.T) {
 
     still,_:=body_test_walk(test_rig,map_,{loop=true})
     hand,head,calf:=map_.bones[.Hand_L],map_.bones[.Head],map_.bones[.Knee_L]
-    goals:=[2]Metric_Goal{{.Reach,hand,{},test_rig.world[hand].position},{.Look,head,{0,0,1},test_rig.world[head].position+{1,0,0}}}
+    goals:=[2]Metric_Goal{{.Reach,hand,{},test_rig.world[hand].position},{.Look,head,{0,0,-1},test_rig.world[head].position+{1,0,0}}}
     residuals:[2]Metric_Stat
     limits:=[1]Metric_Limit{{calf,1,{axis={1,0,0},max_swing=0,min_twist=0,max_twist=0}}}
     violations:[1]Limit_Stat

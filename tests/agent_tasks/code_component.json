@@ -1,0 +1,10 @@
+{
+  "prompt": "In the code of this game (the game folder of this project), add a component named Bonus with an integer field points. Get it built so the open editor has it, without closing the editor, and then give the entity Wall of the open scene that component with points 5.",
+  "project": "game",
+  "tools": ["Read", "Edit", "Write"],
+  "checks": [
+    {"entity": "Wall", "components": {"Bonus": {"points": 5}}},
+    {"count": {}, "equals": 9},
+    {"unchanged": {"except": ["Wall"]}}
+  ]
+}

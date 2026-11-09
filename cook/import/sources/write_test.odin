@@ -84,7 +84,7 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
     testing.expect(t,asset.mesh_check_indices(view))
     testing.expect_value(t,len(view.vertices),6)
     testing.expect_value(t,view.info.triangle_count,4)
-    testing.expect(t,close_to(view.info.bounds_max,{2,2,0}))
+    testing.expect(t,close_to(view.info.bounds_max,{0,2,0}))
     testing.expect_value(t,len(view.slots),1)
     testing.expect_value(t,view.slots[0].material,material_written.id)
     testing.expect(t,slice.contains(a.dependencies,material_written.id),"the mesh depends on its material")

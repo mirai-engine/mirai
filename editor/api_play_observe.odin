@@ -9,6 +9,7 @@ import "mirai:core"
 import "mirai:editor/api"
 import eaudio "mirai:engine/audio"
 import egui "mirai:engine/gui"
+import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -114,7 +115,7 @@ play_observe_api_register :: proc(s:^Session,st:^Api_State) {
 api_play_ui :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Ui_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     // The names come from the files of the interfaces, which can be larger than the scratch of a request.
     arena:virtual.Arena
     if virtual.arena_init_growing(&arena)!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no memory to read the interfaces");return}
@@ -129,7 +130,7 @@ api_play_ui :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_audio :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Audio_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     play_audio_write(s,call.out,host.app_world_storage(s.app,r.world,eaudio.Voices),core.world_ref(r.world,s.info),s.app.mixer)
 }
 
@@ -180,6 +181,92 @@ Play_Ui_Target :: struct {
     row:int,
     asset:base.Asset_Id,
     tree:^ui.Widget_Tree,
+}
+
+// Whether something can be pressed: what the pointer of a button activates.
+@(private)
+play_ui_pressable :: proc "contextless" (kind:ui.Node_Kind) -> bool {
+    #partial switch kind {
+    case .Button,.Checkbox,.Radio,.Dropdown,.Selector: return true
+    }
+    return false
+}
+
+Play_Ui_Button :: struct {
+    row:int,
+    name,text:string,
+    rect:[4]f32, // in window points, as play.step takes them
+    laid,shown,disabled:bool,
+}
+
+Play_Ui_Top :: struct {
+    screen:string,
+    entity:core.Entity,
+    modal:bool,
+    focused:string,
+    buttons:[]Play_Ui_Button,
+}
+
+// The screen that takes the input of a player and what can be pressed on it;
+// with hidden also what is not showing, whose nodes have no rect.
+@(private)
+play_ui_top :: proc(v:^Play_Ui_View,player:int,hidden:bool) -> (top:Play_Ui_Top,found:bool) {
+    g:=v.gui
+    if g==nil {return}
+    s:=v.session
+    for &entry in g.plan {
+        if !entry.top || entry.world || entry.player!=player {continue}
+        at:=play_ui_instance_of(g,entry.entity,entry.world,entry.player)
+        if at<0 {continue}
+        instance:=&g.instances[at]
+        tree:=play_ui_tree(instance,entry.content)
+        if tree==nil || !instance.shown {continue}
+        top.screen,top.entity,top.modal=asset_path(s,instance.asset),instance.entity,instance.modal
+        names:=play_ui_names(v,instance.asset,tree)
+        ctx:=g.surfaces[entry.player].ctx if entry.player>=0 && entry.player<len(g.surfaces) else nil
+        shown:=make([]bool,tree.node_count,v.allocator)
+        disabled:=make([]bool,tree.node_count,v.allocator)
+        buttons:=make([dynamic]Play_Ui_Button,v.allocator)
+        for row in 0..<tree.node_count {
+            state,_:=ui.tree_node_state(tree,&instance.instance,row)
+            parent:=int(tree.nodes[row].parent)
+            shown[row]=state.shown && (parent<0 || shown[parent])
+            disabled[row]=state.disabled || parent>=0 && disabled[parent]
+            name:=row<len(names)?names[row]:""
+            if shown[row] && state.focused {top.focused=name}
+            if !play_ui_pressable(tree.nodes[row].kind) || !shown[row] && !hidden {continue}
+            button:=Play_Ui_Button{row=row,name=name,text=state.text,shown=shown[row],disabled=disabled[row]}
+            if shown[row] && ctx!=nil {
+                if r,laid:=egui.screen_node_rect(ctx,tree,instance.entity,row);laid {button.rect,button.laid={r.x,r.y,r.w,r.h},true}
+            }
+            append(&buttons,button)
+        }
+        top.buttons=buttons[:]
+        return top,true
+    }
+    return
+}
+
+// The context of the screen of the focused local player: 0 is the window, n
+// the part of the player of slot n-1 when they share the screen.
+@(private)
+play_ui_focused_context :: proc(w:core.World_Ref,g:^egui.Gui) -> int {
+    state:=core.world_storage_of(w,input.Seats)
+    if state==nil || g==nil {return 0}
+    split:=state.focus+1
+    if split<len(g.surfaces) && g.surfaces[split].ctx!=nil && g.surfaces[split].shown {return split}
+    return 0
+}
+
+// The screen on top of the focused player of a run and what can be pressed on
+// it, as its last frame laid it out, in allocator; with hidden also what is
+// not showing.
+play_ui_screen :: proc(s:^Session,r:^Run,hidden:bool,allocator:runtime.Allocator) -> (top:Play_Ui_Top,found:bool) {
+    g:=host.app_world_storage(s.app,r.world,egui.Gui)
+    if g==nil {return}
+    w:=run_ref(s,r)
+    view:=Play_Ui_View{session=s,gui=g,world=w,allocator=allocator}
+    return play_ui_top(&view,play_ui_focused_context(w,g),hidden)
 }
 
 // The interfaces of a world as its last frame built them.

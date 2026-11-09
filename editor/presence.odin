@@ -128,7 +128,7 @@ presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,yaw:f32,color:u
 @(private)
 presence_yaw :: proc "contextless" (forward:[3]f32) -> f32 {
     if forward.x==0 && forward.z==0 {return 0}
-    return math.atan2(-forward.x,-forward.z)
+    return mm.yaw_of_direction(forward)
 }
 
 // The outline colors of the agents and of the soft one of what a turn read.

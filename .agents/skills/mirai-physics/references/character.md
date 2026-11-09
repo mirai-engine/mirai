@@ -73,8 +73,8 @@ The same `world_step` serves the server, the predicting client and resimulation.
   touching it; what touches it is an obstacle.
 - It has no friction: traction comes from the ground constraint.
 - The three angular axes are locked (it stays upright inside the solver), its rotation is
-  `up_frame` times the turn of the move's `yaw` and half a turn around its +Y
-  (`character_rotation`): its +Z faces the heading that the yaw gives to a look. It does not sleep
+  `up_frame` times the turn of the move's `yaw` (`character_rotation`): its -Z faces the heading
+  that the yaw gives to a look. It does not sleep
   and it carries the `Character` flag.
 - `character_set_locks` adds linear locks in world axes, with the meaning of those of a body
   (`Character.locks`, as `Rigid_Body.locks`; its angular ones do nothing): no part of the step moves
@@ -105,8 +105,8 @@ The same `world_step` serves the server, the predicting client and resimulation.
 - Everything is measured against it: probe, step and slope, landing and launching, `ground_turn`,
   flattened contacts, push plane and air drive.
 - `character_create` takes the given `frame` turned to the up of the rotation, and the yaw of
-  where the rotation's +Z heads in it (`character_yaw`); `character_set_rotation` does the same
-  from the frame it has. `up_frame_yaw` reads the -Z of a look or a camera.
+  where the rotation's -Z heads in it (`up_frame_yaw`); `character_set_rotation` does the same
+  from the frame it has.
 
 ## Step
 
@@ -171,7 +171,7 @@ accumulates in the body for one tick; the support constraint keeps its own adhes
   - Both impulses are applied opposite to the ground body at the support point: the character
     pushes what it stands on and travels with platforms that move and turn (the target includes the
     half-step centripetal term).
-  - The body faces the move's `yaw` with its +Z and nothing else. The ground turn stays in `ground_turn`;
+  - The body faces the move's `yaw` with its -Z and nothing else. The ground turn stays in `ground_turn`;
     whoever writes the move adds it to the yaw every step so that body, walk and camera turn
     together. If it does not add it, the character travels with the platform without turning.
 - **In the air**: it brings the velocity transverse to its up (or the three axes with

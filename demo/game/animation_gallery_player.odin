@@ -32,7 +32,7 @@ gallery_move :: proc(input:^inp.Move_Input,rotation:mm.Quat,wish:mm.Vec3,dt:f32)
     input.look_yaw=yaw_of(rotation)
     input.move={}
     if amount:=linalg.length(wish);amount>.001 {
-        desired:=math.atan2(-wish.x,-wish.z)
+        desired:=mm.yaw_of_direction(wish)
         input.look_yaw=mm.angle_wrap(mm.angle_approach(input.look_yaw,desired,GALLERY_TURN_SPEED*mm.RAD_PER_DEG*dt))
         input.move=mm.quat_rotate(mm.quat_axis_angle({0,1,0},-input.look_yaw),wish/max(amount,1))
     }
@@ -56,6 +56,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         body:=inp.body_of(seats.drivables,core.entity_at(players,row))
+        if player.focus!=core.NONE {body=player.mirai} // it let go of it to free the mouse
         owner,driven:=core.get(seats.drivables,body)
         input:=core.get(inputs,body)
         placed,exists:=core.get(worlds,body)
@@ -63,7 +64,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
         input.move,input.buttons={},{}
         if player.focus!=core.NONE {input.look_yaw=yaw_of(placed.rotation);continue}
         gallery_player_input(input,placed.rotation,time.dt,owner,walk_actions,look_actions,follows)
-        if placed.position.y< -3 {core.place(placer,body,GALLERY_START)}
+        if placed.position.y< -3 {core.place(placer,body,GALLERY_START,at_rest=true)}
     }
 }
 
@@ -91,6 +92,7 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(A
             } else if player.focus!=core.NONE {
                 cam.camera_override_remove(cameras,seat)
                 next.focus=core.NONE
+                inp.drive(requests,seat,player.mirai)
             } else if near!=core.NONE {
                 if near==player.spider {inp.drive(requests,seat,player.spider)}
                 for at in 0..<core.count(panels) {
@@ -99,6 +101,7 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(A
                     entity:=core.entity_at(panels,at)
                     cam.camera_override(cameras,seat,seat,panel.camera,blend=GALLERY_FOCUS_BLEND)
                     next.focus=entity
+                    inp.release(requests,seat)
                 }
             }
         }
@@ -114,9 +117,10 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // widget without size is not drawn.
 @(step="fixed",after="gallery_interact")
 gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Gallery_Label),panels:core.Read(Gallery_Panel),widgets:^core.Table(gui.World_Widget),worlds:core.Read(core.World_Transform),drivables:core.Read(inp.Drivable)) {
-    if core.count(players)==0 {return}
+    player,found:=core.first(players)
+    if !found {return}
     focus:=core.at(players,0).focus
-    body,_:=core.get(worlds,inp.body_of(drivables,core.entity_at(players,0)))
+    body,_:=core.get(worlds,inp.body_of(drivables,player) if focus==core.NONE else core.at(players,0).mirai)
     for row in 0..<core.count(labels) {
         e:=core.entity_at(labels,row)
         placed,exists:=core.get(worlds,e)

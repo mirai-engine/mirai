@@ -462,6 +462,31 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
     testing.expect(t,!known)
 }
 
+// A skeleton too old to read gives up what a person set on it, and the import says so, keeping its id.
+@(test)
+importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(t:^testing.T) {
+    folder:=temp_folder("old-skeleton")
+    defer os.remove_all(folder)
+    first,error:=import_source(FIXTURES+"skeletal-analytic.glb",folder,{textures=.Uncompressed,no_save=true})
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    defer importer.report_destroy(&first)
+    skeleton:importer.Written
+    for written in first.assets {if written.kind==asset.KIND_SKELETON {skeleton=written}}
+    if !testing.expect(t,skeleton.path!="","the source has a skeleton") {return}
+    data,_:=os.read_entire_file(skeleton.path,context.temp_allocator)
+    old:=asset.SKELETON_VERSION-1
+    data[10],data[11]=u8(old),u8(old>>8)
+    testing.expect(t,os.write_entire_file(skeleton.path,data)==nil)
+    again,failed:=import_source(FIXTURES+"skeletal-analytic.glb",folder,{textures=.Uncompressed,no_save=true})
+    if !testing.expectf(t,failed.code==.None,"%s",failed.message) {return}
+    defer importer.report_destroy(&again)
+    told:=false
+    for warning in again.warnings {told||=strings.contains(warning,"were not kept")}
+    testing.expectf(t,told,"the import says what it dropped: %v",again.warnings)
+    testing.expect_value(t,header_of(skeleton.path).id,skeleton.id)
+    testing.expect_value(t,header_of(skeleton.path).kind_version,u16(asset.SKELETON_VERSION))
+}
+
 @(test)
 an_image_is_a_normal_map_only_when_n_is_a_word_of_its_name :: proc(t:^testing.T) {
     Named :: struct {name:string,use:importer.Image_Use}

@@ -194,7 +194,7 @@ api_panel_delete :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%s cannot be deleted",panel_file(s,id))
         return
     }
-    api_text_put(api.call_result(call,Api_Panel_Deleted).deleted[:],id)
+    base.text_set(api.call_result(call,Api_Panel_Deleted).deleted[:],id)
 }
 
 @(private)
@@ -216,10 +216,6 @@ api_panel_apply :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%q is not a button of %s; its buttons are %s",name,base.text_get(p.id[:]),len(names)>0?string(names[:]):"none")
         return
     }
-    if playing(s) {
-        api.call_fail(call,api.INVALID_PARAMS,"Buttons change the scene: stop the game first")
-        return
-    }
     if !api_edit_begin(s,call,fmt.tprintf("%s: %s",base.text_get(p.title[:]),name)) {return}
     changed,problem:=panel_press(s,p,button)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem)}
@@ -238,10 +234,6 @@ api_panel_apply :: proc(s:^Session,call:^api.Call) {
 api_panel_restore :: proc(s:^Session,call:^api.Call) {
     p:=api_panel_named(s,call,base.text_get(api.call_params(call,Api_Panel_Params).id[:]))
     if p==nil {return}
-    if playing(s) {
-        api.call_fail(call,api.INVALID_PARAMS,"Restore changes the scene: stop the game first")
-        return
-    }
     if !api_edit_begin(s,call,fmt.tprintf("%s: Restore",base.text_get(p.title[:]))) {return}
     restored,problem:=panel_restore(s,p)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem)}

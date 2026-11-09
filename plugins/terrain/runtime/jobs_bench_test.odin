@@ -50,7 +50,7 @@ bench_terrain_update_while_a_brush_edits :: proc(t:^testing.T) {
             corner:=f32(cells)*(kind==.Heightfield?4:1)-f32(samples.x-1)*0.5
             center:=[3]f32{corner+f32(tick%8)*0.25,0,corner}
             brush:=Brush{kind=kind==.Heightfield?.Raise:.Remove,center=center,radius=6,amount=0.05}
-            testing.expect(t,request_edit(&w.requests,owner,brush))
+            dig(&w.requests,brush,owner)
             times[tick]=terrain_bench_tick(&w,&resident,&app,settings)
             // The rest of a frame of 60 Hz, in which the jobs may run.
             time.sleep(12*time.Millisecond)

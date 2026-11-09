@@ -37,7 +37,7 @@ float3 reference_lighting(Shading s, float bias, float sun_radius, uint points, 
             float spin = turn + float(k) * 2.3999632;
             float2 disc = sqrt((float(k) + shift) * share) * float2(cos(spin), sin(spin)) * sun_radius;
             float3 ray = normalize(frame.sun_direction.xyz + t * disc.x + b * disc.y);
-            through += reference_ray(origin, ray, scene_reach(origin, ray), scale);
+            through += reference_ray(origin, ray, sun_reach(origin, ray), scale);
         }
         result += scale * through;
     }

@@ -43,7 +43,7 @@ profile_constraints_defaults :: proc(p:^Profile_Set_Params) {
     authoring_struct_fields(&p.grounding,anim.FOOT_GROUNDING_DEFAULT);for &leg in p.grounding.legs {authoring_struct_fields(&leg,anim.GROUNDED_LEG_DEFAULT)}
 }
 @(private)
-profile_array_count :: proc(call:^api.Call,field,array:string) -> int {text,_:=authoring_json_field(call.raw,field,call.allocator);nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,array);return count}
+profile_array_count :: proc(call:^api.Call,field,array:string) -> int {text:=api.json_member(call.raw,field);nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,array);return count}
 @(private)
 profile_chain_value :: proc(call:^api.Call,p:Profile_Chain_Params) -> (value:anim.Chain_IK_Constraint) {authoring_struct_fields(&value,p);value.limit_count=u8(profile_array_count(call,"chain_ik","limits"));return}
 @(private)

@@ -77,9 +77,9 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
   [reference](references/gi.md#indirect-reference),
   [measuring](references/verification.md#measuring-gi)
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
-  [display](references/display.md#units); display transform (ACES 2.0, 3D LUT, HDR) →
+  [display](references/display.md#units); display transform (Neutral or ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
-- Scene resolution, pixel budget (`render_megapixels`) →
+- Scene resolution, `render_scale` and a preset's target of lines →
   [resolution](references/settings.md#scene-resolution)
 - `render.Settings` → [settings](references/settings.md#settings); inspection modes of a view
   (`View_Inspection`, `Debug_View`) → [modes](references/settings.md#inspection-modes)
@@ -111,8 +111,9 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.
 - A shadow technique costs no more than tracing one ray per 2×2 block.
-- Every view is exposed one EV above its meter (`EXPOSURE_BIAS`), as Unreal's default bias; the
-  ACES 2.0 calibration is not touched.
+- The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
+  into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives
+  the meter's gray the same light under each; the ACES 2.0 calibration is not touched.
 - `render` does not see native handles: backend differences stay in `rhi`, with a single
   implementation of each pass for Vulkan and Metal. A plugin's runtime imports neither `render`
   nor `rhi`.
@@ -191,11 +192,11 @@ description: Modify, diagnose and measure Mirai rendering, GI, shaders, RHI and 
   window), `present_interval_follows_the_frames_and_not_the_thread` (`rhi`) and the tests of
   `plugins/fsr/runtime`; in an editor with a window (`mirai edit`: a headless session does not
   present), `presentation` of `profile.capture` with and without `frame_generation` and
-  `editor.capture` with `ui` and `generated` against the same view without generation.
+  `capture` with `ui` and `generated` against the same view without generation.
 - Surface programs: the focal tests of
   [programs](references/materials.md#program-limits) (`render`), and `generate_test.odin` and
   `programs_test.odin` of `cook/shaders` for the per-program stages and the coverage; in a session,
-  `material.program.edit` with `material.preview.capture` and `editor.capture`.
+  `material.program.edit` with `material.preview.capture` and `capture`.
 - Texture residency: the tests of `render/texture_residency_test.odin` (CPU) and, with GPU,
   `a_texture_holds_the_levels_its_distance_asks_for` of `host`; in the editor, `textures` of
   `engine.status` (memory, pending) when bringing the camera close.
