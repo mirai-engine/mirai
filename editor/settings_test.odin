@@ -62,13 +62,19 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
         return error
     }
 
+    running:Layer_World
+    session.runs[0].world=&running
+    defer session.runs[0]={}
     error:=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":3,"scale":2}}}`)
+    testing.expect(t,running.setting==Layer_Setting{quality=3,scale=2},"the game that plays takes the sections it changes")
     testing.expect_value(t,error.code,0)
     testing.expect(t,!strings.contains(string(serial.writer_bytes(&out)),`"Layer_Rule"`),string(serial.writer_bytes(&out)))
     testing.expect_value(t,world.setting,Layer_Setting{quality=3,scale=2})
     text:=layer_text(.Engine,root,engine)
     testing.expect(t,strings.contains(text,`"quality": 3`) && strings.contains(text,`"scale": 2`),text)
     error=execute(state,&out,"settings.set",`{"settings":{"Layer_Setting":{"scale":5}}}`)
+    testing.expect_value(t,running.setting.scale,5)
+    testing.expect_value(t,running.rule.count,0)
     testing.expect_value(t,error.code,0)
     text=layer_text(.Project,root,engine)
     testing.expect(t,strings.contains(text,`"scale": 5`) && !strings.contains(text,`"quality"`),text)

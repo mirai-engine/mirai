@@ -824,7 +824,7 @@ Api_Settings :: struct {
 @(private)
 settings_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,writes_result=true,flags={.Read_Only},run=api_settings_get})
-    api_register(s,st,{name="settings.set",params_schema=API_SETTINGS_SET_SCHEMA,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World takes the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
+    api_register(s,st,{name="settings.set",params_schema=API_SETTINGS_SET_SCHEMA,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
 }
 
 @(private)
@@ -1070,5 +1070,26 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
             if value:=setting_engine_value(s,setting.name);value!=nil {mem.copy(value,setting.value,setting.info.size)}
         }
     }
-    api_settings_write(s,call,settings_touched(settings_all(s),sections,preset!=""?"Graphics_Settings":""))
+    touched:=settings_touched(settings_all(s),sections,preset!=""?"Graphics_Settings":"")
+    settings_runs_take(s,touched)
+    api_settings_write(s,call,touched)
+}
+
+// The sections settings.set changed, in the games that play: each run holds
+// its own copy of the settings of the World, and the edited World already has
+// the new values. keep is settings_touched over settings_all.
+@(private)
+settings_runs_take :: proc(s:^Session,keep:[]bool) {
+    list:=settings_all(s)
+    for &r in s.runs {
+        if r.world==nil {continue}
+        for setting,i in list {
+            if !keep[i] {continue}
+            for info in s.info.storages {
+                if info.name==setting.name && info.setting!=.None && info.place==.World {
+                    mem.copy(rawptr(uintptr(r.world)+info.offset),rawptr(uintptr(s.edit_world)+info.offset),info.info.size)
+                }
+            }
+        }
+    }
 }

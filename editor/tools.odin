@@ -114,7 +114,7 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
     api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
     api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,writes_result=true,flags={.Read_Only},run=api_asset_import_status})
-    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with, the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
+    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
 }
 
 // A source is absolute or relative to the project, not to where the editor runs.
@@ -233,8 +233,7 @@ api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
 }
 
 @(private)
-api_graphics_fill :: proc(s:^Session,result:^Graphics_Status) {
-    g:=graphics_settings(s)
+api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
     api_text_put(result.preset[:],graphics_quality_label(g.quality))
     result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
@@ -262,7 +261,11 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status) {
 
 @(private)
 api_graphics_status :: proc(s:^Session,call:^api.Call) {
-    api_graphics_fill(s,api.call_result(call,Graphics_Status))
+    g:=graphics_settings(s)
+    if r,_:=api_play_run(s,call);r!=nil {
+        if played:=core.world_storage_of(run_ref(s,r),erender.Graphics_Settings);played!=nil {g=played}
+    }
+    api_graphics_fill(s,api.call_result(call,Graphics_Status),g)
 }
 
 // The pointer for a tool of the viewport in a frame: whether the tool is on,

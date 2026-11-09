@@ -35,7 +35,7 @@ Api_Inspect_Params :: struct {
     limit:int `mirai:"optional,min=1,max=4096,clamp"`,
     player:int `mirai:"optional,min=0,max=3,label=play.inspect: the run of that player of a game a turn plays on the network"`,
     storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: in play.inspect the score or the state of a match"`,
-    storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages"`,
+    storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages; without entity or name or component it answers no entities"`,
 }
 
 Api_Entity_Params :: struct {
@@ -324,13 +324,15 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     }
     entities:=core.world_entities(w)
     offset:=only!=core.NONE?0:params.offset
+    // Naming a storage asks for it alone, unless the entities are named too.
+    storages_only:=storages!="" && only==core.NONE && pattern=="" && component==nil
     serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
     api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
     api.write_key(out,"playing");api.write_flag(out,play || s.mode!=.Edit)
     api.write_key(out,"total");serial.text_write_int(out,i64(entities.alive))
     api.write_key(out,"offset");serial.text_write_int(out,i64(offset))
     api.write_key(out,"entities");serial.write_u8(out,'[')
-    candidates:=[]core.Entity{only} if only!=core.NONE else api_entities_ordered(w)
+    candidates:=[]core.Entity{only} if only!=core.NONE else (storages_only?nil:api_entities_ordered(w))
     matched,shown:=0,0
     for e in candidates {
         if pattern!="" && !api_name_match(pattern,entity_name(w,e)) {continue}

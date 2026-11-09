@@ -379,8 +379,9 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   as every method that only reads a game; what must advance or change one fails asking for
   `play.start`.
   - `storages` adds `storages`, the value of each storage of the world that is plain data (score,
-    game state, queues), by name; `storage` filters with `*` and already requests them. Those of
-    `scene.inspect` are the document's.
+    game state, queues), by name; `storage` filters with `*` and already requests them, and with
+    no `entity`, `name` or `component` it answers no entities. Those of `scene.inspect` are the
+    document's.
 - On a large game, `name` or `component`, and `components` for the values of those; `omitted`
   says how many were left out.
 - `scene.add`: creates an entity; everything is optional. Returns `{id}`.
@@ -949,7 +950,8 @@ instance" are `-32602`; the rest, `-32000`
 
 ## Graphics and settings
 
-- `graphics.status`: `preset` is `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_scale` and
+- `graphics.status`: those of the game while one plays, else of the edited world; `preset` is
+  `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_scale` and
   `preset_height` say how the scene resolution is chosen; the size it is drawn at is given by
   `engine.status` (`render_width`, `render_height`). `options` lists every option of the popup with
   its current choice and its choices.
@@ -967,7 +969,8 @@ instance" are `-32602`; the rest, `-32000`
   `settings.get` does, for the sections it changed; `preferences.set` and `input.set` too, with
   `sections` and `actions` as the filters of their gets.
   - `engine` admits only `machine` sections; another is `-32602` with those it admits.
-  - The edited world takes the values instantly and the layer's file stores what differs.
+  - The edited world and the games that play take the values instantly; the layer's file stores
+    what differs.
   - In `engine`, a field that the project overrides does not change.
   - A section that is not a setting or a field the type does not have is `-32602` with those that
     exist (the file, on the other hand, may store fields the type no longer has, and they are
