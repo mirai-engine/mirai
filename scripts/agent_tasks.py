@@ -349,7 +349,7 @@ def run_agent(task: dict, model: str, session: Session, folder: Path, timeout: f
     executable = (ROOT / "bin" / "mirai").with_suffix(".exe" if os.name == "nt" else "")
     config.write_text(json.dumps({"mcpServers": {"mirai": {
         "command": executable.as_posix(),
-        "args": ["mcp", "--project", session.project.as_posix(), "--timeout", "600"]}}}), "utf-8")
+        "args": ["mcp", "--project", session.project.as_posix()]}}}), "utf-8")
     environment = {k: v for k, v in os.environ.items() if k not in ENV_DROPPED}
     environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     environment["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"

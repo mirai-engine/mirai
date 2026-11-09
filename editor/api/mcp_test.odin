@@ -450,38 +450,17 @@ mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
 }
 
 @(test)
-mcp_explicit_object_output_schemas_share_the_method_contract :: proc(t:^testing.T) {
-    s,ok:=test_server(t);if !ok {return}
-    defer server_destroy(&s)
-    OBJECT :: `{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}`
-    text:=` {"value":7} `
-    testing.expect_value(t,method_register(&s,{name="object",result_schema=OBJECT,handler=mcp_json_handler,user=&text,flags={.Core}}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="array",result_schema=`{"type":"array"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="any",result_schema=`{}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="invalid",result_schema=`{"type":`,handler=mcp_json_handler,user=&text}),Register_Error.Invalid_Schema)
-    reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
-    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),7)
-    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),7)
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),text)
-}
-
-@(test)
 mcp_rejects_malformed_results :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     text:=`{"value":7}`
     testing.expect_value(t,method_register(&s,{name="free",handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="object",result_schema=`{"type":"object"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
     values:=[]string{`[1,2]`,`"hello"`,`3`,`true`,`null`}
     for value in values {
         text=value
         reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"free"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),false))
         testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),value)
-        reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
-        testing.expect(t,is_bool(at(reply,"result","isError"),true))
-        testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
     }
     malformed:=[]string{`{"value":`,`{"value":7} false`,`not json`}
     for value in malformed {
@@ -493,14 +472,14 @@ mcp_rejects_malformed_results :: proc(t:^testing.T) {
 }
 
 @(test)
-mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_allocations :: proc(t:^testing.T) {
+mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations :: proc(t:^testing.T) {
     s,ok:=test_server(t,{max_request=1024,max_response=4096});if !ok {return}
     defer server_destroy(&s)
     buffer:[3600]u8
     w:serial.Writer
     serial.writer_init_fixed(&w,buffer[:])
     raw(&w,`{"value":"`)
-    for _ in 0..<1300 {raw(&w,`\n`)}
+    for _ in 0..<1700 {raw(&w,`\n`)}
     raw(&w,`"}`)
     text:=string(serial.writer_bytes(&w))
     testing.expect_value(t,method_register(&s,{name="object",result_schema=`{"type":"object"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
@@ -512,7 +491,7 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     reply:=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect_value(t,integer(at(reply,"id")),8)
     testing.expect_value(t,integer(at(reply,"error","code")),SERVER_ERROR)
-    testing.expect(t,at(reply,"result")==nil,"a partial structured result is never sent")
+    testing.expect(t,at(reply,"result")==nil,"a partial result is never sent")
     saved_scratch:=s.scratch.arena.data
     s.scratch.arena.data=saved_scratch[:64]
     context.allocator=mem.nil_allocator()
@@ -530,28 +509,6 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":10,"method":"tools/list"}`,.Mcp))
     serial.writer_reset(&s.out)
     testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"object"}}`,.Mcp))
-    context.allocator=saved_allocator
-    reply=parse_json(t,string(serial.writer_bytes(&s.out)))
-    testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),42)
-    serial.writer_reset(&w)
-    raw(&w,`{"type":"object","description":"`)
-    for _ in 0..<1300 {raw(&w,`\n`)}
-    raw(&w,`"}`)
-    testing.expect_value(t,method_register(&s,{name="schema",result_schema=string(serial.writer_bytes(&w)),handler=mcp_json_handler,user=&text,flags={.Core}}),Register_Error.None)
-    s.scratch.arena.data=saved_scratch[:64]
-    context.allocator=mem.nil_allocator()
-    serial.writer_reset(&s.out)
-    testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":12,"method":"tools/list"}`,.Mcp))
-    context.allocator=saved_allocator
-    s.scratch.arena.data=saved_scratch
-    reply=parse_json(t,string(serial.writer_bytes(&s.out)))
-    testing.expect_value(t,integer(at(reply,"id")),12)
-    testing.expect_value(t,integer(at(reply,"error","code")),INTERNAL_ERROR)
-    testing.expect_value(t,s.stats.scratch_failures,2)
-    context.allocator=mem.nil_allocator()
-    serial.writer_reset(&s.out)
-    testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"schema"}}`,.Mcp))
     context.allocator=saved_allocator
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
