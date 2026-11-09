@@ -104,7 +104,7 @@ collab_prefab_receive :: proc(s:^Session,st:^Collab_State,from:int,r:^serial.Rea
         written:=false
         if file.present && (!exists || !slice.equal(current,file.data)) {
             if at:=strings.last_index_byte(path,'/');at>0 && !os.is_dir(path[:at]) {_=os.make_directory_all(path[:at])}
-            written=os.write_entire_file(path,file.data)==nil
+            written=serial.file_write_atomic(path,file.data)==.None
         } else if !file.present && exists {
             written=os.remove(path)==nil
         }

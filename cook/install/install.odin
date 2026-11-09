@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
 // The plugins of a project that come from git (project.Source): what mirai
@@ -456,7 +457,7 @@ ignore_set :: proc(root,name:string,on:bool) {
     if on {append(&lines,line)}
     out:=strings.join(lines[:],"\n",context.temp_allocator)
     if len(lines)>0 {out=strings.concatenate({out,"\n"},context.temp_allocator)}
-    _=os.write_entire_file(file,transmute([]u8)out)
+    _=serial.file_write_atomic(file,transmute([]u8)out)
 }
 
 @(private)
