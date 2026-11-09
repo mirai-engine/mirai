@@ -1068,7 +1068,8 @@ api_editor_capture :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"editor.capture requires a GPU; start without --no-gpu")
         return
     }
-    if !api_rays_ready(s,call,"editor.capture") {return}
+    // The window shows what the user sees meanwhile; the scene alone is not drawn yet.
+    if !params.ui && !api_rays_ready(s,call,"editor.capture") {return}
     // The frames drawn below free the temporary memory.
     file,writable:=api_output_file(s,call,base.text_get(params.path[:]),s.app.allocator)
     if !writable {return}
