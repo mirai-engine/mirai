@@ -1010,6 +1010,7 @@ geometry_copies_commit :: proc(r:^Renderer,copies:[]Geometry_Copy,pending:[]rhi.
     if len(copies)==0 && len(pending)==0 && !pool_moves_pending(s) {return true}
     immediate:=cmd==nil
     list:=immediate?rhi.immediate_begin(r.device):cmd
+    if list==nil {set_error(r,"geometry publication: %s",rhi.device_error(r.device));return false}
     pool_moves_record(r,list)
     at:u64
     for copy in copies {
