@@ -609,13 +609,13 @@ render_sync :: proc(
     gpu.scene_set_exposure(r,exposure)
     if rebuild {
         host.assets_appearance_begin(a)
-        if !instances_build(sync,a,t,frame,len(extras)) {
+        if !instances_build(sync,a,t,frame,len(extras)) || resize(&sync.extras,len(extras))!=nil {
             // Without memory for the instances the scene is empty until a frame makes it again.
             gpu.scene_set(r,nil,nil,{},environment)
             sync.synced=false
             return
         }
-        resize(&sync.extras,len(extras));copy(sync.extras[:],extras)
+        copy(sync.extras[:],extras)
         batches_retain(a,r)
         for instance in extras {
             host.assets_material_retain(a,u32(instance.material))
@@ -628,7 +628,12 @@ render_sync :: proc(
         host.assets_appearance_end(a)
         host.assets_commit(a)
         sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
-        gpu.scene_set(r,instances_composed(sync,extras),sync.lights[:],sync.sun,environment)
+        composed,fits:=instances_composed(sync,extras)
+        if !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
+            gpu.scene_set(r,nil,nil,{},environment)
+            sync.synced=false
+            return
+        }
         sync.environment=environment
         sync.highlights_seen=outlines_seen(t)
         sync.stats.scene_sets+=1
@@ -668,7 +673,14 @@ render_sync :: proc(
             copy(sync.extras[:],extras)
             copy(sync.instances[first:],extras)
             for instance,i in extras {sync.highlights[first+i]=instance.highlight}
-            if !patched {gpu.scene_set(r,instances_composed(sync,extras),sync.lights[:],sync.sun,environment);sync.stats.scene_sets+=1}
+            if !patched {
+                composed,fits:=instances_composed(sync,extras)
+                if !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
+                    sync.synced=false
+                    return
+                }
+                sync.stats.scene_sets+=1
+            }
         }
         if local_changes {
             batches_retain(a,r)
@@ -700,11 +712,16 @@ render_sync :: proc(
         if lights_seen!=sync.lights_seen {
             sync.lights_seen=lights_seen
             previous_sun:=sync.sun
-            resize(&sync.previous_lights,len(sync.lights))
-            copy(sync.previous_lights[:],sync.lights[:])
+            // Without memory to keep the lights of before, they are set as if they had changed.
+            compared:=resize(&sync.previous_lights,len(sync.lights))==nil
+            if compared {copy(sync.previous_lights[:],sync.lights[:])}
             lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y)
-            if sync.sun!=previous_sun || !slice.equal(sync.lights[:],sync.previous_lights[:]) {
-                gpu.scene_set_lights(r,sync.lights[:],sync.sun,environment)
+            if !compared || sync.sun!=previous_sun || !slice.equal(sync.lights[:],sync.previous_lights[:]) {
+                // Without memory in the renderer for the lights a later frame makes the scene again.
+                if !gpu.scene_set_lights(r,sync.lights[:],sync.sun,environment) {
+                    sync.synced=false
+                    return
+                }
                 sync.environment=environment
                 sync.stats.light_sets+=1
             }
@@ -1009,11 +1026,11 @@ instance_insert :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.En
 }
 
 @(private)
-instances_composed :: proc(sync:^Render_Sync,extras:[]gpu.Instance_Desc) -> []gpu.Instance_Desc {
+instances_composed :: proc(sync:^Render_Sync,extras:[]gpu.Instance_Desc) -> (composed:[]gpu.Instance_Desc,ok:bool) {
     replaces:=false
     for instance in extras {replaces||=instance.replace_source && instance.object_id!=0}
-    if !replaces {return sync.instances[:]}
-    resize(&sync.composed,len(sync.instances))
+    if !replaces {return sync.instances[:],true}
+    if resize(&sync.composed,len(sync.instances))!=nil {return nil,false}
     copy(sync.composed[:],sync.instances[:])
     for instance in extras {
         if !instance.replace_source || instance.object_id==0 {continue}
@@ -1021,7 +1038,7 @@ instances_composed :: proc(sync:^Render_Sync,extras:[]gpu.Instance_Desc) -> []gp
         at:=instance_of(sync,e)
         if at>=0 {sync.composed[at].hidden=true}
     }
-    return sync.composed[:]
+    return sync.composed[:],true
 }
 
 @(private)

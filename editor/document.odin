@@ -153,10 +153,13 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
 scene_new :: proc(s:^Session) {
     runs_stop(s)
     tools_release(s)
+    w:=edited_world(s)
+    if !w.info.clear(w.data) {
+        notify(s,"There is not enough memory for a new scene; this one stays open")
+        return
+    }
     ai_document_closed(s,s.edit_world)
     if s.ai!=nil {s.ai.pending=false}
-    w:=edited_world(s)
-    w.info.clear(w.data)
     sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
     if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
     entity_make(s,w,{preset=.Sun,name="Sun",named=true})

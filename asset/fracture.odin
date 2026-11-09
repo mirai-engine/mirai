@@ -183,11 +183,12 @@ fracture_view :: proc(a:^Asset,types:^Types) -> (view:Fracture_View,error:Error)
 // its points. A cluster takes the full hulls of its children, which follow it, so each piece is read once.
 @(private="file")
 fracture_cluster_hulls :: proc(view:Fracture_View,hulls:^[dynamic]Fracture_Cluster_Hull,points:^[dynamic][3]f32) -> Error {
-    gathered:=make([][dynamic][3]f32,len(view.clusters))
+    gathered,no_gathered:=make([][dynamic][3]f32,len(view.clusters))
     defer {
         for &cluster in gathered {delete(cluster)}
         delete(gathered)
     }
+    if no_gathered!=nil {return .Out_Of_Memory}
     for piece in view.pieces {
         if piece.cluster<0 {continue}
         for vertex in view.vertices[piece.first_vertex:][:piece.vertex_count] {append(&gathered[piece.cluster],vertex.position)}
@@ -195,6 +196,7 @@ fracture_cluster_hulls :: proc(view:Fracture_View,hulls:^[dynamic]Fracture_Clust
     #reverse for cluster,at in view.clusters {
         full,error:=geom.hull_build(gathered[at][:])
         defer geom.hull_destroy(&full)
+        if error==.Out_Of_Memory {return .Out_Of_Memory}
         if error!=.None || geom.hull_is_flat(full) {return .Invalid}
         clear(&gathered[at])
         append(&gathered[at],..full.vertices)
@@ -203,6 +205,7 @@ fracture_cluster_hulls :: proc(view:Fracture_View,hulls:^[dynamic]Fracture_Clust
     for cluster in gathered {
         hull,error:=geom.hull_build(cluster[:],{max_vertices=FRACTURE_CLUSTER_POINTS})
         defer geom.hull_destroy(&hull)
+        if error==.Out_Of_Memory {return .Out_Of_Memory}
         if error!=.None || geom.hull_is_flat(hull) {return .Invalid}
         append(hulls,Fracture_Cluster_Hull{u32(len(points)),u32(len(hull.vertices))})
         append(points,..hull.vertices)

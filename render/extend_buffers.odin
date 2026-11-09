@@ -404,7 +404,13 @@ extension_readback :: proc(r: ^Renderer, world: u64, desc: Extension_Buffer_Desc
 	}
 	if free == nil {set_error(r, "readback %s: the renderer has no room for more than %d", desc.name, EXTENSION_READBACK_CAPACITY); return nil}
 	free^ = {key = key, world = world, size = desc.size}
-	free.data = make([]u8, desc.size, r.allocator)
+	data_error: mem.Allocator_Error
+	free.data, data_error = make([]u8, desc.size, r.allocator)
+	if data_error != nil {
+		set_error(r, "readback %s: out of memory for %d bytes", desc.name, desc.size)
+		free^ = {}
+		return nil
+	}
 	ok := free.data != nil
 	for &b in free.buffers {
 		b = rhi.buffer_create(r.device, {size = desc.size, memory = .Readback, name = "extension readback"})

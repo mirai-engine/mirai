@@ -112,21 +112,29 @@ light_region_lights :: proc "contextless" (region: Light_Region) -> int {
 	return int(region.lights) + 1 + (int(region.shadowless) + 1 if region.shadowless > 0 else 0)
 }
 
+// The memory a tree of that many lights after the room of region takes at
+// most: with it light_tree_build does not fail. False without memory.
+light_tree_reserve :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: int, region: Light_Region = {}) -> bool {
+	placed := min(lights, LIGHTS_MAX)
+	return reserve(leaves, lights) == nil && reserve(keys, placed) == nil && reserve(nodes, int(light_region_first(region)) + max(2 * placed - 1, 0)) == nil
+}
+
 // Builds the tree into nodes, after the room of region, with the leaf of
-// each light in leaves, and returns what it costs (light_tree_cost).
-light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: []Gpu_Light, region: Light_Region = {}) -> f64 {
+// each light in leaves, and returns what it costs (light_tree_cost). False
+// without memory for it: the three stay as they were.
+light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: []Gpu_Light, region: Light_Region = {}) -> (cost: f64, ok: bool) {
+	if !light_tree_reserve(nodes, keys, leaves, len(lights), region) {return 0, false}
 	clear(nodes)
 	clear(keys)
-	resize(leaves, len(lights))
-	for &leaf in leaves {leaf = LIGHT_TREE_NONE}
 	first := light_region_first(region)
-	resize(nodes, int(first))
+	// Reserved: neither asks for memory.
+	if resize(leaves, len(lights)) != nil || resize(nodes, int(first)) != nil {return 0, false}
+	for &leaf in leaves {leaf = LIGHT_TREE_NONE}
 	for l, i in lights {
 		if light_placed(l) && len(keys) < LIGHTS_MAX {append(keys, Light_Key{light_curve_place(l), u32(i)})}
 	}
 	if len(keys) > 0 {
 		slice.sort_by(keys[:], proc(a, b: Light_Key) -> bool {return a.place < b.place || (a.place == b.place && a.light < b.light)})
-		reserve(nodes, int(first) + 2 * len(keys) - 1)
 		light_tree_node(nodes, keys[:], leaves[:], lights, 0)
 	}
 	if region.lights > 0 {
@@ -138,7 +146,7 @@ light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_
 		}
 		light_region_root(nodes[:], region)
 	}
-	return light_tree_cost(nodes[first:])
+	return light_tree_cost(nodes[first:]), true
 }
 
 // A leaf of no light: the light it names is the one after those of its part.

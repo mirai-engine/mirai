@@ -977,7 +977,8 @@ app_capture_pixels :: proc(app:^App,allocator:=context.allocator,generated:=fals
 // other context has, so one atlas serves all of them.
 // panels: the world panels it builds in a frame; 0: those of ui.
 app_ui_context_create :: proc(app:^App,panels:=0) -> ^ui.Context {
-    ctx:=new(ui.Context,app.allocator)
+    ctx,error:=new(ui.Context,app.allocator)
+    if error!=nil {return nil}
     desc:=app_ui_context_desc(app)
     desc.max_panels=panels
     if !ui.context_init(ctx,desc) {

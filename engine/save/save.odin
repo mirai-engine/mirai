@@ -535,7 +535,8 @@ restore :: proc(w:core.World_Ref,app:^host.App,data:[]u8,game:^Save_Game=nil) ->
     if asset.asset_open(&file,data[at:][:header.bytes],app.allocator)!=.None {return .Corrupt}
     defer asset.asset_close(&file)
     view,view_error:=asset.scene_view(&file,types)
-    if view_error!=.None || !asset.scene_view_check(view,app.allocator) {return .Corrupt}
+    if view_error!=.None {return .Corrupt}
+    if checked:=asset.scene_view_check(view,app.allocator);checked!=.None {return .Failed if checked==.Out_Of_Memory else .Corrupt}
 
     made:=make([]core.Entity,len(view.ids),context.temp_allocator)
     if _,error:=scene.replace(w,app,&file,types,made,references=false);error!=.None {return .Failed}

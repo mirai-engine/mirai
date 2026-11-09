@@ -264,7 +264,7 @@ covers_tile :: proc "contextless" (low,high:[3]f32,coord:[2]i32) -> bool {
 @(private)
 seen_source :: proc(state:^Foliage_Terrain,id:base.Asset_Id) -> ^Seen_Source {
     for &source in state.sources {if source.id==id {return &source}}
-    append(&state.sources,Seen_Source{id=id})
+    if _,error:=append(&state.sources,Seen_Source{id=id});error!=nil {return nil}
     return &state.sources[len(state.sources)-1]
 }
 
@@ -282,7 +282,7 @@ foliage_terrain_ground :: proc(
     state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,requests:^foliage.Foliage_Ground_Requests,
     data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),
     terrains:core.Read(terrain.Terrain),terrain_data:core.Ref(terrain.Terrain_Data),worlds:core.Read(core.World_Transform),
-    sources:core.Ref(scene.Streaming_Sources),app:^host.App,focus:terrain.Terrain_Focus,
+    sources:core.Ref(scene.Streaming_Sources),app:^host.App,focus:terrain.Terrain_Focus,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.cells)
     if data.ptr==nil || terrain_data.ptr==nil {return}
@@ -323,20 +323,24 @@ foliage_terrain_ground :: proc(
         for &entry in td.entries {
             seen:=seen_source(state,entry.id)
             s:=&entry.source
-            whole:=rebuilt || len(seen.versions)!=len(entry.versions)
+            whole:=rebuilt || seen==nil || len(seen.versions)!=len(entry.versions)
             for version,i in entry.versions {
                 if !whole && seen.versions[i]==version {continue}
                 low,high:[3]f32
                 if s.kind==.Mesh {
                     if i>=len(s.mesh_chunks) {continue}
                     low,high=s.mesh_chunks[i].low,s.mesh_chunks[i].high
-                    if i<len(seen.boxes) {low,high=linalg.min(low,seen.boxes[i][0]),linalg.max(high,seen.boxes[i][1])}
+                    if seen!=nil && i<len(seen.boxes) {low,high=linalg.min(low,seen.boxes[i][0]),linalg.max(high,seen.boxes[i][1])}
                 } else {low,high=chunk_box(s,i)}
                 for &view in state.views {if view.source==s {region_add(state,view.to_world,low,high)}}
             }
-            resize(&seen.versions,len(entry.versions))
+            // Forgotten without memory: its next change takes the whole source as changed.
+            if seen==nil || resize(&seen.versions,len(entry.versions))!=nil || resize(&seen.boxes,s.kind==.Mesh?len(s.mesh_chunks):0)!=nil {
+                if seen!=nil {clear(&seen.versions);clear(&seen.boxes)}
+                core.report(problems,core.NONE,"foliage_terrain.memory","out of memory to remember the chunks of a terrain under the foliage; its next change places again the foliage of all of it: free memory")
+                continue
+            }
             copy(seen.versions[:],entry.versions[:])
-            resize(&seen.boxes,s.kind==.Mesh?len(s.mesh_chunks):0)
             if s.kind==.Mesh {for chunk,i in s.mesh_chunks {seen.boxes[i]={chunk.low,chunk.high}}}
         }
         for i:=len(state.sources)-1;i>=0;i-=1 {
@@ -363,10 +367,19 @@ foliage_terrain_ground :: proc(
         if !inverted {continue}
         seen:^Seen_Owner
         for &held in state.owners {if held.entity==e {seen=&held;break}}
-        if seen==nil {append(&state.owners,Seen_Owner{entity=e});seen=&state.owners[len(state.owners)-1]}
         owner:=foliage.ground_owner(ground,e)
         fresh:=owner==nil
-        if fresh {append(&ground.owners,foliage.Ground_Owner{entity=e});owner=&ground.owners[len(ground.owners)-1]}
+        enough:=true
+        if seen==nil {_,error:=append(&state.owners,Seen_Owner{entity=e});enough=error==nil}
+        if fresh && enough {_,error:=append(&ground.owners,foliage.Ground_Owner{entity=e});enough=error==nil}
+        if !enough {
+            // The next step looks at every Foliage again.
+            state.foliage={}
+            core.report(problems,e,"foliage_terrain.memory","out of memory for the ground under this Foliage; it is looked at again in the next frame: free memory")
+            continue
+        }
+        if seen==nil {seen=&state.owners[len(state.owners)-1]}
+        if fresh {owner=&ground.owners[len(ground.owners)-1]}
         if len(state.views)>0 {
             first:=state.views[0].source
             owner.layer_count=min(first.layer_count,foliage.RULE_LAYERS)

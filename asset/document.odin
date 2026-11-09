@@ -170,8 +170,12 @@ document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type
 document_resize :: proc(doc:^Document,table:int,rows:int) -> Error {
     target:=&doc.tables[table]
     if rows<0 || rows>MAX_ROWS || .Single in target.flags && rows!=1 {return .Invalid}
-    for &column in target.columns {
-        column_size(doc,&column,rows*column.size) or_return
+    for &column,at in target.columns {
+        if error:=column_size(doc,&column,rows*column.size);error!=.None {
+            // The columns that grew go back to the rows the table has: no memory is asked for that.
+            for &grown in target.columns[:at] {_=column_size(doc,&grown,target.rows*grown.size)}
+            return error
+        }
     }
     target.rows=rows
     return .None
@@ -231,9 +235,10 @@ document_column_put :: proc(doc:^Document,types:^Types,table:int,name:string,val
     index,known:=types_index(types,T)
     if !known {return -1,types.error}
     type,imported:=document_type(doc,types,T)
-    if !imported {return -1,.Out_Of_Memory}
+    layout:=types_layout(types,index)
+    if !imported || layout==nil {return -1,.Out_Of_Memory}
     column=document_column_add(doc,table,name,type,flags,compression,alignment) or_return
-    serial.value_write(types_layout(types,index),doc.tables[table].columns[column].data,raw_data(values),len(values))
+    serial.value_write(layout,doc.tables[table].columns[column].data,raw_data(values),len(values))
     return column,.None
 }
 
@@ -263,7 +268,7 @@ document_dependencies :: proc(doc:^Document,out:^[dynamic]base.Asset_Id) -> Erro
         out[unique]=id
         unique+=1
     }
-    resize(out,unique)
+    base.truncate(out,unique)
     return .None
 }
 
@@ -340,7 +345,8 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.
     columns:=0
     for table in doc.tables {columns+=len(table.columns)}
     if len(chunks)+columns>MAX_CHUNKS {return .Invalid}
-    first_chunk:=make([]int,len(doc.tables),allocator);defer delete(first_chunk,allocator)
+    first_chunk,no_first:=make([]int,len(doc.tables),allocator);defer delete(first_chunk,allocator)
+    if no_first!=nil {return .Out_Of_Memory}
     counts:[3]u16
     for bulk in ([]bool{false,true}) {
         for table,t in doc.tables {
@@ -399,14 +405,17 @@ document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=Pack.Edit,w
 // A copy of an open asset that owns everything it holds.
 document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator) -> Error {
     doc^={kind=a.blob.header.kind,kind_version=a.blob.header.kind_version,id=a.blob.header.id,owner=a.blob.header.owner,flags=a.blob.header.flags,allocator=allocator}
-    serial.schema_clone(&doc.schema,&a.schema,allocator)
+    if serial.schema_clone(&doc.schema,&a.schema,allocator)!=.None {document_destroy(doc);return .Out_Of_Memory}
     doc.hashes=make([dynamic]u64,allocator)
     if !serial.schema_hashes_update(&doc.schema,&doc.hashes) {document_destroy(doc);return .Out_Of_Memory}
-    doc.tables=make([dynamic]Doc_Table,0,len(a.tables),allocator)
+    no_tables:runtime.Allocator_Error
+    if doc.tables,no_tables=make([dynamic]Doc_Table,0,len(a.tables),allocator);no_tables!=nil {document_destroy(doc);return .Out_Of_Memory}
     for &source in a.tables {
         table:=Doc_Table{name=strings.clone(source.name,allocator),name_hash=source.name_hash,flags=source.flags,rows=source.rows,key=source.key}
-        table.columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
+        no_columns:runtime.Allocator_Error
+        table.columns,no_columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
         append(&doc.tables,table)
+        if no_columns!=nil {document_destroy(doc);return .Out_Of_Memory}
         target:=&doc.tables[len(doc.tables)-1]
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)

@@ -249,7 +249,9 @@ piece_root :: proc "contextless" (parents:[]u32,index:u32) -> u32 #no_bounds_che
 @(private="file")
 near_links_build :: proc(geometric:^Cluster_Adjacency,groups:[]Cluster_Group,scratch:runtime.Allocator) -> (link_offsets,links:[]u32,ok:bool) #no_bounds_check {
     cluster_count:=len(groups)
-    pieces:=make([]u32,cluster_count,scratch)
+    failed:[7]runtime.Allocator_Error
+    pieces:[]u32
+    if pieces,failed[0]=make([]u32,cluster_count,scratch);failed[0]!=nil {return}
     for &p,i in pieces {p=u32(i)}
     for c in 0..<cluster_count {
         for adj in geometric.offsets[c]..<geometric.offsets[c+1] {
@@ -266,22 +268,30 @@ near_links_build :: proc(geometric:^Cluster_Adjacency,groups:[]Cluster_Group,scr
     extent:=max(hi.x-lo.x,hi.y-lo.y,hi.z-lo.z)
     scale:=extent>0?1023/extent:0
     Keyed :: struct {key,id:u32}
-    sorted:=make([]Keyed,cluster_count,scratch)
+    sorted:[]Keyed
+    run_begin,run_end:[]u32
+    found:[dynamic][2]u32
+    sorted,failed[1]=make([]Keyed,cluster_count,scratch)
+    run_begin,failed[2]=make([]u32,cluster_count,scratch)
+    run_end,failed[3]=make([]u32,cluster_count,scratch)
+    // Each cluster adds its nearest ones both ways.
+    found,failed[4]=make([dynamic][2]u32,0,cluster_count*PARTITION_NEAR_LINKS*2,scratch)
+    link_offsets,failed[5]=make([]u32,cluster_count+1,scratch)
+    for f in failed {
+        if f!=nil {return nil,nil,false}
+    }
     for g,i in groups {
         q:=[3]u32{u32((g.center.x-lo.x)*scale),u32((g.center.y-lo.y)*scale),u32((g.center.z-lo.z)*scale)}
         sorted[i]={morton_spread(q[0])|morton_spread(q[1])<<1|morton_spread(q[2])<<2,u32(i)}
     }
     slice.sort_by(sorted,proc(a,b:Keyed) -> bool {return a.key<b.key || a.key==b.key && a.id<b.id})
     // The run of the same piece each place of the order is in.
-    run_begin:=make([]u32,cluster_count,scratch)
-    run_end:=make([]u32,cluster_count,scratch)
     first:=0
     for i in 1..=cluster_count {
         if i<cluster_count && pieces[sorted[i].id]==pieces[sorted[first].id] {continue}
         for j in first..<i {run_begin[j],run_end[j]=u32(first),u32(i)}
         first=i
     }
-    found:=make([dynamic][2]u32,0,cluster_count*PARTITION_NEAR_LINKS,scratch)
     for i in 0..<cluster_count {
         if run_end[i]-run_begin[i]>=PARTITION_NEAR_PIECE {continue}
         id:=sorted[i].id
@@ -314,16 +324,16 @@ near_links_build :: proc(geometric:^Cluster_Adjacency,groups:[]Cluster_Group,scr
         }
         for other in closest {
             if other==NONE {continue}
-            append(&found,[2]u32{id,other},[2]u32{other,id})
+            push(&found,[2]u32{id,other});push(&found,[2]u32{other,id})
         }
     }
     slice.sort_by(found[:],proc(a,b:[2]u32) -> bool {return a[0]<b[0] || a[0]==b[0] && a[1]<b[1]})
-    link_offsets=make([]u32,cluster_count+1,scratch)
-    unique:=make([dynamic]u32,0,len(found),scratch)
+    unique:[dynamic]u32
+    if unique,failed[6]=make([dynamic]u32,0,len(found),scratch);failed[6]!=nil {return nil,nil,false}
     for pair,i in found {
         if i>0 && found[i-1]==pair {continue}
         link_offsets[pair[0]+1]+=1
-        append(&unique,pair[1])
+        push(&unique,pair[1])
     }
     for c in 0..<cluster_count {link_offsets[c+1]+=link_offsets[c]}
     return link_offsets,unique[:],true

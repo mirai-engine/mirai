@@ -93,4 +93,5 @@ Shape_Error :: enum u8 {
     Too_Many_Loops,
     Self_Intersecting, // edges cross or touch, a hole leaves the outline or meets another
     Geometry,          // the triangulation or the boolean of the brushes failed
+    Out_Of_Memory,
 }

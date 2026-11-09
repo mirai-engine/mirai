@@ -45,7 +45,7 @@ the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow :: proc
         vertices,indices,submeshes,ok:=demo_level0(t,relative,&file,&types)
         if !ok {return}
         defer asset.asset_close(&file)
-        positions,attributes,protect:=asset.mesh_simplify_inputs(vertices,context.temp_allocator)
+        positions,attributes,protect:=asset.mesh_simplify_inputs(vertices)
         weights:=asset.MESH_SIMPLIFY_WEIGHTS
         ranges:=make([]geom.Cluster_Range,len(submeshes),context.temp_allocator)
         for s,i in submeshes {ranges[i]={s.first_index,s.index_count,s.slot}}

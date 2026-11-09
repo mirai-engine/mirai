@@ -340,7 +340,7 @@ vec_length :: #force_inline proc "contextless" (a:geom.Vec3) -> f32 {return math
 @(private="file")
 levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,out_vertices:^[dynamic]asset.Vertex,out_indices:^[dynamic]u32,out_skin:^[dynamic]asset.Skin_Vertex,out_lods:^[dynamic]Lod,out_submeshes:^[dynamic]Submesh,out_sources:^[dynamic]u32,target:int,limit:int,pruned:^bool=nil) {
     temp:=context.temp_allocator
-    positions,attributes,protect:=asset.mesh_simplify_inputs(vertices,temp)
+    positions,attributes,protect:=asset.mesh_simplify_inputs(vertices)
     weights:=asset.MESH_SIMPLIFY_WEIGHTS
     // The submesh of each vertex of level 0; NONE outside all of them.
     owner:=make([]u32,len(vertices),temp)

@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:slice"
+import "mirai:std/base"
 
 Site_Pattern :: enum {
     Uniform,   // spread evenly in the box
@@ -80,7 +81,7 @@ Fracture_Connection :: struct {
     area:f32, // of the face they share; between parts of cells, the smaller of their faces
 }
 
-Fracture_Error :: enum {None,Invalid_Mesh,No_Sites}
+Fracture_Error :: enum {None,Invalid_Mesh,No_Sites,Out_Of_Memory}
 
 // Result and reusable memory of mesh_fracture.
 Fracture :: struct {
@@ -164,16 +165,16 @@ fracture_piece_mesh :: proc(f:^Fracture,piece:int) -> Mesh {
 
 // Cuts `source` with the plane and writes what is behind it to work[target].
 // `previous` is the work buffer that holds source, or -1 for the input mesh.
-@(private="file") fracture_clip :: proc(f:^Fracture,source:Mesh,previous,target:int,plane:DPlane,site:u32,options:Slice_Options) -> Clip #no_bounds_check {
-    result:=slice_plane(&f.slicer,source,plane,nil,&f.work[target],options,false)
-    if result.front.triangles==0 {return .Untouched}
-    if result.back.triangles==0 {return .Empty}
+@(private="file") fracture_clip :: proc(f:^Fracture,source:Mesh,previous,target:int,plane:DPlane,site:u32,options:Slice_Options) -> (clip:Clip,error:runtime.Allocator_Error) #no_bounds_check {
+    result:=slice_plane(&f.slicer,source,plane,nil,&f.work[target],options,false) or_return
+    if result.front.triangles==0 {return .Untouched,nil}
+    if result.back.triangles==0 {return .Empty,nil}
     sources:=f.slicer.sources[1][:]
-    resize(&f.tags[target],len(sources))
+    resize(&f.tags[target],len(sources)) or_return
     for s,t in sources {
         f.tags[target][t]=site if s==SLICE_CAP else NONE if previous<0 else f.tags[previous][s]
     }
-    return .Cut
+    return .Cut,nil
 }
 
 // Voronoi fracture: the part of the mesh nearer to each site than to any
@@ -181,12 +182,23 @@ fracture_piece_mesh :: proc(f:^Fracture,piece:int) -> Mesh {
 // connected part of it. A closed mesh gives closed pieces whose volumes add
 // up to its volume. Also builds the graph of the pieces that touch, with the
 // area they share. Each cell cuts the whole mesh: the first cuts walk every
-// triangle, which bounds the cost by sites times triangles.
-mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Options={}) -> Fracture_Error #no_bounds_check {
+// triangle, which bounds the cost by sites times triangles. Without memory
+// there are no pieces.
+mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Options={}) -> Fracture_Error {
     mesh_buffer_clear(&f.mesh)
     clear(&f.pieces);clear(&f.connections);clear(&f.faces);clear(&f.piece_faces)
     if !mesh_is_valid(mesh) {return .Invalid_Mesh}
     if len(sites)==0 {return .No_Sites}
+    if fracture_cells(f,mesh,sites,options)!=nil {
+        mesh_buffer_clear(&f.mesh)
+        clear(&f.pieces);clear(&f.connections)
+        return .Out_Of_Memory
+    }
+    return .None
+}
+
+@(private="file")
+fracture_cells :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Options) -> runtime.Allocator_Error #no_bounds_check {
     lo,hi:=mesh_bounds(mesh.positions)
     max_abs:=positions_max_abs(mesh.positions)
     tolerance:=max(options.tolerance,tolerance_noise(max_abs))
@@ -195,8 +207,17 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
     margin:=max(tolerance*16,1e-3*f32(dlength(dvec(hi)-dvec(lo))))
     box_lo,box_hi:=lo-margin,hi+margin
 
-    resize(&f.seen,len(sites));resize(&f.area,len(sites));resize(&f.bounds,len(sites));resize(&f.site_pieces,len(sites))
+    resize(&f.seen,len(sites)) or_return
+    resize(&f.area,len(sites)) or_return
+    resize(&f.bounds,len(sites)) or_return
+    resize(&f.site_pieces,len(sites)) or_return
     for i in 0..<len(sites) {f.seen[i]=NONE;f.area[i]=0;f.bounds[i]={max(f32),-max(f32)};f.site_pieces[i]={}}
+    // A cell has at most every other site in its order and among its
+    // neighbors, and starts as the twelve triangles of the box.
+    reserve(&f.order,len(sites)) or_return
+    reserve(&f.neighbors,len(sites)) or_return
+    reserve(&f.work[0].positions,8) or_return
+    reserve(&f.work[0].indices,36) or_return
 
     for site,i in sites {
         // The other sites from the nearest. A site at the place of an earlier
@@ -211,7 +232,7 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
                 if j<i {repeated=true;break}
                 continue
             }
-            append(&f.order,Fracture_Order{distance,u32(j)})
+            push(&f.order,Fracture_Order{distance,u32(j)})
         }
         if repeated {continue}
         slice.sort_by(f.order[:],proc(a,b:Fracture_Order) -> bool {
@@ -225,7 +246,7 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
         corners:=box_corners(box_lo,box_hi)
         append(&cell.positions,..corners[:])
         append(&cell.indices,0,2,1, 1,2,3, 4,5,6, 5,7,6, 0,1,4, 1,5,4, 2,6,3, 3,6,7, 0,4,2, 2,4,6, 1,3,5, 3,7,5)
-        resize(&f.tags[0],12)
+        resize(&f.tags[0],12) or_return
         for &tag in f.tags[0] {tag=NONE}
         current:=0
         empty:=false
@@ -236,7 +257,7 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
                 reach=max(reach,ddot(d,d))
             }
             if entry.distance>4*reach {break}
-            state:=fracture_clip(f,mesh_buffer_view(&f.work[current]),current,1-current,bisector(site,sites[entry.site]),entry.site,cell_cut)
+            state:=fracture_clip(f,mesh_buffer_view(&f.work[current]),current,1-current,bisector(site,sites[entry.site]),entry.site,cell_cut) or_return
             if state==.Empty {empty=true;break}
             if state==.Cut {current=1-current}
         }
@@ -246,7 +267,7 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
             if tag!=NONE {f.seen[tag]=u32(i)}
         }
         for entry in f.order {
-            if f.seen[entry.site]==u32(i) {append(&f.neighbors,entry.site)}
+            if f.seen[entry.site]==u32(i) {push(&f.neighbors,entry.site)}
         }
 
         // The mesh, cut by those planes from the nearest.
@@ -254,7 +275,7 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
         current=-1
         for neighbor in f.neighbors {
             target:=0 if current<0 else 1-current
-            state:=fracture_clip(f,source,current,target,bisector(site,sites[neighbor]),neighbor,cut)
+            state:=fracture_clip(f,source,current,target,bisector(site,sites[neighbor]),neighbor,cut) or_return
             if state==.Empty {empty=true;break}
             if state==.Cut {
                 current=target
@@ -262,12 +283,16 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
             }
         }
         if empty || len(source.indices)==0 {continue}
-        fracture_emit(f,source,f.tags[current][:] if current>=0 else nil,u32(i),options.min_volume)
+        fracture_emit(f,source,f.tags[current][:] if current>=0 else nil,u32(i),options.min_volume) or_return
     }
 
     // A face of one piece and a face of a piece of the site across it that
-    // overlap on their plane are one connection, as wide as the smaller face.
-    key_map_reset(&f.pairs,len(f.faces))
+    // overlap on their plane are one connection, as wide as the smaller face:
+    // a face gives at most one with each piece of that site.
+    pairs:=0
+    for face in f.faces {pairs+=int(f.site_pieces[face.site][1])}
+    key_map_reset(&f.pairs,pairs) or_return
+    reserve(&f.connections,pairs) or_return
     reach:=tolerance*8
     for face in f.faces {
         own:=f.pieces[face.piece].site
@@ -278,13 +303,13 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
                 if back.site!=own || !boxes_touch(face.lo,face.hi,back.lo,back.hi,reach) {continue}
                 a,b:=min(face.piece,other),max(face.piece,other)
                 if _,inserted:=key_map_entry(&f.pairs,pair_key(a,b),u32(len(f.connections)));inserted {
-                    append(&f.connections,Fracture_Connection{a,b,min(face.area,back.area)})
+                    push(&f.connections,Fracture_Connection{a,b,min(face.area,back.area)})
                 }
             }
         }
     }
     slice.sort_by(f.connections[:],proc(x,y:Fracture_Connection) -> bool {return x.a<y.a || (x.a==y.a && x.b<y.b)})
-    return .None
+    return nil
 }
 
 @(private="file") boxes_touch :: proc "contextless" (lo,hi,other_lo,other_hi:Vec3,reach:f32) -> bool {
@@ -293,16 +318,28 @@ mesh_fracture :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Option
 
 // Appends the cell of `site`, the mesh cut to it, as one piece per
 // component (mesh_components). tags holds the site across each face the cuts
-// opened; nil when no plane cut the mesh.
+// opened; nil when no plane cut the mesh. The pieces share no vertex or
+// triangle of the cell, and each has at most one face per neighbor: the mesh
+// and the lists have their room before a piece is written.
 @(private="file")
-fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32) #no_bounds_check {
+fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32) -> runtime.Allocator_Error #no_bounds_check {
     triangles:=len(source.indices)/3
-    resize(&f.chunk_of,triangles)
+    resize(&f.chunk_of,triangles) or_return
     chunks:=u32(mesh_components(source.positions,source.indices,f.chunk_of[:]))
-    resize(&f.remap,len(source.positions))
+    resize(&f.remap,len(source.positions)) or_return
     for &r in f.remap {r=NONE}
 
     has_normals,has_uvs,has_colors,has_materials:=len(source.normals)>0,len(source.uvs)>0,len(source.colors)>0,len(source.materials)>0
+    vertices:=len(source.positions)
+    reserve_more(&f.mesh.positions,vertices) or_return
+    if has_normals {reserve_more(&f.mesh.normals,vertices) or_return}
+    if has_uvs {reserve_more(&f.mesh.uvs,vertices) or_return}
+    if has_colors {reserve_more(&f.mesh.colors,vertices) or_return}
+    reserve_more(&f.mesh.indices,triangles*3) or_return
+    reserve_more(&f.mesh.materials,triangles) or_return
+    reserve_more(&f.pieces,int(chunks)) or_return
+    reserve_more(&f.piece_faces,int(chunks)) or_return
+    if len(tags)>0 {reserve_more(&f.faces,int(chunks)*len(f.neighbors)) or_return}
     f.site_pieces[site]={u32(len(f.pieces)),0}
     for chunk in 0..<chunks {
         first_vertex,first_index:=len(f.mesh.positions),len(f.mesh.indices)
@@ -334,12 +371,12 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
         positions,indices:=f.mesh.positions[first_vertex:],f.mesh.indices[first_index:]
         mass:=mesh_mass_properties(positions,indices)
         if !(mass.volume>max(min_volume,0)) {
-            resize(&f.mesh.positions,first_vertex)
-            if has_normals {resize(&f.mesh.normals,first_vertex)}
-            if has_uvs {resize(&f.mesh.uvs,first_vertex)}
-            if has_colors {resize(&f.mesh.colors,first_vertex)}
-            resize(&f.mesh.indices,first_index)
-            resize(&f.mesh.materials,first_index/3)
+            base.truncate(&f.mesh.positions,first_vertex)
+            if has_normals {base.truncate(&f.mesh.normals,first_vertex)}
+            if has_uvs {base.truncate(&f.mesh.uvs,first_vertex)}
+            if has_colors {base.truncate(&f.mesh.colors,first_vertex)}
+            base.truncate(&f.mesh.indices,first_index)
+            base.truncate(&f.mesh.materials,first_index/3)
             continue
         }
         piece:=u32(len(f.pieces))
@@ -356,13 +393,13 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
         }
         if len(tags)>0 {
             for neighbor in f.neighbors {
-                if f.area[neighbor]>0 {append(&f.faces,Fracture_Face{piece,neighbor,f32(f.area[neighbor]),f.bounds[neighbor][0],f.bounds[neighbor][1]})}
+                if f.area[neighbor]>0 {push(&f.faces,Fracture_Face{piece,neighbor,f32(f.area[neighbor]),f.bounds[neighbor][0],f.bounds[neighbor][1]})}
                 f.area[neighbor]=0
                 f.bounds[neighbor]={max(f32),-max(f32)}
             }
         }
-        append(&f.piece_faces,[2]u32{first_face,u32(len(f.faces))-first_face})
-        append(&f.pieces,Fracture_Piece{
+        push(&f.piece_faces,[2]u32{first_face,u32(len(f.faces))-first_face})
+        push(&f.pieces,Fracture_Piece{
             site=site,chunk=chunk,
             first_vertex=u32(first_vertex),vertex_count=u32(len(positions)),
             first_index=u32(first_index),index_count=u32(len(indices)),
@@ -370,6 +407,7 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
         })
         f.site_pieces[site][1]+=1
     }
+    return nil
 }
 
 @(private) box_corners :: proc(lo,hi:Vec3) -> [8]Vec3 {

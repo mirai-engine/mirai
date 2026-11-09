@@ -235,7 +235,7 @@ surface_place :: proc(s:^Surfaces,mesh:erender.Mesh_Handle,count:u32,frame:u64) 
             s.used+=entry.count
             kept+=1
         }
-        resize(&s.entries,kept)
+        base.truncate(&s.entries,kept)
         need:=s.used+count
         if need>s.capacity {
             capacity:=u32(SURFACES_MIN)

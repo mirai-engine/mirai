@@ -175,18 +175,20 @@ app_content :: proc(app:^App) -> ^Content {
     if error!=nil {return nil}
     c.allocator=app.allocator
     c.index=make(map[base.Asset_Id]Content_Ref,app.allocator)
-    c.uis=make([dynamic]Content_Ui,0,CONTENT_CAPACITY,app.allocator)
-    c.animations=make([dynamic]Content_Animation,0,CONTENT_CAPACITY,app.allocator)
-    c.sounds=make([dynamic]Content_Sound,0,CONTENT_CAPACITY,app.allocator)
-    c.sound_sets=make([dynamic]Content_Sound_Set,0,CONTENT_CAPACITY,app.allocator)
+    errors:[7]runtime.Allocator_Error
+    c.uis,errors[0]=make([dynamic]Content_Ui,0,CONTENT_CAPACITY,app.allocator)
+    c.animations,errors[1]=make([dynamic]Content_Animation,0,CONTENT_CAPACITY,app.allocator)
+    c.sounds,errors[2]=make([dynamic]Content_Sound,0,CONTENT_CAPACITY,app.allocator)
+    c.sound_sets,errors[3]=make([dynamic]Content_Sound_Set,0,CONTENT_CAPACITY,app.allocator)
     c.rng=base.rng_make(0x736f756e64)
-    c.fonts=make([dynamic]Content_Font,0,ui.FONT_CAPACITY,app.allocator)
-    c.texts=make([dynamic]Content_Strings,0,CONTENT_CAPACITY,app.allocator)
-    c.prompts=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
+    c.fonts,errors[4]=make([dynamic]Content_Font,0,ui.FONT_CAPACITY,app.allocator)
+    c.texts,errors[5]=make([dynamic]Content_Strings,0,CONTENT_CAPACITY,app.allocator)
+    c.prompts,errors[6]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
     c.retired=make([dynamic]asset.Asset,app.allocator)
     for &free in c.free {free=make([dynamic]u32,app.allocator)}
-    if reserve(&c.index,CONTENT_CAPACITY*4)!=nil || cap(c.uis)!=CONTENT_CAPACITY || cap(c.animations)!=CONTENT_CAPACITY || cap(c.sounds)!=CONTENT_CAPACITY || cap(c.sound_sets)!=CONTENT_CAPACITY ||
-        cap(c.fonts)!=ui.FONT_CAPACITY || cap(c.texts)!=CONTENT_CAPACITY || cap(c.prompts)!=CONTENT_CAPACITY {
+    failed:=reserve(&c.index,CONTENT_CAPACITY*4)!=nil
+    for error in errors {failed||=error!=nil}
+    if failed {
         delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets);delete(c.retired)
         delete(c.fonts);delete(c.texts);delete(c.prompts)
         for free in c.free {delete(free)}
@@ -278,8 +280,8 @@ content_texture :: proc(a:^Assets,id:base.Asset_Id) -> u32 {
 // as ui.Tree_Resources.programs takes them: 0 for none, one the shaders do
 // not have, and without a renderer. Ask again after a.revision changes. A
 // node gives the program its four values, the first floats of its parameters.
-content_ui_programs :: proc(a:^Assets,styles:[]ui.Node_Style,allocator:=context.temp_allocator) -> []u32 {
-    programs:=make([]u32,len(styles),allocator)
+content_ui_programs :: proc(a:^Assets,styles:[]ui.Node_Style) -> []u32 {
+    programs:=make([]u32,len(styles),context.temp_allocator)
     if a==nil || a.renderer==nil {return programs}
     for &style,i in styles {
         name:=serial.text_field(style.program[:])

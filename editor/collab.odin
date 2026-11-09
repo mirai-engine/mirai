@@ -854,7 +854,7 @@ collab_snapshot_load :: proc(s:^Session,st:^Collab_State,data:[]u8) -> bool {
     if asset.asset_open(&source,data)!=.None {return false}
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&a.types)
-    if view_error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return false}
+    if view_error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return false}
     runs_stop(s)
     tools_release(s)
     if _,error:=scene.replace(edited_world(s),s.app,&source,&a.types);error!=.None {return false}

@@ -80,15 +80,16 @@ mesh_bounds :: proc(positions:[]Vec3) -> (lo,hi:Vec3) {
 // remap[i] is the lowest index whose position is within `tolerance` of
 // positions[i] (equal when tolerance is 0), searched among the vertices that
 // are their own representative. Returns the number of representatives; a
-// remap of another length is not written, and gives 0.
+// remap of another length is not written, and gives 0, as it is without
+// temporary memory.
 positions_weld :: proc(positions:[]Vec3,tolerance:f32,remap:[]u32) -> int #no_bounds_check {
     if len(remap)!=len(positions) {return 0}
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     count:=0
     cells:Key_Map
     key_map_init(&cells,context.temp_allocator)
-    key_map_reset(&cells,len(positions))
-    next:=make([]u32,len(positions),context.temp_allocator)
+    next,no_next:=make([]u32,len(positions),context.temp_allocator)
+    if no_next!=nil || key_map_reset(&cells,len(positions))!=nil {return 0}
     if !(tolerance>0) {
         for p,i in positions {
             key:=position_hash(p)
@@ -238,7 +239,11 @@ mesh_topology :: proc(positions:[]Vec3,indices:[]u32,adjacency:[]u32=nil,by_posi
     edge_of:=make([]u32,n,context.temp_allocator)
     directed:Key_Map
     key_map_init(&directed,context.temp_allocator)
-    key_map_reset(&directed,n)
+    // Without temporary memory no half-edge finds its opposite: the mesh reads as open.
+    if key_map_reset(&directed,n)!=nil {
+        topology.boundary_edges=n
+        return
+    }
     degenerate:=make([]bool,n/3,context.temp_allocator)
     for t:=0;t<n;t+=3 {
         if !triangle_in(indices,t,len(positions)) {

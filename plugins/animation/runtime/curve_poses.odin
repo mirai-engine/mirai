@@ -162,7 +162,7 @@ curves_layout :: proc(state:^Playing,leader:[]Curve_Output,runtime:^Modifier_Run
         if kept>0 && curve_same(curve,state.driven[kept-1]) {continue}
         state.driven[kept]=curve;kept+=1
     }
-    resize(&state.driven,kept)
+    base.truncate(&state.driven,kept)
     find :: proc(curves:[]Curve_Output,key:Curve_Output) -> i32 {
         at,found:=slice.binary_search_by(curves,key,curve_compare)
         return i32(at) if found else -1

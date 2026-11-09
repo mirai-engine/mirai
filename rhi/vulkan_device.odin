@@ -374,8 +374,10 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		f.deletions, err = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 		ok &&= err == nil
 	}
-	d.swapchain.images = make([dynamic]Texture, 0, 8, d.allocator)
-	d.swapchain.present = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	images_error, present_error: runtime.Allocator_Error
+	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
+	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	ok &&= images_error == nil && present_error == nil
 	if !ok {set_error(d, "out of memory for the resource tables")}
 	return ok
 }
@@ -858,9 +860,9 @@ vk_save_pipeline_cache :: proc(d: ^Device) {
 	if d.cache_path_len == 0 {return}
 	size: int
 	if d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, nil) != .SUCCESS || size == 0 {return}
-	data := make([]u8, size, d.allocator)
+	data, data_error := make([]u8, size, d.allocator)
 	defer delete(data, d.allocator)
-	if data == nil || d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, raw_data(data)) != .SUCCESS {return}
+	if data_error != nil || d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, raw_data(data)) != .SUCCESS {return}
 	// Several processes share the file: each writes its own and replaces it
 	// whole, so none reads a half-written one.
 	path := string(d.cache_path[:d.cache_path_len])

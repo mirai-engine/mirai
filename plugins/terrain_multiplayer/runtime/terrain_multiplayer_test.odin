@@ -178,7 +178,7 @@ end_seat :: proc(e:^End,connection:multiplayer.Connection) {
 // The messages an end is about to receive this frame, and the step of the input phase.
 @(private="file")
 end_receive :: proc(e:^End) {
-    terrain_net_receive(core.ref(&e.inbox),core.ref(&e.authority),&e.net,core.ref(&e.state),core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),e.settings)
+    terrain_net_receive(core.ref(&e.inbox),core.ref(&e.authority),&e.net,core.ref(&e.state),core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),e.settings,nil)
     core.queue_clear(&e.inbox.received)
 }
 

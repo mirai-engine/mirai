@@ -254,7 +254,7 @@ grids_sync :: proc(g:^Grids,grids:core.Read(Particle_Grid),volumes:core.Read(Par
         layout=base.hash_combine(layout,base.hash_combine(u64(e),u64(cells.x)|u64(cells.y)<<21|u64(cells.z)<<42))
         layout=base.hash_combine(layout,u64(grid.layers)|u64(entry.has_volume)<<8|u64(entry.has_texture)<<9)
     }
-    resize(&g.entries,kept)
+    base.truncate(&g.entries,kept)
     grids_place(g,layout)
 }
 

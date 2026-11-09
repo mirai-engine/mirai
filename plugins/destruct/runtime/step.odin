@@ -66,6 +66,10 @@ destruct_step :: proc(
     core.queue_clear(&events.grouped)
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     if !fracture_state_make(fractures,settings.ptr,&state.world,problems) {return}
+    if !cache_make(cache,&fractures.fracture) {
+        core.report(problems,core.NONE,"destruct.memory","out of memory for the %d pieces of Destruct_Settings and the %d bodies of Physics_Settings; nothing breaks until there is: lower them, or free memory",fractures.fracture.desc.pieces,fractures.fracture.desc.bodies)
+        return
+    }
     fr.fracture_update(&fractures.fracture,&state.world)
     pending:=core.take(&requests.queue)
     waiting:=core.take(&requests.waiting)
@@ -75,7 +79,6 @@ destruct_step :: proc(
         cache_reset(app,cache)
         cache.epoch=state.epoch
     }
-    cache_make(cache,&fractures.fracture)
     cache.pass+=1
     c:=Ctx{
         state=state,w=&state.world,f=&fractures.fracture,cache=cache,events=events,app=app,time=time,es=commands.entities,commands=commands,
@@ -211,6 +214,11 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         st.failed,st.waiting=false,true
         return
     }
+    if p.error==.Out_Of_Memory {
+        name:[base.ASSET_ID_TEXT]u8
+        core.report(c.problems,e,"destruct.memory","no memory to fracture mesh %s of its Destructible: it stays whole; free memory or lower Destructible.pieces",host.assets_name(c.app.assets,static.mesh,&name))
+        return
+    }
     if p.error!=.None {
         name:[base.ASSET_ID_TEXT]u8
         core.report(c.problems,e,"destruct.fracture","mesh %s of its Destructible cannot be fractured (%v): a mesh breaks only when it is closed; close it in the modelling tool, or give Destructible.fracture a .fracture asset",host.assets_name(c.app.assets,static.mesh,&name),p.error)
@@ -270,6 +278,7 @@ destructible_problem :: proc(c:^Ctx,e:core.Entity,error:fr.Destructible_Error) {
     case .Invalid_Mesh: why,fix="the pieces of its mesh are not valid","use a closed mesh, or another .fracture asset"
     case .No_Pieces:    why,fix="its mesh gave no pieces","give it a closed mesh with volume"
     case .Capacity:     why,fix="the fracture or the simulation has no room for it","raise the destructibles, pieces or connections of Destruct_Settings, or the hulls, shapes or bodies of Physics_Settings"
+    case .Out_Of_Memory: why,fix="there is no memory to cut its mesh","free memory or lower Destructible.pieces"
     }
     core.report(c.problems,e,"destruct.create","the simulation refused its Destructible: %s; %s",why,fix)
 }

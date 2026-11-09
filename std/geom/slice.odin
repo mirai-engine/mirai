@@ -1,6 +1,8 @@
 package geom
 
+import "base:runtime"
 import "core:math"
+import "mirai:std/base"
 
 Slice_Options :: struct {
     // Vertices closer than this to the plane are on it and belong to both
@@ -26,13 +28,14 @@ Slice_Result :: struct {
     open_edges:int,
 }
 
-Slice_Error :: enum {None,Invalid_Mesh,Invalid_Plane}
+Slice_Error :: enum {None,Invalid_Mesh,Invalid_Plane,Out_Of_Memory}
 
 // Source of a cap triangle in Slicer.sources.
 SLICE_CAP :: max(u32)
 
 // Reusable memory of mesh_slice. After the first cuts of a given size a cut
-// allocates nothing.
+// allocates nothing. A cut takes all the memory it needs before it writes:
+// what it fills afterwards has its room.
 Slicer :: struct {
     // For each triangle written to the front (0) and to the back (1), the
     // triangle of the input it comes from, or SLICE_CAP.
@@ -136,11 +139,11 @@ slicer_destroy :: proc(s:^Slicer) {
     return 0 if key==KEY_EMPTY else key
 }
 
+// Of the point just added to s.points: grid_next has one entry per point.
 @(private="file") grid_insert :: proc(p:^Pass,point:u32) #no_bounds_check {
     s:=p.s
-    resize(&s.grid_next,len(s.points))
     head,inserted:=key_map_entry(&s.grid,grid_key(s.points[point],p.inverse,0,0,0),point)
-    if inserted {s.grid_next[point]=NONE} else {s.grid_next[point]=head^;head^=point}
+    if inserted {push(&s.grid_next,NONE)} else {push(&s.grid_next,head^);head^=point}
 }
 
 // The point on the plane nearest to `position` within the tolerance.
@@ -197,14 +200,14 @@ slicer_destroy :: proc(s:^Slicer) {
         point=grid_nearest(p,raw)
         if point==NONE {
             point=u32(len(s.points))
-            append(&s.points,raw)
+            push(&s.points,raw)
             grid_insert(p,point)
         }
-        append(&s.raw_point,point)
+        push(&s.raw_point,point)
     } else {
         point=s.raw_point[index]
     }
-    append(&s.cuts,Slice_Cut{lo,hi,f32(t),{NONE,NONE},point})
+    push(&s.cuts,Slice_Cut{lo,hi,f32(t),{NONE,NONE},point})
     return u32(len(s.cuts)-1)
 }
 
@@ -245,23 +248,42 @@ slicer_destroy :: proc(s:^Slicer) {
     pass_triangle(p,k,a,b,c,source)
 }
 
+// Room in the buffers of side k for that many vertices and triangles more.
+@(private="file") pass_reserve :: proc(p:^Pass,k:int,vertices,triangles:int) -> runtime.Allocator_Error {
+    out:=p.out[k]
+    reserve_more(&out.positions,vertices) or_return
+    if p.has_normals {reserve_more(&out.normals,vertices) or_return}
+    if p.has_uvs {reserve_more(&out.uvs,vertices) or_return}
+    if p.has_colors {reserve_more(&out.colors,vertices) or_return}
+    reserve_more(&out.indices,triangles*3) or_return
+    reserve_more(&out.materials,triangles) or_return
+    return reserve_more(&p.s.sources[k],triangles)
+}
+
 // Splits a mesh with a plane into the part in front of it and the part behind
 // it; either buffer may be nil. A closed mesh gives closed parts: the cut of
 // each side is filled with cap triangles that face the other side, written
 // after the surface triangles with their own vertices, planar texture
 // coordinates and material slot. Vertices are shared by position, so seams of
-// normals or texture coordinates do not open the cut.
+// normals or texture coordinates do not open the cut. Without memory both
+// buffers are left empty.
 mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,options:Slice_Options={}) -> (result:Slice_Result,error:Slice_Error) {
     if !mesh_is_valid(mesh) {return {},.Invalid_Mesh}
     dp,plane_ok:=dplane(plane)
     if !plane_ok {return {},.Invalid_Plane}
-    return slice_plane(s,mesh,dp,front,back,options,true),.None
+    no_memory:runtime.Allocator_Error
+    if result,no_memory=slice_plane(s,mesh,dp,front,back,options,true);no_memory!=nil {
+        if front!=nil {mesh_buffer_clear(front)}
+        if back!=nil {mesh_buffer_clear(back)}
+        return {},.Out_Of_Memory
+    }
+    return result,.None
 }
 
 // mesh_slice for a valid mesh and a unit plane. Without copy_whole, a mesh
 // that the plane does not separate is not written anywhere: the result only
 // tells on which side it is.
-@(private) slice_plane :: proc(s:^Slicer,mesh:Mesh,dp:DPlane,front,back:^Mesh_Buffer,options:Slice_Options,copy_whole:bool) -> (result:Slice_Result) #no_bounds_check {
+@(private) slice_plane :: proc(s:^Slicer,mesh:Mesh,dp:DPlane,front,back:^Mesh_Buffer,options:Slice_Options,copy_whole:bool) -> (result:Slice_Result,error:runtime.Allocator_Error) #no_bounds_check {
     p:=Pass{s=s,mesh=mesh,out={front,back}}
     vertex_count:=len(mesh.positions)
     p.has_normals=len(mesh.normals)==vertex_count && vertex_count>0
@@ -274,7 +296,8 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
     }
 
     tolerance:=f64(max(options.tolerance,tolerance_noise(positions_max_abs(mesh.positions))))
-    resize(&s.dist,vertex_count);resize(&s.side,vertex_count)
+    resize(&s.dist,vertex_count) or_return
+    resize(&s.side,vertex_count) or_return
     in_front,behind:=0,0
     for position,i in mesh.positions {
         d:=ddot(dp.n,dvec(position))-dp.d
@@ -291,16 +314,15 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         k:=0 if behind==0 && in_front>0 else 1
         if in_front==0 && behind==0 {k=1}
         if out:=p.out[k];out!=nil && copy_whole {
+            pass_reserve(&p,k,vertex_count,len(mesh.indices)/3) or_return
             append(&out.positions,..mesh.positions)
             if p.has_normals {append(&out.normals,..mesh.normals)}
             if p.has_uvs {append(&out.uvs,..mesh.uvs)}
             if p.has_colors {append(&out.colors,..mesh.colors)}
             append(&out.indices,..mesh.indices)
-            resize(&out.materials,len(mesh.indices)/3)
-            resize(&s.sources[k],len(mesh.indices)/3)
             for t in 0..<len(mesh.indices)/3 {
-                out.materials[t]=mesh.materials[t] if p.has_materials else 0
-                s.sources[k][t]=u32(t)
+                push(&out.materials,mesh.materials[t] if p.has_materials else 0)
+                push(&s.sources[k],u32(t))
             }
         }
         sides[k].triangles=len(mesh.indices)/3
@@ -310,37 +332,41 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
 
     for k in 0..<2 {
         if p.out[k]==nil {continue}
-        resize(&s.remap[k],vertex_count)
+        resize(&s.remap[k],vertex_count) or_return
         for &r in s.remap[k] {r=NONE}
     }
-    resize(&s.on_point,vertex_count)
+    resize(&s.on_point,vertex_count) or_return
     for &o in s.on_point {o=NONE}
-    clear(&s.cuts);clear(&s.points)
-    crossing:=0
+    // crossing: triangles the plane splits. flat: edges on the plane of the
+    // triangles it does not.
+    crossing,flat:=0,0
     for t:=0;t+2<len(mesh.indices);t+=3 {
         a,b,c:=s.side[mesh.indices[t]],s.side[mesh.indices[t+1]],s.side[mesh.indices[t+2]]
-        if (a>0 || b>0 || c>0) && (a<0 || b<0 || c<0) {crossing+=1}
+        if (a>0 || b>0 || c>0) && (a<0 || b<0 || c<0) {crossing+=1} else {flat+=int(a==0 && b==0)+int(b==0 && c==0)+int(c==0 && a==0)}
     }
-    // Room for everything the surface can leave on a side: the triangle loop
+    // Room for everything the surface can leave: a split triangle cuts at
+    // most two edges, each cut is at most one new point, and a side gets at
+    // most one more triangle and one border edge from it. The triangle loop
     // writes without growing.
     triangle_count:=len(mesh.indices)/3
-    for k in 0..<2 {
-        out:=p.out[k]
-        if out==nil {continue}
-        reserve(&out.positions,vertex_count+crossing*2)
-        if p.has_normals {reserve(&out.normals,vertex_count+crossing*2)}
-        if p.has_uvs {reserve(&out.uvs,vertex_count+crossing*2)}
-        if p.has_colors {reserve(&out.colors,vertex_count+crossing*2)}
-        reserve(&out.indices,(triangle_count+crossing)*3)
-        reserve(&out.materials,triangle_count+crossing)
-        reserve(&s.sources[k],triangle_count+crossing)
-    }
     on_plane:=vertex_count-in_front-behind
-    key_map_reset(&s.cut_of,crossing*2)
-    point_set_reset(&s.point_set,on_plane)
-    point_set_reset(&s.raw_set,crossing*2)
-    key_map_reset(&s.grid,crossing*2+on_plane)
-    clear(&s.raw);clear(&s.raw_point);clear(&s.grid_next)
+    cuts:=crossing*2
+    points:=on_plane+cuts
+    for k in 0..<2 {
+        if p.out[k]==nil {continue}
+        pass_reserve(&p,k,vertex_count+cuts,triangle_count+crossing) or_return
+        reserve(&s.border[k],crossing+flat) or_return
+    }
+    clear(&s.cuts);clear(&s.points);clear(&s.raw);clear(&s.raw_point);clear(&s.grid_next)
+    reserve(&s.cuts,cuts) or_return
+    reserve(&s.points,points) or_return
+    reserve(&s.raw,cuts) or_return
+    reserve(&s.raw_point,cuts) or_return
+    reserve(&s.grid_next,points) or_return
+    key_map_reset(&s.cut_of,cuts) or_return
+    point_set_reset(&s.point_set,on_plane) or_return
+    point_set_reset(&s.raw_set,cuts) or_return
+    key_map_reset(&s.grid,points) or_return
     p.inverse=1/tolerance
     p.reach=tolerance*tolerance
     // The vertices on the plane are its first points, whatever the order of
@@ -372,7 +398,7 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
             pass_triangle(&p,k,pass_vertex(&p,k,v[0]),pass_vertex(&p,k,v[1]),pass_vertex(&p,k,v[2]),source)
             for e in 0..<3 {
                 a,b:=v[e],v[(e+1)%3]
-                if sd[e]==0 && sd[(e+1)%3]==0 {append(&s.border[k],[2]u32{pass_on_point(&p,a),pass_on_point(&p,b)})}
+                if sd[e]==0 && sd[(e+1)%3]==0 {push(&s.border[k],[2]u32{pass_on_point(&p,a),pass_on_point(&p,b)})}
             }
             continue
         }
@@ -387,11 +413,11 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
             pa,px:=pass_on_point(&p,a),s.cuts[cut].point
             if p.out[kb]!=nil {
                 pass_fragment(&p,kb,pass_vertex(&p,kb,a),pass_vertex(&p,kb,b),pass_cut_vertex(&p,kb,cut),source)
-                append(&s.border[kb],[2]u32{px,pa})
+                push(&s.border[kb],[2]u32{px,pa})
             }
             if p.out[kc]!=nil {
                 pass_fragment(&p,kc,pass_vertex(&p,kc,a),pass_cut_vertex(&p,kc,cut),pass_vertex(&p,kc,c),source)
-                append(&s.border[kc],[2]u32{pa,px})
+                push(&s.border[kc],[2]u32{pa,px})
             }
             continue
         }
@@ -406,14 +432,14 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         pab,pca:=s.cuts[ab].point,s.cuts[ca].point
         if p.out[ka]!=nil {
             pass_fragment(&p,ka,pass_vertex(&p,ka,a),pass_cut_vertex(&p,ka,ab),pass_cut_vertex(&p,ka,ca),source)
-            append(&s.border[ka],[2]u32{pab,pca})
+            push(&s.border[ka],[2]u32{pab,pca})
         }
         if p.out[kb]!=nil {
             xab,xca:=pass_cut_vertex(&p,kb,ab),pass_cut_vertex(&p,kb,ca)
             vb,vc:=pass_vertex(&p,kb,b),pass_vertex(&p,kb,c)
             pass_fragment(&p,kb,xab,vb,vc,source)
             pass_fragment(&p,kb,xab,vc,xca,source)
-            append(&s.border[kb],[2]u32{pca,pab})
+            push(&s.border[kb],[2]u32{pca,pab})
         }
     }
 
@@ -426,7 +452,7 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
             continue
         }
         sides[k].cap_first=len(out.indices)/3
-        if !options.open {slice_cap(&p,k,dp,options,&result,sides[k])}
+        if !options.open {slice_cap(&p,k,dp,options,&result,sides[k]) or_return}
         sides[k].triangles=len(out.indices)/3
     }
     return
@@ -445,14 +471,17 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
     return 2 if dot<0 else 4
 }
 
-@(private="file") slice_cap :: proc(p:^Pass,k:int,dp:DPlane,options:Slice_Options,result:^Slice_Result,side:^Slice_Side) #no_bounds_check {
+// Every array is sized for the border before it is filled: the twins are
+// keyed by its directed edges, a contour has at most its edges, and the loops
+// walk each edge of the contour once.
+@(private="file") slice_cap :: proc(p:^Pass,k:int,dp:DPlane,options:Slice_Options,result:^Slice_Result,side:^Slice_Side) -> runtime.Allocator_Error #no_bounds_check {
     s:=p.s
     out:=p.out[k]
     border:=s.border[k][:]
-    if len(border)==0 {return}
+    if len(border)==0 {return nil}
     // Edges used in both directions are interior to this side: what is left
     // is its open border. The cap runs along it backwards.
-    key_map_reset(&s.twins,len(border))
+    key_map_reset(&s.twins,len(border)) or_return
     for e in border {
         if e[0]==e[1] {continue}
         if opposite,found:=key_map_find(&s.twins,pair_key(e[1],e[0]));found && opposite>0 {
@@ -464,14 +493,15 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         entry^+=1
     }
     clear(&s.contour)
+    reserve(&s.contour,len(border)) or_return
     for e in border {
         if e[0]==e[1] {continue}
         entry,_:=key_map_entry(&s.twins,pair_key(e[0],e[1]),0)
         if entry^==0 {continue}
         entry^-=1
-        append(&s.contour,[2]u32{e[1],e[0]})
+        push(&s.contour,[2]u32{e[1],e[0]})
     }
-    if len(s.contour)==0 {return}
+    if len(s.contour)==0 {return nil}
 
     // Plane coordinates with u×v along the cap normal, so that the outlines
     // of the cap are counter-clockwise.
@@ -479,14 +509,15 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
     origin:=dp.n*dp.d
     cap_u,cap_v:=u,v
     if k==0 {cap_u,cap_v=v,u}
-    resize(&s.flat,len(s.points))
+    resize(&s.flat,len(s.points)) or_return
     for point,i in s.points {
         d:=dvec(point)-origin
         s.flat[i]={ddot(d,cap_u),ddot(d,cap_v)}
     }
-    resize(&s.first_out,len(s.points))
+    resize(&s.first_out,len(s.points)) or_return
     for &f in s.first_out {f=NONE}
-    resize(&s.next_out,len(s.contour));resize(&s.used,len(s.contour))
+    resize(&s.next_out,len(s.contour)) or_return
+    resize(&s.used,len(s.contour)) or_return
     // Lists keep the order of the edges.
     for i:=len(s.contour)-1;i>=0;i-=1 {
         from:=s.contour[i][0]
@@ -495,6 +526,8 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         s.used[i]=false
     }
     clear(&s.loop_points);clear(&s.loop_ids);clear(&s.loop_sizes)
+    reserve(&s.loop_ids,len(s.contour)) or_return
+    reserve(&s.loop_sizes,len(s.contour)/3) or_return
     for start in 0..<len(s.contour) {
         if s.used[start] {continue}
         first:=len(s.loop_ids)
@@ -503,7 +536,7 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         for {
             s.used[e]=true
             from,to:=s.contour[e][0],s.contour[e][1]
-            append(&s.loop_ids,from)
+            push(&s.loop_ids,from)
             // Where several edges leave a point, the sharpest turn towards the
             // inside keeps touching outlines apart.
             back:=s.flat[from]-s.flat[to]
@@ -520,19 +553,20 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         }
         if !closed || len(s.loop_ids)-first<3 {
             if !closed {result.open_edges+=len(s.loop_ids)-first}
-            resize(&s.loop_ids,first)
+            base.truncate(&s.loop_ids,first)
             continue
         }
-        append(&s.loop_sizes,i32(len(s.loop_ids)-first))
+        push(&s.loop_sizes,i32(len(s.loop_ids)-first))
     }
-    if len(s.loop_sizes)==0 {return}
-    resize(&s.loop_points,len(s.loop_ids))
+    if len(s.loop_sizes)==0 {return nil}
+    resize(&s.loop_points,len(s.loop_ids)) or_return
     for id,i in s.loop_ids {s.loop_points[i]=s.flat[id]}
     clear(&s.triangles)
-    triangulate_loops(&s.tr,s.loop_points[:],s.loop_sizes[:],&s.triangles,.Orientation)
+    triangulate_loops(&s.tr,s.loop_points[:],s.loop_sizes[:],&s.triangles,.Orientation) or_return
 
-    resize(&s.cap_vertex,len(s.points))
+    resize(&s.cap_vertex,len(s.points)) or_return
     for &c in s.cap_vertex {c=NONE}
+    pass_reserve(p,k,min(len(s.points),len(s.loop_ids)),len(s.triangles)/3) or_return
     normal:=fvec(dp.n) if k==1 else fvec(-dp.n)
     scale:=f64(options.cap_uv_scale) if options.cap_uv_scale!=0 else 1
     color:=options.cap_color if options.cap_color!={} else Vec4{1,1,1,1}
@@ -547,25 +581,26 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
             index:=s.cap_vertex[id]
             if index==NONE {
                 index=u32(len(out.positions))
-                append(&out.positions,s.points[id])
-                if p.has_normals {append(&out.normals,normal)}
+                push(&out.positions,s.points[id])
+                if p.has_normals {push(&out.normals,normal)}
                 if p.has_uvs {
                     d:=dvec(s.points[id])-origin
-                    append(&out.uvs,Vec2{f32(ddot(d,u)*scale),f32(ddot(d,v)*scale)})
+                    push(&out.uvs,Vec2{f32(ddot(d,u)*scale),f32(ddot(d,v)*scale)})
                 }
-                if p.has_colors {append(&out.colors,color)}
+                if p.has_colors {push(&out.colors,color)}
                 s.cap_vertex[id]=index
             }
             corners[c]=index
         }
         a,b,c:=s.loop_points[s.triangles[t]],s.loop_points[s.triangles[t+1]],s.loop_points[s.triangles[t+2]]
         area+=(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)
-        append(&out.indices,corners[0],corners[1],corners[2])
-        append(&out.materials,options.cap_material)
-        append(&s.sources[k],SLICE_CAP)
+        push(&out.indices,corners[0]);push(&out.indices,corners[1]);push(&out.indices,corners[2])
+        push(&out.materials,options.cap_material)
+        push(&s.sources[k],SLICE_CAP)
     }
     side.cap_triangles=len(out.indices)/3-first
     side.cap_area=f32(abs(area)*0.5)
+    return nil
 }
 
 // The mesh has no triangles in front of the plane, within the tolerance.

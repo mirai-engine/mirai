@@ -219,8 +219,13 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
             wire.connection_set_view(h,command.connection,{},-1)
             // Its player is seated once its client says who it is.
             index:=object_index(Object(command.connection))
-            if index>=len(inputs.entries) {resize(&inputs.entries,index+1)}
-            inputs.entries[index]={connection=command.connection,player=s.follows?0:u64(command.connection)}
+            if index<len(inputs.entries) || resize(&inputs.entries,index+1)==nil {
+                inputs.entries[index]={connection=command.connection,player=s.follows?0:u64(command.connection)}
+            } else {
+                // Without room for its inputs it is closed, and may connect again.
+                wire.host_disconnect(h,command.connection,.Capacity)
+                core.report(s.problems,core.NONE,"net.memory","a connection was closed: out of memory for the inputs of its player; free memory, or lower Net_Settings.max_clients")
+            }
             s.server.peers[index]={connection=command.connection,held=s.follows}
             mem.zero_slice(loaded_of(&s.server,index))
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
@@ -277,7 +282,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
         server.notices[kept]=notice
         kept+=1
     }
-    resize(&server.notices,kept)
+    base.truncate(&server.notices,kept)
     if len(server.gone)==0 {return}
     es:=core.world_entities(w)
     kept=0
@@ -300,7 +305,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
             kept+=1
         }
     }
-    resize(&server.gone,kept)
+    base.truncate(&server.gone,kept)
 }
 
 // Server: an entity of the scene of a section, by its Id, that is not in it

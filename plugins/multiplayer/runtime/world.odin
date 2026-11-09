@@ -122,7 +122,7 @@ server_world_update :: proc(s:^Net_Session) {
             kept+=1
         }
     }
-    resize(&s.server.groups,kept)
+    base.truncate(&s.server.groups,kept)
 }
 
 // Server: the clock of the world goes to every client with the tick.

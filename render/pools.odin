@@ -3,6 +3,7 @@ package mirai_render
 import "core:fmt"
 import "core:strings"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // The GPU buffers of the pools of the scene. A pool asks for room before it
 // grows: its buffer grows then, by half again up to POOL_SLACK_BYTES, and
@@ -186,5 +187,5 @@ pool_ranges_keep_past :: proc(ranges: ^[dynamic]Pool_Range, held: u32) {
 		ranges[kept] = {first, end - first}
 		kept += 1
 	}
-	resize(ranges, kept)
+	base.truncate(ranges, kept)
 }

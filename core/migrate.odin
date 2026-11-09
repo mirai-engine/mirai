@@ -52,12 +52,12 @@ world_migration_make :: proc(m:^World_Migration,from,to:^World_Info,allocator:=c
     ok:bool
     if m.from_names,ok=schema_named(&m.from_schema,from,allocator);!ok {return false}
     if m.to_names,ok=schema_named(&m.to_schema,to,allocator);!ok {return false}
-    m.tables=make([]Migration_Kind,len(to.tables),allocator)
-    m.table_sources=make([]int,len(to.tables),allocator)
-    m.table_map=make([]int,len(from.tables),allocator)
-    m.storages=make([]Migration_Kind,len(to.storages),allocator)
-    m.storage_sources=make([]int,len(to.storages),allocator)
-    if m.tables==nil && len(to.tables)>0 || m.table_map==nil && len(from.tables)>0 || m.storages==nil && len(to.storages)>0 {return false}
+    error:runtime.Allocator_Error
+    if m.tables,error=make([]Migration_Kind,len(to.tables),allocator);error!=nil {return false}
+    if m.table_sources,error=make([]int,len(to.tables),allocator);error!=nil {return false}
+    if m.table_map,error=make([]int,len(from.tables),allocator);error!=nil {return false}
+    if m.storages,error=make([]Migration_Kind,len(to.storages),allocator);error!=nil {return false}
+    if m.storage_sources,error=make([]int,len(to.storages),allocator);error!=nil {return false}
     for &source in m.table_map {source=-1}
     renumbered:=names_renumbered(from,to)
     for &t,i in to.tables {

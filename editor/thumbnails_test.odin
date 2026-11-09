@@ -85,7 +85,7 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     testing.expect(t,len(held)>0 && len(changed)>0)
     testing.expect_value(t,asset.registry_memory_set(&r,"other.mat",changed),asset.Error.None)
     testing.expect(t,thumbnail_store_key(&r,other,subject,.Small,PROGRAMS)!=other_key)
-    testing.expect(t,asset.registry_memory_drop(&r,"other.mat"))
+    {dropped,_:=asset.registry_memory_drop(&r,"other.mat");testing.expect(t,dropped)}
     testing.expect_value(t,thumbnail_store_key(&r,other,subject,.Small,PROGRAMS),other_key)
 
     // An asset that no file is any more loses its previews; the others keep theirs.

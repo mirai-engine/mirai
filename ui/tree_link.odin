@@ -23,7 +23,8 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     for component in data.components {widgets|=component.widget!={}}
     if !widgets {return data,true}
     if len(imports)!=len(data.components) {return}
-    components:=make([dynamic]Tree_Component,0,len(data.components),allocator)
+    components,components_error:=make([dynamic]Tree_Component,0,len(data.components),allocator)
+    if components_error!=nil {return}
     component_nodes:=make([dynamic]Tree_Node,allocator)
     styles:=make([dynamic]Node_Style,allocator)
     variants:=make([dynamic]Tree_Style_Variant,allocator)
@@ -136,7 +137,8 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         component.first,component.count,component.widget=first,u32(len(expanded)),{}
     }
     // A style that names a file takes what that style is there.
-    style_infos:=make([dynamic]Tree_Style_Info,len(data.style_infos),max(len(styles),len(data.style_infos)),allocator)
+    style_infos,infos_error:=make([dynamic]Tree_Style_Info,len(data.style_infos),max(len(styles),len(data.style_infos)),allocator)
+    if infos_error!=nil {return {},false}
     copy(style_infos[:],data.style_infos)
     for &info,row in style_infos[:] {
         if info.from==0 {continue}
@@ -169,7 +171,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     // after those of the tree.
     tokens:=make([dynamic]Tree_Token,allocator)
     append(&tokens,..data.tokens)
-    resize(&style_infos,len(styles))
+    if resize(&style_infos,len(styles))!=nil {return {},false}
     for j in joined {
         component:=-1
         for &c,i in data.components {if c.widget==j.id {component=i;break}}
@@ -188,7 +190,8 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     // A parameter that goes past a use is flat from here on: where the
     // parameter of its widget goes, under the name of the use. One that
     // resolves to nothing is for ui.check to say.
-    params:=make([dynamic]Tree_Param,0,len(data.params),allocator)
+    params,params_error:=make([dynamic]Tree_Param,0,len(data.params),allocator)
+    if params_error!=nil {return {},false}
     for &p in data.params {
         param:=serial.text_field(p.param[:])
         if param=="" {append(&params,p);continue}

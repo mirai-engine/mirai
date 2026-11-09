@@ -186,11 +186,11 @@ placed_grounded :: proc "contextless" (s:^Source,coord:[2]i32,b:Foliage_Instance
 // them once. The ids in removed (in order: those taken out in play,
 // Foliage_Removed) are not there; one that names nothing of the cell takes
 // nothing out.
-cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={}) {
+cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={}) -> bool {
     first:=len(out)
     for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
     clear(&scratch.matched)
-    resize(&scratch.matched,len(cell.overrides))
+    if resize(&scratch.matched,len(cell.overrides))!=nil {base.truncate(out,first);return false}
     if cell.generate {
         for t in s.types {
             clear(&scratch.points)
@@ -228,12 +228,13 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
         }
     }
     for matched,i in scratch.matched {if !matched {append(orphans,i)}}
-    if len(removed)==0 {return}
+    if len(removed)==0 {return true}
     kept:=first
     for p in out[first:] {
         if ids_have(removed,p.id) {continue}
         out[kept]=p
         kept+=1
     }
-    resize(out,kept)
+    base.truncate(out,kept)
+    return true
 }

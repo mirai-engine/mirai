@@ -15,9 +15,11 @@ ragdoll_gallery_cycle :: proc(requests:^Ragdoll_Gallery_Requests,rig:core.Entity
 }
 
 @(step="fixed")
-ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^core.Table(rag.Ragdoll),requests:^Ragdoll_Gallery_Requests,time:core.Time) {
+ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^core.Table(rag.Ragdoll),requests:^Ragdoll_Gallery_Requests,time:core.Time,problems:^core.Problems) {
     modes:=[3]rag.Ragdoll_Mode{.Animated,.Driven,.Simulated}
-    if core.count(core.read(gallery))>0 {reserve(&requests.queue.items,32)}
+    if core.count(core.read(gallery))>0 && reserve(&requests.queue.items,32)!=nil {
+        core.report(problems,core.NONE,"demo.ragdoll_requests","out of memory for room for the ragdoll gallery requests; free memory")
+    }
     for rig in core.take(&requests.queue) {
         state:=core.get(gallery,rig);config:=core.get(configs,rig)
         if state==nil || config==nil {continue}

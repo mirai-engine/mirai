@@ -700,7 +700,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     testing.expect_value(t,len(w.data.entries),2)
     // Discard: the file on disk answers again, and the owners keep the
     // revision of their history.
-    testing.expect(t,asset.registry_memory_drop(&assets.registry,"source.terrain"))
+    {dropped,_:=asset.registry_memory_drop(&assets.registry,"source.terrain");testing.expect(t,dropped)}
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(4))
     entry:=data_find(&w.data,id)

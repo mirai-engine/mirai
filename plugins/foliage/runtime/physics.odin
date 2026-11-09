@@ -101,7 +101,7 @@ instance_shape :: proc "contextless" (t:^Foliage_Type,p:Placed,owner:mm.Transfor
 // destroyed first; otherwise a cell whose content, ground, instances taken
 // out (gone) and residency did not change keeps its body. False when the
 // simulation had no room for all of them.
-physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,ground:^Ground_Owner=nil,all:=true,near:^scene.Sources_Near=nil,reach:=f32(0),gone:^Removed_Owner=nil) -> (complete:bool) {
+physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,ground:^Ground_Owner=nil,all:=true,near:^scene.Sources_Near=nil,reach:=f32(0),gone:^Removed_Owner=nil) -> (complete,enough:bool) {
     held:=make([dynamic]Physics_Cell,context.temp_allocator)
     held_shapes:=make([dynamic]sim.Shape_Handle,context.temp_allocator)
     // What each cell of the owner was, in the order of the source, for the residency to hold.
@@ -121,7 +121,7 @@ physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.
         }
     }
     physics_owner_clear(fp,w,e,held[:])
-    complete=true
+    complete,enough=true,true
     work:Build_Work
     defer build_work_destroy(&work)
     j,b:=0,0
@@ -144,7 +144,12 @@ physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.
             append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,version=cell.version,ground=revision,removed=removed_hash,first=u32(len(fp.shapes))})
             continue
         }
-        cell_build(s,&cell,tile,&work,removed)
+        if !cell_build(s,&cell,tile,&work,removed) {
+            // Version 0: built again by the next build of the owner.
+            enough=false
+            append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,ground=revision,removed=removed_hash,resident=true,first=u32(len(fp.shapes))})
+            continue
+        }
         body:sim.Body_Handle
         first:=u32(len(fp.shapes))
         fit:=true
@@ -189,8 +194,8 @@ physics_owner_clear :: proc(fp:^Foliage_Physics,w:^sim.World,e:core.Entity,keep:
         fp.cells[kept]=moved
         kept+=1
     }
-    resize(&fp.cells,kept)
-    resize(&fp.shapes,shapes)
+    base.truncate(&fp.cells,kept)
+    base.truncate(&fp.shapes,shapes)
 }
 
 // Takes the collision of one instance of a cell out of the simulation, in
@@ -261,7 +266,11 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         reach:=collision_reach(&entry.source)
         near:scene.Sources_Near
         if reach>0 {near=scene.sources_near(sources.ptr,mm.transform_matrix(world.transform),reach)}
-        if !physics_owner_build(fp,w,settings,e,&entry.source,world.transform,ground,all,sources.ptr!=nil?&near:nil,reach,gone) {
+        complete,enough:=physics_owner_build(fp,w,settings,e,&entry.source,world.transform,ground,all,sources.ptr!=nil?&near:nil,reach,gone)
+        if !enough {
+            owner.loads=0
+            memory_problem(problems,e,"the collision of its foliage: some cells do not collide")
+        } else if !complete {
             core.report(problems,e,"foliage.physics","the simulation has no room for every collision of its foliage: some cells or instances do not collide; raise the bodies or shapes of Physics_Settings, or give fewer types a collision")
         }
     }

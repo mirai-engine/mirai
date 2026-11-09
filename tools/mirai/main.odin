@@ -246,7 +246,9 @@ cmd_check :: proc(root:string,args:[]string) -> int {
         append(&command,..collections)
     }
     append(&command,..args[1:])
-    return run(root,command[:])
+    code:=run(root,command[:])
+    if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
+    return code
 }
 
 // The code of a project, as build.check checks it: the world generated from
@@ -258,7 +260,10 @@ check_project :: proc(root,folder:string) -> int {
     job:=build.job_run({project=&opened,target=.Editor,action=.Check})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
-    if job.result.status==.Built {return 0}
+    if job.result.status==.Built {
+        game:=join(folder,project.FOLDER_NAMES[.Game])
+        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) else 0
+    }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
     return 1
 }

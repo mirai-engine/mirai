@@ -131,7 +131,7 @@ World_Info :: struct {
     copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed), for a dst a history keeps as a copy of src, with a mark per table, by its index in tables, that it updates; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
     swap:proc(a,b:rawptr), // publishes a prepared World without allocating; local storages stay
     settle:proc(world,shared,editor:rawptr), // applies what the functions and the editor added and removed
-    clear:proc(world:rawptr),   // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay
+    clear:proc(world:rawptr) -> bool, // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay. False without memory: the World as it was
     attach:proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool, // the values of the by_world storages of a World with its id; false without memory
     detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
     loops:[Loop][Phase]Loop_Proc,

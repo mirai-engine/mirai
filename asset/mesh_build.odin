@@ -49,10 +49,10 @@ MESH_SIMPLIFY_WEIGHTS :: [5]f32{0.5,0.5,0.5,1,1}
 // their attributes (MESH_SIMPLIFY_WEIGHTS) and Protect where Permissive must
 // keep a seam: where vertices at one place differ in anything but the normal
 // (uv, uv1, color, material or the sign of the tangent).
-mesh_simplify_inputs :: proc(vertices:[]Vertex,allocator:=context.allocator) -> (positions:[]geom.Vec3,attributes:[]f32,protect:[]geom.Simplify_Vertex) {
+mesh_simplify_inputs :: proc(vertices:[]Vertex) -> (positions:[]geom.Vec3,attributes:[]f32,protect:[]geom.Simplify_Vertex) {
     WEIGHTS :: len(MESH_SIMPLIFY_WEIGHTS)
-    positions=make([]geom.Vec3,len(vertices),allocator)
-    attributes=make([]f32,len(vertices)*WEIGHTS,allocator)
+    positions=make([]geom.Vec3,len(vertices),context.temp_allocator)
+    attributes=make([]f32,len(vertices)*WEIGHTS,context.temp_allocator)
     for vertex,at in vertices {
         positions[at]=vertex.position
         normal:=mm.normal_unpack(vertex.normal)
@@ -60,7 +60,7 @@ mesh_simplify_inputs :: proc(vertices:[]Vertex,allocator:=context.allocator) -> 
     }
     welds:=make([]u32,len(vertices),context.temp_allocator)
     geom.positions_weld(positions,0,welds)
-    protect=make([]geom.Simplify_Vertex,len(vertices),allocator)
+    protect=make([]geom.Simplify_Vertex,len(vertices),context.temp_allocator)
     for first,at in welds {
         a,b:=vertices[at],vertices[first]
         if a.uv!=b.uv || a.uv1!=b.uv1 || a.color!=b.color || a.material!=b.material || (a.tangent~b.tangent)&(1<<30)!=0 {
@@ -159,7 +159,7 @@ mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,alloc
     ordered:=make([dynamic]u32,0,len(indices),scratch)
     ranges:=make([dynamic]geom.Cluster_Range,scratch)
     slot_ranges(source.vertices,indices,&ordered,&ranges)
-    positions,attributes,protect:=mesh_simplify_inputs(source.vertices,scratch)
+    positions,attributes,protect:=mesh_simplify_inputs(source.vertices)
     weights:=MESH_SIMPLIFY_WEIGHTS
     dag:geom.Cluster_Dag
     defer geom.cluster_dag_destroy(&dag)
@@ -479,7 +479,8 @@ mesh_pages_assign :: proc(g:^Mesh_Geometry,sources:[]Cluster_Source,whole:bool,a
 // sources is a run of them, and the numbers they skip are no level.
 @(private="file")
 mesh_levels_count :: proc(g:^Mesh_Geometry,sources:[]Cluster_Source,allocator:=context.allocator) -> bool {
-    levels:=make([dynamic]Mesh_Level,0,MESH_MAX_LEVELS,allocator)
+    levels,no_levels:=make([dynamic]Mesh_Level,0,MESH_MAX_LEVELS,allocator)
+    if no_levels!=nil {return false}
     for c,at in g.clusters {
         if at==0 || sources[at].level!=sources[at-1].level {
             if _,error:=append(&levels,Mesh_Level{first_cluster=u32(at),error=c.error,parent_error=c.parent_error});error!=nil {return false}
@@ -512,7 +513,8 @@ mesh_morphs_follow :: proc(g:^Mesh_Geometry,source:Mesh_Source,origins:[]u32,all
     g.morph_step=morph_step(largest)
     error:mem.Allocator_Error
     g.morphs,error=make([]Morph_Target,len(source.morphs),allocator);if error!=nil {return false}
-    deltas:=make([dynamic]Morph_Cluster_Delta,0,len(source.morph_deltas),allocator)
+    deltas,no_deltas:=make([dynamic]Morph_Cluster_Delta,0,len(source.morph_deltas),allocator)
+    if no_deltas!=nil {return false}
     followed:=false
     defer if !followed {delete(deltas)}
     lookup:=make([]i32,len(source.vertices),context.temp_allocator)

@@ -726,7 +726,8 @@ skin_weights_quantize :: proc "contextless" (weights:[8]f32) -> (bytes:[8]u8) {
 // corners take different tangents is repeated, with its skin when skin has
 // one per vertex. indices are rewritten in place. False without memory or
 // for indices outside the vertices.
-mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Skin_Vertex=nil,scratch:=context.temp_allocator) -> bool {
+mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Skin_Vertex=nil) -> bool {
+    scratch:=context.temp_allocator
     count:=len(vertices)
     for index in indices {if int(index)>=count {return false}}
     positions:=make([][3]f32,count,scratch)

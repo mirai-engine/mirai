@@ -127,7 +127,7 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     testing.expect(t,content!=nil && len(content.bones)==1 && base.text_get(content.bones[0].name[:])=="alone")
     after,_:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,assets.revision==revision && string(after)==string(disk))
-    testing.expect(t,asset.registry_memory_drop(&assets.registry,"rig.skeleton"))
+    {dropped,_:=asset.registry_memory_drop(&assets.registry,"rig.skeleton");testing.expect(t,dropped)}
     content=skeleton_content(&skeletons,&app,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==3)
 }

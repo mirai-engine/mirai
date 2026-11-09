@@ -32,12 +32,15 @@ CRASH_STACK_BYTES :: 64*1024
 _crash_handler_install :: proc() {
     // The handler runs on a stack of its own, so it also reports an overflow.
     // The system keeps the stack for the life of the process.
-    stack:=make([]u8,CRASH_STACK_BYTES)
-    alternate:=posix.stack_t{ss_sp=raw_data(stack),ss_size=c.size_t(len(stack))}
-    posix.sigaltstack(&alternate,nil)
+    // Without memory for it the handler runs on the stack that faulted.
     action:posix.sigaction_t
     action.sa_sigaction=crash_signal
-    action.sa_flags={.SIGINFO,.ONSTACK,.RESETHAND}
+    action.sa_flags={.SIGINFO,.RESETHAND}
+    if stack,error:=make([]u8,CRASH_STACK_BYTES);error==nil {
+        alternate:=posix.stack_t{ss_sp=raw_data(stack),ss_size=c.size_t(len(stack))}
+        posix.sigaltstack(&alternate,nil)
+        action.sa_flags+={.ONSTACK}
+    }
     for signal in CRASH_SIGNALS {posix.sigaction(signal,&action,nil)}
     // backtrace loads what it needs on its first call, which a fault cannot afford.
     warm:[1]rawptr

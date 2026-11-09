@@ -42,6 +42,14 @@ slice_make :: proc($T:typeid/[]$E,count:int,allocator:runtime.Allocator,loc:=#ca
     return s,true
 }
 
+// Shortens a dynamic array to count elements it already holds. resize does
+// the same and may also grow, so its error has to be received; this asks for
+// no memory and cannot fail. A count past the length changes nothing.
+truncate :: proc "contextless" (array:^$T/[dynamic]$E,#any_int count:int) {
+    raw:=(^runtime.Raw_Dynamic_Array)(array)
+    raw.len=clamp(count,0,raw.len)
+}
+
 // ---------------------------------------------------------------- arena
 
 // Linear allocator: everything is released together, by arena_reset or back

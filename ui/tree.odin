@@ -193,15 +193,15 @@ Widget_Tree_Desc :: struct {
 tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
     a:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     tree^={allocator=a}
-    e:[6]runtime.Allocator_Error
+    e:[8]runtime.Allocator_Error
     tree.nodes,e[0]=make([]Node,desc.max_nodes if desc.max_nodes>0 else 256,a)
     tree.styles,e[1]=make([]Node_Style,desc.max_styles if desc.max_styles>0 else 64,a)
     tree.images,e[2]=make([]Node_Image,desc.max_images if desc.max_images>0 else 64,a)
     tree.anim_sets,e[3]=make([]Anim_Set,desc.max_anim_sets if desc.max_anim_sets>0 else 32,a)
     tree.strings,e[4]=make([]u8,desc.max_strings if desc.max_strings>0 else 4096,a)
     tree.variants,e[5]=make([]Style_Variant,desc.max_variants if desc.max_variants>0 else 64,a)
-    tree.translations,_=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
-    tree.grid_tracks,_=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
+    tree.translations,e[6]=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
+    tree.grid_tracks,e[7]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
     anims:=desc.anims
     if anims.allocator.procedure==nil {anims.allocator=a}
     e2:[2]runtime.Allocator_Error
@@ -546,7 +546,7 @@ tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instan
         first:=len(instance.parts)
         scope:=instance.scopes[node.parent] if node.parent>=0 else Bind_Scope{}
         template,parsed:=tree_template_parse(&instance.parts,found,instance,scope,tree,&node)
-        if template && parsed {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}} else {resize(&instance.parts,first)}
+        if template && parsed {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}} else {base.truncate(&instance.parts,first)}
         if !parsed {instance.replan=true}
     }
 }

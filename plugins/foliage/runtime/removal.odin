@@ -139,7 +139,8 @@ removals_destroy :: proc(r:^Foliage_Removals) {
 
 // Makes the instances taken out of each Foliage again from the entities
 // that name them, when they or the Foliage changed.
-removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) {
+removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) -> (enough:bool) {
+    enough=true
     key:=[2]u64{core.version(removed),core.version(foliages)}
     if r.made && key==r.seen {return}
     r.made,r.seen=true,key
@@ -150,7 +151,7 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
         if e==core.NONE || !core.has(foliages,e) {continue}
         owner:=removed_owner(r,e)
         if owner==nil {
-            append(&r.owners,Removed_Owner{entity=e})
+            if _,error:=append(&r.owners,Removed_Owner{entity=e});error!=nil {enough=false;continue}
             owner=&r.owners[len(r.owners)-1]
         }
         // What came from the network is not trusted to fit.
@@ -174,14 +175,21 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
             owner.items[kept]=item
             kept+=1
         }
-        resize(&owner.items,kept)
-        resize(&owner.ids,kept)
+        base.truncate(&owner.items,kept)
+        // Without its ids an owner has nothing taken out, and the index is made again.
+        if resize(&owner.ids,kept)!=nil {
+            clear(&owner.items);clear(&owner.ids)
+            owner.hash,enough=0,false
+            continue
+        }
         owner.hash=0
         for item,k in owner.items {
             owner.ids[k]=item.instance
             owner.hash=base.hash_u64(owner.hash~base.hash_u64(u64(u32(item.coord.x))|u64(u32(item.coord.y))<<32)~item.instance)
         }
     }
+    r.made=enough
+    return
 }
 
 // Takes what the game asked out, on the end that decides: the ids of the
@@ -195,7 +203,9 @@ foliage_removals :: proc(
 ) {
     asked:=core.take(&requests.removes)
     context.allocator=app.allocator
-    removals_index(r,core.read(removed),foliages,commands.entities)
+    if !removals_index(r,core.read(removed),foliages,commands.entities) {
+        memory_problem(problems,core.NONE,"the instances taken out of the foliage: some show again")
+    }
     if len(asked)==0 || authority.ptr!=nil && authority.role==.Client || data.ptr==nil {return}
     // By Foliage and cell: each cell is built once and its entities filled together.
     order:=slice.clone(asked,context.temp_allocator)
@@ -220,7 +230,11 @@ foliage_removals :: proc(
         entry:=data_find(data.ptr,f.source)
         cell:=entry!=nil?source_cell(&entry.source,coord):nil
         if cell==nil {continue}
-        cell_build(&entry.source,cell,{},&work)
+        if !cell_build(&entry.source,cell,{},&work) {
+            for request in group {core.offer(&requests.removes,request)}
+            memory_problem(problems,e,"taking instances out of this Foliage")
+            continue
+        }
         clear(&shown)
         for p in work.placed {append(&shown,p.id)}
         slice.sort(shown[:])
