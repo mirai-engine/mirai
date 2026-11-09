@@ -323,6 +323,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     if !now || !before || !held {return}
     params.kept=kept?1:0
     render.pass_timestamp(pass,"fog light")
+    render.pass_surface_read(pass,5,.Shadow_Atlas)
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}

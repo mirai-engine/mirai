@@ -860,6 +860,15 @@ float3 material_absorption(Material m, float path) {
     return m.attenuation_distance > 0.0 ? pow(max(m.attenuation_color, float3(1e-4)), float3(path / m.attenuation_distance)) : float3(1.0);
 }
 
+// How far into a solid of the material its clearest color still lets
+// SOLID_CLEAR of the light through: what lies farther in does not show.
+#define SOLID_CLEAR 0.002
+float material_clear_reach(Material m) {
+    float clearest = max(m.attenuation_color.r, max(m.attenuation_color.g, m.attenuation_color.b));
+    if (!(m.attenuation_distance > 0.0) || clearest >= 0.999) return FLT_MAX;
+    return m.attenuation_distance * log(SOLID_CLEAR) / log(max(clearest, 1e-4));
+}
+
 // Surface attributes at a ray hit.
 struct Surface {
     float3 position;

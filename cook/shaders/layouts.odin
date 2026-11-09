@@ -16,7 +16,7 @@ Shared_Struct :: struct {
     guard:string, // a define the struct exists under; "": always
 }
 // The last field of Frame_Data that render.Gpu_Frame mirrors: what a generation adds goes after it.
-FRAME_MIRROR_LAST :: "moved_lights"
+FRAME_MIRROR_LAST :: "sun_map_rows"
 @(private)
 SHARED_STRUCTS :: []Shared_Struct{
     {slang="Frame_Data",odin="Gpu_Frame",last=FRAME_MIRROR_LAST},

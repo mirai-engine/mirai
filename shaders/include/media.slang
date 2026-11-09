@@ -7,6 +7,9 @@
 #define MIRAI_MEDIA_SLANG
 #include "lighting.slang"
 #include "probe_light.slang"
+#ifdef SUN_SHADOW_SLOT
+#include "shadow_maps.slang"
+#endif
 
 // Henyey-Greenstein times pi: what the Lambert-normalized light of the frame
 // is multiplied by. cosine: between where the light goes and the eye; g, the
@@ -77,11 +80,23 @@ float3 media_ambient(float3 position, float3 to_eye_ray) {
 
 // What reaches a point of a medium from the sun through the scene, times
 // sun_kept, what the medium itself lets through, and the phase towards the
-// eye; none without a sun. changed: as for media_local_light.
+// eye; none without a sun. A pass with the maps of the view (SUN_SHADOW_SLOT)
+// takes from them what stops the sun where a cascade holds the point, and
+// traces only the glass that colors it; elsewhere a ray tells. changed: as
+// for media_local_light.
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
     if (frame.sun_direction.w < 0.5) return float3(0.0);
     float reach = scene_reach(position, frame.sun_direction.xyz);
+#ifdef SUN_SHADOW_SLOT
+    float known = sun_shadow_seen(position, float3(0.0));
+    float3 through = float3(max(known, 0.0));
+    if (known < 0.0) through = trace_transmission(position, frame.sun_direction.xyz, reach);
+#ifdef MIRAI_COLORED_SHADOWS
+    else if (known > 0.0) through *= trace_glass_filter(position, frame.sun_direction.xyz, reach);
+#endif
+#else
     float3 through = trace_transmission(position, frame.sun_direction.xyz, reach);
+#endif
     changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(position, frame.sun_direction.xyz, reach, INVALID, FLT_MAX);
     return sun_light(position) * through * sun_kept * media_phase(dot(eye_ray, frame.sun_direction.xyz), g);
 }

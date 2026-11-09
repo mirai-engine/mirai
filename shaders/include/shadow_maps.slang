@@ -116,6 +116,56 @@ bool shadow_map_reaches(Shadow_Map m, float3 low, float3 high) {
         && shadow_box_side(lo, hi, float3(0.0, 1.0, -m.span.y), 0.0) && shadow_box_side(lo, hi, float3(0.0, -1.0, m.span.w), 0.0);
 }
 
+// 1 where the depth a texel of a map holds is no blocker of a point `limit`
+// along it: nearer than `skip` lies the body of the light.
+float shadow_past(Shadow_Map m, float depth, float skip, float limit) {
+    float b = shadow_map_distance(m, depth);
+    return b > skip && b < limit ? 0.0 : 1.0;
+}
+
+// Whether the center of the light sees a point `d` along a map past what the
+// 2x2 texels around `texel` hold, blended between them.
+float shadow_hard_seen(Texture2D<float4> atlas, Shadow_Map m, float2 texel, float d, float bias, float skip) {
+    float2 corner = texel - 0.5;
+    float2 first = floor(corner), f = corner - first;
+    float4 depth = atlas.GatherRed(point_sampler, (float2(m.rect.xy) + first + 1.0) / float(SHADOW_ATLAS));
+    float limit = d - bias;
+    float4 past = float4(shadow_past(m, depth.x, skip, limit), shadow_past(m, depth.y, skip, limit),
+                         shadow_past(m, depth.z, skip, limit), shadow_past(m, depth.w, skip, limit));
+    // Gather order: (0, 1), (1, 1), (1, 0), (0, 0).
+    return lerp(lerp(past.w, past.z, f.x), lerp(past.x, past.y, f.x), f.y);
+}
+
+#ifdef SUN_SHADOW_SLOT
+// The atlas of the maps of the view (render.Surface_Source.Shadow_Atlas), for
+// a pass that takes the shadow of the sun from its cascades and not from a ray.
+[[vk::binding(SUN_SHADOW_SLOT, 0)]] Texture2D<float4> sun_shadow_atlas : register(MIRAI_REGISTER(t, SUN_SHADOW_SLOT), space0);
+
+// How much of the sun reaches a point past what the maps of the view hold,
+// blended between the texels around it; -1 where no cascade holds the point,
+// or the view drew none: a ray tells. n: the normal of its surface, zero for
+// a point of a medium.
+float sun_shadow_seen(float3 position, float3 n) {
+    uint count = min(frame.sun_maps.x, uint(SUN_MAP_ROWS) / SHADOW_MAP_ROWS);
+    float c = dot(n, frame.sun_direction.xyz);
+    float lean = c > 0.0 ? min(sqrt(max(1.0 - c * c, 0.0)) / max(c, 1e-3), 8.0) : 0.0;
+    for (uint k = 0u; k < count; k++) {
+        uint row = k * SHADOW_MAP_ROWS;
+        Shadow_Map m = shadow_map_from(frame.sun_map_rows[row], frame.sun_map_rows[row + 1u], frame.sun_map_rows[row + 2u],
+                                       frame.sun_map_rows[row + 3u], frame.sun_map_rows[row + 4u], frame.sun_map_rows[row + 5u]);
+        float step = shadow_map_texel(m, 0.0);
+        // A texel and a half off the surface, so that it does not hide itself.
+        float3 local = shadow_map_local(m, position + n * (1.5 * step));
+        float2 unit = shadow_map_unit(m, local);
+        float side = float(m.rect.z);
+        if (any(abs(unit) > 1.0 - 2.0 / side) || local.z >= m.far) continue;
+        float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side;
+        return shadow_hard_seen(sun_shadow_atlas, m, texel, local.z, step * (1.0 + lean) + 0.001 * local.z, m.near);
+    }
+    return -1.0;
+}
+#endif
+
 // The face of the cube around a light a direction from it falls on.
 uint shadow_face_of(float3 v) {
     float3 a = abs(v);

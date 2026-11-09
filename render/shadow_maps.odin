@@ -410,6 +410,17 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	rhi.cmd_draw_indirect(cmd, b.draw, 0, 1)
 	rhi.cmd_end_render_pass(cmd)
 	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
+	// The maps of the sun, for the passes after this one that take its shadow
+	// from them (sun_shadow_seen): the constants of the view are read when the
+	// frame runs.
+	if planned.sun != max(u32) {
+		first, count := int(planned.sun & 0xFFFF), min(int(planned.sun >> 16), len(SHADOW_SUN_CASCADES))
+		rows := ([^][4]u32)(b.data.ptr)[int(planned.rows) + first * SHADOW_MAP_ROWS:][:count * SHADOW_MAP_ROWS]
+		p.frame.sun_maps = {u32(count), 0, 0, 0}
+		copy(p.frame.sun_map_rows[:], rows)
+		constants := (^Gpu_Frame)(p.constants.ptr)
+		constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
+	}
 	return planned
 }
 

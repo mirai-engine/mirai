@@ -18,6 +18,7 @@
 // fog.hidden, by turns, and keeps what it had in the others: once the camera
 // shows it, it has its light. With fog.hidden 0 it is never lit, and once
 // shown its light starts again.
+#define SUN_SHADOW_SLOT SLOT_PASS5
 #include "media.slang"
 #include <extension_hooks.slang>
 #define FOG_VOLUMES_SLOT SLOT_PASS2
@@ -102,7 +103,8 @@ float3 fog_cell_point(uint3 id, uint k, out float2 uv, out float along) {
 }
 
 // The sun of the cell: the mean of what reaches FOG_SUN_POINTS places of it,
-// each with its shadow ray; the first is the place the rest of the light is
+// each from the maps of the sun of the view, or with its shadow ray where
+// none holds it (media_sun); the first is the place the rest of the light is
 // taken at. Glass on the way is read at the level of what a beam as wide as
 // the cell covers of it (footprint, metres): a cell wider than the pieces of a
 // window takes their mean, a narrow one their pattern.
@@ -110,11 +112,11 @@ float3 fog_cell_sun(uint3 id, float3 first, float3 eye_ray, float g, float taken
 #ifdef MIRAI_RAY_FILTERS
     ray_filter_footprint = footprint * FOG_GLASS_FOOTPRINT;
 #endif
-    float3 sun = media_sun(first, eye_ray, g, float3(fog_shade(first, frame.sun_direction.xyz, taken)), changed);
-    for (uint k = 1u; k < FOG_SUN_POINTS; k++) {
+    float3 sun = float3(0.0);
+    for (uint k = 0u; k < FOG_SUN_POINTS; k++) {
         float2 uv;
         float along;
-        float3 at = fog_cell_point(id, k, uv, along);
+        float3 at = k == 0u ? first : fog_cell_point(id, k, uv, along);
         bool moved = false;
         sun += media_sun(at, eye_ray, g, float3(fog_shade(at, frame.sun_direction.xyz, taken)), moved);
         changed = changed || moved;

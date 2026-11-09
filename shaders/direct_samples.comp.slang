@@ -201,26 +201,6 @@ bool shadow_map_of(uint item, float3 position, out Shadow_Map m, out uint index)
 #define SHADOW_SEARCH_MAX 64.0
 #define SHADOW_PENUMBRA_MIN 1.5
 
-// 1 where the depth a texel of the map holds is no blocker (shadow_hard_seen).
-float shadow_past(Shadow_Map m, float depth, float skip, float limit) {
-    float b = shadow_map_distance(m, depth);
-    return b > skip && b < limit ? 0.0 : 1.0;
-}
-
-// Whether the center of the light sees a point `d` along a map past what the
-// 2x2 texels around `texel` hold, blended between them; direct_spread.comp
-// averages it over the penumbra.
-float shadow_hard_seen(Shadow_Map m, float2 texel, float d, float bias, float skip) {
-    float2 corner = texel - 0.5;
-    float2 first = floor(corner), f = corner - first;
-    float4 depth = shadow_atlas.GatherRed(point_sampler, (float2(m.rect.xy) + first + 1.0) / float(SHADOW_ATLAS));
-    float limit = d - bias;
-    float4 past = float4(shadow_past(m, depth.x, skip, limit), shadow_past(m, depth.y, skip, limit),
-                         shadow_past(m, depth.z, skip, limit), shadow_past(m, depth.w, skip, limit));
-    // Gather order: (0, 1), (1, 1), (1, 0), (0, 0).
-    return lerp(lerp(past.w, past.z, f.x), lerp(past.x, past.y, f.x), f.y);
-}
-
 // What the map of a light says of a point at position with normal n: 1 where
 // the taps around it see past all that could hide a part of the light, 0
 // where they all meet something nearer, -1 without its map, for its rays to
@@ -282,7 +262,7 @@ float shadow_map_seen(uint item, float3 position, float3 n, float radius, float 
     float b = blockers / float(hiding);
     spread = sun ? 2.0 * radius * (d - b) : 2.0 * radius * (d - b) / (b + radius);
     if (blocked == taps) return 0.0;
-    return shadow_hard_seen(m, texel, d, bias, skip);
+    return shadow_hard_seen(shadow_atlas, m, texel, d, bias, skip);
 }
 
 // The samples of a light at a point traced first; the rest only at its penumbra.

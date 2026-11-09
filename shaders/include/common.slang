@@ -81,6 +81,9 @@ struct Nested_View {
 // render.OCCLUDER_CHANGES_MAX, LIGHT_MOVES_MAX, OCCLUDERS_MANY and the MOVED_* bits.
 #define OCCLUDER_CHANGES_MAX 16
 #define LIGHT_MOVES_MAX 16
+// The rows of the maps of the shadows of the sun a view holds in its constants:
+// SHADOW_MAP_ROWS for each of its cascades (shadow_maps.slang).
+#define SUN_MAP_ROWS 18
 #define OCCLUDERS_MANY 0xFFFFFFFFu
 #define MOVED_SUN 1u
 #define MOVED_LIGHTS_ALL 2u
@@ -163,6 +166,8 @@ struct Frame_Data {
     uint4 moved;             // what casts shadows and changed since the frame before (occluder_changed of trace.slang): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
+    uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang); 0: none, a ray tells
+    uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED
     Nested_View nested[NESTED_VIEW_CAPACITY]; // nested[i - 1] for the pixels whose view index is i
 #endif

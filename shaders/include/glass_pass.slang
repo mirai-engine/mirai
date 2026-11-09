@@ -303,8 +303,11 @@ bool walk_advance(inout Glass_Walk w, Material m, uint instance, float depth, fl
         w.stage = WALK_DONE;
         return true;
     }
+    // Through a solid without a way out (the surface of water) the ray goes on in it: no farther
+    // than what it finds would still show through.
+    float reach = (w.flags & WALK_OPEN) != 0u ? min(params.max_distance, material_clear_reach(m)) : params.max_distance;
     Ray_Path arrival;
-    Hit hit = trace_ray(w.origin, w.direction, 0.0, params.max_distance, false, arrival);
+    Hit hit = trace_ray(w.origin, w.direction, 0.0, reach, false, arrival);
     w.direction = arrival.direction;
     w.glass = arrival.glass;
     if (hit.instance == INVALID) {

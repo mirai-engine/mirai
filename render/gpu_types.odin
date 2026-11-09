@@ -68,6 +68,8 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
+	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass); 0: none
+	sun_map_rows:     [len(SHADOW_SUN_CASCADES) * SHADOW_MAP_ROWS][4]u32,
 }
 MOVED_SUN        :: 1 // the sun moved further than its radius, or came on
 MOVED_LIGHTS_ALL :: 2 // more lights moved than moved_lights holds: each counts as moved
