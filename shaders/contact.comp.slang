@@ -28,14 +28,20 @@ struct Params_Block { uint scale; uint pad0; uint pad1; uint pad2; };
 // its normal.
 [[vk::binding(SLOT_PASS3, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_contact : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 
-float contact_occlusion(int2 q, float3 position, float3 n) {
+// distance: from the eye to the point, which says how well its place is
+// known: the rays leave the surface by that much (view_bias), and past where
+// that takes their whole reach a point is wider than what could stand that
+// near it, and nothing shadows it.
+float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
+    float bias = view_bias(distance);
+    if (bias >= CONTACT_RADIUS) return 1.0;
     float3 t = normalize(abs(n.y) < 0.99 ? cross(n, float3(0.0, 1.0, 0.0)) : cross(n, float3(1.0, 0.0, 0.0)));
     float3 b = cross(n, t);
     // The 4x4 pattern a point's rays turn by, in sixteenths of a turn: by the point, not by
     // where it is, which the jitter of the view moves a little in every frame.
     const uint turns[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
     float turn = float(turns[(uint(q.x) & 3u) + 4u * (uint(q.y) & 3u)]) / 16.0 * 6.2831853;
-    float3 origin = position + n * 0.01;
+    float3 origin = offset_origin(position, n, bias);
     float hidden = 0.0;
     [loop]
     for (uint i = 0u; i < CONTACT_SAMPLES; i++) {
@@ -64,7 +70,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         out_contact[q] = float4(1.0, 0.0, 0.0, 0.0);
         return;
     }
-    float3 position = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth).position;
+    Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     float3 normal = gbuffer_normal(p);
-    out_contact[q] = float4(contact_occlusion(q, position, normal), depth_distance(depth), oct_encode(normal));
+    out_contact[q] = float4(contact_occlusion(q, pixel.position, normal, pixel.distance), depth_distance(depth), oct_encode(normal));
 }

@@ -98,6 +98,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
   hemisphere of their normal in the world, which also see what is off screen or behind something
   nearer to the eye; the nearest occludes more, so that the edge fades. Every frame traces every
   point.
+- The rays leave the surface by the bias of its distance (`view_bias`), as far as its place is
+  known from the eye; where that bias takes the whole reach of the rays nothing occludes the
+  point, which is wider than what could stand that near it.
 - The directions of a point rotate through a fixed pattern of 4×4 points that
   `contact_pixels.comp` averages around each pixel, on its surface. Nothing changes from one frame
   to the next if the scene does not change.
@@ -188,13 +191,18 @@ keeps `Renderer_Desc.worlds` (edit and play).
   it; a world that returns recovers its own and its `scene_set` marks no changes. Beyond the
   capacity, the one displayed longest ago loses its own. `render_sync` calls it when the
   `World_Id` changes or when it rebuilds the scene in a frame whose view is cut.
+- A world that returns is `fresh` when its transforms are other rows than those `render_sync` left
+  it with (`world_shown`): a scene loaded into it while another world was drawn, or loaded and
+  played at once without a frame of its own, does not take the light of the scene before.
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
 - **Warm-up.** The frame that shows a world without light (and the one that follows
   `renderer_reset_history`) updates the volume `GI_WARM_UPDATES` times, like Lumen's
   `ForceFullUpdate`, each with up to `PROBE_WARM_BUDGET` probes and one more bounce: the light of
   its first frame ends up close to the settled one. A blackout spreads it over a few frames, so as
-  not to stall the game.
+  not to stall the game. A change of the layout of the probes (`renderer_apply_settings`) leaves
+  every world without light: probes that start from nothing and are traced a few a frame settle
+  dark where their rays met what had no light yet, and nothing wakes them.
 - **New scale.** A change of light scale carries the histories and the irradiance atlases to it in
   the next frame (`history_scale.comp`); nothing starts over. A light thousands of times stronger
   than the others, even if it reaches nothing, leaves that of the room intact: the atlases and

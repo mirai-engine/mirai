@@ -1375,7 +1375,8 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_width) * f32(r.window_height)), true) {return false}
 	}
 	if old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget {
-		ddgi_release(r)
+		// The volume of every world is of the layout before: the one shown gathers its light at once, as a world shown anew.
+		world_light_stale(r)
 	}
 	return true
 }

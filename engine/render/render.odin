@@ -319,6 +319,8 @@ Render_Sync :: struct {
     previous_lights:[dynamic]gpu.Light_Desc,
     // What each table it reads was when it last looked: core.changes gives what moved since.
     seen_meshes,seen_worlds,seen_tints,seen_hidden,seen_elsewhere,seen_parents,seen_overrides,seen_offsets,seen_layers:core.Seen,
+    left:[gpu.WORLDS_MAX]World_Left, // the worlds drawn before the one drawn now (world_shown)
+    left_next:int,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     coming:[dynamic]core.Entity, // scratch: the entities whose meshes start being drawn this frame
     taken:[dynamic]u32, // scratch: the places of instances that went which another took this frame (instances_taken_publish)
@@ -334,6 +336,13 @@ Render_Sync :: struct {
     graphics_applied:bool,
     synced:bool,
     stats:Sync_Stats,
+}
+
+// What the transforms of a world were when the renderer stopped drawing it.
+World_Left :: struct {
+    world:core.World_Id,
+    seen:core.Seen,
+    used:bool,
 }
 
 Sync_Stats :: struct {
@@ -440,10 +449,32 @@ view_of_camera :: proc(view:^core.View,cameras:core.Read(Camera),exposures:core.
     view.cut=pose==nil && (previous!=view.camera || cut)
     view.carried={}
 }
+// The world `id` is drawn in place of the one drawn last, whose transforms
+// stay with it as they were seen. Whether this one, drawn before and left,
+// holds other rows than those it was left with: another scene took its place
+// meanwhile, also without a frame of it in between (a scene loaded and played
+// at once), and the light the renderer kept for it is of the scene before.
+@(private)
+world_shown :: proc(sync:^Render_Sync,id:core.World_Id,worlds:core.Read(core.World_Transform)) -> (replaced:bool) {
+    if sync.synced {
+        at:=sync.left_next
+        for l,i in sync.left {if l.used && l.world==sync.world {at=i}}
+        if at==sync.left_next {sync.left_next=(sync.left_next+1)%len(sync.left)}
+        sync.left[at]={sync.world,sync.seen_worlds,true}
+    }
+    for &l in sync.left {
+        if !l.used || l.world!=id {continue}
+        replaced=core.changes(worlds,&l.seen).all
+        l.used=false
+    }
+    return
+}
+
 // The world into the renderer. The camera and the time of the frame are
 // those of the View, the Time and the Frame_Time of this world: host reads them. Another
 // world, or this one replaced by another scene (rebuilt in a frame whose view
-// is cut), is a discontinuity for the renderer: the light it gathered for the
+// is cut, or while another world was drawn: world_shown), is a discontinuity
+// for the renderer: the light it gathered for the
 // world before stays with that one (gpu.scene_world). A frame that draws only
 // the UI (host.App.ui_only) leaves the scene as it is: a world drawn between
 // frames meanwhile keeps it, and this one takes it back when it is drawn again.
@@ -464,6 +495,8 @@ render_sync :: proc(
     if bodies.ptr!=nil {owned=bodies.bodies}
     t:=Sync_Tables{worlds,meshes,tints,hidden,elsewhere,parents,overrides,highlights,outlines,offsets,layers,locals,cameras,owned}
     defer sync.owned=owned
+    shown:=!sync.synced || sync.world!=id
+    replaced:=shown && world_shown(sync,id,worlds)
     for at in sync.changed {sync.drawn.values[at].changed=false}
     clear(&sync.changed)
     clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions)
@@ -481,8 +514,7 @@ render_sync :: proc(
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
     rebuild||=!local_assets || a.appearance!=sync.assets_appearance
-    shown:=!sync.synced || sync.world!=id
-    if shown || (rebuild && view.cut) {gpu.scene_world(r,world_key(id),!shown)}
+    if shown || (rebuild && view.cut) {gpu.scene_world(r,world_key(id),!shown || replaced)}
     extras_changed:=!extras_unchanged(sync,extras)
     local_changes:=false
     if !rebuild {
