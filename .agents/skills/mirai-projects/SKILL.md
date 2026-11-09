@@ -42,7 +42,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):
   [commands](references/projects.md#commands) and
-  [common commands](../../../AGENTS.md#common-commands).
+  [common commands](references/projects.md#common-commands).
 - Headless editor in the background, `rpc`, `mcp`, `capture`:
   [sessions](../mirai-agent-api/references/api.md#sessions); comparing captures:
   [images](../mirai-agent-api/references/image.md#comparing-images-mirai-image).

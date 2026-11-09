@@ -389,10 +389,12 @@ its skill:
 [`capture`](../../mirai-agent-api/references/api.md#mirai-capture). All pass the platform flags,
 print diagnostics as `file(line:column) Error: message` and end with 1 if a job fails.
 
-### Common commands
+## Common commands
 
 The project is the current folder if omitted; for the demo pass `demo`. The compiler, Slang and the
-tools come from `.deps`, also from a worktree.
+tools come from `.deps`, also from a worktree. Commands are written in bash (Git Bash on Windows):
+from the `mirai` root it is `./mirai`, and PowerShell, cmd and Python `subprocess` use `mirai.cmd`,
+by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine)).
 
 | Operation | Command |
 | --- | --- |
@@ -421,8 +423,13 @@ tools come from `.deps`, also from a worktree.
 | Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
 
-- `edit` and `play` without a flag compile with `--release`, because a person uses them; an agent
-  passes `--dev` ([AGENTS.md](../../../../AGENTS.md#common-commands)).
+- `edit` and `play` without a flag compile with `--release`, because a person uses them; `build`,
+  `session`, `capture` and `record` keep the mode of the engine built last (release when there is
+  none); `render check` is `--dev` by itself. **An agent passes `--dev`** to `build`, `edit`,
+  `play`, `session` and `capture`. **`--release` only when the task cannot do without it or the
+  user asks for it**: figures of the CPU (`mirai bench compare`, a benchmark test) or a budget in
+  absolute numbers. If the user's editor holds the `--dev` build of the checkout, work in a
+  worktree.
 - The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
   builds do not wait for a measurement: they run with low priority while it lasts.
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
@@ -430,8 +437,14 @@ tools come from `.deps`, also from a worktree.
   session; after a change of engine code, `mirai session restart` (or `mirai build editor`,
   which restarts the session that holds the build); after a failure, `mirai rpc
   engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
-- **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
-  there, `mirai setup rg` installs it pinned in `.deps` and in the PATH.
+  Do not launch `mirai-editor` by hand, write HTTP clients, or parse the output of `rpc` with
+  scripts: `--select` and `--wait-until` instead of `json.load` and `sleep`.
+- **Search** with the Grep tool or `rg`, which skip `.worktrees`, `.deps` and `bin`; never
+  `grep -r` or `find | xargs grep` from the root. For the Odin code in `.deps`, pass its path to
+  `rg` or `--no-ignore`. If `rg` is not there, `mirai setup rg` installs it pinned in `.deps` and
+  in the PATH. `rg` always takes a folder (`rg pattern .`): without one it reads standard input
+  and hangs. A file list built with `$(...)` may come out empty: close it with `/dev/null`
+  (`rg pattern $(...) /dev/null`) or go through `xargs -r rg`.
 - **When handing a command to the user** to try a change, `edit` and `play` carry `--dev`; without
   a flag only if it is for measuring. From a worktree, start with a `cd` to its path from miari,
   quoted, separated with `;` and not `&&` so that it also works in PowerShell 5.1. If it compiles,
@@ -441,7 +454,7 @@ tools come from `.deps`, also from a worktree.
 - Run arguments: [editor](../../mirai-editor/references/editor.md#arguments) and
   [player](../../mirai-core/references/host.md#the-player).
 
-### Project
+## Project
 
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
   empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
@@ -458,7 +471,7 @@ tools come from `.deps`, also from a worktree.
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
   developer mode is needed).
 
-### Tool and machine
+## Tool and machine
 
 - `mirai setup git [folder]` wires the clone the folder is in, once per clone
   ([git and assets](../../mirai-assets/references/cli.md#git)); `mirai doctor` reports a clone
@@ -486,7 +499,7 @@ tools come from `.deps`, also from a worktree.
   with the current sources: from the shared cache, or with the host's C toolchain (MSVC on Windows;
   `CC` or `cc` and `ar` on Linux and macOS) ([cache](build.md#dependencies-and-worktrees)).
 
-### Checks and tests
+## Checks and tests
 
 `check` and `test` pass the attributes and the collections of Mirai: `mirai`, and `plugins` or
 `project` when the package or what it imports uses them (`project` is the closest folder upwards
@@ -527,7 +540,7 @@ package.
   `third_party` and `templates`, and `mirai test` of the CPU suites it lists. A
   suite enters the list when it passes on `main`.
 
-### Paths in Git Bash
+## Paths in Git Bash
 
 An argument or a variable that starts with `/` reaches a native program as a Windows path
 (`/tmp/x` → `C:/Users/.../Temp/x`); to pass a POSIX path (`wsl`, `docker`), prefix
@@ -535,7 +548,7 @@ An argument or a variable that starts with `/` reaches a native program as a Win
 `/c/x` and `/cygdrive/c/x` as `C:/x` (`project.path_native`) and rejects a path with a root and
 without a drive (`/x`, `\x`).
 
-### External scripts
+## External scripts
 
 What is external to the engine (preparing dependencies, benchmarks, reports) are `scripts/*.py`:
 self-contained Python (PEP 723, with the header of the existing ones) run with `uv run
@@ -553,7 +566,7 @@ any user and nothing in the engine depends on them; bash remains only in the lau
   the sound of a section of a YouTube or X video, or of a file, to compare with Mirai captures. It
   needs Windows, and what it downloads stays in `.mirai/tmp/video_frames`, never in git.
 
-### ACP agents
+## ACP agents
 
 `mirai agent` installs and manages the ACP adapters of Codex and Claude in the user folder of the
 machine (`project.agents_folder`, `<user data>/Mirai/Editor agents/<agent>/`, or `--home`), outside

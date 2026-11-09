@@ -282,7 +282,8 @@ compiling the project separately. The editor and the player load the project's w
 
 - Targets, collections, outputs and binary updates:
   [projects](../.agents/skills/mirai-projects/references/projects.md#engine-binaries).
-- Usage commands: [AGENTS.md](../AGENTS.md#common-commands).
+- Usage commands:
+  [common commands](../.agents/skills/mirai-projects/references/projects.md#common-commands).
 - Reload of an open project and its relation to the layout:
   [Build and reload](../.agents/skills/mirai-editor/references/editor.md#build-and-reload).
 

@@ -127,16 +127,24 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 
 ## Render check
 
-`mirai render check demo` measures what the user sees: the fixed views of
-`demo/render_check.mirai` in a windowless editor compiled at `--dev`, measured only between
-checkouts (it takes the `mirai measure` turn), against the `main` build measured the same way. A
-change of light, GI, materials, exposure or render cost is accepted only with this check without
-regressions, besides the reference metrics of `gi_test`: synthetic fixtures are not enough to
-assert quality or cost. A change that cannot move the cost (a constant, a value of a scene, an
-asset of the same size and format) is accepted with `--quality`, and one that changes nothing the
-GPU receives (how assets are stored or loaded when they decode to the same data) needs no render
-check: captures against `main` are enough. The full check measures cost, so it runs only on a
-machine with no other GPU load.
+`mirai render check demo` measures what the user sees: the fixed views of `demo/render_check.mirai`
+in a windowless editor compiled at `--dev`, measured only between checkouts (it takes the `mirai
+measure` turn), against the `main` build measured the same way. A global change of the image or its
+cost (GI, light, shadows, TAA, exposure, tonemap, demo materials, a pass that runs in every scene)
+is accepted only with this check, without regressions, besides the reference metrics of `gi_test`:
+synthetic fixtures are not enough to assert quality or cost. It runs once, at the end; which variant
+depends on what the GPU receives and does:
+
+- **Nothing the GPU receives changes**: how assets are stored, compressed or loaded when they
+  decode to the same data, tools, editor UI. No render check; captures against `main` if the
+  image could differ.
+- **Only the image changes**: a constant, a value of a scene, an asset of the same size and
+  format, an encoding setting such as the RDO lambda. `--quality`, which measures no cost.
+- **The work can change**: a pass, a resource, a shader that does more or less work, a texture
+  format or resolution. The full one, which measures cost: only on a machine with no other load.
+  With a game or another GPU job running its times are not valid, so it waits for the machine.
+
+While working, `--views` and `--quality`.
 
 - **`--dev` or `--release`.** Both builds of a check are built in the same mode, `--dev` unless it
   says otherwise. The image, the frame and the GPU of each pass come out the same in the two modes;
