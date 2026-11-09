@@ -70,11 +70,11 @@ loading_settle :: proc(world,shared,editor:rawptr) {
 }
 
 @(private)
-loading_clear :: proc(data:rawptr) {
+loading_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Loading_World)data
     core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms);core.table_clear(&w.parents)
     core.table_clear(&w.models);core.table_clear(&w.references)
-    core.entities_clear(&w.entities)
+    return core.entities_clear(&w.entities)
 }
 
 // A project in a temporary folder of assets, with job threads or without,

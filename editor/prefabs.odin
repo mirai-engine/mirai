@@ -486,7 +486,7 @@ prefab_world_replace :: proc(s:^Session,cap:^asset.Scene) -> Prefab_Error {
     for e in selection.entities {
         if id:=api_entity_id(w,e);id!=0 {append(&selected,id)}
     }
-    w.info.clear(w.data)
+    if !w.info.clear(w.data) {return .Out_Of_Memory}
     _,error:=scene.instantiate(w,&source,&a.types)
     core.world_settle(w)
     if error!=.None {return .Rejected}

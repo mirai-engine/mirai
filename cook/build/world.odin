@@ -1644,7 +1644,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         if place==.World {fmt.sbprintf(w,"    if !%s.entities_init(&w.entities,allocator) {{return false}}\n",core_alias)}
         for t in g.types {
             if t.place!=place || t.kind!=.Component || !included(t,editor) {continue}
-            fmt.sbprintf(w,"    %s.table_init(&w.%s,\"%s\",allocator)\n",core_alias,t.field,t.name)
+            fmt.sbprintf(w,"    if !%s.table_init(&w.%s,\"%s\",allocator) {{return false}}\n",core_alias,t.field,t.name)
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
@@ -1736,8 +1736,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // Clearing a World takes its entities, and the storages derived from them
     // go back to their start: what is kept are the settings, the storages
     // that say keep and those that are not copied.
-    fmt.sbprint(w,"clear_world :: proc(data:rawptr) {\n    w:=cast(^World)data\n")
-    fmt.sbprintf(w,"    %s.entities_clear(&w.entities)\n",core_alias)
+    fmt.sbprint(w,"clear_world :: proc(data:rawptr) -> bool {\n    w:=cast(^World)data\n")
+    fmt.sbprintf(w,"    if !%s.entities_clear(&w.entities) {{return false}}\n",core_alias)
     for t in g.types {
         if t.place==.World && t.kind==.Component {fmt.sbprintf(w,"    %s.table_clear(&w.%s)\n",core_alias,t.field)}
     }
@@ -1751,7 +1751,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         value,found:=default_value(t)
         fmt.sbprintf(w,"    w.%s=%s\n",t.field,found?value:"{}")
     }
-    fmt.sbprint(w,"}\n\n")
+    fmt.sbprint(w,"    return true\n}\n\n")
 
     // The values of the by_world storages of a World, by its id
     world_id:=g.by_key["mirai:core.World_Id"]

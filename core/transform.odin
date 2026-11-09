@@ -254,7 +254,7 @@ propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation
             at=subtree_next(h,root,at)
         }
     }
-    resize(&p.order,n)
+    base.truncate(&p.order,n)
     p.built_tree=h.version
     p.built_locals=layout(locals)
     return true

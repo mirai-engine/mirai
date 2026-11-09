@@ -276,13 +276,15 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     a.row_marks,made[5]=base.region_dynamic(&a.regions[5],u64,capacity*2)
     a.row_hashes,made[6]=base.region_dynamic(&a.regions[6],u64,capacity*2)
     for listed in made {ok&&=listed}
-    a.free_rows=make([dynamic]u32,0,start,allocator)
-    a.rows_dirty=make([dynamic]u32,0,ASSETS_ROWS_DIRTY,allocator)
-    a.free_meshes=make([dynamic]u32,0,start,allocator)
-    a.free_textures=make([dynamic]u32,0,start,allocator)
-    a.free_materials=make([dynamic]u32,0,start,allocator)
-    a.free_scenes=make([dynamic]u32,0,start,allocator)
-    a.errors=make([dynamic]Assets_Error,0,desc.error_capacity>0?desc.error_capacity:ASSETS_DEFAULT_ERRORS,allocator)
+    errors:[7]runtime.Allocator_Error
+    a.free_rows,errors[0]=make([dynamic]u32,0,start,allocator)
+    a.rows_dirty,errors[1]=make([dynamic]u32,0,ASSETS_ROWS_DIRTY,allocator)
+    a.free_meshes,errors[2]=make([dynamic]u32,0,start,allocator)
+    a.free_textures,errors[3]=make([dynamic]u32,0,start,allocator)
+    a.free_materials,errors[4]=make([dynamic]u32,0,start,allocator)
+    a.free_scenes,errors[5]=make([dynamic]u32,0,start,allocator)
+    a.errors,errors[6]=make([dynamic]Assets_Error,0,desc.error_capacity>0?desc.error_capacity:ASSETS_DEFAULT_ERRORS,allocator)
+    for error in errors {ok&&=error==nil}
     if desc.renderer!=nil {a.texture_assets=make([dynamic]base.Asset_Id,allocator)}
     ok=ok && cap(a.meshes)==capacity && cap(a.textures)==capacity && cap(a.materials)==capacity && cap(a.scenes)==capacity
     ok=ok && cap(a.material_descs)==capacity*2 && cap(a.row_marks)==capacity*2 && cap(a.row_hashes)==capacity*2 && cap(a.free_rows)==start && cap(a.free_meshes)==start && cap(a.rows_dirty)==ASSETS_ROWS_DIRTY
@@ -1122,12 +1124,12 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     data.layers,data.cube=layers,.Cube in info.flags
     data.level=first
     if !layered {data.source={int(info.width),int(info.height)}}
-    data.levels=make([dynamic][]u8,0,len(view.mips)-first,allocator)
+    alloc_error:mem.Allocator_Error
+    if data.levels,alloc_error=make([dynamic][]u8,0,len(view.mips)-first,allocator);alloc_error!=nil {return .Rejected,.Out_Of_Memory,false}
     texel:=8 if format==.RGBA16F else 4
     if decode {
         total:=0
         for mip in view.mips[first:] {total+=int(mip.width)*int(mip.height)*texel*layers}
-        alloc_error:mem.Allocator_Error
         levels.decoded,alloc_error=make([]u8,total,allocator)
         if alloc_error!=nil {return .Rejected,.Out_Of_Memory,false}
     }
@@ -1151,11 +1153,12 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     return {},.None,true
 }
 
-// Notes the asset a texture of the renderer was given, by its handle.
+// Notes the asset a texture of the renderer was given, by its handle. Without
+// memory for the note the texture keeps the levels it was given.
 @(private="file")
 assets_texture_given :: proc(a:^Assets,handle:render.Texture_Handle,id:base.Asset_Id) {
     if handle==0 {return}
-    if int(handle)>len(a.texture_assets) {resize(&a.texture_assets,int(handle))}
+    if int(handle)>len(a.texture_assets) && resize(&a.texture_assets,int(handle))!=nil {return}
     a.texture_assets[handle-1]=id
 }
 
@@ -2121,16 +2124,18 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
         assets_errors_forget(a,id)
     }
     if materials {
-        // The parameters of the materials that remain, one run after another.
-        kept:=make([dynamic]asset.Material_Parameter,0,len(a.parameters),a.allocator)
-        for &material in a.materials {
-            if material.row==0 {continue}
-            first:=u32(len(kept))
-            append(&kept,..assets_material_parameters(a,&material))
-            material.first_parameter,material.parameter_room=first,material.parameter_count
+        // The parameters of the materials that remain, one run after another;
+        // without memory for it they stay where they are.
+        if kept,error:=make([dynamic]asset.Material_Parameter,0,len(a.parameters),a.allocator);error==nil {
+            for &material in a.materials {
+                if material.row==0 {continue}
+                first:=u32(len(kept))
+                append(&kept,..assets_material_parameters(a,&material))
+                material.first_parameter,material.parameter_room=first,material.parameter_count
+            }
+            delete(a.parameters)
+            a.parameters=kept
         }
-        delete(a.parameters)
-        a.parameters=kept
     }
     a.stats.unloads+=len(gone)
     a.materials_dirty=true

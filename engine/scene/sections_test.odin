@@ -100,7 +100,7 @@ section_world_settle :: proc(world,shared,editor:rawptr) {
 }
 
 @(private="file")
-section_world_clear :: proc(data:rawptr) {
+section_world_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Section_World)data
     core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms)
     core.table_clear(&w.parents);core.table_clear(&w.disabled);core.table_clear(&w.keeps)
@@ -108,10 +108,11 @@ section_world_clear :: proc(data:rawptr) {
     core.table_clear(&w.dormants);core.table_clear(&w.tombstones)
     core.table_clear(&w.roaming);core.table_clear(&w.lamps);core.table_clear(&w.links);core.table_clear(&w.sources)
     core.table_clear(&w.grounds);core.table_clear(&w.kept)
-    core.entities_clear(&w.entities)
+    if !core.entities_clear(&w.entities) {return false}
     core.hierarchy_clear(&w.hierarchy)
     core.value_free(&w.unresolved,type_info_of(Unresolved_References))
     core.value_free(&w.records,type_info_of(Section_Records))
+    return true
 }
 
 // A project with that World and its assets in a temporary folder, and the

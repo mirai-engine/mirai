@@ -19,7 +19,7 @@ world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,owned:=fals
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for &t in w.info.tables {
         if t.place!=w.place {continue}
-        plan:=ids_plan(t.info,owned,context.temp_allocator)
+        plan,_:=ids_plan(t.info,owned,context.temp_allocator)
         if ids_plan_empty(&plan) {continue}
         table:=core.world_table_at(w,&t)
         for row in 0..<core.raw_count(table) {ids_take(&plan,core.raw_value(table,t.info,row),&seen,ids)}
@@ -27,7 +27,7 @@ world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,owned:=fals
     for &s in w.info.storages {
         value:=storage_value(w,&s,shared,id)
         if value==nil {continue}
-        plan:=ids_plan(s.info,owned,context.temp_allocator)
+        plan,_:=ids_plan(s.info,owned,context.temp_allocator)
         if !ids_plan_empty(&plan) {ids_take(&plan,value,&seen,ids)}
     }
 }
@@ -37,7 +37,7 @@ entity_asset_ids :: proc(w:core.World_Ref,e:core.Entity,ids:^[dynamic]base.Asset
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for &t in w.info.tables {
         if t.place!=w.place {continue}
-        plan:=ids_plan(t.info,false,context.temp_allocator)
+        plan,_:=ids_plan(t.info,false,context.temp_allocator)
         if ids_plan_empty(&plan) {continue}
         if value:=core.raw_find(core.world_table_at(w,&t),t.info,e);value!=nil {ids_take(&plan,value,&seen,ids)}
     }
@@ -55,7 +55,8 @@ storage_value :: proc(w:core.World_Ref,s:^core.Storage_Info,shared:rawptr,id:cor
 
 // Where a type holds asset ids: offsets of fields of type base.Asset_Id in
 // its fixed part, and the slices and dynamic arrays whose elements hold some,
-// each with the plan of its elements.
+// each with the plan of its elements. Making one answers false without
+// memory for all of it.
 @(private="file")
 Ids_Plan :: struct {
     offsets:[dynamic]uintptr,
@@ -70,8 +71,8 @@ Ids_List :: struct {
 }
 
 @(private="file")
-ids_plan :: proc(info:^runtime.Type_Info,owned:bool,allocator:mem.Allocator) -> (plan:Ids_Plan) {
-    ids_plan_add(&plan,info,0,owned,false,0,allocator)
+ids_plan :: proc(info:^runtime.Type_Info,owned:bool,allocator:mem.Allocator) -> (plan:Ids_Plan,ok:bool) {
+    ok=ids_plan_add(&plan,info,0,owned,false,0,allocator)
     return
 }
 
@@ -89,44 +90,51 @@ ids_plan_free :: proc(plan:^Ids_Plan) {
 }
 
 @(private="file")
-ids_plan_add :: proc(plan:^Ids_Plan,info:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) {
-    if depth>16 {return}
+ids_plan_add :: proc(plan:^Ids_Plan,info:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) -> bool {
+    if depth>16 {return true}
     if info.id==base.Asset_Id {
         if !owned || inside {
             if plan.offsets.allocator.procedure==nil {plan.offsets.allocator=allocator}
-            append(&plan.offsets,at)
+            if _,error:=append(&plan.offsets,at);error!=nil {return false}
         }
-        return
+        return true
     }
     #partial switch v in runtime.type_info_base(info).variant {
     case runtime.Type_Info_Struct:
-        for i in 0..<int(v.field_count) {ids_plan_add(plan,v.types[i],at+v.offsets[i],owned,inside || owned && v.tags!=nil && field_owned(v.tags[i]),depth+1,allocator)}
+        for i in 0..<int(v.field_count) {ids_plan_add(plan,v.types[i],at+v.offsets[i],owned,inside || owned && v.tags!=nil && field_owned(v.tags[i]),depth+1,allocator) or_return}
     case runtime.Type_Info_Array:
-        if !ids_hold(v.elem,depth+1) {return}
-        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator)}
+        if !ids_hold(v.elem,depth+1) {return true}
+        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator) or_return}
     case runtime.Type_Info_Enumerated_Array:
-        if !ids_hold(v.elem,depth+1) {return}
-        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator)}
+        if !ids_hold(v.elem,depth+1) {return true}
+        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator) or_return}
     case runtime.Type_Info_Slice:
-        ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
+        return ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
     case runtime.Type_Info_Dynamic_Array:
-        ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
+        return ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
     }
+    return true
 }
 
 // A slice or a dynamic array at at whose elements hold asset ids.
 @(private="file")
-ids_plan_list :: proc(plan:^Ids_Plan,elem:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) {
-    if !ids_hold(elem,depth) {return}
-    nested:=new(Ids_Plan,allocator)
-    if nested==nil {return}
-    ids_plan_add(nested,elem,0,owned,inside,depth,allocator)
-    if ids_plan_empty(nested) {
+ids_plan_list :: proc(plan:^Ids_Plan,elem:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) -> bool {
+    if !ids_hold(elem,depth) {return true}
+    nested,error:=new(Ids_Plan,allocator)
+    if error!=nil {return false}
+    made:=ids_plan_add(nested,elem,0,owned,inside,depth,allocator)
+    if made && ids_plan_empty(nested) {
         free(nested,allocator)
-        return
+        return true
     }
     if plan.lists.allocator.procedure==nil {plan.lists.allocator=allocator}
-    append(&plan.lists,Ids_List{at,elem.size,nested})
+    if made {_,error=append(&plan.lists,Ids_List{at,elem.size,nested})}
+    if !made || error!=nil {
+        ids_plan_free(nested)
+        free(nested,allocator)
+        return false
+    }
+    return true
 }
 
 // Whether a value of the type can hold an asset id the plan reaches.
@@ -181,6 +189,7 @@ ASSETS_MARK_SECONDS :: 0.5
 
 Assets_Marks :: struct {
     last:f64, // app.seconds of the last mark; negative: never
+    pending:bool, // a mark ended without memory: the next one sets the scope whatever changed
     worlds:[dynamic]World_Marks, // at the index of the World_Id
     building:[dynamic]rawptr,    // Worlds a job writes: not read
     // Where the types of the World_Info hold asset ids, made once for it.
@@ -196,6 +205,7 @@ World_Marks :: struct {
     columns:[dynamic]Column_Marks, // at the index of the table in World_Info.tables
     storages:[dynamic]base.Asset_Id, // what its storages named at the last mark, in order
     ids:[dynamic]base.Asset_Id,      // what it marked, in order
+    stale:bool,                      // ids is behind columns and storages: a mark ended without memory
 }
 
 @(private)
@@ -252,12 +262,13 @@ app_assets_mark :: proc(app:^App,force:=false) -> (unloaded:int) {
     m:=&app.asset_marks
     if a==nil || app.info==nil || !force && m.last>0 && app.seconds-m.last<ASSETS_MARK_SECONDS {return}
     m.last=max(app.seconds,1e-9)
-    if m.info!=app.info || len(m.tables)!=len(app.info.tables) || len(m.storages)!=len(app.info.storages) {marks_plans_make(m,app.info,app.allocator)}
+    if (m.info!=app.info || len(m.tables)!=len(app.info.tables) || len(m.storages)!=len(app.info.storages)) && !marks_plans_make(m,app.info,app.allocator) {return}
     if len(m.worlds)<len(app.worlds) {
         m.worlds.allocator=app.allocator
-        resize(&m.worlds,len(app.worlds))
+        if resize(&m.worlds,len(app.worlds))!=nil {return}
     }
-    changed:=false
+    changed:=m.pending
+    m.pending=true
     for &marks,at in m.worlds {
         slot:World_Slot
         if at<len(app.worlds) {slot=app.worlds[at]}
@@ -267,14 +278,21 @@ app_assets_mark :: proc(app:^App,force:=false) -> (unloaded:int) {
         }
         if slot.data==nil || slot.data==app.scratch || slice.contains(m.building[:],slot.data) {continue}
         if marks.data==nil {
+            columns,error:=make([dynamic]Column_Marks,len(app.info.tables),app.allocator)
+            if error!=nil {return}
             marks.data,marks.generation=slot.data,slot.generation
-            marks.columns=make([dynamic]Column_Marks,len(app.info.tables),app.allocator)
+            marks.columns=columns
             marks.storages=make([dynamic]base.Asset_Id,app.allocator)
             marks.ids=make([dynamic]base.Asset_Id,app.allocator)
         }
-        changed|=world_mark(m,&marks,app_world_ref(app,slot.data),app.shared,{u32(at),slot.generation})
+        updated,marked:=world_mark(m,&marks,app_world_ref(app,slot.data),app.shared,{u32(at),slot.generation})
+        if !marked {return}
+        changed|=updated
     }
-    if !changed {return}
+    if !changed {
+        m.pending=false
+        return
+    }
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for marks in m.worlds {
@@ -286,23 +304,42 @@ app_assets_mark :: proc(app:^App,force:=false) -> (unloaded:int) {
         }
     }
     if !assets_scope_set(a,assets_scope_of(a,m),ids[:]) {return}
+    m.pending=false
     return assets_collect(a)+content_collect(app)
 }
 
 @(private="file")
-marks_plans_make :: proc(m:^Assets_Marks,info:^core.World_Info,allocator:mem.Allocator) {
+marks_plans_make :: proc(m:^Assets_Marks,info:^core.World_Info,allocator:mem.Allocator) -> bool {
     marks_plans_free(m)
+    error:runtime.Allocator_Error
+    if m.tables,error=make([dynamic]Ids_Plan,len(info.tables),allocator);error!=nil {return false}
+    if m.storages,error=make([dynamic]Ids_Plan,len(info.storages),allocator);error!=nil {
+        marks_plans_free(m)
+        return false
+    }
+    ok:=true
+    for &t,at in info.tables {
+        made:bool
+        m.tables[at],made=ids_plan(t.info,false,allocator)
+        ok&&=made
+    }
+    for &s,at in info.storages {
+        made:bool
+        m.storages[at],made=ids_plan(s.info,false,allocator)
+        ok&&=made
+    }
+    if !ok {
+        marks_plans_free(m)
+        return false
+    }
     m.info=info
-    m.tables=make([dynamic]Ids_Plan,len(info.tables),allocator)
-    m.storages=make([dynamic]Ids_Plan,len(info.storages),allocator)
-    for &t,at in info.tables {m.tables[at]=ids_plan(t.info,false,allocator)}
-    for &s,at in info.storages {m.storages[at]=ids_plan(s.info,false,allocator)}
+    return true
 }
 
-// Marks again what changed of a World; true when what it marks changed.
+// Marks again what changed of a World; changed when what it marks did. Not ok
+// without memory: what it could not mark it marks the next time.
 @(private="file")
-world_mark :: proc(m:^Assets_Marks,marks:^World_Marks,w:core.World_Ref,shared:rawptr,id:core.World_Id) -> bool {
-    dirty:=false
+world_mark :: proc(m:^Assets_Marks,marks:^World_Marks,w:core.World_Ref,shared:rawptr,id:core.World_Id) -> (changed,ok:bool) {
     found:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for &t,at in w.info.tables {
         if t.place!=w.place || ids_plan_empty(&m.tables[at]) {continue}
@@ -310,11 +347,12 @@ world_mark :: proc(m:^Assets_Marks,marks:^World_Marks,w:core.World_Ref,shared:ra
         column:=&marks.columns[at]
         stamp:=[2]u64{table.version,table.layout}
         if column.marked && column.stamp==stamp {continue}
-        column.marked,column.stamp=true,stamp
         clear(&found)
         seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
         for row in 0..<core.raw_count(table) {ids_take(&m.tables[at],core.raw_value(table,t.info,row),&seen,&found)}
-        if ids_update(&column.ids,found[:],marks.ids.allocator) {dirty=true}
+        updated:=ids_update(&column.ids,found[:],marks.ids.allocator) or_return
+        column.marked,column.stamp=true,stamp
+        marks.stale||=updated
     }
     clear(&found)
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
@@ -322,17 +360,21 @@ world_mark :: proc(m:^Assets_Marks,marks:^World_Marks,w:core.World_Ref,shared:ra
         if ids_plan_empty(&m.storages[at]) {continue}
         if value:=storage_value(w,&s,shared,id);value!=nil {ids_take(&m.storages[at],value,&seen,&found)}
     }
-    if ids_update(&marks.storages,found[:],marks.ids.allocator) {dirty=true}
-    if !dirty {return false}
+    updated:=ids_update(&marks.storages,found[:],marks.ids.allocator) or_return
+    marks.stale||=updated
+    if !marks.stale {return false,true}
     clear(&found)
     for c in marks.columns {append(&found,..c.ids[:])}
     append(&found,..marks.storages[:])
-    return ids_update(&marks.ids,found[:],marks.ids.allocator)
+    changed=ids_update(&marks.ids,found[:],marks.ids.allocator) or_return
+    marks.stale=false
+    return changed,true
 }
 
-// Makes held the ids of found in order, each once; true when that changed it.
+// Makes held the ids of found in order, each once; changed when that changed
+// it. Not ok without memory: held as it was.
 @(private="file")
-ids_update :: proc(held:^[dynamic]base.Asset_Id,found:[]base.Asset_Id,allocator:mem.Allocator) -> bool {
+ids_update :: proc(held:^[dynamic]base.Asset_Id,found:[]base.Asset_Id,allocator:mem.Allocator) -> (changed,ok:bool) {
     slice.sort_by(found,proc(a,b:base.Asset_Id) -> bool {return a[0]<b[0] || a[0]==b[0] && a[1]<b[1]})
     unique:=0
     for id in found {
@@ -340,9 +382,10 @@ ids_update :: proc(held:^[dynamic]base.Asset_Id,found:[]base.Asset_Id,allocator:
         found[unique]=id
         unique+=1
     }
-    if slice.equal(held[:],found[:unique]) {return false}
+    if slice.equal(held[:],found[:unique]) {return false,true}
     if held.allocator.procedure==nil {held.allocator=allocator}
+    if reserve(held,unique)!=nil {return false,false}
     clear(held)
     append(held,..found[:unique])
-    return true
+    return true,true
 }

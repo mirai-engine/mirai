@@ -216,7 +216,10 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    w.info.clear(data)
+    if !w.info.clear(data) {
+        host.load_phase_end(app,making)
+        return {},.Out_Of_Memory
+    }
     report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
     host.load_phase_end(app,making,core.world_entities(candidate).alive)
     settling:=host.load_phase_begin(app,.Settle)

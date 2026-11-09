@@ -57,12 +57,12 @@ play_test_settle :: proc(data,shared,editor:rawptr) {
     core.entities_settle(&w.entities)
 }
 
-play_test_clear :: proc(data:rawptr) {
+play_test_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Play_Test_World)data
     core.table_clear(&w.ids)
     core.table_clear(&w.transforms)
     core.table_clear(&w.parents)
-    core.entities_clear(&w.entities)
+    return core.entities_clear(&w.entities)
 }
 
 play_test_tick :: proc(data,shared,editor,app:rawptr) {(cast(^Play_Test_World)data).ticks+=1}

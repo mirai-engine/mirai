@@ -45,11 +45,12 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
     }
     info:=core.World_Info{entities=offset_of(Physics_Test,entities),tables=tables[:]}
     info.settle=proc(world,shared,editor:rawptr) {physics_test_settle(cast(^Physics_Test)world)}
-    info.clear=proc(data:rawptr) {
+    info.clear=proc(data:rawptr) -> bool {
         f:=cast(^Physics_Test)data
-        core.entities_clear(&f.entities)
+        if !core.entities_clear(&f.entities) {return false}
         core.table_clear(&f.transforms);core.table_clear(&f.names);core.table_clear(&f.rigids);core.table_clear(&f.colliders)
         core.table_clear(&f.joints);core.table_clear(&f.joint_states);core.table_clear(&f.bodies)
+        return true
     }
     w:=core.world_ref(&f,&info)
     previous:core.Entity

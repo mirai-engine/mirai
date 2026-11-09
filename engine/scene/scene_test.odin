@@ -101,13 +101,13 @@ scene_test_settle_lamps :: proc(world,shared,editor:rawptr) {
 }
 
 @(private="file")
-scene_test_clear_lamps :: proc(data:rawptr) {
+scene_test_clear_lamps :: proc(data:rawptr) -> bool {
     f:=cast(^Scene_Test)data
     core.table_clear(&f.ids);core.table_clear(&f.names);core.table_clear(&f.transforms)
     core.table_clear(&f.parents);core.table_clear(&f.lamps);core.table_clear(&f.references);core.table_clear(&f.links)
     core.table_clear(&f.blocks)
     clear(&f.unresolved.items);clear(&f.unresolved.resolved)
-    core.entities_clear(&f.entities)
+    return core.entities_clear(&f.entities)
 }
 
 // A project with lamps in a temporary folder of assets, and a World of it
@@ -453,12 +453,13 @@ scene_test_settle :: proc(world,shared,editor:rawptr) {
 }
 
 @(private="file")
-scene_test_clear :: proc(world:rawptr) {
+scene_test_clear :: proc(world:rawptr) -> bool {
     w:=cast(^Scene_Test_World)world
-    core.entities_clear(&w.entities)
+    if !core.entities_clear(&w.entities) {return false}
     core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms);core.table_clear(&w.parents);core.table_clear(&w.worlds);core.table_clear(&w.drivables);core.table_clear(&w.references);core.table_clear(&w.members)
     core.table_clear(&w.dormants);core.table_clear(&w.tombstones);core.table_clear(&w.disabled);core.table_clear(&w.held)
     core.hierarchy_clear(&w.hierarchy)
+    return true
 }
 
 // transforms_propagate as the late phase of a generated world calls it.

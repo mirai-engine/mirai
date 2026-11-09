@@ -201,7 +201,8 @@ scene does not use the default: it reads what it saved.
   `copy_changed_world` (with fewer marks than tables, it copies whole) and `swap_world` leave the
   `Id` index following the table that arrived with it ([identity](core.md#persistent-identity)).
 - `clear_world` clears entities and tables and takes each derived storage to its start: its
-  `reset`, or its `free` and its initial value.
+  `reset`, or its `free` and its initial value. Without memory for the entities it answers false
+  and leaves the World as it was.
 
 ## Parameters
 

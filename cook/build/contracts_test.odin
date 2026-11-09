@@ -112,6 +112,8 @@ simulation_reset :: proc(s:^Simulation) {}
     testing.expect(t,strings.contains(clear,"p_core.tally_free(&w.tally)\n    w.tally=p_core.TALLY_DEFAULT"),clear)
     testing.expect(t,strings.contains(text,"default_paced :: proc") && strings.contains(text,",default_paced,"),"a table starts its rows at the default of its component")
     testing.expect(t,strings.contains(clear,"p_core.simulation_reset(&w.simulation)"),clear)
+    testing.expect(t,strings.has_prefix(clear,"clear_world :: proc(data:rawptr) -> bool {\n    w:=cast(^World)data\n    if !p_core.entities_clear(&w.entities) {return false}\n"),"a clear without memory for the entities touches nothing")
+    testing.expect(t,strings.contains(text,"if !p_core.table_init(&w.paced,\"Paced\",allocator) {return false}"),"a table without memory fails the init of its World")
     testing.expect(t,strings.contains(clear,"w.requests={}"),clear)
     testing.expect(t,strings.contains(text,"type_info_of(p_core.Progress),offset_of(World,progress),.World,.None,nil,false,nil,true,true,\"\",false}"),text)
     for kept in ([]string{"w.clock","w.progress","w.settings","w.world_id"}) {testing.expectf(t,!strings.contains(clear,kept),"%s in %s",kept,clear)}

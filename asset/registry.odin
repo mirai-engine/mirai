@@ -500,7 +500,10 @@ registry_walk :: proc(r:^Registry,folder:Registry_Mount,known:map[string]u32,pre
                 r.stats.opened+=1
             }
             file.path=strings.clone(path,r.allocator)
-            append(&r.files,file)
+            if _,appended:=append(&r.files,file);appended!=nil {
+                delete(file.path,r.allocator)
+                return .Out_Of_Memory
+            }
         }
     }
     return .None

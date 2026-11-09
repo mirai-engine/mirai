@@ -166,7 +166,14 @@ app_shaders_load :: proc(app:^App,folder:string) -> u64 {
         log.errorf("shaders: %s has an invalid catalog of material programs",folder)
         return 0
     }
-    load:=new(Shaders_Load,app.allocator)
+    load,error:=new(Shaders_Load,app.allocator)
+    if error!=nil {
+        render.shader_assets_destroy(&assets)
+        render.program_catalog_destroy(&catalog)
+        sh.state=.Failed
+        log.errorf("shaders: out of memory to load %s",folder)
+        return 0
+    }
     sh.requested+=1
     load.ticket,load.folder,load.stamp,load.identity=sh.requested,strings.clone(folder,app.allocator),stamp,shaders_identity(folder)
     load.asked=time.tick_now()

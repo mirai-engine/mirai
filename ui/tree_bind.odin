@@ -464,7 +464,7 @@ bind_plan :: proc(instance:^Tree_Instance) -> bool {
         wanted[merged]=range
         merged+=1
     }
-    resize(&instance.ranges,merged)
+    base.truncate(&instance.ranges,merged)
     // An array that reaches entities changes with them, whatever its parent does.
     for &r in instance.regions {r.pure=r.kind==.Array}
     for r in instance.regions {

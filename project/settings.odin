@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:os"
 import "core:strings"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The settings of a project: a section per setting, named by its type and
@@ -320,7 +321,7 @@ settings_merge :: proc(root,engine_root:string,machine:[]string,allocator:=conte
                     if name==field.name {merged.fields[held]=field;held+=1;break}
                 }
             }
-            resize(&merged.fields,held)
+            base.truncate(&merged.fields,held)
         }
     }
     w:serial.Writer
