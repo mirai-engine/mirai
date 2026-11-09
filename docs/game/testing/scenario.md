@@ -74,21 +74,21 @@ none run when they hold already. If they never hold, the step and the scenario f
 ## Drive
 
 `drive` in `play.step` walks the focused player to a target by the game's own move action, re-aimed
-every tick, so a test or an agent writes no bot. Its target is an `entity`, followed where it goes,
-or a `position`. It jumps at a gap ahead and when blocked, then tries each side, and stops within
+every tick: an `entity`, followed where it goes, or a `position`. It takes off at the edge of a gap
+and when blocked, holding the jump as long as it still rises, then tries each side; it stops within
 `within` meters across the ground (1 by default), at the `ticks` or `seconds` of the step (30 s if
-neither is given), when the step's `until` holds, or when it gets no closer.
+neither is given), when `until` holds, or when it gets no closer:
+`{"drive": {"entity": "Checkpoint 2", "within": 1.5}, "seconds": 20}`.
 
-```json
-{"name": "cross to the checkpoint", "method": "play.step",
- "params": {"drive": {"entity": "Checkpoint 2", "within": 1.5}, "seconds": 20}}
-```
-
-- The answer says `drive.stopped` (`Arrived`, `Until`, `Ticks`, `Stuck`, `No_Body`, `Target_Gone`,
-  `Run_Ended`), where it ended (`drive.position`, `drive.distance`) and `ran` its ticks. In a
-  scenario a drive that does not arrive (or end at its `until`) fails the step.
-- A moving platform is not predicted: wait for it with a `play.step` with `until` on its
-  `world_position` ([Wait](#wait)), then drive to the entity.
+- An `entity` with a solid top raised off the floor, or out of reach above or below its feet
+  (about a person's height), arrives only standing on it; it climbs by itself and jumps again from
+  farther if it fell short.
+- A `position` compares `y` within `within` plus a person's height: give the ground's, not 0.
+- The answer says `drive.stopped`, where it ended (`drive.position`, `drive.distance`,
+  `drive.height` of its feet over the target) and `ran`. In a scenario a drive that does not arrive
+  (or end at `until`) fails.
+- A moving platform is not predicted: wait for it with `until` on its `world_position`, then drive.
+- `look_at` (an `entity` or `position`) turns the view; `play.view` says the live `follow.yaw_deg`.
 
 ## Run
 

@@ -509,3 +509,24 @@ shake_test_look :: proc(f:^Camera_Test,transforms:^core.Table(core.Transform),pa
     ahead:=mm.quat_rotate(placed.rotation,{0,0,-1})
     return math.asin(ahead.y) // how far up it looks
 }
+
+// An Orbit asked to look at a point turns by what takes it from where it looks
+// now to where its pivot sees the point; what does not orbit by itself refuses.
+@(test)
+an_orbit_turns_to_look_at_a_point_from_its_pivot :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    input_queue:Camera_Input
+    follow:=Camera_Follow{mode=.Orbit}
+    follow.state.ready,follow.state.pivot.position,follow.looking=true,{0,2,0},{0.3,0.1}
+    testing.expect(t,camera_look_toward(&input_queue,core.Entity(1),follow,{5,2,0}))
+    looks:=input_queue.looks.items
+    if !testing.expect_value(t,len(looks),1) {return}
+    testing.expectf(t,abs(looks[0].yaw-(-f32(math.PI)/2-0.3))<1e-4 && abs(looks[0].pitch+0.1)<1e-4,"%v",looks[0])
+    for mode in ([]Camera_Mode{.Follow,.Eyes}) {
+        other:=follow
+        other.mode=mode
+        testing.expect(t,!camera_look_toward(&input_queue,core.Entity(1),other,{5,2,0}))
+    }
+    follow.aim=true
+    testing.expect(t,!camera_look_toward(&input_queue,core.Entity(1),follow,{5,2,0}))
+}

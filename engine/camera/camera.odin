@@ -104,6 +104,18 @@ camera_look :: proc(input:^Camera_Input,camera:core.Entity,yaw,pitch:f32) {
     core.push(&input.looks,Camera_Look{camera,yaw,pitch})
 }
 
+// Asks an Orbit camera to turn so that it looks from its pivot at a point of
+// the world, whatever turned it so far; up is the frame of the vertical of its
+// target. false for one that does not orbit by itself or has not started.
+camera_look_toward :: proc(input:^Camera_Input,camera:core.Entity,follow:Camera_Follow,point:[3]f32,up:=mm.QUAT_IDENTITY) -> bool {
+    if follow.mode!=.Orbit || follow.aim || !follow.state.ready {return false}
+    toward:=point-follow.state.pivot.position
+    if linalg.length(toward)<1e-4 {return true}
+    want:=look_toward(mm.quat_rotate(conj(up),linalg.normalize(toward)))
+    camera_look(input,camera,mm.angle_wrap(want.x-follow.looking.x),want.y-follow.looking.y)
+    return true
+}
+
 // A camera the seat sees through for as long as the owner asks; the latest
 // asked wins. A lens (fov above zero) is given to the camera while the
 // override stands. With a blend, the view comes into it and back out over it.
@@ -397,7 +409,12 @@ camera_lens_set :: proc "contextless" (camera:^render.Camera,lens:Camera_Lens) {
 // The yaw and pitch of an Orbit that looks as rotation does.
 @(private)
 look_of :: proc "contextless" (rotation:mm.Quat) -> [2]f32 {
-    forward:=mm.quat_rotate(rotation,{0,0,-1})
+    return look_toward(mm.quat_rotate(rotation,{0,0,-1}))
+}
+
+// The yaw and pitch of an Orbit that looks along forward, a unit vector.
+@(private)
+look_toward :: proc "contextless" (forward:[3]f32) -> [2]f32 {
     return {linalg.atan2(-forward.x,-forward.z),math.asin(clamp(-forward.y,-1,1))}
 }
 

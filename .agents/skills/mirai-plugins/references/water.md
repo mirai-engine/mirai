@@ -43,7 +43,8 @@ names the Surface program of a water without its own material (empty or unknown:
   light, a repetition of the waves per texture. `water_light.comp` adds to the direct light
   (`Direct`) of what is under a surface the part of the pattern where its light crossed the
   surface, before the fog: over waves, the depth and the crossing are those of the surface with
-  waves.
+  waves. It reads the pattern twice, turned apart and chosen in patches narrower than a repeat,
+  so the repeat of the waves does not show as a tile over a wide shallow floor.
 - **Over the glass** (`water_over`, `Blend` stage, in front of the glass): the line of the surface
   over the lens where the near plane crosses it, over the waves. It only runs if the view's near
   plane can cross a surface.

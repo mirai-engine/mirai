@@ -208,11 +208,19 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
     code,_,_:=build_project(root,.Play,{folder},mode)
     if code!=0 {return code}
-    if slice.contains(rest,"--headless") {layers_isolate(root)}
+    if play_runs_headless(rest) {layers_isolate(root)}
     command:=make([dynamic]string)
     append(&command,build.engine_paths(root,mode).player_program,"--project",project.path_absolute(folder))
     append(&command,..play_arguments(rest))
     return run(root,command[:])
+}
+
+// Whether the player runs these arguments without a window: asked for, or
+// implied by what automates it (the player does the same with its options).
+@(private)
+play_runs_headless :: proc(args:[]string) -> bool {
+    if slice.contains(args,"--show-window") {return false}
+    return slice.contains(args,"--headless") || slice.contains(args,"--frames") || slice.contains(args,"--input") || slice.contains(args,"--capture")
 }
 
 // The arguments of the player with --capture and --input made absolute: they

@@ -236,7 +236,8 @@ Api_Play_Step_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
-    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick; jumps at gaps and when blocked; stops within its distance or at ticks or seconds (30 s if neither is given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at ticks or seconds (30 s if neither is given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    look_at:Api_Play_Look_At `mirai:"optional,label=Turns what the player sees through toward an entity or a point in every tick of the step; instead of mouse_delta; play.view says where it looks with follow.yaw_deg and follow.pitch_deg"`,
 }
 
 Api_Build_Params :: struct {
@@ -1378,8 +1379,8 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     if api_timeline_input(timeline) {
         if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     }
-    values:[3]string
-    api.object_values(call.allocator,call.raw,{"until","trace","drive"},values[:])
+    values:[4]string
+    api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
     until:=params.until[:api_list_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
@@ -1391,6 +1392,12 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
         if !ok {return}
         drive=new_clone(read,call.allocator)
         run.drive=drive
+    }
+    if values[3]!="" {
+        if owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
+        read,ok:=api_look_read(s,call,run_ref(s,target),&params.look_at,values[3],timeline)
+        if !ok {return}
+        run.look=new_clone(read,call.allocator)
     }
     trace:Api_Trace
     traced:=values[1]!=""

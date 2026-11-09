@@ -113,4 +113,6 @@ play_makes_the_paths_of_its_arguments_absolute :: proc(t:^testing.T) {
     testing.expect_value(t,args[6],project.path_absolute("--frames"))
     last:=play_arguments({"--capture"})
     testing.expect_value(t,last[0],"--capture")
+    testing.expect(t,play_runs_headless({"--frames","3"}) && play_runs_headless({"--headless"}),"automation and --headless run without a window")
+    testing.expect(t,!play_runs_headless({}) && !play_runs_headless({"--capture","a.png","--show-window"}),"a person runs a window, and --show-window keeps it")
 }

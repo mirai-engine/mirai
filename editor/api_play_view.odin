@@ -60,6 +60,8 @@ Api_Play_View_Follow :: struct {
     name:[64]u8 `mirai:"text"`,
     distance:f32 `mirai:"label=Meters from the eye to the origin of that entity"`,
     pivot_distance:f32 `mirai:"label=Meters from the eye to the pivot the camera follows with and turns around"`,
+    yaw_deg:f32 `mirai:"label=The yaw it looks with now; 0 until it starts: for an Orbit where it stands around its pivot"`,
+    pitch_deg:f32 `mirai:"label=The pitch it looks with now; 0 until it starts: for an Orbit positive above the pivot looking down and for Eyes positive up"`,
 }
 Api_Play_View_Shown :: struct {
     entity:[16]u8 `mirai:"text,label=The handle of the entity; empty for a world point"`,
@@ -86,7 +88,7 @@ Play_View :: struct {
     size:[2]f32,
     mode,preset:string,
     blend:struct {active:bool,progress,weight,seconds:f32},
-    follow:struct {entity,name:string,distance,pivot_distance:f32},
+    follow:struct {entity,name:string,distance,pivot_distance,yaw_deg,pitch_deg:f32},
     points:[]Play_View_Shown,
 }
 @(private)
@@ -152,7 +154,10 @@ play_view_json :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=co
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)
             }
-            if follow.state.ready {v.follow.pivot_distance=linalg.length(follow.state.pivot.position-seen.position)}
+            if follow.state.ready {
+                v.follow.pivot_distance=linalg.length(follow.state.pivot.position-seen.position)
+                v.follow.yaw_deg,v.follow.pitch_deg=follow.looking.x*mm.DEG_PER_RAD,follow.looking.y*mm.DEG_PER_RAD
+            }
         }
     }
     if views:=core.world_storage_of(w,ecamera.Camera_Views);views!=nil {

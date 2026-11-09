@@ -24,6 +24,8 @@ import "mirai:std/serial"
 @(private="file") Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
 @(private="file") Probe_Ping :: struct {entity:core.Entity,amount:int}
 @(private="file") Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
+@(private="file") Probe_Standing :: struct {standing:bool `mirai:"transient"`}
+@(private="file") Probe_Climb :: struct {velocity,rise:f32,platform:core.Entity}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
@@ -39,6 +41,10 @@ Probe_World :: struct {
     seats:core.Table(input.Seat),
     drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
+    standings:core.Table(Probe_Standing),
+    queries:core.World_Queries,
+    climbing:bool,     // the driven body runs and jumps over probe_level_top as a character would
+    climb:Probe_Climb,
     players:input.Seats,
     bindings:input.Input_Map,
     holds:input.Hold_Requests,
@@ -65,6 +71,8 @@ probe_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
     core.table_init(&w.health,"Probe_Health",allocator)
     core.table_init(&w.seats,"Seat",allocator)
     core.table_init(&w.drivables,"Drivable",allocator);core.table_init(&w.moves,"Move_Input",allocator)
+    core.table_init(&w.standings,"Character_State",allocator)
+    w.queries.open=probe_query_open
     w.holds.queue.items=make([dynamic]input.Hold_Request,allocator)
     w.places.queue.items=make([dynamic]core.Place_Request,allocator)
     w.jumps.queue.items=make([dynamic]core.Jump,allocator)
@@ -78,6 +86,7 @@ probe_free :: proc(data:rawptr) {
     core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
     core.table_destroy(&w.parents);core.table_destroy(&w.health);core.table_destroy(&w.seats)
     core.table_destroy(&w.drivables);core.table_destroy(&w.moves)
+    core.table_destroy(&w.standings)
     delete(w.holds.queue.items)
     delete(w.places.queue.items);delete(w.jumps.queue.items);delete(w.pings.queue.items)
     core.entities_destroy(&w.entities)
@@ -86,8 +95,9 @@ probe_free :: proc(data:rawptr) {
 @(private="file")
 probe_copy :: proc(dst,src:rawptr) -> bool {
     d,s:=cast(^Probe_World)dst,cast(^Probe_World)src
-    if !core.entities_copy(&d.entities,&s.entities) || !core.table_copy(&d.ids,&s.ids) || !core.table_copy(&d.names,&s.names) || !core.table_copy(&d.transforms,&s.transforms) || !core.table_copy(&d.parents,&s.parents) || !core.table_copy(&d.health,&s.health) || !core.table_copy(&d.seats,&s.seats) || !core.table_copy(&d.drivables,&s.drivables) || !core.table_copy(&d.moves,&s.moves) {return false}
+    if !core.entities_copy(&d.entities,&s.entities) || !core.table_copy(&d.ids,&s.ids) || !core.table_copy(&d.names,&s.names) || !core.table_copy(&d.transforms,&s.transforms) || !core.table_copy(&d.parents,&s.parents) || !core.table_copy(&d.health,&s.health) || !core.table_copy(&d.seats,&s.seats) || !core.table_copy(&d.drivables,&s.drivables) || !core.table_copy(&d.moves,&s.moves) || !core.table_copy(&d.standings,&s.standings) {return false}
     d.time,d.input,d.score=s.time,s.input,s.score
+    d.climbing,d.climb=s.climbing,s.climb
     d.view,d.quit_at=s.view,s.quit_at
     d.players,d.bindings=s.players,s.bindings
     return true
@@ -99,7 +109,8 @@ probe_swap :: proc(a,b:rawptr) {
     x.entities,y.entities=y.entities,x.entities
     core.table_swap(&x.ids,&y.ids);core.table_swap(&x.names,&y.names);core.table_swap(&x.transforms,&y.transforms)
     core.table_swap(&x.parents,&y.parents);core.table_swap(&x.health,&y.health);core.table_swap(&x.seats,&y.seats)
-    core.table_swap(&x.drivables,&y.drivables);core.table_swap(&x.moves,&y.moves)
+    core.table_swap(&x.drivables,&y.drivables);core.table_swap(&x.moves,&y.moves);core.table_swap(&x.standings,&y.standings)
+    x.climbing,y.climbing=y.climbing,x.climbing;x.climb,y.climb=y.climb,x.climb
     x.view,y.view=y.view,x.view;x.quit_at,y.quit_at=y.quit_at,x.quit_at
     x.time,y.time=y.time,x.time;x.input,y.input=y.input,x.input;x.score,y.score=y.score,x.score
     x.players,y.players=y.players,x.players;x.bindings,y.bindings=y.bindings,x.bindings
@@ -112,7 +123,59 @@ probe_settle :: proc(data,shared,editor:rawptr) {
     core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
     core.table_settle(&w.health,&w.entities);core.table_settle(&w.seats,&w.entities)
     core.table_settle(&w.drivables,&w.entities);core.table_settle(&w.moves,&w.entities)
+    core.table_settle(&w.standings,&w.entities)
     core.entities_settle(&w.entities)
+}
+
+// The ground of a body that climbs over x, the only axis it uses: a floor that
+// ends at x 2 and starts again at x 7 with a gap between, and past it a
+// platform with its top at y 2.9. The top under from.y or at it; found is false
+// over the gap.
+@(private="file")
+probe_level_top :: proc(w:^Probe_World,x,from:f32) -> (top:f32,entity:core.Entity,found:bool) {
+    if x>=12.5 && x<=14.5 && from>=2.9 {return 2.9,w.climb.platform,true}
+    if (x<2 || x>=7) && from>=0 {return 0,core.NONE,true}
+    return
+}
+
+@(private="file")
+probe_query_open :: proc(w:core.World_Ref) -> (core.World_Query,bool) {
+    return {user=w.data,probe=probe_query_probe},true
+}
+
+// Down rays only: over probe_level_top.
+@(private="file")
+probe_query_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,ignore:core.Entity,mask:u32) -> (found:core.World_Hit,ok:bool) {
+    world:=cast(^Probe_World)user
+    if !world.climbing || direction.y>=0 {return}
+    top,entity,there:=probe_level_top(world,origin.x,origin.y)
+    if !there || origin.y-top>length {return}
+    return {point={origin.x,top,origin.z},normal={0,1,0},distance=origin.y-top,entity=entity},true
+}
+
+// A character of a test: it runs at 5 m/s, a jump held rises at 6 m/s for up to
+// 0.6 s and it falls at 30 m/s2, so a jump let go early goes short.
+@(private="file")
+probe_climb_tick :: proc(w:^Probe_World,hero,seat:core.Entity) {
+    dt:=f32(1.0/60)
+    climb:=&w.climb
+    place:=core.get(&w.transforms,hero)
+    standing:=&core.get(&w.standings,hero).standing
+    jump:=input.seat_action(core.read(&w.seats),seat,PROBE_JUMP)
+    if jump.pressed && standing^ {climb.velocity,climb.rise=6,0.6}
+    if jump.down && climb.rise>0 {
+        climb.velocity=6
+        climb.rise-=dt
+    } else {
+        climb.rise=0
+        climb.velocity-=30*dt
+    }
+    place.position.x+=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE).vector.x*5*dt
+    from:=place.position.y
+    place.position.y+=climb.velocity*dt
+    top,_,there:=probe_level_top(w,place.position.x,from)
+    standing^=there && place.position.y<=top && climb.velocity<=0
+    if standing^ {place.position.y,climb.velocity=top,0}
 }
 
 // The seats take their holds and the devices of the tick, as engine/input runs them.
@@ -132,6 +195,10 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     if core.count(&w.drivables)==0 {return}
     hero:=w.drivables.entities[0]
     seat:=w.drivables.values[0].seat
+    if w.climbing {
+        probe_climb_tick(w,hero,seat)
+        return
+    }
     move:=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE)
     core.get(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
     place:=core.get(&w.transforms,hero)
@@ -142,8 +209,8 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
 @(private="file")
 Probe :: struct {
     p:^platform.Platform,
-    tables:[8]core.Table_Info,
-    storages:[13]core.Storage_Info,
+    tables:[9]core.Table_Info,
+    storages:[14]core.Storage_Info,
     names:[2]core.Name_Info,
     info:core.World_Info,
     app:host.App,
@@ -174,6 +241,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
         {name="Seat",type=input.Seat,info=type_info_of(input.Seat),offset=offset_of(Probe_World,seats)},
         {name="Drivable",type=input.Drivable,info=type_info_of(input.Drivable),offset=offset_of(Probe_World,drivables)},
         {name="Move_Input",type=input.Move_Input,info=type_info_of(input.Move_Input),offset=offset_of(Probe_World,moves)},
+        {name="Character_State",type=Probe_Standing,info=type_info_of(Probe_Standing),offset=offset_of(Probe_World,standings)},
     }
     f.storages={
         {type=Api,info=type_info_of(Api),place=.Editor},
@@ -189,6 +257,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
         {name="Hold_Requests",type=input.Hold_Requests,info=type_info_of(input.Hold_Requests),offset=offset_of(Probe_World,holds)},
         {name="Problems",type=core.Problems,info=type_info_of(core.Problems),offset=offset_of(Probe_World,problems)},
         {name="View",type=core.View,info=type_info_of(core.View),offset=offset_of(Probe_World,view)},
+        {name="World_Queries",type=core.World_Queries,info=type_info_of(core.World_Queries),offset=offset_of(Probe_World,queries)},
     }
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
     f.info={tables=f.tables[:],storages=f.storages[:],names=f.names[:],copy=probe_copy,swap=probe_swap,settle=probe_settle,entities=offset_of(Probe_World,entities)}
@@ -512,11 +581,43 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
         {`{"drive":{"entity":"Nobody"}}`,"Nobody"},
         {`{"drive":{"position":[0,0,0]},"segments":[{"ticks":1}]}`,"without segments or press"},
         {`{"drive":{"position":[0,0,0],"move":"nothing"}}`,"is not a Axis2 action"},
+        {`{"look_at":{}}`,"name what it looks at"},
+        {`{"look_at":{"entity":"Foe"},"mouse_delta":[1,0]}`,"leave mouse_delta out"},
+        {`{"look_at":{"entity":"Foe"}}`,"Camera_Follow"},
     }
     for c in refused {
         error,_=probe_call(f,"play.step",c.params)
         testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
     }
+}
+
+// Over a gap a drive takes off at the edge and holds the jump for all it needs,
+// and a platform raised over its feet it arrives at standing on it, not under it.
+@(test)
+a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    probe_drive(f)
+    running:=cast(^Probe_World)run_find(&f.s,0).world
+    platform:=core.create(&running.entities)
+    core.add(&running.names,platform,core.name_make("Platform"))
+    core.add(&running.transforms,platform,core.Transform{{13.5,2.9,0},1,{1,1,1}})
+    core.add(&running.standings,f.hero,Probe_Standing{standing=true})
+    probe_settle(running,nil,nil)
+    running.climbing,running.climb.platform=true,platform
+    place:=core.get(&running.transforms,f.hero)
+    place.position={0,0,0}
+    error,text:=probe_call(f,"play.step",`{"drive":{"position":[10,0,0],"within":0.5,"move":"move"},"seconds":5}`)
+    testing.expectf(t,error.code==0,"%v",error)
+    testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
+    testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
+    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","component":"Character_State","field":"standing","compare":"Equal","number":1}]}`)
+    testing.expect(t,error.code==0 && strings.contains(text,`"passed":true`),text)
+    error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"seconds":5}`)
+    testing.expectf(t,error.code==0,"%v",error)
+    testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
+    testing.expectf(t,place.position.y==2.9 && place.position.x>=12.5 && place.position.x<=14.5,"on its top: %v",place.position)
 }
 
 // A frame of the editor as a step runs it, without the window.
