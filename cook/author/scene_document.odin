@@ -574,7 +574,10 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
             append(&gone,id)
         }
     }
-    if len(gone)>0 {written.removed=asset.scene_entities_remove(scene,gone[:])}
+    if len(gone)>0 {
+        error:asset.Error
+        if written.removed,error=asset.scene_entities_remove(scene,gone[:]);error!=.None {reading_broke(reading,"the entities the document leaves out could not be removed: memory ran out");return false}
+    }
     return true
 }
 
