@@ -407,7 +407,7 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
         if met {break}
         if time.duration_seconds(time.tick_since(started))>WAIT_UNTIL_SECONDS {
             message:=format_text(allocator,"%s did not meet %s in %d s: %s is %s",method.name,options.until.text,WAIT_UNTIL_SECONDS,options.until.path.text,json_brief(value))
-            return {TIMEOUT,message,format_text(allocator,`{"field":%s,"value":%s}`,serial.text_quote(options.until.path.text),value)},false,"",""
+            return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),value)},false,"",""
         }
         base.arena_rewind(&s.scratch,mark)
         if !server_pause(s) {return {SERVER_ERROR,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
