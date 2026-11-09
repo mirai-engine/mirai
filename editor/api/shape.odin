@@ -94,12 +94,10 @@ word_plural :: proc(plural,single:string) -> bool {
     return last=='y' && rest=="ies" || len(rest)>1 && rest[0]==last && (rest[1:]=="s" || rest[1:]=="es")
 }
 
-// Whether a key can only be meant for a field: its singular or plural, or an
-// id for a field that names an entity, which takes it.
+// Whether a key can only be meant for a field: its singular or plural.
 @(private="file")
 key_means :: proc(key,field:string) -> bool {
-    if word_plural(key,field) || word_plural(field,key) {return true}
-    return (key=="id" || key=="ids") && (field=="entity" || field=="entities")
+    return word_plural(key,field) || word_plural(field,key)
 }
 
 // The field a key that is not one means, which the object does not give

@@ -185,7 +185,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         return
     }
     importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
-    api_wait(s,f64(params.seconds),nil,importing)
+    api_wait(s,f64(params.seconds),nil,importing,"importing")
     api_import_status_write(s,call.out)
 }
 

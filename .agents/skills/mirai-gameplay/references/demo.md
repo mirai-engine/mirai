@@ -19,13 +19,8 @@ the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Clau
 
 The scene, the prefab and the `.ui` of `templates/game` are its source: files kept in the
 repository and written through the API. Its `tools/content` writes only what code generates (the
-badge and the hum), from the project folder, and does not go into the game: only `game/`,
+badge and the hum); `mirai content <project>` runs it. It does not go into the game: only `game/`,
 `editor/` and the plugins are compiled.
-
-```sh
-odin run tools/content -collection:mirai=<engine> -ignore-unknown-attributes
-```
-
 ## Demo
 
 [`demo/`](../../../../demo) is a complete project:
@@ -234,11 +229,10 @@ Play, F1 releases the mouse and the click that returns it chooses who receives k
 run:
 
 ```sh
-odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins \
-  -ignore-unknown-attributes -- .
+mirai content demo
 ```
 
-A `--<part>-only` flag after the path regenerates only one part
+A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
 - `--prefabs-only`: `Player.prefab`, `Person.prefab`, `Dog.prefab` and `Thrown cube.prefab`.

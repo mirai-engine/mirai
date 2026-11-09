@@ -401,6 +401,7 @@ tools come from `.deps`, also from a worktree.
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
 | Build only the engine | `mirai build engine [--dev\|--release] [--force]` |
 | Generate the world without building | `mirai generate [project]` |
+| Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins |
 | Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |

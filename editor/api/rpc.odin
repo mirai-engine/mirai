@@ -267,7 +267,7 @@ params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial
     mem.zero_slice(bytes)
     if method.defaults!=nil {copy(bytes,method.defaults)}
     serial.text_reader_init(r,params,base.arena_allocator(&s.scratch))
-    r.assets,r.entities=s.assets,s.entities
+    r.assets=s.assets
     r.loose_names=true
     return serial.text_read(r,&s.schema,method.params,bytes) && serial.text_end(r)
 }

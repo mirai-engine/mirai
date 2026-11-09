@@ -1,67 +1,67 @@
 {
   "scene": "scenes/main.scene",
   "steps": [
-    {"name": "the game opens", "method": "play.step", "params": {"ticks": 30}},
+    {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
     {"name": "on the main menu", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Menu"}]}},
 
     {"name": "Enter presses Play", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Enter"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
     {"name": "playing", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Playing"}]}},
     {"name": "walk forward", "method": "play.step",
-     "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 2}]}},
+     "params": {"segments": [{"for": "1s", "keys": ["W"]}, {"for": 2}]}},
     {"name": "the player walked", "method": "play.check", "params": {"conditions": [
       {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}},
 
     {"name": "Escape pauses", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Escape"]}, {"for": 10}]}},
     {"name": "paused and frozen", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"},
-      {"entity": "Shell", "component": "UI_Screen", "field": "pause", "compare": "Equal", "number": 1},
+      {"entity": "Shell", "field": "UI_Screen.pause", "compare": "Equal", "number": 1},
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}]}},
     {"name": "Escape resumes", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Escape"]}, {"for": 10}]}},
     {"name": "playing again", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Playing"},
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 0}]}},
     {"name": "Escape pauses again", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Escape"]}, {"for": 10}]}},
 
     {"name": "Down and Enter open Settings", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Down"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Enter"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
     {"name": "on the settings", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Settings"}]}},
     {"name": "render scale changed by hand", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Down"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "the preset says Custom", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Custom"}]}},
     {"name": "back to a preset, left of Custom is Ultra", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Up"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Up"]}, {"for": 4}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "Ultra follows the target of the preset", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Ultra"},
       {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
       {"storage": "Graphics_Settings", "field": "sun_shadows", "compare": "Equal", "number": 1},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Detailed"}]}},
     {"name": "two presets down", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Left"]}, {"ticks": 6}, {"ticks": 2, "keys": ["Left"]}, {"ticks": 6}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Left"]}, {"for": 6}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "Medium reached the engine", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Medium"},
       {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Traced"}]}},
     {"name": "and High again", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Right"]}, {"ticks": 6}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Right"]}, {"for": 6}]}},
 
     {"name": "Escape goes back to the pause menu", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Escape"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Escape"]}, {"for": 10}]}},
     {"name": "on the pause menu, still frozen", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"},
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}]}},
     {"name": "Quit to Menu with the keys", "method": "play.step",
-     "params": {"segments": [{"ticks": 2, "keys": ["Down"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Down"]}, {"ticks": 4}, {"ticks": 2, "keys": ["Enter"]}, {"ticks": 10}]}},
+     "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
     {"name": "on the main menu", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Menu"}]}},
-    {"name": "the scene starts over", "method": "play.step", "params": {"ticks": 900, "until": [
+    {"name": "the scene starts over", "method": "play.step", "params": {"for": 900, "until": [
       {"entity": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}},
     {"name": "the clock runs behind the menu", "method": "play.check", "params": {"conditions": [
       {"storage": "Clock", "field": "paused", "compare": "Equal", "number": 0}]}}

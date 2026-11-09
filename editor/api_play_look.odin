@@ -14,7 +14,7 @@ import mm "mirai:std/math"
 // looks where its body looks (Eyes, aiming) through the look action of the seat.
 
 Api_Play_Look_At :: struct {
-    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=What it looks at: the entity by its name or a path Parent/Child or its id or its handle followed where it moves (its middle); in place of position"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=What it looks at: the entity by its name or a path Parent/Child or its id or its handle followed where it moves (its middle); in place of position"`,
     position:[3]f32 `mirai:"optional,label=What it looks at: a point of the world; in place of entity"`,
 }
 

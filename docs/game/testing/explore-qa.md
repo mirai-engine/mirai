@@ -9,9 +9,9 @@ with the `playtest` plugin, which the game template enables.
 
 ```bash
 mirai rpc --project . play.start '{}'            # builds first when Odin changed
-mirai rpc --project . play.explore '{"mode":"Ui","seconds":20}' \
+mirai rpc --project . play.explore '{"mode":"Ui","for":"20s"}' \
   --select stopped,pages,activated,never,exits,passed
-mirai rpc --project . play.explore '{"mode":"World","seed":7,"seconds":60}' \
+mirai rpc --project . play.explore '{"mode":"World","seed":7,"for":"60s"}' \
   --select stopped,cells,passed,violations,repros
 mirai rpc --project . play.stop
 ```
@@ -19,7 +19,7 @@ mirai rpc --project . play.stop
 - `mode` `World`: the seat walks and jumps with its actions toward the cells of the world it
   has been in the least. `Ui`: it presses every button it sees with the pointer, goes back with
   Escape and follows the pages it reaches.
-- Give `seconds` or `ticks`, not both. `seed` varies the walk; `cell` is the side of a coverage
+- `for` is how long it plays. `seed` varies the walk; `cell` is the side of a coverage
   cell in meters.
 - `World` finds the action that moves (an `Axis2` bound to keys or the left stick) and the one
   that jumps (`Space` or the south button); name them with `move` and `jump` when it cannot.
@@ -48,7 +48,7 @@ from the API or the violation cannot write one:
 
 ```bash
 mirai rpc --project . play.qa.start '{"frame_ms":50}'
-mirai rpc --project . play.step '{"seconds":10,"keys":["W"]}'
+mirai rpc --project . play.step '{"for":"10s","keys":["W"]}'
 mirai rpc --project . play.qa.report '{}' --select passed,violations
 ```
 

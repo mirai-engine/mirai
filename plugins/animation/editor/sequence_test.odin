@@ -51,7 +51,7 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     viewport:editor.Viewport;gui:editor.Editor_Ui
     session:=editor.Session{edit_world=&w,info=&info,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui}
     editor.edits_reset(&edits,world)
-    params:=Sequence_Capture_Params{entity=2,frame=1,source=3}
+    params:=Sequence_Capture_Params{frame=1};copy(params.entity[:],"0000000000000002");copy(params.source[:],"0000000000000003")
     captured_result:Sequence_Edit_Result
     method:=api.Method{params_id=Sequence_Capture_Params,result_id=Sequence_Edit_Result}
     call:=api.Call{method=&method,params=&params,result=&captured_result,allocator=context.temp_allocator}
@@ -67,10 +67,10 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     previous:=w.sequences.values[0]
     sequence_capture(&session,&call)
     testing.expect(t,call.failed && w.sequences.values[0]==previous)
-    params.reference=1;call.failed=false
+    copy(params.reference[:],"0000000000000001");call.failed=false
     sequence_capture(&session,&call)
     testing.expect(t,!call.failed && w.sequences.values[0].frames[1].pose.position.x==6)
-    preview_params:=Sequence_Preview_Params{entity=2,time=0.5}
+    preview_params:=Sequence_Preview_Params{time=0.5};copy(preview_params.entity[:],"0000000000000002")
     result:Sequence_Preview_Result
     method.params_id=Sequence_Preview_Params;method.result_id=Sequence_Preview_Result
     call.params,call.result=&preview_params,&result
@@ -81,10 +81,10 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     writer:serial.Writer;serial.writer_init(&writer,4096);defer serial.writer_destroy(&writer)
     defaults:=sequence_set_defaults()
     testing.expect_value(t,api.method_register(&server,{name="set",params=Sequence_Set_Params,params_info=type_info_of(Sequence_Set_Params),result=Sequence_Edit_Result,result_info=type_info_of(Sequence_Edit_Result),defaults=&defaults,user=&session,handler=proc(call:^api.Call) {sequence_set((^editor.Session)(call.user),call)}}),api.Register_Error.None)
-    method_set:=api.method_find(&server,"set");error,_:=api.method_execute(&server,method_set,`{"entity":"2","value":{"frames":[{}, {"duration":2}]}}`,&writer)
+    method_set:=api.method_find(&server,"set");error,_:=api.method_execute(&server,method_set,`{"entity":"0000000000000002","value":{"frames":[{}, {"duration":2}]}}`,&writer)
     testing.expect(t,error.code==0 && w.sequences.values[0].count==2 && w.sequences.values[0].frames[0].pose==mm.TRANSFORM_IDENTITY && w.sequences.values[0].frames[1].duration==2,error.message)
     testing.expect(t,strings.contains(string(serial.writer_bytes(&writer)),`"queued": false`))
     before:=w.sequences.values[0];cursor:=edits.cursor;serial.writer_reset(&writer)
-    error,_=api.method_execute(&server,method_set,`{"entity":"2","value":{"frames":[]}}`,&writer)
+    error,_=api.method_execute(&server,method_set,`{"entity":"0000000000000002","value":{"frames":[]}}`,&writer)
     testing.expect(t,error.code==api.INVALID_PARAMS && strings.contains(error.data,`"path":"value.frames"`) && w.sequences.values[0]==before && edits.cursor==cursor)
 }

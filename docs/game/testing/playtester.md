@@ -18,7 +18,7 @@ template enables; its tools reach the plugin through `call`, so nothing else pay
 
 ```bash
 mirai rpc --project . play.observe '{"targets":["Door*"],"nearest":3}'
-mirai rpc --project . play.observe '{"step":{"ticks":20,"keys":["W"]},"targets":["Door*"]}'
+mirai rpc --project . play.observe '{"step":{"for":20,"keys":["W"]},"targets":["Door*"]}'
 mirai rpc --project . play.get '{"entity": "Player","field":"world_position"}' --select value
 mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gone"}]}' \
   --select passed
@@ -41,7 +41,7 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
 mirai rpc --project . capture '{"path":"C:/work/now.png"}' --select path,width,height
 mirai rpc --project . capture \
   '{"path":"C:/work/walk.png","every":10,"count":9,"follow":"Player",
-    "segments":[{"ticks":80,"keys":["W"]}]}'
+    "segments":[{"for":80,"keys":["W"]}]}'
 ```
 
 - With `path` the answer is only where the file is: open it when the numbers do not decide.

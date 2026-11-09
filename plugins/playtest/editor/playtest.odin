@@ -16,6 +16,13 @@ Playtest_Run :: struct {
     id:u64, // Run.id; 0: the place is free
     qa:^Run_Qa,
     observed:Run_Observed,
+    stuck:Stuck_Watch,
+}
+
+Stuck_Watch :: struct {
+    anchor:[3]f32, // where the body was when it last moved or did not ask to
+    since:f64,     // seconds of the game
+    anchored:bool,
 }
 
 @(storage)

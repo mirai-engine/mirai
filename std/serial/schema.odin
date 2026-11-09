@@ -74,6 +74,7 @@ Field :: struct {
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
     any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
+    entity_name:bool, // a text that names an entity: the API says so in its schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -405,7 +406,8 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
 // list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
-// of key=value pairs (min, max, step, precision, bits, label, unit).
+// of key=value pairs (min, max, step, precision, bits, label, unit, name: the
+// key of a param whose word is reserved in Odin).
 @(private)
 schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
@@ -424,12 +426,17 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
         case "any":       field.any_value=true
+        case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
         case "max":       field.max,field.has_max=strconv.parse_f64(value)
         case "step":      field.step,_=strconv.parse_f64(value)
         case "precision": precision,_:=strconv.parse_f64(value);field.precision=f32(precision)
         case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
         case "label":     field.label=strings.clone(value,s.allocator)
+        case "name":
+            if value=="" {continue} // a comma inside a label
+            delete(field.name,s.allocator)
+            field.name,field.name_hash=strings.clone(value,s.allocator),base.name_hash(value)
         case "unit":      field.unit=strings.clone(value,s.allocator)
         case "kind":      field.asset_kinds=strings.clone(value,s.allocator)
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}

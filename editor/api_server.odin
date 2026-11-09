@@ -25,7 +25,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "13"
+API_VERSION :: "14"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with methods, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and _wait_until, a condition (phase=Built) it is called again until. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -71,7 +71,6 @@ Api_State :: struct {
     port:int,
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
-    scripts:[EDITOR_RUNS]Run_Script, // the input play.input scheduled for each place of Session.runs
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
 }
 
@@ -114,7 +113,6 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
         return .Server
     }
     st.server.assets={s,asset_text_resolve}
-    st.server.entities={s,api_entity_text_resolve}
     api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
@@ -241,6 +239,7 @@ api_poll :: proc(s:^Session) {
         if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
         st.library_generation=s.library_generation
     }
+    st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
     api.server_poll(&st.server)
 }
 
@@ -281,7 +280,7 @@ api_jobs :: proc(s:^Session) {
 // left loads meanwhile: the handler holds nothing of the worlds, and no text
 // of the temporary allocator, across this. False when the time ran out or the
 // editor is ending.
-api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool) -> bool {
+api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,what:="working") -> bool {
     st:=api_state(s)
     if st==nil {return !pending(s,user)}
     started:=time.tick_now()
@@ -294,7 +293,8 @@ api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user
         }
     }
     for pending(s,user) {
-        if s.quit || time.duration_seconds(time.tick_since(started))>seconds {return false}
+        if s.quit || time.duration_seconds(time.tick_since(started))>seconds || api.server_cancelled(&st.server) {return false}
+        if api.server_progress_due(&st.server) {api.server_progress(&st.server,fmt.tprintf("%s: %.0f s",what,time.duration_seconds(time.tick_since(started))))}
         if st.manual {
             temp:=runtime.default_temp_allocator_temp_begin()
             build_poll(s)
@@ -306,6 +306,13 @@ api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user
         }
     }
     return true
+}
+
+// Whether the client cancelled the call that runs: the loops of a handler that
+// goes on for long end at their next safe point.
+api_stop_asked :: proc(s:^Session) -> bool {
+    st:=api_state(s)
+    return st!=nil && api.server_cancelled(&st.server)
 }
 
 // Advances whole frames from inside a handler until pending says false or
@@ -707,23 +714,15 @@ rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     return magnitude,true
 }
 
-// The id of the entity a param read by hand names, as any param of type
-// base.Entity_Id takes it; null is none.
+// The id a document read by hand holds; null is none.
 rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"null") {return 0,true}
     text,read:=serial.text_string(&a.r)
-    if !read {return 0,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
-    entities:serial.Text_Entities
-    if a.call.server!=nil {entities=a.call.server.entities}
-    if entities.resolve==nil {
-        value,parsed:=serial.text_parse_hex(text)
-        if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-        return base.Entity_Id(value),true
-    }
-    problem:string
-    if id,problem=entities.resolve(entities.user,text);problem!="" {return 0,rpc_fail(a,"%s: %s",what,problem)}
-    return id,true
+    if !read {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
+    value,parsed:=serial.text_parse_hex(text)
+    if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
+    return base.Entity_Id(value),true
 }
 
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {

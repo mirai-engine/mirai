@@ -157,10 +157,10 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     clear_method:=api.Method{params_id=Clear_Params,result_id=Clear_Result}
 
     // Along an edge of the cube the brush paints the vertices of its two corners and no other.
-    params:=Stroke_Params{entity=7,radius=0.3,strength=1,color={0,1,0}}
+    params:=Stroke_Params{radius=0.3,strength=1,color={0,1,0}};copy(params.entity[:],"0000000000000007")
     params.points[0],params.points[1]={0.5,0.5,0.5},{0.5,0.5,-0.5}
     result:Stroke_Result
-    call:=api.Call{method=&stroke_method,params=&params,result=&result,raw=`{"entity":"7","points":[[0.5,0.5,0.5],[0.5,0.5,-0.5]]}`,allocator=context.temp_allocator}
+    call:=api.Call{method=&stroke_method,params=&params,result=&result,raw=`{"entity":"0000000000000007","points":[[0.5,0.5,0.5],[0.5,0.5,-0.5]]}`,allocator=context.temp_allocator}
     api_stroke(s,&call)
     if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
     testing.expect_value(t,result.vertices,u32(24))
@@ -175,13 +175,13 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     // Away from the mesh nothing is painted and no step is made.
     params.points[0]={10,10,10}
     far:Stroke_Result
-    away:=api.Call{method=&stroke_method,params=&params,result=&far,raw=`{"entity":"7","points":[[10,10,10]]}`,allocator=context.temp_allocator}
+    away:=api.Call{method=&stroke_method,params=&params,result=&far,raw=`{"entity":"0000000000000007","points":[[10,10,10]]}`,allocator=context.temp_allocator}
     api_stroke(s,&away)
     testing.expect(t,away.failed && away.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,1)
 
     clear_params:Clear_Params
-    clear_params.entities[0]=7
+    copy(clear_params.entities[0][:],"0000000000000007")
     cleared:Clear_Result
     clear:=api.Call{method=&clear_method,params=&clear_params,result=&cleared,allocator=context.temp_allocator}
     api_clear(s,&clear)

@@ -61,6 +61,6 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
     }
     schema:=authoring_result_schema(Action_Inspect_Result,type_info_of(Action_Inspect_Result),context.temp_allocator);testing.expect(t,strings.contains(schema,`"root_motion"`) && strings.contains(schema,`"cancel"`) && !strings.contains(schema,"section_count"))
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
-    result=authoring_test_execute(f,"request",`{"entity":"1","actions":[{"name":"attack"}]}`)
+    result=authoring_test_execute(f,"request",`{"entity":"0000000000000001","actions":[{"name":"attack"}]}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"actions"`) && strings.contains(result.data,`"code":"Runtime_Required"`))
 }

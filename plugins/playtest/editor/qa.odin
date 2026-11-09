@@ -15,7 +15,7 @@ import "mirai:std/serial"
 
 // Monitors of the game a run plays, armed by play.qa.start and read by
 // play.qa.report, for the ticks the API runs (play.step, a scenario,
-// play.explore, a filmstrip, play.walk). The first thing the API does to a run
+// play.explore, a filmstrip). The first thing the API does to a run
 // reserves its log of what the run received, from which a repro plays the same
 // ticks again whenever the monitors started; a tick writes into that.
 
@@ -131,8 +131,6 @@ Run_Qa :: struct {
     serial:u64,       // the Problems.serial it has seen
     memory_base:u64,
     memory_next:int,  // ran of the next reading
-    anchor:[3]f32,    // where the body was when it last asked to move and moved
-    anchor_seconds:f64,
     stuck,fell:bool,  // the episode that is going on
 }
 
@@ -192,9 +190,7 @@ qa_arm :: proc(s:^editor.Session,r:^editor.Run,limits:Qa_Limits) -> ^Run_Qa {
     q.violation_count,q.dropped=0,0
     q.counts={}
     q.stuck,q.fell=false,false
-    q.anchor_seconds=seconds
     _,body:=editor.play_focused(w)
-    if body!=core.NONE {q.anchor=editor.entity_world(w,body).position}
     if problems:=host.app_world_storage(s.app,w.data,core.Problems);problems!=nil {q.serial=problems.serial}
     q.memory_base=platform.process_memory_bytes()
     q.memory_next=q.ran+QA_MEMORY_EVERY
@@ -336,6 +332,16 @@ qa_violation_add :: proc(q:^Run_Qa,v:Qa_Violation,repeats:bool) {
     q.violation_count+=1
 }
 
+// How long the body has asked to move and stayed where it was, in seconds of
+// the game; 0 when it moved or does not ask to. The one measure of stuck of a run.
+@(private)
+stuck_watch :: proc(watch:^Stuck_Watch,w:core.World_Ref,body:core.Entity,at:[3]f32,seconds:f64) -> f64 {
+    if body==core.NONE || !play_moving(w,body) || !watch.anchored || linalg.length(at-watch.anchor)>=QA_STUCK_DISTANCE {
+        watch^={at,seconds,true}
+    }
+    return seconds-watch.since
+}
+
 @(private)
 qa_finite :: proc "contextless" (values:[]f32) -> bool {
     for v in values {if v-v!=0 {return false}}
@@ -390,11 +396,12 @@ qa_tick :: proc(s:^editor.Session,r:^editor.Run) {
         q.fell=below
     }
     if limits.stuck_seconds>0 {
-        if !play_moving(w,body) || linalg.length(at-q.anchor)>=QA_STUCK_DISTANCE {
-            q.anchor,q.anchor_seconds,q.stuck=at,seconds,false
-        } else if seconds-q.anchor_seconds>=f64(limits.stuck_seconds) && !q.stuck {
+        still:=stuck_watch(&playtest_run(s,r).stuck,w,body,at,seconds)
+        if still==0 {
+            q.stuck=false
+        } else if still>=f64(limits.stuck_seconds) && !q.stuck {
             q.stuck=true
-            qa_violation_add(q,{kind=.Stuck,severity=.Warning,tick=tick,position=at,value=f32(seconds-q.anchor_seconds),limit=limits.stuck_seconds,entity=body},false)
+            qa_violation_add(q,{kind=.Stuck,severity=.Warning,tick=tick,position=at,value=f32(still),limit=limits.stuck_seconds,entity=body},false)
         }
     }
 }
@@ -562,7 +569,7 @@ repro_segment :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
     out:=&w.out
     i:=&e.given
     serial.write_u8(out,'{')
-    api.write_int(out,"ticks",i64(ticks),true)
+    api.write_int(out,"for",i64(ticks),true)
     repro_keys(out,"keys",i.keys)
     repro_buttons(out,"mouse_buttons",i.buttons)
     repro_keys(out,"tap_keys",i.tap_keys)
@@ -643,7 +650,7 @@ repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
                 case .Axis:  api.write_key(out,"value");api.write_number(out,e.hold.value.x)
                 case .Axis2: repro_pair(out,"vector",e.hold.value)
                 }
-                if e.hold.ticks>0 {api.write_int(out,"ticks",i64(e.hold.ticks))}
+                if e.hold.ticks>0 {api.write_int(out,"for",i64(e.hold.ticks))}
             }
             serial.write_u8(out,'}')
         }

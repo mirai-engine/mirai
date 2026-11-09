@@ -18,7 +18,7 @@ import "plugins:vfx/runtime/gridfile"
 // in cached starts from it.
 @(private)
 Api_Grid_Bake_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     path:[editor.API_PATH_BYTES]u8 `mirai:"text"`,
 }
 
@@ -43,9 +43,10 @@ api_grid_bake :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     w:=editor.edited_world(s)
-    e:=editor.api_entity(w,p.entity)
+    e,found_e:=editor.api_call_entity(call,w,p.entity[:])
+    if !found_e {return}
     if !editor.entity_has(w,e,vfx.Particle_Grid) {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity with a Particle_Grid in the edited world",u64(p.entity))
+        api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Particle_Grid in the edited world",base.text_get(p.entity[:]))
         return
     }
     named:=base.text_get(p.path[:])

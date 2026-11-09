@@ -31,12 +31,11 @@ Api_Capture_Params :: struct {
     seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
     generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
-    every:int `mirai:"optional,min=0,max=3600,label=Filmstrip: the ticks the game runs between two cells of one image; with segments and no count as many cells as they last; 0: an image of now"`,
-    every_seconds:f32 `mirai:"optional,min=0,unit=s,label=Filmstrip: the game time between two cells in place of every"`,
+    every:[api.DURATION_TEXT]u8 `mirai:"optional,text,label=Filmstrip: what the game runs between two cells of one image: a number is ticks and a text ending in s is seconds as 10 or 0.5s; with segments and no count as many cells as they last; 0: an image of now"`,
     count:int `mirai:"optional,min=0,max=64,label=Filmstrip: its cells; the first shows the game before the first tick; with segments and no every they spread evenly over their ticks"`,
     columns:int `mirai:"optional,min=0,max=64,label=Filmstrip: cells across; 0: as square as they fit"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Filmstrip: the input along its ticks as play.step takes it; they say how many ticks it runs"`,
-    follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
+    follow:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=Filmstrip: every cell is centered on where this entity shows; by its name or a path Parent/Child or its id or its handle"`,
     size:[2]f32 `mirai:"optional,min=8,max=4096,label=Filmstrip that follows an entity: width and height of a cell in points of the image"`,
     region:[4]f32 `mirai:"optional,label=x y width height of the part written, in pixels from the top left of the image; of a filmstrip, in points, what every cell shows in place of following an entity. None: all of it"`,
     width:int `mirai:"optional,min=0,max=4096,label=Pixels of the image alone; 0 keeps the aspect of what it shows (its size when height is 0 too)"`,
@@ -93,7 +92,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if p.ui && p.of!=.Auto {api.call_fail(call,api.INVALID_PARAMS,"of chooses what the image alone shows: leave it out with ui");return}
     if p.ui && (p.width>0 || p.height>0) {api.call_fail(call,api.INVALID_PARAMS,"width and height size the image alone: leave ui out with them, or leave them out for the window");return}
     if p.generated && !p.ui {api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it");return}
-    filmstrip:=p.every>0 || p.every_seconds>0 || api_filmstrip_spread(call,p)
+    filmstrip:=(p.every[0]!=0 && base.text_get(p.every[:])!="0") || api_filmstrip_spread(call,p)
     if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
     game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
     if (game || filmstrip) && r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}

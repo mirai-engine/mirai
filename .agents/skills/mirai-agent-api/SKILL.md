@@ -17,8 +17,8 @@ difference with the catalog, it rules.
 ## Map
 
 - Connecting a client, limits, errors, MCP: [protocol and CLI](references/api.md).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, whose
-  calls can name the results of earlier ones, and `--stdin`, many calls over one connection) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
+  calls over one connection, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:
@@ -111,22 +111,20 @@ difference with the catalog, it rules.
 A person's input has timing and a person looks at the screen; a check that sets actions and reads
 positions misses both.
 
-1. Give devices, not actions, when the test is about how input plays: `segments` of `play.input`
-   or `play.step` go through the path of real input, so taps, holds, double-press windows and
-   thresholds of the actions see them. Each press has its own length: one tick and three ticks are
-   different inputs.
-   - A click: `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 1}]`; on a button of the
+1. Give devices, not actions, when the test is about how input plays: `segments` of `play.step`
+   go through the path of real input, so taps, holds, double-press windows and thresholds of the
+   actions see them. Each press has its own length: one tick and three ticks are different inputs.
+   - A click: `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 1}]`; on a button of the
      UI, by its name: `{"press": "start"}` in `play.step`.
    - A double click: two presses with a gap inside the game's window,
-     `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 5}, {"ticks": 3, "mouse_buttons":
-     ["Left"]}, {"ticks": 1}]`.
-   - A hold: `[{"seconds": 0.8, "keys": ["E"]}, {"ticks": 1}]`; a press shorter than a tick:
+     `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 5}, {"for": 3, "mouse_buttons":
+     ["Left"]}, {"for": 1}]`.
+   - A hold: `[{"for": "0.8s", "keys": ["E"]}, {"for": 1}]`; a press shorter than a tick:
      `tap_keys`; a chord: the keys in one segment, or the modifier one segment earlier.
    - A look or a turn of the stick: `mouse_delta` (spread over its segment) or `gamepads` with a
      stick, in a segment as long as the motion.
-2. Schedule them with `play.input` and step a few ticks at a time with `play.step` without input,
-   reading `play.view` (or `capture`) between steps; or in one call, `play.step` with the
-   `segments` and a `trace` with `view` that reads every tick.
+2. Step a few ticks at a time, reading `play.view` (or `capture`) between steps; or in one call,
+   `play.step` with the `segments` and a `trace` with `view` that reads every tick.
 3. Assert what a person checks: that the game did it (`play.check` on its components) and what is
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
    `points.0.on_screen`; `until` with them waits for the moment. Look at one image at the moments
@@ -208,7 +206,7 @@ positions misses both.
   params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one
   a_limit_past_its_maximum_takes_it_and_the_answer_says_so
   an_invalid_params_error_says_what_the_method_takes_and_only_it_does
-  a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes
+  a_param_that_names_an_entity_says_so_in_its_schema
   an_example_is_written_with_key_value_unless_it_needs_json`; names of a registry:
   `mirai test std/base`, `mirai test std/serial
   a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does` and
@@ -245,10 +243,11 @@ positions misses both.
   a game plays:
   `the_api_edits_the_document_while_a_game_plays`;
   the input of a person and what the player sees: `mirai test editor
-  play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
+  a_step_plays_the_devices_of_a_person_tick_by_tick
   a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go
   a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped
   a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform
+  a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives
   play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:
   `mirai test editor
   a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails

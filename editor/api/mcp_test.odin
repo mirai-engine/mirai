@@ -8,6 +8,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "mirai:std/serial"
 
@@ -560,4 +561,105 @@ describe_gives_the_guides_of_the_methods_it_gives :: proc(t:^testing.T) {
     testing.expect(t,at(reply,"result","guides")==nil,"a method without a guide comes alone")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":4,"method":"engine.describe"}`)
     testing.expect(t,at(reply,"result","guides")==nil,"the list of every method carries no guide")
+}
+
+// Works for a little more than a second, telling its progress and stopping when cancelled.
+@(private="file")
+slow_handler :: proc(call:^Call) {
+    s:=call.server
+    for i in 0..<130 {
+        if server_cancelled(s) {return}
+        server_progress(s,"working",i,130)
+        time.sleep(10*time.Millisecond)
+    }
+    raw(call.out,`{"done":true}`)
+}
+
+@(private="file")
+Slow_Events :: struct {lines:[dynamic]string}
+
+@(private="file")
+slow_event :: proc(user:rawptr,line:string) {
+    events:=(^Slow_Events)(user)
+    append(&events.lines,strings.clone(line,context.temp_allocator))
+}
+
+@(private="file")
+slow_call :: proc(meta:string) -> string {
+    return strings.concatenate({`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"test_slow","arguments":{}`,meta,`}}`},context.temp_allocator)
+}
+
+// A call with a token answers as a stream of its progress and its answer last;
+// without one, or without an Accept for it, it is one JSON as any other.
+@(test)
+a_call_with_a_progress_token_streams_its_progress_and_one_without_answers_as_always :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    port:=server_port(&f.server)
+    events:Slow_Events
+    events.lines.allocator=context.temp_allocator
+    body:=slow_call(`,"_meta":{"progressToken":"t1"}`)
+    status,bytes,err:=client_post(port,"/mcp",body,5000,context.temp_allocator,events={&events,slow_event})
+    testing.expectf(t,err.code==0 && status==200,"%d %v",status,err)
+    testing.expectf(t,len(events.lines)>=2,"%v",events.lines)
+    if len(events.lines)>0 {
+        first:=parse_json(t,events.lines[0])
+        testing.expect_value(t,string_of(at(first,"method")),"notifications/progress")
+        testing.expect_value(t,string_of(at(first,"params","progressToken")),"t1")
+        testing.expect_value(t,integer(at(first,"params","total")),130)
+    }
+    testing.expectf(t,strings.contains(string(bytes),`done`),"the answer comes last: %s",string(bytes))
+    plain:=slow_call("")
+    status,bytes,err=client_post(port,"/mcp",plain,5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200 && strings.contains(string(bytes),`done`),"%d %v %s",status,err,string(bytes))
+    noted:=slow_call(`,"_meta":{"progressToken":"t2"}`)
+    status,bytes,err=client_post(port,"/mcp",noted,5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200 && !strings.contains(string(bytes),"data:"),"no Accept, no stream: %s",string(bytes))
+}
+
+// A notifications/cancelled that arrives on another connection ends the wait at
+// its safe point, and the call answers that it was cancelled.
+@(test)
+a_cancelled_call_stops_at_its_safe_point_and_says_so :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    Canceller :: struct {port:int}
+    canceller:=Canceller{server_port(&f.server)}
+    cancel :: proc(c:^Canceller) {
+        time.sleep(200*time.Millisecond)
+        client_post(c.port,"/mcp",`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7,"reason":"enough"}}`,3000,context.temp_allocator)
+    }
+    th:=thread.create_and_start_with_poly_data(&canceller,cancel)
+    defer {thread.join(th);thread.destroy(th)}
+    began:=time.tick_now()
+    status,bytes,err:=client_post(canceller.port,"/mcp",slow_call(""),5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200,"%d %v",status,err)
+    testing.expect(t,time.duration_seconds(time.tick_since(began))<1,"it did not run to its end")
+    reply:=parse_json(t,string(bytes))
+    testing.expect(t,at(reply,"result","isError").(json.Boolean),string(bytes))
+    testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),CANCELLED)
+}
+
+// initialize says which editor answers, and the bridge what it knows without one.
+@(test)
+initialize_says_which_editor_answers_under_meta :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t) {return}
+    defer fixture_finish(f)
+    f.server.instance={process=321,engine="9.9",project="demo",folder="C:/demo"}
+    reply:=mcp(t,f,`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
+    meta:=at(reply,"result","_meta")
+    testing.expect_value(t,integer(at(meta,"process_id")),321)
+    testing.expect_value(t,string_of(at(meta,"engine_version")),"9.9")
+    testing.expect_value(t,string_of(at(meta,"project")),"demo")
+    testing.expect_value(t,string_of(at(meta,"project_folder")),"C:/demo")
+    text,_:=bridge_absent(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,{instructions="none",instance={engine="9.9",project="demo",folder="C:/demo"}},context.temp_allocator)
+    absent:=parse_json(t,text)
+    testing.expect_value(t,string_of(at(absent,"result","_meta","project")),"demo")
+    _,has_process:=at(absent,"result","_meta").(json.Object)["process_id"]
+    testing.expect(t,!has_process,"no process while no editor answers")
 }

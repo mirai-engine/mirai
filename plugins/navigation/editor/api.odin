@@ -29,13 +29,13 @@ Inspect_Params :: struct {
 }
 
 Agent_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 Move_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     to:[3]f32 `mirai:"optional,label=Where it walks; omitted with no target: it stops"`,
-    target:base.Entity_Id `mirai:"optional,label=An entity it follows instead"`,
+    target:editor.Api_Entity_Text `mirai:"text,entity,optional,label=An entity it follows instead"`,
     distance:f32 `mirai:"optional,min=0,unit=m,label=Kept from the target"`,
 }
 
@@ -60,8 +60,6 @@ register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result_schema=INSPECT_SCHEMA,run=inspect})
     editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result_schema=AGENT_SCHEMA,run=agent})
     editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result_schema=`{"type":"object","properties":{"queued":{"type":"boolean"}},"required":["queued"]}`,run=move})
-    walk_defaults:=Walk_Params{ticks=600,slot=-1}
-    editor.api_method_register(s,{name="play.walk",summary="The body a seat of the game of the caller drives walks to a point or an entity through the navigation meshes, steered tick by tick as a seated Nav_Agent with the buttons of its seat (no teleport): it pauses the game and runs fixed ticks until it arrives or fails or gets stuck or the ticks run out, and says which.",params=Walk_Params,params_info=type_info_of(Walk_Params),result=Walk_Result,result_info=type_info_of(Walk_Result),defaults=&walk_defaults,run=walk})
     editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result_schema=PATH_SCHEMA,run=path})
 }
 
@@ -492,11 +490,12 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Agent_Params)
     n,world,ok:=navigation_of(s,call)
     if !ok {return}
-    e:=core.entity_of(core.world_entities(world),p.entity)
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=s.mode!=.Edit)
+    if !named {return}
     paths:=core.world_table_of(world,nav.Nav_Path)
     agents:=core.world_table_of(world,nav.Nav_Agent)
     far:=far_of(world,e)
-    if e==core.NONE || agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the shown world",p.entity);return}
+    if agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the shown world",base.text_get(p.entity[:]));return}
     w:=call.out
     serial.text_write_raw(w,"{")
     value:nav.Nav_Path
@@ -595,12 +594,13 @@ move :: proc(s:^editor.Session,call:^api.Call) {
     world:=editor.shown_world(s)
     requests:=core.world_storage_of(world,nav.Nav_Requests)
     agents:=core.world_table_of(world,nav.Nav_Agent)
-    e:=core.entity_of(core.world_entities(world),p.entity)
-    if requests==nil || agents==nil || e==core.NONE || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Nav_Agent in the running world",p.entity);return}
+    e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
+    if !named {return}
+    if requests==nil || agents==nil || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the running world",base.text_get(p.entity[:]));return}
     switch {
-    case p.target!=0:
-        target:=core.entity_of(core.world_entities(world),p.target)
-        if target==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"target %x is not an entity of the running world",p.target);return}
+    case p.target[0]!=0:
+        target,known:=editor.api_call_entity(call,world,p.target[:],"target",true)
+        if !known {return}
         nav.nav_follow(requests,e,target,p.distance)
     case p.to!={}:
         nav.nav_move_to(requests,e,p.to)

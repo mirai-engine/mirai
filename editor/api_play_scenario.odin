@@ -17,7 +17,7 @@ import "mirai:std/serial"
 // the same ticks every time.
 //
 //   {"scene": "scenes/main.scene", "start": {"players": 1}, "steps": [
-//     {"name": "walk", "method": "play.step", "params": {"seconds": 1, "keys": ["W"]}},
+//     {"name": "walk", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
 //     {"method": "play.check", "params": {"conditions": [...]}}]}
 //
 // A step fails when its call fails, when its result says passed false (the
@@ -121,7 +121,7 @@ scenario_parse :: proc(text:string,allocator:=context.allocator) -> (sc:Scenario
         sc.start=values[1]
     }
     count:=api.json_count(values[2])
-    if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"ticks": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
+    if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"for": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
     if count>API_SCENARIO_STEPS {return {},fmt.aprintf("steps: %d steps, and a scenario takes %d at most: split it into several files",count,API_SCENARIO_STEPS,allocator=allocator)}
     items:=make([]string,count,allocator)
     api_list_items(values[2],items)
@@ -332,6 +332,8 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Wr
     if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0}
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
     for &step,i in sc.steps {
+        if api_stop_asked(s) {return fmt.bprintf(buffer,"cancelled"),0}
+        api.server_progress(server,fmt.tprintf("step %d of %d: %s",i+1,len(sc.steps),step.name!=""?step.name:step.method),i,len(sc.steps))
         method:=api.method_find(server,step.method)
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')

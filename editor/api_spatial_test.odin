@@ -351,7 +351,8 @@ entities_are_named_by_name_path_id_or_handle :: proc(t:^testing.T) {
         {"",0,"it must be the name of an entity"},
     }
     for c in ids {
-        id,problem:=api_entity_text_resolve(&f.s,c.text)
+        e,problem:=api_entity_select(edited_world(&f.s),c.text)
+        id:=api_entity_id(edited_world(&f.s),e)
         testing.expectf(t,id==c.want && strings.contains(problem,c.says),"%s: %v %s",c.text,id,problem)
     }
 }

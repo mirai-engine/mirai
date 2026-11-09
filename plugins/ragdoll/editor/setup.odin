@@ -30,7 +30,7 @@ Ragdoll_Part :: enum u8 {Pelvis,Spine,Chest,Head,Upper_Arm_L,Forearm_L,Hand_L,Up
 Ragdoll_Joint_Kind :: enum u8 {None,Hinge,Swing_Twist}
 
 Ragdoll_Setup_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The rig: the entity with the Animation and the Mesh_Renderer of a skinned mesh"`,
     mass:f32 `mirai:"optional,min=0,max=100000,unit=kg,label=Total mass, split by volume; 0 weighs each body as water"`,
     mode:rag.Ragdoll_Mode `mirai:"optional"`,
 }
@@ -125,8 +125,8 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         failure(call,{"plugins","Unavailable","the tables of ragdoll, animation and physics","missing","The world has no ragdoll or physics components","Activate the plugin ragdoll in project.mirai and rebuild"},api.SERVER_ERROR)
         return
     }
-    rig:=core.entity_of(core.world_entities(w),p.entity)
-    if rig==core.NONE {failure(call,{"entity","Missing_Entity","an entity of the edited scene",fmt.tprintf("%x",p.entity),"The rig does not exist","Use an id from scene.inspect"});return}
+    rig,problem:=editor.api_entity_select(w,base.text_get(p.entity[:]),"entity",false,call.allocator)
+    if problem!="" {failure(call,{"entity","Missing_Entity","an entity of the edited scene",base.text_get(p.entity[:]),"The rig does not exist",problem});return}
     if source,shared:=editor.entity_get(w,rig,anim.Pose_Source);shared && source.rig!=core.NONE {rig=source.rig}
     if !editor.entity_has(w,rig,anim.Animation) {failure(call,{"entity","Missing_Component","a rig with an Animation","no Animation","The rig has no Animation, so a ragdoll could not follow its pose","Give it an Animation, for example with animation.play"});return}
     skeleton_id:base.Asset_Id

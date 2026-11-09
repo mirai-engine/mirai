@@ -150,8 +150,7 @@ mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
   [--wait-until CONDITION]
   [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
-mirai rpc --batch <calls.jsonl> [the same options]
-mirai rpc --stdin [the same options]
+mirai rpc --batch <calls.jsonl|-> [the same options]
 ```
 
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
@@ -173,14 +172,12 @@ mirai rpc --stdin [the same options]
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
-  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line and stops
-  at the first error; a value of the params that is exactly `$N` or `$N.path` (the paths of
+  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
+  file or from stdin (`-`), over one connection, so many calls cost one process; it prints a JSON
+  array with the result of each and stops at the first error, whose entry says its `line`. A value
+  of the params that is exactly `$N` or `$N.path` (the paths of
   `--select`, as `$0.id` or `$1.entities[0].id`) stands for the result of the call N or that field
   of it, and `$$` writes a literal `$`.
-- `--stdin` keeps one connection open for many calls in one process: one call per line, `method
-  key=value...` or `method {json}`, with `--select` and `--wait-until` after it, and one line of
-  JSON per call on stdout, its result or `{"error":...}`; a failed call does not end it. It ends
-  at the end of the input. A script of many calls costs one process, not one per call.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it
@@ -253,7 +250,18 @@ methods). Which plugins exist is told by `engine.describe`.
 
 `/mcp` implements [MCP](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) in
 the revisions of `MCP_VERSIONS` (the first if another is requested): one `POST` per message or
-batch, without sessions or server events.
+batch, without sessions.
+
+- A `tools/call` with `_meta.progressToken` and an `Accept` of `text/event-stream` answers as a
+  stream: `notifications/progress` while it works, its answer last. Without both it is one JSON.
+  `mirai mcp` asks for the stream when a call brings a token and writes each notification to
+  stdout as it comes.
+- `notifications/cancelled` ends the wait of the call it names (`build.start`, a blocking
+  `play.start`, `play.step`, `play.scenario.run`, what goes through `api_wait`) at a safe point,
+  which answers code `-32094`. A `play.start` that waited for a build does not start its game
+  later; a build or an import it waited for goes on. `mirai mcp` forwards it while the call runs.
+- `initialize` gives `_meta` with `engine_version`, `process_id`, `project` and `project_folder`;
+  `mirai mcp` with no editor gives what it knows.
 
 - `tools/list`: `docs` (the game documentation of `docs/game`, as `mirai docs` reads it, and the
   same in `mirai mcp` without an editor; its index goes in the instructions), one tool per editor
@@ -283,9 +291,9 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 
 - **An entity is named once, as `entity`.** Every param that names one (`entity`, `entities`, or
   by its role `parent`, `target`, `ground`, `around`...) takes its name, a path of names
-  `Parent/Child`, its id or its handle: the reader of params resolves a `base.Entity_Id` through
-  the resolver the editor installs (`Server.entities`), so handlers get an id, and hand-read params
-  with `rpc_id`, and their schemas say `x-entity`. A name several entities have is an error that
+  `Parent/Child`, its id or its handle, as text (`Api_Entity_Text`, tagged `entity`, so its schema
+  says `x-entity`); the handler resolves it with `api_call_entity` in the world it acts on, where
+  in Play a handle is a valid text. A name several entities have is an error that
   lists them and how to tell them apart; a text of 16 hexadecimal digits or starting with `0x` is
   tried as an id and a handle first; `scene.write` keeps `id` in its documents, which are what
   `scene.inspect` gives back. Results always give ids.
@@ -294,7 +302,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   results keep ids. A miss lists the nearest paths of that kind.
 - **Params are taken as they can only be meant**, in one place before anything reads them
   (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
-  the singular or the plural of one field (`id` and `ids` also of `entity` and `entities`), a
+  the singular or the plural of one field, a
   single value where a list goes, a list of one where a single value goes, and a number or a
   boolean, as its text, where the schema takes only a string. A list of several for a single
   value fails saying so.

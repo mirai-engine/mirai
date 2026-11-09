@@ -9,9 +9,7 @@ import importer "mirai:cook/import"
 // Writes what no art source holds: a badge (.tex) and a hum (.sound, imported
 // from the WAV this writes into source/). The scene, the prefabs and the .ui of
 // assets/ are their own source: the API and the editor edit those files and
-// nothing here writes them. From the folder of the project:
-//
-//   odin run tools/content -collection:mirai=<engine> -ignore-unknown-attributes
+// nothing here writes them. mirai content runs it.
 
 PROJECT :: "game_content"
 BADGE_SIZE :: 64

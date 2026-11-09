@@ -7,6 +7,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 import "mirai:editor/api"
+import "mirai:project"
 import "mirai:std/serial"
 
 MCP_MAX_LINE :: 16<<20
@@ -24,6 +25,9 @@ Mcp_Bridge :: struct {
     named:bool,     // by --client
     asked:bool,        // with --project: the client has asked for the list of tools
     listed:Connection_Editor, // with --project: the editor that list came from; zero: none answered it
+    queue:[dynamic]string,    // messages of stdio waiting for the worker
+    arrived:sync.Cond,
+    closed:bool,              // stdin ended
 }
 
 // MCP over stdio, one JSON message per line, forwarded to the editor.
@@ -41,6 +45,7 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
     bridge.named=bridge.client!=""
     if !bridge.named {bridge.client=client_environment()}
     thread.create_and_start_with_poly_data(&bridge,mcp_watch,self_cleanup=true)
+    worker:=thread.create_and_start_with_poly_data(&bridge,mcp_work)
     pending:[dynamic]u8
     chunk:[64*1024]u8
     for {
@@ -50,7 +55,7 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
             end:=-1
             for c,i in pending {if c=='\n' {end=i;break}}
             if end<0 {break}
-            mcp_message(&bridge,string(pending[:end]))
+            mcp_arrived(&bridge,string(pending[:end]))
             remove_range(&pending,0,end+1)
         }
         if len(pending)>MCP_MAX_LINE {
@@ -59,8 +64,43 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
         }
         if error!=nil || n==0 {break}
     }
-    if len(pending)>0 {mcp_message(&bridge,string(pending[:]))}
+    if len(pending)>0 {mcp_arrived(&bridge,string(pending[:]))}
+    sync.lock(&bridge.lock)
+    bridge.closed=true
+    sync.cond_signal(&bridge.arrived)
+    sync.unlock(&bridge.lock)
+    thread.join(worker)
+    thread.destroy(worker)
     return 0
+}
+
+// A message that came on stdio: a cancellation goes to the editor at once,
+// while the call it stops still holds the worker; the rest wait their turn.
+mcp_arrived :: proc(bridge:^Mcp_Bridge,line:string) {
+    method,_:=api.json_string(api.json_member(line,"method"))
+    if method=="notifications/cancelled" {
+        if port:=connection_editor(bridge.connection).port;port!=0 {
+            api.client_post(port,"/mcp",line,api.WAIT_TIMEOUT_MS,context.temp_allocator)
+            free_all(context.temp_allocator)
+        }
+        return
+    }
+    sync.guard(&bridge.lock)
+    append(&bridge.queue,strings.clone(line))
+    sync.cond_signal(&bridge.arrived)
+}
+
+// Answers the messages of stdio one after the other, as they came.
+mcp_work :: proc(bridge:^Mcp_Bridge) {
+    for {
+        sync.lock(&bridge.lock)
+        for len(bridge.queue)==0 && !bridge.closed {sync.cond_wait(&bridge.arrived,&bridge.lock)}
+        if len(bridge.queue)==0 {sync.unlock(&bridge.lock);return}
+        line:=pop_front(&bridge.queue)
+        sync.unlock(&bridge.lock)
+        mcp_message(bridge,line)
+        delete(line)
+    }
 }
 
 mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
@@ -82,7 +122,7 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
         editor,failed=connection_ready(c,called)
         if c.project=="" || editor.port!=0 {
             watch:=connection_watch(c,editor,fmt.tprintf("mirai mcp %s",method))
-            reply,answer,failed=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch)
+            reply,answer,failed=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch,{bridge,mcp_event})
             if !retried && connection_ended(c,called,failed) {continue}
             if answer && c.project!="" && method=="initialize" {reply=mcp_lists_changes(reply)}
         }
@@ -141,7 +181,16 @@ mcp_absent :: proc(root:string,c:Connection,editor:Connection_Editor,failed:api.
         tools=fmt.tprintf(`%s,{{"name":"%s","description":%s,"inputSchema":%s}}`,tools,api.MCP_CALL_TOOL,description,api.MCP_CALL_SCHEMA)
     }
     if compact:=api.docs_compact(root);compact!="" {instructions=fmt.tprintf("%s\n\n%s",instructions,compact)}
-    return {instructions,tools,failed}
+    instance:=api.Instance{engine=project.ENGINE_VERSION,project=c.project!=""?os.base(c.project):"",folder=c.project}
+    return {instructions,tools,failed,instance}
+}
+
+// A notification of a call that goes on, as it arrives.
+mcp_event :: proc(user:rawptr,line:string) {
+    bridge:=(^Mcp_Bridge)(user)
+    sync.guard(&bridge.lock)
+    os.write_string(os.stdout,line)
+    os.write_string(os.stdout,"\n")
 }
 
 // While the client holds an empty list, tries the editor every

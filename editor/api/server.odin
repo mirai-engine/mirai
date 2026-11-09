@@ -302,6 +302,8 @@ head_parse :: proc(s:^Server,conn:^Conn,head:string) -> (status:int,message:stri
             return 411,"Content-Length is required; chunked bodies are not accepted"
         case strings.equal_fold(name,"connection"):
             conn.keep=strings.equal_fold(value,"keep-alive")
+        case strings.equal_fold(name,"accept"):
+            conn.stream=strings.contains(value,"text/event-stream")
         case strings.equal_fold(name,"content-type"):
             kind:=value
             if semicolon:=strings.index_byte(kind,';');semicolon>=0 {kind=strings.trim_space(kind[:semicolon])}
@@ -348,8 +350,20 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
         write_error_envelope(base.arena_allocator(&s.scratch),&s.out,"",{INVALID_REQUEST,conn.reject_message,""})
     } else {
         body:=string(conn.buffer[conn.head:][:conn.length])
+        s.running={conn=index}
         has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]))
+        running_end(s)
         if !has_body {status=202}
+    }
+    if s.running.streamed && has_body {
+        // The answer is the last event of the stream its progress opened.
+        serial.text_write_raw(&s.out,"\n\n")
+        conn.keep=false
+        start:=HEAD_ROOM-len(STREAM_DATA)
+        copy(s.response[start:],STREAM_DATA)
+        s.sending,s.send_at,s.send_end=index,start,HEAD_ROOM+len(serial.writer_bytes(&s.out))
+        conn.started=time.tick_now()
+        return
     }
     body_bytes:=serial.writer_bytes(&s.out)
     if !has_body {body_bytes=nil}

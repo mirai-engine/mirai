@@ -172,7 +172,7 @@ pose_bake_uses_preview_actions_and_keeps_marker_crossings_across_discontinuous_s
     sections:=[2]anim.Action_Section{{start=0,end=.25,next=1},{start=1,end=1.5,next=-1}};base.text_set(sections[0].name[:],"prepare");base.text_set(sections[1].name[:],"contact")
     testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/reach.action",a.root),&a.assets.types,action_id,{info={animation=source_id},actions={definition},sections=sections[:]}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
     description:=anim.ANIMATION_DEFAULT;description.asset,description.actions=source_id,action_id;description.loop=false;base.text_set(description.clip[:],"Idle");core.add(&f.world.animations,f.rig,description);pose_bake_test_settle(&f.world,nil,nil)
-    result:=authoring_test_execute(a,"bake",`{"entity":"11","path":"action.anim","clip":"Final","start":0,"end":0.4,"rate":2.5,"actions":[{"kind":"Fire","name":"reach","tick":0}]}`);if !testing.expect(t,result.code==0,result.message) {return}
+    result:=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"action.anim","clip":"Final","start":0,"end":0.4,"rate":2.5,"actions":[{"kind":"Fire","name":"reach","tick":0}]}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"action.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {return}
     testing.expect(t,len(view.markers)==2 && abs(view.markers[0].time-.1)<1e-5 && abs(view.markers[1].time-.35)<1e-5 && view.clips[0].root.translation)
@@ -206,7 +206,7 @@ pose_bake_samples_final_constraints_curves_markers_blended_root_and_exact_partia
     if !testing.expect(t,result.code==0,result.message) {return}
     animation:=anim.ANIMATION_DEFAULT;animation.asset=authoring_test_id(a,"blend.agraph");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true});pose_bake_test_settle(&f.world,nil,nil)
     before:=f.world.transforms.values[1]
-    result=authoring_test_execute(a,"bake",`{"entity":"11","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
+    result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
     testing.expect(t,f.world.transforms.values[1]==before && len(f.world.playback.states)==0 && len(f.world.modifier_requests.queue.items)==0)
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None);defer asset.asset_close(&file)
@@ -238,7 +238,7 @@ pose_bake_samples_final_constraints_curves_markers_blended_root_and_exact_partia
         previous=time
     }
     testing.expect(t,linalg.length(actor.position-wanted.position)<1e-4 && mm.quat_angle(actor.rotation,wanted.rotation)<.001)
-    result=authoring_test_execute(a,"bake",`{"entity":"11","path":"in-place.anim","clip":"Still","start":0.2,"end":0.57,"rate":10,"root_motion":"In_Place","goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
+    result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"in-place.anim","clip":"Still","start":0.2,"end":0.57,"rate":10,"root_motion":"In_Place","goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
     in_place:asset.Asset;testing.expect_value(t,authoring_test_load(a,"in-place.anim",&in_place),asset.Error.None);defer asset.asset_close(&in_place)
     still,loaded:=asset.animation_view(&in_place,&a.assets.types);testing.expect_value(t,loaded,asset.Error.None);testing.expect(t,!still.clips[0].root.translation && !still.clips[0].root.rotation)
@@ -254,15 +254,15 @@ pose_bake_preserves_other_clips_and_undoes_without_publishing_on_failure :: proc
     a:=&f.authoring;source_id:=base.Asset_Id{502,1}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/source.anim",a.root),&a.assets.types,{id=source_id,clips={{name="Still"}}}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
     animation:=anim.ANIMATION_DEFAULT;animation.asset=source_id;core.add(&f.world.animations,f.rig,animation);pose_bake_test_settle(&f.world,nil,nil)
-    result:=authoring_test_execute(a,"bake",`{"entity":"11","path":"final.anim","clip":"Still","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
+    result:=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Still","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     output_id:=authoring_test_id(a,"final.anim");revision:=authoring_test_revision(a,"final.anim")
-    result=authoring_test_execute(a,"bake",`{"entity":"11","path":"final.anim","clip":"Other","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
+    result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Other","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None)
     view,error:=asset.animation_view(&file,&a.assets.types);testing.expect(t,error==.None && len(view.clips)==2 && len(view.tracks)==30);asset.asset_close(&file)
     failure:=Pose_Bake_Failing_Copy{owner=a.app.allocator,fail_at=3};saved:=a.app.allocator;a.app.allocator={pose_bake_failing_copy_allocator,&failure}
-    result=authoring_test_execute(a,"bake",`{"entity":"11","path":"oom.anim","clip":"Still","start":0,"end":0.1,"rate":10}`)
+    result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"oom.anim","clip":"Still","start":0,"end":0.1,"rate":10}`)
     a.app.allocator=saved;testing.expect(t,result.code!=0 && failure.attempts==3 && strings.contains(result.message,"copied") && !authoring_test_exists(a,"oom.anim"))
-    testing.expect_value(t,authoring_test_execute(a,"bake",`{"entity":"11","path":"bad.anim","clip":"Still","start":0.2,"end":0.1}`).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"bad.anim","clip":"Still","start":0.2,"end":0.1}`).code,api.INVALID_PARAMS)
     testing.expect(t,!authoring_test_exists(a,"bad.anim"))
 }
 
@@ -286,7 +286,7 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
     for pass in 0..<4 {
         if pass>0 {weights:=anim.Morph_Weights{source=f.rig};anim.morph_weight_set(&weights,"Smile",values[pass],modes[pass]);core.add(&f.world.morph_weights,f.rig,weights);pose_bake_test_settle(&f.world,nil,nil)}
         path:=paths[pass]
-        result:=authoring_test_execute(a,"bake",fmt.tprintf(`{{"entity":"11","path":"%s","clip":"Pose","start":0,"end":0.1,"rate":10}}`,path));if !testing.expect(t,result.code==0,result.message) {return}
+        result:=authoring_test_execute(a,"bake",fmt.tprintf(`{{"entity":"0000000000000011","path":"%s","clip":"Pose","start":0,"end":0.1,"rate":10}}`,path));if !testing.expect(t,result.code==0,result.message) {return}
         file:asset.Asset;testing.expect_value(t,authoring_test_load(a,path,&file),asset.Error.None)
         view,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {asset.asset_close(&file);return}
         saw_rest,saw_follow,saw_morph:bool

@@ -33,13 +33,10 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"typed",`{"methods":"a"}`,`{"methods":["a"]}`,""},
         {"typed",`{"entity":["x"]}`,`{"entity":"x"}`,""},
         {"typed",`{"entities":["x"]}`,`{"entity":"x"}`,""},
-        {"typed",`{"id":"x"}`,`{"entity":"x"}`,""},
-        {"typed",`{"ids":["x"]}`,`{"entity":"x"}`,""},
         {"typed",`{"count":[3]}`,`{"count":3}`,""},
         {"typed",`{"rows":{"x":1}}`,`{"rows":[{"x":1}]}`,""},
         {"typed",`{"rows":[{"xs":1}]}`,`{"rows":[{"x":1}]}`,""},
         {"typed",`{"mode":"run"}`,`{"mode":"run"}`,""},
-        {"typed",` { "ids" : [ "x" ] } `,` { "entity" : "x" } `,""},
         {"typed",`{"entity":["a","b"]}`,"","entity takes one value, not a list of several"},
         {"typed",`{"entities":["a","b"]}`,"","entity takes one value"},
         {"typed",`{"position":1}`,"","expected an array"},
@@ -75,53 +72,16 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
 
 @(private="file")
 Named_Params :: struct {
-    entity:base.Entity_Id,
-    parent:base.Entity_Id `mirai:"optional"`,
-    list:[3]base.Entity_Id `mirai:"optional"`,
+    entity:[64]u8 `mirai:"text,entity"`,
+    parent:[64]u8 `mirai:"optional,text,entity"`,
 }
 
-@(private="file")
-named_resolve :: proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string) {
-    switch text {
-    case "Floor": return 7,""
-    case "123":   return 8,""
-    case "0000000000000009": return 9,""
-    }
-    return 0,fmt.tprintf("%q names no entity",text)
-}
-
-@(private="file")
-named_echo :: proc(call:^Call) {
-    p:=call_params(call,Named_Params)
-    raw(call.out,fmt.tprintf("%d %d %d",p.entity,p.parent,p.list[1]))
-}
-
+// A param that names an entity is a text the handler resolves, and says so.
 @(test)
-a_param_of_an_entity_id_takes_what_the_resolver_of_the_server_takes :: proc(t:^testing.T) {
+a_param_that_names_an_entity_says_so_in_its_schema :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    s.entities={nil,named_resolve}
-    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=named_echo}),Register_Error.None)
-    cases:=[]struct{params,echo,error:string}{
-        {`{"entity":"Floor"}`,"7 0 0",""},
-        {`{"entity":123}`,"8 0 0",""},
-        {`{"entity":"0000000000000009","parent":"Floor","list":["Floor","123"]}`,"9 7 8",""},
-        {`{"id":"Floor"}`,"7 0 0",""},
-        {`{"entity":"Nope"}`,"",`entity: "Nope" names no entity`},
-        {`{"entity":"Floor","list":["Floor","Nope"]}`,"",`list[1]: "Nope" names no entity`},
-    }
-    buffer:=make([]u8,4096,context.temp_allocator)
-    for c in cases {
-        w:serial.Writer
-        serial.writer_init_fixed(&w,buffer)
-        err,ran:=method_execute(&s,method_find(&s,"named"),c.params,&w)
-        if c.error!="" {
-            testing.expectf(t,!ran && err.message==c.error,"%s: %s",c.params,err.message)
-            continue
-        }
-        testing.expectf(t,ran,"%s: %s",c.params,err.message)
-        testing.expect_value(t,string(serial.writer_bytes(&w)),c.echo)
-    }
+    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=noop}),Register_Error.None)
     schema:=params_schema_text(&s,method_find(&s,"named"))
     testing.expectf(t,strings.contains(schema,`"x-entity":`) && !strings.contains(schema,"pattern"),"the schema of a param says how it names: %s",schema)
     described:=strings.builder_make(context.temp_allocator)
@@ -223,11 +183,9 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
         {"small",`{"count":99}`,""},
         {"refuses",`{"count":1}`,""},
         {"own",`{"count":1}`,"own"},
-        {"named",`{"entity":"Nope"}`,""},
         {"named",`{"entity":"Floor","bogus":1}`,"usage"},
     }
     testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=noop}),Register_Error.None)
-    s.entities={nil,named_resolve}
     for c in failures {
         err,ran=run(&s,c.method,c.params,buffer)
         testing.expectf(t,!ran && (c.data=="" && err.data=="" || c.data!="" && strings.contains(err.data,c.data)),"%s %s: %s",c.method,c.params,err.data)

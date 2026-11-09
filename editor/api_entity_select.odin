@@ -15,6 +15,8 @@ import "mirai:std/serial"
 API_ENTITY_TEXT :: 256          // bytes of the text that names an entity
 API_ENTITY_SEVERAL_SHOWN :: 8   // how many of the entities a name fits an error lists
 
+Api_Entity_Text :: [API_ENTITY_TEXT]u8 // a param that names an entity
+
 // Whether the text has the form of an id or a handle: 16 hexadecimal digits,
 // or any number of them after 0x, so that a name like "1" stays a name.
 @(private="file")
@@ -92,16 +94,6 @@ api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=conte
 api_entity_select :: proc(w:core.World_Ref,text:string,what:="entity",game:=false,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
     if e,problem=api_entity_named(w,text,game,allocator);problem!="" {problem=fmt.aprintf("%s: %s",what,problem,allocator=allocator)}
     return
-}
-
-// What the reader of params does with a text where a base.Entity_Id goes: the
-// id of the entity of the document it names, also while a game plays, so every
-// handler gets an id and needs no code of its own.
-api_entity_text_resolve :: proc(user:rawptr,text:string) -> (id:base.Entity_Id,problem:string) {
-    w:=edited_world((^Session)(user))
-    e:core.Entity
-    if e,problem=api_entity_named(w,text,false);problem!="" {return}
-    return api_entity_id(w,e),""
 }
 
 // api_entity_select of a text of the params; false after failing the call.

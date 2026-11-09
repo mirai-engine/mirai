@@ -67,7 +67,7 @@ Intent_Gesture :: struct {
 }
 REQUEST_ROWS :: 64
 Request_Params :: struct {
-    entity:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
     seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
     parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
@@ -133,7 +133,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
             return
         }
     }
-    w,e,ok:=subject(s,call,p.entity);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     e=pose_owner(s,w,e)
     applied:=make([dynamic]Request_Applied,call.allocator)
     if !edit_begin(s,call,"Animation request") {return}
@@ -144,7 +144,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     }
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
     out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.entity)
+    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))
     if value,has:=editor.entity_get(w,e,anim.Animation);has {api.write_bool(out,"playing",value.playing)}
     if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {api.write_key(out,"time");api.write_number(out,time)}
     api.write_key(out,"applied");serial.text_write_raw(out,"[")
@@ -422,8 +422,9 @@ request_target_position :: proc(call:^api.Call,world:core.World_Ref,target:Spati
     #partial switch target.kind {
     case .World: return target.position,true
     case .Entity:
-        e:=find_entity(world,target.entity)
-        if e==core.NONE {authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity of the world",fmt.tprintf("%x",target.entity),"The target entity does not exist");return {},false}
+        target:=target
+        e,problem:=editor.api_entity_select(world,base.text_get(target.entity[:]),"entity",false,call.allocator)
+        if problem!="" {authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity of the world",base.text_get(target.entity[:]),"The target entity does not exist",fix=problem);return {},false}
         return mm.transform_point(editor.entity_world(world,e),target.position),true
     }
     authoring_failure(call,fmt.tprintf("%s.kind",path),"Unsupported_Target","World or Entity",fmt.tprintf("%v",target.kind),"Walking needs a point or an entity",fix="Pass target {\"kind\":\"World\",\"position\":[x,y,z]} or {\"kind\":\"Entity\",\"entity\":\"<id>\"}")
@@ -526,8 +527,8 @@ request_source_check :: proc(s:^editor.Session,call:^api.Call,world:core.World_R
 // fields of animation.preview): from time, ticks of dt, calling each with the
 // copy after the first pose (tick 0) and after every tick. The entity is the
 // rig. False, with the call failed, when the copy cannot run or each says so.
-preview_run :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,p:^$T,time:f32,ticks:u32,dt:f32,each:proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,tick:u32,data:rawptr) -> bool,data:rawptr) -> bool {
-    source,e,ok:=subject(s,call,id);if !ok {return false}
+preview_run :: proc(s:^editor.Session,call:^api.Call,named:[]u8,p:^$T,time:f32,ticks:u32,dt:f32,each:proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,tick:u32,data:rawptr) -> bool,data:rawptr) -> bool {
+    source,e,ok:=subject(s,call,named);if !ok {return false}
     e=pose_owner(s,source,e)
     if !editor.entity_has(source,e,anim.Animation) && rig_skeleton(s,source,e)=={} {authoring_failure(call,"entity","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return false}
     clone:=preview_world_clone(s,call,source);if clone==nil {return false}

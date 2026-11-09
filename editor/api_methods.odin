@@ -195,7 +195,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
 }
 
 
@@ -219,11 +218,12 @@ Api_Pause_Params :: struct {
 Api_Play_Step_Params :: struct {
     using input:Api_Play_Segment `mirai:"inline"`,
     focus:int `mirai:"optional,min=-1,max=3,label=The local seat (by slot) that gets the keys and the mouse from this step on; -1 keeps it"`,
-    until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; ticks (or those of segments) is the most it runs and none run when they hold already"`,
+    until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; for (or those of segments) is the most it runs and none run when they hold already"`,
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
-    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at ticks or seconds (30 s if neither is given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick along the navigation meshes when the project has them; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at for (30 s if not given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    drive_ticks:int `mirai:"transient"`, // of a drive given no for
     look_at:Api_Play_Look_At `mirai:"optional,label=Turns what the player sees through toward an entity or a point in every tick of the step; instead of mouse_delta; play.view says where it looks with follow.yaw_deg and follow.pitch_deg"`,
 }
 
@@ -321,7 +321,7 @@ Api_Editor_Action :: struct {
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
-    play_step_default:=Api_Play_Step_Params{input={ticks=1},focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
+    play_step_default:=Api_Play_Step_Params{focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
     build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
@@ -1177,7 +1177,6 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
     }
     result.entities=core.world_entities(ref).alive
     if view:=core.world_storage_of(ref,core.View);view!=nil {result.game_camera=view.camera!=core.NONE}
-    result.scripted=run_script_ticks(run_script(s,r))
 }
 
 @(private)
@@ -1242,7 +1241,9 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
     build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
-    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits) {
+    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits,"building to play") {
+        // Cancelled, the game does not start by itself when the build ends.
+        if api_stop_asked(s) {s.build.play.pending=false;s.play_asked={};return}
         api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
         return
     }
@@ -1354,6 +1355,7 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     if !api_step_drive_ticks(s,call,params) {return}
     timeline,ok:=api_step_timeline(call,params,s.app.tick_dt)
     if !ok {return}
+    if params.drive_ticks>0 {timeline[0].ticks=params.drive_ticks}
     if owner==0 && simulating(s) && (api_timeline_input(timeline) || params.focus>=0) {
         api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input")
         return
@@ -1363,9 +1365,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"That player has no run: play.start with online opens them")
         return
     }
-    if api_timeline_input(timeline) {
-        if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    }
     values:[4]string
     api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
     until:=params.until[:api.json_count(values[0])]
@@ -1374,7 +1373,6 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
     drive:^Api_Drive
     if values[2]!="" {
         if owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
-        if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
         read,ok:=api_drive_read(s,call,run_ref(s,target),&params.drive,values[2])
         if !ok {return}
         drive=new_clone(read,call.allocator)
@@ -1393,28 +1391,28 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.INVALID_PARAMS,problem)
             return
         }
-        run.sampler={every=params.trace.every,take=api_trace_take,data=&trace}
+        run.sampler,run.every=&trace,params.trace.every
     }
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)
-    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     ended:=run_find(s,owner)
     if drive!=nil {api_drive_finish(s,ended,drive,len(until)>0 && met)}
+    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     api_play_step_write(s,call,ended,ran,len(until)>0 && met,traced?&trace:nil,drive)
 }
 
-// A drive runs for ticks or seconds, its default when neither is given; it
+// A drive runs as long as its step says, 30 s when it does not; it
 // takes no segments and no press, which the steering would fight. false after failing the call.
 @(private)
 api_step_drive_ticks :: proc(s:^Session,call:^api.Call,params:^Api_Play_Step_Params) -> bool {
-    values:[5]string
-    api.object_values(call.allocator,call.raw,{"drive","ticks","seconds","segments","press"},values[:])
+    values:[4]string
+    api.object_values(call.allocator,call.raw,{"drive","for","segments","press"},values[:])
     if values[0]=="" {return true}
-    if values[3]!="" || values[4]!="" {
-        api.call_fail(call,api.INVALID_PARAMS,"drive steers along the ticks of the step: give it with ticks or seconds, without segments or press")
+    if values[2]!="" || values[3]!="" {
+        api.call_fail(call,api.INVALID_PARAMS,"drive steers along the ticks of the step: give it with for, without segments or press")
         return false
     }
-    if values[1]=="" && values[2]=="" {params.ticks=clamp(int(f64(API_DRIVE_DEFAULT_SECONDS)/max(f64(s.app.tick_dt),1e-6)+0.5),1,API_STEP_LIMIT)}
+    if values[1]=="" {params.drive_ticks=clamp(int(f64(API_DRIVE_DEFAULT_SECONDS)/max(f64(s.app.tick_dt),1e-6)+0.5),1,API_STEP_LIMIT)}
     return true
 }
 
@@ -1438,8 +1436,7 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
 }
 
 // One tick of play.step: every run of the game advances; the one of the
-// player gets the input of step, or without one the next tick of its script.
-// at: the tick of its segment; the first takes its pointer, wheel, taps and
+// player gets the input of step. at: the tick of its segment; the first takes its pointer, wheel, taps and
 // text, and the motion of the mouse is spread over all of them.
 @(private)
 api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
@@ -1447,12 +1444,6 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
         if other.world==nil || other.owner!=owner {continue}
         other.step=true
         if other.player!=player {continue}
-        step,at:=step,at
-        scripted:Api_Step_Input
-        if step==nil {
-            scripted,at=run_script_take(run_script(s,&other))
-            step=&scripted
-        }
         run_tell_input(s,&other,step,at)
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}
@@ -1586,7 +1577,7 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
-    api_wait(s,f64(params.seconds),nil,build_running)
+    api_wait(s,f64(params.seconds),nil,build_running,"building")
     api_build_result(s,call)
 }
 

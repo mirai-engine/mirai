@@ -140,7 +140,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `seconds` (0 or more) sets the window clock, the one the renderer draws, when the frames
     start: a scene loaded anew and captured at the same seconds draws the same. Without it the
     clock keeps running. A game runs by its ticks, so `dt` and `seconds` do not go with it.
-  - Filmstrip (`every` or `every_seconds`, and `count`): steps the caller's own run like
+  - Filmstrip (`every`, and `count`): steps the caller's own run like
     `play.step` (pausing the user's Play), with `segments` as its input and nothing held after
     them, and draws a cell before the first tick and every `every` ticks: the whole image, a
     `region` in points, or a cell of `size` centered where the `follow` entity (its name, id or
@@ -539,27 +539,30 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - Local seats (`play.start players`): gamepad `slot` i belongs to seat i; keyboard and mouse go
     to the focused seat, which `focus` changes like `input.focus`.
   - `until`: up to 8 conditions of `play.check`; runs until the first tick after which all are met,
-    with `ticks` as the maximum (`ran` and `met` say so). A badly written condition fails before
+    with `for` as the maximum (`ran` and `met` say so). A badly written condition fails before
     running; if it becomes invalid later, it fails saying after how many ticks.
-  - `segments`: a timeline in one call, each segment holding its input for its `ticks` (or
-    `seconds`, rounded to whole ticks) and its pointer, wheel, text and taps in its first tick; the
-    mouse motion is spread over its ticks. It replaces `ticks` and the input fields, which fail
+  - `segments`: a timeline in one call, each segment holding its input for its `for`
+    and its pointer, wheel, text and taps in its first tick; the
+    mouse motion is spread over its ticks. It replaces `for` and the input fields, which fail
     beside it, and its ticks add up to at most those of a step.
   - Edges are against what the previous tick held, so a press is a segment with the key and a
     release the next one without it. A tap (`tap_keys`, `tap_buttons`, a gamepad's `tapped`) is
     pressed and released inside one tick and never down, like a press shorter than a tick.
-  - A step without input of its own plays the segments `play.input` scheduled; one with input
-    fails while some are left.
-  - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and paths of
-    `--select` inside the document `play.inspect` (or `play.view`) writes. Its rows are read
+  - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and the values
+    as [`play.get`](#play) names them (or paths inside the storage or the view). Its rows are read
     between ticks, before the first, every `every` and after the last, so the rows of a long step
     need a larger `every`. In the first row a path that is not there fails, unless it names a
     component the entity does not have yet; later, what is gone is `null`. With `view` the
     entities named are its `points`.
-- `play.check` (`read_only`): each condition reads a field (`field` with dots and indices) of a
-  component of an `entity`, of a storage or of the `view`, as
-  `play.inspect` or `play.view` write them, and compares it with `number` or `text`; without a
-  component, the entity gives its `world_position`. With `view` the entity named is `points.0`.
+- A duration is one param, `for`, in every method: a number is ticks, exact, and a text ending in
+  `s` is seconds (`{"for": 120}`, `{"for": "1.5s"}`); a place of the past takes the same form.
+- One syntax names a value in Play, for `play.get`, `play.check`, `until` and `trace`:
+  `Component.field.0.field` (`a[0].b` reads as `a.0.b`), or a key of the document of the entity
+  (`world_position.2`).
+- `play.check` (`read_only`): each condition reads a value (`field`) of an `entity`, of a storage
+  or of the `view`, as `play.inspect` or `play.view` write them, and compares it with `number` or
+  `text`; without `field`, the entity gives its `world_position`. With `view` the entity named is
+  `points.0`.
   `Exists` and `Gone` say whether the entity, the component or the field is there: what is not
   there is a reading, not an error. A name or a field the game does not have is `-32602` with what
   exists. A `passed:false` is a result, not a failure.
@@ -590,19 +593,9 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   one, another by `slot`. In a networked game a player is held in the
   run of its client (`player`), whose seat sends the held actions to the server with the others;
   the seat of a connection in the server's run is refused, since it takes what its client sends.
-  An action is held for `ticks` or `seconds`, the nearest whole ticks.
+  An action is held for its `for`.
   Typical test: hold `jump` for 1 tick, `play.step` 30 ticks with a `trace` of the height (or
   `capture` with a filmstrip that follows the body), `play.check` the height.
-  - `segments` instead schedule devices, as in `play.step`, through the path of real input (taps,
-    holds, double presses and thresholds of the actions see them as a person's): the following
-    ticks the API runs without input of their own (`play.step`, a filmstrip, `play.walk`) play them
-    one by one, and nothing is held after them. They replace what was left of earlier ones;
-    `release_all` drops them, and `scripted` in the play results counts the ticks left. Keys and
-    mouse go to the focused seat and gamepad i to seat i, so `slot` fails beside them
-    alone. The user's Play pauses; `play.record` fails while some are left.
-- `play.walk` (registered by the `navigation` plugin): walks the body of a seat to a point or
-  an entity tick by tick through the meshes and says how it ended
-  ([walk](../../mirai-plugins/references/navigation.md#editor-and-api)).
 - `play.record`: requires a GPU. Deletes the previous sequence in the folder, pauses the run,
   advances it `1/fps` of game time per frame (with its `Clock`), draws the world alone through the
   camera of its `View`, without screen UI, and writes `frame_000000.png` (16 bits, after the
@@ -621,8 +614,8 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   was played again is not what was seen. Fails with the range if the tick is older
   ([history](../../mirai-editor/references/editor.md#play)).
   - Both act on the caller's run or else the user's last Play kept after Stop (`stopped`), which
-    `play.seek` opens again paused outside a turn. Ticks may be given as game time: `seconds` of
-    `play.seek` and `from_seconds` and `to_seconds` of `play.history`.
+    `play.seek` opens again paused outside a turn. `to` of `play.seek` and `from` and `to` of
+    `play.history` are a tick or a game time, as a duration is.
   - Both `trace` and `verify` play the kept frames again on the run's World and put it back after:
     the game, paused or playing, stays as it was. A trace takes the syntax of `play.step`'s and
     gives a row per kept frame that reached `every` ticks past the previous row (a frame that ran
@@ -753,7 +746,7 @@ when the viewport draws with them, which `mirai shaders` asks for.
 
 ## Prefabs
 
-A prefab is named by `asset`: its file, a path under `assets/` or its id. Those that edit are
+A prefab is named by `asset`, as any asset is: a path under `assets/` or its id. Those that edit are
 transactions. Unknown id, no id, prefab not found, nonexistent override and "is not part of an
 instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).

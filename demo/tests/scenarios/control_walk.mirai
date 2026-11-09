@@ -1,13 +1,13 @@
 {
   "scene": "scenes/control.scene",
   "steps": [
-    {"name": "the intro ends", "method": "play.step", "params": {"ticks": 600, "until": [
-      {"entity": "Control intro", "component": "Cinematic", "field": "status",
+    {"name": "the intro ends", "method": "play.step", "params": {"for": 600, "until": [
+      {"entity": "Control intro", "field": "Cinematic.status",
        "compare": "Equal", "text": "Completed"}]}},
     {"name": "the person stands at its spawn", "method": "play.check", "params": {"conditions": [
       {"entity": "Person", "field": "world_position.2", "compare": "Above", "number": 1.9}]}},
     {"name": "walk forward a second", "method": "play.step",
-     "params": {"segments": [{"seconds": 1, "keys": ["W"]}, {"ticks": 30}]}},
+     "params": {"segments": [{"for": "1s", "keys": ["W"]}, {"for": 30}]}},
     {"name": "the person walked forward", "method": "play.check", "params": {"conditions": [
       {"entity": "Person", "field": "world_position.2", "compare": "Below", "number": 0}]}}
   ]

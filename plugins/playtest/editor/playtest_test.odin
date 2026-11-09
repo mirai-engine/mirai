@@ -314,7 +314,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
         testing.expect(t,!(foe["on_screen"].(json.Boolean) or_else true),text)
     }
     core.report(&running.problems,f.hero,"test.broken","The hero is broken: fix it.")
-    error,text=probe_call(f,"play.observe",`{"step":{"ticks":2},"targets":["Foe"]}`)
+    error,text=probe_call(f,"play.observe",`{"step":{"for":2},"targets":["Foe"]}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect_value(t,api.result_mismatch(Api_Play_Observe,text),"")
     seen:=probe_json(t,text)
@@ -328,7 +328,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     error,_=probe_call(f,"play.input",`{"actions":[{"name":"move","vector":[1,0]}]}`)
     testing.expectf(t,error.code==0,"%v",error)
     for _ in 0..<3 {
-        error,text=probe_call(f,"play.observe",`{"step":{"ticks":60}}`)
+        error,text=probe_call(f,"play.observe",`{"step":{"for":60}}`)
         testing.expectf(t,error.code==0,"%v",error)
     }
     testing.expect(t,(probe_json(t,text)["stuck"].(json.Boolean) or_else false),text)
@@ -356,12 +356,12 @@ the_monitors_report_a_violation_with_its_tick_place_and_severity :: proc(t:^test
     running:=cast(^Probe_World)editor.run_find(&f.s,0).world
     transforms:=core.get(&running.transforms,f.foe)
     transforms.scale.y=f32(math.inf_f32(1))
-    error,_=probe_call(f,"play.step",`{"segments":[{"ticks":2,"keys":["Space"]},{"ticks":3}]}`)
+    error,_=probe_call(f,"play.step",`{"segments":[{"for":2,"keys":["Space"]},{"for":3}]}`)
     testing.expectf(t,error.code==0,"%v",error)
     transforms.scale.y=1
     error,_=probe_call(f,"play.input",`{"actions":[{"name":"move","vector":[1,0]}]}`)
     testing.expectf(t,error.code==0,"%v",error)
-    error,_=probe_call(f,"play.step",`{"ticks":90}`)
+    error,_=probe_call(f,"play.step",`{"for":90}`)
     testing.expectf(t,error.code==0,"%v",error)
     error,text=probe_call(f,"play.qa.report",`{}`)
     testing.expectf(t,error.code==0,"%v",error)
@@ -405,17 +405,17 @@ repro_replay_case :: proc(t:^testing.T,late:bool) {
     error:api.Error
     text:string
     if late {
-        error,_=probe_call(f,"play.step",`{"ticks":1}`)
+        error,_=probe_call(f,"play.step",`{"for":1}`)
         testing.expectf(t,error.code==0,"%v",error)
     }
     error,text=probe_call(f,"play.qa.start",`{"fall_below":-2,"stuck_seconds":0,"non_finite":false,"problems":false}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"repro": true`),text)
-    error,_=probe_call(f,"play.input",`{"actions":[{"name":"move","vector":[1,0],"ticks":3}]}`)
+    error,_=probe_call(f,"play.input",`{"actions":[{"name":"move","vector":[1,0],"for":3}]}`)
     testing.expectf(t,error.code==0,"%v",error)
-    error,_=probe_call(f,"play.step",`{"ticks":4}`)
+    error,_=probe_call(f,"play.step",`{"for":4}`)
     testing.expectf(t,error.code==0,"%v",error)
-    error,_=probe_call(f,"play.step",`{"segments":[{"ticks":2},{"ticks":1,"keys":["Space"]},{"ticks":4}]}`)
+    error,_=probe_call(f,"play.step",`{"segments":[{"for":2},{"for":1,"keys":["Space"]},{"for":4}]}`)
     testing.expectf(t,error.code==0,"%v",error)
     f.s.project_root=root
     error,text=probe_call(f,"play.qa.report",`{"violation":0,"repro":true}`)
@@ -477,7 +477,7 @@ the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(
     probe_drive(f)
     root:=probe_root()
     defer os.remove_all(root)
-    params:=`{"seed":7,"ticks":150,"move":"move","jump":"jump","cell":1}`
+    params:=`{"seed":7,"for":150,"move":"move","jump":"jump","cell":1}`
     play :: proc(t:^testing.T,f:^Probe,root,params:string) -> string {
         error,_:=probe_call(f,"play.stop",`{}`)
         testing.expect_value(t,error.code,0)
@@ -507,7 +507,7 @@ the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(
     repros,_:=answer["repros"].(json.Array)
     testing.expect(t,len(violations)>0 && len(repros)==1,first)
     testing.expect(t,!strings.contains(first,`"repro_error"`),first)
-    error,_:=probe_call(f,"play.explore",`{"ticks":10,"move":"nothing"}`)
+    error,_:=probe_call(f,"play.explore",`{"for":10,"move":"nothing"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 

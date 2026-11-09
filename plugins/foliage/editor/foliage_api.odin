@@ -31,7 +31,7 @@ Create_Params :: struct {
 }
 
 Type_Add_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     mesh:base.Asset_Id `mirai:"label=The .mesh it shows"`,
     name:[32]u8 `mirai:"text,optional,label=What names it; omitted: that of its mesh"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
@@ -53,7 +53,7 @@ Type_Add_Params :: struct {
 }
 
 Type_Set_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name as foliage.query lists them"`,
     name:[32]u8 `mirai:"text,optional,label=Another name; no other type may have it"`,
     mesh:base.Asset_Id `mirai:"optional,label=Another mesh: its instances stay"`,
@@ -76,12 +76,12 @@ Type_Set_Params :: struct {
 }
 
 Type_Remove_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name: it goes with its instances"`,
 }
 
 Paint_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     mode:[16]u8 `mirai:"text,label=paint or erase or reapply or generate or ungenerate"`,
     at:[3]f32 `mirai:"label=Where the brush touches in the world: the surface under it"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to touching every half radius"`,
@@ -93,13 +93,13 @@ Paint_Params :: struct {
 }
 
 Place_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     type:[32]u8 `mirai:"text,label=The type by its name"`,
     at:[3]f32 `mirai:"label=Where it stands in the world: on the surface under it"`,
 }
 
 Query_Params :: struct {
-    entity:base.Entity_Id `mirai:"label=The entity of the Foliage"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
     min:[3]f32 `mirai:"optional,label=A corner of the box of the world it lists; without min and max: only the types and their counts"`,
     max:[3]f32 `mirai:"optional"`,
     limit:u32 `mirai:"optional,min=1,max=4096,clamp,label=Instances listed at most"`,
@@ -124,21 +124,22 @@ foliage_api_register :: proc(s:^editor.Session) {
 
 // The tool and the edited world with the source of a Foliage ready to edit.
 @(private)
-api_foliage :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id) -> (tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,ok:bool) {
-    id:=id
+api_foliage :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,ok:bool) {
     // A Foliage just made takes its place in the world with the next frame.
-    if api_foliage_unplaced(s,&id) {editor.api_settle(s,&id,api_foliage_unplaced)}
+    given:=base.text_get(named)
+    if api_foliage_unplaced(s,&given) {editor.api_settle(s,&given,api_foliage_unplaced)}
     tool=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Foliage_Tool)
     world=editor.edited_world(s)
     table:=core.world_table_of(world,foliage.Foliage);worlds:=core.world_table_of(world,core.World_Transform)
     if tool==nil || table==nil || worlds==nil {api.call_fail(call,api.INVALID_PARAMS,"The project has no foliage: activate the plugin foliage in project.mirai");return}
     tool_ready(tool)
     if tool.stroke.active || tool.gizmo.drag.active {api.call_fail(call,api.INVALID_PARAMS,"A stroke of the foliage tool is held in the viewport: let it go first");return}
-    e=editor.api_entity(world,id)
-    if e==core.NONE || !core.has(core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"%x is not an entity with a Foliage: scene.inspect lists them",id);return}
-    if !edit_prepare(tool,s.app,core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %x could not be read: engine.diagnostics says why",id);return}
+    found:bool
+    if e,found=editor.api_call_entity(call,world,named);!found {return}
+    if !core.has(core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Foliage: scene.inspect lists them",given);return}
+    if !edit_prepare(tool,s.app,core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
     placed,has_place:=core.get(core.read(worlds),e)
-    if !has_place {api.call_failf(call,api.INVALID_PARAMS,"Foliage %x has no place in the world: give its entity a Transform with scene.set",id);return}
+    if !has_place {api.call_failf(call,api.INVALID_PARAMS,"Foliage %s has no place in the world: give its entity a Transform with scene.set",given);return}
     owner=placed.transform
     if grounds:=core.world_storage_of(world,foliage.Foliage_Ground);grounds!=nil {ground=foliage.ground_owner(grounds,e)}
     ok=true
@@ -152,12 +153,12 @@ type_write :: proc(call:^api.Call,name:string) {
     serial.text_write_raw(call.out,"}")
 }
 
-// Whether the entity of the id (^base.Entity_Id) is a Foliage still without a place in the world.
+// Whether the entity named (^string) is a Foliage still without a place in the world.
 @(private)
 api_foliage_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
     world:=editor.edited_world(s)
     table:=core.world_table_of(world,foliage.Foliage);worlds:=core.world_table_of(world,core.World_Transform)
-    e:=editor.api_entity(world,(^base.Entity_Id)(user)^)
+    e,_:=editor.api_entity_find(world,(^string)(user)^)
     return table!=nil && worlds!=nil && e!=core.NONE && core.has(core.read(table),e) && !core.has(core.read(worlds),e)
 }
 
@@ -267,7 +268,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_add :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Add_Params)
-    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     count,_:=api.params_array_count(call,"layers")
     if count>0 {ground=ground_settled(s,e)}
@@ -288,7 +289,7 @@ api_type_add :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Set_Params)
-    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,e,_,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.edit.source
     t:=type_named(call,source,base.text_get(p.type[:]))
@@ -319,7 +320,7 @@ api_type_set :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_type_remove :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Type_Remove_Params)
-    tool,world,_,_,_,ok:=api_foliage(s,call,p.entity)
+    tool,world,_,_,_,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     t:=type_named(call,&tool.edit.source,base.text_get(p.type[:]))
     if t==nil {return}
@@ -342,7 +343,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     case "ungenerate": mode,generate=.Generate,false
     case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, generate or ungenerate");return
     }
-    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.edit.source
     // What the brush of the tool holds goes back to it after the stroke.
@@ -391,7 +392,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_place :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Place_Params)
-    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity)
+    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.edit.source
     t:=type_named(call,source,base.text_get(p.type[:]))
@@ -415,7 +416,7 @@ api_place :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
-    tool,_,_,owner,ground,ok:=api_foliage(s,call,p.entity)
+    tool,_,_,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
     source:=&tool.edit.source
     w:=call.out

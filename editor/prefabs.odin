@@ -281,26 +281,6 @@ prefab_file :: proc(s:^Session,id:base.Asset_Id) -> (file:^asset.Registry_File,p
     return file,asset.registry_file_path(&a.registry,file.path,context.temp_allocator),true
 }
 
-// The id of a prefab named by an asset id or by a path: a file, or inside the assets folder.
-prefab_locate :: proc(s:^Session,path:string) -> (found:base.Asset_Id,error:Prefab_Error) {
-    a:=s.app.assets
-    if a==nil {return {},.No_Assets}
-    assets_rescan(s)
-    if id,is_id:=base.asset_id_parse(path);is_id {
-        _,_,ok:=prefab_file(s,id)
-        return id,ok?.None:.Not_Found
-    }
-    if path=="" {return {},.Not_Found}
-    names:=[2]string{path,path}
-    if !strings.has_suffix(path,PREFAB_EXTENSION) {names[1]=strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator)}
-    for name in names {
-        for candidate in ([2]string{scene_path(s,scene_file(s,name)),name}) {
-            if file,ok:=asset.registry_find_path(&a.registry,candidate);ok && file.kind==asset.KIND_PREFAB {return file.id,.None}
-        }
-    }
-    return {},.Not_Found
-}
-
 @(private)
 assets_rescan :: proc(s:^Session) {
     a:=s.app.assets

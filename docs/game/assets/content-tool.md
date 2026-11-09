@@ -5,8 +5,8 @@ the generated assets of a game from code, so the same bytes come out every run a
 rebuilt from source. Use it for what no art source holds: procedural textures, generated sounds,
 sets of sounds and meshes made from code. Art files go through `mirai import`
 ([assets](../assets.md#import)); a scene and a prefab are files of `assets/`, written through the
-API or in the editor, never by a tool ([whole-scene](whole-scene.md)). The command that runs a
-tool is at the top of the project's `tools/content/main.odin`; run it from the project folder.
+API or in the editor, never by a tool ([whole-scene](whole-scene.md)). `mirai content <project>` runs a project's
+tool; what goes after `--` reaches it as its arguments.
 
 ## Skeleton
 
