@@ -45,6 +45,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         if _,held:=widget_rect(ctx,ctx.focus);ctx.focus==0 || !held || b.turned {
             ctx.focus,ctx.focus_ring=node_id,true
             b.turned=false
+            b.animating=true // this frame built it without its focus: the next shows it
         }
     }
     if .Draggable in node.flags {tree_drag_source(ctx,b,node,index,node_id,item)}

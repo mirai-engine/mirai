@@ -86,6 +86,7 @@ Tree_Style_Info :: struct {
     base:u16, // row plus one of the style a node overrides with this one until it saves it there; 0: none
     family:Style_Family,
     defaults:Node_Kinds, // the kinds whose new nodes take this style; a kind is in one style of a file at most
+    from:u16, // row plus one of the component whose file has the style of this name: this row is that style once linked; 0: its own
 }
 Tree_Font :: struct {
     font:base.Asset_Id, // a .font
@@ -222,7 +223,7 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
     for font in data.fonts {if font.font=={} {return false}}
     // An info is that of a style and names as its base another style.
     if len(data.style_infos)>len(data.styles) {return false}
-    for info,row in data.style_infos {if int(info.base)>len(data.styles) || int(info.base)==row+1 {return false}}
+    for info,row in data.style_infos {if int(info.base)>len(data.styles) || int(info.base)==row+1 || info.from!=0 {return false}}
     expanded,ok:=tree_expand(data,allocator)
     if !ok {return false}
     defer delete(expanded,allocator)
@@ -428,7 +429,7 @@ tree_text_fields :: proc(node:^Tree_Node) -> (fields:[TREE_TEXT_FIELDS]Node_Fiel
 
 @(private)
 tree_style_finite :: proc "contextless" (s:Node_Style) -> bool {
-    return tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,
+    return tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,s.move.x,s.move.y,s.scale,
         s.program_values[0],s.program_values[1],s.program_values[2],s.program_values[3])
 }
 @(private)

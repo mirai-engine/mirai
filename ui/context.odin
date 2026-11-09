@@ -398,6 +398,8 @@ widget_add :: proc(ctx:^Context,id:Id,flags:Widget_Flags) {
     flags:=flags
     if ctx.effect_refused>0 || ctx.invisible>0 {flags+={.Passive,.Disabled}}
     if ctx.unfocusable>0 {flags-={.Focusable}}
+    // The element that a scope registered as its pivot takes the place of that entry.
+    if ctx.widget_count>0 && ctx.widgets[ctx.widget_count-1].id==id && .Passive in ctx.widgets[ctx.widget_count-1].flags {ctx.widget_count-=1}
     if ctx.widget_count>=len(ctx.widgets) {ctx.stats.dropped_widgets+=1;return}
     ctx.widgets[ctx.widget_count]={id=id,layer=ctx.layer,clip=ctx.clip_stack[ctx.clip_depth-1] if ctx.clip_depth>0 else 0,scope=ctx.scope,surface=ctx.surface,flags=flags,effect_clip=ctx.effect_clip,order=ctx.order,group=ctx.nav_group}
     ctx.widget_count+=1

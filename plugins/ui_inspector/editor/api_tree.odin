@@ -683,6 +683,8 @@ tree_patch_fields :: proc(call:^api.Call,text:string) -> (fields:ui.Style_Fields
         case "radius":       fields+={.Radius}
         case "stroke_width": fields+={.Stroke_Width}
         case "shadow","shadow_color","shadow_blur","shadow_offset": fields+={.Shadow}
+        case "move":         fields+={.Move}
+        case "scale":        fields+={.Scale}
         case "text":
             text_keys,_:=tree_object(call,values[i],"fields.text") or_return
             for t in text_keys {

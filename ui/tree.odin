@@ -68,6 +68,7 @@ Node_Flag :: enum u8 {
     Invisible,   // it keeps its room but draws nothing and takes no input; with a Visible binding, what false does
     Multiline,   // a Field: its text keeps line breaks and wraps
     Password,    // a Field: shows a mark for each character
+    Slot,        // a template: what its instance holds goes in this node, the last of the template
 }
 Node_Flags :: bit_set[Node_Flag;u16]
 
@@ -101,7 +102,9 @@ Node_Style :: struct {
     program:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a ui program that colors the fill
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
-    transition:f32, // seconds its colors take to go from one state to the next
+    transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
+    scale:f32,      // drawn this size around its center, as move; 0: 1
 }
 // How an image takes the rectangle of its node.
 Image_Fit :: enum u8 {
@@ -622,7 +625,7 @@ tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
 }
 @(private)
 tree_box :: proc(node:^Node,style:^Node_Style,id:Id) -> Box {
-    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
+    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width if style.stroke_width>0 || style.stroke[3]==0 else 1,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
 }
 
 @(private)
@@ -858,6 +861,15 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
     style:=&resolved
+    // A style moves what its node draws, not where the layout or the pointer find it.
+    moved:=false
+    if style.move!={} || style.scale!=0 && style.scale!=1 {
+        look:=ANIM_IDENTITY
+        look.offset=style.move
+        if style.scale!=0 {look.scale={style.scale,style.scale}}
+        moved=animated_begin(ctx,node_id,look,still=true)
+    }
+    defer if moved {animated_end(ctx)}
     image_ref:Node_Image
     if node.image!=0 && int(node.image)<=tree.image_count {image_ref=tree.images[node.image-1]}
     if bound.image.bound && ctx.game.texture!=nil {

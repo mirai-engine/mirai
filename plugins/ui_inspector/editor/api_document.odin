@@ -30,6 +30,7 @@ import "mirai:ui"
     .Fill={"fill","","",""},.Fill2={"fill2","","",""},.Stroke={"stroke","","",""},.Track={"track","","",""},.Knob={"knob","","",""},.Mark={"mark","","",""},
     .Radius={"radius","","",""},.Stroke_Width={"stroke_width","","",""},.Shadow={"shadow","shadow_color","shadow_blur","shadow_offset"},
     .Text_Font={"font","","",""},.Text_Size={"size","","",""},.Text_Color={"color","","",""},.Text_Outline={"outline","outline_color","",""},.Text_Shadow={"shadow","shadow_color","",""},
+    .Move={"move","","",""},.Scale={"scale","","",""},
 }
 @(private) DOCUMENT_TEXT_FIELDS :: ui.Style_Fields{.Text_Font,.Text_Size,.Text_Color,.Text_Outline,.Text_Shadow}
 

@@ -55,16 +55,16 @@ UI_CLIP_TRACKS :: 16
 // the layout of the file.
 @(private="file") Ui_String_Links :: struct {offset,length:u32}
 @(private="file") Ui_Layout_Links :: struct {tracks:u16}
-@(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links}
+@(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links,flags:u16}
 @(private="file") Ui_Translation_Links :: struct {text:Ui_String_Links}
-@(private="file") Ui_Component_Links :: struct {first,count:u32,name:[64]u8 `mirai:"text"`,widget:base.Asset_Id}
+@(private="file") Ui_Component_Links :: struct {first,count:u32,name:[64]u8 `mirai:"text"`,widget:base.Asset_Id,named,library:bool}
 @(private="file") Ui_Override_Links :: struct {instance:u32,node:[64]u8 `mirai:"text"`,fields:u32,values:Ui_Node_Links}
 @(private="file") Ui_Font_Links :: struct {font:u8}
 @(private="file") Ui_Font_Row :: struct {font:base.Asset_Id}
 @(private="file") Ui_Style_Links :: struct {text:Ui_Font_Links}
 @(private="file") Ui_Patch_Links :: struct {values:Ui_Style_Links}
 @(private="file") Ui_Variant_Links :: struct {style:u16,patch:Ui_Patch_Links}
-@(private="file") Ui_Style_Info_Links :: struct {base:u16}
+@(private="file") Ui_Style_Info_Links :: struct {base,from:u16}
 
 // As ui.FONT_TREE and ui.FONT_CAPACITY: a style font from UI_FONT_TREE on is a
 // row of fonts; below UI_FONT_CAPACITY, a font of the context.
@@ -74,6 +74,8 @@ UI_FONT_CAPACITY :: 16
 @(private="file") ui_holds :: proc "contextless" (kind:u8) -> bool {return kind==0 || kind==8 || kind==9 || kind==10 || kind==17 || kind>=22 && kind<=26}
 @(private="file") UI_KIND_COMPONENT :: 7
 @(private="file") UI_KIND_LIST :: 10
+// As ui.Node_Flag.Slot.
+@(private="file") UI_FLAG_SLOT :: u16(1<<11)
 // As ui.NODE_FIELDS_UNKNOWN.
 @(private="file") UI_FIELDS_UNKNOWN :: ~u32(0xffff)
 @(private="file") Ui_Anim_Links :: struct {kind:u8,first,count:u32}
@@ -125,7 +127,7 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
     for style in styled {if !font_ok(style.text.font,fonts) {return false}}
     // A style overrides another style, not itself.
     if len(infos)>styles {return false}
-    for info,row in infos {if int(info.base)>styles || int(info.base)==row+1 {return false}}
+    for info,row in infos {if int(info.base)>styles || int(info.base)==row+1 || int(info.from)>len(components) {return false}}
     if !ui_components_check(nodes,component_nodes,components,overrides,styles,images,len(sets),text,grids) {return false}
     if len(anims)>=int(max(u16)) {return false}
     clip_tracks,clip_keys,group_parts:=0,0,0
@@ -195,6 +197,16 @@ ui_link_patch :: proc(node:^Ui_Node_Links,fields:u32,values:^Ui_Node_Links) {
     if fields&(1<<5)!=0 {node.anims=values.anims}
 }
 @(private="file")
+ui_slot_in :: proc(s:^Ui_Structure,component,depth:int) -> bool {
+    if depth>=UI_TREE_DEPTH {return false}
+    c:=s.components[component]
+    for &node in s.component_nodes[c.first:][:c.count] {
+        if node.flags&UI_FLAG_SLOT!=0 {return true}
+        if node.kind==UI_KIND_COMPONENT && node.component!=0 && int(node.component)<=len(s.components) && ui_slot_in(s,int(node.component-1),depth+1) {return true}
+    }
+    return false
+}
+@(private="file")
 ui_structure_range :: proc(s:^Ui_Structure,nodes:[]Ui_Node_Links,parent_depth:int,prefix,local_prefix:string,instance:i32,component_depth:int,root_patch:^Ui_Node_Links=nil) -> bool {
     subtree:=make([]i32,len(nodes),context.temp_allocator)
     depths:=make([]int,len(nodes),context.temp_allocator)
@@ -202,7 +214,7 @@ ui_structure_range :: proc(s:^Ui_Structure,nodes:[]Ui_Node_Links,parent_depth:in
     built:=instance!=-2
     for &source,at in nodes {
         if source.parent<-1 || int(source.parent)>=at {return false}
-        if source.parent>=0 && (!ui_holds(nodes[source.parent].kind) || int(source.parent+subtree[source.parent])+1!=at) {return false}
+        if source.parent>=0 && (!ui_holds(nodes[source.parent].kind) && nodes[source.parent].kind!=UI_KIND_COMPONENT || int(source.parent+subtree[source.parent])+1!=at) {return false}
         // A List holds one node: the first after it.
         if built && source.parent>=0 && nodes[source.parent].kind==UI_KIND_LIST && int(source.parent)+1!=at {return false}
         if built && source.kind==UI_KIND_LIST && (at+1>=len(nodes) || int(nodes[at+1].parent)!=at) {return false}
@@ -218,6 +230,9 @@ ui_structure_range :: proc(s:^Ui_Structure,nodes:[]Ui_Node_Links,parent_depth:in
         if source.kind==UI_KIND_COMPONENT {
             if source.component==0 || int(source.component)>len(s.components) || name=="" || component_depth>=UI_TREE_DEPTH {return false}
             for active in s.stack[:component_depth] {if active==source.component {return false}}
+            if s.components[source.component-1].library {return false}
+            // What an instance holds goes in the Slot of its template; a widget's is checked when the two load together.
+            if at+1<len(nodes) && nodes[at+1].parent==i32(at) && s.components[source.component-1].widget=={} && !ui_slot_in(s,int(source.component-1),0) {return false}
             s.stack[component_depth]=source.component
             component:=s.components[source.component-1]
             // The nodes of a widget are in its file: what overrides them is checked when the two load together.
@@ -263,7 +278,7 @@ ui_components_check :: proc(nodes,component_nodes:[]Ui_Node_Links,components:[]U
         }
         if component.count==0 || u64(component.first)+u64(component.count)>u64(len(component_nodes)) {return false}
         run:=component_nodes[component.first:][:component.count]
-        if run[0].kind!=0 || run[0].parent!=-1 {return false}
+        if run[0].kind==UI_KIND_COMPONENT || run[0].parent!=-1 {return false}
         for node,at in run {if at>0 && node.parent<0 {return false}}
     }
     for &override in overrides {
