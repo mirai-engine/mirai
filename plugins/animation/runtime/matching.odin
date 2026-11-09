@@ -402,7 +402,7 @@ match_database :: proc(content:^Match_Content,library:^host.Content_Animation,st
         rest,rest_error:=make([]mm.Transform,len(state.rest));defer delete(rest)
         if rest_error!=nil {built.error=.Out_Of_Memory} else {
             copy(rest,state.rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
-            body:=lib.body_map_empty()
+            body:=lib.body_map_empty();body.forward,body.up=mm.FORWARD,{0,1,0}
             for bone,part in state.body {if bone>0 {body.bones[part]=bone}}
             for part,i in ([3]lib.Body_Part{.Foot_L,.Foot_R,.Pelvis}) {
                 if body.bones[part]>=0 {continue}
