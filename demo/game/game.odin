@@ -32,7 +32,6 @@ import "mirai:ui"
 
 WALK_SPEED :: f32(4)
 LOOK_SPEED :: inp.LOOK_SPEED
-PITCH_LIMIT :: phys.PITCH_LIMIT_DEFAULT
 VIEW_FOV :: f32(70)*mm.RAD_PER_DEG     // vertical
 THROW_SPEED :: f32(12)
 CUBE_SECONDS :: f32(8)
