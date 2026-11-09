@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:math/linalg"
+import mm "mirai:std/math"
 
 // Shapes made from code for props, on the same Mesh_Buffer as the built-in
 // primitives: several calls append to one buffer, and the buffer is the whole
@@ -65,10 +66,6 @@ tube_build :: proc(out:^Mesh_Buffer,path:[]Vec3,radius:Vec2={0.25,0.12},sides:=6
     if len(path)<2 {return}
     sides,rings:=max(sides,3),max(rings,1)
     base:=u32(len(out.positions))
-    tangent_at :: proc(path:[]Vec3,t:f32) -> Vec3 {
-        step:=f32(0.001)
-        return fnormalize(curve_point(path,min(t+step,1))-curve_point(path,max(t-step,0)),{0,1,0})
-    }
     tangent:=tangent_at(path,0)
     across:=abs(tangent.y)<0.9?Vec3{0,1,0}:Vec3{1,0,0}
     across=fnormalize(linalg.cross(tangent,across),{1,0,0})
@@ -82,7 +79,7 @@ tube_build :: proc(out:^Mesh_Buffer,path:[]Vec3,radius:Vec2={0.25,0.12},sides:=6
         for i in 0..=sides {
             sn,cs:=turn_sincos(f64(i)/f64(sides))
             normal:=across*f32(cs)+side*f32(sn)
-            shape_vertex(out,center+normal*r,normal,{f32(i)/f32(sides),t})
+            vertex(out,center+normal*r,normal,{f32(i)/f32(sides),t})
         }
     }
     row:=u32(sides+1)
@@ -111,7 +108,7 @@ lathe_build :: proc(out:^Mesh_Buffer,profile:[]Vec2,segments:=SHAPE_SEGMENTS) {
         for i in 0..=segments {
             sn,cs:=turn_sincos(f64(i)/f64(segments))
             around:=Vec3{f32(cs),0,f32(sn)}
-            shape_vertex(out,around*p.x+{0,p.y,0},around*rim.x+{0,rim.y,0},{f32(i)/f32(segments),f32(at)/f32(len(profile)-1)})
+            vertex(out,around*p.x+{0,p.y,0},around*rim.x+{0,rim.y,0},{f32(i)/f32(segments),f32(at)/f32(len(profile)-1)})
         }
     }
     row:=u32(segments+1)
@@ -140,7 +137,7 @@ extrude_build :: proc(out:^Mesh_Buffer,outline:[]Vec2,depth:f32) {
         z:=face==0?half:-half
         n:=Vec3{0,0,face==0?1:-1}
         base:=u32(len(out.positions))
-        for p in outline {shape_vertex(out,{p.x,p.y,z},n,p)}
+        for p in outline {vertex(out,{p.x,p.y,z},n,p)}
         for t:=0;t+2<len(triangles);t+=3 {shape_triangle(out,base+triangles[t],base+triangles[t+1],base+triangles[t+2])}
     }
     // The outline may run either way: outward is to its right when it turns left.
@@ -154,10 +151,10 @@ extrude_build :: proc(out:^Mesh_Buffer,outline:[]Vec2,depth:f32) {
         b:=outline[(i+1)%len(outline)]
         edge:=fnormalize(Vec3{b.y-a.y,a.x-b.x,0}*outward,{0,1,0})
         base:=u32(len(out.positions))
-        shape_vertex(out,{a.x,a.y,-half},edge,{0,0})
-        shape_vertex(out,{a.x,a.y,half},edge,{0,1})
-        shape_vertex(out,{b.x,b.y,half},edge,{1,1})
-        shape_vertex(out,{b.x,b.y,-half},edge,{1,0})
+        vertex(out,{a.x,a.y,-half},edge,{0,0})
+        vertex(out,{a.x,a.y,half},edge,{0,1})
+        vertex(out,{b.x,b.y,half},edge,{1,1})
+        vertex(out,{b.x,b.y,-half},edge,{1,0})
         shape_quad(out,base,base+1,base+2,base+3)
     }
 }
@@ -189,8 +186,8 @@ blade_build :: proc(out:^Mesh_Buffer,root,direction:Vec3,blade:Blade) {
             along:=center_at(root,forward,blade,min(t+0.02,1))-center_at(root,forward,blade,max(t-0.02,0))
             normal:=fnormalize(linalg.cross(along,right),{0,1,0})*lit
             halfwidth:=blade.width*width_at(t,belly)*0.5
-            shape_vertex(out,center-right*halfwidth-{0,blade.fold,0},normal,{0,t})
-            shape_vertex(out,center+right*halfwidth-{0,blade.fold,0},normal,{1,t})
+            vertex(out,center-right*halfwidth-{0,blade.fold,0},normal,{0,t})
+            vertex(out,center+right*halfwidth-{0,blade.fold,0},normal,{1,t})
         }
     }
     row:=u32(segments+1)
@@ -228,24 +225,26 @@ blob_build :: proc(out:^Mesh_Buffer,radius:Vec3={0.5,0.5,0.5},subdivisions:=1,lu
     }
 }
 
-// The point of a curve through its points at t, from 0 at the first to 1 at
-// the last: Catmull-Rom with the first and last doubled.
-@(private)
-curve_point :: proc(path:[]Vec3,t:f32) -> Vec3 {
+// The span of a curve through its points at t, from 0 at the first to 1 at
+// the last, with the first and last doubled, and where it is along that span.
+@(private="file")
+curve_span :: proc(path:[]Vec3,t:f32) -> (p0,p1,p2,p3:Vec3,s:f32) {
     spans:=len(path)-1
     position:=clamp(t,0,1)*f32(spans)
     at:=min(int(position),spans-1)
-    s:=position-f32(at)
-    p0,p1,p2,p3:=path[max(at-1,0)],path[at],path[at+1],path[min(at+2,spans)]
-    a:=(p2-p0)*0.5
-    b:=(p3-p1)*0.5
-    return (p1*2-p2*2+a+b)*(s*s*s)+(p2*3-p1*3-a*2-b)*(s*s)+a*s+p1
+    return path[max(at-1,0)],path[at],path[at+1],path[min(at+2,spans)],position-f32(at)
 }
 
-@(private="file") shape_vertex :: #force_inline proc(out:^Mesh_Buffer,position,normal:Vec3,uv:Vec2) {
-    append(&out.positions,position)
-    append(&out.normals,normal)
-    append(&out.uvs,uv)
+@(private="file")
+curve_point :: proc(path:[]Vec3,t:f32) -> Vec3 {
+    p0,p1,p2,p3,s:=curve_span(path,t)
+    return mm.catmull_rom(p0,p1,p2,p3,s)
+}
+
+@(private="file")
+tangent_at :: proc(path:[]Vec3,t:f32) -> Vec3 {
+    p0,p1,p2,p3,s:=curve_span(path,t)
+    return fnormalize(mm.catmull_rom_tangent(p0,p1,p2,p3,s),{0,1,0})
 }
 
 // A triangle that faces where its normals do; one with a repeated position is dropped.
@@ -267,8 +266,8 @@ curve_point :: proc(path:[]Vec3,t:f32) -> Vec3 {
     for i in 0..<u32(sides) {center+=out.positions[first+i]}
     center/=f32(sides)
     base:=u32(len(out.positions))
-    for i in 0..<u32(sides) {shape_vertex(out,out.positions[first+i],n,{0.5,0.5})}
-    shape_vertex(out,center,n,{0.5,0.5})
+    for i in 0..<u32(sides) {vertex(out,out.positions[first+i],n,{0.5,0.5})}
+    vertex(out,center,n,{0.5,0.5})
     for i in 0..<u32(sides) {shape_triangle(out,base+u32(sides),base+i,base+(i+1)%u32(sides))}
 }
 
