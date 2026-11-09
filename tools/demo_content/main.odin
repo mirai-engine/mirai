@@ -232,8 +232,6 @@ write_hum :: proc(o:^Out) -> base.Asset_Id {
     return report.assets[0].id
 }
 
-// Toward the sun of the scenes of the demo.
-SCENE_SUN :: [3]f32{0.45,0.85,0.30}
 EYE_HEIGHT :: f32(1.6)
 
 
@@ -281,7 +279,7 @@ write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
     asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","showcase"))
     defer asset.builder_destroy(&s)
 
-    environment,turn,to_sun,disc:=sky_of(o,.Day,SCENE_SUN,LAMPLIT,1.6)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.6)
     // Its view is mostly sky: a stop under the meter keeps it as the demo has it.
     exposure:=render.EXPOSURE_DEFAULT
     exposure.compensation=-1

@@ -31,6 +31,7 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:std/jobs"
+import mm "mirai:std/math"
 import "mirai:rhi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
@@ -1659,11 +1660,8 @@ clear_textures :: proc(cmd: ^rhi.Command_List, textures: ..rhi.Texture) {
 camera_matrices :: proc(c: Camera, aspect: f32, reach: f32 = 0) -> (view, proj: Mat4, forward: Vec3) {
 	// Degenerate cameras (target on the eye, forward parallel to up) would
 	// produce NaN matrices that poison every temporal history.
-	forward = linalg.normalize(c.forward) if linalg.length(c.forward) > 1e-6 else Vec3{0, 0, -1}
-	up_hint := c.up if linalg.length(c.up) > 1e-6 else Vec3{0, 1, 0}
-	right := linalg.cross(forward, up_hint)
-	if linalg.length(right) < 1e-5 {right = linalg.cross(forward, Vec3{0, 0, 1} if abs(forward.y) > 0.9 else Vec3{0, 1, 0})}
-	right = linalg.normalize(right)
+	_, right, along := mm.look_basis(c.forward, c.up)
+	forward = along
 	up := linalg.cross(right, forward)
 	view = Mat4(1)
 	for i in 0 ..< 3 {

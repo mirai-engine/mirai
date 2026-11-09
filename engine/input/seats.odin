@@ -161,7 +161,7 @@ seat_of :: proc(drivables:core.Read(Drivable),body:core.Entity) -> core.Entity {
 aim :: proc(drivables:core.Read(Drivable),worlds:core.Read(core.World_Transform),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
     drivable:=core.get(drivables,body) or_return
     placed:=core.get(worlds,drivable.camera) or_return
-    return placed.position,mm.quat_rotate(placed.rotation,[3]f32{0,0,-1}),true
+    return placed.position,mm.quat_forward(placed.rotation),true
 }
 
 // The seat of a local slot; none without one.

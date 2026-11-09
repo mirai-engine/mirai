@@ -127,7 +127,7 @@ offset_moves_and_turns_parts_toward_body_directions :: proc(t:^testing.T) {
     if !testing.expect_value(t,result.error,Edit_Error.None) {return}
     for frame in ([3]int{0,20,60}) {
         before,after:=body_test_world(rig,walk,frame),body_test_world(rig,turned,frame)
-        a,b:=math.quat_rotate(before[head].rotation,{0,0,-1}),math.quat_rotate(after[head].rotation,{0,0,-1})
+        a,b:=math.quat_forward(before[head].rotation),math.quat_forward(after[head].rotation)
         testing.expectf(t,abs(anim_angle(a,b)-15*math.RAD_PER_DEG)<1e-3 && b.x<a.x,"head %v to %v",a,b)
     }
 

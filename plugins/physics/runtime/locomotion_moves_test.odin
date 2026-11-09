@@ -57,7 +57,7 @@ moves_tick :: proc(f:^Moves_Test,move:[3]f32,ticks:=1,buttons:=input.Action_Mask
         if ledge,has:=f.ledge.?;has {ledge_ready_update(&f.loco,ledge,found,sim.character_velocity(&f.w,f.ch),&f.w,f.ch)}
         if mantle,has:=f.mantle.?;has && (f.loco.mode==MODE_WALKING || f.loco.mode==MODE_FALLING || f.loco.mode==MODE_CROUCHING) {
             if wanted,from_ground:=mantle_wanted(&f.loco,mantle,found,given,TEST_JUMP);wanted {
-                facing:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},yaw),{0,0,-1})
+                facing:=mm.quat_forward(mm.quat_axis_angle({0,1,0},yaw))
                 if to,height,ok:=ledge_find(&f.w,f.ch,facing,mantle,from_ground);ok {mantle_start(&f.loco,sim.character_position(&f.w,f.ch),to,height)}
             }
         }

@@ -161,8 +161,8 @@ material_asset :: proc(name:string) -> base.Asset_Id {
 
 // The look yaw of an upright character body: where its front, -Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    ahead:=mm.quat_rotate(rotation,[3]f32{0,0,-1})
-    return math.atan2(-ahead.x,-ahead.z)
+    ahead:=mm.quat_forward(rotation)
+    return mm.yaw_of_direction(ahead)
 }
 
 player_walk :: proc "contextless" () -> phys.Walk {
@@ -424,7 +424,7 @@ game_projectiles :: proc(
             if projectile.launched {
                 projectile.velocity=state.linear
             } else if local,placed:=core.get(transforms,e);placed {
-                projectile.velocity=mm.quat_rotate(local.rotation,[3]f32{0,0,-1})*projectile.speed
+                projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
                 phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
                 projectile.launched=true
             }

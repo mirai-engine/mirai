@@ -37,7 +37,7 @@ Look_Constraint :: struct {
     weight:f32 `mirai:"min=0,max=1"`,
     enabled:bool,
 }
-LOOK_CONSTRAINT_DEFAULT :: Look_Constraint{target=SPATIAL_TARGET_DEFAULT,forward={0,0,-1},up={0,1,0},world_up={0,1,0},max_angle=1.5,weight=1,enabled=true}
+LOOK_CONSTRAINT_DEFAULT :: Look_Constraint{target=SPATIAL_TARGET_DEFAULT,forward=mm.FORWARD,up={0,1,0},world_up={0,1,0},max_angle=1.5,weight=1,enabled=true}
 
 Rotation_Constraint :: struct {
     rig:core.Entity `mirai:"transient"`,

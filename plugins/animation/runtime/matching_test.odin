@@ -59,7 +59,7 @@ mirai_avatar_body_step :: proc(body:^Mirai_Body,wish:mm.Vec3,jump:bool,dt:f32) {
     } else {
         body.velocity.y-=9.81*dt
     }
-    if linalg.length(wish)>.001 {body.yaw=mm.angle_wrap(mm.angle_approach(body.yaw,cmath.atan2(-wish.x,-wish.z),MIRAI_AVATAR_TURN*dt))}
+    if linalg.length(wish)>.001 {body.yaw=mm.angle_wrap(mm.angle_approach(body.yaw,mm.yaw_of_direction(wish),MIRAI_AVATAR_TURN*dt))}
     body.position+=body.velocity*dt
     if body.mode==MODE_FALLING && body.position.y<=0 && body.velocity.y<=0 {body.position.y,body.velocity.y,body.mode,body.jumped=0,0,MODE_WALKING,false}
 }

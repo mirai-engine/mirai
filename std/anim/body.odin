@@ -533,7 +533,7 @@ body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Tran
     } else if direction,ok=anim_unit(toes);ok {
         forward=direction
     } else {
-        forward=math.Vec3{0,0,-1} if abs(up.z)<.9 else math.Vec3{1,0,0}
+        forward=math.FORWARD if abs(up.z)<.9 else math.Vec3{1,0,0}
         axes_confidence=.1
     }
     forward=body_snap(forward)

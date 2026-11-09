@@ -210,7 +210,7 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
         #partial switch item.kind {
         case .Matching:
             placed,_:=core.get(worlds,entity)
-            forward:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,-1})
+            forward:=mm.quat_forward(placed.rotation)
             velocity:=forward*(item.speed if manual else speed)
             anim.match_goal(requests,{rig=entity,mode=u16(phys.MODE_WALKING),velocity=velocity,desired=velocity,facing=forward})
             if !manual && gallery_period(item.age,time.dt,9,4.5) {anim.match_play(requests,entity,"wave",u16(phys.MODE_WALKING))}
@@ -257,7 +257,7 @@ gallery_root_motion :: proc(gallery:core.Read(Animation_Gallery),transforms:^cor
         if root:=core.free(transforms,entity);root!=nil {
             root.position+=mm.quat_rotate(root.rotation,motion.translation*root.scale)
             root.rotation=linalg.normalize(root.rotation*motion.rotation)
-            forward:=mm.quat_rotate(root.rotation,mm.Vec3{0,0,-1})
+            forward:=mm.quat_forward(root.rotation)
             along:=linalg.dot(root.position-item.origin,forward)
             if along>1.4 {root.position-=forward*2.8}
             if along< -1.4 {root.position+=forward*2.8}

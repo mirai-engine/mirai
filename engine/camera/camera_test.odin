@@ -506,7 +506,7 @@ shake_test_look :: proc(f:^Camera_Test,transforms:^core.Table(core.Transform),pa
     following:=core.get(&f.follows,camera)
     follow_one(camera,following,body,transforms,core.read(&f.worlds),core.read(parents),core.read(moves),1,{},{dt=dt,alpha=1},dt,core.get(&f.cameras,camera))
     placed,_:=core.get(core.read(transforms),camera)
-    ahead:=mm.quat_rotate(placed.rotation,{0,0,-1})
+    ahead:=mm.quat_forward(placed.rotation)
     return math.asin(ahead.y) // how far up it looks
 }
 

@@ -224,7 +224,6 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 }
 
 @(private)
-yaw_of_direction :: #force_inline proc "contextless" (d:mm.Vec3) -> f32 {return math.atan2(-d.x,-d.z)}
 
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
@@ -977,8 +976,8 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
         if p.looking {
             to:=p.look-pose.position
             to.y=0
-            if linalg.length(to)>1e-3 {want=yaw_of_direction(to)}
-        } else if speed>0.05 {want=yaw_of_direction(flat)}
+            if linalg.length(to)>1e-3 {want=mm.yaw_of_direction(to)}
+        } else if speed>0.05 {want=mm.yaw_of_direction(flat)}
         turn:=math.remainder(want-yaw,2*math.PI)
         step:=character.turn_speed*dt
         if character.turn_speed>0 && abs(turn)>step {turn=math.copy_sign(step,turn)}
@@ -1041,7 +1040,7 @@ navigation_crossing :: proc(
                 next.value.flags={.Airborne}
             }
             next.value.air={velocity=flat,force=traction}
-            if linalg.length(flat)>0.05 {next.value.yaw=yaw_of_direction(flat)}
+            if linalg.length(flat)>0.05 {next.value.yaw=mm.yaw_of_direction(flat)}
         case:
             speed:=max(walk.max_speed*0.5,0.5)
             d:=p.to-pose.position

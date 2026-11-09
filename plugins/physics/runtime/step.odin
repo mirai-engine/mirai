@@ -716,8 +716,8 @@ character_shape_same :: proc "contextless" (l:^Link,c:Character,capsule:Collider
 
 @(private)
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    forward:=mm.quat_rotate(rotation,{0,0,-1})
-    return linalg.atan2(-forward.x,-forward.z)
+    forward:=mm.quat_forward(rotation)
+    return mm.yaw_of_direction(forward)
 }
 
 // The look yaw of a character's body rotation (its -Z faces the look) in the frame of the vertical it has, or

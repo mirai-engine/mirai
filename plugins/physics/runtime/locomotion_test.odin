@@ -135,7 +135,7 @@ walking_toward_plus_x_turns_the_front_of_the_body_to_plus_x_and_keeps_the_look :
     v:=sim.character_velocity(&f.w,f.ch)
     testing.expectf(t,near(v.x,5,0.05) && abs(v.z)<0.05,"velocity %v",v)
     rotation:=sim.body_transform(&f.w,sim.character_body(&f.w,f.ch)).q
-    front:=mm.quat_rotate(rotation,{0,0,-1})
+    front:=mm.quat_forward(rotation)
     testing.expectf(t,near(front.x,1,1e-4),"the body's -Z is %v",front)
     testing.expectf(t,near(sim.character_move(&f.w,f.ch).yaw,look,1e-6),"move yaw %v",sim.character_move(&f.w,f.ch).yaw)
     testing.expectf(t,near(look_yaw_of(mm.QUAT_IDENTITY,rotation),look,1e-4),"the look taken from the body %v",look_yaw_of(mm.QUAT_IDENTITY,rotation))

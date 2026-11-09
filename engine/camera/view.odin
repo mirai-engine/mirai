@@ -108,7 +108,7 @@ view_update :: proc(
     follow,follows_it:=core.get(follows,camera)
     // An orbit looks at its pivot: the view focuses at its depth.
     if follows_it && follow.mode==.Orbit && follow.state.ready {
-        live.focus=max(linalg.dot(follow.state.pivot.position-live.position,mm.quat_rotate(live.rotation,[3]f32{0,0,-1})),0)
+        live.focus=max(linalg.dot(follow.state.pivot.position-live.position,mm.quat_forward(live.rotation)),0)
     }
     changes:=follows_it?follow.state.changes:0
     if camera!=v.camera || changes!=v.changes {
@@ -141,7 +141,7 @@ view_update :: proc(
                     from.position=at+mm.quat_rotate(turn,from.position)
                 }
             }
-            pivot:=live.position+mm.quat_rotate(live.rotation,{0,0,-1})*10
+            pivot:=live.position+mm.quat_forward(live.rotation)*10
             if at,ok:=anchor_at(worlds,body,frame);ok {pivot=at}
             around:=follows_it && follow.mode==.Orbit && follow.state.ready
             if around {pivot=follow.state.pivot.position}
@@ -186,14 +186,14 @@ pose_mix :: proc "contextless" (from,to:render.View_Pose,pivot:[3]f32,around:boo
     // What it looks at goes from one to the other, wherever the view is between them.
     if from.focus>0 || to.focus>0 {
         at:=mm.lerp(pose_focus(from),pose_focus(to),t)
-        out.focus=max(linalg.dot(at-out.position,mm.quat_rotate(out.rotation,[3]f32{0,0,-1})),0)
+        out.focus=max(linalg.dot(at-out.position,mm.quat_forward(out.rotation)),0)
     }
     return out
 }
 
 @(private)
 pose_focus :: proc "contextless" (p:render.View_Pose) -> [3]f32 {
-    return p.position+mm.quat_rotate(p.rotation,[3]f32{0,0,-1})*p.focus
+    return p.position+mm.quat_forward(p.rotation)*p.focus
 }
 
 @(private)
@@ -221,8 +221,8 @@ dolly_mix :: proc "contextless" (out:^render.View_Pose,from,to:render.View_Pose,
         ortho=from
         s=1-t
     }
-    p_forward:=mm.quat_rotate(persp.rotation,{0,0,-1})
-    o_forward:=mm.quat_rotate(ortho.rotation,{0,0,-1})
+    p_forward:=mm.quat_forward(persp.rotation)
+    o_forward:=mm.quat_forward(ortho.rotation)
     p_depth:=max(linalg.dot(pivot-persp.position,p_forward),1)
     o_depth:=max(linalg.dot(pivot-ortho.position,o_forward),ortho.near)
     p_tan,end_tan:=math.tan(persp.fov/2),math.tan(f32(DOLLY_FOV)/2)
@@ -234,7 +234,7 @@ dolly_mix :: proc "contextless" (out:^render.View_Pose,from,to:render.View_Pose,
     out.projection=.Perspective
     out.fov=2*math.atan(tan_half)
     out.height=height
-    out.position=focus-mm.quat_rotate(out.rotation,{0,0,-1})*depth
+    out.position=focus-mm.quat_forward(out.rotation)*depth
     near:=persp.near+(ortho.near-persp.near)*s
     out.near=max(near,near+(depth-(o_depth-ortho.near)-near)*s)
     out.far=persp.far+(depth+ortho.far-o_depth-persp.far)*s if persp.far>0 && ortho.far>0 else 0

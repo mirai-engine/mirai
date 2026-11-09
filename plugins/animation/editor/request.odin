@@ -491,7 +491,7 @@ request_body_bone :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Ent
 // the way the body faces in the space of the rig.
 @(private)
 request_body :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> (bone:string,forward:mm.Vec3) {
-    forward={0,0,-1}
+    forward=mm.FORWARD
     id:=rig_skeleton(s,world,entity)
     if id=={} || s.app==nil || s.app.assets==nil {return}
     file:asset.Asset

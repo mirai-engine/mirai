@@ -70,7 +70,7 @@ write_night_scene :: proc(o: ^Out) {
     colors := [4][3]f32{{1, 0.15, 0.1}, {0.15, 0.3, 1}, {0.2, 1, 0.3}, {1, 0.9, 0.75}}
     for at, i in spots {
         towards := linalg.normalize([3]f32{0, 1, -8} - at)
-        id := placed(&s, fmt.tprintf("Spot %d", i + 1), at, mm.quat_between([3]f32{0, 0, -1}, towards), {1, 1, 1})
+        id := placed(&s, fmt.tprintf("Spot %d", i + 1), at, mm.quat_between(mm.FORWARD, towards), {1, 1, 1})
         asset.builder_set(&s, id, render.Spot_Light{color = colors[i], intensity = 60 * LAMP, range = 11, angle = 22.5 * mm.RAD_PER_DEG, radius = 0.08})
     }
 

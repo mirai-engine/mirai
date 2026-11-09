@@ -409,13 +409,13 @@ camera_lens_set :: proc "contextless" (camera:^render.Camera,lens:Camera_Lens) {
 // The yaw and pitch of an Orbit that looks as rotation does.
 @(private)
 look_of :: proc "contextless" (rotation:mm.Quat) -> [2]f32 {
-    return look_toward(mm.quat_rotate(rotation,{0,0,-1}))
+    return look_toward(mm.quat_forward(rotation))
 }
 
 // The yaw and pitch of an Orbit that looks along forward, a unit vector.
 @(private)
 look_toward :: proc "contextless" (forward:[3]f32) -> [2]f32 {
-    return {linalg.atan2(-forward.x,-forward.z),math.asin(clamp(-forward.y,-1,1))}
+    return {mm.yaw_of_direction(forward),math.asin(clamp(-forward.y,-1,1))}
 }
 
 @(private)
@@ -548,7 +548,7 @@ follow_one :: proc(
             s.idle+=dt
             if s.idle>=follow.recenter && linalg.length(ground)>RECENTER_SPEED {
                 along:=mm.quat_rotate(conj(vertical),ground)
-                follow.looking.x=mm.damp_angle(follow.looking.x,linalg.atan2(-along.x,-along.z),RECENTER_RATE,dt)
+                follow.looking.x=mm.damp_angle(follow.looking.x,mm.yaw_of_direction(along),RECENTER_RATE,dt)
             }
         }
         orbit:=orbit_make(pivot,follow.distance,follow.looking.x,follow.looking.y)

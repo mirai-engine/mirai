@@ -1254,7 +1254,7 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         if !placed || is_hidden(hidden,parents,e) {continue}
         spot:=core.at(lights.spots,row)
         desc:=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
-        desc.direction,desc.cone=mm.quat_rotate(world.rotation,[3]f32{0,0,-1}),spot.angle
+        desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
         append(&sync.lights,desc)
     }
     for row in 0..<core.count(lights.rects) {
@@ -1291,7 +1291,7 @@ sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radi
 rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc {
     return {
         position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,
-        direction=mm.quat_rotate(world.rotation,[3]f32{0,0,-1}),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
+        direction=mm.quat_forward(world.rotation),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
         size={abs(world.scale.x),abs(world.scale.y)},
     }
 }

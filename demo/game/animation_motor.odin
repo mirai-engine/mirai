@@ -13,7 +13,7 @@ Animation_Motor :: struct {enabled:bool}
 ANIMATION_MOTOR_DEFAULT :: Animation_Motor{enabled=true}
 
 animation_motor_input :: proc "contextless" (delta:anim.Root_Delta,actor:mm.Transform,max_speed,dt:f32) -> (input:inp.Move_Input) {
-    rotation:=actor.rotation*delta.rotation;forward:=mm.quat_rotate(rotation,{0,0,-1});input.look_yaw=math.atan2(-forward.x,-forward.z)
+    rotation:=actor.rotation*delta.rotation;forward:=mm.quat_forward(rotation);input.look_yaw=mm.yaw_of_direction(forward)
     if dt<=0 || max_speed<=0 || abs(dt)>max(f32) || abs(max_speed)>max(f32) {return}
     velocity:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale)/(dt*max_speed);velocity.y=0
     if length:=linalg.length(velocity);length>1 {velocity/=length}

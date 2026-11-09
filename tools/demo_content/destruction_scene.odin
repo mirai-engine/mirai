@@ -20,7 +20,7 @@ write_destruction_scene :: proc(o:^Out) {
     asset.builder_init(&s,&o.content,asset.KIND_SCENE,DESTRUCTION_SCENE)
     defer asset.builder_destroy(&s)
 
-    environment,turn,to_sun,disc:=sky_of(o,.Overcast,mm.quat_rotate(mm.quat_from_euler({-0.9,0.5,0}),SCENE_SUN),LAMPLIT,1)
+    environment,turn,to_sun,disc:=sky_of(o,.Overcast,mm.quat_rotate(mm.quat_from_euler({-0.9,0.5,0}),render.SUN_DIRECTION),LAMPLIT,1)
     sky_set(&s,&environment,turn)
     solid(&s,asset.builder_entity(&s,"Floor",{position={0,-0.5,0},scale={40,1,40}}),"Tiles")
 

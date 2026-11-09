@@ -56,7 +56,7 @@ write_control_scene :: proc(o:^Out) {
     defer asset.builder_destroy(&s)
     demo:=game.Control_Demo{}
     asset.builder_set(&s,asset.builder_entity(&s,"Control demo"),demo)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.9,-0.6,0}),SCENE_SUN),LAMPLIT,1.3)
+    environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.9,-0.6,0}),render.SUN_DIRECTION),LAMPLIT,1.3)
     sky_set(&s,&environment,turn)
     sun:=render.Sun{color={1,0.94,0.85},illuminance=lux(LAMPLIT,1.3),disc=disc}
     sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})

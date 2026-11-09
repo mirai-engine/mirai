@@ -249,7 +249,7 @@ orbit_from_points :: proc "contextless" (position,target:[3]f32,fov:=VIEW_FOV) -
 // the limit of the pitch the eye stays where it is and the target moves.
 orbit_of_camera :: proc "contextless" (pose:mm.Transform,camera:erender.Camera,distance:f32) -> (o:Orbit,ok:bool) {
     fov:=camera.fov>0?camera.fov:erender.CAMERA_DEFAULT.fov
-    o=orbit_from_points(pose.position,pose.position+mm.quat_rotate(pose.rotation,[3]f32{0,0,-1})*distance,fov*mm.DEG_PER_RAD) or_return
+    o=orbit_from_points(pose.position,pose.position+mm.quat_forward(pose.rotation)*distance,fov*mm.DEG_PER_RAD) or_return
     o.target=pose.position-orbit_offset(o)*o.distance
     return o,true
 }
@@ -876,7 +876,7 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         hidden:=entity_hidden(w,e) || core.entity_off(es,e)
         radius:=INDICATOR_RADIUS
         if spots!=nil && core.has(core.read(spots),e) {
-            tip,tip_front:=viewport_screen(v,world.position+mm.quat_rotate(world.rotation,{0,0,-1}))
+            tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
             if length:=linalg.distance(tip,p);tip_front && length>radius {
                 direction:=(tip-p)/length
                 ui.draw_line(ctx,p+direction*radius,p+direction*min(length,radius+48),1.6,ui.color_alpha(base_color,hidden?110:200))
@@ -1038,7 +1038,7 @@ grid_lines :: proc(s:^Session) {
         for e in suns.entities[:core.count(suns)] {
             if entity_hidden(w,e) {continue}
             world:=entity_world(w,e)
-            to:=mm.quat_rotate(world.rotation,[3]f32{0,0,-1})
+            to:=mm.quat_forward(world.rotation)
             side:=linalg.normalize(linalg.cross(to,abs(to.y)<0.9?[3]f32{0,1,0}:[3]f32{1,0,0}))
             up:=linalg.cross(side,to)
             color:=[4]f32{1,0.84,0.47,0.9}
@@ -1095,7 +1095,7 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
         if spot,ok:=entity_get(w,e,erender.Spot_Light);ok && spot.range>0 {
             // Its cone out to its range: the circle of its edge, lines from its
             // place to that circle, and fainter, the circle where it starts to fade.
-            axis:=mm.quat_rotate(world.rotation,[3]f32{0,0,-1})
+            axis:=mm.quat_forward(world.rotation)
             side:=linalg.normalize(linalg.cross(axis,abs(axis.y)<0.9?[3]f32{0,1,0}:[3]f32{1,0,0}))
             up:=linalg.cross(side,axis)
             edge:=world.position+axis*(spot.range*math.cos(spot.angle))
