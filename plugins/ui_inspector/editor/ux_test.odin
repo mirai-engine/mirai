@@ -179,11 +179,11 @@ a_widget_that_holds_the_document_is_not_offered :: proc(t:^testing.T) {
     a,b,c,d:=base.Asset_Id{1,0},base.Asset_Id{2,0},base.Asset_Id{3,0},base.Asset_Id{4,0}
     edges:=[][2]base.Asset_Id{{a,b},{b,c},{c,b},{d,a}}
     graph:=Graph{edges}
-    children :: proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id {
+    children :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
         g:=(^Graph)(user)
-        held:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        for e in g.edges {if e[0]==id {append(&held,e[1])}}
-        return held[:]
+        held:=make([dynamic]ui.Tree_Component,context.temp_allocator)
+        for e in g.edges {if e[0]==id {append(&held,ui.Tree_Component{widget=e[1]})}}
+        return held[:],true
     }
     testing.expect(t,widget_reaches(a,c,children,&graph))  // a holds b, which holds c
     testing.expect(t,widget_reaches(d,c,children,&graph))

@@ -2,6 +2,7 @@ package ui_inspector_editor
 
 import "core:fmt"
 import "core:slice"
+import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -281,24 +282,69 @@ records_anim_remove :: proc(r:^Records,anim:int) {
 
 // ---------------------------------------------------------------- widgets
 
-// Whether the widget from reaches target through the widgets it holds, the
-// widgets those hold and so on: putting from inside target would make a
-// widget that holds itself. children: the widgets a .ui holds.
-widget_reaches :: proc(from,target:base.Asset_Id,children:proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id,user:rawptr) -> bool {
-    if from==target {return true}
-    seen:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    queue:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    append(&queue,from)
-    for len(queue)>0 {
-        id:=pop(&queue)
-        if slice.contains(seen[:],id) {continue}
-        append(&seen,id)
-        for child in children(user,id) {
-            if child==target {return true}
-            if !slice.contains(seen[:],child) {append(&queue,child)}
-        }
+// The components a .ui names; false when its file does not read.
+Widget_Uses :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool)
+
+// A walk of the .ui that others use, depth first: what it found when it ended.
+Widget_Walk :: struct {
+    uses:Widget_Uses,
+    user:rawptr,
+    target:base.Asset_Id, // none: it only looks for what fails
+    chain:[dynamic]base.Asset_Id, // the files open, from the first; when it reached target, the way there
+    seen:[dynamic]base.Asset_Id,
+    reached:bool,
+    broken:ui.Tree_Component, // the first component that does not read or that closes a cycle
+    cycle:bool,
+}
+
+// Walks what used names, from the file from (none: from records of no file).
+widget_walk :: proc(used:[]ui.Tree_Component,from,target:base.Asset_Id,uses:Widget_Uses,user:rawptr) -> (w:Widget_Walk) {
+    w.uses,w.user,w.target=uses,user,target
+    w.chain,w.seen=make([dynamic]base.Asset_Id,context.temp_allocator),make([dynamic]base.Asset_Id,context.temp_allocator)
+    if from!={} {
+        append(&w.chain,from)
+        append(&w.seen,from)
+    }
+    widget_walk_down(&w,used)
+    return
+}
+
+// True when it reached target, with the chain left as it was.
+@(private)
+widget_walk_down :: proc(w:^Widget_Walk,used:[]ui.Tree_Component) -> bool {
+    broke :: proc(w:^Widget_Walk,component:ui.Tree_Component,cycle:bool) {
+        if w.broken.widget=={} {w.broken,w.cycle=component,cycle}
+    }
+    for component in used {
+        id:=component.widget
+        if id=={} {continue}
+        if id==w.target {w.reached=true;return true}
+        if slice.contains(w.chain[:],id) {broke(w,component,true);continue}
+        if slice.contains(w.seen[:],id) {continue}
+        append(&w.seen,id)
+        held,read:=w.uses(w.user,id)
+        if !read {broke(w,component,false);continue}
+        append(&w.chain,id)
+        if widget_walk_down(w,held) {return true}
+        pop(&w.chain)
     }
     return false
+}
+
+// The components of a .ui, read from its file. user: the ^host.Assets.
+widget_uses_of_file :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
+    records:Records
+    if !records_read((^host.Assets)(user),id,&records,context.temp_allocator) {return}
+    return records.components[:],true
+}
+
+// Whether the widget from reaches target through the widgets it holds, the
+// widgets those hold and so on: putting from inside target would make a
+// widget that holds itself.
+widget_reaches :: proc(from,target:base.Asset_Id,uses:Widget_Uses,user:rawptr) -> bool {
+    if from==target {return true}
+    used,read:=uses(user,from)
+    return read && widget_walk(used,from,target,uses,user).reached
 }
 
 // Takes away the tracks and keys of an animation, or its parts: the row stays
@@ -344,9 +390,8 @@ records_param_valid_name :: proc(r:^Records,row:int) -> string {
     name:=serial.text_field(p.name[:])
     if name=="" || name=="children" {return "A parameter needs a name of its own"}
     reserved:=DOCUMENT_NODE_KEYS
-    flat:=DOC_LAYOUT_FLAT
     _,is_node:=doc_instance_field(name)
-    if slice.contains(reserved[:],name) || slice.contains(flat[:],name) || is_node {return "A node has a key of that name"}
+    if slice.contains(reserved[:],name) || is_node {return "A node has a key of that name"}
     for &other,i in r.params {if i!=row && other.name==p.name {return "The widget has a parameter of that name"}}
     return ""
 }

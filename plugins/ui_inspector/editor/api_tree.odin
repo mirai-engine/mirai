@@ -54,31 +54,25 @@ Tree_Row_Answer :: struct {
 
 Tree_Inspect :: struct {
     document:Tree_Document `mirai:"label=What ui.write takes back"`,
-    widgets:[1]Tree_Inspect_Widget `mirai:"list,label=The other .ui its instances are of"`,
-    fonts:[1]base.Asset_Id `mirai:"list,label=The .font its styles take"`,
 }
 Tree_Document :: struct {
     use:u8 `mirai:"any,optional,label=The paths of the .ui it takes styles and tokens from and whose widgets its nodes name by the name of their file"`,
     params:u8 `mirai:"any,optional,label=What the widget of this file takes, by name: node.field, node.parameter of a use it holds, or the field of its root"`,
-    styles:u8 `mirai:"any,label=The named styles, or those its nodes take, by name: family, defaults (the kinds whose new nodes take it), fields of ui.Node_Style that are not zero, and rules {variant, states, fields, tokens}"`,
-    animations:u8 `mirai:"any,label=By name: kind, loop, and tracks of a Clip or parts of a Sequence or a Parallel"`,
-    nodes:[1]Tree_Document_Node `mirai:"list,label=The roots in order; with node, that node alone"`,
+    tokens:u8 `mirai:"any,optional,label=By name: a color or a number that styles name"`,
+    styles:u8 `mirai:"any,label=The named styles, or those its nodes take, by name: extends, family, defaults (the kinds whose new nodes take it), its keys (fill, size, width, shadow...), the states hover, focus, pressed, disabled, selected and over, variants by name, and rules {variant, states, tokens and the keys of a state}"`,
+    animations:u8 `mirai:"any,label=By name: kind, loop, and from-to properties with seconds and ease, tracks of a Clip or parts of a Sequence or a Parallel"`,
+    nodes:[1]Tree_Document_Node `mirai:"list,label=The roots in order, each also with the keys of ui.Tree_Node and of its layout that differ from a new node of its kind, and a use with the parameters of its widget; with node, that node alone"`,
 }
 Tree_Document_Node :: struct {
     name:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,label=What ui.write matches it by"`,
     kind:u8 `mirai:"any,optional,label=A ui.Node_Kind, or the name of the file of a widget it uses"`,
     text:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=In the language interfaces are written in"`,
     style:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=The named style it takes; empty: none, where its kind would take one; absent: the one its kind takes"`,
-    look:u8 `mirai:"any,optional,label=Its own look, as a style without family; with style, what it changes of that style until it is saved there"`,
+    look:u8 `mirai:"any,optional,label=Its own look, as a style without family; with style, all that the node has instead of that style until it is saved there"`,
     image:ui.Tree_Image `mirai:"optional"`,
     events:u8 `mirai:"any,optional,label=By trigger (shown, hovered, clicked, ...): the animation it plays"`,
-    fields:u8 `mirai:"any,label=The fields of ui.Tree_Node that differ from a new node of its kind"`,
+    slot:bool `mirai:"optional,label=Whether it takes what a use of this widget holds"`,
     children:u8 `mirai:"any,optional,label=The nodes it holds, in order, as this one"`,
-}
-Tree_Inspect_Widget :: struct {
-    name:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text"`,
-    asset:base.Asset_Id,
-    title:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The name of its file"`,
 }
 
 @(private)
@@ -213,24 +207,19 @@ tree_arg :: proc(args:^Tree_Args,key:string) -> (text:string,found:bool) {
 tree_arg_string :: proc(args:^Tree_Args,key:string) -> (value:string,found,ok:bool) {
     text,present:=tree_arg(args,key)
     if !present {return "",false,true}
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,args.call.allocator)
     read:bool
-    value,read=serial.text_string(&r)
+    value,read=doc_string(args.call,text)
     if !read {api.call_failf(args.call,api.INVALID_PARAMS,"%s must be a string",key);return "",true,false}
-    return strings.clone(value,args.call.allocator),true,true
+    return value,true,true
 }
 
 @(private)
 tree_arg_bool :: proc(args:^Tree_Args,key:string) -> (value,ok:bool) {
     text,present:=tree_arg(args,key)
     if !present {return false,true}
-    switch strings.trim_space(text) {
-    case "true":  return true,true
-    case "false": return false,true
-    }
-    api.call_failf(args.call,api.INVALID_PARAMS,"%s must be true or false",key)
-    return false,false
+    value,ok=doc_bool(text)
+    if !ok {api.call_failf(args.call,api.INVALID_PARAMS,"%s must be true or false",key)}
+    return
 }
 
 // The records of the .ui the params name.
@@ -396,9 +385,7 @@ tree_node_apply :: proc(args:^Tree_Args,r:^Records,row:int) -> bool {
         if at<0 {api.call_fail(call,api.SERVER_ERROR,"the .ui holds no more sets of events");return false}
         set:=&r.anim_sets[at]
         for key,i in keys {
-            sr:serial.Text_Reader
-            serial.text_reader_init(&sr,values[i],call.allocator)
-            name,read:=serial.text_string(&sr)
+            name,read:=doc_string(call,values[i])
             if !read {api.call_failf(call,api.INVALID_PARAMS,"events.%s must be the name of an animation",key);return false}
             played:ui.Anim
             if name!="" {
@@ -462,12 +449,9 @@ tree_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,r:^Records,
 // after failing the call.
 @(private)
 tree_kinds_read :: proc(call:^api.Call,text:string,family:ui.Style_Family) -> (kinds:ui.Node_Kinds,ok:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,call.allocator)
-    if !serial.text_accept(&r,'[') {api.call_fail(call,api.INVALID_PARAMS,"defaults must be an array of kinds of node, as [\"Button\"]");return}
-    for count:=0;!serial.text_accept(&r,']');count+=1 {
-        if count>0 && !serial.text_accept(&r,',') {tree_malformed(call,&r);return}
-        name,read:=serial.text_string(&r)
+    items:=doc_items(call,text,"defaults",`kinds of node, as ["Button"]`) or_return
+    for item in items {
+        name,read:=doc_string(call,item)
         if !read {api.call_fail(call,api.INVALID_PARAMS,"defaults must be an array of kinds of node, as [\"Button\"]");return}
         kind:=tree_kind(call,name) or_return
         if style_family(kind)!=family {api.call_failf(call,api.INVALID_PARAMS,"defaults: a %s takes a style of family %s, and this style is of family %s",fmt.tprintf("%v",kind),fmt.tprintf("%v",style_family(kind)),fmt.tprintf("%v",family));return}
@@ -535,17 +519,12 @@ tree_node_add :: proc(args:^Tree_Args,r:^Records,parent,before:int) -> int {
     if !tree_node_apply(args,r,row) {return -1}
     text,found:=tree_arg(args,"children")
     if !found {return row}
-    list:serial.Text_Reader
-    serial.text_reader_init(&list,text,call.allocator)
-    if !serial.text_accept(&list,'[') {api.call_fail(call,api.INVALID_PARAMS,"children must be an array of nodes, each with the keys of ui.node.add but asset, parent and before");return -1}
-    for at:=0;!serial.text_accept(&list,']');at+=1 {
-        if at>0 && !serial.text_accept(&list,',') {tree_malformed(call,&list);return -1}
-        serial.text_space(&list)
-        start:=list.offset
-        if !serial.text_skip(&list) {tree_malformed(call,&list);return -1}
+    items,listed:=doc_items(call,text,"children","nodes, each with the keys of ui.node.add but asset, parent and before")
+    if !listed {return -1}
+    for item,at in items {
         child:=args^
         ok:bool
-        child.keys,child.values,ok=tree_object(call,text[start:list.offset],fmt.tprintf("children[%d]",at))
+        child.keys,child.values,ok=tree_object(call,item,fmt.tprintf("children[%d]",at))
         if !ok {return -1}
         for key in TREE_CHILD_REFUSED {
             if _,given:=tree_arg(&child,key);given {
@@ -708,12 +687,9 @@ tree_rule_apply :: proc(args:^Tree_Args,r:^Records,style:int) -> bool {
     if !variant_ok {return false}
     states:ui.Style_States
     if text,found:=tree_arg(args,"states");found {
-        r_states:serial.Text_Reader
-        serial.text_reader_init(&r_states,text,call.allocator)
-        if !serial.text_accept(&r_states,'[') {api.call_fail(call,api.INVALID_PARAMS,"states must be an array of names");return false}
-        for count:=0;!serial.text_accept(&r_states,']');count+=1 {
-            if count>0 && !serial.text_accept(&r_states,',') {tree_malformed(call,&r_states);return false}
-            name,read:=serial.text_string(&r_states)
+        items:=doc_items(call,text,"states","names") or_return
+        for item in items {
+            name,read:=doc_string(call,item)
             known:=false
             for state in ui.Style_State {if read && fmt.tprintf("%v",state)==name {states+={state};known=true}}
             if !known {api.call_failf(call,api.INVALID_PARAMS,"states: '%s' is none of Selected, Hovered, Focused, Over, Pressed, Disabled",name);return false}
@@ -805,13 +781,11 @@ tree_anim_apply :: proc(args:^Tree_Args,r:^Records) -> int {
         text,found:=tree_arg(args,"parts")
         if !found && row<0 {api.call_fail(call,api.INVALID_PARAMS,"parts is required for a new Sequence or Parallel");return -1}
         if found {
-            pr:serial.Text_Reader
-            serial.text_reader_init(&pr,text,call.allocator)
-            if !serial.text_accept(&pr,'[') {api.call_fail(call,api.INVALID_PARAMS,"parts must be an array of names");return -1}
+            items,listed:=doc_items(call,text,"parts","names")
+            if !listed {return -1}
             first:=u32(len(r.parts))
-            for count:=0;!serial.text_accept(&pr,']');count+=1 {
-                if count>0 && !serial.text_accept(&pr,',') {tree_malformed(call,&pr);return -1}
-                part,read:=serial.text_string(&pr)
+            for item in items {
+                part,read:=doc_string(call,item)
                 found_row:=-1
                 for &a,i in r.anims {if read && serial.text_field(a.name[:])==part {found_row=i;break}}
                 limit:=row if row>=0 else len(r.anims)
@@ -828,38 +802,24 @@ tree_anim_apply :: proc(args:^Tree_Args,r:^Records) -> int {
 // Reads the tracks of a clip: each a property and its keys, put in time order.
 @(private)
 tree_tracks_read :: proc(call:^api.Call,types:^asset.Types,text:string,tracks:^[dynamic]ui.Tree_Track,keys:^[dynamic]ui.Keyframe) -> bool {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,call.allocator)
-    if !serial.text_accept(&r,'[') {api.call_fail(call,api.INVALID_PARAMS,"tracks must be an array of {property, keys}");return false}
-    for count:=0;!serial.text_accept(&r,']');count+=1 {
-        if count>0 && !serial.text_accept(&r,',') {return tree_malformed(call,&r)}
+    items:=doc_items(call,text,"tracks","{property, keys}") or_return
+    for item,count in items {
         if count>=ui.TREE_CLIP_TRACKS {api.call_failf(call,api.INVALID_PARAMS,"a clip has at most %d tracks",ui.TREE_CLIP_TRACKS);return false}
-        serial.text_space(&r)
-        start:=r.offset
-        if !serial.text_skip(&r) {return tree_malformed(call,&r)}
         what:=fmt.tprintf("tracks[%d]",count)
-        object_keys,object_values:=tree_object(call,text[start:r.offset],what) or_return
+        object_keys,object_values:=tree_object(call,item,what) or_return
         track:=ui.Tree_Track{first_key=u32(len(keys))}
         has_property:=false
         for key,i in object_keys {
             switch key {
             case "property":
-                pr:serial.Text_Reader
-                serial.text_reader_init(&pr,object_values[i],call.allocator)
-                name,_:=serial.text_string(&pr)
+                name,_:=doc_string(call,object_values[i])
                 for p in ui.Anim_Property {if fmt.tprintf("%v",p)==name {track.property,has_property=p,true}}
                 if !has_property {api.call_failf(call,api.INVALID_PARAMS,"%s.property '%s' is none of Offset, Scale, Rotation, Opacity, Color, Width, Height, Value, Frame, Reveal",what,name);return false}
             case "keys":
-                kr:serial.Text_Reader
-                serial.text_reader_init(&kr,object_values[i],call.allocator)
-                if !serial.text_accept(&kr,'[') {api.call_failf(call,api.INVALID_PARAMS,"%s.keys must be an array of {time, value, ease}",what);return false}
-                for k:=0;!serial.text_accept(&kr,']');k+=1 {
-                    if k>0 && !serial.text_accept(&kr,',') {return tree_malformed(call,&kr)}
-                    serial.text_space(&kr)
-                    key_start:=kr.offset
-                    if !serial.text_skip(&kr) {return tree_malformed(call,&kr)}
+                key_items:=doc_items(call,object_values[i],fmt.tprintf("%s.keys",what),"{time, value, ease}") or_return
+                for key_item,k in key_items {
                     key:ui.Keyframe
-                    if !tree_fields_read(call,types,ui.Keyframe,&key,object_values[i][key_start:kr.offset],fmt.tprintf("%s.keys[%d]",what,k)) {return false}
+                    if !tree_fields_read(call,types,ui.Keyframe,&key,key_item,fmt.tprintf("%s.keys[%d]",what,k)) {return false}
                     if key.time<0 || key.time-key.time!=0 {api.call_failf(call,api.INVALID_PARAMS,"%s.keys[%d].time must be a finite number of seconds, 0 or more",what,k);return false}
                     append(keys,key)
                 }
@@ -894,25 +854,6 @@ api_tree_inspect :: proc(s:^editor.Session,call:^api.Call) {
     serial.write_u8(out,'{')
     api.write_key(out,"document",true)
     document_write(out,&a.types,&r,root,libs[:],a)
-    api.write_key(out,"widgets");serial.write_u8(out,'[')
-    first:=true
-    for &template in r.components {
-        if template.widget=={} {continue}
-        if !first {serial.write_u8(out,',')}
-        first=false
-        serial.write_u8(out,'{')
-        api.write_text(out,"name",serial.text_field(template.name[:]),true)
-        api.write_key(out,"asset");serial.write_u8(out,'"');serial.text_write_asset_id(out,template.widget);serial.write_u8(out,'"')
-        api.write_text(out,"title",editor.asset_name_of(a,template.widget,"missing"))
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
-    api.write_key(out,"fonts");serial.write_u8(out,'[')
-    for font,i in r.fonts {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'"');serial.text_write_asset_id(out,font.font);serial.write_u8(out,'"')
-    }
-    serial.write_u8(out,']')
     serial.write_u8(out,'}')
 }
 

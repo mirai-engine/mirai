@@ -281,7 +281,7 @@ param_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node,component:int) {
         records_load(source,linked,context.temp_allocator)
         expanded,expanded_ok:=ui.tree_expand(linked,context.temp_allocator)
         if expanded_ok {for &e in expanded {if serial.text_field(e.name[:])==serial.text_field(param.node[:]) {node=e;break}}}
-        if records_param_set(r,u.selected,&param,serial.text_field(buffer[:]),source,node) {changed(u,"Parameter")}
+        if records_param_give(a,r,u.selected,&param,serial.text_field(buffer[:]),source,node) {changed(u,"Parameter")}
     }
 }
 

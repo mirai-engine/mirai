@@ -272,26 +272,12 @@ Bind_Fault :: enum u8 {Path,Template,Widget,Load,Name}
 // Why the widgets the records name do not read: the first one missing, one
 // that is not a .ui that loads, or one that uses the file back.
 widget_why :: proc(a:^host.Assets,data:ui.Tree_Data) -> string {
-    walk :: proc(a:^host.Assets,data:ui.Tree_Data,stack:^[dynamic]base.Asset_Id,depth:int) -> string {
-        for &component in data.components {
-            id:=component.widget
-            if id=={} || depth>=ui.TREE_DEPTH {continue}
-            name:=serial.text_field(component.name[:])
-            record,found:=asset.registry_find(&a.registry,id)
-            if !found || record.kind!=asset.KIND_UI {return fmt.tprintf("it uses '%s', whose file is missing",name)}
-            if slice.contains(stack[:],id) {return fmt.tprintf("'%s' uses a file that uses it back: a cycle",record.path)}
-            records:Records
-            if !records_read(a,id,&records,context.temp_allocator) {return fmt.tprintf("'%s', which it uses, does not load",record.path)}
-            append(stack,id)
-            why:=walk(a,records_data(&records),stack,depth+1)
-            pop(stack)
-            if why!="" {return why}
-        }
-        return ""
-    }
-    stack:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    why:=walk(a,data,&stack,0)
-    return why if why!="" else "a widget it uses does not load"
+    w:=widget_walk(data.components,{},{},widget_uses_of_file,a)
+    if w.broken.widget=={} {return "a widget it uses does not load"}
+    record,found:=asset.registry_find(&a.registry,w.broken.widget)
+    if !found || record.kind!=asset.KIND_UI {return fmt.tprintf("it uses '%s', whose file is missing",serial.text_field(w.broken.name[:]))}
+    if w.cycle {return fmt.tprintf("'%s' uses a file that uses it back: a cycle",record.path)}
+    return fmt.tprintf("'%s', which it uses, does not load",record.path)
 }
 
 // What the paths of a .ui fail at, against the types of the world: a node
@@ -1202,10 +1188,10 @@ records_write :: proc(s:^editor.Session,id:base.Asset_Id,records:^Records,label:
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     records_tidy(records)
     params:=widget_params(a,id)
-    imports,imported:=records_settle(records,a)
+    imports,imported:=host.ui_tree_imports(a,records_data(records))
     if !imported {return widget_why(a,records_data(records)),false}
+    bytes,error:=records_commit(&a.types,id,records,imports)
     data:=records_data(records)
-    bytes,error:=host.ui_tree_bytes(&a.types,id,data,imports,context.temp_allocator)
     if error==.Invalid {return fmt.tprintf("the interface would not load: %s",load_why(a,data,imports)),false}
     if error!=.None {return fmt.tprintf("the interface could not be written: %v",error),false}
     written,opened:=false,false

@@ -6,6 +6,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:asset"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -128,18 +129,15 @@ records_tidy :: proc(r:^Records) {
 }
 
 // Puts what the names of the records say in their values: what tokens give,
-// what styles take from those they extend and from the files they link, and
-// the layouts nodes take from their styles. Only an edit calls it: nothing of
-// it runs per frame. False when a file it links is missing.
-records_settle :: proc(r:^Records,a:^host.Assets) -> (imports:[]ui.Tree_Data,ok:bool) {
+// what styles take from those they extend and from the files they link
+// (imports, as host.ui_tree_imports gives them), and the layouts nodes take
+// from their styles. Only an edit calls it: nothing of it runs per frame.
+records_settle :: proc(r:^Records,imports:[]ui.Tree_Data) {
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
-    data:=records_data(r)
-    imports,ok=host.ui_tree_imports(a,data)
-    if !ok {return}
-    linked:ui.Tree_Data
+    infos:=r.style_infos[:]
     if imports!=nil {
-        linked,ok=ui.tree_link(data,imports,context.temp_allocator)
-        if !ok {return nil,true} // ui_tree_document says why
+        linked,ok:=ui.tree_link(records_data(r),imports,context.temp_allocator)
+        if !ok {return} // ui_tree_document says why
         for &info,row in r.style_infos {
             if info.from==0 && info.extends[0]==0 {continue}
             if row>=len(linked.styles) {continue}
@@ -156,11 +154,16 @@ records_settle :: proc(r:^Records,a:^host.Assets) -> (imports:[]ui.Tree_Data,ok:
                 append(&r.variants,kept)
             }
         }
+        infos=linked.style_infos
     }
-    take :: proc(nodes:[]ui.Tree_Node,infos:[]ui.Tree_Style_Info) {ui.tree_nodes_take_styles(nodes,infos)}
-    infos:=r.style_infos[:] if imports==nil else linked.style_infos
-    take(r.nodes[:],infos)
-    return imports,true
+    ui.tree_nodes_take_styles(r.nodes[:],infos)
+}
+
+// What both routes of an edit write, the API and the visual editor: records
+// settled against the widgets they use and made the bytes of their file.
+records_commit :: proc(types:^asset.Types,id:base.Asset_Id,r:^Records,imports:[]ui.Tree_Data) -> (bytes:[]u8,error:asset.Error) {
+    records_settle(r,imports)
+    return host.ui_tree_bytes(types,id,records_data(r),imports,context.temp_allocator)
 }
 
 // Rows of nodes inside row, which follow it in pre-order.
@@ -849,9 +852,9 @@ records_keys_sort :: proc(r:^Records) {
 
 // Writes what a parameter of the use at row gives: on the instance when it
 // goes to its root, or on the override of the node it goes to, node as the
-// widget has it and its rows those of source. A style goes by name, as a style
-// of the file. False when the name of a style does not resolve.
-records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,node:ui.Tree_Node) -> bool {
+// widget has it and its rows those of source. style: the row a parameter of a
+// style goes by.
+records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,style:int,source:^Records,node:ui.Tree_Node) {
     path:=serial.text_field(p.node[:])
     group:=doc_param_group(p.field)
     target:^ui.Tree_Node
@@ -868,12 +871,24 @@ records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,sourc
         records_text_set(r,&target.text,value)
         target.text_id=0
     case .Style:
-        style:=tree_style_row(r,value)
-        if style<0 {return false}
         target.style=u16(style)
     case:
         ui.tree_text_set(doc_param_slot(target,p.field),value)
     }
+}
+
+// records_param_set with a style by its name, of the file or of a file it
+// uses. False when that name does not resolve.
+records_param_give :: proc(a:^host.Assets,r:^Records,row:int,p:^ui.Tree_Param,value:string,source:^Records,node:ui.Tree_Node) -> bool {
+    style:=0
+    if p.field==.Style {
+        args:=Tree_Args{assets=a}
+        libs:=doc_libs(&args,r)
+        args.libs=&libs
+        style=doc_style_row(&args,r,value)
+        if style<0 {return false}
+    }
+    records_param_set(r,row,p,value,style,source,node)
     return true
 }
 

@@ -14,7 +14,7 @@ every_result_of_the_ui_methods_registers_with_its_schema :: proc(t:^testing.T) {
     defer api.server_destroy(&s)
     Result :: struct {result:typeid,info:^runtime.Type_Info,writes:bool,part:string}
     results:=[?]Result{
-        {Tree_Inspect,type_info_of(Tree_Inspect),true,`"required":["name","fields"]`},
+        {Tree_Inspect,type_info_of(Tree_Inspect),true,`"required":["name"]`},
         {Tree_Node_Answer,type_info_of(Tree_Node_Answer),false,`"required":["ok","row","name"]`},
         {Tree_Row_Answer,type_info_of(Tree_Row_Answer),false,`"required":["ok","row"]`},
         {Ui_Ok,type_info_of(Ui_Ok),false,`"required":["ok"]`},

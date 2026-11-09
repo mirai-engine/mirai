@@ -239,13 +239,11 @@ node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {
 widget_holds_document :: proc(u:^Ui_Inspector,a:^host.Assets,widget:base.Asset_Id) -> bool {
     Reach :: struct {u:^Ui_Inspector,a:^host.Assets}
     reach:=Reach{u,a}
-    return widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> []base.Asset_Id {
+    return widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
         reach:=(^Reach)(user)
-        held:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        if r:=widget_records(reach.u,reach.a,id);r!=nil {
-            for &template in r.components {if template.widget!={} {append(&held,template.widget)}}
-        }
-        return held[:]
+        r:=widget_records(reach.u,reach.a,id)
+        if r==nil {return}
+        return r.components[:],true
     },&reach)
 }
 

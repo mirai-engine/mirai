@@ -344,11 +344,11 @@ inspector_write :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^edit
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     records_tidy(&u.records)
     params:=widget_params(a,u.id)
-    data:=records_data(&u.records)
-    imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
+    imports,imported:=imports_cached(&u.imports,a,records_data(&u.records),u.allocator)
     bytes:[]u8
     error:=asset.Error.Invalid
-    if imported {bytes,error=host.ui_tree_bytes(&a.types,u.id,data,imports,context.temp_allocator)}
+    if imported {bytes,error=records_commit(&a.types,u.id,&u.records,imports)}
+    data:=records_data(&u.records)
     if error!=.None {
         why:=load_why(a,data,imports) if imported else widget_why(a,data)
         editor.notify(s,fmt.tprintf("That change leaves an interface that does not load (%s): it was undone",why) if error==.Invalid else fmt.tprintf("The interface could not be written: %v",error))
@@ -447,7 +447,7 @@ records_params_follow :: proc(a:^host.Assets,records:^Records,widget:base.Asset_
                 records_param_clear(records,row,&c.before,lib.linked.params)
                 if c.after.name!={} {
                     node,source:=node_at(&lib,serial.text_field(c.after.node[:]))
-                    records_param_set(records,row,&c.after,value,source,node)
+                    records_param_give(a,records,row,&c.after,value,source,node)
                 }
             }
             // A parameter of this file that goes to this one, through this use.

@@ -51,7 +51,6 @@ Doc_Lib :: struct {
     {"align_x",.Align_X},{"align_y",.Align_Y},{"columns",.Columns},{"span",.Span},{"self_x",.Self_X},{"self_y",.Self_Y},{"aspect",.Aspect},
 }
 @(private) DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
-@(private) DOC_LAYOUT_FLAT :: [?]string{"width","height","direction","padding","gap","align_x","align_y","columns","span","self_x","self_y","aspect"}
 // The fields a parameter of a widget can go to.
 @(private) DOC_PARAM_FIELDS :: [ui.Tree_Param_Field]string{.Text="text",.Style="style",.Data="data",.Bind_Text="bind_text",.Bind_Value="bind_value",.Bind_Visible="bind_visible",.Bind_Selected="bind_selected",.Bind_Disabled="bind_disabled",.Bind_Items="bind_items",.Bind_Image="bind_image",.Bind_Tint="bind_tint",.Bind_Variant="bind_variant",.Variant="variant",.Action="action",.Tag="tag",.Accepts="accepts"}
 
@@ -109,13 +108,14 @@ doc_bool :: proc(text:string) -> (value,ok:bool) {
     return false,false
 }
 
-// The items of a JSON array, each the text of its value.
+// The items of a JSON array, each the text of its value. of: what it is an
+// array of, for the error.
 @(private)
-doc_items :: proc(call:^api.Call,text,what:string) -> (items:[dynamic]string,ok:bool) {
+doc_items :: proc(call:^api.Call,text,what:string,of:="") -> (items:[dynamic]string,ok:bool) {
     items=make([dynamic]string,call.allocator)
     r:serial.Text_Reader
     serial.text_reader_init(&r,text,call.allocator)
-    if !serial.text_accept(&r,'[') {return items,doc_failed(call,"%s must be an array",what)}
+    if !serial.text_accept(&r,'[') {return items,doc_failed(call,"%s must be an array%s%s",what," of " if of!="" else "",of)}
     for at:=0;!serial.text_accept(&r,']');at+=1 {
         if at>0 && !serial.text_accept(&r,',') {return items,tree_malformed(call,&r)}
         serial.text_space(&r)
@@ -289,21 +289,12 @@ doc_use_resolve :: proc(args:^Tree_Args,path,what:string) -> (id:base.Asset_Id,o
 // the files from the first to target; empty: it does not.
 @(private)
 doc_reaches :: proc(a:^host.Assets,from,target:base.Asset_Id) -> string {
-    walk :: proc(a:^host.Assets,id,target:base.Asset_Id,depth:int,chain:^[dynamic]string) -> bool {
-        if depth>=ui.TREE_DEPTH {return false}
-        append(chain,doc_path(a,id))
-        records:Records
-        if records_read(a,id,&records,context.temp_allocator) {
-            for &c in records.components {
-                if c.widget==target {return true}
-                if c.widget!={} && walk(a,c.widget,target,depth+1,chain) {return true}
-            }
-        }
-        pop(chain)
-        return false
-    }
+    used,read:=widget_uses_of_file(a,from)
+    if !read {return ""}
+    w:=widget_walk(used,from,target,widget_uses_of_file,a)
+    if !w.reached {return ""}
     chain:=make([dynamic]string,context.temp_allocator)
-    if !walk(a,from,target,0,&chain) {return ""}
+    for id in w.chain {append(&chain,doc_path(a,id))}
     return strings.join(chain[:]," -> ",context.temp_allocator)
 }
 
@@ -363,6 +354,44 @@ doc_token_of :: proc(r:^Records,style:int,variant:string,states:ui.Style_States,
         if int(u.style)==style && u.states==states && u.key==key && serial.text_field(u.variant[:])==variant {return serial.text_field(u.token[:])}
     }
     return ""
+}
+
+// The color a key gives: #rrggbb, #rrggbbaa, or the name of a token of a color.
+@(private)
+doc_color_value :: proc(args:^Tree_Args,r:^Records,text,what:string) -> (color:ui.Color,token:string,ok:bool) {
+    call:=args.call
+    word,is_text:=doc_string(call,text)
+    if !is_text {return {},"",doc_failed(call,"%s must be a color: #rrggbb, #rrggbbaa or the name of a token",what)}
+    if len(word)>0 && word[0]=='#' {
+        parsed:bool
+        color,parsed=doc_color_parse(word)
+        if !parsed {return {},"",doc_failed(call,"%s: '%s' is no color: write #rrggbb or #rrggbbaa",what,word)}
+        return color,"",true
+    }
+    t:=doc_token_find(r,doc_libs_slice(args),word)
+    if t==nil {return {},"",doc_failed(call,"%s names the token '%s', which is not declared in tokens or in a file this one uses",what,word)}
+    if t.numeric {return {},"",doc_failed(call,"%s names '%s', a token of a number",what,word)}
+    return t.color,word,true
+}
+
+// The value of the token of a number that a key names.
+@(private)
+doc_number_token :: proc(args:^Tree_Args,r:^Records,word,what:string) -> (number:f32,ok:bool) {
+    t:=doc_token_find(r,doc_libs_slice(args),word)
+    if t==nil || !t.numeric {return 0,doc_failed(args.call,"%s names '%s', which is no number token",what,word)}
+    return t.number,true
+}
+
+// The number a key gives; a style (r) can give the name of a token of a
+// number, a node (r nil) cannot.
+@(private)
+doc_number_value :: proc(args:^Tree_Args,r:^Records,text,what:string) -> (number:f32,token:string,ok:bool) {
+    if value,is_number:=doc_number(text);is_number {return value,"",true}
+    if r==nil {return 0,"",doc_failed(args.call,"%s must be a number",what)}
+    word,is_text:=doc_string(args.call,text)
+    if !is_text {return 0,"",doc_failed(args.call,"%s must be a number or the name of a token",what)}
+    number,ok=doc_number_token(args,r,word,what)
+    return number,word,ok
 }
 
 // ---------------------------------------------------------------- writing
@@ -709,22 +738,8 @@ doc_style_value_write :: proc(out:^serial.Writer,r:^Records,style:^ui.Node_Style
 @(private)
 doc_layout_value_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,info:^ui.Tree_Style_Info,row:int,variant:string,states:ui.Style_States,which:ui.Style_Key) {
     if token:=doc_token_of(r,row,variant,states,which);token!="" {serial.text_write_string(out,token);return}
-    l:=&info.layout
-    #partial switch which {
-    case .Width:     doc_size_write(out,types,l.width)
-    case .Height:    doc_size_write(out,types,l.height)
-    case .Direction: serial.text_write_string(out,doc_enum_text(l.direction))
-    case .Padding:   doc_padding_write(out,l.padding)
-    case .Gap:       api.write_number(out,l.gap)
-    case .Align_X:   serial.text_write_string(out,doc_enum_text(l.align_x))
-    case .Align_Y:   serial.text_write_string(out,doc_enum_text(l.align_y))
-    case .Columns:   api.write_number(out,f32(l.columns))
-    case .Span:      api.write_number(out,f32(l.span))
-    case .Self_X:    serial.text_write_string(out,doc_enum_text(l.self_x))
-    case .Self_Y:    serial.text_write_string(out,doc_enum_text(l.self_y))
-    case .Aspect:    api.write_number(out,l.aspect)
-    case .Blur:      api.write_number(out,info.blur)
-    }
+    if which==.Blur {api.write_number(out,info.blur);return}
+    doc_layout_write(out,types,&info.layout,which)
 }
 
 @(private)
@@ -1038,19 +1053,18 @@ doc_node_fields_write :: proc(w:^Doc_Write,row:int,n:^ui.Tree_Node,root_params:[
         if which not_in ui.LAYOUT_KEYS {continue}
         given:=which in info.layout_keys && which not_in n.layout_own
         if given {continue}
-        unset:=ui.Layout{}
         probe:=n.layout
         ui.layout_key_copy(&probe,&d,which)
         same:=probe==n.layout
-        _=unset
         if which not_in n.layout_own && same {continue}
         api.write_key(out,k.key)
-        doc_node_layout_write(out,w.types,&n.layout,which)
+        doc_layout_write(out,w.types,&n.layout,which)
     }
 }
 
+// A key of a layout as a document says it.
 @(private)
-doc_node_layout_write :: proc(out:^serial.Writer,types:^asset.Types,l:^ui.Layout,which:ui.Style_Key) {
+doc_layout_write :: proc(out:^serial.Writer,types:^asset.Types,l:^ui.Layout,which:ui.Style_Key) {
     #partial switch which {
     case .Width:     doc_size_write(out,types,l.width)
     case .Height:    doc_size_write(out,types,l.height)
@@ -1111,9 +1125,6 @@ document_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) -> (made
         case "styles":     styles=values[i]
         case "animations": anims=values[i]
         case "nodes":      nodes=values[i]
-        case "widgets","fonts":
-            api.call_failf(call,api.INVALID_PARAMS,"document.%s is what ui.inspect says beside the document; write back its document alone",key)
-            return
         case "components":
             api.call_fail(call,api.INVALID_PARAMS,"document has no 'components': a component is a widget, a .ui of its own; write it as a file and name it in use")
             return
@@ -1413,7 +1424,6 @@ doc_rule_apply :: proc(args:^Tree_Args,r:^Records,style,rule:int,keys,values:[dy
 doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_Style,info:^ui.Tree_Style_Info,own:^ui.Style_Keys,variant:string,states:ui.Style_States,key,value:string) -> bool {
     call:=args.call
     is_rule:=info==nil
-    rule_only:=make([dynamic]string,context.temp_allocator)
     which:ui.Style_Key
     found:=false
     table:=DOC_KEYS
@@ -1453,7 +1463,6 @@ doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_
         api.call_failf(call,api.INVALID_PARAMS,"a style has no '%s'; it has extends, %s, sounds, hover, focus, pressed, disabled, selected, over, variants and rules",key,strings.join(names[:],", ",context.temp_allocator))
         return false
     }
-    _=rule_only
     if is_rule && which not_in ui.RULE_KEYS {
         api.call_failf(call,api.INVALID_PARAMS,"a state does not set %s: it goes in the style",key)
         return false
@@ -1464,28 +1473,17 @@ doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_
     set:=false
     switch {
     case ui.style_key_color(which):
-        word,is_text:=doc_string(call,trimmed)
-        if !is_text {api.call_failf(call,api.INVALID_PARAMS,"%s must be a color: #rrggbb, #rrggbbaa or the name of a token",key);return false}
-        if len(word)>0 && word[0]=='#' {
-            color,parsed:=doc_color_parse(word)
-            if !parsed {api.call_failf(call,api.INVALID_PARAMS,"%s: '%s' is no color: write #rrggbb or #rrggbbaa",key,word);return false}
-            ui.style_key_color_set(style,which,color)
-            set=true
-        } else {
-            t:=doc_token_find(r,doc_libs_slice(args),word)
-            if t==nil {api.call_failf(call,api.INVALID_PARAMS,"%s names the token '%s', which is not declared in tokens or in a file this one uses",key,word);return false}
-            if t.numeric {api.call_failf(call,api.INVALID_PARAMS,"%s names '%s', a token of a number",key,word);return false}
-            ui.style_key_color_set(style,which,t.color)
-            token,set=word,true
-        }
+        color:ui.Color
+        color,token=doc_color_value(args,r,trimmed,key) or_return
+        ui.style_key_color_set(style,which,color)
+        set=true
     case which==.Radius:
         if number,is_number:=doc_number(trimmed);is_number {
             style.radius={number,number,number,number}
             set=true
         } else if word,is_text:=doc_string(call,trimmed);is_text {
-            t:=doc_token_find(r,doc_libs_slice(args),word)
-            if t==nil || !t.numeric {api.call_failf(call,api.INVALID_PARAMS,"radius names '%s', which is no number token",word);return false}
-            style.radius={t.number,t.number,t.number,t.number}
+            number:=doc_number_token(args,r,word,"radius") or_return
+            style.radius={number,number,number,number}
             token,set=word,true
         } else {
             items:=doc_items(call,trimmed,"radius") or_return
@@ -1514,38 +1512,8 @@ doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_
             style.text.font=u8(ui.FONT_TREE+at)
         }
         set=true
-    case which==.Width || which==.Height:
-        size:ui.Size
-        word:=doc_size_read(args,trimmed,key,&size) or_return
-        if word!="" {
-            t:=doc_token_find(r,doc_libs_slice(args),word)
-            if t==nil || !t.numeric {api.call_failf(call,api.INVALID_PARAMS,"%s names '%s', which is no number token",key,word);return false}
-            size,token=ui.fixed(t.number),word
-        }
-        if which==.Width {info.layout.width=size} else {info.layout.height=size}
-        set=true
-    case which==.Padding:
-        word:=doc_padding_read(call,trimmed,key,&info.layout.padding) or_return
-        if word!="" {
-            t:=doc_token_find(r,doc_libs_slice(args),word)
-            if t==nil || !t.numeric {api.call_failf(call,api.INVALID_PARAMS,"padding names '%s', which is no number token",word);return false}
-            info.layout.padding,token=ui.padding_all(t.number),word
-        }
-        set=true
-    case which==.Direction:
-        if !doc_enum_read(call,trimmed,"direction",ui.Direction,&info.layout.direction) {return false}
-        set=true
-    case which==.Align_X:
-        if !doc_enum_read(call,trimmed,"align_x",ui.Align,&info.layout.align_x) {return false}
-        set=true
-    case which==.Align_Y:
-        if !doc_enum_read(call,trimmed,"align_y",ui.Align,&info.layout.align_y) {return false}
-        set=true
-    case which==.Self_X:
-        if !doc_enum_read(call,trimmed,"self_x",ui.Self_Align,&info.layout.self_x) {return false}
-        set=true
-    case which==.Self_Y:
-        if !doc_enum_read(call,trimmed,"self_y",ui.Self_Align,&info.layout.self_y) {return false}
+    case which in ui.LAYOUT_KEYS:
+        token=doc_layout_read(args,r,&info.layout,which,key,trimmed) or_return
         set=true
     case which==.Text_Align_X:
         if !doc_enum_read(call,trimmed,"text_x",ui.Align,&style.text.align_x) {return false}
@@ -1578,26 +1546,10 @@ doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_
             style.program_values[i]=n
         }
         set=true
-    case which==.Columns || which==.Span:
-        n,ok:=doc_number(trimmed)
-        if !ok {api.call_failf(call,api.INVALID_PARAMS,"%s must be a whole number",key);return false}
-        if which==.Columns {info.layout.columns=u16(n)} else {info.layout.span=u8(n)}
-        set=true
-    case which==.Gap || which==.Aspect || which==.Blur || ui.style_key_number(which):
-        number,is_number:=doc_number(trimmed)
-        if !is_number {
-            word,is_text:=doc_string(call,trimmed)
-            if !is_text {api.call_failf(call,api.INVALID_PARAMS,"%s must be a number or the name of a token",key);return false}
-            t:=doc_token_find(r,doc_libs_slice(args),word)
-            if t==nil || !t.numeric {api.call_failf(call,api.INVALID_PARAMS,"%s names '%s', which is no number token",key,word);return false}
-            number,token=t.number,word
-        }
-        #partial switch which {
-        case .Gap:    info.layout.gap=number
-        case .Aspect: info.layout.aspect=number
-        case .Blur:   info.blur=number
-        case: ui.style_key_number_set(style,info,which,number)
-        }
+    case which==.Blur || ui.style_key_number(which):
+        number:f32
+        number,token=doc_number_value(args,r,trimmed,key) or_return
+        if which==.Blur {info.blur=number} else {ui.style_key_number_set(style,info,which,number)}
         set=true
     }
     if !set {api.call_failf(call,api.INVALID_PARAMS,"%s cannot be set",key);return false}
@@ -1634,30 +1586,15 @@ doc_shadow_read :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_Style,
         }
         own^+={which}
         trimmed:=strings.trim_space(values[i])
-        token:=""
+        field:=fmt.tprintf("%s.%s",what,key)
+        token:string
         if ui.style_key_color(which) {
-            word,is_text:=doc_string(call,trimmed)
-            if !is_text {api.call_failf(call,api.INVALID_PARAMS,"%s.%s must be a color or the name of a token",what,key);return false}
             color:ui.Color
-            if len(word)>0 && word[0]=='#' {
-                parsed:bool
-                color,parsed=doc_color_parse(word)
-                if !parsed {api.call_failf(call,api.INVALID_PARAMS,"%s.%s: '%s' is no color",what,key,word);return false}
-            } else {
-                t:=doc_token_find(r,doc_libs_slice(args),word)
-                if t==nil || t.numeric {api.call_failf(call,api.INVALID_PARAMS,"%s.%s names '%s', which is no color token",what,key,word);return false}
-                color,token=t.color,word
-            }
+            color,token=doc_color_value(args,r,trimmed,field) or_return
             ui.style_key_color_set(style,which,color)
         } else {
-            number,is_number:=doc_number(trimmed)
-            if !is_number {
-                word,is_text:=doc_string(call,trimmed)
-                if !is_text {api.call_failf(call,api.INVALID_PARAMS,"%s.%s must be a number or the name of a token",what,key);return false}
-                t:=doc_token_find(r,doc_libs_slice(args),word)
-                if t==nil || !t.numeric {api.call_failf(call,api.INVALID_PARAMS,"%s.%s names '%s', which is no number token",what,key,word);return false}
-                number,token=t.number,word
-            }
+            number:f32
+            number,token=doc_number_value(args,r,trimmed,field) or_return
             ui.style_key_number_set(style,nil,which,number)
         }
         if token!="" {records_token_use(r,row,variant,states,which,token)}
@@ -1678,9 +1615,6 @@ document_anim_apply :: proc(args:^Tree_Args,r:^Records,name,text:string) -> bool
     seconds:=f32(-1)
     ease:="Linear"
     short:=false
-    tracks:=make([dynamic]string,call.allocator)
-    tracks_kept:=make([dynamic]string,call.allocator)
-    _=tracks;_=tracks_kept
     fixed_keys:=make([dynamic]string,call.allocator)
     fixed_values:=make([dynamic]string,call.allocator)
     for key,i in keys {
@@ -1754,17 +1688,11 @@ doc_vector_read :: proc(call:^api.Call,text:string,property:ui.Anim_Property) ->
 @(private)
 document_nodes_read :: proc(args:^Tree_Args,r:^Records,text:string,parent:int,path:string,out:^[dynamic]Document_Node) -> bool {
     call:=args.call
-    list:serial.Text_Reader
-    serial.text_reader_init(&list,text,call.allocator)
-    if !serial.text_accept(&list,'[') {api.call_failf(call,api.INVALID_PARAMS,"%s must be an array of nodes",path);return false}
-    for at:=0;!serial.text_accept(&list,']');at+=1 {
-        if at>0 && !serial.text_accept(&list,',') {return tree_malformed(call,&list)}
-        serial.text_space(&list)
-        start:=list.offset
-        if !serial.text_skip(&list) {return tree_malformed(call,&list)}
+    items:=doc_items(call,text,path,"nodes") or_return
+    for item,at in items {
         d:=Document_Node{path=fmt.aprintf("%s[%d]",path,at,allocator=call.allocator),parent=parent,row=-1}
         ok:bool
-        d.keys,d.values,ok=tree_object(call,text[start:list.offset],d.path)
+        d.keys,d.values,ok=tree_object(call,item,d.path)
         if !ok {return false}
         node_args:=args^
         node_args.keys,node_args.values=d.keys,d.values
@@ -1957,46 +1885,58 @@ doc_instance_field :: proc(key:string) -> (field:ui.Node_Field,ok:bool) {
     case "nav","order","flags": return .Focus,true
     case "tag","accepts","ghost": return .Drag,true
     case "bind_text","bind_value","bind_visible","bind_selected","bind_disabled","bind_items","bind_image","bind_tint","bind_variant","data": return .Bindings,true
-    case "width","height","direction","padding","gap","align_x","align_y","columns","span","self_x","self_y","aspect": return .Layout,true
     }
+    if _,is_layout:=doc_layout_key(key);is_layout {return .Layout,true}
     return .Text,false
 }
 
-// One flat key of a node of its layout: width and the others of a new node
-// of its kind, as a style takes them. False after failing the call.
+// The key of a layout a name is: width and the others, of a node or a style.
 @(private)
-doc_node_layout_apply :: proc(args:^Tree_Args,n:^ui.Tree_Node,key,value:string) -> bool {
+doc_layout_key :: proc(name:string) -> (which:ui.Style_Key,ok:bool) {
+    keys:=DOC_KEYS
+    for k in keys {if k.key==name && k.which in ui.LAYOUT_KEYS {return k.which,true}}
+    return
+}
+
+// One key of a layout, into l: of a style (r), which can give the name of a
+// token of a number and says so in token, or of a node (r nil), which cannot.
+// False after failing the call.
+@(private)
+doc_layout_read :: proc(args:^Tree_Args,r:^Records,l:^ui.Layout,which:ui.Style_Key,key,value:string) -> (token:string,ok:bool) {
     call:=args.call
-    which:ui.Style_Key
-    table:=DOC_KEYS
-    for k in table {if k.key==key {which=k.which}}
-    n.layout_own+={which}
-    l:=&n.layout
     trimmed:=strings.trim_space(value)
     #partial switch which {
     case .Width,.Height:
         size:ui.Size
         word:=doc_size_read(args,trimmed,key,&size) or_return
-        if word!="" {api.call_failf(call,api.INVALID_PARAMS,"%s: '%s' is no size: on a node give a number, \"grow\", \"fit\" or \"50%%\"; a token goes in a style",key,word);return false}
+        if word!="" {
+            if r==nil {return "",doc_failed(call,"%s: '%s' is no size: on a node give a number, \"grow\", \"fit\" or \"50%%\"; a token goes in a style",key,word)}
+            number:=doc_number_token(args,r,word,key) or_return
+            size,token=ui.fixed(number),word
+        }
         if which==.Width {l.width=size} else {l.height=size}
-    case .Direction: return doc_enum_read(call,trimmed,"direction",ui.Direction,&l.direction)
     case .Padding:
-        word:=doc_padding_read(call,trimmed,"padding",&l.padding) or_return
-        if word!="" {api.call_failf(call,api.INVALID_PARAMS,"padding: '%s': on a node give numbers; a token goes in a style",word);return false}
+        word:=doc_padding_read(call,trimmed,key,&l.padding) or_return
+        if word!="" {
+            if r==nil {return "",doc_failed(call,"padding: '%s': on a node give numbers; a token goes in a style",word)}
+            number:=doc_number_token(args,r,word,key) or_return
+            l.padding,token=ui.padding_all(number),word
+        }
     case .Gap,.Aspect:
-        number,is_number:=doc_number(trimmed)
-        if !is_number {api.call_failf(call,api.INVALID_PARAMS,"%s must be a number",key);return false}
+        number:f32
+        number,token=doc_number_value(args,r,trimmed,key) or_return
         if which==.Gap {l.gap=number} else {l.aspect=number}
-    case .Align_X: return doc_enum_read(call,trimmed,"align_x",ui.Align,&l.align_x)
-    case .Align_Y: return doc_enum_read(call,trimmed,"align_y",ui.Align,&l.align_y)
     case .Columns,.Span:
         number,is_number:=doc_number(trimmed)
-        if !is_number {api.call_failf(call,api.INVALID_PARAMS,"%s must be a whole number",key);return false}
+        if !is_number {return "",doc_failed(call,"%s must be a whole number",key)}
         if which==.Columns {l.columns=u16(number)} else {l.span=u8(number)}
-    case .Self_X: return doc_enum_read(call,trimmed,"self_x",ui.Self_Align,&l.self_x)
-    case .Self_Y: return doc_enum_read(call,trimmed,"self_y",ui.Self_Align,&l.self_y)
+    case .Direction: return "",doc_enum_read(call,trimmed,key,ui.Direction,&l.direction)
+    case .Align_X:   return "",doc_enum_read(call,trimmed,key,ui.Align,&l.align_x)
+    case .Align_Y:   return "",doc_enum_read(call,trimmed,key,ui.Align,&l.align_y)
+    case .Self_X:    return "",doc_enum_read(call,trimmed,key,ui.Self_Align,&l.self_x)
+    case .Self_Y:    return "",doc_enum_read(call,trimmed,key,ui.Self_Align,&l.self_y)
     }
-    return true
+    return token,true
 }
 
 // The node at row (of the records' tree) becomes what d declares: what it
@@ -2050,7 +1990,6 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d
     flat:=make([dynamic]string,call.allocator)
     param_values:=make([dynamic]string,call.allocator)
     reserved:=DOCUMENT_NODE_KEYS
-    layout_flat:=DOC_LAYOUT_FLAT
     is_instance:=n.kind==.Component
     slot:=false
     for key,i in d.keys {
@@ -2066,8 +2005,9 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d
             if serial.text_field(p.name[:])==key {is_param=true;break}
         }
         if is_param {append(&param_values,key);continue}
-        if slice.contains(layout_flat[:],key) {
-            if !doc_node_layout_apply(args,n,key,d.values[i]) {return false}
+        if which,is_layout:=doc_layout_key(key);is_layout {
+            n.layout_own+={which}
+            if _,read:=doc_layout_read(args,nil,&n.layout,which,key,d.values[i]);!read {return false}
             if is_instance {n.component_fields+={.Layout}}
             continue
         }
@@ -2125,7 +2065,7 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d
     }
     if slot {n.flags+={.Slot}}
     if is_instance {
-        if !doc_params_apply(args,r,n,row,params,d,param_values[:]) {return false}
+        if !doc_params_apply(args,r,row,params,d,param_values[:]) {return false}
     } else if len(param_values)>0 {
         return doc_failed(call,"this node takes no parameters")
     }
@@ -2196,7 +2136,7 @@ doc_node_events_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,events:
 // The values of the parameters a use gives, into its instance or the
 // overrides of the nodes they go to; those it does not give are taken away.
 @(private)
-doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,params:[]ui.Tree_Param,d:^Document_Node,given:[]string) -> bool {
+doc_params_apply :: proc(args:^Tree_Args,r:^Records,row:int,params:[]ui.Tree_Param,d:^Document_Node,given:[]string) -> bool {
     call:=args.call
     // What a parameter set before and this use does not name goes.
     for &p in params {
@@ -2217,29 +2157,19 @@ doc_params_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,para
         p:ui.Tree_Param
         for &each in params {if serial.text_field(each.name[:])==key {p=each}}
         node:=serial.text_field(p.node[:])
-        group:=doc_param_group(p.field)
-        target:^ui.Tree_Node
-        if node=="" {
-            target=n
-            n.component_fields+={group}
-        } else {
-            template,source,found:=doc_widget_node(args,d.widget,node)
+        template:ui.Tree_Node
+        source:^Records
+        if node!="" {
+            found:bool
+            template,source,found=doc_widget_node(args,d.widget,node)
             if !found {return doc_failed(call,"%s goes to node '%s', which its widget does not have",key,node)}
-            at:=records_override(r,row,node,{})
-            if group not_in r.overrides[at].fields {records_override_field(r,at,group,true,source,template)}
-            target=&r.overrides[at].values
         }
-        #partial switch p.field {
-        case .Text:
-            records_text_set(r,&target.text,value)
-            target.text_id=0
-        case .Style:
-            style:=doc_style_row(args,r,value)
+        style:=0
+        if p.field==.Style {
+            style=doc_style_row(args,r,value)
             if style<0 {return doc_failed(call,"%s: '%s' is no style of this file or of a file it uses",key,value)}
-            target.style=u16(style)
-        case:
-            ui.tree_text_set(doc_param_slot(target,p.field),value)
         }
+        records_param_set(r,row,&p,value,style,source,template)
     }
     return true
 }

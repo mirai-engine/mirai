@@ -410,9 +410,11 @@ project_doc :: proc(t:^testing.T,p:^Project,path:string,id:base.Asset_Id,text:st
     args.assets=&p.assets
     args.asset=id
     if _,_,applied:=document_apply(&args,&r,-1,text);!testing.expectf(t,applied,"%s",call.error.message,loc=loc) {return}
-    imports,settled:=records_settle(&r,&p.assets)
-    if !testing.expectf(t,settled,"%s does not settle",path,loc=loc) {return}
-    return r,project_put(t,p,path,id,records_data(&r),imports,loc)
+    imports,imported:=host.ui_tree_imports(&p.assets,records_data(&r))
+    if !testing.expectf(t,imported,"%s does not read what it uses",path,loc=loc) {return}
+    bytes,error:=records_commit(&p.assets.types,id,&r,imports)
+    if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return}
+    return r,testing.expect_value(t,asset.registry_memory_set(&p.assets.registry,path,bytes),asset.Error.None,loc=loc)
 }
 
 @(private="file")
@@ -514,6 +516,47 @@ a_document_says_what_is_wrong_with_what_it_uses :: proc(t:^testing.T) {
     component:=&r.components[0]
     component.widget={0xdd,9}
     testing.expect(t,strings.contains(widget_why(&p.assets,records_data(&r)),"whose file is missing"),widget_why(&p.assets,records_data(&r)))
+}
+
+@(test)
+a_commit_settles_what_a_style_gives_nodes_that_take_it :: proc(t:^testing.T) {
+    p:Project
+    if !project_init(t,&p,"commit") {return}
+    defer project_destroy(&p)
+    r,ok:=project_doc(t,&p,"ui/panel.ui",{0xc0,1},`{"styles":{"base":{"gap":6},"child":{"extends":"base","size":12}},"nodes":[{"name":"root","kind":"Box","style":"child"}]}`)
+    if !ok {return}
+    child:=tree_style_row(&r,"child")
+    r.style_infos[tree_style_row(&r,"base")].layout.gap=30
+    _,error:=records_commit(&p.assets.types,{0xc0,1},&r,nil)
+    if !testing.expect_value(t,error,asset.Error.None) {return}
+    testing.expect_value(t,r.style_infos[child].layout.gap,f32(30))
+    testing.expect_value(t,r.nodes[document_row_of(&r,"root")].layout.gap,f32(30))
+}
+
+@(test)
+a_parameter_of_a_style_can_give_one_of_a_file_it_uses :: proc(t:^testing.T) {
+    p:Project
+    _,ok:=widgets_project(t,&p,"widget-style")
+    if !ok {return}
+    defer project_destroy(&p)
+    tone:=base.Asset_Id{0xc1,1}
+    if _,written:=project_doc(t,&p,"ui/tone.ui",tone,`{"use":["ui/theme.ui"],"params":{"accent":"label.style"},"nodes":[{"name":"tone","kind":"Box","children":[{"name":"label","kind":"Text","style":"label"}]}]}`);!written {return}
+    r,made:=project_doc(t,&p,"ui/page.ui",{0xc2,1},`{"use":["ui/theme.ui","ui/tone.ui"],"nodes":[{"name":"page","kind":"Box","children":[{"name":"use","kind":"tone"}]}]}`)
+    if !made {return}
+    lib,read:=doc_lib_read(&p.assets,tone,context.temp_allocator)
+    if !testing.expect(t,read && len(lib.linked.params)==1) {return}
+    param:=lib.linked.params[0]
+    expanded,expanded_ok:=ui.tree_expand(lib.linked,context.temp_allocator)
+    if !testing.expect(t,expanded_ok) {return}
+    source:=new(Records,context.temp_allocator)
+    if !testing.expect(t,records_load(source,lib.linked,context.temp_allocator)) {return}
+    node:ui.Tree_Node
+    for &e in expanded {if serial.text_field(e.name[:])=="label" {node=e}}
+    row:=document_row_of(&r,"use")
+    testing.expect(t,!records_param_give(&p.assets,&r,row,&param,"nothing",source,node),"a name that resolves to nothing changes nothing")
+    if !testing.expect(t,records_param_give(&p.assets,&r,row,&param,"knob",source,node)) {return}
+    at:=records_override(&r,row,"label",{})
+    testing.expect_value(t,records_style_name(&r,int(r.overrides[at].values.style)),"knob")
 }
 
 @(test)
