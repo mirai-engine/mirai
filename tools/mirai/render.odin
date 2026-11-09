@@ -1307,8 +1307,9 @@ render_report_load :: proc(path:string) -> (report:Render_Report,ok:bool) {
 }
 
 // The verdicts of head against base and against the art direction. The cost
-// is judged where both measured it, on the repeat when both repeated it; a
-// view the base did not measure is not compared.
+// is judged where both measured it, on the repeat when both repeated it. A
+// view the base has no scene for is not compared; one it failed to measure
+// leaves the check without its answer, so it does not pass.
 render_judge :: proc(report:^Render_Report) {
     clear(&report.verdicts)
     report.regressions,report.failed_views=0,0
@@ -1335,6 +1336,7 @@ render_judge :: proc(report:^Render_Report) {
         }
         if !has_base {continue}
         if !found || b.failure!="" {
+            if found && !b.scene_missing {report.failed_views+=1}
             add(report,{view=m.view,size=m.size,metric="base",note=found?fmt.aprintf("not measured in the base: %s",b.failure):"not measured: the base has no such view"})
             continue
         }

@@ -273,8 +273,9 @@ render_judge_repeats_a_cost_past_the_limit_and_judges_the_repeat :: proc(t:^test
     testing.expect_value(t,report.regressions,3) // the stability of boils, twice, and other, not comparable
 }
 
-// A view the base has no scene for, or did not measure, is not compared: it
-// is no regression. The base does not stop the art direction of head.
+// A view the base has no scene for, or does not list, is not compared: it is
+// no regression. One the base failed to measure fails the check. The base
+// does not stop the art direction of head.
 @(test)
 render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -283,8 +284,10 @@ render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing
     base:=Render_Run{name="base"}
     new_scene:=measured("new",0,0,0)
     new_scene.failure,new_scene.scene_missing="this build has no scene scenes/new.scene",true
-    append(&base.measures,new_scene)
-    append(&head.measures,measured("new",9,0.9,0.5,0.1),measured("unlisted",9,0.9,0.1))
+    broken:=measured("broken",0,0,0)
+    broken.failure="scene.open failed"
+    append(&base.measures,new_scene,broken)
+    append(&head.measures,measured("new",9,0.9,0.5,0.1),measured("unlisted",9,0.9,0.1),measured("broken",9,0.9,0.1))
     append(&report.runs,head,base)
     render_judge(&report)
     verdict,found:=judged(report,"new","base")
@@ -296,7 +299,7 @@ render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing
     verdict,found=judged(report,"new","art")
     testing.expect(t,found && verdict.failed)
     testing.expect_value(t,report.regressions,1)
-    testing.expect_value(t,report.failed_views,0)
+    testing.expect_value(t,report.failed_views,1)
 }
 
 // Without the cost (--quality) the check judges all but the cost, also
