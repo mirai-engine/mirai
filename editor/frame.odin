@@ -483,6 +483,7 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,wo
     x1:=max(app.drawable.x-i32(math.round(right*density)),x0+1)
     app.scene={x0,top,x1-x0,max(app.drawable.y-top,1)}
     app.scene_shift={f32(view_x0-x0)/f32(x1-x0),0}
+    app.scene_view_width=x1-view_x0
     viewport_update(v,{left,bars},{max(ctx.size.x-left-right,1),max(ctx.size.y-bars,1)},ctx.size,frame,input.modifiers)
     v.hovered=frame.mouse_inside && !ctx.over && ctx.active==0 && popups==0 && !modal && s.mode!=.Play && !camera_previewing(s) && !player_processes_view(s) && g.drag.kind==.None && !scene_covered(s)
     drag_update(g,frame)

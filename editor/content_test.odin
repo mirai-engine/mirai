@@ -139,6 +139,10 @@ content_names_is_a_wall_under_the_names_of_the_folders :: proc(t:^testing.T) {
     // Lines are built once for the same inputs.
     cached:=raw_data(c.lines)
     testing.expect_value(t,raw_data(content_test_lines(&c,&registry)),cached)
+    // A folded folder keeps its name and shows nothing of what it holds.
+    content_fold_flip(&c,content_test_hash("Castle"))
+    testing.expect_value(t,content_test_show(&c,&registry),"rock [Castle] [Levels] one")
+    content_fold_flip(&c,content_test_hash("Castle"))
     // Entering a folder keeps where it was, and a folder holds folders and assets.
     content_enter(&c,.None,"Castle")
     testing.expect_value(t,content_test_show(&c,&registry),"gate [Props] barrel,crate,torch,wall [Towers] big")
@@ -325,8 +329,9 @@ content_selection_toggle_shows_what_the_selection_uses :: proc(t:^testing.T) {
     testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Robot_01,SKM_Robot,robot")
     content_selection_set(&c,&registry,{})
     testing.expect_value(t,len(content_test_lines(&c,&registry)),0)
-    c.selection_only=false
-    c.revision+=1
+    c.categories={.Mesh}
+    content_filters_clear(&c)
+    testing.expect(t,c.categories=={} && !c.selection_only)
     testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Shared,robot [Spider] spider [Stray] orphan")
 }
 

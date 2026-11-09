@@ -37,11 +37,43 @@ the_rail_and_a_docked_details_take_their_edges_and_the_left_panel_does_not_move_
     left,_=dock_widths(&s)
     testing.expect_value(t,left,RAIL_WIDTH)
     testing.expect_value(t,dock_scene_left(&s),RAIL_WIDTH)
-    // In a Play the panels are not there: the game takes the window.
+    // In a Play only the rail stays: the game takes the rest.
     l.left_open=true
     s.mode=.Play
     left,right=dock_widths(&s)
-    testing.expect(t,left==0 && right==0)
+    testing.expect(t,left==RAIL_WIDTH && right==0)
+    testing.expect_value(t,dock_scene_left(&s),RAIL_WIDTH)
+}
+
+@(test)
+an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    ui.frame_begin(&ctx,{size={1600,900},pointer_absent=true})
+    defer ui.frame_end(&ctx)
+    g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
+    s:=Session{gui=&g}
+    bars:=ctx.theme.bar_height+toolbar_height(&g)
+    g.rects.left={RAIL_WIDTH,bars,LEFT_WIDTH.max,900-bars}
+    x0:=RAIL_WIDTH+LEFT_WIDTH.max-LEFT_UNDER
+    testing.expect_value(t,asset_workspace_rect(&g),ui.Rect{x0,bars,1600-x0,900-bars})
+    testing.expect_value(t,asset_workspace(&g).padding,[4]f32{LEFT_UNDER,0,0,0})
+    document,details,_:=asset_workspace_details(&s)
+    testing.expect(t,document.width.value==1600-x0 && document.backdrop,"Details floats over the document, under the left panel")
+    testing.expect_value(t,details.offset,[2]f32{-DETAILS_MARGIN,bars+DETAILS_MARGIN})
+    // What the bottom panel takes stays free of what the document shows.
+    g.rects.bottom={400,600,1000,292}
+    testing.expect_value(t,asset_workspace(&g).padding[3],f32(300))
+    g.rects.bottom={}
+    g.layout.right_mode=.Docked
+    document,details,_=asset_workspace_details(&s)
+    width:=dock_right_width(&s)
+    testing.expect_value(t,document.width.value,1600-x0-width)
+    testing.expect_value(t,details.offset,[2]f32{0,bars})
+    // With the panel folded only the rail is at the left, and nothing runs under it.
+    g.rects.left={0,bars,RAIL_WIDTH,900-bars}
+    testing.expect_value(t,asset_workspace_rect(&g).x,RAIL_WIDTH)
+    testing.expect_value(t,asset_workspace_under(&g),f32(0))
 }
 
 @(test)

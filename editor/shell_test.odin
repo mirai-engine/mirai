@@ -262,7 +262,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
         _,editor_tab:=ui.widget_rect(&ctx,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
         testing.expect(t,left_shown && left.x==RAIL_WIDTH && left.y+left.h==size.y)
         // In the pause Details stays beside the chat, for the entities it refers to.
-        testing.expect(t,right_shown && !editor_tab && g.rects.bottom.h==0)
+        testing.expect(t,right_shown && editor_tab && g.rects.bottom.h==0)
         ui.id_push(&ctx,shell_id(&g,"left"))
         ui.id_push(&ctx,shell_id(&g,"ai_chat"))
         prompt:=ui.id(&ctx,"prompt")
@@ -282,8 +282,8 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,!session.play_chat_open)
     session.mode=.Play
     shell_test_frame(&session,{size={1440,900},pointer_absent=true})
-    _,launcher=ui.widget_rect(&ctx,chat_button)
-    testing.expect(t,!launcher,"while the game plays the chat has no launcher")
+    shell_test_click(t,&session,chat_button)
+    testing.expect(t,!session.play_chat_open,"while the game plays the rail stays and the chat does not open")
     g.layout=layout_before_play
     world.graphics.show_fps=true
     labels:=[3]string{"Paint","Terrain","Placement"}

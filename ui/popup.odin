@@ -615,6 +615,7 @@ Panel_Float :: struct {
     bare:bool,           // no background
     docked:bool,         // against an edge of the surface: its fill, square, without border or shadow
     corners:[4]f32,      // docked: of each corner, top left first clockwise; 0: square
+    backdrop:bool,       // in layer 0, under every other panel, whatever layer says
     stroke:Color,        // the border; that of the theme when transparent
 }
 
@@ -622,7 +623,9 @@ Panel_Float :: struct {
 @(deferred_in=panel_end)
 panel :: proc(ctx:^Context,id:Id,p:Panel_Float) -> bool {
     th:=&ctx.theme
-    b:=Box{id=id,layout=p.layout,float={to=.Safe if p.safe else .Surface,anchor=p.anchor,pivot=p.pivot,offset=p.offset,layer=p.layer if p.layer!=0 else LAYER_PANEL},block=true}
+    layer:=p.layer if p.layer!=0 else LAYER_PANEL
+    if p.backdrop {layer=0}
+    b:=Box{id=id,layout=p.layout,float={to=.Safe if p.safe else .Surface,anchor=p.anchor,pivot=p.pivot,offset=p.offset,layer=layer},block=true}
     b.direction=.Row if p.row else .Column
     switch {
     case p.bare:

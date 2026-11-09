@@ -186,6 +186,7 @@ App :: struct {
     // The part of the drawable the camera draws in, in pixels: what is not
     // always covered (the editor leaves out its bars). Zero: all of it.
     scene:[4]i32,
+    scene_view_width:i32, // of the whole view scene is the visible part of, in pixels; 0: the width of scene
     scene_shift:[2]f32, // where the center of the view of the camera is, in halves of scene: what surrounds scene is part of the view, not drawn
     time:f32,                 // seconds of the world the next frame shows: the render library sets it
     views:[render.VIEW_CAPACITY]render.Frame_View,

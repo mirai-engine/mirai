@@ -201,6 +201,7 @@ User_Icon :: enum u8 {
     Terrain,       // two peaks: a terrain and its tool
     Plugin,        // three blocks and a fourth set apart: a plugin without an icon of its own
     Mirai_Shape,   // the mark in one color, the one given
+    Puzzle,        // a piece with knobs on top and at its right and notches at the other two sides
 }
 
 DRAWING_CAPACITY :: 8 // areas plugins draw in one frame
@@ -375,6 +376,20 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
             ui.draw_line(ctx,c+{x*s,(y+1.5)*s},c+{x*s,6*s},1.3,color)
             ui.draw_rect_lines(ctx,{c.x+(x-1.5)*s,c.y+(y-1.5)*s,3*s,3*s},1.1,color)
         }
+    case .Puzzle:
+        // On a 24 unit grid, as wide as the other tabs and centered nearer its body, where its weight is:
+        // x, y and radius of each arc with its angles from and to, clockwise. Straight sides join them.
+        arcs:=[16][5]f32{{7,6,1,90,0},{10,5,2,180,360},{13,6,1,180,90},{16,8,1,270,360},{18,11,1,180,90},{19,14,2,-90,90},{18,17,1,270,180},{16,20,1,0,90},{13,20,1,90,180},{10,19,2,0,-180},{7,20,1,0,90},{4,20,1,90,180},{4,17,1,180,270},{5,14,2,90,-90},{4,11,1,90,180},{4,8,1,180,270}}
+        points:[84][2]f32
+        n:=0
+        for arc in arcs {
+            steps:=arc[2]>1?8:3
+            for i in 0..=steps {
+                a:=(arc[3]+(arc[4]-arc[3])*f32(i)/f32(steps))*math.PI/180
+                points[n]=c+([2]f32{arc[0]-11.25+arc[2]*math.cos(a),arc[1]-12.75+arc[2]*math.sin(a)})*0.78*s;n+=1
+            }
+        }
+        ui.draw_outline(ctx,points[:],1.3*s,color)
     case .Component:
         ui.draw_polyline(ctx,([][2]f32{c+{-3*s,-4*s},c+{-7*s,0},c+{-3*s,4*s}}),1.3,color)
         ui.draw_polyline(ctx,([][2]f32{c+{3*s,-4*s},c+{7*s,0},c+{3*s,4*s}}),1.3,color)
@@ -649,7 +664,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     details:=panels || s.mode==.Paused && !s.play_stepped && !player_processes_view(s)
 
     shown_tab:=library_tab_shown(s)
-    if (panels || s.mode==.Paused) && !s.viewport.pick.active {
+    if (panels || play && !player_processes_view(s)) && !s.viewport.pick.active {
         rail_build(s,shown_tab,bars)
         g.rects.left={0,bars,RAIL_WIDTH,ctx.size.y-bars}
     }
@@ -747,7 +762,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         }
         if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect} else {g.rects.right={ctx.size.x-DETAILS_MARGIN-right_width,top,right_width,120}}
     }
-    if right_dock>0 {dock_edge(s,right_width,bars)}
+    if right_dock>0 {dock_edge(s,right_width,bars,ctx.size.y-bars)}
     if panels && material_document_shown(s) {material_document_build(s)}
     camera_preview_bar(s)
     play_history_bar(s)
@@ -769,17 +784,17 @@ rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
     th:=&ctx.theme
     l:=&g.layout
     play:=play_shown(s)
-    tabs:=play?Library_Tabs{.Ai}:library_tabs(s)
-    icons:=[Library_Tab]ui.Icon{.Editor=.Plus,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
+    tabs:=library_tabs(s)
+    icons:=[Library_Tab]ui.Icon{.Editor=ui.icon_user(u8(User_Icon.Puzzle)),.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
     tips:=[Library_Tab]string{.Editor="Editor",.Content="Content Browser",.Hierarchy="Hierarchy",.World="World",.Ai="AI",.Git="Source control"}
     if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=th.bar_top,block=true}) {
         for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
             if tab not_in tabs {continue}
-            shown:=play?s.play_chat_open:l.left_open && shown_tab==tab
+            shown:=play?tab==.Ai && s.play_chat_open:l.left_open && shown_tab==tab
             color:=shown?th.text:th.text_muted
             // A merge that waits for its conflicts marks the tab while it lasts.
             if tab==.Git && s.git!=nil && s.git.merging {color=th.danger}
-            if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],style=.Ghost,active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17}).clicked {continue}
+            if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],style=.Toggle,active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17,disabled=play && (tab!=.Ai || s.mode==.Play)}).clicked {continue}
             switch {
             case play:  play_chat_set(s,!s.play_chat_open)
             case shown: l.left_open=false
@@ -901,7 +916,7 @@ panel_mode :: proc "contextless" (l:^Layout,type:Document_Type) -> Panel_Mode {
 dock_scene_left :: proc(s:^Session) -> f32 {
     left,_:=dock_widths(s)
     g:=s.gui
-    if left<=0 || !g.layout.left_open {return left}
+    if left<=0 || !g.layout.left_open || play_shown(s) {return left}
     density:=s.app!=nil && s.app.density>0?s.app.density:1
     return math.round((RAIL_WIDTH+width_of(LEFT_WIDTH,g.ctx.size.x)-LEFT_UNDER)*density)/density
 }
@@ -909,31 +924,38 @@ dock_scene_left :: proc(s:^Session) -> f32 {
 // What the rail and a docked right panel take of the window, in points on
 // whole pixels: the view is the rest, whether the left panel covers part of it
 // or not, so folding the panel moves nothing of its image. An asset document
-// draws its own right side, and in a Play or while picking the panels are not
-// there.
+// draws its own right side. In a Play only the rail stays, and while picking
+// nothing does.
 dock_widths :: proc(s:^Session) -> (left,right:f32) {
     g:=s.gui
-    if g==nil || g.ctx==nil || play_shown(s) || player_processes_view(s) || s.viewport!=nil && s.viewport.pick.active {return}
+    if g==nil || g.ctx==nil || player_processes_view(s) || s.viewport!=nil && s.viewport.pick.active {return}
     l:=&g.layout
     window:=g.ctx.size.x
     density:=s.app!=nil && s.app.density>0?s.app.density:1
     left=math.round(RAIL_WIDTH*density)/density
+    if play_shown(s) {return}
     switch type:=document_type(s);type {
     case .Asset:
     case .Scene,.Prefab:
-        if l.right_open && window>=760 && panel_mode(l,type)==.Docked {
-            value:=clamp(l.right_width>0?l.right_width:width_of(RIGHT_WIDTH,window),DOCK_MIN,max(window*0.4,DOCK_MIN))
-            right=math.round(value*density)/density
-        }
+        if l.right_open && window>=760 && panel_mode(l,type)==.Docked {right=dock_right_width(s)}
     }
     return
 }
 
+// The width of a docked right panel, in points on whole pixels.
+dock_right_width :: proc(s:^Session) -> f32 {
+    g:=s.gui
+    window:=g.ctx.size.x
+    density:=s.app!=nil && s.app.density>0?s.app.density:1
+    value:=clamp(g.layout.right_width>0?g.layout.right_width:width_of(RIGHT_WIDTH,window),DOCK_MIN,max(window*0.4,DOCK_MIN))
+    return math.round(value*density)/density
+}
+
 // The inner edge of a docked right panel: a rule, which a drag moves to widen or narrow it.
-dock_edge :: proc(s:^Session,width,top:f32) {
+dock_edge :: proc(s:^Session,width,top,height:f32) {
     g:=s.gui;ctx:=g.ctx
     x:=ctx.size.x-width
-    height:=max(ctx.size.y-top,1)
+    height:=max(height,1)
     if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=ctx.theme.divider,float={to=.Surface,offset={x,top},layer=ui.LAYER_PANEL}}) {}
     if value,changed:=splitter(s,.Right,{x-SPLITTER_WIDTH/2,top,SPLITTER_WIDTH,height},width,-1);changed {
         g.layout.right_width=clamp(value,DOCK_MIN,max(ctx.size.x*0.4,DOCK_MIN))

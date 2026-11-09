@@ -25,11 +25,13 @@ CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
 
 CONTENT_ROW :: f32(28)        // a row of the list
 CONTENT_CONTROL :: f32(28)    // the row of the search and its buttons
-CONTENT_STRIP_ROW :: f32(14)  // the row of the filters of kinds and the zoom
+CONTENT_STRIP_ROW :: f32(22)  // the row of the filters of kinds and the zoom
 CONTENT_STRIP_BAR :: f32(6)   // the bar of a filter inside its row
-CONTENT_DOTS :: f32(20)       // the button of the menu of filters
+CONTENT_FILTERS_GAP :: f32(4) // around the button that clears them
+CONTENT_FILTERS :: f32(22)    // the button of the menu of filters
+CONTENT_FILTERS_CLEAR :: f32(22) // the room of the button that clears them
 CONTENT_ZOOM_WIDTH :: f32(64)
-CONTENT_RAIL_GAP :: f32(8)    // between the strip, the dots and the zoom
+CONTENT_RAIL_GAP :: f32(8)    // between the strip, the filters and the zoom
 CONTENT_PANEL_GAP :: f32(6)   // between the rows of the browser
 CONTENT_BACK_ROW :: f32(24)   // the back arrow and the breadcrumb
 CONTENT_HEADER :: f32(26)     // the name of a folder the wall stays under
@@ -218,12 +220,14 @@ Content_At :: struct {
 // Where the browser of a project was left, as the file of its marks keeps it
 // (preferences.odin): written from Content and read back into it. The search
 // is not kept: it is what is being looked for now.
+CONTENT_FOLDED_KEPT :: 256
 Content_Navigation :: struct {
     place:[API_PATH_BYTES]u8 `mirai:"text"`, // Content.place
     at:[API_PATH_BYTES]u8 `mirai:"text"`,    // Content.at
     virtual:Content_Virtual,
     categories:Content_Categories,
     unused:bool,
+    folded:[CONTENT_FOLDED_KEPT]u64, // Content.folded; a zero ends them
 }
 
 // A clip of a library: an .anim and the name of one of its clips in Content.clip_text.
@@ -323,6 +327,7 @@ Content :: struct {
     scene_key:[4]u64,
     selection_used:[dynamic]u32,   // sorted, of Registry.files: what the selection uses and what that uses
     selection_key:[4]u64,
+    folded:[dynamic]u64,             // the groups of the folders Names shows only the name of
     unfolded:[dynamic]base.Asset_Id, // libraries whose clips show and owners whose parts show
     focus_search:bool,             // the search takes the keyboard on the next frame
     card_focus:ui.Id,              // the card that had the keyboard when the browser was last built
@@ -930,6 +935,7 @@ content_wall_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,pre
             group:=content_virtual_group(virtual)
             header:=i32(len(c.lines))
             append(&c.lines,Content_Line{kind=.Header,group=group,name=labels[virtual],virtual=virtual,parent=-1})
+            if content_folded(c,group) {continue}
             first:=len(c.cards)
             content_cards_add(c,b,files[:min(b.columns,len(files))])
             content_rows_add(c,first,b.columns,group,header)
@@ -952,6 +958,7 @@ content_wall_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,pre
     for child in content_children(under,prefix) {
         header:=i32(len(c.lines))
         append(&c.lines,Content_Line{kind=.Header,group=base.hash64(transmute([]u8)child.path),name=child.name,path=child.path,cover=content_cover_of(registry,fmt.tprintf("%s/",child.path)),parent=-1})
+        if content_folded(c,base.hash64(transmute([]u8)child.path)) {continue}
         clear(&held)
         for entry in child.entries {
             if entry.index>=0 {append(&held,Held{content_folder_of(entry.path),entry.index})}
@@ -964,6 +971,10 @@ content_wall_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,pre
             if j-i>=b.columns {
                 flush(c,b,&loose,header)
                 if folder!=child.path {append(&c.lines,Content_Line{kind=.Subheader,group=base.hash64(transmute([]u8)folder),name=folder[len(child.path)+1:],path=folder,parent=header})}
+                if folder!=child.path && content_folded(c,base.hash64(transmute([]u8)folder)) {
+                    i=j
+                    continue
+                }
                 files:=make([]i32,j-i,context.temp_allocator)
                 for k in i..<j {files[k-i]=held[k].file}
                 start:=len(c.cards)
@@ -1236,6 +1247,7 @@ content_navigation :: proc(c:^Content) -> (n:Content_Navigation) {
     copy(n.place[:],c.place[:c.place_length])
     copy(n.at[:],c.at.folder[:c.at.length])
     n.virtual,n.categories,n.unused=c.at.virtual,c.categories,c.unused
+    copy(n.folded[:],c.folded[:])
     return
 }
 
@@ -1246,6 +1258,11 @@ content_navigation_set :: proc(c:^Content,n:^Content_Navigation) {
     c.at.virtual=n.virtual
     c.at.length=copy(c.at.folder[:],base.text_get(n.at[:]))
     c.categories,c.unused=n.categories,n.unused
+    clear(&c.folded)
+    for group in n.folded {
+        if group==0 {break}
+        append(&c.folded,group)
+    }
     clear(&c.history)
     clear(&c.trail)
     c.restore=true
@@ -2007,7 +2024,16 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
     header:=line.kind==.Header
     height:=CONTENT_HEADER if header else CONTENT_SUBHEADER
     fill:=th.accent_soft if marked else (th.field if it.hot else (th.panel if header else {}))
+    icon,color:=ui.icon_user(u8(User_Icon.Folder)),th.text_faint
+    #partial switch line.virtual {
+    case .Recent:    icon,color=.History,th.text_muted
+    case .Scene:     icon,color=ui.icon_user(u8(User_Icon.Scene)),th.text_muted
+    case .Favorites: icon,color=ui.icon_user(u8(User_Icon.Star_Filled)),STAR_COLOR
+    }
+    folded:=content_folded(s.content,line.group)
     if ui.box(ctx,{id=id,width=ui.fixed(width),height=ui.fixed(height),padding={2,0,2,0},gap=6,align_y=.Center,fill=fill}) {
+        if ui.button(ctx,ui.id_derive(ctx,id,"fold"),{icon=folded?.Chevron_Right:.Chevron_Down,icon_color=th.text_faint,icon_size=10,style=.Ghost,width=16,height=height-4}).clicked {content_fold_flip(s.content,line.group)}
+        ui.icon(ctx,icon,color,14)
         if line.cover>0 {
             cover:=texture_quad(s,s.app.assets.registry.files[line.cover-1].id)
             if ui.box(ctx,{width=ui.fixed(CONTENT_COVER),height=ui.fixed(CONTENT_COVER),fill=th.field,radius=2,clip_x=true,clip_y=true}) {
@@ -2019,6 +2045,20 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
     }
     if it.hot {ui.tooltip(ctx,line.path if line.virtual==.None else line.name)}
     return it
+}
+
+// What the name that stays on top covers past the edge of the list: at a
+// fractional density the two round to different pixels.
+CONTENT_PIN_BLEED :: f32(4)
+
+// Whether Names shows only the name of a folder.
+@(private)
+content_folded :: proc(c:^Content,group:u64) -> bool {return slice.contains(c.folded[:],group)}
+
+@(private)
+content_fold_flip :: proc(c:^Content,group:u64) {
+    if at,found:=slice.linear_search(c.folded[:],group);found {unordered_remove(&c.folded,at)} else {append(&c.folded,group)}
+    c.revision+=1
 }
 
 // What the lines of a frame ask for, done once they are built: their names
@@ -2131,6 +2171,14 @@ content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
     return
 }
 
+// Takes off the filters of kinds and that of the selection of the viewport.
+@(private)
+content_filters_clear :: proc(c:^Content) {
+    c.categories,c.selection_only={},false
+    c.scroll=0
+    c.revision+=1
+}
+
 // The strip of the filters of kinds, the menu of the others and the zoom.
 @(private)
 content_strip_row :: proc(s:^Session) {
@@ -2160,10 +2208,12 @@ content_strip_row :: proc(s:^Session) {
         id:=ui.id(ctx,"content_more_open")
         it:=ui.interact(ctx,id,{.Focusable})
         lit:=c.categories&{.Texture,.Animation,.Sound,.Ui}!={}
-        ink:=th.panel if lit else th.text_muted
-        if ui.box(ctx,{id=id,width=ui.fixed(CONTENT_DOTS),height=ui.fixed(CONTENT_STRIP_ROW),gap=2,align_x=.Center,align_y=.Center,fill=th.text if lit else (th.field if it.hot || opened else {}),radius=2}) {
-            for _ in 0..<3 {
-                if ui.box(ctx,{width=ui.fixed(2.6),height=ui.fixed(2.6),fill=ink,radius=1.3}) {}
+        if ui.box(ctx,{width=ui.fixed(CONTENT_FILTERS+CONTENT_FILTERS_CLEAR+2*CONTENT_FILTERS_GAP),height=ui.fixed(CONTENT_STRIP_ROW),padding={0,0,CONTENT_FILTERS_GAP,0},gap=CONTENT_FILTERS_GAP}) {
+            if ui.box(ctx,{id=id,width=ui.fixed(CONTENT_FILTERS),height=ui.fixed(CONTENT_STRIP_ROW),align_x=.Center,align_y=.Center,fill=th.text if lit else (th.field if it.hot || opened else {}),radius=2}) {
+                ui.icon(ctx,.Filter,th.panel if lit else th.text_muted,12)
+            }
+            if c.categories!={} || c.selection_only {
+                if ui.button(ctx,ui.id(ctx,"content_filters_clear"),{icon=.Cross,icon_size=12,icon_color=th.text_muted,tip="Clear filters",style=.Ghost,width=CONTENT_FILTERS_CLEAR,height=CONTENT_STRIP_ROW}).clicked {content_filters_clear(c)}
             }
         }
         if it.hot {ui.tooltip(ctx,"More filters")}
@@ -2706,7 +2756,8 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                 for h in c.heights[:header] {head_top+=h}
             }
             if header>=0 && head_top<c.scroll {
-                if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,float={to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={0,c.scroll}}}) {
+                if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,direction=.Column,fill=th.panel,float={to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={0,c.scroll-CONTENT_PIN_BLEED}}}) {
+                    ui.spacer(ctx,-1,CONTENT_PIN_BLEED)
                     pinned:=lines[header]
                     pin:=ui.id(ctx,"content_sticky")
                     it:=content_header(s,pinned,pin,width,content_folder_marked(s,pin,pinned.virtual,pinned.path))

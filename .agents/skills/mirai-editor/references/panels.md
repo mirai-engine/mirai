@@ -13,7 +13,8 @@
   `dock_scene_left`), in Edit, Simulate and Play: what they always cover consumes no GPU. The left
   panel never moves the image: the viewport (`Viewport.origin`, `size`, `dock_widths`) is the whole
   view, also under the panel, and takes the pointer and projects there, and `App.scene_shift` keeps
-  the center of that view in the part drawn, without moving the camera. The bar's edge falls on
+  the center of that view in the part drawn, without moving the camera; the pixels of the Resolution
+  setting count the whole view (`Frame_View.view_width`), so what the panel covers is pixels saved. The bar's edge falls on
   a whole pixel at any scale (`bars_snap`).
 - During Play the game UI's safe area reserves the height of the bar: a HUD anchored to
   `Float_To.Safe` stays below them.
@@ -433,9 +434,10 @@ The Content Browser tab shows the registry of the assets of the project and its 
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
 - **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
-  only in its tooltip; three dots open the rest (Texture, Animation, Sound, UI) and light up while
-  one of them is on. They combine; none active shows everything. Model gathers meshes, fractures and
-  physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a
+  only in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI) and lights up while
+  one of them is on, and a cross by it, there only while a filter is on, clears them and the
+  viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
+  and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a
   plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
   the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
   listed: the mesh that uses them represents them (`content_listed`).
@@ -455,7 +457,8 @@ are built; it is rebuilt when the registry, the filters, the marks or the place 
   `content_back`) and shows a row with the back arrow and a breadcrumb.
 - **Layouts** (`Content_Arrangement`, in the gear): **Names** is a continuous wall, with each
   first-level folder's name sticky over what it holds, a thin name on subfolders of at least a full
-  row and the smaller ones flowing together, and at the root one row of each virtual folder.
+  row and the smaller ones flowing together, and at the root one row of each virtual folder. A
+  name enters its folder and its arrow folds it in place.
   **Tabs** has chips of the first-level folders and rows of those of the chosen one over a grid of
   what it holds and everything under it. **Cards** shows folders as cells of an asset, with Recent
   open at the top of the root. No level is indented.
@@ -685,9 +688,10 @@ the prototype; tabs, history, Save and closing in [document](document.md#asset-d
 - With a document in front, the active scene stays loaded underneath but is neither drawn nor
   handed to the renderer (`App.ui_only`, which also draws the previews' images of the panels); in
   its place goes the prototype's canvas color.
-- **Workspace** (`asset_workspace_rect`): from the left column to the window edge, below the bars
-  and above the bottom panel. A panel with 33-point headings (`asset_heading`, background
-  `ASSET_SUBSECTION`).
+- **Workspace** (`asset_workspace_rect`): from under the left panel, whose rounded corners show it,
+  to the edges of the window, below the bars; every other panel floats over it, and Details docked
+  takes its edge. A panel with 33-point headings (`asset_heading`, background `ASSET_SUBSECTION`);
+  what is read in it starts past the left panel (`asset_workspace_under`).
 - **Left column**: the shared panel takes the whole height. Details, the viewport tools, the gizmo,
   picking, placement, what is drawn over the scene and Play are not there; `tool_on` is false and
   `tool_set` does not turn on.

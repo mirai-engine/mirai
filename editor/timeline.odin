@@ -34,6 +34,13 @@ Timeline :: struct {
 }
 Timeline_Drag :: enum u8 {None,Head,In,Out,View,View_Start,View_End,Mark}
 
+// A range turned on starts at the head, and ends where it ended if that is after it.
+@(private)
+timeline_range_start :: proc(t:^Timeline,frame,frames:f32) {
+    t.range_in=clamp(frame,0,max(frames-1,0))
+    if t.range_out<=t.range_in || t.range_out>frames {t.range_out=frames}
+}
+
 // What plays, as the strip reads it.
 Timeline_Clock :: struct {
     frame:f32,  // where the head is
@@ -181,7 +188,7 @@ timeline_strip :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_
             }
             if transport(ctx,"range",timeline_icon(.Range),"Range",.Tab,t.range) {
                 t.range=!t.range
-                if t.range && t.range_out<=t.range_in {t.range_in,t.range_out=0,c.frames}
+                if t.range {timeline_range_start(t,c.frame,c.frames)}
             }
             timeline_divider(ctx)
             if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.control-2),padding={2,2,2,2},gap=2,fill=th.well,radius=th.radius_control,align_y=.Center}) {
