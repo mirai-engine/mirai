@@ -63,13 +63,6 @@ unsaved_assets_are_saved_discarded_and_found_through_what_a_world_uses :: proc(t
     // A game of players of other processes says which and how to go on: they read the saved files.
     refused:=play_unsaved(&s)
     testing.expect(t,strings.contains(refused,"clay.mat, other.mat") && strings.contains(refused,"asset.save") && strings.contains(refused,"saved_only:true"),refused)
-    // While a game plays, asset.save waits for Edit as Save does: the game reads those files.
-    s.mode=.Play
-    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    call:=api.Call{raw=`{"all":true}`,out=&out,allocator=context.temp_allocator}
-    api_asset_save(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && len(assets_unsaved(&s))==2)
-    s.mode=.Edit
 
     // The world shows stone, and stone needs clay: clay is what it uses unsaved.
     used:=make([dynamic]string,context.temp_allocator)

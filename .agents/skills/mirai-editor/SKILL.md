@@ -219,7 +219,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back` (the chain over the saved
   file, a truncated log, the replay by `Id` and the copy that deletes the previous one); one chain
   per tab and all of them at startup,
-  `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; recovery after killing
+  `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; what is offered stays
+  aside while the document is edited and saved,
+  `a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved`; recovery after killing
   the process, by API in an open editor. Prefab records in collaboration:
   `prefab_records_of_one_editor_reach_the_others_in_the_order_of_the_host`.
 - Journal, undo and transactions: `editor/journal_test.odin` (each reader's cursors, steps that

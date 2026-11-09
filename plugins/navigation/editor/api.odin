@@ -591,7 +591,7 @@ far_of :: proc(w:core.World_Ref,e:core.Entity) -> ^nav.Nav_Far {
 @(private)
 move :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Move_Params)
-    if !editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.move works on the running world: start Play or Simulate");return}
+    if !editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.move works on the running world: play.start first");return}
     world:=editor.shown_world(s)
     requests:=core.world_storage_of(world,nav.Nav_Requests)
     agents:=core.world_table_of(world,nav.Nav_Agent)

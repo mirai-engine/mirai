@@ -172,12 +172,13 @@ edits_once :: proc(edits:^Edits,selection:^Selection,label:string) -> bool {
 }
 
 // The gesture of an edit: one of its own, unless one is open, which it joins.
-edit_open :: proc(s:^Session,label:string) -> (opened,ready:bool) {
-    if shown_world(s).data!=s.edits.world {return false,true}
+// document opens it on the document whatever the view shows.
+edit_open :: proc(s:^Session,label:string,document:=false) -> (opened,ready:bool) {
+    if !document && !s.edits.open && shown_world(s).data!=s.edits.world {return false,true}
     opened=!s.edits.open
-    ready=edits_begin(s.edits,s.selection,label)
+    ready=edits_begin(s.edits,document_selection(s),label)
     if ready && !s.edits.cancel_ready {
-        if error:=edits_cancel_prepare(s.edits,shown_world(s));error!=.None {
+        if error:=edits_cancel_prepare(s.edits,edited_world(s));error!=.None {
             if opened {s.edits.open=false}
             s.edits.error,ready=error,false
         }

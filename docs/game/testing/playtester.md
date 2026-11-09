@@ -63,8 +63,9 @@ mirai rpc --project . capture \
 - With `path` the answer is only where the file is: open it when the numbers do not decide.
   Without it MCP also returns the image, which costs tokens.
 - A filmstrip steps the game as `play.step` does and puts `count` cells `every` ticks apart in
-  one image, the first before any tick; `segments` must not run longer than `every` times
-  `count` less one ticks. `follow` centers each cell on an entity by name, id or handle.
+  one image, the first before any tick. `segments` say how long it runs: with `count` the cells
+  spread over them, with `every` there are as many as they last. `follow` centers each cell on an
+  entity by name, id or handle.
 - `play.observe` with `path` writes a small image beside its answer.
 - Captures show the game alone with its own interfaces; a menu that is open is in the image.
 

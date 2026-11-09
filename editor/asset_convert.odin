@@ -29,7 +29,6 @@ asset_convert :: proc(s:^Session,id:base.Asset_Id) -> (path:string,message:strin
     file,found:=asset.registry_find(r,id)
     if !found {return "","No asset has that id"}
     if file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB {return "","Only a scene or a prefab changes kind"}
-    if s.mode!=.Edit {return "","Stop Play or Simulate first"}
     if busy:=import_busy(s);busy!="" {return "",busy}
     if scene_tab(s,id)>=0 {return "","It is open in a tab: close the tab first"}
     if file.kind==asset.KIND_SCENE {

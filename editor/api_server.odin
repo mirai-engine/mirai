@@ -429,7 +429,7 @@ api_trampoline :: proc(call:^api.Call) {
         // A gesture the call opened and ended is its step, without waiting for the frame.
         if edits.commit && edits.opener==edits.author {
             sections_sync(entry.session)
-            edits_flush(edits,edited_world(entry.session),entry.session.selection)
+            edits_flush(edits,edited_world(entry.session),document_selection(entry.session))
         }
         // What the call selected is a step of its author.
         edits_select(edits,edited_world(entry.session),document_selection(entry.session))
@@ -542,12 +542,7 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
 // ends before the edit. The scene of the document can be edited while a game
 // runs: the game keeps its own copy and the user sees the changes when the
 // run stops.
-@(private)
 api_guard :: proc(s:^Session,call:^api.Call) -> bool {
-    if s.recovery.pending {
-        api.call_fail(call,api.SERVER_ERROR,"Resolve the pending recovery with editor.recover before editing")
-        return false
-    }
     tools_release(s)
     edits_cancel(s.edits,edited_world(s))
     if s.edits.open || s.edits.commit || s.edits.preview {
@@ -555,17 +550,6 @@ api_guard :: proc(s:^Session,call:^api.Call) -> bool {
         return false
     }
     return true
-}
-
-// The checks of api_guard for what has to wait for Edit: saving, prefabs,
-// which work on the selection in sight and write assets a running game may
-// load, and a tool of a plugin that confirms through its own preview.
-api_guard_edit :: proc(s:^Session,call:^api.Call) -> bool {
-    if playing(s) {
-        api.call_fail(call,api.SERVER_ERROR,"A game is playing; this is done from Edit")
-        return false
-    }
-    return api_guard(s,call)
 }
 
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.

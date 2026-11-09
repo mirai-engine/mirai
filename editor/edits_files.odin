@@ -241,13 +241,13 @@ edits_files_free :: proc(edits:^Edits) {files_free(&edits.files,&edits.touched)}
 
 // Writes a file of the project as an edit, in the open gesture or in a step
 // of its own named label; nil bytes with remove take it away. An asset file
-// changes in memory, unsaved. A Play has no history: the file changes
-// without a step.
+// changes in memory, unsaved. Outside a transaction, a Play has no history:
+// the file changes without a step.
 file_write :: proc(s:^Session,path:string,bytes:[]u8,label:string,remove:=false) -> bool {
     r:=files_registry(s)
     if len(bytes)>EDITS_FILE_BYTES {return file_set(s,path,bytes,remove)}
     if h:=asset_history_front(s);h!=nil {return asset_history_write(s,h,path,bytes,label,remove)}
-    history:=s.edits!=nil && shown_world(s).data==s.edits.world
+    history:=s.edits!=nil && (s.edits.open || shown_world(s).data==s.edits.world)
     opened,present:bool
     before:[]u8
     if history {

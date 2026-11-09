@@ -111,7 +111,6 @@ failure :: proc(call:^api.Call,f:Plan_Failure,rpc_code:=api.INVALID_PARAMS) {
 @(private)
 setup :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Ragdoll_Setup_Params)
-    if editor.playing(s) {failure(call,{"mode","Invalid_Mode","Edit",fmt.tprintf("%v",s.mode),"A ragdoll is set up in Edit","Stop Play or Simulation with play.stop"});return}
     if s.app==nil || s.app.assets==nil {failure(call,{"asset","Unavailable","an asset registry","none","Assets are unavailable",""},api.SERVER_ERROR);return}
     if !(p.mass>=0 && p.mass<=max(f32)) || p.mode>max(rag.Ragdoll_Mode) {failure(call,{"mass","Invalid_Value","a finite mass of 0 or more and a mode",fmt.tprintf("mass %v mode %v",p.mass,p.mode),"The mass or the mode is not valid","Pass mass in kg, or omit it"});return}
     w:=editor.edited_world(s)

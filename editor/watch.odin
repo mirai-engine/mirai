@@ -37,7 +37,7 @@ watch_world :: proc(s:^Session) -> rawptr {
 // selection of the document is kept for the return; from a game of the user,
 // that game goes on, released.
 watch_start :: proc(s:^Session,task:int,host:bool) -> bool {
-    if s.recovery.pending || task==0 && !host {return false}
+    if task==0 && !host {return false}
     if task!=0 && run_find(s,task)==nil {return false}
     if host && !collab_host_playing(s) {return false}
     if s.mode==.Watch {

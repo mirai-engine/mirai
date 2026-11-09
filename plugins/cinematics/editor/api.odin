@@ -115,13 +115,6 @@ timeline_find :: proc(call:^api.Call,w:core.World_Ref,id:base.Entity_Id,field:st
 }
 
 @(private)
-edit_only :: proc(s:^editor.Session,call:^api.Call) -> bool {
-    if s.mode==.Edit {return true}
-    api.call_fail(call,api.INVALID_PARAMS,"timelines are written in Edit: stop the run with play.stop first")
-    return false
-}
-
-@(private)
 api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Inspect_Params)
     w:=editor.shown_world(s)
@@ -282,7 +275,6 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_add :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Add_Params)
-    if !edit_only(s,call) {return}
     w:=editor.edited_world(s)
     desc:=Part_Desc{part=p.part,property=p.property,tick=p.tick,duration_ticks=p.duration_ticks,blend_ticks=p.blend_ticks,ease=p.ease,values=p.values}
     if p.part!=.Timeline {
@@ -305,7 +297,6 @@ api_add :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_key_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Key_Params)
-    if !edit_only(s,call) {return}
     w:=editor.edited_world(s)
     e:=editor.api_entity(w,p.track)
     track,found:=editor.entity_get(w,e,cine.Cinematic_Track)

@@ -105,7 +105,7 @@ stroke_dirty :: proc(stroke:^Stroke) -> bool {return shapes.shape_edit_dirty(&st
 // a new piece becomes a shape entity, one a cut took whole is deleted. False
 // when the scene refused a write (an entity another editor holds, a section).
 stroke_sync :: proc(s:^editor.Session,stroke:^Stroke) -> bool {
-    w:=editor.shown_world(s)
+    w:=editor.editing_world(s)
     _,info:=core.world_table(w,shapes.Shape)
     if info==nil {return false}
     index:=0

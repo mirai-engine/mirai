@@ -181,8 +181,7 @@ api_asset_save :: proc(s:^Session,call:^api.Call) {
         api_unsaved_copy(s,call,folder,paths[:])
         return
     }
-    // A running game reads the files of its assets, as Save from the menu waits for Edit.
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     saved,failures:=assets_write(s,paths[:])
     if failures!="" {
         api.call_failf(call,api.SERVER_ERROR,"%d of %d assets could not be written and stay unsaved: %s",len(paths)-saved,len(paths),failures)

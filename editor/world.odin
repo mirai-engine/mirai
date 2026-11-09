@@ -251,7 +251,7 @@ entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
     opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",all[index].label))
     if !edit_ready {return core.NONE}
     defer edit_close(s,opened)
-    return entity_make(s,shown_world(s),desc)
+    return entity_make(s,editing_world(s),desc)
 }
 
 // entity_create without a step of undo.
@@ -360,12 +360,12 @@ preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
 // Destroys entities and everything under them.
 entities_delete :: proc(s:^Session,entities:[]core.Entity) {
     if watching(s) || edit_held(s,..entities) || section_refused(s,..section_alone(s,entities)) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     if len(entities)==0 {return}
     opened,edit_ready:=edit_open(s,"Delete")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    links:=prefab_links(s)
+    links:=prefab_links(s,w)
     kept:=false
     for e in entities {
         // What a section holds goes with its reference, which is among them.
@@ -375,13 +375,14 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
         core.world_destroy_tree(w,e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
+    selection:=w.data==s.edit_world?document_selection(s):s.selection
     for e in entities {
         if e==document_root(s,w) || prefab_member_locked_in(s,links,w,e) {continue}
-        for i:=len(s.selection.entities)-1;i>=0;i-=1 {
-            if entity_under(w,s.selection.entities[i],e) {ordered_remove(&s.selection.entities,i)}
+        for i:=len(selection.entities)-1;i>=0;i-=1 {
+            if entity_under(w,selection.entities[i],e) {ordered_remove(&selection.entities,i)}
         }
     }
-    s.selection.serial+=1
+    selection.serial+=1
 }
 
 // Copies entities with everything under them, next to their originals:
@@ -389,7 +390,7 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
 // copy. Returns the copies of the entities given, in their order.
 entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",allocator:=context.temp_allocator) -> []core.Entity {
     if watching(s) || section_refused(s,..entities) {return nil}
-    w:=shown_world(s)
+    w:=editing_world(s)
     es:=core.world_entities(w)
     if len(entities)==0 {return nil}
     if root:=document_root(s,w);root!=core.NONE {
@@ -471,7 +472,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
             }
             core.world_settle(w)
         }
-        prefab_copied(s,sources[:],copies)
+        prefab_copied(s,w,sources[:],copies)
     }
     result:=make([]core.Entity,len(roots),allocator)
     for r,i in roots {result[i]=copies[r]}
@@ -480,7 +481,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
 
 entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
-    w:=shown_world(s)
+    w:=editing_world(s)
     names:=core.world_table_of(w,core.Name)
     text:=strings.trim_space(name)
     if names==nil || text=="" || !entity_alive(w,e) {return false}
@@ -500,9 +501,9 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
 // without size on an axis cannot hold it there.
 entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if watching(s) || edit_held(s,e) {return false}
-    w:=shown_world(s)
+    w:=editing_world(s)
     parent:=parent
-    if root:=document_root(s,w);root!=core.NONE && !playing(s) {
+    if root:=document_root(s,w);root!=core.NONE && w.data==s.edit_world {
         if e==root {return parent==core.NONE}
         if parent==core.NONE {parent=root}
     }
@@ -510,7 +511,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     transforms:=core.world_table_of(w,core.Transform)
     if parents==nil || !entity_alive(w,e) || parent!=core.NONE && (!entity_alive(w,parent) || entity_under(w,parent,e)) {return false}
     if entity_parent(w,e)==parent {return true}
-    if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,e) {return false}
+    if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,w,e) {return false}
     local:=mm.TRANSFORM_IDENTITY
     if transforms!=nil {local=core.local_under(core.read(transforms),core.read(parents),parent,entity_world(w,e)) or_return}
     opened,edit_ready:=edit_open(s,"Parent")
@@ -526,7 +527,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
 // Places an entity among the children of its parent: order says where.
 entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
     current,placed:=core.get(core.read(parents),e)
@@ -539,7 +540,7 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     table:=core.world_table_of(w,erender.Hidden)
     if table==nil || entity_has(w,e,erender.Hidden)==hidden {return}
     opened,edit_ready:=edit_open(s,hidden?"Hide":"Show")
@@ -552,13 +553,13 @@ entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
 // component owns (a body) is left to it.
 transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
-    w:=shown_world(s)
+    w:=editing_world(s)
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return false}
     opened,edit_ready:=edit_open(s,"Transform")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    row:=s.mode==.Edit?core.get(transforms,e):core.free(transforms,e)
+    row:=w.data==s.edit_world?core.get(transforms,e):core.free(transforms,e)
     if row==nil {return false}
     row^=core.from_math(t)
     return true
@@ -566,7 +567,7 @@ transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
 
 // The table of a component of the World shown, by its name as scenes and the API name it.
 component_table :: proc(s:^Session,name:string) -> ^core.Table_Info {
-    _,info:=core.world_table_named(shown_world(s),name)
+    _,info:=core.world_table_named(editing_world(s),name)
     return info
 }
 
@@ -574,7 +575,7 @@ component_table :: proc(s:^Session,name:string) -> ^core.Table_Info {
 // one it starts with (component_default).
 component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=nil) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     if t==nil || t.place!=.World || !entity_alive(w,e) {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",readable(t.name)))
     if !edit_ready {return}
@@ -591,7 +592,7 @@ component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=n
 
 component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Remove %s",readable(t.name)))
     if !edit_ready {return}
@@ -602,7 +603,7 @@ component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
 // Turns a component of an entity off by itself, or on: it keeps its values.
 component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     table:=core.world_table_at(w,t)
     _,turned_off,found:=core.raw_state(table,e)
@@ -616,7 +617,7 @@ component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
 // Turns an entity and everything under it off, or on (core.Disabled).
 entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
     if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    w:=editing_world(s)
     table:=core.world_table_of(w,core.Disabled)
     if table==nil || entity_has(w,e,core.Disabled)!=enabled {return}
     opened,edit_ready:=edit_open(s,enabled?"Enable":"Disable")
@@ -629,7 +630,7 @@ entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
 // it. The step is the gesture that is open, or one of its own.
 field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:int,bytes:[]u8) -> bool {
     if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return false}
-    w:=shown_world(s)
+    w:=editing_world(s)
     if t==nil || offset<0 || offset+len(bytes)>t.info.size {return false}
     table:=core.world_table_at(w,t)
     opened,edit_ready:=edit_open(s,readable(t.name))

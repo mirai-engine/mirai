@@ -273,6 +273,13 @@ shown_world :: proc(s:^Session) -> core.World_Ref {
 // The World of the document: what undo, scenes and Build work on.
 edited_world :: proc(s:^Session) -> core.World_Ref {return core.world_ref(s.edit_world,s.info)}
 
+// The world an edit writes: the document inside a transaction, which a call
+// of the API holds on it whatever plays, and otherwise what the view shows.
+editing_world :: proc(s:^Session) -> core.World_Ref {
+    if s.edits!=nil && s.edits.open {return edited_world(s)}
+    return shown_world(s)
+}
+
 playing :: proc "contextless" (s:^Session) -> bool {return s.mode!=.Edit}
 
 // The selection of the document: the one in sight in Edit, the one kept for
@@ -464,7 +471,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     if scene=="" && options.restore=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
     switch {
     case options.documents!="":
-        if !documents_restore(s,options.documents) {log.error("The document tabs could not all be restored; the recovery files were kept")}
+        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be restored; the recovery files were kept: %s",why)}
     case options.restore!="":
         if error:=document_restore(s,options.restore,options.scene,options.dirty);error!=.None {
             log.errorf("the restarted scene could not be read: %s",document_error_text(error))
@@ -553,8 +560,8 @@ close :: proc(s:^Session) -> int {
     preferences_close(s)
     services_close(s)
     // A normal end leaves no chain; one for the GPU kept what it needs.
-    recovery_chains_close(s,!s.recovery.pending && s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned && !s.recovery.pending {os.remove_all(recovery_assets_folder(s))}
+    recovery_chains_close(s,s.gpu_failure!=.Ended)
+    if s.recovery.assets_owned {os.remove_all(recovery_assets_own(s))}
     recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world
@@ -742,8 +749,12 @@ requests_run :: proc(s:^Session) {
     if .Prefab_Place in requests {prefab_place_run(s)}
     if .Prefab_Action in requests {prefab_action_run(s,s.prefab_action)}
     if .Variant_Create in requests {variant_prompt_run(s)}
-    if .Recover in requests {recovery_resolve(s,false)}
-    if .Discard_Recovery in requests {recovery_resolve(s,true)}
+    if .Recover in requests {
+        if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
+    }
+    if .Discard_Recovery in requests {
+        if _,why:=recovery_resolve(s,true);why!="" {notify(s,why)}
+    }
     if .Stop in requests {
         switch {
         case s.mode==.Watch:   watch_stop(s)
@@ -813,7 +824,6 @@ open_run :: proc(s:^Session) {
 play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
     asked:=owner==0 && !simulate?s.play_asked:{}
     if owner==0 {s.play_asked={}}
-    if s.recovery.pending {return false}
     if run_find(s,owner)!=nil {return owner!=0}
     host.load_open(s.app,.Play,document_path(s.document))
     stopping:=host.load_phase_begin(s.app,.Editor)
@@ -889,7 +899,7 @@ play_view_enter :: proc(s:^Session,simulate:bool) {
 // frame it was at: its past can be looked at and played on from there. False
 // without one, or while the editor shows another game.
 play_review :: proc(s:^Session) -> bool {
-    if s.mode!=.Edit || s.replay.world==nil || s.recovery.pending {return false}
+    if s.mode!=.Edit || s.replay.world==nil {return false}
     r:^Run
     for &place in s.runs {
         if place.world==nil {r=&place;break}

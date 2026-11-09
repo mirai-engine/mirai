@@ -28,6 +28,7 @@ import "mirai:ui"
 // Build. The scene has its own file (api_scene.odin).
 
 API_STEP_LIMIT :: 3600
+API_FILMSTRIP_CELLS :: 64
 API_DT_MAX :: f32(0.25)
 API_INPUT_EVENTS :: 256
 API_TIMINGS :: 48
@@ -308,6 +309,7 @@ Api_Editor_Camera :: struct {
 Api_Editor_Interactions :: struct {
     captured_by:[8]u8 `mirai:"text,label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
     modal:[16]u8 `mirai:"text,label=The dialog that blocks the editor: confirm save_changes recovery shortcuts settings delete_asset or git_discard; empty when none does"`,
+    recovery_offered:bool `mirai:"label=Whether changes an editor left when it ended wait for editor.recover: they stay set aside until then"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
     dialog_pending:bool `mirai:"label=Whether a file dialog of the system waits for an answer"`,
@@ -339,7 +341,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=Api_Gpu_Lose_Result,flags={.Destructive},run=api_gpu_lose})
     api_register(s,st,{name="editor.inspect",summary="What the editor shows and the actions it can run, to drive it as a person would with editor.input and editor.action.",result=Api_Editor_Inspect,writes_result=true,flags={.Read_Only},run=api_editor_inspect})
     api_register(s,st,{name="editor.action",summary="Runs an action of the editor by name, as its menu entry or its shortcut does.",params=Api_Action_Params,result=Api_Action_Result,run=api_editor_action})
-    api_register(s,st,{name="editor.recover",summary="Recovers the pending scene after an interrupted session, or discards its recovery copy.",params=Api_Recovery_Params,result=Api_File_Result,run=api_recover})
+    api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=Api_Recovery_Params,result=Api_Recovery_Result,flags={.Idempotent},run=api_recover})
     api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=Api_Section_Edit_Params,run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=Api_Section_Preview_Params,run=api_section_preview})
     api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},run=api_sections})
@@ -350,7 +352,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
-    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
+    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene, or answers the state of the game the caller already plays without restarting it: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
     api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
     api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
@@ -694,6 +696,7 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     serial.text_write_string(w,v.capture==.None?"":api_lower(capture))
     modal,_:=reflect.enum_name_from_value(g.modal)
     api.write_key(w,"modal");serial.text_write_string(w,g.modal==.None?"":api_lower(modal))
+    api.write_key(w,"recovery_offered");api.write_flag(w,s.recovery.pending)
     api.write_key(w,"popups");serial.text_write_int(w,i64(g.ctx.popup.count))
     api.write_key(w,"editing_text");api.write_flag(w,g.ctx.edit.id!=0)
     api.write_key(w,"dialog_pending");api.write_flag(w,platform.dialog_pending(s.app.platform))
@@ -1169,6 +1172,19 @@ api_play_run :: proc(s:^Session,call:^api.Call,player:=0) -> (r:^Run,own:bool) {
     return r,r!=nil && r.owner==owner
 }
 
+// What a method that only reads the game answers when no game plays: its
+// empty result as JSON (body), marked playing false.
+@(private)
+api_play_none :: proc(call:^api.Call,body:string) {
+    serial.text_write_raw(call.out,`{"playing":false`)
+    if len(body)>2 {
+        serial.write_u8(call.out,',')
+        serial.text_write_raw(call.out,body[1:])
+    } else {
+        serial.write_u8(call.out,'}')
+    }
+}
+
 api_play_refused :: proc(call:^api.Call) {
     api.call_fail(call,api.SERVER_ERROR,"The user is playing this game; a turn changes only a run of its own, which play.start opens")
 }
@@ -1199,8 +1215,8 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
 @(private)
 api_play_start :: proc(s:^Session,call:^api.Call) {
     owner:=ai_task_of_call(s,call)
-    if owner==0 && run_find(s,0)!=nil {
-        api.call_fail(call,api.SERVER_ERROR,"A game is already playing: play.status says how it goes and play.stop ends it")
+    if r:=run_find(s,owner);r!=nil {
+        api_play_result(s,call,r)
         return
     }
     params:=api.call_params(call,Api_Play_Start_Params)

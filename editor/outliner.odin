@@ -219,7 +219,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     v:=s.viewport
     outliner_sync(o,w)
     if search_field(s,ui.id(ctx,"outliner_filter"),o.filter[:],&o.filter_length,"Search entities") {o.scroll=0}
-    links:=prefab_links(s)
+    links:=prefab_links(s,w)
     if o.scope!=core.NONE && !entity_alive(w,o.scope) {o.scope=core.NONE}
     if o.scope!=core.NONE {outliner_scope_bar(s,o,w,links)}
     outliner_rows(o,w)

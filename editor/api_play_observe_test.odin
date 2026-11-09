@@ -237,19 +237,3 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     api_result_shape_expect(t,text,Api_Play_Audio)
     testing.expect(t,strings.contains(text,`"voices":[]`) && strings.contains(text,`"mixer":{"voices_active":0`))
 }
-
-// Without a game, play.ui and play.audio say how to start one.
-@(test)
-play_ui_and_play_audio_need_a_game :: proc(t:^testing.T) {
-    s:Session
-    ui_params:Api_Play_Ui_Params
-    ui_method:=api.Method{params_id=Api_Play_Ui_Params,result_id=Api_Play_Ui}
-    call:=api.Call{method=&ui_method,params=&ui_params,allocator=context.temp_allocator}
-    api_play_ui(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.message,"play.start"))
-    audio_params:Api_Play_Audio_Params
-    audio_method:=api.Method{params_id=Api_Play_Audio_Params,result_id=Api_Play_Audio}
-    call={method=&audio_method,params=&audio_params,allocator=context.temp_allocator}
-    api_play_audio(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.SERVER_ERROR && strings.contains(call.error.message,"play.start"))
-}

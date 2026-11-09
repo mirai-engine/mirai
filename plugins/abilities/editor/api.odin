@@ -272,7 +272,7 @@ check :: proc(s:^editor.Session,call:^api.Call) {
 use :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Use_Params)
     if !editor.playing(s) {
-        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: start Play or Simulate, then ask again")
+        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: play.start first")
         return
     }
     world:=editor.shown_world(s)

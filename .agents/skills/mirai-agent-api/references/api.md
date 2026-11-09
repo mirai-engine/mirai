@@ -299,7 +299,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   `skeleton.*`, `animation.clip.set`, `material.program.edit` with `source`): the last wins, as in
   the scene; each one is an undo step of the caller and, in an AI turn, enters its change review.
 - Before editing, the server cancels the user's tools (a gizmo drag goes back) and records their
-  pending gesture as their own step; `api_guard` fails with a pending recovery
+  pending gesture as their own step
   ([document](../../mirai-editor/references/document.md#edits-and-undo)).
 - An edit is **one transaction** (`edits_begin`, the operations, `edits_commit`): if an operation
   fails, `edits_cancel` and nothing remains; otherwise it is a named undo step, with the project
@@ -307,7 +307,8 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   the API outside a turn or the user) and `history.*` moves the caller's
   ([undo per author](../../mirai-editor/references/document.md#undo-by-author); `ai.revert`,
   `ai.review.accept` and `ai.retry`: [contract](../../mirai-editor/references/ai-review.md)).
-- During Play or Simulate, scene edits and history **write into the document**: the game runs on
-  its copy and does not see them until it stops. Saving and prefabs (`api_guard_edit`) wait for
-  Edit (`A game is playing; this is done from Edit`); `simulation.apply` commits transforms into
-  the document with one undo ([methods](methods.md#simulation)).
+- During Play or Simulate, scene edits, history, saving, prefabs and asset authoring **work on the
+  document and the assets**: the game runs on its copy and sees an asset that changes when it is
+  read again, as with any write on disk. What opens a view over the viewport (a section, a material
+  document) or simulates on the document (`placement.drop`) waits for Edit; `simulation.apply`
+  commits transforms into the document with one undo ([methods](methods.md#simulation)).

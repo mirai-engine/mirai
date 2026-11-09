@@ -84,10 +84,6 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     testing.expect(t,clean=="Materials/Deep" && refusal=="")
     _,refusal=asset_folder_clean(r,"Materials/../out")
     testing.expect(t,refusal!="")
-    // Nothing is made while the user plays: the entries are off.
-    s.mode=.Play
-    testing.expect(t,asset_create_refusal(s)!="" && asset_create(s,asset.KIND_MATERIAL,"Other.mat",asset_id_new(s))!="")
-    s.mode=.Edit
     // A kind no plugin creates is refused.
     testing.expect(t,!slice.contains(asset_create_kinds(s),asset.KIND_UI))
     testing.expect(t,asset_create(s,asset.KIND_UI,"hud.ui",asset_id_new(s))!="")

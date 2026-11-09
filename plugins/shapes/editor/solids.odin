@@ -30,7 +30,7 @@ brush_place_at :: proc(subtract:bool,at,normal:[3]f32,size,angle:f32) -> mm.Tran
 // when target is NONE, makes a Solid at the point at with the brush as its
 // first. One step; the brush entity, or NONE with the reason.
 brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.Brush_Kind,subtract:bool,material:base.Asset_Id,target:core.Entity) -> (brush:core.Entity,error:shapes.Shape_Error) {
-    w:=editor.shown_world(s)
+    w:=editor.editing_world(s)
     _,shape_info:=core.world_table(w,shapes.Shape)
     _,brush_info:=core.world_table(w,shapes.Shape_Brush)
     if shape_info==nil || brush_info==nil || !(min(place.scale.x,place.scale.y,place.scale.z)>0) {return core.NONE,.Invalid}

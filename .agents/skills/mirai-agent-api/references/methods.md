@@ -158,8 +158,10 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - In Play the lit image of the game is shown; the mode comes back on returning to Edit. A mode of
     a plugin that stops being declared goes back to `lit`.
   - `collision` are lines: `capture` without `ui` does not include them.
-- `editor.recover`: fails without a pending copy. While it waits, Play, Simulate and document edits
-  are blocked
+- `editor.recover`: what an editor left when it ended waits set aside: loading, editing, saving
+  and Play go on, and `editor.inspect` says so with `recovery_offered`. With nothing offered it
+  answers `resolved:false`, so a retry after a timeout is no error; what could not be put back
+  stays offered with `reason`, a failure of every part fails with that cause
   ([recovery](../../mirai-editor/references/document.md#recovery-and-failures)).
 - `camera.set` (`idempotent`): returns `{position, target, yaw, pitch, distance, fov_y, exposure,
   ev100}`; all params are optional.
@@ -195,7 +197,7 @@ projects; `names.create` declares a new one. Categories, sensors, presets and gr
   Simulate) and gives what rules: from the preset or its own.
 - Without `component`, get and set take the only collision component of the entity; with several
   or none, the error lists them.
-- `physics.collision.set`: only in Edit, in a single undo; keeps `group` and the other fields.
+- `physics.collision.set`: on the document, in a single undo; keeps `group` and the other fields.
   `preset` makes it follow that preset and `custom` saves as its own what rules; `sensor`,
   `belongs` and `collides` make the collider custom starting from what rules. An unknown name or an
   incompatible combination fail with their cause without changing the document.
@@ -222,7 +224,7 @@ queues the command in the running world. Contract:
 ## Ragdoll
 
 `ragdoll.setup` (plugin `ragdoll`) builds the bodies, colliders, joints and the `Ragdoll` of a rig
-from the body of its `.skeleton`, detected in memory if it stores none: only in Edit and in a
+from the body of its `.skeleton`, detected in memory if it stores none: on the document and in a
 single undo, which also replaces the ragdoll the rig had. Parts, shapes and joints:
 [setup](../../mirai-plugins/references/ragdoll.md#setup-by-api).
 
@@ -237,8 +239,9 @@ Contract: [the inspector](../../mirai-plugins/references/ui-inspector.md#api).
 
 ## Painting and placement
 
-Viewport tools through the API, only in Edit and with the scene in front; each call is an undo step
-and an error leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#paint) and
+Viewport tools through the API, on the document whatever plays (`placement.drop`, only in Edit: it
+simulates on the document) and with the scene in front; each call is an undo step and an error
+leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#paint) and
 [Physics placement](../../mirai-plugins/references/plugins.md#physics-placement).
 
 - `paint.stroke`: the points are world points and need not be on the surface; paints the vertices
@@ -369,7 +372,9 @@ An entity is named by its hexadecimal Id. Each edit is a transaction
   the default `limit` of `scene.inspect` plus `player`, which picks the run of that player in a
   networked game of a turn. Its entities may have no id (those of a spawned prefab) and are named
   by `entity` (the handle in hexadecimal); their `parent` and the `Entity` fields of their
-  components also give the handle. Fails without a Play.
+  components also give the handle. Without a game of the caller, `playing:false` and nothing else,
+  as every method that only reads a game; what must advance or change one fails asking for
+  `play.start`.
   - `storages` adds `storages`, the value of each storage of the world that is plain data (score,
     game state, queues), by name; `storage` filters with `*` and already requests them. Those of
     `scene.inspect` are the document's.
@@ -463,8 +468,8 @@ member of another instance) fails with a message that says so
 
 ## Spatial queries
 
-`scene.raycast`, `scene.bounds` and `scene.ground` work on the document in Edit; with a Play or a
-simulation they fail with `-32000`, and the game world is read with `play.inspect`. They count the
+`scene.raycast`, `scene.bounds` and `scene.ground` work on the document whatever plays; the game
+world is read with `play.inspect`. They count the
 meshes the viewport picking chooses (`Mesh_Renderer`, without physics or batch instances such as
 foliage) at the place the locals give them, with the edits of the same frame.
 
@@ -507,7 +512,8 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
 
 - `play.start`: saves a recovery copy if there are changes and clones the world; fails if the copy
   is not saved or the world is not created.
-  - Outside a turn it opens the user's Play, which the editor shows; fails if one already runs.
+  - Outside a turn it opens the user's Play, which the editor shows; a game already playing answers
+    its state and is not started again.
     `from` `Camera` or `Point` (with `point`) is Play from camera or from here: player 1 appears
     there before at a spawn point; in a turn or with `simulate` it fails.
   - In a turn it opens a run of the turn even if others play: the editor does not change, it

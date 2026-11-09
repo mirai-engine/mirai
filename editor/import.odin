@@ -136,10 +136,6 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
         import_say(s,"There is no asset folder to import into")
         return false
     }
-    if s.mode!=.Edit {
-        import_say(s,"Stop the game to import")
-        return false
-    }
     if busy:=import_busy(s);busy!="" {
         import_say(s,"%s",busy)
         return false

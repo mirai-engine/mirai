@@ -21,8 +21,8 @@ libraries.
 
 ## Files and history
 
-- Writing assets requires Edit; `dry_run` (in every `create`, `set`, `patch`, bake and edit)
-  validates and answers in any mode without writing.
+- `dry_run` (in every `create`, `set`, `patch`, bake and edit) validates and answers without
+  writing.
 - `path` is relative to the assets folder. `create` does not overwrite; `set` on a path that has one
   replaces it keeping its id (`replaced:true`) and validates the whole definition before publishing. The files use the [asset
   container](../../mirai-assets/references/formats.md), without opaque JSON.

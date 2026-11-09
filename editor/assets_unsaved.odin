@@ -230,6 +230,23 @@ assets_unsaved_kept :: proc(folder:string) -> bool {
     return os.exists(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator))
 }
 
+// A file folder keeps that this editor holds unsaved as well; "" when none is.
+assets_unsaved_conflict :: proc(s:^Session,folder:string) -> string {
+    if s.app==nil || s.app.assets==nil {return ""}
+    data,read:=os.read_entire_file(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
+    if read!=nil {return ""}
+    manifest:Unsaved_Manifest
+    if json.unmarshal(data,&manifest,allocator=context.temp_allocator)!=nil {return ""}
+    r:=&s.app.assets.registry
+    for path in manifest.assets {
+        if _,held:=asset.registry_memory_find(r,path);held {return path}
+    }
+    for path in manifest.removed {
+        if _,held:=asset.registry_memory_find(r,path);held {return path}
+    }
+    return ""
+}
+
 // Puts back in memory the unsaved assets folder keeps and removes it.
 // Returns how many it put back; false when the manifest could not be read.
 assets_unsaved_restore :: proc(s:^Session,folder:string) -> (restored:int,ok:bool) {

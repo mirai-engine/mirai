@@ -632,15 +632,17 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     defer probe_close(f)
     r:=run_find(&f.s,0)
     running:=cast(^Probe_World)r.world
-    call:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":4,"segments":[{"ticks":2,"keys":["Space"]}],"follow":"Hero"}`}
+    call:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":4,"segments":[{"ticks":2,"keys":["Space"]},{"ticks":7}],"follow":"Hero"}`}
     p:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,every=3,count=4,size={64,32}}
     p.segments[0]={ticks=2,keys={.Space}}
+    p.segments[1]={ticks=7}
     copy(p.follow[:],"Hero")
     strip,ok:=api_filmstrip_read(&f.s,&call,r,true,&p)
     testing.expect(t,ok && strip!=nil && strip.follow==f.hero,call.error.message)
     if strip==nil {return}
     testing.expect_value(t,len(strip.run.timeline),2)
-    testing.expect(t,strip.run.timeline[0].keys=={.Space} && strip.run.timeline[1].ticks==7 && strip.run.timeline[1].keys=={},"the segments and then nothing held")
+    testing.expect(t,strip.run.timeline[0].keys=={.Space} && strip.run.timeline[1].ticks==7 && strip.run.timeline[1].keys=={},"the segments as they are")
+    testing.expect(t,slice.equal(strip.ticks,[]int{0,3,6,9}),"a cell before the first tick and every 3")
     // The cells without the GPU: what each one sees.
     seen:Probe_Seen
     strip.run.sampler.take,strip.run.sampler.data=probe_seen,&seen
@@ -649,7 +651,7 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     ran,_,problem:=api_step_run(&f.s,&strip.run,probe_frame)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,ran,9)
-    testing.expect(t,slice.equal(seen.ticks[:seen.count],[]u64{start,start+3,start+6,start+9}),"a cell every 3 ticks from the one before the first")
+    testing.expect_value(t,running.time.tick,start+9)
     // Where the entity shows and the cell around it, kept beside the image when it is far off.
     camera:=core.View{position={0,0,10},rotation=1,fov=90*math.RAD_PER_DEG,near=0.1}
     at,shown:=api_view_project(camera,{100,50,200,100},{0,0,0})
@@ -672,13 +674,36 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
         taken,_:=object["cells"].(json.Array);testing.expect(t,len(taken)==2,answer)
     }
     api_result_shape_expect(t,answer,Api_Capture_Result)
+    // Segments say how long it runs: nothing else is padded or refused.
+    spread:=[?]struct{given,every,count:int,ticks:[]int}{
+        {30,0,4,{0,10,20,30}},
+        {32,0,4,{0,11,21,32}},
+        {3,0,10,{0,1,2,3}},
+        {7,0,1,{0}},
+        {32,10,0,{0,10,20,30}},
+        {8,3,4,{0,3,6}},
+        {9,3,2,{0,3}},
+        {-1,3,4,{0,3,6,9}},
+    }
+    for c in spread {testing.expectf(t,slice.equal(api_filmstrip_ticks(c.given,c.every,c.count,64,context.temp_allocator),c.ticks),"%v",c)}
+    testing.expect_value(t,len(api_filmstrip_ticks(3600,1,0,64,context.temp_allocator)),64)
+    evenly:=api.Call{allocator=context.temp_allocator,raw=`{"count":3,"segments":[{"ticks":5}]}`}
+    even:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,count=3,size={64,32}}
+    even.segments[0]={ticks=5}
+    testing.expect(t,api_filmstrip_spread(&evenly,&even),"a count with segments is a filmstrip")
+    from_count,given_count:=api_filmstrip_read(&f.s,&evenly,r,true,&even)
+    testing.expect(t,given_count && from_count!=nil && slice.equal(from_count.ticks,[]int{0,3,5}),evenly.error.message)
+    long:=api.Call{allocator=context.temp_allocator,raw=`{"every":3,"count":2,"segments":[{"ticks":5}]}`}
+    longer:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,frames=1,every=3,count=2,size={64,32}}
+    longer.segments[0]={ticks=5}
+    from_every,given_every:=api_filmstrip_read(&f.s,&long,r,true,&longer)
+    testing.expect(t,given_every && from_every!=nil && api_timeline_ticks(from_every.run.timeline)==5 && slice.equal(from_every.ticks,[]int{0,3}),long.error.message)
     refused:=[?]struct{params,says:string}{
         {`{"count":4}`,"count is of a filmstrip"},
         {`{"ui":true,"count":4}`,"count is of a filmstrip"}, // ui is a field of the capture, whatever it draws
         {`{"every":3}`,"count: give the cells"},
         {`{"every":100,"count":64}`,"lower every or count"},
         {`{"every":3,"count":4,"follow":"Nobody"}`,"names no entity"},
-        {`{"every":3,"count":2,"segments":[{"ticks":5}]}`,"segments run 5 ticks"},
         {`{"every":3,"count":2,"follow":"Hero","region":[0,0,10,10]}`,"not both"},
         {`{"every":3,"count":2,"size":[100,100]}`,"give follow"},
         {`{"every":3,"count":2,"region":[0,0,0,10]}`,"region takes"},
@@ -1224,4 +1249,71 @@ a_step_with_input_reaches_the_ui_without_a_pointer :: proc(t:^testing.T) {
     testing.expect(t,!run_ui_scripted(&r),"the user's Play with no input of a step keeps the window")
     r.has_input=true
     testing.expect(t,run_ui_scripted(&r))
+}
+
+// With a game already playing, play.start says how it goes; once none plays
+// what reads it answers playing false, empty, and what must change it asks for play.start.
+@(test)
+play_start_is_idempotent_and_reads_answer_without_a_game :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    world:=run_find(&f.s,0).world
+    error,text:=probe_call(f,"play.start",`{}`)
+    testing.expect_value(t,error.code,0)
+    says :: proc(text,field:string) -> bool {
+        tight,_:=strings.remove_all(text," ",context.temp_allocator)
+        return strings.contains(tight,field)
+    }
+    testing.expect(t,says(text,`"playing":true`),text)
+    testing.expect(t,run_find(&f.s,0).world==world,"a game already playing is not started again")
+    error,_=probe_call(f,"play.stop",`{}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,run_find(&f.s,0)==nil)
+    reads:=[?]struct{method,params:string,shape:typeid}{
+        {"play.inspect",`{}`,Api_Inspect_Result},
+        {"play.player",`{}`,Api_Play_Player_Result},
+        {"play.view",`{}`,Api_Play_View},
+        {"play.observe",`{}`,Api_Play_Observe},
+        {"play.ui",`{}`,Api_Play_Ui},
+        {"play.audio",`{}`,Api_Play_Audio},
+        {"play.get",`{"entity":"Hero","field":"Transform.position"}`,Api_Play_Get_Result},
+        {"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7}]}`,Api_Play_Check_Result},
+        {"play.history",`{"verify":true}`,Api_Play_History_Result},
+        {"play.qa.report",`{}`,Api_Play_Qa_Report},
+    }
+    for c in reads {
+        error,text=probe_call(f,c.method,c.params)
+        testing.expectf(t,error.code==0 && says(text,`"playing":false`),"%s: %v %s",c.method,error,text)
+        api_result_shape_expect(t,text,c.shape)
+    }
+    changes:=[?]struct{method,params:string}{
+        {"play.step",`{"ticks":1}`},
+        {"play.pause",`{}`},
+        {"play.destroy",`{"entity":"Hero"}`},
+    }
+    for c in changes {
+        error,_=probe_call(f,c.method,c.params)
+        testing.expectf(t,error.code!=0 && strings.contains(error.message,"play.start"),"%s: %v",c.method,error)
+    }
+    // Nothing offered: recovering has nothing to do and is no error.
+    error,text=probe_call(f,"editor.recover",`{}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,says(text,`"resolved":false`),text)
+}
+
+// A game copies the world: what the API edits is the document, whatever the view shows.
+@(test)
+the_api_edits_the_document_while_a_game_plays :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    running:=run_ref(&f.s,run_find(&f.s,0))
+    document:=edited_world(&f.s)
+    error,_:=probe_call(f,"scene.set",`{"entity":"Hero","name":"Renamed","position":[9,0,0]}`)
+    testing.expect_value(t,error.code,0)
+    hero:=api_entity(document,1)
+    testing.expect_value(t,entity_name(document,hero),"Renamed")
+    testing.expect_value(t,entity_name(running,f.hero),"Hero")
+    testing.expect(t,f.edits.cursor==1 && document_dirty(&f.s),"a step of the document")
 }

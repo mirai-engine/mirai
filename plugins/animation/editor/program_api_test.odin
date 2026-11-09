@@ -62,7 +62,7 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     testing.expect_value(t,authoring_test_id(f,"locomotion.blend"),id)
     testing.expect(t,authoring_test_revision(f,"locomotion.blend")!=revision)
     f.session.mode=.Play
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,definition)).code,api.INVALID_PARAMS)
+    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,definition)).code,0)
 }
 
 @(test)

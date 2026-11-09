@@ -33,6 +33,7 @@ Api_Play_Observe_Params :: struct {
 }
 
 Api_Play_Observe :: struct {
+    playing:bool `mirai:"optional,label=false when no game of the caller plays: the rest is empty; absent while one plays"`,
     tick:u64,
     seconds:f64 `mirai:"label=The time of the game"`,
     frame_ms:f32 `mirai:"label=The whole last frame of the application"`,
@@ -391,7 +392,7 @@ observe_capture_write :: proc(s:^Session,call:^api.Call,out:^serial.Writer,path:
 api_play_observe :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Observe_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_play_none(call,`{"tick":0,"seconds":0,"frame_ms":0,"stuck":false}`);return}
     values:[1]string
     api.object_values(call.allocator,call.raw,{"targets"},values[:])
     names:=observe_targets_read(call,p.targets[:],values[0],call.allocator)

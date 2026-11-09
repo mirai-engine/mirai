@@ -55,7 +55,6 @@ api_stamp :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Stamp_Params)
     count,_:=api.params_array_count(call,"points")
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"points must list at least one world point of the stroke");return}
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Shapes are stamped from Edit: stop the game or the simulation with play.stop");return}
     w:=editor.edited_world(s)
     if core.world_table_of(w,shapes.Shape)==nil {api.call_fail(call,api.SERVER_ERROR,"The project world has no Shape: enable the shapes plugin");return}
     first:=core.NONE
@@ -92,7 +91,6 @@ api_stamp :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 api_corner :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Corner_Params)
-    if editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"Corners are edited from Edit: stop the game or the simulation with play.stop");return}
     w:=editor.edited_world(s)
     e:=core.entity_of(core.world_entities(w),p.id)
     if e==core.NONE {api.call_failf(call,api.INVALID_PARAMS,"id: no entity %x in the scene; scene.inspect lists them",p.id);return}
