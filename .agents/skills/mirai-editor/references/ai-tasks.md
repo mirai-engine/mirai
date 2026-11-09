@@ -384,9 +384,9 @@ and a write waits for another one. The review of each conversation
 and the turn folders stay files.
 
 - **Conversations** have a kind: `Main` (the one chat), `Agent` (a subagent, with its `parent`) or
-  `Archived` (the conversations of agents outside the editor and those imported from files of an
-  older layout). **Messages** are the lines of a conversation by sequence; a later write of a sequence
-  replaces it and one that did not change is not written again. Messages are read on recovering a
+  `Archived` (the conversations of agents outside the editor). **Messages** are the lines of a
+  conversation by sequence; a later write of a sequence replaces it and one that did not change is
+  not written again. Messages are read on recovering a
   conversation or requesting a page; the visible transcript is a bounded cache
   (`AI_TRANSCRIPT_*`). Their search is an FTS5 table that triggers keep exact: there is no cache
   that can go stale.
@@ -395,9 +395,7 @@ and the turn folders stay files.
   `provenance`, `meta` (small markers such as the subagents that were working) and
   `memory_docs`, the derived index of the memory topics.
 - `PRAGMA user_version` is the schema version. A database that is corrupt or of another version is
-  reported with how to restore or move it, and is never deleted. Opening a project with the files
-  of an older layout imports them once, in one transaction, as `Archived` conversations, and then
-  removes those files and their search index.
+  reported with how to restore or move it, and is never deleted.
 - The initial title is the beginning of the first request (a subagent's, the one `agent.spawn`
   gives). Those of `session_info_update` update the conversation, also after the turn; they are
   not messages, and Mirai does not call the model to summarize them. In Codex the title is

@@ -2,12 +2,9 @@ package editor
 
 import "base:runtime"
 import "core:c"
-import "core:encoding/json"
 import "core:fmt"
-import vmem "core:mem/virtual"
 import "core:os"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:project"
@@ -155,7 +152,6 @@ Ai_Store :: struct {
     db:^sqlite.Db,
     conversations:[dynamic]Ai_Conversation, // by updated_at and id, the latest first
     data_version:i64, // of the database when conversations was read
-    first_id:u64, // no new conversation below it: older files of the folder name those
     allocator:runtime.Allocator,
     error:[512]u8,
     error_len:int,
@@ -164,7 +160,7 @@ Ai_Store :: struct {
 Ai_Conversation_Kind :: enum u8 {
     Main,     // the chat of the project
     Agent,    // a subagent of the main chat
-    Archived, // from before the single chat
+    Archived, // of an agent outside the editor
 }
 
 Ai_Conversation_Kinds :: bit_set[Ai_Conversation_Kind]
@@ -280,7 +276,7 @@ ai_db_fail :: proc(s:^Ai_Store,what:string) -> string {
     reason:=string(sqlite.errmsg(s.db))
     code:=sqlite.errcode(s.db)&0xff
     if code==sqlite.CORRUPT || code==sqlite.NOTADB {
-        return ai_store_error(s,fmt.tprintf("%s: %s. The file .mirai/ai/chat.db was left as it is: restore it, or move it away to start a new history",what,reason))
+        return ai_store_error(s,fmt.tprintf("%s: %s. The file .mirai/ai/chat.db was left as it is: restore it, or move it and .mirai/ai/chats away to start a new history",what,reason))
     }
     return ai_store_error(s,fmt.tprintf("%s: %s",what,reason))
 }
@@ -455,175 +451,6 @@ ai_store_refresh :: proc(s:^Ai_Store) -> string {
     return ""
 }
 
-// The number at the start of a file name of the folder: 0 for another file.
-@(private="file")
-ai_store_file_id :: proc(name:string) -> (id:u64,extension:string) {
-    dot:=strings.index_byte(name,'.')
-    if dot<=0 {return 0,""}
-    value,ok:=strconv.parse_u64_of_base(name[:dot],10)
-    if !ok || value>=u64(max(i64)) {return 0,""}
-    return value,name[dot+1:]
-}
-
-// The chats of a project from before chat.db, read once to bring them in:
-// <id>.json held the metadata of a conversation and <id>.log its messages, one
-// JSON record per line, the last record of a sequence replacing the earlier
-// ones and a line cut by a crash skipped.
-@(private="file")
-AI_STORE_LEGACY_VERSION :: 1
-@(private="file")
-AI_STORE_LEGACY_SEQUENCES :: 1<<24
-@(private="file")
-AI_STORE_LEGACY_META_BYTES :: 64<<10
-
-@(private="file")
-Ai_Store_Meta :: struct {
-    version:int,
-    id:u64,
-    title,document,provider,model,effort,native_session:string,
-    last:string `json:"last,omitempty"`,
-    created_at,updated_at:i64,
-    seconds:f32 `json:"seconds,omitempty"`,
-    usage:Ai_Usage,
-}
-
-@(private="file")
-Ai_Store_Record :: struct {
-    sequence:u64,
-    annotation:bool `json:"annotation,omitempty"`,
-    kind:int `json:"kind,omitempty"`,
-    text:string `json:"text,omitempty"`,
-    role:string `json:"role,omitempty"`,
-    event_type:string `json:"event_type,omitempty"`,
-    tool:string `json:"tool,omitempty"`,
-    context_json:string `json:"context,omitempty"`,
-}
-
-@(private="file")
-ai_store_from_meta :: proc(meta:Ai_Store_Meta) -> (c:Ai_Conversation,ok:bool) {
-    c={id=meta.id,kind=.Archived,created_at=meta.created_at,updated_at=meta.updated_at,seconds=meta.seconds,usage=meta.usage}
-    ok=ai_conversation_set_text(c.title[:],&c.title_len,meta.title) &&
-        ai_conversation_set_text(c.document[:],&c.document_len,meta.document) &&
-        ai_conversation_set_text(c.provider[:],&c.provider_len,meta.provider) &&
-        ai_conversation_set_text(c.model[:],&c.model_len,meta.model) &&
-        ai_conversation_set_text(c.effort[:],&c.effort_len,meta.effort) &&
-        ai_conversation_set_text(c.native_session[:],&c.native_session_len,meta.native_session) &&
-        ai_conversation_set_text(c.last[:],&c.last_len,meta.last)
-    return
-}
-
-// The messages of a log as its records leave them. A message record sets kind
-// and text, and the role when the message is new; an annotation completes a
-// message saved before it.
-@(private="file")
-ai_store_legacy_lines :: proc(path:string,allocator:runtime.Allocator) -> (lines:[dynamic]Ai_Stored_Line,ok:bool) {
-    if !os.exists(path) {return nil,true}
-    bytes,read_error:=os.read_entire_file(path,allocator)
-    if read_error!=nil {return nil,false}
-    lines=make([dynamic]Ai_Stored_Line,allocator)
-    at:=make(map[u64]int,allocator=allocator)
-    rest:=string(bytes)
-    for text in strings.split_lines_iterator(&rest) {
-        if text=="" {continue}
-        record:Ai_Store_Record
-        if json.unmarshal_string(text,&record,allocator=allocator)!=nil || record.sequence>=AI_STORE_LEGACY_SEQUENCES {continue}
-        if record.kind<0 || record.kind>int(max(Ai_Line_Kind)) {continue}
-        index,found:=at[record.sequence]
-        if record.annotation {
-            if found {
-                line:=&lines[index]
-                line.role,line.event_type,line.tool,line.context_json=record.role,record.event_type,record.tool,record.context_json
-            }
-            continue
-        }
-        if !found {
-            index=len(lines)
-            at[record.sequence]=index
-            if _,error:=append(&lines,Ai_Stored_Line{sequence=record.sequence,role=record.role,event_type="text"});error!=nil {return nil,false}
-        }
-        lines[index].kind,lines[index].text=Ai_Line_Kind(record.kind),record.text
-    }
-    return lines,true
-}
-
-// Brings in a conversation of the folder. What cannot be read stays on disk;
-// false is a failure of the database. A chat already in the database comes
-// from an import cut after its commit, and only its files are left to remove.
-@(private="file")
-ai_store_import_chat :: proc(s:^Ai_Store,insert:^sqlite.Stmt,entry:os.File_Info,id:u64,removed:^[dynamic]string,allocator:runtime.Allocator) -> bool {
-    if entry.size>AI_STORE_LEGACY_META_BYTES {return true}
-    bytes,read_error:=os.read_entire_file(entry.fullpath,allocator)
-    if read_error!=nil {return true}
-    meta:Ai_Store_Meta
-    if json.unmarshal(bytes,&meta,allocator=allocator)!=nil || meta.version!=AI_STORE_LEGACY_VERSION || meta.id!=id {return true}
-    c,valid:=ai_store_from_meta(meta)
-    if !valid {return true}
-    log:=fmt.aprintf("%s/%d.log",s.folder,id,allocator=allocator)
-    _,exists,ok:=ai_db_value(s,"SELECT id FROM conversations WHERE id=?1",i64(id))
-    if !ok {return false}
-    if !exists {
-        lines,read:=ai_store_legacy_lines(log,allocator)
-        if !read {return true}
-        if !ai_store_row_write(s,&c) {return false}
-        for &line in lines {
-            if !ai_db_again(insert,i64(id),i64(line.sequence),i64(line.kind),line.text,line.role,line.event_type,line.tool,line.context_json) {return false}
-        }
-    }
-    append(removed,log,entry.fullpath)
-    return true
-}
-
-// One transaction with all the chats of the folder; their files and the search
-// index that was derived from them go once it is committed. The numbers of the
-// folder that remain (a review, a file that could not be read) are not given
-// to a new conversation.
-@(private="file")
-ai_store_import :: proc(s:^Ai_Store,root:string) -> string {
-    scratch:vmem.Arena
-    if vmem.arena_init_growing(&scratch)!=nil {return ai_store_error(s,"No memory to read the project chats")}
-    defer vmem.arena_destroy(&scratch)
-    allocator:=vmem.arena_allocator(&scratch)
-    entries,error:=os.read_all_directory_by_path(s.folder,allocator)
-    if error!=nil {return ai_store_error(s,"Could not read the project chat folder")}
-    legacy:=false
-    for entry in entries {
-        id,extension:=ai_store_file_id(entry.name)
-        if id==0 {continue}
-        s.first_id=max(s.first_id,id+1)
-        legacy=legacy || extension=="json" || extension=="log"
-    }
-    if legacy {
-        if !ai_db_exec(s,"BEGIN IMMEDIATE") {return ai_db_fail(s,"Could not import the project chats")}
-        removed:=make([dynamic]string,allocator)
-        insert,prepared:=ai_db_prepare(s,"INSERT INTO messages(conversation,sequence,kind,text,role,event_type,tool,context_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)")
-        done:=prepared
-        if prepared {
-            for entry in entries {
-                if !done {break}
-                id,extension:=ai_store_file_id(entry.name)
-                if id==0 {continue}
-                switch extension {
-                case "json":
-                    done=ai_store_import_chat(s,insert,entry,id,&removed,allocator)
-                case "log":
-                    if os.exists(fmt.aprintf("%s/%d.json",s.folder,id,allocator=allocator)) {continue}
-                    _,exists,ok:=ai_db_value(s,"SELECT id FROM conversations WHERE id=?1",i64(id))
-                    done=ok
-                    if ok && (exists || entry.size==0) {append(&removed,entry.fullpath)}
-                }
-            }
-            sqlite.finalize(insert)
-        }
-        if !done || !ai_db_exec(s,"COMMIT") {return ai_db_abort(s,"Could not import the project chats")}
-        for path in removed {os.remove(path)}
-    }
-    index:=project.path(root,".mirai/ai/search.db",allocator=allocator)
-    for suffix in ([]string{"","-wal","-shm","-journal"}) {
-        if path:=fmt.aprintf("%s%s",index,suffix,allocator=allocator);os.exists(path) {os.remove(path)}
-    }
-    return ""
-}
-
 // Gives a new database its schema; two editors that open it at once take
 // turns. A database of another version is reported and left as it is.
 @(private="file")
@@ -631,7 +458,7 @@ ai_store_schema :: proc(s:^Ai_Store) -> string {
     version,_,ok:=ai_db_value(s,"PRAGMA user_version")
     if !ok {return ai_db_fail(s,"Could not open the project chat database")}
     if version==AI_STORE_VERSION {return ""}
-    if version!=0 {return ai_store_error(s,fmt.tprintf("The project chat database has version %d and this editor reads version %d: use the editor that wrote it, or move .mirai/ai/chat.db away",version,AI_STORE_VERSION))}
+    if version!=0 {return ai_store_error(s,fmt.tprintf("The project chat database has version %d and this editor reads version %d: use the editor that wrote it, or move .mirai/ai/chat.db and .mirai/ai/chats away to start a new history",version,AI_STORE_VERSION))}
     if !ai_db_exec(s,"BEGIN IMMEDIATE") {return ai_db_fail(s,"Could not create the project chat database")}
     version,_,ok=ai_db_value(s,"PRAGMA user_version")
     if !ok || version==0 && !ai_db_exec(s,AI_STORE_SCHEMA) || !ai_db_exec(s,"COMMIT") {return ai_db_abort(s,"Could not create the project chat database")}
@@ -653,14 +480,12 @@ ai_store_open :: proc(s:^Ai_Store,root:string,allocator:=context.allocator) -> s
     s.allocator=allocator
     s.folder=strings.clone(folder,allocator)
     s.conversations=make([dynamic]Ai_Conversation,allocator)
-    s.first_id=1
     s.data_version=-1
     message:=""
     if !ai_db_exec(s,"PRAGMA journal_mode=WAL") || !ai_db_exec(s,"PRAGMA synchronous=NORMAL") {
         message=ai_db_fail(s,"Could not open the project chat database")
     }
     if message=="" {message=ai_store_schema(s)}
-    if message=="" {message=ai_store_import(s,root)}
     if message=="" {message=ai_store_refresh(s)}
     if message!="" {ai_store_close(s)}
     return message
@@ -678,8 +503,8 @@ ai_store_close :: proc(s:^Ai_Store) {
 // it is saved, so that another editor of the same project does not take it.
 ai_store_next_id :: proc(s:^Ai_Store) -> (id:u64,message:string) {
     if s.db==nil {return 0,ai_store_error(s,AI_STORE_NOT_OPEN)}
-    value,found,ok:=ai_db_value(s,"INSERT INTO conversations(id,kind,reserved) SELECT max(coalesce(max(id),0)+1,?1),?2,1 FROM conversations RETURNING id",
-        i64(s.first_id),i64(Ai_Conversation_Kind.Archived))
+    value,found,ok:=ai_db_value(s,"INSERT INTO conversations(id,kind,reserved) SELECT coalesce(max(id),0)+1,?1,1 FROM conversations RETURNING id",
+        i64(Ai_Conversation_Kind.Archived))
     if !ok || !found {return 0,ai_db_fail(s,"Could not reserve a chat identifier")}
     if value<=0 || value>=max(i64) {return 0,ai_store_error(s,"Chat identifiers are exhausted")}
     return u64(value),""
