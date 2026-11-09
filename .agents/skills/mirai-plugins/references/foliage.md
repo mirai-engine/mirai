@@ -344,7 +344,10 @@ the registry's memory as a file of the undo step that creates it.
   (`Foliage_Tool`).
 - `foliage_cells` inspection mode (Advanced → Foliage): the outline of each cell near the view over
   its ground, green the one that generates and yellow the one that only has manual instances.
-- **API** (`foliage_api.odin`): `foliage.create`, `foliage.type_add` (a type by its mesh with
+- A content tool writes a `.foliage` and its entity with `foliage.builder_foliage`
+  (`builder.odin`), in one pass with the scene.
+- **API** (`foliage_api.odin`): `foliage.create` (with `name`, for its entity and file beside the
+  scene), `foliage.type_add` (a type by its mesh with
   the values it receives; its name is unique), `foliage.type_set` (the type by its name, the
   values it receives; the others stay; a rule's `layers` are materials of the terrain under it, as
   `Ground_Owner.layers` lists them), `foliage.type_remove`, `foliage.paint` (a paint, erase,
@@ -356,6 +359,7 @@ the registry's memory as a file of the undo step that creates it.
 
 ## Verification
 
+- What a content tool writes: `a_content_tool_writes_a_foliage_and_its_entity_in_one_pass`.
 - `mirai test plugins/foliage/runtime` (CPU): cells
   (`cells_take_the_points_of_their_32_metres_including_negative_coordinates`), format
   (`a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused`), generator and overrides

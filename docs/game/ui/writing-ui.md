@@ -35,6 +35,8 @@ err:=host.ui_tree_save("assets/ui/hud.ui",&types,id_of("ui","hud"),
   scene's `UI_Screen.asset` or `World_Widget.asset` takes it. Write the `.ui` before the scene.
 - Sizes are `ui.fixed(n)`, `ui.grow()`; `layout.direction` is `.Row` or `.Column`, `gap` and
   `padding` are layout units, `align_x` and `align_y` center content.
+- A `Text` with a `fill`, `radius` or `stroke` in its style draws them behind the text as a `Box`,
+  with the `padding` of its `layout` around the text: a pill needs no parent `Box`.
 - `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items` take paths:
   [hud-panels.md](hud-panels.md#hud). The kinds are the members of `ui.Node_Kind`.
 

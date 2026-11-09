@@ -35,6 +35,8 @@ Area :: struct {
     radius:f32,
 }
 
+AREA_RADIUS_MAX :: f32(16000) // metres: a square of this half side holds CELLS_MAX cells
+
 Foliage_Desc :: struct {
     file:string,     // the .foliage, relative to where the tool runs: assets/island/plants.foliage
     types:[]Type_Desc,
@@ -78,7 +80,11 @@ builder_foliage :: proc(b:^asset.Scene_Builder,name:string,desc:Foliage_Desc) ->
         t.casts_shadow=type.casts_shadow
     }
     if !source_valid(&source) {return fail(b,name,"a type is out of range: densities and distances at least 0, slopes from 0 to 90 degrees, align and weight from 0 to 1")}
-    for area in desc.generate {source_generate_area(&source,area.at,area.radius,true)}
+    for area in desc.generate {
+        for v in area.at {if !(abs(v)<=POSITION_MAX) {return fail(b,name,fmt.tprintf("an area to generate is at %v, past the limit of %v",area.at,POSITION_MAX))}}
+        if !(area.radius>0) || area.radius>AREA_RADIUS_MAX {return fail(b,name,fmt.tprintf("the radius of an area to generate is above 0 and at most %v",AREA_RADIUS_MAX))}
+        source_generate_area(&source,area.at,area.radius,true)
+    }
     bytes,error:=source_bytes(&source,id,&b.content.types)
     if error!=.None {
         asset.builder_fail(b,fmt.tprintf("%s: %s",name,desc.file),error)

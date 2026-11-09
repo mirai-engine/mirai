@@ -23,13 +23,15 @@ mesh_buffer_place :: proc(b:^Mesh_Buffer,first:int,at:Vec3,turn:f32=0,size:Vec3=
     spin :: #force_inline proc "contextless" (v:Vec3,s,c:f64) -> Vec3 {
         return {f32(f64(v.x)*c-f64(v.z)*s),v.y,f32(f64(v.x)*s+f64(v.z)*c)}
     }
-    for &p in b.positions[first:] {p=spin(p*size,s,c)+at}
-    for &n in b.normals[first:] {n=fnormalize(spin(n/size,s,c),n)}
+    for &p in b.positions[clamp(first,0,len(b.positions)):] {p=spin(p*size,s,c)+at}
+    for &n in b.normals[clamp(first,0,len(b.normals)):] {n=fnormalize(spin(n/size,s,c),n)}
 }
 
 // Gives every triangle of the buffer its own vertices with the normal of the
 // face, for a look of cut facets; its color and texture coordinates stay.
 mesh_buffer_flatten :: proc(b:^Mesh_Buffer) {
+    if len(b.normals)!=len(b.positions) || len(b.uvs)!=0 && len(b.uvs)!=len(b.positions) || len(b.indices)%3!=0 {return}
+    for index in b.indices {if int(index)>=len(b.positions) {return}}
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(b.positions.allocator))
     scratch:=context.temp_allocator
     count:=len(b.indices)

@@ -303,8 +303,8 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     tool.create_source,tool.samples,tool.chunk_cells=.Plane,5,4
     e:=terrain_create(&s,&tool,ref,&app,at={0,0,0},placed=true,name="Island")
     if !testing.expect(t,e!=core.NONE && editor.edits_commit(&edits,ref,&selection)) {return}
-    name,named:=core.get(&world.names,e)
-    testing.expect(t,named && base.text_get(name.text[:])=="Island",base.text_get(name.text[:]))
+    name:=core.get(&world.names,e)
+    testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
     testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
 }
 

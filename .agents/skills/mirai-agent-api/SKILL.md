@@ -159,6 +159,8 @@ positions misses both.
 
 ## Invariants
 
+- A method acts on the entity it is given: the selection is never a precondition of a method, and
+  a method does not change the selection of the user unless changing it is what it is for.
 - The caller names things as a person does: an entity by its name, a path, an id or a handle,
   in every param that takes one (`entity`, or its role: `parent`, `target`...), and an asset by its
   path. The engine resolves them and a name that fits several is an error, never the first match.
