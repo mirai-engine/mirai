@@ -16,7 +16,7 @@ count_handler :: proc(call:^Call) {
     call_result(call,Count_Result).value=count^
 }
 
-// Every method takes the reserved params, over both routes and in its schema.
+// A method takes the reserved params over both routes and in its schema.
 @(test)
 a_wait_that_runs_out_repeats_a_long_value_cut_and_a_short_one_whole :: proc(t:^testing.T) {
     short:=`{"a":1}`
@@ -56,9 +56,14 @@ select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: p
     content:=at(unknown,"result","content").(json.Array)
     testing.expect(t,len(content)==2 && strings.contains(string_of(at(content[1],"text")),"has no 'total'"),"the note follows what it found")
 
-    described:=rpc(t,&f,`{"jsonrpc":"2.0","id":3,"method":"engine.describe","params":{"methods":["test.add"]}}`)
-    properties:=at(described,"result","methods",0,"params","properties")
-    testing.expect(t,at(properties,"_select")!=nil && at(properties,"_wait_until")!=nil && at(properties,"a")!=nil,"the schema lists them")
+    described:=rpc(t,&f,`{"jsonrpc":"2.0","id":3,"method":"engine.describe","params":{"methods":["test.add","test.shapes"]}}`)
+    for read_only,i in ([]bool{true,false}) {
+        properties:=at(described,"result","methods",i,"params","properties")
+        testing.expect(t,at(properties,"_select")!=nil,"the schema of every method lists _select")
+        for name in ([]string{PARAM_WAIT_UNTIL,PARAM_WAIT_SECONDS}) {
+            testing.expectf(t,(at(properties,name)!=nil)==read_only,"the schema lists %s only for a method that changes nothing",name)
+        }
+    }
 }
 
 @(test)
@@ -67,7 +72,9 @@ wait_until_calls_the_method_again_until_its_result_meets_the_condition :: proc(t
     if !testing.expect_value(t,server_init(&server,{port=0}),Init_Error.None) {return}
     defer server_destroy(&server)
     count:=0
-    testing.expect_value(t,method_register(&server,{name="count",result=Count_Result,handler=count_handler,user=&count}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="count",result=Count_Result,handler=count_handler,user=&count,flags={.Read_Only}}),Register_Error.None)
+    changes:=0
+    testing.expect_value(t,method_register(&server,{name="change",result=Count_Result,handler=count_handler,user=&changes}),Register_Error.None)
     pause :: proc(s:^Server,seconds:f64) -> bool {return true}
     server.pause=pause
     out:serial.Writer
@@ -89,4 +96,13 @@ wait_until_calls_the_method_again_until_its_result_meets_the_condition :: proc(t
     server.pause=ending
     error,ok,_,_=method_call(&server,method,`{"_wait_until":"value<0"}`,&out)
     testing.expect(t,!ok && error.code==CLOSED && strings.contains(error.message,"ending"),error.message)
+    for params in ([]string{`{"_wait_until":"value>=3"}`,`{"_wait_seconds":1}`,`{"_wait_until":"value>=3","_wait_seconds":1,"_select":"value"}`}) {
+        base.arena_reset(&server.scratch)
+        error,ok,_,_=method_call(&server,method_find(&server,"change"),params,&out)
+        testing.expectf(t,!ok && error.code==INVALID_PARAMS && strings.contains(error.message,"change changes things") && strings.contains(error.message,"read-only method"),"%s: %s",params,error.message)
+    }
+    testing.expect_value(t,changes,0)
+    base.arena_reset(&server.scratch)
+    error,ok,selected,_=method_call(&server,method_find(&server,"change"),`{"_select":"value"}`,&out)
+    testing.expectf(t,ok && changes==1 && selected==`{"value":1}`,"a method that changes things runs once and still takes _select: %v",error)
 }

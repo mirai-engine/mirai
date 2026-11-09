@@ -309,18 +309,20 @@ text_brief :: proc(text:string,limit:int) -> string {
 }
 
 
-// What every method takes besides its own params: the server does these with
-// its answer, so a client of MCP has them as a client of mirai rpc does.
-// _select names the fields of the result the answer keeps, separated by
-// commas; _wait_until calls the method again until a field of its result
-// meets a condition, the editor going on meanwhile, for _wait_seconds at most.
+// What a method takes besides its own params: the server does these with its
+// answer, so a client of MCP has them as a client of mirai rpc does. _select
+// names the fields of the result the answer keeps, separated by commas.
+// _wait_until calls the method again until a field of its result meets a
+// condition, the editor going on meanwhile, for _wait_seconds at most: only a
+// Read_Only method takes these two, as each call of another changes things.
 PARAM_SELECT :: "_select"
 PARAM_WAIT_UNTIL :: "_wait_until"
 PARAM_WAIT_SECONDS :: "_wait_seconds"
 WAIT_UNTIL_SECONDS :: 300 // how long _wait_until waits without _wait_seconds, under the timeouts of the clients of MCP
 WAIT_UNTIL_PAUSE :: 0.1   // seconds between its calls
 
-@(private) RESERVED_SCHEMA :: `"_select":{"type":"string"},"_wait_until":{"type":"string"},"_wait_seconds":{"type":"number"}`
+@(private) SELECT_SCHEMA :: `"_select":{"type":"string"}`
+@(private) WAIT_SCHEMA :: `"_wait_until":{"type":"string"},"_wait_seconds":{"type":"number"}`
 
 param_reserved :: proc(name:string) -> bool {return name==PARAM_SELECT || name==PARAM_WAIT_UNTIL || name==PARAM_WAIT_SECONDS}
 
@@ -422,6 +424,9 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
     allocator:=base.arena_allocator(&s.scratch)
     rest,options,problem,read:=call_options_take(s,params)
     if !read {return problem,false,"",""}
+    if (options.waits || options.wait_seconds>0) && .Read_Only not_in method.flags {
+        return {INVALID_PARAMS,format_text(allocator,"%s changes things, and %s would call it again until its condition holds: call it once without %s and %s, then wait on a read-only method, such as its status method (build.status after build.start)",method.name,PARAM_WAIT_UNTIL,PARAM_WAIT_UNTIL,PARAM_WAIT_SECONDS),""},false,"",""
+    }
     start:=out.count
     started:=time.tick_now()
     limit:=options.wait_seconds>0?options.wait_seconds:WAIT_UNTIL_SECONDS

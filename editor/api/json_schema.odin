@@ -209,7 +209,7 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
     start:=w.count
     defer if !result {
-        properties_add(w,start,RESERVED_SCHEMA)
+        properties_add(w,start,.Read_Only in method.flags?SELECT_SCHEMA+","+WAIT_SCHEMA:SELECT_SCHEMA)
     } else if method.clamps {
         properties_add(w,start,CLAMPED_SCHEMA)
     }

@@ -187,14 +187,18 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
 
 ### Fields and waits
 
-Every method takes two reserved params the server handles: `_select` (`"a.b,c[0].d"`) answers
-only those fields, as an object by their paths, and `_wait_until` (`"phase=Built"`) calls the
-method again until the condition holds, the editor going on meanwhile, for at most
-`api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout` sends. Selecting reads the result of a call that already ran, so a field that
-is not there is no error: the answer keeps the fields it found and says briefly which are missing
-and which exist, in the `note` member of the JSON-RPC response or in a second text of the MCP
-content. `--select` and `--wait-until` of `mirai rpc` send these params: the server does both, and
-the client only calls again when the editor restarts during the wait.
+The server handles the reserved params. Every method takes `_select` (`"a.b,c[0].d"`), which
+answers only those fields, as an object by their paths. A read-only method (`read_only` in
+`engine.describe`) also takes `_wait_until` (`"phase=Built"`), which calls the method again until
+the condition holds, the editor going on meanwhile, for at most `api.WAIT_UNTIL_SECONDS`, or the
+`_wait_seconds` that `--timeout` sends. A method that changes things refuses both with `-32602`,
+as each call would change them again: it is called once, and the wait goes on a read-only method,
+such as its status method (`build.start`, then `build.status`). Selecting reads the result of a
+call that already ran, so a field that is not there is no error: the answer keeps the fields it
+found and says briefly which are missing and which exist, in the `note` member of the JSON-RPC
+response or in a second text of the MCP content. `--select` and `--wait-until` of `mirai rpc`
+send these params: the server does both, and the client only calls again when the editor restarts
+during the wait.
 
 A field is a path in the result: names separated by dots and `[i]` for element `i` of an array,
 from the end if `i` is negative (`entities[0].id`, `entities[-1]`); a name that is a number on an
@@ -307,6 +311,10 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   single value where a list goes, a list of one where a single value goes, and a number or a
   boolean, as its text, where the schema takes only a string. A list of several for a single
   value fails saying so.
+- **A key the params do not declare is `-32602`**, with the same words for a typed method and
+  for one that reads them by hand: an object of a `params_schema` that has `properties` takes
+  only those, unless it says `"additionalProperties":true` or gives the schema of the others
+  (an object keyed by component name).
 - **A name of a registry is matched as a person writes it** (`base.name_find`): components, enum
   members of params and values, input keys and presets, without minding case, underscores, spaces
   or hyphens. It resolves only when exactly one candidate fits; otherwise the error says which
