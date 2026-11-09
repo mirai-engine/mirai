@@ -292,7 +292,7 @@ inverse:
 Procedures:
 
 - A gesture goes from `edits_begin(edits, selection, label)` to `edits_end`, and `edits_flush` (in
-  `editor_end`) records it at the end of the frame; `edits_once` is a step of its own.
+  `editor_end`) records it at the end of the frame.
   `edits_begin` returns `false` if it could not reserve the selection; opening another with one open
   keeps the first.
 - `edits_commit` records immediately, in two phases: `edits_prepare` computes the delta and makes

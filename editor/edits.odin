@@ -164,13 +164,6 @@ edits_end :: proc(edits:^Edits) {
     if edits.open && !edits.preview {edits.commit=true}
 }
 
-// One edit that is a step of its own: begin, then edits_end once it is made.
-edits_once :: proc(edits:^Edits,selection:^Selection,label:string) -> bool {
-    if !edits_begin(edits,selection,label) {return false}
-    edits_end(edits)
-    return true
-}
-
 // The gesture of an edit: one of its own, unless one is open, which it joins.
 // document opens it on the document whatever the view shows.
 edit_open :: proc(s:^Session,label:string,document:=false) -> (opened,ready:bool) {

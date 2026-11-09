@@ -323,18 +323,6 @@ document_label :: proc(s:^Session) -> string {
     return filepath.base(document_path(s.document))
 }
 
-// The entities without a parent, in the order of the world.
-entity_roots :: proc(w:core.World_Ref) -> []core.Entity {
-    roots:=make([dynamic]core.Entity,context.temp_allocator)
-    names:=core.world_table_of(w,core.Name)
-    if names==nil {return nil}
-    for row in 0..<core.count(names) {
-        e:=core.entity_at(names,row)
-        if entity_parent(w,e)==core.NONE && entity_author(w,e)==e {append(&roots,e)}
-    }
-    return roots[:]
-}
-
 Api_Section_Preview_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose sky, sun and look the editor draws; omitted goes back to those on"`,
 }
