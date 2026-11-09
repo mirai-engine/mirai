@@ -102,7 +102,7 @@ sphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,segments:=SHAPE_SEGMENTS,ri
 
 // Subdivided icosahedron: 20*4^subdivisions triangles of similar size.
 // Texture coordinates follow the sphere; vertices are repeated along the seam
-// and at the poles.
+// and at the poles. Without temporary memory nothing is appended.
 icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(out.positions.allocator))
     scratch:=context.temp_allocator
@@ -130,7 +130,8 @@ icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
     key_map_init(&midpoints,scratch)
     next:=make([dynamic][3]u32,0,80,scratch)
     for _ in 0..<subdivisions {
-        key_map_reset(&midpoints,len(faces)*2)
+        // Three edges per face, each shared by two.
+        if key_map_reset(&midpoints,len(faces)*2)!=nil {return}
         clear(&next)
         for f in faces {
             m:[3]u32

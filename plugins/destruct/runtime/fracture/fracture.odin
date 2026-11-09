@@ -104,7 +104,7 @@ DESTRUCTIBLE_DESC_DEFAULT :: Destructible_Desc{
     strength=500,impact_damage=true,damage_threshold=50,damage_radius=0.5,debris_volume=0.001,debris_ticks=300,hull_vertices=32,
 }
 
-Destructible_Error :: enum {None,Invalid_Desc,Invalid_Mesh,No_Pieces,Capacity}
+Destructible_Error :: enum {None,Invalid_Desc,Invalid_Mesh,No_Pieces,Capacity,Out_Of_Memory}
 
 DESTRUCTIBLE_ANCHOR_CAPACITY :: 4
 
@@ -711,7 +711,11 @@ destructible_create :: proc(f:^Fracture,w:^sim.World,desc:Destructible_Desc) -> 
     fracture:=desc.fracture
     if fracture==nil {
         geom.fracture_init(&own,f.allocator)
-        if geom.mesh_fracture(&own,desc.mesh,desc.sites)!=.None {return {},.Invalid_Mesh}
+        switch geom.mesh_fracture(&own,desc.mesh,desc.sites) {
+        case .None:
+        case .Out_Of_Memory: return {},.Out_Of_Memory
+        case .Invalid_Mesh,.No_Sites: return {},.Invalid_Mesh
+        }
         fracture=&own
     }
     count:=len(fracture.pieces)
