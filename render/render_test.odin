@@ -472,6 +472,8 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
+	// Without the jitter of the TAA, which the samples of a pixel follow: the two images differ by the budget alone.
+	settings.taa = false
 	if !fixture_init(t, &f, 240, 150, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer

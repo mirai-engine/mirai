@@ -27,8 +27,13 @@
 // and materials shape it.
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
+// The filters of glass with a program wait for it (points.slang): the light
+// takes their means, and the resume (params.resume) adds what the exact ones
+// change of it.
 #ifdef MIRAI_DIRECT_GLASS
 #define MIRAI_RAY_FILTERS
+#define MIRAI_DEFER_FILTERS
+#define POINTS_SLOT SLOT_POINTS
 #endif
 #include "lighting.slang"
 #include "gbuffer.slang"
@@ -42,7 +47,7 @@
 // hard: the shadow rays of a point that traces its own (direct_lighting);
 // glass: not 0 where glass colors the light;
 // the grid of the lights (render.Light_Grid) and its cells.
-struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint mode; uint glass; uint pad4; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
+struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint resume; uint glass; uint pad4; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
     // The maps of the shadows of this frame (render.Shadow_Maps).
     uint shadow_on; uint shadow_rows; uint shadow_maps; uint shadow_sun; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
@@ -260,17 +265,39 @@ float shadow_map_seen(uint item, float3 position, float3 n, float radius, float 
 #define DIRECT_PROBES 4u
 
 // What the glass between o and o + w * reach lets through of a light: the
-// product of the filters of the faces it crosses, 1 without glass.
-float3 direct_glass(float3 o, float3 w, float reach) {
+// product of the filters of the faces it crosses, 1 without glass. plain:
+// what the light gives the owner without it, which what the programs of the
+// glass change of that product is weighed by (filters_weigh).
+float3 direct_glass(float3 o, float3 w, float reach, float3 plain) {
 #ifdef MIRAI_DIRECT_GLASS
-    if (params.glass != 0u) return trace_glass_filter(o, w, reach);
+    if (params.glass != 0u) {
+        filters_begin();
+        float3 through = trace_glass_filter(o, w, reach);
+        filters_weigh(plain);
+        return through;
+    }
 #endif
     return float3(1.0);
 }
 
+// The owner of the filter points of the sun of a point, apart from that of
+// its local lights: bit 15 of its place.
+#define DIRECT_OWNER_SUN 0x8000u
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
+#ifdef MIRAI_FILTER_POINTS
+    if (params.resume != 0u) {
+        Point_Head head;
+        if (!head_of_round(group.x * GROUP_SIZE + index, head)) return;
+        int2 at = int2(head.owner & 0x7FFFu, head.owner >> 16u);
+        float3 change = finite_or_zero(filters_correction(head.chain));
+        if ((head.owner & DIRECT_OWNER_SUN) != 0u) out_sun[at] = float4(max(out_sun[at].rgb + change, float3(0.0)), out_sun[at].a);
+        else out_samples[at] = float4(max(out_samples[at].rgb + change, float3(0.0)), out_samples[at].a);
+        return;
+    }
+#endif
     int scale = int(max(params.scale, 1u));
     int2 p = direct_group_pixel(group.xy, index);
     int2 source = p * scale;
@@ -308,6 +335,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     Pixel pixel = pixel_at(source, uv, depth);
     float3 normal = gbuffer_normal(source);
     Shading s = gbuffer_shading(gbuffer_read(source), pixel);
+    float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
     float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
@@ -323,8 +351,13 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float sun = direct_sun_weight(pixel.position, normal);
     float3 sun_glass = float3(1.0);
     float sun_part = -1.0, sun_wide = 0.0;
+    uint sun_chain = INVALID;
     if (sun > 0.0) {
-        sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5);
+        sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
+#ifdef MIRAI_FILTER_POINTS
+        sun_chain = filter_chain;
+        filter_chain = INVALID;
+#endif
         Shadow_Map held;
         if (sun_map_of(pixel.position, held)) {
             float known = shadow_map_seen(INVALID, pixel.position, normal, params.sun_radius, spin, sun_wide);
@@ -388,7 +421,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                     spread = light_extent(chosen) / max(far, 1e-4);
                     if (!(luminance(radiance) > 0.0)) continue;
                     // The glass on the way colors all of it, lit or hidden.
-                    radiance *= direct_glass(origin, axis, far);
+                    radiance *= direct_glass(origin, axis, far, radiance * (float(k - first) * factor) / reflectance);
                 }
                 float3 share = radiance * (float(k - first) * factor);
                 open += share;
@@ -480,7 +513,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                     direct_ray(light, pixel.position, origin, direct_point(place, m, q), spin, params.sun_radius, direction, reach);
                     float3 add = light_radiance(lights[light], s, toward, distance) * (factor / max(chance, 1e-6));
                     if (!(luminance(add) > 0.0)) continue;
-                    add *= direct_glass(origin, toward, distance);
+                    add *= direct_glass(origin, toward, distance, add / reflectance);
                     open += add;
                     if (changes && !marked) marked = light_moved(light) || (q != traced && occluder_changed(origin, direction, reach, INVALID, reach));
                     float near = q == traced ? -1.0 : direct_hit(origin, direction, reach, mask);
@@ -494,7 +527,11 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
             }
         }
     }
-    float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
+#ifdef MIRAI_FILTER_POINTS
+    uint place_of = uint(p.x) | (uint(p.y) << 16u);
+    if (sun_chain != INVALID) head_append(point_head(INVALID, sun_chain, place_of | DIRECT_OWNER_SUN));
+    if (filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, place_of));
+#endif
     float part = luminance(open) > 0.0 ? saturate(luminance(lit) / luminance(open)) : 1.0;
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
     out_sun[p] = float4(sun_glass, isfinite(sun_part) ? sun_part : 1.0);

@@ -1253,7 +1253,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		s.light_grid_dirty = false
 	}
 	reference := settings.reference_lights
-	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, pad1, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, resume, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
 	params := Params{
 		scale       = scale,
@@ -1292,6 +1292,8 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	case params.glass == 0:               samples = .Direct_Samples_Hw_Unlayered if hw else .Direct_Samples_Unlayered
 	case:                                 samples = .Direct_Samples_Hw_Unlayered_Color if hw else .Direct_Samples_Unlayered_Color
 	}
+	// Glass with a program colors the light by what its program gives where each ray crosses it.
+	batch := params.glass != 0 && points_begin(p, filters = true)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[samples])
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1304,7 +1306,9 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer)
+	points_bind(p)
 	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
+	points_rounds(p, batch, r.pipelines[samples], &params, 1)
 	// What the window of the pattern gives each point.
 	rhi.cmd_timestamp(cmd, "direct points")
 	Window :: struct {scale, samples, pad0, pad1: u32}
