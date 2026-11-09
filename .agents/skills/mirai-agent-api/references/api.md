@@ -144,6 +144,35 @@ when one fails and 2 when they cannot run. A session it opens builds the editor 
 first when its code changed, as `mirai session start` does. A project runs it in its CI, on a
 machine with a GPU.
 
+## `mirai ui` and `mirai scene`
+
+`mirai ui read|write|check` and `mirai scene read|write|check` (`UI_USAGE`, `SCENE_USAGE`) work on
+the documents of [`ui.inspect` and `ui.write`](../../mirai-plugins/references/ui-inspector.md#api)
+and of [`scene.inspect` with `root` and `scene.write`](methods.md#scene) with no editor: the tool
+runs `cook/author.command` in the engine's `mirai-author` program
+([binaries](../../mirai-projects/references/projects.md#engine-binaries)), building the engine
+first when it is not current, as `mirai import` does.
+
+- **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
+  `.scene.json` and `.prefab.json`. `read <asset>` prints the document or writes it to `--out`;
+  `read --sources` writes one per asset of the project (not of its plugins); `write` takes those
+  files or a folder of them, or `<asset> <file>` for a file kept elsewhere, and tries again what
+  failed while a round writes something, so a file may use one the same run makes.
+- **A write** is the one of the API method: what it refuses is refused with its message and the
+  file stays as it was; a file that already says the document is not written. An asset that does
+  not exist is made with an id that follows from its path.
+- **Types of the game.** The paths an interface binds and the components of a scene are read
+  against the `editor` or `play` library of the project, the one built last. Without a library
+  an interface is written with its paths unchecked, which the command says, and a scene is not
+  read or written: its components start with the values their types declare.
+- **A scene document** is `{"entities": [...]}`, the entities at the top of the file, and is
+  applied to the file of the asset, with no world: an entity it makes takes the id the document
+  gives when the file is new, the components the game of this build does not know stay with the
+  entities it keeps, and `preset` or a new entity with `prefab` are refused, since a recipe and
+  an instance are made on a world (`scene.write`, `prefab.instantiate`).
+- **`check`** lists what would fail in the game and exits with 1: for interfaces what `ui.check`
+  lists, for scenes each file whose document does not write it back unchanged.
+
 ## `mirai rpc`
 
 ```sh

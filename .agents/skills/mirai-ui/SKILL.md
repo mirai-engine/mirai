@@ -149,8 +149,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   `paragraph_height_matches_the_lines_the_layout_wraps`,
   `rows_of_different_heights_build_only_those_in_sight_and_keep_the_range`.
 - The document of a `.ui` (`ui.inspect`, `ui.write`, tokens, roundtrip):
-  `plugins/ui_inspector/editor/api_document_test.odin`; widgets (use, params, reach through,
-  slot, follow, cycles, Make widget): `project_files_test.odin` in that package.
+  `cook/author/ui_document_test.odin`; widgets (use, params, reach through, slot, cycles):
+  `ui_files_test.odin` in that package; follow and Make widget: `project_files_test.odin` in
+  `plugins/ui_inspector/editor`.
 - `.ui` file, in `host` (`ui_check_test.odin`):
   `ui_records_come_back_from_their_file_row_by_row` (roundtrip of `host.ui_tree_document` and
   `ui_tree_view`), `ui_check_refuses_what_tree_load_refuses_case_by_case` and

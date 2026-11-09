@@ -358,7 +358,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `content_shows_empty_folders_and_the_line_of_create` and
   `a_right_click_on_a_folder_creates_an_asset_named_in_place`; rename, move and duplicate,
   `editor/asset_move_test.odin`; the empty `.ui`,
-  `an_empty_interface_is_a_root_box_that_grows_to_the_surface` in `plugins/ui_inspector/editor`.
+  `an_empty_interface_is_a_root_box_that_grows_to_the_surface` in `cook/author`.
 - Asset documents: `files_an_asset_document_writes_are_steps_of_its_own_history`,
   `another_asset_of_the_kind_in_front_takes_its_tab_while_it_has_no_history`,
   `the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_message` and

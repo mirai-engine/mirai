@@ -39,6 +39,9 @@ difference with the catalog, it rules.
   `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
   document=@<file> save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+- Reading, checking or writing the documents of interfaces, scenes and prefabs with no editor,
+  from files of text under `source/`:
+  [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
 - Letting a cheap model play with few tokens, finding bugs with monitors or a bot with no model,

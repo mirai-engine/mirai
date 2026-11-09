@@ -266,10 +266,13 @@ Each mode has its folder: switching between them compiles nothing.
   directly or not: what whoever imports it compiles against) and whether the runtime compilation
   was left half done.
 - Programs `mirai-editor` and `mirai-player`, which load the `editor` or `play` library of the
-  project ([host](../../mirai-core/references/host.md#project-libraries)), and `mirai-import`,
-  that of `mirai import` over the editor library
-  ([import](../../mirai-imports/references/imports.md#what-is-written)): this way the `mirai`
-  tool links neither importers nor renderer and compiles before the generated shaders exist.
+  project ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
+  library `mirai-import`, that of `mirai import`
+  ([import](../../mirai-imports/references/imports.md#what-is-written)), and `mirai-author`,
+  that of `mirai ui` and `mirai scene`
+  ([documents](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene)): this way the
+  `mirai` tool links neither importers nor renderer and compiles before the generated shaders
+  exist.
 - **Stage and declarations.** `build.declare` reads each file with `core:odin/parser` and writes
   the stage, with each procedure exported as `mirai.<package>.<name>`, and the declaration: types
   and constants as they are, generic, `inline`, `where`, `defer` or `deferred_*` procedures and
@@ -410,6 +413,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Build only the engine | `mirai build engine [--dev\|--release] [--force]` |
 | Generate the world without building | `mirai generate [project]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
+| Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins |
 | Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
