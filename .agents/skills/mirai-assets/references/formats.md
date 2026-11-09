@@ -188,9 +188,11 @@ One rule for all types, of the engine and of plugins:
   folder with the root where its source is; for a newer file, a newer engine. `mirai asset verify`
   and the `asset_errors` of `engine.diagnostics` show it.
 - **Rows are read by the schema the file carries**, by field name (`serial.Migration`): the types
-  a game declares (components, records) change while its files stay. A field the file lacks reads
-  the default of the read (`asset_rows`/`asset_row` with `default`, like `MATERIAL_DEFAULTS`), and
-  a table a file may omit reads empty (`table_rows`, like `skin` in `vertices`).
+  a game declares (components, records) change while its files stay, and a field their file lacks
+  reads the default of the read (`asset_rows` with `default`). The rows of an asset type hold
+  every field of its version: its read asks for them `whole`, and a file that does not store one
+  fails with `Version`; `version_message` names the table and the field. A table a file may omit
+  reads empty (`table_rows`, like `skin` in `vertices`).
 - **Saving writes the current version**: a type's `*_document` and a scene taken as `asset.Scene`
   stamp it. A generic `Document` (`mirai asset set`, a merge, a move) keeps the version of the file
   it came from, and its rows that file's schema.

@@ -66,9 +66,9 @@ an_effect_of_another_version_asks_to_be_written_again :: proc(t:^testing.T) {
     testing.expect_value(t,error,asset.Error.Version)
 }
 
-// The lights of an effect cast shadows only when it asks: not by default,
-// nor in an effect written before it could ask; one that asks keeps it, and
-// an instance can ask on its own.
+// The lights of an effect cast shadows only when it asks: not by default;
+// one that asks keeps it, and an instance can ask on its own. An effect that
+// does not store a field of its version is refused.
 @(test)
 particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     testing.expect(t,!PARTICLE_DEFAULTS.light_shadows)
@@ -88,9 +88,9 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
         a:asset.Asset
         testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
         defer asset.asset_close(&a)
-        view,view_error:=particle_view(&a,&types)
-        testing.expect_value(t,view_error,asset.Error.None)
-        if view_error==.None {testing.expect(t,view.info.lights==4 && view.info.rate==30 && !view.info.light_shadows)}
+        _,view_error:=particle_view(&a,&types)
+        testing.expect_value(t,view_error,asset.Error.Version)
+        testing.expect_value(t,a.lacking,[2]string{"particle","duration"})
     }
     info:=PARTICLE_DEFAULTS
     info.lights,info.light_shadows=4,true
@@ -153,38 +153,6 @@ mesh_particles_keep_their_facing_axis_rotation_and_scale :: proc(t:^testing.T) {
     bad.facing=Particle_Facing(7)
     testing.expect_value(t,particle_validate({info=&bad}).field,"facing")
     testing.expect_value(t,particle_save(path,&types,{id={3,4},info=bad}),asset.Error.Invalid)
-}
-
-// An effect written before Mesh particles had a facing reads Random, no axis,
-// no turn and no scale: they turn about an axis of their own at their size,
-// as they did.
-@(test)
-mesh_particles_of_an_effect_written_before_facing_turn_as_they_did :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    path:=effect_test_path("old_mesh.particle")
-    defer os.remove(path)
-    Before :: struct {rate:f32,size:[2]f32,rotation:[2]f32,spin:[2]f32,render:Particle_Render,mesh:base.Asset_Id}
-    before:=Before{rate=12,size={0.3,0.4},rotation={0,1},spin={-2,2},render=.Mesh,mesh={5,6}}
-    doc:asset.Document
-    asset.document_init(&doc,KIND,{1,2})
-    doc.kind_version=VERSION
-    _,error:=asset.document_put_row(&doc,&types,"particle",&before)
-    testing.expect_value(t,error,asset.Error.None)
-    testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
-    asset.document_destroy(&doc)
-    a:asset.Asset
-    testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
-    defer asset.asset_close(&a)
-    view,view_error:=particle_view(&a,&types)
-    testing.expect_value(t,view_error,asset.Error.None)
-    if view_error!=.None {return}
-    testing.expect(t,view.info.render==.Mesh && view.info.mesh==base.Asset_Id{5,6} && view.info.spin==[2]f32{-2,2})
-    testing.expect_value(t,view.info.facing,Particle_Facing.Random)
-    testing.expect_value(t,view.info.spin_axis,[3]f32{})
-    testing.expect_value(t,view.info.mesh_rotation,[4]f32{})
-    testing.expect_value(t,view.info.mesh_scale,[3]f32{})
-    defaults:=PARTICLE_DEFAULTS
-    testing.expect(t,defaults.facing==.Random && defaults.spin_axis==[3]f32{} && defaults.mesh_rotation==[4]f32{} && defaults.mesh_scale==[3]f32{})
 }
 
 @(test)

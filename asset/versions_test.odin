@@ -81,6 +81,40 @@ an_asset_of_another_version_says_which_it_is_and_how_to_import_it_again :: proc(
     testing.expect(t,strings.contains(told,"newer than this build") && strings.contains(told,"newer engine"),told)
 }
 
+// A row of a kind holds every field of its version: a file that does not
+// store one is refused, and told with the field and how to make it again.
+@(test)
+a_row_that_lacks_a_field_of_its_kind_is_refused :: proc(t:^testing.T) {
+    Old_Material :: struct {base_color:[3]f64,roughness:f32}
+    Old_Texture :: struct {width,height,mip_count:u32,format:Texture_Format,flags:Texture_Flags,alpha_coverage:f32}
+    Old_Sound_Set :: struct {volume_min,volume_max:f32}
+    types:Types;types_init(&types);defer types_destroy(&types)
+    Case :: struct {kind:Fourcc,version:u16,table,lacking:string}
+    for c in ([3]Case{{KIND_MATERIAL,MATERIAL_VERSION,"material","opacity"},{KIND_TEXTURE,TEXTURE_VERSION,"texture","layers"},{KIND_SOUND_SET,SOUND_SET_VERSION,"sound_set","sounds"}}) {
+        doc:Document;document_init(&doc,c.kind,{4,4});defer document_destroy(&doc)
+        doc.kind_version=c.version
+        put:Error
+        switch c.kind {
+        case KIND_MATERIAL: _,put=document_put_row(&doc,&types,c.table,&Old_Material{base_color={0.5,0.25,1},roughness=0.2})
+        case KIND_TEXTURE: _,put=document_put_row(&doc,&types,c.table,&Old_Texture{width=2,height=1,mip_count=1})
+        case KIND_SOUND_SET: _,put=document_put_row(&doc,&types,c.table,&Old_Sound_Set{1,1})
+        }
+        bytes,written:=document_bytes(&doc,context.temp_allocator)
+        a:Asset
+        if !testing.expect(t,put==.None && written==.None && asset_open(&a,bytes,context.temp_allocator)==.None,c.table) {continue}
+        defer asset_close(&a)
+        read:Error
+        switch c.kind {
+        case KIND_MATERIAL: _,read=material_view(&a,&types)
+        case KIND_TEXTURE: _,read=texture_open(&a,&types)
+        case KIND_SOUND_SET: _,read=sound_set_view(&a,&types)
+        }
+        testing.expect_value(t,read,Error.Version)
+        told:=version_message(&a,&types,"old.asset",allocator=context.temp_allocator)
+        testing.expect(t,strings.contains(told,c.table) && strings.contains(told,c.lacking) && strings.contains(told,"make it again"),told)
+    }
+}
+
 @(test)
 an_asset_of_another_version_named_by_a_relative_path_says_how_to_import_it_again :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
