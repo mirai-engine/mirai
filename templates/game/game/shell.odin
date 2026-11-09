@@ -37,7 +37,7 @@ Shell :: struct {
 
 // What shell.ui asked for in this frame.
 @(private="file")
-shell_events :: proc(events:[]gui.UI_Event,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,app:^host.App) {
+shell_events :: proc(events:gui.Frame_Events,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,app:^host.App) {
     if gui.clicked(events,screen,"menu_play") || gui.clicked(events,screen,"pause_resume") {shell.page=.Playing}
     if gui.clicked(events,screen,"pause_settings") {shell.page=.Settings}
     if gui.clicked(events,screen,"settings_back") {shell.page=.Pause}

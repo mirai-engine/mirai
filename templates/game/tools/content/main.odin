@@ -16,18 +16,17 @@ import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
-import "mirai:host"
 import "mirai:std/base"
-import "mirai:ui"
 import game "project:game"
 
 PLAYER_PREFAB_ID :: base.Asset_Id{0x6d6972616967616d,0x706c617965720001} // the id main.scene names the player prefab by
 
-// Writes every asset of the game: a badge (.tex), the look every screen shares
-// (write_theme, its tokens first), the HUD, the sign and the menus of
-// game/shell.odin (.ui), a hum (.sound, imported from the WAV this writes into source/) and
-// the scene assets/scenes/main.scene that uses them. Running it again gives
-// the same bytes. From the folder of the project:
+// Writes the assets the .ui do not name by their documents: a badge (.tex), a
+// hum (.sound, imported from the WAV this writes into source/) and the scene
+// assets/scenes/main.scene that uses the .ui of assets/ui. The .ui are the
+// source: an agent changes them with ui.write and the visual editor edits the
+// same files, so running this again leaves them alone. From the folder of the
+// project:
 //
 //   odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins -collection:project=. -ignore-unknown-attributes
 
@@ -37,7 +36,7 @@ HUM_RATE :: 22050
 HUM_SECONDS :: 2
 
 // An orange disc with a white core, transparent around it.
-write_badge :: proc(c:^asset.Content) -> base.Asset_Id {
+write_badge :: proc(c:^asset.Content) {
     id:=asset.content_id(PROJECT,"texture","badge")
     pixels:=make([]u8,BADGE_SIZE*BADGE_SIZE*4,context.temp_allocator)
     coverage :: proc(distance,radius:f32) -> f32 {return clamp(radius-distance+0.5,0,1)}
@@ -53,184 +52,6 @@ write_badge :: proc(c:^asset.Content) -> base.Asset_Id {
     }
     asset.content_check(c,"assets/textures/badge.tex",asset.texture_save("assets/textures/badge.tex",&c.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
-    return id
-}
-
-// The look of the game, in one place: change a token and every screen follows.
-// theme.ui holds these styles and the components every screen shares; the
-// other screens take them with ui.sheet_take, so two screens share button.
-write_theme :: proc(c:^asset.Content) -> (theme:ui.Sheet,id:base.Asset_Id) {
-    theme=ui.sheet_make("theme")
-    ui.sheet_tokens(&theme,{
-        {"ink","#3a1d4f"},        // text and thick edges
-        {"cream","#fff6e9"},      // panel, top
-        {"peach","#ffdfbe"},      // panel, bottom
-        {"berry_light","#ff8fa9"}, // button, top
-        {"berry","#f0467f"},      // button, bottom
-        {"sun_light","#ffe07a"},  // button under the pointer, top
-        {"sun","#ffb238"},
-        {"mint","#46dfc4"},       // the focus of keys and gamepad
-        {"sky","#fff0dc"},        // controls, top
-        {"sky_low","#ffd4a6"},    // controls, bottom
-        {"dim_color","#2c163f8c"},
-        {"clear","#00000000"},
-        {"edge",4},
-        {"round",20},
-        {"soft",12},
-        {"title",92},
-        {"heading",46},
-        {"body",22},
-    })
-    ui.sheet_styles(&theme,{
-        // Behind a menu: the world, dimmed and blurred.
-        {name="dim",fill="dim_color",blur=6},
-        {name="menu_back",fill="#2c163f30"},
-        {name="title",size="title",color="cream",font=ui.FONT_SEMIBOLD,outline=6,outline_color="ink",text_shadow={x=0,y=7,color="ink"},align_x=.Center},
-        {name="heading",size="heading",color="ink",font=ui.FONT_SEMIBOLD,align_x=.Center},
-        {name="hint",size=16,color="cream",text_shadow={x=0,y=2,color="#2c163fc0"},align_x=.Center},
-        {name="label",size="body",color="ink",font=ui.FONT_MEDIUM},
-        {name="panel",fill="cream",fill2="peach",stroke="ink",border=6,radius=32,
-            shadow={color="#2c163f70",blur=30,y=18}},
-        // A thick rounded button whose hard shadow is its edge: it lifts under the
-        // pointer and sinks when pressed.
-        {name="button",fill="berry_light",fill2="berry",stroke="ink",border="edge",radius="round",
-            size=26,color="cream",font=ui.FONT_SEMIBOLD,align_x=.Center,align_y=.Center,text_shadow={x=0,y=2,color="ink"},
-            shadow={color="ink",y=7},transition=0.09,
-            hover={fill="sun_light",fill2="sun",color="ink",text_shadow={color="clear"},move_y=-3,shadow={y=10}},
-            focus={fill="sun_light",fill2="sun",color="ink",text_shadow={color="clear"},stroke="mint",border=6,move_y=-3,shadow={y=10}},
-            pressed={move_y=5,shadow={y=2}},
-            disabled={fill="#b5acc4",fill2="#9a90ab",color="#ece6f4",shadow={y=3}},
-        },
-        // The value of a setting.
-        {name="control",fill="sky",fill2="sky_low",stroke="ink",border=3,radius="soft",
-            size=20,color="ink",font=ui.FONT_SEMIBOLD,align_x=.Center,align_y=.Center,mark="berry",
-            shadow={color="ink",y=3},transition=0.08,
-            hover={fill="sun_light",fill2="sun",move_y=-1,shadow={y=4}},
-            focus={stroke="mint",border=5,fill="sun_light",fill2="sun"},
-            pressed={move_y=2,shadow={y=1}},
-        },
-        {name="chip",fill="cream",fill2="peach",stroke="ink",border=4,radius=16,shadow={color="ink",y=5}},
-        {name="chip_value",size=20,color="ink",font=ui.FONT_SEMIBOLD},
-        {name="chip_label",size=14,color="#6b4a7a"},
-    })
-    // The pieces every screen builds with: a screen sets their text, what they bind and their focus.
-    if ui.sheet_component(&theme,"button") {
-        ui.sheet_node(&theme,-1,"button",{kind=.Button,layout={width=ui.fixed(300),height=ui.fixed(60)}})
-    }
-    if ui.sheet_component(&theme,"panel") {
-        root:=ui.sheet_node(&theme,-1,"panel",{kind=.Box,flags={.Slot,.Wrap_Y},layout={direction=.Column,align_x=.Center,gap=14,padding=ui.padding_all(34)}})
-        ui.sheet_node(&theme,root,"heading",{kind=.Text,name="heading"})
-    }
-    // One row of a settings page: its label and a control that binds what the use names with data.
-    if ui.sheet_component(&theme,"select_row") {
-        row:=ui.sheet_node(&theme,-1,"",{kind=.Box,layout={width=ui.grow(),gap=22,align_y=.Center}})
-        ui.sheet_node(&theme,row,"label",{kind=.Text,name="label",layout={width=ui.grow()}})
-        ui.sheet_node(&theme,row,"control",{kind=.Selector,name="control",bind_value="@",layout={width=ui.fixed(310),height=ui.fixed(44)}})
-    }
-    if ui.sheet_component(&theme,"check_row") {
-        row:=ui.sheet_node(&theme,-1,"",{kind=.Box,layout={width=ui.grow(),gap=22,align_y=.Center}})
-        ui.sheet_node(&theme,row,"label",{kind=.Text,name="label",layout={width=ui.grow()}})
-        ui.sheet_node(&theme,row,"control",{kind=.Checkbox,name="control",bind_value="@",layout={width=ui.fixed(44),height=ui.fixed(44)}})
-    }
-    id=asset.content_id(PROJECT,"ui","theme")
-    host.ui_sheet_save(c,"assets/ui/theme.ui",id,&theme)
-    return
-}
-
-// The HUD: a chip in the top left corner with a badge that never stops
-// pulsing, the message of the game and how many hits landed.
-write_hud :: proc(c:^asset.Content,theme:^ui.Sheet,theme_id,badge:base.Asset_Id) -> base.Asset_Id {
-    s:=ui.sheet_make("hud")
-    ui.sheet_take(&s,theme_id,theme)
-    badge_image:=ui.sheet_image(&s,{texture=badge})
-    s.keys=[]ui.Keyframe{
-        {time=0,value={1,1,0,0}},{time=0.6,value={1.2,1.2,0,0},ease=.In_Out_Quad},
-    }
-    s.tracks=[]ui.Tree_Track{{.Scale,0,2}}
-    s.anims=[]ui.Tree_Anim{{kind=.Clip,loop=.Ping_Pong,first=0,count=1}}
-    s.anim_sets=[]ui.Anim_Set{{shown=1}}
-    panel:=ui.sheet_node(&s,-1,"chip",{kind=.Box,name="panel",
-        float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,offset={18,18}},
-        layout={width=ui.fixed(290),gap=14,padding={16,12,16,12},align_y=.Center}})
-    ui.sheet_node(&s,panel,"",{kind=.Image,name="badge",image=badge_image,anims=1,layout={width=ui.fixed(40),height=ui.fixed(40)}})
-    lines:=ui.sheet_node(&s,panel,"",{kind=.Box,name="lines",layout={direction=.Column,gap=3}})
-    ui.sheet_node(&s,lines,"chip_value",{kind=.Text,name="message",bind_text="Status.message"})
-    count:=ui.sheet_node(&s,lines,"",{kind=.Box,name="count",layout={gap=6}})
-    ui.sheet_node(&s,count,"chip_label",{kind=.Text,name="hits_label",text="Hits:"})
-    ui.sheet_node(&s,count,"chip_label",{kind=.Text,name="hits",bind_text="Status.hits"})
-    id:=asset.content_id(PROJECT,"ui","hud")
-    host.ui_sheet_save(c,"assets/ui/hud.ui",id,&s)
-    return id
-}
-
-// The sign above the speaker: the message and the hits, facing the camera.
-write_sign :: proc(c:^asset.Content,theme:^ui.Sheet,theme_id:base.Asset_Id) -> base.Asset_Id {
-    s:=ui.sheet_make("sign")
-    ui.sheet_take(&s,theme_id,theme)
-    sign:=ui.sheet_node(&s,-1,"chip",{kind=.Box,name="sign",layout={width=ui.fixed(220),height=ui.fixed(70),direction=.Column,padding=ui.padding_all(10),gap=4}})
-    ui.sheet_node(&s,sign,"chip_value",{kind=.Text,name="message",bind_text="Status.message"})
-    ui.sheet_node(&s,sign,"chip_label",{kind=.Text,name="hits",bind_text="Status.hits"})
-    id:=asset.content_id(PROJECT,"ui","sign")
-    host.ui_sheet_save(c,"assets/ui/sign.ui",id,&s)
-    return id
-}
-
-// The interface of game/shell.odin: a Switcher with a node named after each
-// game.Shell_Page but Playing. It names styles and components of theme.ui:
-// restyle write_theme, add screens here.
-write_shell :: proc(c:^asset.Content,theme:^ui.Sheet,theme_id:base.Asset_Id) -> base.Asset_Id {
-    GAME_TITLE :: "Game"
-    first :: proc(on:bool) -> ui.Node_Flags {return on?{.Focus_First}:{}}
-    // The first control of a page takes the focus of keys and gamepad when it shows.
-    button :: proc(s:^ui.Sheet,parent:i32,name,text:string,is_first:=false) {
-        ui.sheet_use(s,parent,"button",{name=name,text=text,flags=first(is_first)})
-    }
-    // A screen over the world, named after its page of Shell_Page: dimmed and blurred behind a menu that stops the game.
-    page :: proc(s:^ui.Sheet,pages:i32,member:game.Shell_Page,back:="dim") -> i32 {
-        return ui.sheet_node(s,pages,back,{kind=.Box,name=fmt.tprint(member),layout={width=ui.grow(),height=ui.grow(),align_x=.Center,align_y=.Center}})
-    }
-    panel :: proc(s:^ui.Sheet,pages:i32,member:game.Shell_Page,title:string,width:f32) -> i32 {
-        return ui.sheet_use(s,page(s,pages,member),"panel",{layout={width=ui.fixed(width),direction=.Column,align_x=.Center,gap=14,padding=ui.padding_all(34)}},{{"heading",{text=title},""}})
-    }
-    select :: proc(s:^ui.Sheet,parent:i32,label,name,bind,options:string,is_first:=false) {
-        ui.sheet_use(s,parent,"select_row",{name=name,data=bind},{{"label",{text=label},""},{"control",{text=options,flags=first(is_first)},""}})
-    }
-    check :: proc(s:^ui.Sheet,parent:i32,label,name,bind:string) {
-        ui.sheet_use(s,parent,"check_row",{name=name,data=bind},{{"label",{text=label},""}})
-    }
-
-    s:=ui.sheet_make("shell")
-    ui.sheet_take(&s,theme_id,theme)
-    root:=ui.sheet_node(&s,-1,"",{kind=.Box,name="shell",float={to=.Surface,anchor=.Top_Left,pivot=.Top_Left},layout={width=ui.grow(),height=ui.grow()}})
-    pages:=ui.sheet_node(&s,root,"",{kind=.Switcher,name="pages",bind_value="Shell.page",layout={width=ui.grow(),height=ui.grow()}})
-
-    menu:=ui.sheet_node(&s,page(&s,pages,.Menu,"menu_back"),"",{kind=.Box,flags={.Wrap_Y},layout={direction=.Column,align_x=.Center,gap=16}})
-    ui.sheet_node(&s,menu,"title",{kind=.Text,text=GAME_TITLE,layout={height=ui.fixed(150)}})
-    button(&s,menu,"menu_play","Play",true)
-    button(&s,menu,"menu_exit","Exit")
-    ui.sheet_node(&s,menu,"hint",{kind=.Text,text="Arrow keys and Enter, or the mouse"})
-
-    pause:=panel(&s,pages,.Pause,"Paused",470)
-    button(&s,pause,"pause_resume","Resume",true)
-    button(&s,pause,"pause_settings","Settings")
-    button(&s,pause,"pause_quit","Quit to Menu")
-
-    // Bound to the settings of the engine: choosing writes them, and "Label=Value" is what each option writes.
-    settings:=panel(&s,pages,.Settings,"Graphics",680)
-    select(&s,settings,"Quality","settings_quality","Graphics_Settings.quality","Low|Medium|High|Ultra|Custom",true)
-    select(&s,settings,"Render scale","settings_scale","Graphics_Settings.render_scale","Auto=0|50%=0.5|75%=0.75|100%=1")
-    select(&s,settings,"Shadow rays","settings_rays","Graphics_Settings.shadowed_lights","Low=4|Medium=8|High=16")
-    check(&s,settings,"Sun shadows","settings_sun","Graphics_Settings.sun_shadows")
-    select(&s,settings,"Anti-aliasing","settings_aa","Graphics_Settings.antialiasing","Off=off|TAA=taa")
-    select(&s,settings,"Reflections","settings_reflections","Graphics_Settings.reflections","Off|Traced|Detailed")
-    select(&s,settings,"Frame limit","settings_limit","Graphics_Settings.frame_limit","30=30|60=60|120=120|None=0")
-    select(&s,settings,"Window","settings_window","Display_Settings.mode","Project=Project|Windowed=Windowed|Fullscreen=Fullscreen")
-    check(&s,settings,"VSync","settings_vsync","Graphics_Settings.vsync")
-    button(&s,settings,"settings_back","Back")
-
-    id:=asset.content_id(PROJECT,"ui","shell")
-    host.ui_sheet_save(c,"assets/ui/shell.ui",id,&s)
-    return id
 }
 
 // Two seconds of a low hum that loops without a click: every partial fits a
@@ -351,11 +172,11 @@ main :: proc() {
     asset.content_init(&c,PROJECT)
     defer asset.content_destroy(&c)
     for folder in ([]string{"assets/ui","assets/sounds","assets/textures","assets/scenes","assets/prefabs"}) {os.make_directory_all(folder)}
-    badge:=write_badge(&c)
-    theme,theme_id:=write_theme(&c)
-    hud,sign,hum,shell:=write_hud(&c,&theme,theme_id,badge),write_sign(&c,&theme,theme_id),write_hum(&c),write_shell(&c,&theme,theme_id)
+    write_badge(&c)
+    hum:=write_hum(&c)
     write_player(&c)
-    if !c.failed {write_scene(&c,hud,sign,hum,shell)}
+    // The ids of the .ui of assets/ui: written by their ui.write, not here.
+    if !c.failed {write_scene(&c,asset.content_id(PROJECT,"ui","hud"),asset.content_id(PROJECT,"ui","sign"),hum,asset.content_id(PROJECT,"ui","shell"))}
     free_all(context.temp_allocator)
     if c.failed {os.exit(1)}
 }

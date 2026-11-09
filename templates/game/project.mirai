@@ -4,7 +4,7 @@
   "identifier": "",
   "icon": "",
   "start_scene": "scenes/main.scene",
-  "plugins": ["spawn", "physics", "destruct", "multiplayer", "playtest"],
+  "plugins": ["spawn", "physics", "destruct", "multiplayer", "playtest", "ui_inspector"],
   "window": {
     "title": "",
     "mode": "Maximized",
