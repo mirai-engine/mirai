@@ -1346,8 +1346,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     }
     backdrop:=id_derive(ctx,node_id,"backdrop")
     // Nothing it was built in clips it.
-    ctx.clip_stack[ctx.clip_depth]=0
-    ctx.clip_depth+=1
+    clips_suspend(ctx)
     box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=ctx.theme.backdrop,block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
     box.float={to=.Surface,anchor=.Center,pivot=.Center,offset=node.float.offset,layer=LAYER_MODAL+1}
@@ -1356,7 +1355,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     ctx.area=0
     for child:=index+1;child<next; {child=tree_build_node(ctx,b,child,values,copy,item)}
     box_end(ctx,box^)
-    ctx.clip_depth-=1
+    clips_resume(ctx)
     ctx.modal_open,ctx.modal_layer=true,LAYER_MODAL
     if escape(ctx) {tree_emit(b,{name=node.name,node=i32(index),kind=.Closed,item=item})}
 }

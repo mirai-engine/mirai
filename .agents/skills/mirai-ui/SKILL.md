@@ -84,6 +84,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **Containers with clip up to `Context_Desc.max_clips`**; the others are built without clip and
   counted in `dropped_clips`. Containers nest up to `LAYOUT_DEPTH`: a deeper one is discarded with
   its content and counted in `dropped_elements`.
+- **No order of calls ends the process.** An id scope, a float, a layer, a clip or a scissor nested
+  deeper than its stack holds is not applied and is counted (`dropped_nesting`, `dropped_clips`),
+  and its end takes nothing off. An end without its begin does nothing, and `frame_end` closes what
+  a frame left open and counts it in `layout_errors`.
 - **Editable text is US-keyboard ASCII**, one line, without shaping or IME. Displayed text is UTF-8
   within the glyphs of `FONT_RANGES` (Latin, Greek, Cyrillic and `FONT_EXTRA`); the rest is shown
   as `?`. GPOS kerning moves the pen; nothing substitutes glyphs.

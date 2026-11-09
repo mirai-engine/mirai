@@ -47,11 +47,17 @@ composition_begin :: proc(ctx:^Context,bounds:Rect,style:Layer_Style) {
 composition_end :: proc(ctx:^Context) {
     d:=&ctx.draw
     if d.skipped_layers>0 {d.skipped_layers-=1;d.suppressed-=1;return}
-    assert(d.composition_depth>0,"Unbalanced UI composition layers")
+    if d.composition_depth<=0 {return}
     d.composition_depth-=1
     entry:=d.composition_stack[d.composition_depth]
     if entry.accepted {
         d.commands[d.command_count]={kind=.End_Layer,layer=entry.layer,first=u32(d.count),scissor=entry.scissor,surface=d.surface}
         d.command_count+=1;d.accepted_layers-=1;d.dirty=true
     } else if entry.suppressed {d.suppressed-=1}
+}
+// Ends the layers still open: what a frame leaves without its end.
+@(private)
+compositions_close :: proc(ctx:^Context) {
+    d:=&ctx.draw
+    for d.composition_depth>0 || d.skipped_layers>0 {composition_end(ctx)}
 }

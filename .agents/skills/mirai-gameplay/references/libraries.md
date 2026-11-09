@@ -633,7 +633,8 @@ one per local player that has screens or sees a `World_Widget`.
   (`World_Widget`s in view that did not fit: the farthest are left out; `Gui.dropped_widgets`
   counts them), `gui.mesh` (the renderer did not give the texture of a `Mesh`), `gui.events` (more
   than `EVENT_BATCH` events in a frame), `gui.play` and `gui.request` (a request that was not
-  applied); what does not fit in the renderer is `gui.draws` of the world.
+  applied); what does not fit in the renderer is `gui.draws` of the world, and what an interface
+  nests deeper than a frame holds (`ui.Stats.dropped_nesting`), `gui.nesting`.
 - `pointer_consumed`/`keyboard_consumed` say whether the UI had the pointer or the keyboard.
 - Flow: `gui_frame_begin` (`ui`, stage `begin`: plan, copies, rays and which contexts are built),
   `gui_widgets` (the first of `intent`), `gui_frame_end` (`end`: passes layers, panels and textures

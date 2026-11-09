@@ -237,6 +237,55 @@ a_tree_deeper_than_its_builder_opens_is_not_loaded :: proc(t:^testing.T) {
     tree_destroy(&tree)
 }
 
+// What a tree may nest is more than the stacks of a frame hold: it loads, and
+// its frame is drawn without what did not fit.
+@(test)
+a_tree_that_nests_more_than_a_frame_holds_is_drawn_and_counted :: proc(t:^testing.T) {
+    Case :: struct {name:string,node:Node_Desc,floating:bool,dropped:proc(s:^Stats) -> u32}
+    nesting :: proc(s:^Stats) -> u32 {return s.dropped_nesting}
+    clips :: proc(s:^Stats) -> u32 {return s.dropped_clips}
+    cases:=[]Case{
+        {"floats",{float={to=.Parent,offset={2,2}}},false,nesting},
+        {"layers in a float",{layer={enabled=true,opacity=1}},true,nesting},
+        {"clips",{clip=true},false,clips},
+    }
+    Scene :: struct {tree:Widget_Tree,instance:Tree_Instance,floating:bool}
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Scene)user
+        if s.floating {box_begin(ctx,{float={to=.Surface}})}
+        tree_build(ctx,&s.tree,&s.instance,{})
+        if s.floating {box_end(ctx,{float={to=.Surface}})}
+    }
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    defer context_destroy(&ctx)
+    input:=test_input()
+    for c in cases {
+        texts:=make([dynamic]u8,context.temp_allocator)
+        nodes:[TREE_DEPTH]Tree_Node
+        for &node,i in nodes {
+            desc:=c.node
+            desc.kind=.Box
+            desc.layout={width=fixed(f32(200-i)),height=fixed(f32(200-i))}
+            node=tree_node_record(&texts,i32(i)-1,desc)
+        }
+        scene:=Scene{floating=c.floating}
+        testing.expectf(t,tree_load(&scene.tree,{text=texts[:],nodes=nodes[:],styles={{fill={255,255,255,255}}}},{}),"%s: the tree loads",c.name)
+        testing.expect(t,tree_instance_init(&scene.instance,&scene.tree,nil))
+        dropped:=c.dropped(&ctx.stats)
+        frame:=test_frame(&ctx,&input,build,&scene)
+        testing.expectf(t,frame.overflow && c.dropped(&ctx.stats)>dropped,"%s: what did not fit is counted",c.name)
+        testing.expectf(t,len(frame.vertices)>0,"%s: the frame is drawn",c.name)
+        _,found:=layout_find(&ctx.layout,tree_node_id(&ctx,&scene.tree.nodes[TREE_DEPTH-1],TREE_DEPTH-1))
+        testing.expectf(t,found,"%s: the deepest node is laid out",c.name)
+        tree_instance_destroy(&scene.instance)
+        tree_destroy(&scene.tree)
+        frame=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {label(ctx,"fits")})
+        testing.expectf(t,!frame.overflow,"%s: the next frame carries nothing of it",c.name)
+    }
+    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+}
+
 @(test)
 the_programs_of_a_tree_follow_its_styles :: proc(t:^testing.T) {
     records:Test_Hud_Records

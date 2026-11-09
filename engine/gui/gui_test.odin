@@ -669,3 +669,23 @@ the_depth_read_around_the_ray_hides_what_is_behind_where_the_point_falls_in_its_
     view.depth=nil
     testing.expect(t,!scene_hides(&view,{4,0,0},1.01,0.02),"without a probe yet nothing is known to be in the way")
 }
+
+@(test)
+what_a_frame_nests_too_deep_is_a_problem_of_the_frame_that_did_it :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{no_font=true}))
+    defer ui.context_destroy(&ctx)
+    problems:=new(core.Problems,context.temp_allocator)
+    s:=Surface{ctx=&ctx}
+    for deep in ([]bool{true,false}) {
+        ui.frame_begin(&ctx,{size={100,100}})
+        if deep {
+            for i in 0..=ui.ID_STACK_DEPTH {ui.id_push(&ctx,ui.id(&ctx,"scope",i+1))}
+            for _ in 0..=ui.ID_STACK_DEPTH {ui.id_pop(&ctx)}
+        }
+        ui.frame_end(&ctx)
+        nesting_report(&s,problems)
+    }
+    problem:=core.problem_find(problems,core.NONE,"gui.nesting")
+    testing.expect(t,problem!=nil && problem.count==1)
+}

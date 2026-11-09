@@ -778,6 +778,7 @@ frame_end :: proc(
             s.open=false
             gui.escape_used||=s.ctx.escape_used
             frame:=ui.frame_end(s.ctx)
+            nesting_report(s,problems)
             s.pointer,s.keyboard,s.cursor=frame.pointer_consumed,frame.keyboard_consumed,s.ctx.cursor
             host.app_ui_font_sync(app,s.ctx)
             converted:=host.ui_frame_split(frame,s.draws,s.panels,s.offscreen,s.offscreen_draws,gui.views[p].panels)
