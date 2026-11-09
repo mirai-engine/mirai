@@ -124,8 +124,9 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Common commands
 
-Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, and in
-PowerShell `mirai.cmd` hands it to Git Bash. The compiler, Slang and the tools come from `.deps`.
+Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, in
+PowerShell `mirai.cmd` hands it to Git Bash, and from Python `subprocess` it is the absolute path
+of `mirai.cmd` (the file `mirai` is a script: `not a valid Win32 application`). The compiler, Slang and the tools come from `.deps`.
 The command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 

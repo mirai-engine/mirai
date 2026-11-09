@@ -18,7 +18,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 
 ## Map
 
-- Functions, requests, events, playable template: [game.md](references/game.md).
+- Writing a game: [the docs games read](../../../docs/game/core.md), and the requests and events
+  of each library: [game.md](references/game.md).
 - `scene`, `render`, `input`, `audio`, `gui`, `save`:
   [libraries.md](references/libraries.md).
 - Per-zone values (`Volume`, `Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and

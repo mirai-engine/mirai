@@ -43,6 +43,12 @@ game_breath :: proc(divers:^core.Table(Diver),states:core.Read(phys.Character_St
 
 Oxygen, drowning and cold are game rules over these numbers.
 
+## End a run in the water
+
+A character floats at the surface, so testing its height fails: `Character_State.submersion` says
+it fell in. The whole rule, with a respawn:
+[the rules of a game](../third-person/rules-test.md#the-rules).
+
 ## The surface at a point
 
 ```odin
@@ -73,7 +79,5 @@ buoyancy too. A volume's `current` carries what is in it.
 ## Pitfalls that fail silently
 
 - No `Swim` on the prefab: the character wades and walks on the bottom.
-- A `Fluid_Volume` plane covers everything below the entity's height: put it at the water level.
-  A box has no waves; a `Fluid_Waves` on a box is a problem (`physics.fluid_waves`).
 - A dry box (`phys.fluid_volume_dry`) removes the fluid of lower priority inside it, the air of
   a base under the sea. Volumes that overlap wrongly are the problem `physics.fluid_overlap`.

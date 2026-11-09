@@ -208,10 +208,10 @@ array is that index (`entities.0.id`).
 
 ### `mirai rpc describe`
 
-It reads `engine.describe`: with no argument, the methods grouped by plugin (`editor` first) with
-their summary, and the plugins the project finds and does not use. With the name of a plugin (or
-`editor`), the methods of that area; with a method, or with a prefix (`scene.` or `scene`), those
-that start that way; with several methods, those (`methods` of `engine.describe`). For each, its flags and its summary, each param with its type (range, length,
+It reads `engine.describe`: with no argument, the index: the core methods with a short summary, the
+names of the others by plugin and the plugins the project does not use. With the name of a plugin
+(or `editor`) or a prefix (`scene.` or `scene`), the summaries of that area. With a method, or with
+several methods (`methods` of `engine.describe`), for each its flags and its summary, each param with its type (range, length,
 unit, enum, id), `required` or its default value and its label, an example of valid params and
 each field of the result with its type and its label. A name that lists none is `-32602` with the
 similar ones.

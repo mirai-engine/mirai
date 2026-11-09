@@ -67,6 +67,10 @@ of the display transform (`exposure_of_ev100`).
   - The background (`use_background`), the pixels without light and the almost black surfaces do
     not count. A view that sees nothing that counts keeps its exposure; the first time it starts
     at mid gray under the strongest light.
+  - **In daylight the shade does not count.** With the sun up and much of the view out of shade
+    (lit by the sun or the open sky, as `sky_card` measures), the pixels in shade leave the meter:
+    a tree's shadow in view does not burn what is lit. A dark room with a window stays below that
+    share and meters as before.
   - `exposure_adapt.comp` brings to mid gray the geometric mean without the extremes of the
     histogram, limits it to `range` (`AUTO_EXPOSURE_RANGE`) and approaches according to
     `adaptation_mode`: `Time` (default) exponential in EV, 95 % of any change in `adaptation`

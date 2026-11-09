@@ -10,12 +10,12 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
 
 ## Server and execution
 
-- `engine.describe`: without params it is the index: each method with its plugin (`editor` for
-  those of the core) and the plugins the project finds, with which ones it uses; entries with
-  schemas come out with `methods`, the names of the ones a task needs in one call, or with
-  `plugin` and `prefix`, which combine. `methods` goes alone; unknown names (all of them, in the
-  error), a `prefix` that leaves none or a `plugin` without methods is `-32602`, and the last one
-  names the plugins that have methods.
+- `engine.describe`: without params it is the index: the core methods with a short summary, the
+  names of the others by plugin, and which plugins the project uses and finds. Schemas come out
+  with `methods`, the names of the ones a task needs in one call; `plugin` and `prefix`, which
+  combine, give the summaries and guides of an area, and the schema when one method is left.
+  `methods` goes alone; unknown names (all of them, in the error), a `prefix` that leaves none or
+  a `plugin` without methods is `-32602`, and the last one names the plugins that have methods.
 - `engine.diagnostics`: after a failed capture, test or Play, read it before repeating.
   - `since` with the previous `console.serial` reads only what is new.
   - A repeated id is an `asset_errors` entry with `problem:"Duplicate_Id"`: `detail:"Reassigned"`
@@ -354,14 +354,16 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 ([protocol](api.md#concurrency-transactions-and-undo)).
 
 - `scene.inspect` (`read_only`): free-form result
-  `{path,dirty,playing,total,offset, entities[],shown,matched,omitted}`.
+  `{path,dirty,playing,total,offset, entities[],shown,matched,omitted,left_out}`.
   - Filters: `entity` (only that one); `name` (exact name; `*` stands for any sequence and case is
     significant); `component` (only the entities that have it, by its name as
     [names of the API](api.md#method-conventions) take it; an unknown one is `-32602`).
   - Each entity gives `id`, `name`, `parent`, its `position` and the names of its components.
     `components` is `true` (every value, with the rest of the entity) or a list of names (only
     those); `include_runtime` also names those of runtime state.
-  - Page: `offset` and `limit` (1 to 4096, 256). `total` counts the live entities of the world,
+  - Page: `offset` and `limit` (up to 4096; omitted, 256 when `entity`, `name` or `component`
+    narrow it and a few otherwise, and `left_out` says what stayed out; `storage` or `storages`
+    without those give only storages). `total` counts the live entities of the world,
     `matched` those that pass the filters, `offset` is counted over them and `omitted` says how
     many remain after the page (the next one starts at `offset` + `shown`).
   - `root` gives that entity and what hangs from it as the document `scene.write` takes: nested by
@@ -805,6 +807,8 @@ when the viewport draws with them, which `mirai shaders` asks for.
   before writing: an invalid field, a plugin that does not exist, an automatic one, turning off one
   that another active one needs, an `icon`, a `thumbnail` or a `start_scene` that do not exist are
   `-32602` with what failed and how to fix it, and the file stays the same.
+- It answers only `building` and `active_plugins`; `project.get` gives the manifest and every
+  plugin.
 - A change of `plugins` or `build` launches an editor Build (`building`), which restarts it like
   the dialog's switch; the rest applies when the game is opened.
 
@@ -829,8 +833,10 @@ instance" are `-32602`; the rest, `-32000`
 
 ## Components and assets
 
-- `component.list`: free-form result `{components:[…]}`. Each component with `name`, `library`,
-  `description` (empty if the type does not declare one), `default` and `fields`.
+- `component.list`: free-form result `{components:[…]}`. Without `name` or `names` an index: each
+  component with `name` and a short `description`, and `left_out`. With them, up to 16 in one call,
+  each with `name`, `library`, `description` (empty if the type does not declare one), `default`
+  and `fields`.
   - Field: `path`, `type` and, where applicable, `element`, `count`, `options`, `min`, `max`,
     `unit`, `label`, `read_only:true` (missing if false) and `description`, the comment on the
     field's line ([generator](../../mirai-core/references/generator.md#attributes)).

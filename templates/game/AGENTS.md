@@ -5,7 +5,8 @@ This is a Mirai game project.
 ## Documentation
 
 - The engine serves the documentation: the MCP tool `docs`, or `mirai docs` in a shell.
-- Call it before writing game code, and read only the section the task needs.
+- Call it before writing game code, and read only the section the task needs. A third-person 3D
+  game is one read: `docs third-person`, with the code and the settings it needs.
 - Start from the code already here: `game/game.odin` and `assets/scenes/main.scene` play as they
   are; `game/shell.odin` is the main menu, pause and graphics settings, and
   `tests/scenarios/shell.mirai` drives them. Extend them instead of studying the engine.
@@ -15,12 +16,18 @@ This is a Mirai game project.
 
 - Write a scenario in `tests/scenarios/<name>.mirai` and run it in one call with
   `mirai play test . <name>`, instead of stepping and inspecting by hand.
+- A route or a chase is a scenario with the drive step of `play.step` (it steers the player to a
+  point), never a bot script around `mirai rpc`.
+- Few turns: every turn pays for the whole context. Plan the change, make it in one edit, run
+  `mirai rpc --batch` for several calls, and verify once.
 - While looking at state, read only what you need with `play.get` and `--select`.
 - Give `capture` a `path`: it answers only where the image is.
 
 ## Commands
 
-Run them from the project folder. Never talk to an editor without `--project`.
+Run them from the project folder. Never talk to an editor without `--project`. On Windows, from
+bash it is `mirai`; from PowerShell `mirai.cmd`; from Python `subprocess` the absolute path of
+`mirai.cmd` at the engine root (a relative `./mirai.cmd` fails in `cmd`).
 
 - `mirai rpc --project . <method> key=value... --select <fields>` calls a method; the first call
   opens a headless editor and `mirai session stop .` closes it.

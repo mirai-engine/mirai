@@ -33,11 +33,13 @@ $P scene.add '{"name":"Pond","position":[30,0,10],"components":{
 ## Fog and haze
 
 `Fog_Volume` (plugin `fog`) is a medium that dims what is behind it and shows the shafts of the
-sun and lights through it. With no `Volume` on its entity it fills the world; with one (box or
-sphere, `blend`, `priority`) only that place.
+sun and lights through it. With a `Volume` on its entity (box or sphere, `blend`, `priority`) it
+stays in that place. **With no `Volume` it fills the world and the sky too**: the sky is infinitely
+far, so even a small density replaces it with the color of the fog, a milky gray over a clear day.
+For a clear day leave fog out; for haze near the ground give it a `Volume` with `falloff`, as
+below.
 
 ```sh
-$P scene.add '{"name":"Haze","components":{"Fog_Volume":{"density":0.004,"color":[0.8,0.85,0.9]}}}'
 $P scene.add '{"name":"Valley mist","position":[0,0,0],"components":{
   "Volume":{"shape":"Box","extents":[100,8,100]},"Fog_Volume":{"density":0.03,"falloff":0.2,
   "variable":true,"wisp_size":20,"drift":[0.5,0,0.2]}}}'
@@ -53,5 +55,7 @@ $P scene.add '{"name":"Valley mist","position":[0,0,0],"components":{
 - A `Plane` with the entity at the wrong height: everything below it is water, even a cellar.
 - A `Fluid_Volume` with density 0 and `Plane` shape is not made (`physics.fluid`).
 - `Fluid_Waves` on a `Box` makes no waves: the problem `physics.fluid_waves`.
+- A character that falls in floats at the surface, so a height test never fires:
+  [end a run in the water](../character/swimming.md#end-a-run-in-the-water).
 - A fog that hides the whole view is a `density` too high: lower it before touching exposure
   ([exposure.md](exposure.md)).
