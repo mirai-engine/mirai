@@ -2,18 +2,42 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 
-// The shell that runs the scripts of the repository: Git Bash on Windows, by the path mirai.cmd
-// uses (the bash of the PATH is usually the one of WSL, which has no odin), sh elsewhere.
+// The shell that runs the scripts of the repository: Git Bash on Windows, looked for where
+// mirai.cmd looks (the bash of the PATH is usually the one of WSL, which has no odin), sh
+// elsewhere. path is the first place looked when it is in none.
 shell_executable :: proc() -> (path:string,found:bool) {
     when ODIN_OS==.Windows {
-        program_files,_:=os.lookup_env("ProgramFiles",context.allocator)
-        bash:=join(program_files,"Git","bin","bash.exe")
-        return bash,os.is_file(bash)
+        env :: proc(name:string) -> string {value,_:=os.lookup_env(name,context.temp_allocator);return value}
+        git,_:=path_find("git")
+        return git_bash_find({env("ProgramFiles"),env("ProgramFiles(x86)"),env("LocalAppData")},env("GIT_INSTALL_ROOT"),git)
     } else {
         return "sh",true
     }
+}
+
+// bin/bash.exe of Git for Windows: under Git of each of program_folders (ProgramFiles,
+// ProgramFiles(x86), then Programs/Git of LocalAppData), under install_root, or under the root
+// of git, the git.exe of PATH, which is in <root>/cmd or <root>/mingw64/bin. Empty folders are
+// skipped. path is the first place looked when it is in none.
+git_bash_find :: proc(program_folders:[3]string,install_root,git:string) -> (path:string,found:bool) {
+    roots:=make([dynamic]string,context.temp_allocator)
+    for folder,i in program_folders {
+        if folder=="" {continue}
+        append(&roots,join(folder,"Programs","Git") if i==2 else join(folder,"Git"))
+    }
+    if install_root!="" {append(&roots,install_root)}
+    if git!="" {
+        folder:=filepath.dir(git)
+        append(&roots,filepath.dir(folder),filepath.dir(filepath.dir(folder)))
+    }
+    for root in roots {
+        if bash:=join(root,"bin","bash.exe");os.is_file(bash) {return bash,true}
+    }
+    if len(roots)>0 {return join(roots[0],"bin","bash.exe"),false}
+    return "bash.exe",false
 }
 
 // command with the script it starts run by shell_executable, where the system cannot start one
