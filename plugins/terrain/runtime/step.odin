@@ -354,12 +354,17 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if urgent {urgent_left^=true}
                 break build
             }
-            work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join)
+            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join) {
+                name:[base.ASSET_ID_TEXT]u8
+                core.report(problems,source.owner,"terrain.memory","out of memory for the border of a piece of terrain source %s; it is built in a later frame: free memory, or make the source smaller",host.assets_name(resident.assets,entry.id,&name))
+                keep=true
+                break build
+            }
             chunk.working=true
         }
         if keep {source.pending[write]=index;write+=1} else {source.dirty[index]=false}
     }
-    resize(&source.pending,write)
+    base.truncate(&source.pending,write)
 }
 
 // Lets go of the pages of a paged source that no resident chunk reads, once

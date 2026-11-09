@@ -389,7 +389,9 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     _=wire.fragment_register(&s.protocol,"motion",{schema=&s.schema,type=motion}) or_return
     _=wire.fragment_register(&s.protocol,"driver",{schema=&s.schema,type=driver}) or_return
     largest:=size_of(Received)
-    s.fragments=make([]wire.Fragment_Id,len(w.info.tables),allocator)
+    fragments,fragments_error:=make([]wire.Fragment_Id,len(w.info.tables),allocator)
+    if fragments_error!=nil {return false}
+    s.fragments=fragments
     for &info,table in w.info.tables {
         s.fragments[table]=wire.FRAGMENT_NONE
         if info.replicated==.None || info.place!=.World {continue}
@@ -401,7 +403,9 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
         if !registered {return protocol_refuse(s,"%s does not fit the protocol: it replicates no field, or its fields take more than a state carries; mark local what need not travel",info.name)}
         largest=max(largest,info.info.size)
     }
-    s.events=make([]Net_Event,len(w.info.messages),allocator)
+    events,events_error:=make([]Net_Event,len(w.info.messages),allocator)
+    if events_error!=nil {return false}
+    s.events=events
     s.own={-1,-1,-1,-1,-1}
     for message,index in w.info.messages {
         switch message.type {
@@ -431,7 +435,9 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     s.follows=s.own.world>=0 && s.own.ready>=0 && s.own.player>=0 && s.own.section>=0 && s.own.gone>=0
     wire.input_register(&s.protocol,&s.schema,input) or_return
     _=wire.protocol_seal(&s.protocol) or_return
-    s.types=make([]Net_Type,wire.TYPE_CAPACITY,allocator)
+    types,types_error:=make([]Net_Type,wire.TYPE_CAPACITY,allocator)
+    if types_error!=nil {return false}
+    s.types=types
     error:runtime.Allocator_Error
     s.scratch,error=make_aligned_bytes(largest,allocator)
     return error==nil

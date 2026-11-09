@@ -117,7 +117,7 @@ end_tick :: proc(f:^End,resimulating:=false) {
         core.read(&f.configs),&f.meshes,&f.tints,core.read(&f.parents),&f.states,&f.groups,&f.elsewhere,&f.transforms,&f.ids,core.read(&f.colliders),{},&f.problems)
     end_settle(f)
     destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),core.ref(&f.fractures),core.commands(f,&f.info),
-        core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root))
+        core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root),&f.problems)
     end_settle(f)
 }
 
@@ -215,7 +215,7 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     testing.expect_value(t,len(rewinds.queue.items),0)
     end_tick(&b)
     testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
@@ -240,7 +240,7 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     for _ in 8..=12 {end_tick(&b)}
     testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
     hash:=sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture)
@@ -266,7 +266,7 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     asked:=core.take(&rewinds.queue)
     if !testing.expect_value(t,len(asked),1) || !testing.expect_value(t,asked[0],u32(3)) {return}
     // The correction it asked for: from the world as tick 3 found it.
@@ -330,7 +330,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     end_tick(&b)
     if !testing.expect_value(t,core.get(&b.states,client).sequence,u32(1)) {return}
 
@@ -354,7 +354,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     for item in a.outbox.queue.items {testing.expect_value(t,item.to,connection)}
     chunks:=end_received(&a)
     defer core.value_free(&chunks,type_info_of(multiplayer.Net_Events))
-    destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root))
+    destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)
     for _ in 0..<2 {end_tick(&c)}
     testing.expect_value(t,core.get(&c.states,again).sequence,u32(1))
     testing.expect_value(t,fr.destructible_check(&c.fractures.fracture,core.get(&c.states,again).handle),fr.destructible_check(&a.fractures.fracture,core.get(&a.states,server).handle))

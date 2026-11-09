@@ -126,15 +126,20 @@ net_link :: proc(n:^Destruct_Net,id:base.Entity_Id,create:bool) -> ^Net_Destruct
         if link.id==id {return &link}
     }
     if !create {return nil}
-    append(&n.links,Net_Destructible{id=id})
+    if _,error:=append(&n.links,Net_Destructible{id=id});error!=nil {return nil}
     return &n.links[len(n.links)-1]
+}
+
+@(private)
+memory_problem :: proc(problems:^core.Problems) {
+    core.report(problems,core.NONE,"destruct.net_memory","out of memory for what the server says of a broken Destructible; it is asked for again and may show other pieces until then: free memory")
 }
 
 // What arrived this frame, to be used by the ticks that follow: a frame can
 // have several ticks, or none. A fracture of a tick already simulated asks to
 // go back to it.
 @(step="input",stage="begin",after="net_begin",before="net_rewind")
-destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root)) {
+destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
     net_world(n,root)
     if authority.role==.Standalone {return}
     server:=authority.role==.Server
@@ -142,13 +147,14 @@ destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:c
         if fracture,ok:=multiplayer.event_read(item,Net_Fracture);ok {
             if server || fracture.sequence==0 {continue}
             link:=net_link(n,fracture.id,true)
+            if link==nil {memory_problem(problems);continue}
             link.log[fracture.sequence%NET_LOG]=fracture
             link.placed[fracture.sequence%NET_LOG]=0
             link.newest=max(link.newest,fracture.sequence)
             n.stats.received+=1
             if i32(fracture.tick-u32(time.tick))<0 {multiplayer.rewind(rewinds,fracture.tick)}
         } else if chunk,state_ok:=multiplayer.event_read(item,Net_State);state_ok {
-            if !server {net_chunk(n,chunk)}
+            if !server {net_chunk(n,chunk,problems)}
         } else if ask,ask_ok:=multiplayer.event_read(item,Net_Ask);ask_ok {
             if server && item.sender!=0 {append(&n.requests,Net_Request{item.sender,ask.id})}
         }
@@ -156,12 +162,14 @@ destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:c
 }
 
 @(private)
-net_chunk :: proc(n:^Destruct_Net,chunk:Net_State) {
+net_chunk :: proc(n:^Destruct_Net,chunk:Net_State,problems:^core.Problems) {
     if int(chunk.count)>NET_STATE_CHUNK {return}
     l:=net_link(n,chunk.id,true)
+    if l==nil {memory_problem(problems);return}
     same:=l.state_sequence==chunk.sequence && l.state_total==chunk.total && l.state_check==chunk.check
     if chunk.offset==0 && !(same && l.state_ready) {
-        resize(&l.state,int(chunk.total))
+        // Asked again: the chunks that follow this one are of a state that has no room.
+        if resize(&l.state,int(chunk.total))!=nil {l.ask=true;memory_problem(problems);return}
         l.state_sequence,l.state_check,l.state_total,l.state_have=chunk.sequence,chunk.check,chunk.total,0
         l.state_ready,l.state_at,same=false,0,true
     }
@@ -231,14 +239,14 @@ destruct_net_send :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,adoptions:^multiplayer.Net_Adoptions,session:core.Ref(multiplayer.Net_Session),
     connections:core.Ref(multiplayer.Net_Connections),
     events:core.Ref(destruct.Destruct_Events),physics_state:core.Ref(physics.Physics_State),fractures:core.Ref(destruct.Fracture_State),commands:core.Commands,
-    states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),objects:core.Read(multiplayer.Replicate),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),
+    states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),objects:core.Read(multiplayer.Replicate),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),problems:^core.Problems,
 ) {
     net_world(n,root)
     if authority.role==.Standalone || !physics_state.ready || !fractures.ready {return}
     w,f:=&physics_state.world,&fractures.fracture
     if authority.role==.Server {
         fractures_send(n,f,time,outbox,events,states,ids)
-        states_serve(n,f,w,time,outbox,connections,states,ids)
+        states_serve(n,f,w,time,outbox,connections,states,ids,problems)
     } else {
         replays_verify(n,entities.ptr,time,outbox,session,events,states,ids)
     }
@@ -272,7 +280,7 @@ fractures_send :: proc(n:^Destruct_Net,f:^fr.Fracture,time:core.Time,outbox:^mul
 
 // The connections that entered the world and the clients that asked get the state of the broken destructibles.
 @(private)
-states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,outbox:^multiplayer.Net_Outbox,connections:core.Ref(multiplayer.Net_Connections),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id)) {
+states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,outbox:^multiplayer.Net_Outbox,connections:core.Ref(multiplayer.Net_Connections),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),problems:^core.Problems) {
     if connections.ptr!=nil {
         for event in connections.events.items {
             if event.kind!=.Entered {continue}
@@ -287,10 +295,10 @@ states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,
         request:=n.requests[n.requested]
         n.requested+=1
         st:destruct.Destructible_State
-        found:=false
+        found,served:=false,0
         for row in 0..<core.count(states) {
             if core.id_of(ids,core.entity_at(states,row))==request.id {
-                st,found=core.at(states,row),true
+                st,found,served=core.at(states,row),true,row
                 break
             }
         }
@@ -298,7 +306,11 @@ states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,
         chunk:=Net_State{id=request.id,sequence=st.sequence,check=fr.destructible_check(f,st.handle)}
         size:=0
         if fr.destructible_revision(f,st.handle)!=0 || st.sequence!=0 {
-            resize(&n.scratch,fr.destructible_state_size(f,st.handle))
+            if resize(&n.scratch,fr.destructible_state_size(f,st.handle))!=nil {
+                core.report(problems,core.entity_at(states,served),"destruct.net_memory","out of memory to send the state of this broken Destructible to a client; it is tried again in the next tick: free memory, or lower Destruct_Settings.pieces")
+                n.requested-=1
+                break
+            }
             size=fr.destructible_state_write(f,w,st.handle,n.scratch[:])
         }
         chunk.total=u32(size)

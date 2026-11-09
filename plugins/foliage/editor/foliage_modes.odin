@@ -288,7 +288,7 @@ erase_touch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,types:[]u32,c
     for z in low.y..=high.y {for x in low.x..=high.x {
         cell:=foliage.source_cell(s,{x,z})
         if cell==nil {continue}
-        foliage.cell_build(s,cell,ground_of(ground,cell.coord),work)
+        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),work) {continue}
         for p in work.placed {if slice.contains(types,p.type) && in_brush(p.position,center,radius) {append(&found,Found{ref={cell.coord,p.id},type=p.type,order=mm.rng_u32(random)})}}
     }}
     if len(found)==0 {return}
@@ -325,7 +325,7 @@ reapply_touch :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Groun
     for z in low.y..=high.y {for x in low.x..=high.x {
         cell:=foliage.source_cell(s,{x,z})
         if cell==nil {continue}
-        foliage.cell_build(s,cell,ground_of(ground,cell.coord),&tool.work)
+        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),&tool.work) {continue}
         for p in tool.work.placed {
             if !slice.contains(tool.painted[:],p.type) || !in_brush(p.position,center,radius) {continue}
             key:=base.hash_combine(base.hash_u64(u64(u32(cell.coord.x))|u64(u32(cell.coord.y))<<32),p.id)
@@ -507,7 +507,7 @@ select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e
         for z in low.y..=high.y {for x in low.x..=high.x {
             cell:=foliage.source_cell(source,{x,z})
             if cell==nil {continue}
-            foliage.cell_build(source,cell,ground_of(ground,cell.coord),&tool.work)
+            if !foliage.cell_build(source,cell,ground_of(ground,cell.coord),&tool.work) {continue}
             for p in tool.work.placed {
                 if !slice.contains(tool.painted[:],p.type) || !in_brush(p.position,center,radius) {continue}
                 if stroke.mode==.Erase {selected_remove(tool,{cell.coord,p.id})} else {selected_add(tool,e,{cell.coord,p.id},p.type)}
@@ -608,7 +608,7 @@ selected_all :: proc(tool:^Foliage_Tool,e:core.Entity,ground:^foliage.Ground_Own
     source:=&tool.edit.source
     selected_clear(tool)
     for &cell in source.cells {
-        foliage.cell_build(source,&cell,ground_of(ground,cell.coord),&tool.work)
+        if !foliage.cell_build(source,&cell,ground_of(ground,cell.coord),&tool.work) {continue}
         for p in tool.work.placed {if slice.contains(tool.painted[:],p.type) {selected_add(tool,e,{cell.coord,p.id},p.type)}}
     }
 }

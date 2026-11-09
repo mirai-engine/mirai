@@ -19,6 +19,22 @@ refusing_allocator :: proc(calls:^int) -> runtime.Allocator {
     },data=calls}
 }
 
+// Serves the requests left in served from the allocator of the test and refuses the rest.
+@(private="file")
+serving_allocator :: proc(served:^int,owner:runtime.Allocator) -> runtime.Allocator {
+    Serving :: struct {served:^int,owner:runtime.Allocator}
+    serving:=new(Serving,context.temp_allocator)
+    serving^={served,owner}
+    return {procedure=proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        serving:=(^Serving)(data)
+        if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+            if serving.served^<=0 {return nil,.Out_Of_Memory}
+            serving.served^-=1
+        }
+        return serving.owner.procedure(serving.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    },data=serving}
+}
+
 @(private="file")
 Count_Act :: enum u8 {Count}
 
@@ -565,6 +581,20 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
     measures:[2]f32
     walking:=place_filter(core.ref(&navigation),walker,core.read(&paths),core.read(&agents),core.read(&walks),core.read(&swims),core.ref(&physics))
     testing.expect(t,walking.excluded&(1<<u64(nav.AREA_WATER))!=0)
+    // The first Path measure asks for the memory of its search: with it ending at each request
+    // in turn the measure says so and finds no path, and with memory enough it goes through.
+    owner:=context.allocator
+    served,refused:=0,false
+    for budget in 0..<64 {
+        served=budget
+        context.allocator=serving_allocator(&served,owner)
+        enough:=place_paths(&places,origin,candidates,refs[:],mesh,nil,&walking,measures[:],1)
+        context.allocator=owner
+        if enough {break}
+        refused=true
+        testing.expectf(t,measures==[2]f32{PLACE_NO_PATH,PLACE_NO_PATH},"with %d requests served a refused measure found %v",budget,measures)
+    }
+    testing.expect(t,refused,"the search asks for memory")
     place_paths(&places,origin,candidates,refs[:],mesh,nil,&walking,measures[:],1)
     testing.expectf(t,abs(measures[0]-linalg.distance(origin,candidates[0]))<1e-3 && measures[1]==PLACE_NO_PATH,"a walker measures %v",measures)
     swimming:=place_filter(core.ref(&navigation),swimmer,core.read(&paths),core.read(&agents),core.read(&walks),core.read(&swims),core.ref(&physics))

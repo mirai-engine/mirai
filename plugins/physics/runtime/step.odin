@@ -171,7 +171,10 @@ physics_step :: proc(
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
-            reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))
+            // Without it sealed_sync has no room and every tick looks at all the bodies.
+            if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))!=nil {
+                memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
+            }
         } else {memory_problem(problems,core.NONE,"the links from entities to the simulation, so no body changes in this tick")}
     }
     if !synced {state.sealed_key=0}

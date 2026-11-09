@@ -84,7 +84,10 @@ shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometr
         return error
     }
     if !body {
-        static_collision(g)
+        if !static_collision(g) {
+            shape_geometry_clear(g)
+            return .Out_Of_Memory
+        }
         return .None
     }
     geom.mesh_buffer_clear(&g.collision)
@@ -317,7 +320,7 @@ solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
     if !have {return .Empty}
     m:=&g.mesh
     clear(&m.colors);clear(&m.materials)
-    resize(&m.uvs,len(m.positions))
+    if resize(&m.uvs,len(m.positions))!=nil {return .Out_Of_Memory}
     for p,i in m.positions {m.uvs[i]=box_uv(p,m.normals[i])*k}
     return .None
 }
@@ -353,7 +356,7 @@ box_uv :: proc "contextless" (p,n:geom.Vec3) -> geom.Vec2 {
 // The static triangles of the mesh, joined by position, without those that
 // joining leaves without area, and the edges between coplanar ones disabled.
 @(private)
-static_collision :: proc(g:^Shape_Geometry) {
+static_collision :: proc(g:^Shape_Geometry) -> bool {
     c:=&g.collision
     if len(c.indices)==0 {
         m:=&g.mesh
@@ -361,21 +364,21 @@ static_collision :: proc(g:^Shape_Geometry) {
         lo,hi:=geom.mesh_bounds(m.positions[:])
         extent:=max(abs(lo.x),abs(lo.y),abs(lo.z),abs(hi.x),abs(hi.y),abs(hi.z))
         geom.positions_weld(m.positions[:],max(1e-6*extent,geom.tolerance_noise(extent)),remap)
-        append(&c.positions,..m.positions[:])
+        if _,error:=append(&c.positions,..m.positions[:]);error!=nil {return false}
         for i:=0;i<len(m.indices);i+=3 {
             a,b,d:=remap[m.indices[i]],remap[m.indices[i+1]],remap[m.indices[i+2]]
             if a==b || b==d || a==d {continue}
-            append(&c.indices,a,b,d)
+            if _,error:=append(&c.indices,a,b,d);error!=nil {return false}
         }
     }
-    coplanar_edges(c.positions[:],c.indices[:],&g.disabled_edges)
+    return coplanar_edges(c.positions[:],c.indices[:],&g.disabled_edges)
 }
 
 // Per triangle, the bits of its ordered edges that a triangle in its plane shares.
 @(private)
-coplanar_edges :: proc(positions:[]geom.Vec3,indices:[]u32,out:^[dynamic]u8) {
+coplanar_edges :: proc(positions:[]geom.Vec3,indices:[]u32,out:^[dynamic]u8) -> bool {
     count:=len(indices)/3
-    resize(out,count)
+    if resize(out,count)!=nil {return false}
     slice.zero(out[:])
     Edge :: struct {key:u64,triangle:u32,edge:u8}
     edges:=make([]Edge,3*count,context.temp_allocator)
@@ -400,6 +403,7 @@ coplanar_edges :: proc(positions:[]geom.Vec3,indices:[]u32,out:^[dynamic]u8) {
         }
         first=last
     }
+    return true
 }
 
 @(private)

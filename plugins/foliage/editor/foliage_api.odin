@@ -430,7 +430,7 @@ api_query :: proc(s:^editor.Session,call:^api.Call) {
     instances:=make([dynamic]foliage.Placed,context.temp_allocator)
     manual:=make([dynamic]bool,context.temp_allocator)
     for &cell in source.cells {
-        foliage.cell_build(source,&cell,ground_of(ground,cell.coord),&tool.work)
+        if !foliage.cell_build(source,&cell,ground_of(ground,cell.coord),&tool.work) {api.call_fail(call,api.SERVER_ERROR,"no memory to place the instances of a cell: free memory and ask again");return}
         for placed in tool.work.placed {
             for t,i in source.types {if t.id==placed.type {counts[i]+=1}}
             if !listing {continue}

@@ -169,7 +169,7 @@ source_type_remove :: proc(s:^Source,id:u32) -> bool {
     for &cell in s.cells {
         kept:=0
         for instance in cell.manual {if instance.type!=id {cell.manual[kept]=instance;kept+=1}}
-        resize(&cell.manual,kept)
+        base.truncate(&cell.manual,kept)
         kept=0
         for override in cell.overrides {
             if override.type==id {continue}
@@ -177,7 +177,7 @@ source_type_remove :: proc(s:^Source,id:u32) -> bool {
             if o.kind==.Replaced && o.instance.type==id {o.kind,o.instance=.Deleted,{}}
             cell.overrides[kept]=o;kept+=1
         }
-        resize(&cell.overrides,kept)
+        base.truncate(&cell.overrides,kept)
     }
     return true
 }

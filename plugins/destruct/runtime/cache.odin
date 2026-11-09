@@ -150,19 +150,24 @@ cache_reset :: proc(app:^host.App,cache:^Destruct_Cache) {
 
 // Scratch for the worlds of the simulation, reserved once.
 @(private)
-cache_make :: proc(cache:^Destruct_Cache,f:^fr.Fracture) {
-    if cache.ready {return}
+cache_make :: proc(cache:^Destruct_Cache,f:^fr.Fracture) -> bool {
+    if cache.ready {return true}
     pieces,bodies:=max(f.desc.pieces,1),max(f.desc.bodies,1)
-    cache.infos=make([]fr.Piece_Info,pieces)
-    cache.marks=make([]u32,bodies)
-    cache.group_of=make([]i32,bodies)
-    cache.firsts=make([]i32,pieces)
-    cache.flat=make([]i32,pieces)
-    reserve(&cache.groups,bodies)
+    infos,infos_error:=make([]fr.Piece_Info,pieces)
+    marks,marks_error:=make([]u32,bodies)
+    group_of,group_error:=make([]i32,bodies)
+    firsts,firsts_error:=make([]i32,pieces)
+    flat,flat_error:=make([]i32,pieces)
+    if infos_error!=nil || marks_error!=nil || group_error!=nil || firsts_error!=nil || flat_error!=nil || reserve(&cache.groups,bodies)!=nil {
+        delete(infos);delete(marks);delete(group_of);delete(firsts);delete(flat)
+        return false
+    }
+    cache.infos,cache.marks,cache.group_of,cache.firsts,cache.flat=infos,marks,group_of,firsts,flat
     geom.slicer_init(&cache.slicer)
     for &half in cache.halves {geom.mesh_buffer_init(&half)}
     geom.mesh_buffer_init(&cache.merged)
     cache.ready=true
+    return true
 }
 
 @(private)
@@ -269,7 +274,7 @@ prepare_start :: proc(app:^host.App,entry:^Entry,d:Destructible,static:render.Me
     for &position in p.source.positions {position*=scale}
     for &normal in p.source.normals {normal=linalg.normalize0(normal/scale)}
     lo,hi:=geom.mesh_bounds(p.source.positions[:])
-    resize(&p.sites,int(d.pieces))
+    if resize(&p.sites,int(d.pieces))!=nil {p.error=.Invalid_Mesh;return false}
     p.desc={pattern=geom.Site_Pattern(d.pattern),seed=d.seed,lo=lo,hi=hi,center=0.5*(lo+hi)}
     p.interior=interior
     p.key={pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,shape=static.shape,scale=scale,interior=interior}

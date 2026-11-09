@@ -75,7 +75,7 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
         core.table_settle(parents,es);core.table_settle(transforms,es);core.table_settle(members,es);core.table_settle(roaming,es)
         core.hierarchy_settle(hierarchy,core.read(parents),es)
         core.entities_settle(es)
-        streaming_crossings(core.read(motions),core.read(references),core.read(worlds),core.read(roaming),core.ref(hierarchy),parents,transforms,members,crossings)
+        streaming_crossings(core.read(motions),core.read(references),core.read(worlds),core.read(roaming),core.ref(hierarchy),parents,transforms,members,crossings,nil)
         core.table_settle(parents,es);core.table_settle(transforms,es);core.table_settle(members,es);core.table_settle(roaming,es)
         core.hierarchy_settle(hierarchy,core.read(parents),es)
     }

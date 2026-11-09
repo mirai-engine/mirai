@@ -202,11 +202,11 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:
     count:=len(rig.morphs)
     fresh:=len(state.current)!=count || state.mesh!=rig.id || state.revision!=rig.revision
     // Room first, so that without memory nothing changes.
-    if reserve(&state.current,count)!=nil || reserve(&state.previous,count)!=nil || reserve(&state.tracks,count)!=nil || reserve(&state.names,count)!=nil || reserve(&state.entries,count)!=nil || reserve(&state.curve_rows,count)!=nil {
+    if reserve(&state.current,count)!=nil || reserve(&state.previous,count)!=nil || reserve(&state.tracks,count)!=nil || reserve(&state.names,count)!=nil || reserve(&state.entries,count)!=nil || reserve(&state.curve_rows,count)!=nil ||
+       resize(&state.current,count)!=nil || resize(&state.previous,count)!=nil || resize(&state.tracks,count)!=nil || resize(&state.names,count)!=nil || resize(&state.entries,count)!=nil || resize(&state.curve_rows,count)!=nil {
         state.error=.Out_Of_Memory
         return false
     }
-    resize(&state.current,count);resize(&state.previous,count);resize(&state.tracks,count);resize(&state.names,count);resize(&state.entries,count);resize(&state.curve_rows,count)
     path_hash:=base.name_hash(path)
     renamed:=fresh || state.path!=path_hash
     state.error,state.unknown=morph_weights_check(config,rig.morphs)
@@ -269,7 +269,7 @@ animation_morph :: proc(
             state.rows[index]=i32(kept+1)
             kept+=1
         }
-        resize(&state.states,kept)
+        base.truncate(&state.states,kept)
         if found {state.inputs=inputs}
     }
     for &playing in state.states {

@@ -67,7 +67,8 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:core.Read(Nav_Link
         }
         core.entity_map_clear(&b.links)
     }
-    seen:=seen_reset(b,len(b.links.values))
+    seen,enough:=seen_reset(b,len(b.links.values),problems)
+    if !enough {b.links_stamps={};return}
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)
         link:=links.table.values[row]
