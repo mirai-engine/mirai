@@ -153,14 +153,6 @@ the_document_of_each_interface_of_the_template_writes_it_back_as_it_is :: proc(t
     }
     if !testing.expect(t,len(paths)>0,"the template has interfaces") {return}
     for path in paths {
-        // What Save writes of the file as it reads: a file written by an
-        // earlier layout of its tables differs from itself by that alone.
-        r:Records
-        record,_:=asset.registry_find_path(&p.registry,path)
-        id:=record.id
-        if !testing.expectf(t,records_read(p.assets,id,&r,context.temp_allocator),"%s reads",path) {continue}
-        saved,_,why,loads:=records_bytes(p.assets,id,&r)
-        if !testing.expectf(t,loads,"%s loads: %s",path,why) {continue}
         out:serial.Writer
         serial.writer_init(&out,0,context.temp_allocator)
         if problem:=ui_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
@@ -168,9 +160,7 @@ the_document_of_each_interface_of_the_template_writes_it_back_as_it_is :: proc(t
         written,problem:=ui_write(&p,path,document)
         if !testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
         testing.expectf(t,written.made==0 && written.removed==0,"%s: its own document makes or removes nodes",path)
-        // theme.ui keeps, in a rule of a style, values of keys that rule does not
-        // set: no document says them, and Save writes them back.
-        if path!="menu/theme.ui" {testing.expectf(t,slice.equal(file_bytes(&p,path),saved),"%s: its document writes other bytes than Save does",path)}
+        testing.expectf(t,written.same,"%s: its own document changes the bytes of its file",path)
         again,_:=ui_write(&p,path,document)
         testing.expectf(t,again.same,"%s: written twice, the second changes nothing",path)
         serial.writer_init(&out,0,context.temp_allocator)
@@ -447,3 +437,62 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,len(after.instances)==1 && len(after.members)==len(yard.members))
 }
 
+
+// The bytes a document read from the .ui id and written back gives; ok false
+// when it does not read or write.
+@(private="file")
+ui_round_trip :: proc(p:^Project,id:base.Asset_Id) -> (bytes:[]u8,why:string,ok:bool) {
+    r:Records
+    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,"it does not read",false}
+    reading:=Reading{allocator=context.temp_allocator,assets=registry_assets(&p.registry)}
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
+    libs:=doc_libs(&args,&r)
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    document_write(&out,&p.types,&r,-1,libs[:],p.assets)
+    text:=string(serial.writer_bytes(&out))
+    reading.raw=text
+    again:Records
+    if !records_read(p.assets,id,&again,context.temp_allocator) {return nil,"it does not read",false}
+    if _,_,applied:=document_apply(&args,&again,-1,text);!applied {return nil,reading.problem,false}
+    written,_,loads:=document_bytes(&args,id,&again)
+    if !loads {return nil,reading.problem,false}
+    return written,"",true
+}
+
+// Every interface, scene and prefab the engine tracks, in the game template
+// and in the demo: its document written back is the file it was read from,
+// byte by byte, so text kept under source/ and the assets say the same.
+@(test)
+the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: proc(t:^testing.T) {
+    engine,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
+    if !found {
+        log.warn("MIRAI_ROOT is not set: the tracked assets were not read. Use `mirai test cook/author`.")
+        return
+    }
+    info:core.World_Info
+    game_info(&info)
+    for folder in ([]string{"templates/game","demo"}) {
+        p:Project
+        if problem:=project_open(&p,project.path(engine,folder,allocator=context.temp_allocator),engine,false);!testing.expectf(t,problem=="","%s: %s",folder,problem) {continue}
+        defer project_close(&p)
+        p.info=&info
+        files:=0
+        for &file in p.registry.files {
+            if file.state!=.Asset || strings.has_prefix(file.path,"plugins/") || strings.has_prefix(file.path,".") {continue}
+            path:=strings.clone(file.path,context.temp_allocator)
+            switch file.kind {
+            case asset.KIND_UI:
+                files+=1
+                written,why,ok:=ui_round_trip(&p,file.id)
+                if !testing.expectf(t,ok,"%s/%s: %s",folder,path,why) {continue}
+                testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
+            case asset.KIND_SCENE,asset.KIND_PREFAB:
+                files+=1
+                problem:=scene_verify(&p,path)
+                testing.expectf(t,problem=="","%s/%s: %s",folder,path,problem)
+            }
+        }
+        testing.expectf(t,files>0,"%s has interfaces and scenes",folder)
+    }
+}

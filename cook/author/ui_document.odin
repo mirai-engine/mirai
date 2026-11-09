@@ -824,7 +824,8 @@ document_node_body_write :: proc(w:^Doc_Write,row:int) {
         names:=DOCUMENT_EVENTS
         once:=true
         for played,i in (^[len(DOCUMENT_EVENTS)]ui.Anim)(&set)^ {
-            if played==0 || int(played)>len(r.anims) {continue}
+            // An animation without a name is of the file alone: no document names it, and its trigger stays.
+            if played==0 || int(played)>len(r.anims) || r.anims[played-1].name[0]==0 {continue}
             serial.json_text(out,names[i],serial.text_field(r.anims[played-1].name[:]),once)
             once=false
         }
@@ -1892,6 +1893,16 @@ document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node)
     }
     if !doc_node_keys_apply(args,r,n,row,d) {return false}
     n=&r.nodes[row]
+    // A trigger that played an animation without a name stays: no document names one.
+    if old.anims!=0 && int(old.anims)<=len(r.anim_sets) {
+        kept:=r.anim_sets[old.anims-1]
+        for played,i in (^[len(DOCUMENT_EVENTS)]ui.Anim)(&kept)^ {
+            if played==0 || int(played)>len(r.anims) || r.anims[played-1].name[0]!=0 {continue}
+            at:=records_anim_set(r,n)
+            if at<0 {break}
+            if slots:=(^[len(DOCUMENT_EVENTS)]ui.Anim)(&r.anim_sets[at]);slots[i]==0 {slots[i]=played}
+        }
+    }
     n.flags=n.flags-{.Localized}+old.flags&{.Localized}
     node_args:=args^
     node_args.keys,node_args.values=d.keys,d.values

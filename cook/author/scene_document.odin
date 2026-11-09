@@ -460,7 +460,9 @@ scene_verify :: proc(p:^Project,path:string) -> (problem:string) {
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
     written:Written
     if !scene_apply(&f,&reading,text,&written) {return reading.problem}
-    if written.made!=0 || written.removed!=0 || written.changed {return "its document does not write it back as it is"}
+    if written.made!=0 || written.removed!=0 || written.changed {
+        return fmt.tprintf("its document does not write it back as it is: %s is another (%d made, %d removed)",written.first!=""?written.first:"what it holds",written.made,written.removed)
+    }
     return ""
 }
 
@@ -577,7 +579,7 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
                 reading_failf(reading,"%s: it cannot go under an entity that hangs from it",d.path)
                 return false
             }
-            written.changed=true
+            scene_changed(written,d.path,"its parent")
         }
     }
     order :: proc(a:^Scene_Apply,from,to:int) {
@@ -592,7 +594,7 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
             if at<=last || (d.made || d.placed) && at!=last+1 {
                 orders[row]=u32(last+1)
                 at=last+1
-                a.written.changed=true
+                scene_changed(a.written,d.path,"its order among its siblings")
             }
             last=at
         }
@@ -614,7 +616,7 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
             if a.placed[asset.scene_entity_instance(scene,id)] {continue}
             if (parent==0 || declared[parent]) && !scene_has(f,"Disabled",id) {
                 if !scene_mark(f,"Disabled",id,true) {reading_broke(reading,"the game of this build has no Disabled to turn a member of an instance off with");return false}
-                written.changed=true
+                scene_changed(written,"a member of an instance the document leaves out","being on")
             }
         } else if parent==0 || declared[parent] {
             append(&gone,id)
@@ -759,7 +761,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
     if d.name!="" && d.name!=asset.scene_entity(scene,row).name {
         asset.scene_entity_rename(scene,id,d.name)
         scene_overrides(a,id,0,.Field,"name")
-        written.changed=true
+        scene_changed(written,d.path,"name")
     }
     local:=scene_local(f,id)
     rotation,scale:=recipe_place(d.recipe,f.p.plugins)
@@ -774,16 +776,16 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
         if !d.has_rotation {target.rotation=local.rotation}
         if !d.has_scale {target.scale=local.scale}
     }
-    if target!=local || !scene_has(f,"Transform",id) {
+    if target!=local {
         if asset.scene_set(scene,id,"Transform",&target)!=.None {reading_brokef(reading,"%s: its transform could not be written",d.path);return false}
         scene_overrides(a,id,base.name_hash(asset.INSTANCE_PLACEMENT),.Field)
-        written.changed=true
+        scene_changed(written,d.path,"its transform")
     }
     for mark in ([2]struct{name:string,on:bool}{{"Hidden",d.hidden},{"Disabled",d.disabled}}) {
         if scene_has(f,mark.name,id)==mark.on {continue}
         if !scene_mark(f,mark.name,id,mark.on) {reading_brokef(reading,"%s: the game of this build has no %s",d.path,mark.name);return false}
         scene_overrides(a,id,base.name_hash(mark.name),.Added if mark.on else .Removed)
-        written.changed=true
+        scene_changed(written,d.path,mark.name)
     }
     parts:=a.parts[d.recipe] if d.recipe>=0 else nil
     from :: proc(parts:[]Part,t:^core.Table_Info) -> []u8 {
@@ -819,7 +821,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
             table,_:=asset.scene_component(scene,t.name)
             scene_overrides(a,id,base.name_hash(t.name),.Removed)
             asset.scene_component_remove(scene,table,id)
-            written.changed=true
+            scene_changed(written,d.path,t.name)
         }
     }
     off:=make([dynamic]^core.Table_Info,reading.allocator)
@@ -838,7 +840,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
         if turned_off==slice.contains(off[:],t) {continue}
         asset.scene_component_turn(scene,id,hash,!turned_off)
         scene_overrides(a,id,hash,.Turned)
-        written.changed=true
+        scene_changed(written,d.path,"off")
     }
     return true
 }
@@ -883,7 +885,7 @@ scene_component_apply :: proc(a:^Scene_Apply,id:base.Entity_Id,t:^core.Table_Inf
     if has && slice.equal(bytes,current) {return true}
     if !scene_value_set(f,t,v,id,bytes) {reading_brokef(reading,"%s could not be written",path);return false}
     scene_overrides(a,id,base.name_hash(t.name),.Field if has else .Added)
-    a.written.changed=true
+    scene_changed(a.written,path,"")
     return true
 }
 
@@ -900,4 +902,11 @@ scene_components_near :: proc(f:^Scene_File,name:string) -> string {
     b:=strings.builder_make(context.temp_allocator)
     for at,i in nearest[:count] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",names[at])}
     return fmt.tprintf("the nearest are %s; what its code declares is here after the game is built",strings.to_string(b))
+}
+
+// Something of an entity the file kept is another now; the first one is told.
+@(private="file")
+scene_changed :: proc(written:^Written,place,what:string) {
+    if !written.changed {written.first=fmt.tprintf("%s.%s",place,what) if what!="" else place}
+    written.changed=true
 }

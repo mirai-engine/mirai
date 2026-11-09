@@ -180,6 +180,7 @@ Written :: struct {
     fresh:bool,  // the file did not exist
     same:bool,   // the file already said it: nothing was written
     changed:bool, // a scene: something of an entity it kept is another
+    first:string, // a scene: the first thing that is, in the temporary allocator
     followed:int, // an interface: the files that use it as a widget and were written to follow its parameters
     made,removed:int,
 }
