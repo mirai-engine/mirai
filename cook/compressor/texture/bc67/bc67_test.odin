@@ -12,12 +12,9 @@ analyzers_take_any_bits :: proc(t:^testing.T) {
             block[i]=u8(seed>>24)
         }
         if n<256 {block[0]=u8(n)}
-        desc:Block_Desc
-        bc7_analyze_block(&desc,&block)
         raw:Block_Raw_Desc
         valid:=bc7_analyze_block_raw(&raw,&block)
         testing.expect_value(t,valid,block[0]!=0)
-        testing.expect_value(t,desc.mode==nil,!valid)
         for signed in ([]bool{false,true}) {
             r6:BC6H_Block_Raw_Desc
             v6:=bc6h_analyze_block_raw(&r6,signed,&block)

@@ -3,8 +3,6 @@ package bc67
 // Bit layouts of BC6H and BC7 blocks (Khronos Data Format 1.1, BPTC) and their
 // decoders.
 
-BC7_NUM_MODES :: 8
-
 Optimal_Endpoint :: struct {
     err:u16,
     lo,hi:u8,
@@ -39,20 +37,6 @@ Mode_Desc :: struct {
 Partition :: struct {
     subset_mask:u32,   // 2 bits per texel: its subset
     anchor0,anchor1:u16, // first and second non-0 anchor texels, ascending (0: none)
-}
-
-// A decoded BC7 block.
-Block_Desc :: struct {
-    mode:^Mode_Desc, // nil when the block is invalid
-    partition:^Partition,
-    partition_id:u8,
-    rot:u8,
-    ind_sel:u8,
-    color_ind_bits:u8, // after ind_sel
-    alpha_ind_bits:u8,
-    endpoints:[6][4]u8, // [index][channel], RGBA
-    color_inds:[16]u8,
-    alpha_inds:[16]u8,
 }
 
 // A BC7 block decoded so that its fields encode back to the same bits.
@@ -275,43 +259,6 @@ unpack_inds :: proc "contextless" (out:^[16]u8,inds:u64,indbits:u32) {
     for i in 0..<16 {
         out[i]=u8(inds&mask)
         inds>>=indbits
-    }
-}
-
-bc7_analyze_block :: proc "contextless" (desc:^Block_Desc,block:^[16]u8) {
-    buf:Bit_Buf
-    bitbuf_init(&buf,block)
-    desc^={}
-    m:=bc7_read_mode(&buf)
-    desc.mode=m
-    if m==nil {return}
-    desc.partition_id=u8(bitbuf_get(&buf,u32(m.pb)))
-    desc.rot=u8(bitbuf_get(&buf,u32(m.rb)))
-    desc.ind_sel=u8(bitbuf_get(&buf,u32(m.isb)))
-    endpoints:[4][6]u8
-    bc7_decode_endpoints(&endpoints,&buf,m)
-    part:=partition_of(m.ns,u32(desc.partition_id))
-    desc.partition=part
-    inds:[2]u64
-    indbits:[2]u32
-    indbits[0]=u32(m.ib)
-    inds[0]=read_inds(&buf,int(m.ib),int(part.anchor0),int(part.anchor1))
-    if m.ib2!=0 {
-        indbits[1]=u32(m.ib2)
-        inds[1]=read_inds(&buf,int(m.ib2),int(part.anchor0),int(part.anchor1))
-    } else {
-        indbits[1]=u32(m.ib)
-        inds[1]=inds[0]
-    }
-    s:=desc.ind_sel&1
-    desc.color_ind_bits=u8(indbits[s])
-    desc.alpha_ind_bits=u8(indbits[s~1])
-    unpack_inds(&desc.color_inds,inds[s],indbits[s])
-    unpack_inds(&desc.alpha_inds,inds[s~1],indbits[s~1])
-    chan_swap:=u32(desc.rot-1)&3
-    for ch in 0..<u32(4) {
-        out_ch:=chan_swap==ch?3:ch
-        for i in 0..<int(m.ns)*2 {desc.endpoints[i][out_ch]=endpoints[ch][i]}
     }
 }
 

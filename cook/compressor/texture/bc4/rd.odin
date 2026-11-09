@@ -53,9 +53,6 @@ FOUR :: 0
 @(private="file")
 SIX :: 1
 
-// Bit i set: texel i is the minimum; bit i+16: the maximum (preserve extremes).
-@(private="file")
-feasible :: #force_inline proc "contextless" (mask:u32) -> bool {return mask&(mask>>16)==0}
 @(private="file")
 superset_of :: #force_inline proc "contextless" (a,b:u32) -> bool {return a&b==b}
 
@@ -190,22 +187,9 @@ sad_from_predecoded :: proc "contextless" (pred:^[16]u8,variant:int) -> (out:[16
 }
 
 @(private="file")
-sad16 :: #force_inline proc "contextless" (a,b:^[16]u8) -> i32 {
-    return i32(common.sad_u8x16(transmute(V16b)a^,transmute(V16b)b^))
-}
-
-@(private="file")
 V16b :: #simd[16]u8
 @(private="file")
 V8s :: #simd[8]i16
-@(private="file")
-lo8 :: #force_inline proc "contextless" (v:V16b) -> V8s {
-    return cast(V8s)simd.shuffle(v,v,0,1,2,3,4,5,6,7)
-}
-@(private="file")
-hi8 :: #force_inline proc "contextless" (v:V16b) -> V8s {
-    return cast(V8s)simd.shuffle(v,v,8,9,10,11,12,13,14,15)
-}
 
 @(private="file")
 Window_Entry :: struct {

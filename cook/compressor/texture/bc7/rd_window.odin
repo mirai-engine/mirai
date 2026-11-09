@@ -260,14 +260,6 @@ matched_bits_to_lz_bits :: proc "contextless" (matched_bits:int) -> f32 {
 }
 
 @(private)
-lz_matched_bits_reindex :: #force_inline proc "contextless" (mode:int,change_pbits:bool) -> int {
-    m:=mode&7
-    b:=BITS_HEADER[m]+BITS_ENDPOINTS[m]
-    if !change_pbits {b+=BITS_PBITS[m]}
-    return b
-}
-
-@(private)
 lz_matched_bits_reendpoint :: #force_inline proc "contextless" (mode:int,change_pbits:bool) -> int {
     m:=mode&7
     b:=BITS_INDICES[m]

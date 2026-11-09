@@ -500,35 +500,6 @@ huff64 :: #force_inline proc "contextless" (
     return true
 }
 
-@(private="file")
-huff_sym_lane :: #force_inline proc "contextless" (tb:[^]u8,w:^u64) -> u8 #no_bounds_check {
-    at:=tb[w^&HUFF_INDEX_MASK:]
-    w^>>=uint(at[0])&63
-    return at[1]
-}
-
-@(private="file")
-huff_last_lane_fwd :: #force_inline proc "contextless" (
-    tb:[^]u8,w:u64,c:^Huff_Cursor,
-) -> u8 #no_bounds_check {
-    at:=tb[w&HUFF_INDEX_MASK:]
-    t:=uint(intrinsics.count_leading_zeros(w))+uint(at[0])
-    c.p=c.p[t>>3:]
-    c.k=t&7
-    return at[1]
-}
-
-@(private="file")
-huff_last_lane_back :: #force_inline proc "contextless" (
-    tb:[^]u8,w:u64,c:^Huff_Cursor,
-) -> u8 #no_bounds_check {
-    at:=tb[w&HUFF_INDEX_MASK:]
-    t:=uint(intrinsics.count_leading_zeros(w))+uint(at[0])
-    c.p=c.p[-int(t>>3):]
-    c.k=t&7
-    return at[1]
-}
-
 // Both halves of a 6-stream array at once, for twice the independent work
 // of the 3-stream loop; leaves the state for huff64 to finish each half.
 @(private="file")

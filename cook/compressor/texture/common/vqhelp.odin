@@ -62,14 +62,6 @@ bits128_less :: #force_inline proc "contextless" (lhs,rhs:Bits128) -> bool {
     return lhs[1]<rhs[1]
 }
 
-bits128_load :: #force_inline proc "contextless" (from:[]u8) -> Bits128 {
-    return transmute(Bits128)(^[16]u8)(raw_data(from))^
-}
-
-bits128_store :: #force_inline proc "contextless" (to:[]u8,b:Bits128) {
-    (^[16]u8)(raw_data(to))^=transmute([16]u8)b
-}
-
 Bits128_And_Count :: struct {
     val:Bits128,
     count:u32,
@@ -83,10 +75,6 @@ bits128_and_count_compare_bits :: proc(lhs,rhs:Bits128_And_Count) -> bool {
 // No tie break on equal counts: the sort algorithm decides their order.
 bits128_and_count_compare_count_highest_first :: proc(lhs,rhs:Bits128_And_Count) -> bool {
     return lhs.count>rhs.count
-}
-
-bits128_and_count_compare_count_lowest_first :: proc(lhs,rhs:Bits128_And_Count) -> bool {
-    return lhs.count<rhs.count
 }
 
 @(private="file")
@@ -111,10 +99,6 @@ sort_and_count_uniques_bits128 :: proc(counting:^[dynamic]Bits128_And_Count,
 
 sort_bits128_and_count_compare_count_highest_first :: proc(counting:[]Bits128_And_Count) {
     stdsort(counting,bits128_and_count_compare_count_highest_first)
-}
-
-sort_bits128_and_count_compare_count_lowest_first :: proc(counting:[]Bits128_And_Count) {
-    stdsort(counting,bits128_and_count_compare_count_lowest_first)
 }
 
 sort_bits128_and_count_compare_bits :: proc(counting:[]Bits128_And_Count) {
@@ -195,14 +179,6 @@ any_index_d_batch_lookup_from :: #force_inline proc "contextless" (out_d:[]i32,a
     return min_d
 }
 
-// indices8_scaled are 16 indices, each times 2.
-any_index_8d64_lookup :: #force_inline proc "contextless" (aid:^Any_Index_8D64,
-    indices8_scaled:[]u8) -> i64 {
-    ssd:i64
-    for c in 0..<16 {ssd+=i64(aid.ssdx[c][(indices8_scaled[c]>>1)&7])}
-    return ssd
-}
-
 // The indices of eight candidates for any_index_8d64_batch_lookup_packed: [group][candidate],
 // the indices (0 to 7) of texels 4*group to 4*group+3 in the bytes of a u32.
 Any_Index_8D64_Pack :: [4][8]u32
@@ -230,17 +206,6 @@ any_index_8d64_lookup_packed_from :: #force_inline proc "contextless" (out_d:[]i
             for j in 0..<4 {ssd+=i64(aid.ssdx[4*g+j][(v>>uint(8*j))&7])}
         }
         out_d[i]=ssd
-    }
-}
-
-// Block i's scaled indices start at indices_scaled[i*indices_step].
-any_index_8d64_batch_lookup :: proc "contextless" (out_d:[]i64,aid:^Any_Index_8D64,
-    indices_scaled:[]u8,indices_step:int,count:int) {
-    n:=min(count,len(out_d))
-    for i in 0..<n {
-        start:=i*indices_step
-        if start+16>len(indices_scaled) {return}
-        out_d[i]=any_index_8d64_lookup(aid,indices_scaled[start:start+16])
     }
 }
 
@@ -290,10 +255,6 @@ chunk_sads_from :: #force_inline proc "contextless" (chunk_sads:[]i32,indices:[]
         s:=block_sad_halves(&pair_colors[min(int(indices[i]),last)],&c)
         chunk_sads[i]=i32(simd.extract(s,0)+simd.extract(s,2))
     }
-}
-
-unpacked_16x8_diff :: #force_inline proc "contextless" (p1,p2:[]u8) -> u32 {
-    return sad_u8x16(load_u8x16(raw_data(p1)),load_u8x16(raw_data(p2)))
 }
 
 // The SSD of pixels against the BC4 palette pal (8 entries) indexed by the 16 byte offsets
