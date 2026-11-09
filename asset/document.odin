@@ -405,7 +405,7 @@ document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=Pack.Edit,w
 // A copy of an open asset that owns everything it holds.
 document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator) -> Error {
     doc^={kind=a.blob.header.kind,kind_version=a.blob.header.kind_version,id=a.blob.header.id,owner=a.blob.header.owner,flags=a.blob.header.flags,allocator=allocator}
-    serial.schema_clone(&doc.schema,&a.schema,allocator)
+    if serial.schema_clone(&doc.schema,&a.schema,allocator)!=.None {document_destroy(doc);return .Out_Of_Memory}
     doc.hashes=make([dynamic]u64,allocator)
     if !serial.schema_hashes_update(&doc.schema,&doc.hashes) {document_destroy(doc);return .Out_Of_Memory}
     no_tables:runtime.Allocator_Error

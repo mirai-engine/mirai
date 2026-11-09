@@ -20,6 +20,11 @@ ALLOC_LINT_PACKAGES :: [?]string{"asset","engine/save","engine/scene",
     "platform",
     "project",
     "ui",
+    "std/ai",
+    "std/anim",
+    "std/base",
+    "std/geom",
+    "std/serial",
 }
 
 Alloc_Finding :: struct {line,column:int,call:string}

@@ -1,5 +1,7 @@
 package ai
 
+import "mirai:std/base"
+
 // The polygon mesh: each contour is triangulated by ear clipping and its
 // triangles merged greedily into convex polygons of up to NAV_VERTS_PER_POLY
 // vertices, longest shared edge first. Vertices are shared between contours,
@@ -190,7 +192,7 @@ nav_merge_polys :: proc(s:^Nav_Build_Scratch) {
         polys[best_b]=polys[count-1]
         count-=1
     }
-    resize(&s.merge,count)
+    base.truncate(&s.merge,count)
 }
 
 @(private="file")

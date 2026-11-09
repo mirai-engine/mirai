@@ -628,4 +628,32 @@ zero_scratch_and_tile_data_are_safe :: proc(t:^testing.T) {
     defer nav_build_scratch_destroy(&scratch)
     testing.expect_value(t,nav_build_tile(test_config(),{},test_input(&m),&scratch,&data,runtime.nil_allocator()),Nav_Build_Status.Out_Of_Memory)
     testing.expect(t,data.block==nil)
+    // So does the memory of the scratch and of the tile ending at each request in turn.
+    Served :: struct {owner:runtime.Allocator,remaining:int}
+    served:=Served{owner=context.allocator}
+    limited:=runtime.Allocator{proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        s:=(^Served)(data)
+        if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+            if s.remaining<=0 {return nil,.Out_Of_Memory}
+            s.remaining-=1
+        }
+        return s.owner.procedure(s.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    },&served}
+    built,refused:=false,false
+    for requests in 0..<4096 {
+        starved:Nav_Build_Scratch
+        nav_build_scratch_init(&starved,limited)
+        served.remaining=requests
+        status:=nav_build_tile(test_config(),{},test_input(&m),&starved,&data,limited)
+        served.remaining=max(int)
+        built=status==.Built
+        if !built {
+            refused=true
+            testing.expectf(t,status==.Out_Of_Memory && data.block==nil,"a tile with %d requests served: %v",requests,status)
+        }
+        nav_tile_data_free(&data)
+        nav_build_scratch_destroy(&starved)
+        if built {break}
+    }
+    testing.expect(t,built && refused)
 }
