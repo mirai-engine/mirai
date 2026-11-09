@@ -447,6 +447,12 @@ view_of_camera :: proc(view:^core.View,cameras:core.Read(Camera),exposures:core.
     view.cut=pose==nil && (previous!=view.camera || cut)
     view.carried={}
 }
+// The world id took another scene: the light the renderer kept for it, if it
+// is not the one shown, is of the scene before.
+world_light_forget :: proc(app:^host.App,id:core.World_Id) {
+    if app.renderer!=nil {gpu.world_light_forget(app.renderer,world_key(id))}
+}
+
 // The world into the renderer. The camera and the time of the frame are
 // those of the View, the Time and the Frame_Time of this world: host reads them. Another
 // world, or this one replaced by another scene (rebuilt in a frame whose view
