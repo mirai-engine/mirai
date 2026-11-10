@@ -25,6 +25,7 @@ Directivity :: struct {
 @(private) AIR_ABSORPTION :: [BANDS]f32{0.0002,0.0017,0.0182} // per meter
 @(private) EQ_GAIN_MIN :: f32(0.0625)
 @(private) EQ_GAIN_STEP :: f32(0.0115) // 0.1 dB: below what an ear tells apart
+@(private) EQ_FLAT :: f32(0.944)       // -0.5 dB: a band this near unity is not heard dulled
 @(private) BAND_EDGES :: [2]f32{800,8000}
 
 // The part of each band the air lets through over distance meters.

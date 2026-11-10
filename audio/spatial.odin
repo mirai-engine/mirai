@@ -22,10 +22,10 @@ Attenuation :: struct {
 }
 ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1}
 
-// What the output plays on. Headphones hear each spatial voice through the
-// HRTF of its direction, which tells ahead from behind and above from below;
-// speakers pan it between them. A mono output plays every voice centered.
-Output_Kind :: enum u8 {Headphones,Speakers}
+// What the output plays on. Speakers pan each spatial voice between them;
+// headphones hear it through the HRTF of its direction, which tells ahead from
+// behind and above from below. A mono output plays every voice centered.
+Output_Kind :: enum u8 {Speakers,Headphones}
 
 @(private)
 Listener :: struct {
@@ -86,69 +86,109 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
     return clamp((speed_of_sound-factor*listener_speed)/(speed_of_sound-factor*source_speed),0.25,4)
 }
 
-// Turns the mono signal a spatial voice left in the left channel of frames
-// [from,to) of out into its place: the direct effect (EQ and gain), then the
-// pan on speakers. On headphones it leaves the signal in both channels and
-// returns true: the HRTF is applied with the other voices of its bus.
+// The gains of a spatial voice as those of a voice panned on two speakers:
+// its volume by the gain of its direct path, between the speakers on Speakers
+// (PanningEffect::stereoPanningWeight: the side once brought to the horizontal
+// plane, so ahead and behind both sit in the middle) and centered otherwise.
 @(private)
-spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,from,to:int) -> (binaural:bool) #no_bounds_check {
+spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
+    if v.spatial_dirty || v.listener_serial!=m.listener_serial {
+        l:=m.listener
+        direction,distance:=listener_direction(l.position,l.rotation,v.position)
+        directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
+        v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance),v.occlusion,v.transmission)
+        v.direction=direction
+        v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
+        v.spatial_dirty=false;v.listener_serial=m.listener_serial
+    }
+    pan:=f32(0)
+    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.output_now==.Speakers && m.channels==2 && horizontal>1e-6 {pan=v.direction.x/horizontal}
+    sides:=pan_gains(pan)*(v.volume*v.direct_gain)
+    // A stereo sound that has a place in the world is heard as one source.
+    if v.source.channels==2 {return {sides[0]*0.5,sides[1]*0.5,sides[0]*0.5,sides[1]*0.5}}
+    return {sides[0],sides[1],0,0}
+}
+
+// The EQ of a voice is left out while all its bands are within EQ_FLAT of unity.
+@(private)
+eq_flat :: proc "contextless" (gains:[BANDS]f32) -> bool {
+    return gains[0]>=EQ_FLAT && gains[1]>=EQ_FLAT && gains[2]>=EQ_FLAT
+}
+
+// A spatial voice that goes through its EQ or its HRTF is mixed apart as one
+// source into the left channel: its gains (base and target) lose their pan,
+// which spatial_post applies. Any other is mixed as a panned voice.
+@(private)
+spatial_apart :: proc "contextless" (m:^Mixer,v:^Mix_Voice,base,target:^[4]f32) -> (pans:[2][2]f32,apart:bool) {
+    if !(m.output_now==.Headphones && m.channels==2) && !v.eq_on && eq_flat(v.eq_target) {return}
+    one :: proc "contextless" (g:^[4]f32,stereo:bool) -> [2]f32 {
+        level:=math.sqrt(g[0]*g[0]+g[1]*g[1])
+        pan:=[2]f32{math.SQRT_TWO/2,math.SQRT_TWO/2}
+        if level>0 {pan={g[0]/level,g[1]/level}}
+        g^={level,0,level if stereo else 0,0}
+        return pan
+    }
+    stereo:=v.source.channels==2
+    return {one(base,stereo),one(target,stereo)},true
+}
+
+// Places frames [from,to) of a voice mixed apart as one source: its EQ while
+// it is not flat, then on speakers the pan from pans[0] to pans[1]. On
+// headphones it leaves the signal in the left channel and returns true: the
+// HRTF is applied with the other voices of its bus.
+@(private)
+spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:int,pans:[2][2]f32,silent:bool) -> (binaural:bool) #no_bounds_check {
     count:=to-from
     binaural=m.output_now==.Headphones && m.channels==2
-    if count<=0 {return}
+    flat:=eq_flat(v.eq_target)
+    if count<=0 || silent || binaural && !v.eq_on && flat {return}
     mono:=m.spatial_mono[:count]
     for i in 0..<count {mono[i]=out[(from+i)*2]}
-    if !v.direct_ready {
-        v.eq_gains=v.eq_target
-        v.eq_current=0
-        v.eq[0]=eq_filters(v.eq_gains,m.sample_rate)
-        v.eq_state={}
-        v.direct_gain_now=v.direct_gain
-        v.direct_ready=true
-    }
-    current:=int(v.eq_current)
-    // A band that moved less than EQ_GAIN_STEP of its gain keeps the filters it has.
-    moved:=false
-    for i in 0..<BANDS {moved||=!(abs(v.eq_target[i]-v.eq_gains[i])<=EQ_GAIN_STEP*v.eq_gains[i])}
-    if moved {
-        // EQEffect: the cascade of the old gains and that of the new ones, which
-        // starts from its state, crossfade over the chunk.
-        previous:=current
-        current=1-current
-        v.eq[current]=eq_filters(v.eq_target,m.sample_rate)
-        v.eq_state[current]=v.eq_state[previous]
+    if v.eq_on || !flat {
+        // EQEffect: a change crossfades over the chunk from old, the signal of
+        // the filters before (the dry signal when the EQ comes in), to mono.
         old:=m.spatial_old[:count]
-        copy(old,mono)
-        eq_run(&v.eq[previous],&v.eq_state[previous],old)
-        eq_run(&v.eq[current],&v.eq_state[current],mono)
-        for i in 0..<count {
+        current:=int(v.eq_current)
+        moved:=false
+        for i in 0..<BANDS {moved||=!(abs(v.eq_target[i]-v.eq_gains[i])<=EQ_GAIN_STEP*v.eq_gains[i])}
+        switch {
+        case !v.eq_on:
+            if v.placed {copy(old,mono)} else {old=nil}
+            v.eq_current,v.eq_gains,v.eq_state=0,v.eq_target,{}
+            v.eq[0]=eq_filters(v.eq_gains,m.sample_rate)
+            eq_run(&v.eq[0],&v.eq_state[0],mono)
+            v.eq_on=true
+        case flat:
+            // It goes out: from the EQ to the dry signal.
+            copy(old,mono)
+            eq_run(&v.eq[current],&v.eq_state[current],old)
+            v.eq_on=false
+        case moved:
+            v.eq_current=u8(1-current)
+            v.eq[1-current],v.eq_state[1-current]=eq_filters(v.eq_target,m.sample_rate),v.eq_state[current]
+            v.eq_gains=v.eq_target
+            copy(old,mono)
+            eq_run(&v.eq[current],&v.eq_state[current],old)
+            eq_run(&v.eq[1-current],&v.eq_state[1-current],mono)
+        case:
+            eq_run(&v.eq[current],&v.eq_state[current],mono)
+            old=nil
+        }
+        for i in 0..<len(old) {
             w:=f32(i)/f32(count)
             mono[i]=w*mono[i]+(1-w)*old[i]
         }
-        v.eq_current=u8(current)
-        v.eq_gains=v.eq_target
-    } else {
-        eq_run(&v.eq[current],&v.eq_state[current],mono)
     }
-    g0,dg:=v.direct_gain_now,(v.direct_gain-v.direct_gain_now)/f32(count)
-    for i in 0..<count {mono[i]*=g0+dg*f32(i)}
-    v.direct_gain_now=v.direct_gain
     if binaural {
-        for i in 0..<count {out[(from+i)*2],out[(from+i)*2+1]=mono[i],mono[i]}
+        for i in 0..<count {out[(from+i)*2]=mono[i]}
         return
     }
-    // PanningEffect::stereoPanningWeight: the side once brought to the
-    // horizontal plane, so ahead and behind both sit in the middle.
-    pan:=f32(0)
-    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.channels==2 && horizontal>1e-6 {pan=v.direction.x/horizontal}
-    weights:=pan_gains(pan)
-    if !v.pan_valid {v.pan_now,v.pan_valid=weights,true}
-    dw:=(weights-v.pan_now)/f32(count)
+    dw:=(pans[1]-pans[0])/f32(count)
     for i in 0..<count {
-        g:=v.pan_now+dw*f32(i)
+        g:=pans[0]+dw*f32(i)
         out[(from+i)*2]=mono[i]*g[0]
         out[(from+i)*2+1]=mono[i]*g[1]
     }
-    v.pan_now=weights
     return
 }
 
