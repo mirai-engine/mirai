@@ -230,7 +230,7 @@ instance is `animation.request`, with the fields of `animation.preview`:
 
 - Controls: stop and seek, parameters, `plays` (`match_play` with clip, mode and the options of
   `Match_Play_Options`), actions, targets and controls of modifiers, targets of warping windows,
-  locomotion, distance and the control of a `Keyframe_Path`.
+  locomotion and distance.
 - Intents, which write to those same queues:
   - `locomote`: the forward velocity of the orientation and stride warping (asks for the `.motion`)
     and, with root motion, the target of the `locomote` window. It does not move the body, which
@@ -238,7 +238,7 @@ instance is `animation.request`, with the fields of `animation.preview`:
   - `look` and `reach`: target and fade of the head's Look or of the IK that ends at the hand;
     requesting them turns the operation on even if the profile stores it off.
   - `gesture`: fires or cancels the action of a gesture.
-- In Edit only `stop`, `parameters` and Play/Pause/Speed of `sequence` are valid, as an undo step;
+- In Edit only `stop` and `parameters` are valid, as an undo step;
   everything else asks for Play or Simulation and the `fix` proposes `animation.preview` with the
   same fields.
 - What an intent lacks (no Look in the profile, no gesture) fails with the method that creates it.
@@ -269,7 +269,7 @@ instance is `animation.request`, with the fields of `animation.preview`:
   and distance: [motion](animation-motion.md).
 
 `animation.preview` clones the world and applies the fields of `request`, with `time`, `ticks` and
-`dt` instead of stop, seek and sequence; `plays` and actions can be scheduled per tick. It returns
+`dt` instead of stop and seek; `plays` and actions can be scheduled per tick. It returns
 paged local poses, the program and, with `trace`, per tick the leaves and layers with their
 effective weights, markers, curves, root, what the matching touches, actions, problems and the last
 modifier request that did not find its destination; `trace_truncated` says whether pages remained
@@ -288,9 +288,9 @@ copy: it touches no document, renderer or displayed world. `animation.capture`
   change of root bone in the range, or a problem of the evaluation, fails without publishing, with
   its code.
 
-`animation.sequence.*` configures, captures and tests the sequence of a `Keyframe_Path`
-([sequences](animation-sequence.md)); in Edit it is a scene transaction and its control is
-`sequence` of `animation.request`.
+A prop moved over time is a clip: `animation.clip.create` and `animation.track.set` write it (an
+empty `target` is the entity that plays it, `@field/Component.field` one of its fields) and
+`animation.play` gives it to the entity ([timelines](animation-timeline.md)).
 
 ## Verification
 

@@ -21,8 +21,8 @@ Components (`@(component)` of `plugins/animation/runtime`):
   skeleton of its own, [follows it](#following-a-rig-of-another-skeleton).
 - **`Pose_Modifiers`**: activates a shared `.pose` profile on its rig.
 - **`Bone_Attachment`**: on each equipped object, references a socket of the skeleton.
-- **`Keyframe_Path`** ([sequences](animation-sequence.md)), **`Animation_Budget`**
-  ([budget](animation-budget.md)) and **`Morph_Weights`** ([morphs](animation-morphs.md)).
+- **`Animation_Budget`** ([budget](animation-budget.md)) and **`Morph_Weights`**
+  ([morphs](animation-morphs.md)).
 - **`Animation_Target`**: internal identity of an imported rigid destination, hidden in the
   inspector; the visible name of the entity may change without losing it.
 - **`Skin_Part`**: a bone of the skinned mesh, with what hangs from it, is a part in those layers. A
@@ -380,7 +380,7 @@ its definition or `library`.
 - `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
   keeps the time of the clip and, when loaded, an entity without state in `Playback` asks for
   `animation_seek` there.
-- The runtimes of modifiers, constraints, grounding, sequences, actions, motion and budget are
+- The runtimes of modifiers, constraints, grounding, field tracks, actions, motion and budget are
   copied for Play and rollback.
 - Definitions of skeletons, profiles and programs live in application caches, like `Skin_Runtime`;
   `Skin_Instances` stores the GPU meshes that each world deforms and `animation_skin_release`
