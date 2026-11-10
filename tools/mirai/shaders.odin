@@ -192,22 +192,33 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
     return 0
 }
 
-// The shaders the GPU tests of a package of an engine plugin load: those of
-// the plugin and, as <plugin>_test, the programs of testdata/ of the package,
-// in <root>/.mirai/tmp/<plugin>-test-shaders. A test of a runtime package does
-// not generate them itself: the shipped game compiles its test files too, and
-// cook is not shipped. Only for a package whose tests take the shared device.
-plugin_test_shaders :: proc(root,folder:string) -> bool {
-    plugins:=project.path_absolute(join(root,"plugins"),context.temp_allocator)
+// The shaders the GPU tests of a package load, in
+// <root>/.mirai/tmp/<name>-test-shaders: for a package of an engine plugin,
+// those of the plugin and, as <plugin>_test, the programs of testdata/ of the
+// package; for a package of the engine, as <package>_test, the programs of
+// its testdata/, which the engine does not ship. A test of a runtime package
+// does not generate them itself: the shipped game compiles its test files
+// too, and cook is not shipped. Only for a package whose tests take the
+// shared device, and one of the engine only with programs in testdata/.
+package_test_shaders :: proc(root,folder:string) -> bool {
     absolute:=project.path_absolute(folder,context.temp_allocator)
-    if len(absolute)<=len(plugins) || absolute[len(plugins)]!='/' || !project.path_same(absolute[:len(plugins)],plugins) {return true}
-    rest:=absolute[len(plugins)+1:]
-    name:=rest
-    if slash:=strings.index_byte(rest,'/');slash>=0 {name=rest[:slash]}
-    folder_shaders:=join(plugins,name,"shaders")
-    if !os.is_dir(folder_shaders) || !takes_shared_device(absolute) {return true}
+    engine:=project.path_absolute(root,context.temp_allocator)
+    plugins:=project.path_absolute(join(root,"plugins"),context.temp_allocator)
+    inside :: proc(path,base:string) -> bool {return len(path)>len(base) && path[len(base)]=='/' && project.path_same(path[:len(base)],base)}
     sources:=make([dynamic]shaders.Source,context.temp_allocator)
-    append(&sources,shaders.Source{name=name,folder=folder_shaders})
+    name:string
+    if inside(absolute,plugins) {
+        rest:=absolute[len(plugins)+1:]
+        name=rest
+        if slash:=strings.index_byte(rest,'/');slash>=0 {name=rest[:slash]}
+        folder_shaders:=join(plugins,name,"shaders")
+        if !os.is_dir(folder_shaders) {return true}
+        append(&sources,shaders.Source{name=name,folder=folder_shaders})
+    } else if inside(absolute,engine) {
+        name,_=strings.replace_all(absolute[len(engine)+1:],"/","_",context.temp_allocator)
+    } else {
+        return true
+    }
     testdata:=join(absolute,"testdata")
     if entries,error:=os.read_all_directory_by_path(testdata,context.temp_allocator);error==nil {
         for entry in entries {
@@ -217,13 +228,14 @@ plugin_test_shaders :: proc(root,folder:string) -> bool {
             }
         }
     }
+    if len(sources)==0 || !takes_shared_device(absolute) {return true}
     output:=join(root,".mirai","tmp",fmt.tprintf("%s-test-shaders",name))
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
     result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output)})
     defer shaders.result_destroy(&result)
     if result.warnings!="" {fmt.eprint(result.warnings)}
-    if result.error!="" {fmt.eprintfln("mirai test: the shaders of the plugin %s could not be generated: %s",name,result.error);return false}
+    if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}
     return true
 }
 

@@ -30,7 +30,7 @@ DIVER_DEFAULT :: Diver{capacity=45,refill=15}
 Raft_Game :: struct {
     raft:core.Entity,
     deck:f32 `mirai:"unit=m"`, // over the center of the raft, where a diver comes back
-    message:f32 `mirai:"transient,readonly,unit=s"`, // left of the drowned message
+    message_until:u64 `mirai:"transient,readonly"`, // the tick the drowned message goes at
 }
 
 @(step="fixed")
@@ -39,28 +39,25 @@ raft_breath :: proc(
     worlds:core.Read(core.World_Transform),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
-    for row in 0..<core.count(core.read(games)) {
-        if left:=core.at(core.read(games),row).message;left>0 {core.at(games,row).message=max(left-time.dt,0)}
-    }
-    for row in 0..<core.count(core.read(divers)) {
+    for row in 0..<core.count(divers) {
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
         if !has {continue}
         // Only a breath that changes is written: a full one over the surface stays as it is.
-        next:=core.at(core.read(divers),row)
+        next:=core.at(divers,row)
         if !next.ready {next.oxygen,next.ready=next.capacity,true}
         if state.head_depth>0 {
             next.oxygen=max(next.oxygen-time.dt,0)
         } else {next.oxygen=min(next.oxygen+next.refill*time.dt,next.capacity)}
         drowned:=next.oxygen<=0
         if drowned {next.oxygen,next.drowned=next.capacity,next.drowned+1}
-        if next!=core.at(core.read(divers),row) {core.at(divers,row)^=next}
+        if next!=core.at(divers,row) {core.edit_at(divers,row)^=next}
         if !drowned {continue}
         for &game in core.writable(games) {
             raft,found:=core.get(worlds,game.raft)
             if !found {continue}
             core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0},at_rest=true)
-            game.message=RAFT_DROWNED_SECONDS
+            game.message_until=core.deadline(time,RAFT_DROWNED_SECONDS)
             break
         }
     }
@@ -91,7 +88,7 @@ RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
 @(step="frame")
 raft_hud :: proc(
     huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
-    drivables:core.Read(inp.Drivable),
+    drivables:core.Read(inp.Drivable),time:core.Time,
 ) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
@@ -109,8 +106,8 @@ raft_hud :: proc(
             next.shown,next.oxygen,next.air=true,i32(math.round(diver.oxygen)),share<0.25?.Low:.Fine
             next.breath=math.round(share*RAFT_BAR_STEPS)/RAFT_BAR_STEPS
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
-            for at in 0..<core.count(games) {next.message||=core.at(games,at).message>0}
+            for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }
-        if core.at(shown,row)!=next {core.at(huds,row)^=next}
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

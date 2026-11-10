@@ -390,7 +390,7 @@ replica_place :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
             section:=section_of(core.ref(core.world_storage_of(w,core.Hierarchy)),references,r.entity)
             loaded:=section==core.NONE
             if !loaded && references!=nil {
-                reference,_:=core.get(core.read(references),section)
+                reference,_:=core.get(references,section)
                 loaded=reference.loaded!={}
             }
             if loaded {
@@ -482,7 +482,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
         // Where its section is not loaded, a copy of it from the scene of that section.
         if home:=r.pose.sections[0];home!=0 && r.pose.id!=0 {
             if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
-                if reference,found:=core.get(core.read(references),core.entity_of(es,home));found && reference.scene!={} {
+                if reference,found:=core.get(references,core.entity_of(es,home));found && reference.scene!={} {
                     if report,error:=scene.spawn_member(core.commands_of(w),assets,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
                 }
             }
@@ -550,7 +550,7 @@ row_staged :: proc "contextless" (t:^core.Raw_Table,e:core.Entity) -> bool {
 section_holding :: proc(w:core.World_Ref,e:core.Entity) -> bool {
     references:=core.world_table_of(w,scene.Scene_Reference)
     if references==nil {return false}
-    reference,found:=core.get(core.read(references),core.parent_of(core.ref(core.world_storage_of(w,core.Hierarchy)),e))
+    reference,found:=core.get(references,core.parent_of(core.ref(core.world_storage_of(w,core.Hierarchy)),e))
     return found && reference.loaded!={} && reference.held
 }
 
@@ -899,7 +899,7 @@ client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.mode!=.Predicted || !core.alive(es,r.entity) {continue}
         wire.smoothing_update(&r.smoothing,dt)
-        shown:=core.get(offsets,r.entity)
+        shown:=core.edit(offsets,r.entity)
         if shown==nil {continue}
         shown.offset,shown.rotation=r.smoothing.offset,r.smoothing.rotation
     }
@@ -969,14 +969,14 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     for index in c.driven[:c.driven_count] {
         r:=&c.replicas[index]
         if !core.alive(es,r.entity) {continue}
-        motion,has:=core.get(core.read(motions),r.entity)
+        motion,has:=core.get(motions,r.entity)
         if !has || motion.island==0 || slice.contains(c.islands[:islands],motion.island) {continue}
         c.islands[islands]=motion.island
         islands+=1
     }
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || !core.alive(es,r.entity) {continue}
-        motion,has_motion:=core.get(core.read(motions),r.entity)
+        motion,has_motion:=core.get(motions,r.entity)
         if has_motion && motion.island!=0 {
             for island in c.islands[:islands] {
                 if island==motion.island {r.touched,r.touched_set=tick,true;break}
@@ -1003,7 +1003,7 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.role!=.Held || !core.alive(es,r.entity) {continue}
         t:=net_type(s,r.type)
-        local,has_pose:=core.get(core.read(transforms),r.entity)
+        local,has_pose:=core.get(transforms,r.entity)
         if !has_pose {continue}
         pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,r.entity,t)}
         motion,_:=motion_read(w,r.entity)
@@ -1607,7 +1607,7 @@ driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     if seat==core.NONE {return}
     for row in 0..<core.count(drivables) {
         if drivables.values[row].seat!=seat {continue}
-        move,has:=core.get(core.read(moves),core.entity_at(drivables,row))
+        move,has:=core.get(moves,core.entity_at(drivables,row))
         if !has {return}
         return {move.look_yaw,move.look_pitch},true
     }

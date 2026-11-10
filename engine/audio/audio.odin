@@ -295,7 +295,7 @@ sources_update :: proc(sources:core.Read(Audio_Source),states:^core.Table(Audio_
         e:=core.entity_at(sources,row)
         source:=core.at(sources,row)
         local:Audio_Source_State
-        state:=core.get(states,e)
+        state:=core.edit(states,e)
         fresh:=state==nil
         if fresh {state=&local}
         voice_update(voices,m,app,&hearing,listener.position,source,e,dt,state,problems)

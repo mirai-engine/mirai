@@ -100,7 +100,7 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     count,version,layout:=len(modifiers.chain_ik.values),modifiers.chain_ik.version,modifiers.chain_ik.layout
     testing.expect(t,!modifier_append(&modifiers.chain_ik,states[0].entity,modifiers.chain_ik.values[0]))
     testing.expect(t,len(modifiers.chain_ik.values)==count && modifiers.chain_ik.version==version && modifiers.chain_ik.layout==layout)
-    core.at(&modifiers.springs,3).enabled=false
+    core.edit_at(&modifiers.springs,3).enabled=false
     testing.expect(t,modifiers.spring_states[3].springs[0].ready)
     testing.expect(t,rigs_apply(&states[1],&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
     testing.expect_value(t,modifiers.spring_states[3].springs,([RIG_CHAIN_BONES]lib.Spring_Joint_State{}))
@@ -273,7 +273,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Chain_IK,0)
     testing.expect(t,found && diagnostic.valid && diagnostic.reached && diagnostic.residual<.001)
-    core.at(&modifiers.chain_ik,0).enabled=false
+    core.edit_at(&modifiers.chain_ik,0).enabled=false
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.rig,spring.root,spring.end=rig,chain.root,chain.end;spring.settings.gravity={};spring.settings.force={2,0,0}
     testing.expect(t,modifier_append(&modifiers.springs,rig,spring))
     copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
@@ -284,7 +284,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect_value(t,modifiers.chain_ik.values[0].weight,f32(.2))
-    core.at(&modifiers.chain_ik,0).enabled=false
+    core.edit_at(&modifiers.chain_ik,0).enabled=false
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<120 {
@@ -417,11 +417,11 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     testing.expect(t,aimed_found && aimed.valid && aimed.reached && aimed.residual<1e-3 && aimed.angular_error<1e-3)
     _,beyond:=animation_rig_diagnostic(nil,rig,.Look,1,&cache);_,elsewhere:=animation_rig_diagnostic(nil,rig,.IK,0)
     testing.expect(t,!beyond && !elsewhere)
-    core.at(&looks,0).target=spatial_point({5,1,0});core.at(&looks,0).max_angle=.2
+    core.edit_at(&looks,0).target=spatial_point({5,1,0});core.edit_at(&looks,0).max_angle=.2
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,problems.count==0 && aimed.valid && !aimed.reached && aimed.angular_error>1 && aimed.residual>1,"a look held by max_angle says how far it misses")
-    core.at(&looks,0).enabled=false
+    core.edit_at(&looks,0).enabled=false
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,!aimed.valid)

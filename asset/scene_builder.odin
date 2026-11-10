@@ -47,7 +47,7 @@ content_check :: proc(content:^Content,what:string,error:Error) {
     content.failed=true
 }
 
-// A scene or prefab written from code. Its entities take the ids 1, 2, 3...
+// A scene written from code. Its entities take the ids 1, 2, 3...
 // in the order they are added, so the same code gives the same bytes. The
 // first error is reported and everything after it does nothing.
 Scene_Builder :: struct {
@@ -57,9 +57,9 @@ Scene_Builder :: struct {
     failed:bool,
 }
 
-builder_init :: proc(b:^Scene_Builder,content:^Content,kind:Fourcc,id:base.Asset_Id,allocator:=context.allocator) {
+builder_init :: proc(b:^Scene_Builder,content:^Content,id:base.Asset_Id,allocator:=context.allocator) {
     b^={content=content}
-    if error:=scene_init(&b.scene,&content.types,kind,id,allocator);error!=.None {
+    if error:=scene_init(&b.scene,&content.types,id,allocator);error!=.None {
         builder_fail(b,"the document",error)
     }
 }
@@ -70,22 +70,15 @@ builder_destroy :: proc(b:^Scene_Builder) {
 }
 
 // Adds an entity with its Transform: a rotation or a scale left zero is the
-// identity. The first entity of a prefab without a parent is its root, and a
-// prefab has only one.
+// identity.
 builder_entity :: proc(b:^Scene_Builder,name:string,place:mm.Transform={},parent:base.Entity_Id=0) -> base.Entity_Id {
     if b.failed {return 0}
-    is_root:=b.scene.doc.kind==KIND_PREFAB && parent==0
-    if is_root && b.scene.info.root!=0 {
-        builder_fail(b,fmt.tprintf("%s: a prefab has one entity without a parent",name),.Invalid)
-        return 0
-    }
     b.next+=1
     id:=b.next
     if _,error:=scene_entity_add(&b.scene,id,parent,name);error!=.None {
         builder_fail(b,name,error)
         return 0
     }
-    if is_root {b.scene.info.root=id}
     place:=place
     if place.rotation==0 {place.rotation=1}
     if place.scale==([3]f32{}) {place.scale=1}

@@ -131,7 +131,7 @@ entity_initialization_and_each_table_copy_reservation_fail_without_invalid_owner
     e:=create(&entities);add(&source,e,44);table_settle(&source,&entities)
     resize(&source.owners,2);source.owners[1]={entity_generation(e),3}
     succeeded:=false
-    for budget in 0..<8 {
+    for budget in 0..<16 {
         tracking:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracking,context.allocator)
         allocation:=Copy_Allocation{owner=mem.tracking_allocator(&tracking),remaining=budget}
@@ -212,11 +212,11 @@ a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swa
     testing.expect(t,table_copy_changed(&copied,&source,&mark))
     testing.expect_value(t,copied.version,version)
     testing.expect(t,table_copy(&older,&source))
-    get(&source,entities[3]).value=30
-    append(&get(&source,entities[5]).items,55)
+    edit(&source,entities[3]).value=30
+    append(&edit(&source,entities[5]).items,55)
     testing.expect(t,table_copy_changed(&copied,&source,&mark))
     testing.expect(t,copy_rows_equal(&source,&copied))
-    delete(get(&source,entities[1]).items)
+    delete(at(&source,row_of(&source,entities[1])).items)
     remove(&source,entities[1])
     disable(&source,entities[6])
     table_settle(&source,&es)
@@ -226,7 +226,7 @@ a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swa
     table_swap(&source,&older)
     testing.expect(t,table_copy_changed(&copied,&source,&mark))
     testing.expect(t,copy_rows_equal(&source,&copied))
-    get(&source,entities[2]).value=20
+    edit(&source,entities[2]).value=20
     testing.expect(t,table_copy_changed(&copied,&source,&mark))
     testing.expect(t,copy_rows_equal(&source,&copied))
 }

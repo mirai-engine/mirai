@@ -30,7 +30,6 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     defer animation_destroy(&p,context.allocator)
     p.subject.renderer=&renderer
     if !testing.expect(t,anim.library_init(&p.lib,{max_clips=1,max_tracks=1,max_keys=2})) {return}
-    if !testing.expect(t,anim.pose_init(&p.pose,1)) {return}
     target:=base.name_hash("root/foot")
     clip,_:=anim.clip_add(&p.lib,{tracks={{target=target,property=.Position,keys={{time=0,value={0,1,0,0}},{time=1,value={0,2,0,0}}}}}})
     w:Skin_World

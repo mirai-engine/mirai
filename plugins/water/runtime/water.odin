@@ -82,7 +82,8 @@ Water_Gpu :: struct {
     looks:[CAPACITY]Water_Look,
     look_count:int,
     air:u32,       // the row of the air of a dry box the camera is in; 0 until one is
-    looks_seen:u64, // the versions of the Water rows and of the assets the looks were made with
+    waters_seen:core.Seen, // the Water rows the looks were made with
+    looks_seen:u64, // and the rounds of the assets
     sheets:[CAPACITY]Sheet,
     sheet_pipeline:render.Pipeline,
     frame:u64,
@@ -206,7 +207,7 @@ water_render :: proc(
     // A derived row lasts while the rounds of the assets keep it: a new round asks for them again.
     settings:=settings
     program:=base.text_get(settings.surface_program[:])
-    if seen:=core.version(waters)+core.layout(waters)+app.assets.revision+app.assets.appearance+base.name_hash(program);seen!=state.looks_seen {
+    if seen:=app.assets.revision+app.assets.appearance+base.name_hash(program);core.touched(waters,&state.waters_seen) | (seen!=state.looks_seen) {
         state.looks_seen,state.look_count,state.air=seen,0,0
     }
     state.time=waves_time(physics,time,frame,app)

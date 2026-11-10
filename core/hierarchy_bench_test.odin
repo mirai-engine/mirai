@@ -85,7 +85,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     b:Bench
     for bench_round(&b) {
         for pass in 0..<PASSES {
-            for k in 0..<64 {get(&locals,groups[(pass*64+k)%GROUPS]).position.y+=1}
+            for k in 0..<64 {edit(&locals,groups[(pass*64+k)%GROUPS]).position.y+=1}
             transforms_propagate(read(&locals),ref(&h),&worlds,&p,&jumps,tick)
         }
     }

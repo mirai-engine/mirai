@@ -78,7 +78,7 @@ result is not valid, and then `<ours>` stays as it was.
   does not enter.
 - Without a key, a table is a set of rows; a `Bulk` table is compared whole. An empty `<base>` is a
   file both added: every difference is a conflict.
-- In scenes and prefabs (`asset.scene_merge`): a removed parent leaves the child at the root, a
+- In scenes (`asset.scene_merge`): a removed parent leaves the child at the root, a
   cycle between the two sides is opened with ours' parent, the instances theirs added with an id
   that ours already gave take a new one (with their members and overrides), and the `Scene_Info`
   counters end at the larger.

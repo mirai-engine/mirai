@@ -34,7 +34,7 @@ prefab_save_and_placing_in_a_scene_of_many_instances :: proc(t:^testing.T) {
     filled:=time.tick_since(filling)
     // Every tenth instance holds something on its own.
     lamps:=&f.world.lamps
-    for row:=0;row<core.count(lamps);row+=10 {core.at(lamps,row).intensity=9}
+    for row:=0;row<core.count(lamps);row+=10 {core.edit_at(lamps,row).intensity=9}
     prefab_fixture_step(f)
 
     placing:=time.tick_now()

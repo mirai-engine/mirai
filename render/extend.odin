@@ -269,9 +269,10 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 // order, in a pass_surface_begin with them; one of Blend into the lit image
 // with blend and into the coverage TAA reads, adding, in pass_blend_begin.
 // Gbuffer takes pass_gbuffer_pipeline instead. A compute stage that traces
-// rays declares the variants hw, color and color_hw (//! variant), and the
-// one for the rays the renderer traces is taken, as for the stages of the
-// engine: by hardware, and through the filters of glass with colored shadows.
+// rays declares the variant hw (//! variant) and the constant color
+// (//! constant), and its pipeline is that of the rays the renderer traces,
+// as for the stages of the engine: by hardware, and through the filters of
+// glass with colored shadows.
 // A graphics stage whose source marks it `//! per surface program` draws the
 // materials of a Surface program with the fragment stage of that program:
 // program names it (pass_material_program), 0 for those without one.
@@ -326,11 +327,13 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 	names: [2][192]u8
 	switch {
 	case compute:
-		variants := [4]string{"_color_hw", "_hw", "_color", ""}
+		variants := [2]string{"_hw", ""}
 		for variant in variants {
-			if variant == "_color_hw" && !(hardware && colored) || variant == "_hw" && !hardware || variant == "_color" && (hardware || !colored) {continue}
+			if variant == "_hw" && !hardware {continue}
 			if code := extension_shader(r, fmt.bprintf(names[0][:], "%s%s.comp", desc.shader, variant)); code != nil {
-				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, name = desc.name})
+				constants: rhi.Shader_Constants
+				if colored {constants, _ = rhi.shader_constant(code, "color")}
+				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, constants = constants, name = desc.name})
 				break
 			}
 		}
