@@ -291,8 +291,7 @@ absorption and a tent-shaped ozone layer. The world is flat and horizontal at th
 - **Aerial perspective** per view (`Targets.aerial`, `air_aerial.comp`): columns over the view
   without jitter in slices along it up to `AIR_AERIAL_DISTANCE`, each texel the air light to the
   end of its slice and the mean transmittance. It is recomputed when the camera, the sun or the
-  air change. Composite applies it to the image that is shown (`out_display`) and not to the scene
-  light that the next frame traces; the fog of the `fog` plugin is composed on top in `Lit`: they
-  are two media and they add up, without counting anything twice. Glass and what blends afterwards
-  do not take it.
+  air change. Composite applies it to the image that is shown (`out_display`); the fog of the
+  `fog` plugin is composed on top in `Lit`: they are two media and they add up, without counting
+  anything twice. Glass and what blends afterwards do not take it.
 - Nothing is sampled: each table integrates with fixed steps, and a still view recomputes none.
