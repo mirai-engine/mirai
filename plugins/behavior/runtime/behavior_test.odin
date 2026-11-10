@@ -777,33 +777,56 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
 }
 
 // The influence of each team is where its Perceivables are, less farther
-// away; without a cell there is no map.
+// away; without a cell, or with nobody to stamp or read them, there is no map.
 @(test)
 influence_maps_follow_the_teams :: proc(t:^testing.T) {
     es:core.Entities
     core.entities_init(&es)
     defer core.entities_destroy(&es)
     perceivables:core.Table(Perceivable)
+    perceivers:core.Table(Perceiver)
+    minds:core.Table(Mind_Agent)
+    queriers:core.Table(Place_Result)
     worlds:core.Table(core.World_Transform)
-    core.table_init(&perceivables,"Perceivable");core.table_init(&worlds,"World_Transform")
-    defer {core.table_destroy(&perceivables);core.table_destroy(&worlds)}
+    core.table_init(&perceivables,"Perceivable");core.table_init(&perceivers,"Perceiver");core.table_init(&minds,"Mind_Agent")
+    core.table_init(&queriers,"Place_Result");core.table_init(&worlds,"World_Transform")
+    defer {core.table_destroy(&perceivables);core.table_destroy(&perceivers);core.table_destroy(&minds);core.table_destroy(&queriers);core.table_destroy(&worlds)}
     influence:Influence
     defer influence_free(&influence)
     settings:=BEHAVIOR_SETTINGS_DEFAULT
     settings.influence_size,settings.influence_cells,settings.influence_rays=32,32*32*INFLUENCE_TEAMS,0
     physics:phys.Physics_State
+    calls:=0
+    // A world with nobody to stamp the maps or to read them makes none: its ticks ask for no memory and leave no pass begun.
+    for tick in 0..<3 {
+        saved:=context.allocator
+        context.allocator=refusing_allocator(&calls)
+        influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&perceivers),core.read(&minds),core.read(&queriers),core.read(&worlds),core.ref(&physics),{tick=u64(tick),dt=1.0/60,playing=true})
+        context.allocator=saved
+    }
+    testing.expect_value(t,calls,0)
+    testing.expect(t,!ai.influence_ready(&influence.grid) && influence.made=={} && influence.sweep==0)
+    // A reader alone has them made.
+    reader:=core.create(&es)
+    core.add(&perceivers,reader,Perceiver{})
+    core.table_settle(&perceivers,&es)
+    influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&perceivers),core.read(&minds),core.read(&queriers),core.read(&worlds),core.ref(&physics),{tick=3,dt=1.0/60,playing=true})
+    testing.expect(t,ai.influence_ready(&influence.grid))
+    core.remove(&perceivers,reader)
+    core.table_settle(&perceivers,&es)
+    influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&perceivers),core.read(&minds),core.read(&queriers),core.read(&worlds),core.ref(&physics),{tick=4,dt=1.0/60,playing=true})
+    testing.expect(t,!ai.influence_ready(&influence.grid),"the maps nobody reads any more are freed")
     red,blue:=core.create(&es),core.create(&es)
     core.add(&perceivables,red,Perceivable{team=1})
     core.add(&perceivables,blue,Perceivable{team=2})
     core.add(&worlds,red,core.World_Transform{transform={position={-10,0,0},rotation=1,scale=1}})
     core.add(&worlds,blue,core.World_Transform{transform={position={10,0,0},rotation=1,scale=1}})
     core.table_settle(&perceivables,&es);core.table_settle(&worlds,&es)
-    calls:=0
     for tick in 0..<20 {
         // Made on the first tick; the others do not allocate.
         saved:=context.allocator
         if tick>0 {context.allocator=refusing_allocator(&calls)}
-        influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&worlds),core.ref(&physics),{tick=u64(tick),dt=1.0/60,playing=true})
+        influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&perceivers),core.read(&minds),core.read(&queriers),core.read(&worlds),core.ref(&physics),{tick=u64(tick),dt=1.0/60,playing=true})
         context.allocator=saved
     }
     testing.expect_value(t,calls,0)
@@ -814,6 +837,6 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
     testing.expect(t,influence_at(&influence,{-10,0,0},reds|Teams(1<<2))>=influence_at(&influence,{-10,0,0},reds))
     testing.expect_value(t,cover_at(&influence,{-10,0,0},{10,0,0}),0)
     settings.influence_cell=0
-    influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&worlds),core.ref(&physics),{tick=20,dt=1.0/60,playing=true})
+    influence_update(&influence,core.ref(&settings),core.read(&perceivables),core.read(&perceivers),core.read(&minds),core.read(&queriers),core.read(&worlds),core.ref(&physics),{tick=20,dt=1.0/60,playing=true})
     testing.expect_value(t,influence_at(&influence,{-10,0,0},reds),0)
 }

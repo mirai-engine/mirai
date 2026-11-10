@@ -865,6 +865,29 @@ agents_test_step :: proc(f:^Nav_Test,g:^Agents_Test) {
     )
 }
 
+// A world with meshes and no agent spends nothing on them: no memory for the
+// searches and no gathering of what agents step aside from, until one comes.
+@(test)
+a_world_without_agents_prepares_no_search :: proc(t:^testing.T) {
+    f:Nav_Test
+    nav_test_init(&f)
+    defer nav_test_destroy(&f)
+    g:Agents_Test
+    agents_test_init(&g)
+    defer agents_test_destroy(&g)
+    nav_test_box(&f,{5,-0.5,2},{8,0.5,4})
+    nav_test_settled(t,&f)
+    obstacle:=core.create(&f.entities)
+    core.add(&f.transforms,obstacle,core.Transform{{5,0.5,2},1,{1,1,1}})
+    core.add(&f.obstacles,obstacle,Nav_Obstacle{half={0.5,0.5,0.5}})
+    for _ in 0..<3 {agents_test_step(&f,&g)}
+    testing.expect(t,f.nav.ready && f.nav.count>0)
+    testing.expect(t,len(g.run.query.points)==0 && len(g.run.refs)==0 && len(g.run.near)==0)
+    agents_test_walker(&f,&g,{2,0,2})
+    for _ in 0..<3 {agents_test_step(&f,&g)}
+    testing.expect(t,len(g.run.query.points)>0 && len(g.run.near)>0)
+}
+
 @(test)
 fliers_leave_a_u_shaped_cave_under_its_wall_and_step_aside_from_each_other :: proc(t:^testing.T) {
     f:Nav_Test
