@@ -152,18 +152,19 @@ bc6h_decodes_every_mode_as_the_encoder_reads_it :: proc(t:^testing.T) {
         append(&blocks,block)
     }
     modes:bit_set[0..<32]
+    bc6h_modes:=asset.BC6H_MODES
     for &block in blocks {
         expected:[16][3]u16
-        desc:bc67.BC6H_Block_Raw_Desc
-        if bc67.bc6h_analyze_block_raw(&desc,false,&block) {
+        if fields,ok:=asset.texture_bc6h_block_fields(block);ok {
             modes+={int(block[0]&0x1f) if block[0]&2!=0 else int(block[0]&3)}
-            weights:=WEIGHTS_3[:] if desc.mode.ib==3 else WEIGHTS_4[:]
-            subsets:=bc67.partition_of(desc.mode.ns,u32(desc.partition_id)).subset_mask
+            mode:=bc6h_modes[fields.mode]
+            weights:=WEIGHTS_3[:] if mode.ib==3 else WEIGHTS_4[:]
+            subsets:=bc67.partition_of(mode.ns,fields.partition).subset_mask
             for &texel,i in expected {
                 s:=(subsets>>(u32(i)*2))&3
-                w:=i32(weights[desc.inds[i]])
+                w:=i32(weights[fields.indices[i]])
                 for c in 0..<3 {
-                    low,high:=desc.endpoints_internal[c][s*2],desc.endpoints_internal[c][s*2+1]
+                    low,high:=fields.endpoints[c][s*2],fields.endpoints[c][s*2+1]
                     texel[c]=u16((((low*(64-w)+high*w+32)>>6)*31)>>6)
                 }
             }

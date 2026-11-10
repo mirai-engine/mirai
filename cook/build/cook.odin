@@ -12,6 +12,7 @@ import "core:sync"
 import "core:time"
 import "mirai:asset"
 import anim "mirai:std/anim"
+import lz_optimal "mirai:cook/compressor/lz"
 import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
@@ -58,7 +59,7 @@ Cook_Desc :: struct {
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
-    quick:bool,  // a cook that checks a change (a --dev game): asset.Pack.Quick in place of Ship
+    quick:bool,  // a cook that checks a change (a --dev game): lz_optimal.QUICK in place of SHIP
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
@@ -69,7 +70,7 @@ Cook_Import :: #type proc(source,folder:string,desc:^Cook_Desc,worker:jobs.Worke
 
 // How the assets of a cook are compressed.
 @(private="file")
-cook_pack :: proc(desc:Cook_Desc) -> asset.Pack {return .Quick if desc.quick else .Ship}
+cook_pack :: proc(desc:Cook_Desc) -> asset.Pack {return lz_optimal.QUICK if desc.quick else lz_optimal.SHIP}
 
 Cook_Error :: enum u8 {
     None,

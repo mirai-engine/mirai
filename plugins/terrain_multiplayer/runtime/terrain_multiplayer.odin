@@ -1093,7 +1093,7 @@ serve_packed :: proc(n:^Terrain_Net,sv:^Net_Serve,chunk:Net_Terrain_Page) -> boo
     total:=0
     if raw>0 {
         error:asset.Error
-        if total,error=asset.pack(&n.encoder,.Edit,n.raw[:raw],sv.packed[:]);error!=.None {return false}
+        if total,error=asset.pack(&n.encoder,asset.PACK_EDIT,n.raw[:raw],sv.packed[:]);error!=.None {return false}
     }
     base.truncate(&sv.packed,total)
     sv.chunk.total,sv.chunk.offset=u32(total),0

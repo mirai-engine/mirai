@@ -24,7 +24,7 @@ Text_Bench :: struct {
     container,text:int,       // bytes
     bare:int,                 // of the text without its schema, which pack does not read
     bulk:int,                 // of the files next to the text
-    packed:[Pack]int,         // of the text as one LZ stream of each level
+    packed:int,               // of the text as one LZ stream at PACK_EDIT
 }
 
 // Seconds of the best round: on the clock, and of them those the thread had a processor.
@@ -101,14 +101,14 @@ text_bench :: proc(t:^testing.T,doc:^Document,rounds:int) -> (b:Text_Bench,ok:bo
     }
     encoder:lz.Encoder;defer lz.encoder_destroy(&encoder)
     packed:=make([]u8,pack_bound(len(source)));defer delete(packed)
-    for p in Pack {b.packed[p],_=pack(&encoder,p,source,packed)}
+    b.packed,_=pack(&encoder,PACK_EDIT,source,packed)
     return b,true
 }
 
 @(private="file")
 text_bench_print :: proc(name:string,b:Text_Bench) {
     fmt.printfln("%s, container: save %.3f ms (cpu %.3f), load %.3f ms (cpu %.3f), %d bytes",name,b.save.wall*1000,b.save.cpu*1000,b.load.wall*1000,b.load.cpu*1000,b.container)
-    fmt.printfln("%s, text: write %.3f ms (cpu %.3f), read %.3f ms (cpu %.3f), %d bytes (%d without the schema, %d of bulk files; as LZ %d Edit, %d Quick, %d Ship)",name,b.write.wall*1000,b.write.cpu*1000,b.read.wall*1000,b.read.cpu*1000,b.text,b.bare,b.bulk,b.packed[.Edit],b.packed[.Quick],b.packed[.Ship])
+    fmt.printfln("%s, text: write %.3f ms (cpu %.3f), read %.3f ms (cpu %.3f), %d bytes (%d without the schema, %d of bulk files; as LZ %d)",name,b.write.wall*1000,b.write.cpu*1000,b.read.wall*1000,b.read.cpu*1000,b.text,b.bare,b.bulk,b.packed)
     fmt.printfln("%s, text / container: save %.1fx, load %.1fx, size %.1fx",name,b.write.wall/b.save.wall,b.read.wall/b.load.wall,f64(b.text)/f64(b.container))
 }
 

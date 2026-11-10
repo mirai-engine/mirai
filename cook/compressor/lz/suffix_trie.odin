@@ -1,7 +1,8 @@
-package match
+package lz_optimal
 
 import "base:intrinsics"
 import "mirai:std/compressor/lz/entropy"
+import "mirai:std/compressor/lz/match"
 
 // Find-all finder of the Optimal2+ levels: a suffix trie built incrementally, one suffix per
 // position. Positions are 1-based (0 is null); a negative child is a leaf at -child. Nodes keep the
@@ -123,7 +124,7 @@ read_firstbytes :: #force_inline proc "contextless" (p:[^]u8) -> u32 {
 alloc_node_chunk :: proc(f:^Suffix_Trie_Finder,node:int) -> bool {
     id:=node>>CHUNK_SHIFT
     if id>=len(f.node_chunks) {return false}
-    mem,data:=alloc_aligned(f.arena,St_Node,CHUNK_SIZE)
+    mem,data:=match.alloc_aligned(f.arena,St_Node,CHUNK_SIZE)
     if mem==nil {return false}
     f.node_chunks_mem[id]=mem
     f.node_chunks[id]=(^[CHUNK_SIZE]St_Node)(raw_data(data))
@@ -171,11 +172,11 @@ suffix_trie_release :: proc(f:^Suffix_Trie_Finder,arena:^entropy.Arena) {
 }
 
 @(private="file")
-report_max_len_match :: proc "contextless" (f:^Suffix_Trie_Finder,pairs:[^]Unpacked_Match_Pair,
+report_max_len_match :: proc "contextless" (f:^Suffix_Trie_Finder,pairs:[^]match.Unpacked_Match_Pair,
     max_pairs,count:int) #no_bounds_check {
     p:=pairs
     for i in 0..<count {
-        p[0]=Unpacked_Match_Pair{i32(f.size-i),i32(f.maxml_offs)}
+        p[0]=match.Unpacked_Match_Pair{i32(f.size-i),i32(f.maxml_offs)}
         p[1].length=0
         p=p[max_pairs:]
     }
@@ -186,7 +187,7 @@ Step :: enum u8 {Search, Promote, Branch, Done, Maxml}
 
 // Adds the suffixes of [pos,pos+chunk_size) and, when matches is not nil, writes their pairs.
 @(private)
-suffix_trie_chunk :: proc(f:^Suffix_Trie_Finder,chunk_size:int,matches:[^]Unpacked_Match_Pair,
+suffix_trie_chunk :: proc(f:^Suffix_Trie_Finder,chunk_size:int,matches:[^]match.Unpacked_Match_Pair,
     max_pairs:int) -> int #no_bounds_check {
     ubuf:=f.ubuf
     size:=f.size
@@ -476,7 +477,7 @@ suffix_trie_chunk :: proc(f:^Suffix_Trie_Finder,chunk_size:int,matches:[^]Unpack
                 pairs:=matches[(pos-chunk_start)*max_pairs:]
                 curoff:=pdiff(ptr,match_ptr)
                 np:=1
-                pairs[0]=Unpacked_Match_Pair{i32(curml),i32(curoff)}
+                pairs[0]=match.Unpacked_Match_Pair{i32(curml),i32(curoff)}
                 pos_to_beat:=pos-curoff
                 steps_left:=ST_PARENT_STEPS
                 for parent!=0 {
@@ -484,7 +485,7 @@ suffix_trie_chunk :: proc(f:^Suffix_Trie_Finder,chunk_size:int,matches:[^]Unpack
                     if int(n.pos)>pos_to_beat && np<max_pairs {
                         length:=n.depth
                         if length<=2 {break}
-                        pairs[np]=Unpacked_Match_Pair{length,i32(pos)-n.pos}
+                        pairs[np]=match.Unpacked_Match_Pair{length,i32(pos)-n.pos}
                         np+=1
                         pos_to_beat=int(n.pos)
                     }
@@ -516,7 +517,7 @@ suffix_trie_chunk :: proc(f:^Suffix_Trie_Finder,chunk_size:int,matches:[^]Unpack
                 out:=matches[(mp-chunk_start)*max_pairs:]
                 if l>out[0].length {
                     for i:=max_pairs-1;i>0;i-=1 {out[i]=out[i-1]}
-                    out[0]=Unpacked_Match_Pair{l,i32(off)}
+                    out[0]=match.Unpacked_Match_Pair{l,i32(off)}
                 }
             }
         }

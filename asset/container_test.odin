@@ -450,15 +450,15 @@ a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
     // Its pieces compressed at once on the workers are the same file, also with a last piece of
     // fewer bytes than the encoder stores raw on its own.
     parallel:serial.Writer;serial.writer_init(&parallel);defer serial.writer_destroy(&parallel)
-    testing.expect_value(t,blob_build(&parallel,KIND_TEST,0,{},{},{},chunks[:],&scratch,.Edit,{&js,jobs.OWNER,nil}),Error.None)
+    testing.expect_value(t,blob_build(&parallel,KIND_TEST,0,{},{},{},chunks[:],&scratch,PACK_EDIT,{&js,jobs.OWNER,nil}),Error.None)
     testing.expect(t,mem.compare(serial.writer_bytes(&parallel),serial.writer_bytes(&w))==0)
     {
         short:=data[:2*PACK_PIECE+100]
         e:lz.Encoder;lz.encoder_init(&e);defer lz.encoder_destroy(&e)
         a:=make([]u8,pack_bound(len(short)));defer delete(a)
         b:=make([]u8,pack_bound(len(short)));defer delete(b)
-        na,ea:=pack(&e,.Edit,short,a)
-        nb,eb:=pack(&e,.Edit,short,b,{&js,jobs.OWNER,nil})
+        na,ea:=pack(&e,PACK_EDIT,short,a)
+        nb,eb:=pack(&e,PACK_EDIT,short,b,{&js,jobs.OWNER,nil})
         testing.expect(t,ea==.None && eb==.None && na==nb && mem.compare(a[:na],b[:nb])==0)
     }
     pieces:Piece_Decoders

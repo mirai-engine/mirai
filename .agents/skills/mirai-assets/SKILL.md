@@ -11,9 +11,8 @@ description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .so
 # Mirai assets
 
 The packages are `std/serial` (streams, schemas, migration, paths, JSON), the codecs
-(`std/compressor`
-and its packages, `cook/compressor/bc7split`) and `asset` (container, compression, typed tables,
-asset types, scene/prefab, registry).
+(`std/compressor` and its packages, `cook/compressor/lz`, `cook/compressor/bc7split`) and
+`asset` (container, compression, typed tables, asset types, scene/prefab, registry).
 
 ## Map
 
@@ -98,8 +97,7 @@ asset types, scene/prefab, registry).
   (`unpack`, `bc7split.decode`, `schema_read`, `text_read`) allocate no more than the input backs.
 - **LZ is the only codec** (the user's choice), for every class of data: load-once chunks,
   streamed mesh pages and texture levels (BC7 after BC7Split). Its decode with the loader's jobs
-  keeps up with an NVMe; the levels of `Edit` and `Ship` are `PACK_LEVELS`, and a stream of
-  another codec is `Unsupported`.
+  keeps up with an NVMe; a stream of another codec is `Unsupported`.
 - **Decoders are preallocated.** `compressor.Decoder` and `bc7split.Decoder` hold all the scratch,
   allocated once by whoever reads; `decompress` and `bc7split.decode` never allocate, and for any
   input never read outside `src` nor write outside `dst`.
@@ -107,7 +105,13 @@ asset types, scene/prefab, registry).
   encoder; the
   encoders import the decoder's format. A rule both sides share (a header, a constant, the
   prediction of packed code lengths) is written once, in `std/compressor/format.odin`.
+- **A game compiles only the fast encoder.** `std/compressor/lz` parses the levels a save uses;
+  the optimal parser and its match finders are in `cook/compressor/lz`, and a write reaches them
+  through its `Pack`: `asset` never imports `cook`, and every level is the same stream format.
 - **The encoders are deterministic**: the same input, codec and level give the same bytes.
+- **A block format is described once.** `asset/texture_bc7.odin` and `asset/texture_bc6h.odin`
+  hold the modes, partitions, anchors, weights and decode of BC7 and BC6H; the encoders of
+  `cook/compressor/texture` build their records from those tables and keep no rows of their own.
 - `asset.Types` is the context with the schema of the program's types: it is created once and
   passed to reads and writes.
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
@@ -146,11 +150,20 @@ asset types, scene/prefab, registry).
   `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
   with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
 - `.pose`, `.blend` and `.agraph` are verified in their [plugin](../mirai-plugins/SKILL.md).
-- Compression: `mirai test std/compressor/lz` (every level decodes through `std/compressor`),
+- Compression: `mirai test std/compressor/lz` and `mirai test cook/compressor/lz` (every level
+  decodes through `std/compressor`),
   `asset/container_test.odin` (chunks with alignment and compression) and the pages in
   `asset/mesh_page_code_test.odin`. Codec packages: `mirai test` of `std/compressor` (library
   streams, hostile streams, decoding without allocating), of each package under
   `std/compressor/lz` (hostile inputs, determinism), of `std/compressor/bc7split` and of
   `cook/compressor/bc7split` (the encoder matches the library).
+- A change to the LZ decoder: `mutated_streams_never_escape_their_buffers` with a large budget,
+  in the background, under the sanitizer and with `COMPRESSOR_CHECKED`, which compiles the tables
+  the decoder builds from a stream as bounds-checked slices. The test changes bytes anywhere and
+  the headers and tables of valid streams, and poisons the guards around the stream, the output
+  and the scratch, so the sanitizer reports any read or write outside them:
+  `mirai test std/compressor mutated_streams_never_escape_their_buffers -sanitize:address
+  -define:COMPRESSOR_CHECKED=true -define:COMPRESSOR_MUTATIONS=4000000 --timeout 0`.
+  `-define:COMPRESSOR_MUTATION_SEED=<n>` gives another sequence, for runs side by side.
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

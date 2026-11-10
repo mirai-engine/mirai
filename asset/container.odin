@@ -49,13 +49,11 @@ fourcc_text :: proc "contextless" (value:Fourcc,buffer:^[4]u8) -> string {
 
 Compression :: enum u8 {None,LZ}
 
-// How hard a write compresses: Edit in the time of a save or an import, Ship to the smallest
-// stream at a decode the loader sustains (the cooking of a shipped game), Quick for a cook that
-// checks a change (a --dev game): a few times faster to write and a little larger.
-Pack :: enum u8 {Edit,Ship,Quick}
-
-// The LZ level of each pack.
-PACK_LEVELS :: [Pack]lz.Level{.Edit=.SuperFast,.Ship=.Optimal5,.Quick=.Optimal1}
+// How hard a write compresses. A program writes with PACK_EDIT, in the time of a save or an
+// import; a cook writes with the packs of cook/compressor/lz (SHIP and QUICK), which carry the
+// parser of their levels: a game does not compile it.
+Pack :: lz.Mode
+PACK_EDIT :: Pack{level=compressor.LEVEL_SUPER_FAST}
 
 // What the encoder takes in one call: a larger chunk is stored as it is.
 @(private) PACK_MAX :: 1<<30
@@ -129,9 +127,8 @@ pack_bound :: proc "contextless" (size:int) -> int {return lz.compress_bound(siz
 // workers, into the same bytes.
 pack :: proc(e:^lz.Encoder,p:Pack,src,dst:[]u8,worker:=jobs.Worker_Ref{}) -> (size:int,error:Error) {
     if len(src)>=PACK_MAX {return 0,.Too_Large}
-    levels:=PACK_LEVELS
-    if worker.system!=nil && len(src)>PACK_PIECE {return pack_pieces(levels[p],src,dst,worker)}
-    written,encode_error:=lz.compress(e,levels[p],src,dst,PACK_PIECE)
+    if worker.system!=nil && len(src)>PACK_PIECE {return pack_pieces(p,src,dst,worker)}
+    written,encode_error:=lz.compress(e,p,src,dst,PACK_PIECE)
     switch encode_error {
     case .None:
     case .Out_Of_Memory: return 0,.Out_Of_Memory
@@ -142,7 +139,7 @@ pack :: proc(e:^lz.Encoder,p:Pack,src,dst:[]u8,worker:=jobs.Worker_Ref{}) -> (si
 
 @(private="file")
 Pack_Pieces :: struct {
-    level:lz.Level,
+    pack:Pack,
     src:[]u8,
     out:[][]u8,
     sizes:[]int,
@@ -152,10 +149,10 @@ Pack_Pieces :: struct {
 // The pieces of src compressed on the workers of worker, each with an encoder of its own, then
 // put in order into dst.
 @(private="file")
-pack_pieces :: proc(level:lz.Level,src,dst:[]u8,worker:jobs.Worker_Ref) -> (size:int,error:Error) {
+pack_pieces :: proc(p:Pack,src,dst:[]u8,worker:jobs.Worker_Ref) -> (size:int,error:Error) {
     heap:=runtime.heap_allocator()
     count:=(len(src)+PACK_PIECE-1)/PACK_PIECE
-    work:=Pack_Pieces{level=level,src=src}
+    work:=Pack_Pieces{pack=p,src=src}
     a,b,c:mem.Allocator_Error
     work.out,a=make([][]u8,count,heap)
     work.sizes,b=make([]int,count,heap)
@@ -174,7 +171,7 @@ pack_pieces :: proc(level:lz.Level,src,dst:[]u8,worker:jobs.Worker_Ref) -> (size
             work.out[i]=out
             e:lz.Encoder
             lz.encoder_init(&e,heap)
-            work.sizes[i],work.errors[i]=lz.compress_piece(&e,work.level,from,out)
+            work.sizes[i],work.errors[i]=lz.compress_piece(&e,work.pack,from,out)
             lz.encoder_destroy(&e)
         }
     }
@@ -428,7 +425,7 @@ Build_Chunk :: struct {
 
 // Writes a whole file into w, which has to be empty. scratch holds a chunk
 // while it is compressed.
-blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,p:=Pack.Edit,worker:=jobs.Worker_Ref{}) -> Error {
+blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> Error {
     encoder:lz.Encoder
     lz.encoder_init(&encoder,scratch.allocator if scratch.allocator.procedure!=nil else context.allocator)
     defer lz.encoder_destroy(&encoder)

@@ -322,9 +322,10 @@ Numbered layers; a package only imports lower layers.
 - **0** `std/*`: standard library (base, math, serial, compressor, jobs, spatial, geom, anim, ai,
   input, subprocess, ui_format). It does not depend on the engine. `std/compressor` decodes LZ
   streams and `std/compressor/bc7split` restores BC7Split blocks; `std/compressor/lz` encodes the
-  streams with `std/compressor/lz/entropy`, `match` and `lz`, on top of the decoder's format.
-  `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
-  limits), which `ui` builds and `asset` checks without importing each other.
+  streams with `std/compressor/lz/entropy`, `match` and `parse`, on top of the decoder's format,
+  at the levels a program saves with. `std/ui_format` is what the structure of a `.ui` is judged
+  by (node kinds, override fields, limits), which `ui` builds and `asset` checks without
+  importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
 - **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
@@ -343,8 +344,9 @@ Numbered layers; a package only imports lower layers.
   they combine, and wind), `render`, `audio`, `gui`, `input` (devices, actions, seats, driving and
   `Move_Input`), `camera` (each seat's camera and the game view), `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7,
-  and `cook/compressor/bc7split`), importers, shaders, `cook/workspace` (a worktree's main
+  stored by what makes it), `cook/compressor/lz` (the optimal levels of the LZ encoder, which only
+  a cook writes with), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
+  `cook/compressor/bc7split`), importers, shaders, `cook/workspace` (a worktree's main
   checkout, the dependencies folder, shared cache and locks between processes), `cook/image` (PNG
   to RGBA8, difference, statistics, montage, crop, enlargement and pixels of captures),
   `cook/movie` (the files of a recording: half EXR, 16-bit PNG and WAV) and `cook/install` (a
@@ -377,4 +379,5 @@ The low-level packages `render`, `audio` and `std/anim`, and the `physics` solve
 `mirai_render`, `mirai_audio`, `mirai_anim` and `mirai_physics` so they do not clash with the
 libraries that use them; these import them with aliases (`gpu`, `mixer`, `lib`, `sim`). For the
 same reason `cook/compressor/bc7split` is declared `bc7split_encode`, apart from
-`std/compressor/bc7split`.
+`std/compressor/bc7split`, and `cook/compressor/lz` is declared `lz_optimal`, apart from
+`std/compressor/lz`.

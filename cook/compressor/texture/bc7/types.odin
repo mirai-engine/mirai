@@ -1,6 +1,7 @@
 package bc7
 
 import "core:simd"
+import "mirai:asset"
 import "mirai:cook/compressor/texture/bc67"
 import "mirai:cook/compressor/texture/common"
 
@@ -179,7 +180,7 @@ Block_And_Input :: struct {
 // RGBA lerp of the index weights of ib bits.
 @(private)
 lerp_factor :: #force_inline proc "contextless" (ib,i:int) -> int {
-    return int(bc67.LERP_FACTOR[ib&7][i&15])
+    return int(asset.BC7_WEIGHTS[ib&7][i&15])
 }
 
 // cvtss2si: nearest, ties to even; NaN and out of range give min(i32).

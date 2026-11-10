@@ -48,8 +48,10 @@ insertion_sort :: proc "contextless" (a:[]$T) #no_bounds_check {
 @(private="file")
 unpack_counts4 :: proc "contextless" (
     l_bits:int,counts:^Tans_Counts,b:^Bits,
-) -> bool #no_bounds_check {
-    seen:[256]bool
+) -> bool {
+    seen_table:[256]bool
+    seen:=view(&seen_table)
+    singles_of,larger_of:=view(&counts.singles),view(&counts.larger)
     L:=u32(1)<<uint(l_bits)
     bits_refill_safe(b)
     num_non_zero:=int(bits_get(b,3))+2
@@ -66,9 +68,9 @@ unpack_counts4 :: proc "contextless" (
         if cur==0 {return false}
         seen[sym]=true
         if cur==1 {
-            counts.singles[singles]=u8(sym);singles+=1
+            singles_of[singles]=u8(sym);singles+=1
         } else {
-            counts.larger[larger]=u32(sym)<<16|cur;larger+=1
+            larger_of[larger]=u32(sym)<<16|cur;larger+=1
         }
         sum+=cur
         if sum>=L {return false}
@@ -78,9 +80,9 @@ unpack_counts4 :: proc "contextless" (
     if seen[mps] {return false}
     last:=L-sum
     if last<cur || last<=1 {return false}
-    counts.larger[larger]=u32(mps)<<16|last;larger+=1
-    insertion_sort(counts.singles[:singles])
-    insertion_sort(counts.larger[:larger])
+    larger_of[larger]=u32(mps)<<16|last;larger+=1
+    insertion_sort(singles_of[:singles])
+    insertion_sort(larger_of[:larger])
     counts.num_singles=singles
     counts.num_larger=larger
     return true
@@ -95,22 +97,25 @@ unfold_delta_clamped :: #force_inline proc "contextless" (delta:u32,pred:i32) ->
 @(private="file")
 unpack_counts_delta :: proc "contextless" (
     l_bits:int,counts:^Tans_Counts,vbl:^Bits,
-) -> bool #no_bounds_check {
+) -> bool {
+    singles_of,larger_of:=view(&counts.singles),view(&counts.larger)
     k:=int(bits_get(vbl,3))
     got:=int(bits_get(vbl,8))+1
     if got<2 {return false}
     num_eg:=decode_alphabet_shape_num_eg(got,vbl)
     bb:=bits_to_block(vbl)
     num_unary:=got+num_eg
-    unary:[256+255+16]u8 = ---
-    up:=([^]u8)(&unary[0])
+    unary_table:[256+255+16]u8 = ---
+    unary:=view(&unary_table)
+    up:=([^]u8)(&unary_table[0])
     if decode_unary_block(up,num_unary,&bb)!=num_unary {return false}
     store64(up[num_unary:],0)
     store64(up[num_unary+8:],0)
     vb:Bits
     bits_from_block(&vb,&bb)
-    run_lens:[128*2+1+8]u16 = ---
-    pairs:=decode_alphabet_shape_runlens(&run_lens[0],u32(got),u32(num_eg),up[got:],&vb)
+    run_lens_table:[128*2+8+1]u16 = ---
+    run_lens:=view(&run_lens_table)
+    pairs:=decode_alphabet_shape_runlens(&run_lens_table,u32(got),u32(num_eg),up[got:],&vb)
     if pairs<0 {return false}
     vbl^=vb
     bits_refill_safe(vbl)
@@ -133,8 +138,8 @@ unpack_counts_delta :: proc "contextless" (
             count:=unfold_delta_clamped(delta,pred)
             pred_state=pred_state-pred+min(count,pred*2)
             count+=1
-            counts.singles[singles]=u8(i)
-            counts.larger[larger]=(i<<16)+u32(count)
+            singles_of[singles]=u8(i)
+            larger_of[larger]=(i<<16)+u32(count)
             singles+=int(count==1)
             larger+=int(count>=2)
             sum+=u32(count)
@@ -169,10 +174,12 @@ entry32 :: #force_inline proc "contextless" (e:Tans_Entry) -> u32 {return transm
 @(private="file")
 tans_fill :: proc "contextless" (
     table:[^]Tans_Entry,l_bits:int,counts:^Tans_Counts,
-) #no_bounds_check {
+) {
+    singles_of,larger_of:=view(&counts.singles),view(&counts.larger)
     L:=1<<uint(l_bits)
     t:=([^]u32)(table)
-    bucket:[TANS_BUCKET_SIZE]int
+    bucket_table:[TANS_BUCKET_SIZE]int
+    bucket:=view(&bucket_table)
     total:=L-counts.num_singles
     even:=total>>TANS_BUCKET_BITS
     rem:=total&TANS_BUCKET_MASK
@@ -186,13 +193,13 @@ tans_fill :: proc "contextless" (
         e:=entry32({len=u8(l_bits)})
         dest:=total
         for i in 0..<counts.num_singles {
-            t[dest]=e|u32(counts.singles[i])<<8
+            t[dest]=e|u32(singles_of[i])<<8
             dest+=1
         }
     }
     cumulative:=0
     for li in 0..<counts.num_larger {
-        packed:=counts.larger[li]
+        packed:=larger_of[li]
         sym:=u8(packed>>16)
         count:=int(packed&0xffff)
         if count<=TANS_BUCKET_SIZE {

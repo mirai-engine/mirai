@@ -1,7 +1,8 @@
-package match
+package lz_optimal
 
 import "base:intrinsics"
 import "mirai:std/compressor/lz/entropy"
+import "mirai:std/compressor/lz/match"
 
 // Long range matcher: a sorted table of rolling hashes of every `step`-th position of a chunk,
 // with a jump table on the top hash bits and a blocked Bloom filter. A cascade is a binary tree
@@ -266,7 +267,7 @@ lrm_find_match :: proc "contextless" (lrm:^Lrm,hash:u32,ptr,ptrend:[^]u8,match_o
     for it<len(entries) && entries[it].hash==hash {
         vs:=padd(lrm.match_base_ptr,int(entries[it].pos32))
         ml:int
-        if uintptr(vs)<uintptr(ptr) && havematch_better(ptr,vs,ptrend,ml_must_be_above,&ml) {
+        if uintptr(vs)<uintptr(ptr) && match.havematch_better(ptr,vs,ptrend,ml_must_be_above,&ml) {
             ml_must_be_above=ml-1
             off:=pdiff(ptr,vs)
             if off<best_off {

@@ -218,7 +218,7 @@
   and `rhi/shaders_gen_test.odin`, `@(rodata)` tables.
 - The `render` table embeds the code of its stages and then of its program stages as one LZ
   stream per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`), each stage an
-  `Embedded_Shader` with its size in it. It is packed `Edit`, and `Ship` when the generation is
+  `Embedded_Shader` with its size in it. It is packed `PACK_EDIT`, and `SHIP` when the generation is
   asked to ship (`Options.ship`: the release builds of the engine); either serves every build.
   `renderer_init` decodes it once (`embedded_shaders_decode`) unless it starts with a loaded
   generation. The `rhi` test table loads each stage as it is.

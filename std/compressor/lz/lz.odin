@@ -10,10 +10,30 @@ import "mirai:std/compressor/lz/match"
 // LZ encoder: the output is the standard stream, the same bytes the reference encoder
 // writes with default options. This file is the block framing: blocks of
 // BLOCK_LEN raw bytes with one large quantum each, split into chunks the codec encodes; the
-// find-all match finders of the optimal levels run here, one block ahead of the parse.
+// find-all match finders of the optimal levels fill their pairs here, one block ahead of the
+// parse.
 
-Level :: enum i8 {
-    SuperFast=1, VeryFast, Fast, Normal, Optimal1, Optimal2, Optimal3, Optimal4, Optimal5,
+// The levels this package parses. The optimal ones are in cook/compressor/lz, with their parser
+// and match finders: a program that only saves does not compile them.
+Level :: enum i8 {SuperFast=1, VeryFast, Fast, Normal}
+
+// How compress encodes: a level (compressor.LEVEL_*) and, for one above Normal, what parses it.
+Mode :: struct {
+    level:i32,
+    parser:parse.Optimal,
+    // The blocks of the whole input through compress_sub, with the match finders of the level.
+    whole:proc(f:^Framing) -> int,
+}
+
+mode :: proc "contextless" (level:Level) -> Mode {return {level=i32(level)}}
+
+@(private)
+mode_valid :: proc "contextless" (m:Mode) -> bool {
+    if m.level>=compressor.LEVEL_OPTIMAL1 {
+        return m.level<=compressor.LEVEL_OPTIMAL5 && m.parser.setup!=nil &&
+            m.parser.encode_chunk!=nil && m.whole!=nil
+    }
+    return m.level>=compressor.LEVEL_SUPER_FAST
 }
 
 Error :: enum u8 {None, Output_Too_Small, Out_Of_Memory, Invalid}
@@ -56,8 +76,8 @@ compress_bound :: proc "contextless" (size:int) -> int {
 // Compresses src into dst. Single-threaded and deterministic; an empty src writes nothing.
 // piece_len, a multiple of BLOCK_LEN, cuts src into pieces of that many bytes, each a stream of
 // its own that decodes without the others: the library's seekChunkReset with seekChunkLen.
-compress :: proc(e:^Encoder, level:Level, src:[]u8, dst:[]u8, piece_len:=0) -> (size:int, error:Error) {
-    if e==nil || level<.SuperFast || level>.Optimal5 {return 0,.Invalid}
+compress :: proc(e:^Encoder, mode:Mode, src:[]u8, dst:[]u8, piece_len:=0) -> (size:int, error:Error) {
+    if e==nil || !mode_valid(mode) {return 0,.Invalid}
     if piece_len<0 || piece_len%compressor.BLOCK_LEN!=0 {return 0,.Invalid}
     if e.allocator.procedure==nil {e.allocator=context.allocator}
     n:=len(src)
@@ -71,7 +91,7 @@ compress :: proc(e:^Encoder, level:Level, src:[]u8, dst:[]u8, piece_len:=0) -> (
     }
     step:=piece_len>0 ? piece_len : n
     for at:=0;at<n;at+=step {
-        size+=compress_piece(e,level,src[at:min(n,at+step)],dst[size:]) or_return
+        size+=compress_piece(e,mode,src[at:min(n,at+step)],dst[size:]) or_return
     }
     return size,.None
 }
@@ -79,8 +99,8 @@ compress :: proc(e:^Encoder, level:Level, src:[]u8, dst:[]u8, piece_len:=0) -> (
 // One piece of a stream compress writes in pieces, past the check the reference
 // encoder makes for small inputs: the pieces of a src of more
 // than STORED_MAX bytes, each compressed apart and in order, are the bytes compress writes.
-compress_piece :: proc(e:^Encoder, level:Level, src:[]u8, dst:[]u8) -> (size:int, error:Error) {
-    if e==nil || level<.SuperFast || level>.Optimal5 || len(src)==0 || len(src)>=1<<30 {return 0,.Invalid}
+compress_piece :: proc(e:^Encoder, mode:Mode, src:[]u8, dst:[]u8) -> (size:int, error:Error) {
+    if e==nil || !mode_valid(mode) || len(src)==0 || len(src)>=1<<30 {return 0,.Invalid}
     if e.allocator.procedure==nil {e.allocator=context.allocator}
     n:=len(src)
     bound:=compress_bound(n)
@@ -91,13 +111,16 @@ compress_piece :: proc(e:^Encoder, level:Level, src:[]u8, dst:[]u8) -> (size:int
     arena:=entropy.arena_make(e.allocator)
     f:Framing
     f.arena=&arena
-    f.level=i32(level)
-    ok:=parse.setup(&f.parser,f.level,raw,&arena)
+    f.level=mode.level
+    f.output=e.output
+    ok:=parse.setup(&f.parser,f.level,raw,&arena,optimal=mode.parser)
     if ok {configure(&f,&f.parser)}
     total:=-1
     if ok {
         f.huff_space=entropy.arena_alloc(&arena,u8,huff_space_size(f.chunk_len)+PAD)
-        if f.huff_space!=nil {total=compress_whole(&f,raw,raw_data(e.output))}
+        if f.huff_space!=nil {
+            if f.parser.optimal.setup!=nil {total=mode.whole(&f)} else {total=compress_sub(&f,0,n,0)}
+        }
     }
     parse.destroy(&f.parser,&arena)
     entropy.arena_free(&arena,f.huff_space)
@@ -119,14 +142,22 @@ grow :: proc(e:^Encoder, buffer:^[]u8, size:int) -> bool {
     return true
 }
 
-// The fields of newlz_vtable the framing reads, and the LZ encoder they come from.
-@(private)
+// The fields of newlz_vtable the framing reads, and the LZ encoder they come from. The input of
+// the piece is parser.raw.
 Framing :: struct {
     arena:^entropy.Arena,
     level:i32, lambda:f32, entropy_flags:u32, chunk_len:int, try_huff_chunks:bool,
-    decode_type:i32, finder:match.Finder_Kind, num_pairs:int, wants_dic_limit_splits:bool,
+    decode_type:i32,
     parser:parse.Encoder,
     huff_space:[]u8,
+    output:[]u8,
+}
+
+// The find-all matches of an optimal level: fill writes the pairs of the next block_len
+// positions, match.NEWLZ_MATCH_NUM_PAIRS per position, and returns less than zero when it fails.
+Block_Matches :: struct {
+    fill:proc(finder:rawptr, block_len:int, matches:[]match.Unpacked_Match_Pair) -> int,
+    finder:rawptr,
 }
 
 @(private)
@@ -136,9 +167,6 @@ configure :: proc(f:^Framing, c:^parse.Encoder) {
     f.chunk_len=c.chunk_len
     f.try_huff_chunks=c.try_huff_chunks
     f.decode_type=c.decode_type
-    f.finder=c.finder
-    f.num_pairs=c.find_all_matches_num_pairs
-    f.wants_dic_limit_splits=c.wants_dic_limit_splits
 }
 
 // newlz_literal_space_reserve_size: the scratch the whole-chunk entropy array is written to.
@@ -198,7 +226,7 @@ encode_block :: proc(f:^Framing, dictionary_base:[^]u8, block_ptr:[^]u8, block_l
         chunk_ptr:=padd(block_ptr,done)
         chunk_len:=min(block_len-done,f.chunk_len)
         pairs:[^]match.Unpacked_Match_Pair
-        if matches!=nil {pairs=matches[done*f.num_pairs:]}
+        if matches!=nil {pairs=matches[done*match.NEWLZ_MATCH_NUM_PAIRS:]}
         if pdiff(comp_end,comp_ptr)<chunk_len+compressor.CHUNK_HEADER_SIZE {return block_len+1}
         raw_J:=compressor.CHUNK_HEADER_SIZE+entropy.speedfit_memcpy_array_j(lambda,chunk_len)
         entropy.speedfit_deadlines_lz(&deadlines,chunk_len)
@@ -288,90 +316,38 @@ compress_block :: proc(f:^Framing, comp:[^]u8, raw_ptr:[^]u8, block_pos:int, blo
     return compressor.BLOCK_HEADER_SIZE+compressor.QUANTUM_HEADER_SIZE+comp_len
 }
 
-// newlz_compress_vtable_sub: the blocks of raw[0:raw_len), with the finder (if any) filling the
-// match pairs of each block just before it is parsed. Returns the comp length or -1.
-@(private)
-compress_sub :: proc(f:^Framing, raw:[^]u8, raw_len:int, comp:[^]u8, dictionary_base:[^]u8,
-    zero_pos:[^]u8, finder:match.Incremental_Finder) -> int {
+// newlz_compress_vtable_sub: the blocks of the raw_len input bytes at raw_at, written at comp_at
+// of the output, with found (if any) filling the match pairs of each block just before it is
+// parsed. Returns the comp length or -1.
+compress_sub :: proc(f:^Framing, raw_at,raw_len:int, comp_at:int, found:=Block_Matches{}) -> int {
+    if f==nil || f.arena==nil || raw_at<0 || raw_len<=0 || raw_len>len(f.parser.raw)-raw_at ||
+        comp_at<0 || compress_bound(raw_len)>len(f.output)-comp_at {return -1}
+    if f.chunk_len<=0 || f.try_huff_chunks && len(f.huff_space)<huff_space_size(f.chunk_len) {
+        return -1
+    }
+    dictionary_base:=raw_data(f.parser.raw)
+    raw:=padd(dictionary_base,raw_at)
+    comp:=padd(raw_data(f.output),comp_at)
     matches:[]match.Unpacked_Match_Pair
-    if finder!=nil {
+    if found.fill!=nil {
         matches=entropy.arena_alloc(f.arena,match.Unpacked_Match_Pair,
-            min(compressor.BLOCK_LEN,raw_len)*f.num_pairs)
+            min(compressor.BLOCK_LEN,raw_len)*match.NEWLZ_MATCH_NUM_PAIRS)
         if matches==nil {return -1}
     }
     defer entropy.arena_free(f.arena,matches)
     comp_ptr:=comp
     for done:=0;done<raw_len; {
         block_len:=min(compressor.BLOCK_LEN,raw_len-done)
-        if finder!=nil {
-            if match.incremental_process_chunk(finder,block_len,matches,f.num_pairs)<0 {return -1}
+        if found.fill!=nil {
+            if found.fill(found.finder,block_len,matches)<0 {return -1}
         }
         raw_ptr:=padd(raw,done)
         reset:=pdiff(raw_ptr,dictionary_base)==0
-        n:=compress_block(f,comp_ptr,raw_ptr,pdiff(raw_ptr,zero_pos),block_len,reset,
+        n:=compress_block(f,comp_ptr,raw_ptr,pdiff(raw_ptr,dictionary_base),block_len,reset,
             dictionary_base,raw_data(matches))
         if f.arena.failed {return -1}
         comp_ptr=padd(comp_ptr,n)
         done+=block_len
     }
     return pdiff(comp_ptr,comp)
-}
-
-// newlz_compress_vtable for an input without dictionary. Above the local dictionary size the
-// suffix trie is rebuilt over windows of half of it, with a long range matcher for what the
-// window no longer sees. The parse still takes the whole input as its dictionary base, as the
-// library does (its source passes the window start).
-@(private)
-compress_whole :: proc(f:^Framing, raw:[]u8, comp:[^]u8) -> int {
-    base:=raw_data(raw)
-    n:=len(raw)
-    if f.finder==.None {return compress_sub(f,base,n,comp,base,base,nil)}
-    if n<=compressor.BLOCK_LEN {
-        finder:=match.incremental_create(f.finder,base,n,0,nil,f.arena)
-        if finder==nil {return -1}
-        defer match.incremental_release(&finder,f.arena)
-        return compress_sub(f,base,n,comp,base,base,finder)
-    }
-    max_local:=MAX_LOCAL_DICTIONARY
-    if !f.wants_dic_limit_splits {max_local=max(max_local,1<<26)}
-    max_sub:=n
-    cascade:^match.Lrm_Cascade
-    if max_local<n {
-        max_sub=max_local/2
-        if f.level>=i32(Level.Optimal1) {
-            chunks:=(n+max_sub-1)/max_sub
-            last_chunk_dic_start:=chunks*max_sub-max_local
-            cascade=match.lrm_create_cascade_incremental(base,last_chunk_dic_start,match.LRM_STEP,
-                match.LRM_JUMP_BITS,0,max_sub,match.LRM_HASH_LENGTH,f.arena)
-            if cascade==nil {return -1}
-        }
-    }
-    defer match.lrm_destroy_cascade(cascade)
-    total:=0
-    for pos:=0;pos<n; {
-        remaining:=n-pos
-        cur:=min(remaining,max_sub)
-        if pos==0 {cur=min(remaining,max_local)}
-        if remaining<=(max_sub*5)/4 {cur=remaining}
-        backup:=0
-        if cur<max_local {backup=min(pos,max_sub,max_local-cur)}
-        raw_ptr:=padd(base,pos)
-        start:=padd(raw_ptr,-backup)
-        set:match.Lrm_Set
-        lrm_set:^match.Lrm_Set
-        if cascade!=nil && backup<pos {
-            if !match.lrm_cascade_get_set_align_update_incremental(cascade,&set,start,raw_ptr) {
-                return -1
-            }
-            lrm_set=&set
-        }
-        finder:=match.incremental_create(f.finder,start,backup+cur,backup,lrm_set,f.arena)
-        if finder==nil {return -1}
-        k:=compress_sub(f,raw_ptr,cur,padd(comp,total),base,base,finder)
-        match.incremental_release(&finder,f.arena)
-        if k<0 {return -1}
-        total+=k
-        pos+=cur
-    }
-    return total
 }
