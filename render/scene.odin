@@ -1335,6 +1335,21 @@ mesh_shown :: proc(r: ^Renderer, handle: u32) {
 // have other boxes. The tree keeps its shape, refit, until it fits them too badly.
 @(private)
 instances_moved :: proc(s: ^Scene_State) {
+	bounds_settle(s)
+	// A move is one call a frame: the tree is refit now, unless it is to be built again anyway.
+	if !s.tlas_stale {
+		if tlas_refit(s) > s.tlas_cost * TLAS_REFIT_SLACK {
+			tlas_build(s)
+			s.tlas_refs_dirty = true
+		}
+		s.tlas_nodes_dirty = true
+	}
+	s.tlas_dirty = true
+}
+
+// The box of the instances shown, from those of each.
+@(private)
+bounds_settle :: proc(s: ^Scene_State) {
 	s.has_bounds = false
 	s.bounds_min = {1e30, 1e30, 1e30}
 	s.bounds_max = {-1e30, -1e30, -1e30}
@@ -1351,15 +1366,6 @@ instances_moved :: proc(s: ^Scene_State) {
 			s.has_bounds = true
 		}
 	}
-	// A move is one call a frame: the tree is refit now, unless it is to be built again anyway.
-	if !s.tlas_stale {
-		if tlas_refit(s) > s.tlas_cost * TLAS_REFIT_SLACK {
-			tlas_build(s)
-			s.tlas_refs_dirty = true
-		}
-		s.tlas_nodes_dirty = true
-	}
-	s.tlas_dirty = true
 }
 
 // The tree of the instances once a frame, whatever the updates before it
@@ -1368,6 +1374,8 @@ instances_moved :: proc(s: ^Scene_State) {
 // walk every instance.
 @(private)
 tlas_settle :: proc(s: ^Scene_State) {
+	// Instances that came, went, moved or were hidden by scene_update: the box of the scene follows.
+	if s.tlas_stale || s.tlas_classify || s.tlas_moved {bounds_settle(s)}
 	if s.tlas_stale {
 		tlas_build(s)
 		s.tlas_nodes_dirty, s.tlas_refs_dirty = true, true

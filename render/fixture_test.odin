@@ -77,7 +77,9 @@ scene_lights_given :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, en
 }
 
 // The instances, the lights, the sun and the sky in place of those the scene
-// has, as the sync of a world gives them.
+// has, as the sync of a world gives them and a frame settles them.
 scene_given :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
-	return scene_update(r, 0, instances, true) && scene_lights_given(r, lights, sun, environment)
+	if !scene_update(r, 0, instances, true) {return false}
+	tlas_settle(&r.scene)
+	return scene_lights_given(r, lights, sun, environment)
 }

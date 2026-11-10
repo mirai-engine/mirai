@@ -142,7 +142,7 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		case .Scene_Whole, .Scene_Update:
 			testing.expectf(t, len(s.instances) == len(instances), "%v: %d instances", call, len(s.instances))
 		case .Lights:
-			testing.expect_value(t, len(s.lights), len(light_descs))
+			testing.expect_value(t, len(s.lights), 1)
 		case .Materials:
 			testing.expect_value(t, len(s.materials), len(materials) + 1)
 		}

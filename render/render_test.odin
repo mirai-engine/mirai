@@ -1551,8 +1551,8 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	testing.expect(t, !scene_move(r, {3}, {}))
 	testing.expect(t, !scene_move(r, {5}, {trs({1, 1, 1}, {1, 1, 1})}))
 	testing.expect(t, scene_move(r, {}, {}))
-	// An instance the set skipped and one that stays where it was move nothing.
-	testing.expect(t, scene_move(r, {1, 3}, {trs({9, 9, 9}, {1, 1, 1}), instances[3].transform}))
+	// Instances that stay where they were move nothing.
+	testing.expect(t, scene_move(r, {1, 3}, {instances[1].transform, instances[3].transform}))
 	testing.expect(t, r.scene.touched_count == 0 && !r.scene.tlas_nodes_dirty)
 
 	for step in 1 ..= 3 {

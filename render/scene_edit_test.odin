@@ -286,6 +286,7 @@ scene_set_changes_the_light_only_around_what_comes_goes_or_changes :: proc(t:^te
     scene_given(r,{a,c},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==1,"one that goes, around where it was")
     s.changes={}
+    touched_settle(s);touched_settle(s)
     moved:=c
     moved.transform=at(-25)
     scene_given(r,{a,moved},nil,{},{})
