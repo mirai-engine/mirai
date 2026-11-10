@@ -33,7 +33,7 @@ JOURNAL_BODY :: 168
 JOURNAL_PIECE :: 192
 JOURNAL_PART_BYTES :: 4<<20 // raw bytes of a part at most
 JOURNAL_BUDGET :: 4096      // bytes of parts a server sends a tick
-JOURNAL_ASK_TICKS :: 30     // a client asks for parts again after this long, and for a base after a gap this long
+JOURNAL_ASK_TICKS :: 30     // a client asks for parts again after this long without an answer, and for a base after a gap this long
 JOURNAL_AHEAD_TICKS :: 240  // server: an ask for a tick further ahead than this is let out at once (Journal_Held.ahead)
 JOURNAL_LOG :: 4096         // operations of a key a client holds ahead of where it stands
 JOURNAL_KEEP_TICKS :: 32    // a client keeps what it applied this long at least, for the corrections that go back
@@ -194,6 +194,7 @@ Journal_Stream :: struct {
     ask_since:u64,
     ask_low,ask_high:[3]i32,
     asked:u64,                  // tick + 1 of the last Net_Journal_Resync
+    answering:bool,             // its answer has not ended: the next waits for it, or JOURNAL_ASK_TICKS
     gap:u64,                    // tick + 1 the client first missed an operation; 0: none
     // server
     sequence:u32,
@@ -261,12 +262,14 @@ journal_forget :: proc(j:^Journal) {
 }
 
 // At the start of each function of the library that uses the journal: which
-// journal it is, and a scene that replaced the world forgets what it knew.
-journal_world :: proc(j:^Journal,id:u32,root:core.Ref(scene.Scene_Root)) {
+// journal it is, and a scene that replaced the world forgets what it knew;
+// true then, for the library to forget its own.
+journal_world :: proc(j:^Journal,id:u32,root:core.Ref(scene.Scene_Root)) -> (replaced:bool) {
     j.id=id
     if root.ptr==nil || root.changes==j.changes {return}
     j.changes=root.changes
     journal_forget(j)
+    return true
 }
 
 @(private)
@@ -305,7 +308,7 @@ boxes_overlap :: proc "contextless" (a_low,a_high,b_low,b_high:[3]i32,margin:i32
 // A region of a key differs from the server: its parts are asked for.
 @(private)
 region_differs :: proc(s:^Journal_Stream,low,high:[3]i32) {
-    if high.x<low.x || s.basing {return}
+    if high.x<low.x {return}
     if !s.ask {s.ask_low,s.ask_high,s.ask=low,high,true;return}
     for axis in 0..<3 {s.ask_low[axis],s.ask_high[axis]=min(s.ask_low[axis],low[axis]),max(s.ask_high[axis],high[axis])}
 }
@@ -473,7 +476,7 @@ journal_due :: proc(j:^Journal,key:Journal_Key,time:core.Time,own:Connection) ->
             if state==.Done {continue}
             if state==.New {
                 part.placed=now
-                if part.last {s.basing=false;s.covered=max(s.covered,part.after)}
+                if part.last {s.basing,s.answering=false,false;s.covered=max(s.covered,part.after)}
                 if part.broken {
                     part.skipped,part.done=true,now
                     s.basing=false
@@ -494,6 +497,7 @@ journal_due :: proc(j:^Journal,key:Journal_Key,time:core.Time,own:Connection) ->
                 // The prediction of its tick is made after this, in that tick.
                 if mine && time.tick<=u64(op.ask_tick) || i32(op.tick-u32(time.tick))>0 {break}
                 entry.placed=now
+                s.gap=0
                 if at:=prediction_find(j,op.key,op.ask_tick,op.ask_index);mine && at>=0 {
                     p:=j.predictions[at]
                     entry.absorbed,entry.verified=true,true
@@ -506,7 +510,6 @@ journal_due :: proc(j:^Journal,key:Journal_Key,time:core.Time,own:Connection) ->
                 }
             }
             ops=number
-            s.gap=0
             if state==.Done || entry.skipped {continue}
             if entry.absorbed {
                 // Of a correction: the game made its prediction again, which stands for it as before.
@@ -523,7 +526,7 @@ journal_due :: proc(j:^Journal,key:Journal_Key,time:core.Time,own:Connection) ->
                 if l:=entry_at(s,q);l!=nil && l.placed==0 {l.placed,l.done,l.skipped=now,now,true}
             }
             ops=part.after
-            s.gap=0
+            if part.placed==0 {s.gap=0}
             continue
         }
         // A missing operation: after a while a base is asked for.
@@ -649,12 +652,12 @@ journal_flush :: proc(j:^Journal,outbox:^Net_Outbox,time:core.Time,session:core.
         ordered_remove(&j.predictions,i)
     }
     for &s in j.streams {
-        if !s.ask && !s.ask_base || s.asked!=0 && now-s.asked<JOURNAL_ASK_TICKS {continue}
+        if !s.ask && !s.ask_base || s.answering && now-s.asked<JOURNAL_ASK_TICKS {continue}
         if session.ptr!=nil && session.status!=.Connected {continue}
         resync:=Net_Journal_Resync{journal=j.id,key=s.key,low={0,0,0},high={-1,-1,-1},base=s.ask_base,since=s.ask_since}
         if s.ask {resync.low,resync.high=s.ask_low,s.ask_high}
         if !send(outbox,resync) {continue}
-        s.asked=now
+        s.asked,s.answering=now,true
         if s.ask_base {s.basing=true}
         s.ask,s.ask_base=false,false
         j.stats.resyncs+=1
