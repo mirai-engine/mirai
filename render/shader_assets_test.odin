@@ -130,9 +130,9 @@ generation_copy :: proc(t:^testing.T,edit:proc(manifest:string)->string) -> stri
 }
 
 @(test)
-shader_generation_of_other_engine_sources_is_not_loaded :: proc(t:^testing.T) {
+shader_generation_that_binds_otherwise_is_not_loaded :: proc(t:^testing.T) {
     folder:=generation_copy(t,proc(manifest:string)->string {
-        changed,_:=strings.replace_all(manifest,SHADERS_FINGERPRINT,"0000000000000000000000000000000000000000000000000000000000000000",context.temp_allocator)
+        changed,_:=strings.replace_all(manifest,SHADERS_INTERFACE,"0000000000000000000000000000000000000000000000000000000000000000",context.temp_allocator)
         return changed
     })
     defer base.remove_all(folder)

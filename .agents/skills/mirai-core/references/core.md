@@ -63,7 +63,9 @@ another into its place, with its stamp, without mixing the two sections.
 
 - **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
   answer the same on a `Read` and on a `^Table`, as `row_of` and `has` do. None of them sees a
-  disabled row.
+  disabled row. `join` of two or three tables, either access, and `each_joined` walk the rows of
+  the first whose entity has the others on and give the entity and the values; the join's `row`
+  is the row of the first, for `edit_at`.
 - **Writing is requesting the row.** `edit`, `edit_at` and `writable` on `^Table`, and `free` on a
   `shared` table, give `^T` and stamp the row with a new `version`, written or not. `set` and
   `set_at` take the value and stamp only when its bytes differ from those of the row: what a
@@ -113,7 +115,8 @@ A reader keeps one `core.Seen` per table and calls `changes(t, &seen)`, which ad
 - `gone`: the entities whose row stopped being enabled since the last read (some may have come
   back, among the stamped ones); valid until the next settle.
 - `all`: the reader did not see the rows that exist (the table was copied, swapped or cleared, or
-  the log discarded entries) and walks all of them.
+  the log discarded entries) and walks all of them. A rollback that takes back rows in place
+  ([replace](host.md#the-application)) gives them as written, not `all`.
 - **A reader that makes again whole what it derives** does not walk rows: `touched(t, &seen)` says
   whether anything changed in the table since it looked, and `reshaped(t, &shape)` whether its rows
   are others (added, removed, turned on or off, replaced whole) whatever was written in them, for
