@@ -13,6 +13,12 @@
 #define MIRAI_LIGHTING_SLANG
 #include "trace.slang"
 #include "probe_light.slang"
+// A pass with the maps of the view (SUN_SHADOW_SLOT and SHADOW_DATA_SLOT) that
+// takes the shadows of direct_lighting from them where they hold the point,
+// and traces the rays only where they do not.
+#ifdef MIRAI_LIGHT_MAPS
+#include "shadow_maps.slang"
+#endif
 
 // No light is smaller than this, metres: closer to its center a point gets
 // the light of its surface.
@@ -801,6 +807,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         float3 radiance = float3(0.0);
         float3 direction = float3(0.0, 1.0, 0.0);
         float reach = 0.0;
+        float mapped = -1.0;
         if (item == 0u) {
             if (frame.sun_direction.w < 0.5) continue;
             float cosine = dot(s.normal, frame.sun_direction.xyz);
@@ -809,6 +816,9 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
             reach = scene_reach(origin, direction);
+#ifdef MIRAI_LIGHT_MAPS
+            mapped = sun_shadow_seen(s.position, s.normal);
+#endif
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;
@@ -830,6 +840,9 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
                 direction = toward / max(distance, 1e-6);
             }
             reach = light_reach(aimed, distance);
+#ifdef MIRAI_LIGHT_MAPS
+            mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed));
+#endif
         }
 #ifdef MIRAI_HOOK_LIGHTS
         float3 from = origin;
@@ -851,20 +864,21 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         filters_begin();
 #endif
         float3 through = float3(1.0);
-        for (uint segment = 0u; segment < 2u; segment++) {
+        for (uint segment = 0u; segment < 2u && mapped < 0.0; segment++) {
             through *= trace_transmission(from, direction, reach, item <= local_items);
             if (segment != 0u || beyond_reach <= 0.0 || max(through.r, max(through.g, through.b)) <= 0.0) break;
             from = beyond_origin;
             direction = beyond_direction;
             reach = beyond_reach;
         }
+        if (mapped >= 0.0) through = float3(mapped);
         if (item > local_items) extension += radiance * through;
         else
 #else
 #ifdef MIRAI_SHADOW_FILTER_POINTS
         filters_begin();
 #endif
-        float3 through = trace_transmission(origin, direction, reach);
+        float3 through = mapped >= 0.0 ? float3(mapped) : trace_transmission(origin, direction, reach);
 #endif
 #ifdef MIRAI_SHADOW_FILTER_POINTS
         filters_weigh(radiance);

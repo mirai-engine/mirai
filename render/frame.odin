@@ -294,7 +294,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 			rhi.cmd_dispatch(p.cmd, x, y)
 		}
 	}
-	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness: u32, faint_below: f32, resume, pad0, pad1, pad2: u32}
+	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness: u32, faint_below: f32, resume, medium, pad1, pad2: u32}
 	// The rays of a size of block, then what waits for the programs of what they hit.
 	trace :: proc(p: ^Pass, pipeline: rhi.Pipeline, params: ^Params, glass, half: bool, x, y: u32) {
 		batch := points_begin(p)
@@ -325,6 +325,8 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, r.dummy_texture if glass else t.motion)
 	params.material_roughness = 0 if glass else 1
+	// The exit faces of the solid the camera is in reflect inside it.
+	params.medium = p.glass_medium if glass else 0
 	// Until the filter has a past to keep, every turn traces.
 	params.faint_below = GLASS_FAINT_REFLECTANCE if glass && history_valid else 0
 	// A layer of glass always keeps what it reflects.

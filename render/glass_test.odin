@@ -688,7 +688,10 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 @(test)
 glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_scatters :: proc(t: ^testing.T) {
 	f: Glass_Fixture
-	if !glass_fixture(t, &f, 96, 64, glass_settings()) {return}
+	// What a back face reflects inside comes from the reflections of the layer.
+	inside_settings := glass_settings()
+	inside_settings.reflections = true
+	if !glass_fixture(t, &f, 96, 64, inside_settings) {return}
 	defer glass_fixture_destroy(&f)
 	r := f.renderer
 	water := glass_material({1, 1, 1}, 1, 0.02)

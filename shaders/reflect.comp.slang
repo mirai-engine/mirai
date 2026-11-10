@@ -33,6 +33,7 @@
 #define POINTS_SLOT SLOT_POINTS
 #define MIRAI_DEFER_FILTERS
 #include "lighting.slang"
+#include "glass.slang"
 #include <extension_hooks.slang>
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
@@ -46,7 +47,7 @@
 // glass has only the latter). faint_below: a reflection this faint (glass
 // seen face on) traces one turn of its block in four. resume: a thread for
 // each head of the round of the batch, instead of each cell.
-struct Params_Block { uint light_budget; float max_distance; float firefly_clamp; float pixel_spread; uint block; float roughness_from; float roughness_to; float cached_below; float detail_below; uint stored_reflectance; uint material_roughness; float faint_below; uint resume; uint pad0; uint pad1; uint pad2; };
+struct Params_Block { uint light_budget; float max_distance; float firefly_clamp; float pixel_spread; uint block; float roughness_from; float roughness_to; float cached_below; float detail_below; uint stored_reflectance; uint material_roughness; float faint_below; uint resume; uint medium; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 #define GBUFFER_NORMAL SLOT_PASS0
 #define GBUFFER_ALBEDO SLOT_PASS3
@@ -73,8 +74,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     float3 direction;
     float distance;
     uint how;
-    // What multiplies the light of the hit: the glass on the way.
+    // What multiplies the light of the hit: the glass on the way, and the solid the camera is in; and
+    // what that solid scatters towards the eye on the way.
     float3 through;
+    float3 glow = float3(0.0);
     if (params.resume != 0u) {
         Point_Head head;
         if (!head_of_round(group.x * (MIRAI_GROUP_X * MIRAI_GROUP_Y) + local, head)) return;
@@ -101,8 +104,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         // A layer of glass always keeps its reflectance; the opaque G-buffer, when the scene needs it.
         Gbuffer_Pixel g = gbuffer_read(p, params.stored_reflectance != 0u);
         float roughness = (params.material_roughness != 0u ? g_motion.Load(int3(p, 0)).b : g.roughness) + ROUGHNESS_ROUNDING;
-        // The view leaves a solid at an exit face of glass: what it reflects there is inside, which the glass pass traces.
-        if (depth_empty(depth) || reflection_weight(roughness) <= 0.0 || roughness < params.roughness_from || roughness >= params.roughness_to || (g.bits & GBUFFER_GLASS_EXIT) != 0u) {
+        if (depth_empty(depth) || reflection_weight(roughness) <= 0.0 || roughness < params.roughness_from || roughness >= params.roughness_to) {
             out_radiance[cell] = float4(0.0, 0.0, 0.0, -1.0);
             return;
         }
@@ -144,6 +146,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             fresnel = fresnel_schlick(g.f0, specular_grazing(g.f0, g.f90, g.base_color, g.metallic), saturate(dot(n, -view)));
         }
         float reflectance = max(fresnel.r, max(fresnel.g, fresnel.b));
+        // At an exit face of the solid the camera is in (params.medium) the view is reflected back into
+        // it, all of it beyond the critical angle: a whole reflection, through the solid.
+        bool inside = (g.bits & GBUFFER_GLASS_EXIT) != 0u && params.medium != 0u;
+        if (inside) reflectance = 1.0;
         // A reflection this faint shows little and changes little: its block
         // traces four frames in sixteen, one pixel of it each, and the filter
         // keeps what they found in between. The turn is the same for a whole
@@ -155,6 +161,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         Ray_Path path;
         Hit hit = trace_ray(origin, dir, 0.0, params.max_distance, false, path);
         distance = hit.instance == INVALID ? params.max_distance : hit.t;
+        float3 solid = float3(1.0);
+        if (inside) {
+            Material medium = material_row(material_of(scene_instance(params.medium - 1u), 0u));
+            solid = material_absorption(medium, distance);
+            glow = solid_scatter(medium, params.medium - 1u, origin, dir, distance, SOLID_TOP_UNKNOWN);
+        }
         // The glass the ray crosses on its way: with its detail in a sharp
         // reflection, up to the gate of an extension it leaves through, and as its
         // mean in the others.
@@ -165,15 +177,16 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         } else {
             through = path.glass;
         }
+        through *= solid;
         uint owner = uint(cell.x) | (uint(cell.y) << 16u);
         if (hit.instance == INVALID) {
             float3 sky = sky_radiance(path.direction, roughness);
             if (filtered) filters_weigh(sky);
             if (filter_chain != INVALID && head_append(point_head(INVALID, filter_chain, owner))) {
-                out_radiance[cell] = float4(finite_or_zero(sky * through), distance);
+                out_radiance[cell] = float4(finite_or_zero(sky * through + glow), distance);
                 return;
             }
-            out_radiance[cell] = float4(firefly_clamped(sky * through), distance);
+            out_radiance[cell] = float4(firefly_clamped(sky * through + glow), distance);
             return;
         }
         bool cached = reflectance < params.cached_below && (frame.flags & FRAME_FLAG_GI) != 0u && frame.volume_atlas.w != 0u;
@@ -208,9 +221,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         filters_weigh(radiance);
         uint owner = uint(cell.x) | (uint(cell.y) << 16u);
         if (head_append(point_head(INVALID, filter_chain, owner))) {
-            out_radiance[cell] = float4(finite_or_zero(radiance * through), distance);
+            out_radiance[cell] = float4(finite_or_zero(radiance * through + glow), distance);
             return;
         }
     }
-    out_radiance[cell] = float4(firefly_clamped(radiance * through), distance);
+    out_radiance[cell] = float4(firefly_clamped(radiance * through + glow), distance);
 }

@@ -287,7 +287,7 @@ Pipeline_Id :: enum {
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
 	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
 	Reflect_Color, Reflect_Color_Hw, Translucent_Color, Translucent_Color_Hw,
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Glass_Light, Glass_Light_Hw, Glass_Light_Color, Glass_Light_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
 	Glass_Inside, Glass_Inside_Hw, Glass_Inside_Color, Glass_Inside_Color_Hw,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
@@ -935,6 +935,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		color_formats = {0 = .RGBA8_Srgb}, color_count = 1, name = "reflectance of a view before its nested views",
 	})
 	compute(list, r, .Glass, .Glass_Comp)
+	compute(list, r, .Glass_Light, .Glass_Light_Comp)
+	compute(list, r, .Glass_Light_Color, .Glass_Light_Color_Comp)
+	compute(list, r, .Glass_Light_Hw, .Glass_Light_Hw_Comp)
+	compute(list, r, .Glass_Light_Color_Hw, .Glass_Light_Color_Hw_Comp)
 	compute(list, r, .Glass_Color, .Glass_Color_Comp)
 	compute(list, r, .Glass_Inside, .Glass_Inside_Comp)
 	compute(list, r, .Glass_Inside_Color, .Glass_Inside_Color_Comp)
@@ -1181,7 +1185,7 @@ renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 pipeline_uses_hardware :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
     case .Direct_Rays_Hw,.Direct_Samples_Hw,.Direct_Samples_Hw_Unlayered,.Direct_Samples_Color_Hw,.Direct_Samples_Hw_Unlayered_Color,.Direct_Filter_Hw,.Direct_Filter_Hw_Unlayered,.Ddgi_Trace_Hw,.Contact_Hw,.Reflect_Hw,.Translucent_Hw,.Glass_Hw,
-         .Ddgi_Trace_Color_Hw,.Reflect_Color_Hw,.Translucent_Color_Hw,.Glass_Color_Hw,.Gi_Reference_Hw,.Glass_Inside_Hw,.Glass_Inside_Color_Hw,
+         .Ddgi_Trace_Color_Hw,.Reflect_Color_Hw,.Translucent_Color_Hw,.Glass_Color_Hw,.Glass_Light_Hw,.Glass_Light_Color_Hw,.Gi_Reference_Hw,.Glass_Inside_Hw,.Glass_Inside_Color_Hw,
          .Reflect_Unlayered_Hw,.Reflect_Unlayered_Color_Hw:
         return true
     }
