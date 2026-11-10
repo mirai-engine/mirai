@@ -301,14 +301,16 @@ SUN_DIRECTION :: [3]f32{0.45,0.85,0.30}
 SPOT_MIN :: 1*mm.RAD_PER_DEG
 SPOT_MAX :: 89*mm.RAD_PER_DEG
 
-// What the renderer has of the world it was last given. One per application,
-// as the scene of the renderer it mirrors in its order: a world shown in
-// place of another sets the scene again whatever each world kept.
+// What the renderer has of the world it was last given, which it cannot
+// answer itself: the entity of each instance and what it was made from. The
+// instances of the scene of the renderer are those of drawn, at the same
+// index, then the visual instances of the application (extras). One per
+// application: a world shown in place of another sets the scene again
+// whatever each world kept.
 @(storage,host,free="sync_free")
 Render_Sync :: struct {
     world:core.World_Id, // the one the scene of the renderer holds
-    instances:[dynamic]gpu.Instance_Desc, // those of drawn at the same index, then the visual instances of the application
-    drawn:core.Entity_Map(Drawn),         // by entity whose mesh the renderer draws
+    drawn:core.Entity_Map(Drawn), // by entity whose mesh the renderer draws
     mesh_users:map[base.Asset_Id][dynamic]u32,
     changed:[dynamic]u32,
     lights:[dynamic]gpu.Light_Desc,
@@ -320,19 +322,19 @@ Render_Sync :: struct {
     moved_transforms:[dynamic]mm.Mat4,
     moved_anchors:[dynamic][3]f32, // what each is relative to (instance_place)
     lerping:[dynamic]u32, // instances whose world is between its previous and its transform
+    deriving:[dynamic]u32, // instances whose rows derive from the values of their materials (Drawn.derives)
     tinted:[dynamic]u32,
     tinted_colors,tinted_emissions:[dynamic][3]f32,
-    highlights:[dynamic]u8, // the outline level of each instance (instance_outline)
+    highlights:[dynamic]u8, // scratch: the outline level of each instance, when the outlines change
     previous_lights:[dynamic]gpu.Light_Desc,
     // What each table it reads was when it last looked: core.changes gives what moved since.
     seen_meshes,seen_worlds,seen_tints,seen_hidden,seen_elsewhere,seen_parents,seen_overrides,seen_offsets,seen_layers:core.Seen,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     coming:[dynamic]core.Entity, // scratch: the entities whose meshes start being drawn this frame
-    taken:[dynamic]u32, // scratch: the places of instances that went which another took this frame (instances_taken_publish)
-    shown:[dynamic]gpu.Instance_Desc, // scratch: the instances that came this frame and those of the application after them
+    taken:[dynamic]Taken, // scratch: the places of instances that went which another took this frame (instances_taken_publish)
+    shown:[dynamic]gpu.Instance_Desc, // scratch: the instances a frame gives the renderer at once, those of a scene it sets or those that came, and those of the application after them
     worlds_version,highlights_seen,lights_seen:u64,
-    extras:[dynamic]gpu.Instance_Desc,
-    composed:[dynamic]gpu.Instance_Desc,
+    extras:[dynamic]gpu.Instance_Desc, // the visual instances of the application the renderer has, after those of drawn
     assets_structure,assets_appearance:u64,
     environment:gpu.Environment,
     postprocess:[POST_PROCESS_CAPACITY]Post_Process_Layer,
@@ -347,11 +349,16 @@ Sync_Stats :: struct {
     scene_sets,instance_updates,moves,tints,light_sets,highlight_sets,environment_sets,postprocess_sets,outline_sets:u64,
 }
 
+// A place among the instances of the world that the instance at `from` took:
+// where the renderer has it until it is told.
+@(private)
+Taken :: struct {at,from:u32}
+
 // What the instance of an entity was made from.
 Drawn :: struct {
     shown:Mesh_Renderer,
     alpha:f32,
-    derives:bool, // its rows derive from the values of its materials (an override, an alpha, layers)
+    derives:bool, // its rows derive from the values of its materials (an override, an alpha, layers): in deriving
     lerp:bool,    // in lerping
     changed:bool, // in changed
 }
@@ -510,7 +517,7 @@ render_sync :: proc(
                 if core.changed(elsewhere,c.elsewhere,row) {instance_drop(sync,t,core.entity_at(elsewhere,row),&structure)}
             }
         }
-        if structure {kept=instances_taken_publish(sync,r,extras)}
+        if structure {kept=instances_taken_publish(sync,a,r,t,frame,extras)}
         rebuild=!kept
         // What starts being drawn: a mesh added or turned on, placed, or no longer drawn elsewhere.
         clear(&sync.coming)
@@ -554,18 +561,28 @@ render_sync :: proc(
                 if body!=core.NONE {subtree_changed(sync,hierarchy,body)}
             }
             tints_settle(sync,tints,c.tints)
+            // The mesh a visual instance starts or stops replacing is made again, hidden or shown.
+            if extras_changed {
+                for previous in sync.extras {
+                    if at:=instance_of(sync,core.Entity(previous.object_id));at>=0 && previous.replace_source && !replaces(extras,previous.object_id) {instance_changed(sync,u32(at))}
+                }
+                for extra in extras {
+                    if at:=instance_of(sync,core.Entity(extra.object_id));at>=0 && extra.replace_source && !replaces(sync.extras[:],extra.object_id) {instance_changed(sync,u32(at))}
+                }
+            }
             local_changes=structure || len(sync.coming)>0 || len(sync.changed)>0 || extras_changed
         }
         if local_changes {
             host.assets_appearance_begin(a)
             host.assets_commit(a)
             first:=len(sync.drawn.values)
+            clear(&sync.shown)
             for e in sync.coming {
-                if !instance_insert(sync,a,t,e,frame) {rebuild=true;break}
+                if !instance_insert(sync,a,t,e,frame,extras) {rebuild=true;break}
                 host.assets_commit(a)
             }
             // What came goes to the renderer at once, the instances of the application after it.
-            if !rebuild && len(sync.drawn.values)>first {rebuild=!instances_came_publish(sync,r,extras,first)}
+            if !rebuild && len(sync.drawn.values)>first {rebuild=!instances_came_publish(sync,r,first)}
             for at in sync.changed {
                 if rebuild {break}
                 e:=sync.drawn.entities[at]
@@ -578,14 +595,17 @@ render_sync :: proc(
                     mesh_user_remove(sync,drawn.shown.mesh,at)
                     mesh_user_add(sync,static.mesh,at)
                 }
+                if derives && !drawn.derives {
+                    if !room(&sync.deriving) {rebuild=true;break}
+                    append(&sync.deriving,at)
+                }
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-                sync.instances[at]=instance
-                sync.highlights[at]=instance.highlight
                 drawn.shown=static
                 drawn.alpha=alpha
                 drawn.derives=derives
                 host.assets_commit(a)
-                if !gpu.scene_update(r,at,{instance_shown(sync,int(at),extras)}) {rebuild=true;break}
+                instance.hidden||=replaces(extras,instance.object_id)
+                if !gpu.scene_update(r,at,{instance}) {rebuild=true;break}
                 sync.stats.instance_updates+=1
             }
         }
@@ -607,9 +627,28 @@ render_sync :: proc(
     exposure:=host.render_exposure(view_exposure_of(look))
     exposure.own=false
     gpu.scene_set_exposure(r,exposure)
+    if !rebuild && extras_changed {
+        // The visual instances of the application that are others, in their places after those of the world.
+        first:=len(sync.drawn.entities)
+        patched:=true
+        for instance,i in extras {
+            if i<len(sync.extras) && instance==sync.extras[i] {continue}
+            patched&&=gpu.scene_update(r,u32(first+i),{instance})
+            sync.stats.instance_updates+=1
+        }
+        if len(extras)<len(sync.extras) {patched&&=gpu.scene_update(r,u32(first+len(extras)),nil,true)}
+        if !patched {
+            // What the renderer refused of them it gets with the scene, set again.
+            rebuild=true
+        } else if resize(&sync.extras,len(extras))!=nil {
+            // Without memory for the visual instances a later frame makes the scene again.
+            sync.synced=false
+            return
+        } else {copy(sync.extras[:],extras)}
+    }
     if rebuild {
         host.assets_appearance_begin(a)
-        if !instances_build(sync,a,t,frame,len(extras)) || resize(&sync.extras,len(extras))!=nil {
+        if !instances_build(sync,a,t,frame,extras) || resize(&sync.extras,len(extras))!=nil {
             // Without memory for the instances the scene is empty until a frame makes it again.
             gpu.scene_set(r,nil,nil,{},environment)
             sync.synced=false
@@ -617,97 +656,55 @@ render_sync :: proc(
         }
         copy(sync.extras[:],extras)
         batches_retain(a,r)
-        for instance in extras {
-            host.assets_material_retain(a,u32(instance.material))
-            for row in instance.slot_materials {if row>0 {host.assets_material_retain(a,row-1)}}
-            for i in 0..<instance.overlays.count {host.assets_material_retain(a,u32(instance.overlays.entries[i].material))}
-            append(&sync.instances,instance);append(&sync.highlights,instance.highlight)
-        }
-        lit:=lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y)
+        for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
+        lit:=lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y,r,sync.shown[:])
         sync.lights_seen=lights_seen
         host.assets_appearance_end(a)
         host.assets_commit(a)
         sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
-        composed,fits:=instances_composed(sync,extras)
-        if !lit || !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
+        if !lit || !gpu.scene_set(r,sync.shown[:],sync.lights[:],sync.sun,environment) {
             gpu.scene_set(r,nil,nil,{},environment)
             sync.synced=false
             return
         }
+        // The renderer has the scene now: no copy of it is kept.
+        delete(sync.shown)
+        sync.shown=nil
         sync.environment=environment
         sync.highlights_seen=outlines_seen(t)
         sync.stats.scene_sets+=1
     } else {
-        if extras_changed {
-            patched:=true
-            for previous in sync.extras {
-                if !previous.replace_source {continue}
-                at:=instance_of(sync,core.Entity(previous.object_id))
-                if at<0 {continue}
-                shown:=sync.instances[at]
-                for extra in extras {if extra.replace_source && extra.object_id==previous.object_id {shown.hidden=true}}
-                if !shown.hidden {patched&&=gpu.scene_update(r,u32(at),{shown})}
-            }
-            for extra in extras {
-                if !extra.replace_source {continue}
-                already:=false
-                for previous in sync.extras {already||=previous.replace_source && previous.object_id==extra.object_id}
-                if already {continue}
-                at:=instance_of(sync,core.Entity(extra.object_id))
-                if at<0 {continue}
-                shown:=sync.instances[at];shown.hidden=true
-                patched&&=gpu.scene_update(r,u32(at),{shown})
-            }
-            first:=len(sync.drawn.entities)
-            for instance,i in extras {
-                if i<len(sync.extras) && instance==sync.extras[i] {continue}
-                patched&&=gpu.scene_update(r,u32(first+i),{instance})
-                sync.stats.instance_updates+=1
-            }
-            if len(extras)<len(sync.extras) {patched&&=gpu.scene_update(r,u32(first+len(extras)),nil,true)}
-            if resize(&sync.extras,len(extras))!=nil || resize(&sync.instances,first+len(extras))!=nil || resize(&sync.highlights,first+len(extras))!=nil {
-                // Without memory for the visual instances a later frame makes the scene again.
-                sync.synced=false
-                return
-            }
-            copy(sync.extras[:],extras)
-            copy(sync.instances[first:],extras)
-            for instance,i in extras {sync.highlights[first+i]=instance.highlight}
-            if !patched {
-                composed,fits:=instances_composed(sync,extras)
-                if !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
-                    sync.synced=false
-                    return
-                }
-                sync.stats.scene_sets+=1
-            }
-        }
         if local_changes {
+            // The derived rows in use: those of the batches, of the instances that derive theirs and of the visual instances.
             batches_retain(a,r)
-            for instance in sync.instances {
-                host.assets_material_retain(a,u32(instance.material))
-                for row in instance.slot_materials {if row>0 {host.assets_material_retain(a,row-1)}}
-                for i in 0..<instance.overlays.count {host.assets_material_retain(a,u32(instance.overlays.entries[i].material))}
+            for i:=len(sync.deriving)-1;i>=0;i-=1 {
+                at:=sync.deriving[i]
+                if !sync.drawn.values[at].derives {
+                    unordered_remove(&sync.deriving,i)
+                    continue
+                }
+                if material,slots,overlays,held:=gpu.scene_instance_materials(r,at);held {instance_materials_retain(a,material,slots,overlays)}
             }
+            for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
             host.assets_appearance_end(a);host.assets_commit(a)
             sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
         } else {sync.assets_structure=a.structure}
-        moved:=instances_moved(sync,t,frame)
+        instances_moved(sync,t,frame)
         for instance,i in extras {
-            at:=len(sync.drawn.entities)+i
-            if sync.instances[at].transform==instance.transform && sync.instances[at].anchor==instance.anchor {continue}
-            sync.instances[at].transform,sync.instances[at].anchor=instance.transform,instance.anchor
+            if sync.extras[i].transform==instance.transform && sync.extras[i].anchor==instance.anchor {continue}
             sync.extras[i]=instance
-            append(&sync.moved,u32(at));append(&sync.moved_transforms,instance.transform);append(&sync.moved_anchors,instance.anchor)
-            moved+=1
+            append(&sync.moved,u32(len(sync.drawn.entities)+i));append(&sync.moved_transforms,instance.transform);append(&sync.moved_anchors,instance.anchor)
         }
-        if moved>0 {
-            gpu.scene_move(r,sync.moved[:],sync.moved_transforms[:],sync.moved_anchors[:])
-            sync.stats.moves+=1
+        // The renderer leaves where it is what did not move, and as it is what has the same tint.
+        if len(sync.moved)>0 {
+            moved:int
+            gpu.scene_move(r,sync.moved[:],sync.moved_transforms[:],sync.moved_anchors[:],&moved)
+            if moved>0 {sync.stats.moves+=1}
         }
         if len(sync.tinted)>0 {
-            gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:])
-            sync.stats.tints+=1
+            tinted:int
+            gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],&tinted)
+            if tinted>0 {sync.stats.tints+=1}
         }
         if lights_seen!=sync.lights_seen {
             sync.lights_seen=lights_seen
@@ -716,7 +713,7 @@ render_sync :: proc(
             compared:=resize(&sync.previous_lights,len(sync.lights))==nil
             if compared {copy(sync.previous_lights[:],sync.lights[:])}
             // Without memory for the lights a later frame makes the scene again.
-            if !lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y) {
+            if !lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y,r) {
                 sync.synced=false
                 return
             }
@@ -730,12 +727,11 @@ render_sync :: proc(
                 sync.stats.light_sets+=1
             }
         }
-        if seen:=outlines_seen(t);seen!=sync.highlights_seen {
+        // Without memory for the levels a later frame gives them.
+        if seen:=outlines_seen(t);seen!=sync.highlights_seen && resize(&sync.highlights,len(sync.drawn.entities)+len(sync.extras))==nil {
             sync.highlights_seen=seen
-            for e,at in sync.drawn.entities {
-                sync.highlights[at]=sync.instances[at].hidden?0:instance_outline(highlights,outlines,e)
-                sync.instances[at].highlight=sync.highlights[at]
-            }
+            for e,at in sync.drawn.entities {sync.highlights[at]=is_hidden(hidden,parents,e)?0:instance_outline(highlights,outlines,e)}
+            for instance,i in sync.extras {sync.highlights[len(sync.drawn.entities)+i]=instance.highlight}
             gpu.scene_set_highlights(r,sync.highlights[:])
             sync.stats.highlight_sets+=1
         }
@@ -941,14 +937,21 @@ slot_textures_apply :: proc(extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tabl
 @(private)
 SLOT_TEXTURE_OWNER :: u64(0x736c6f7400000000)
 
-// The instance at as the renderer shows it: hidden while a visual instance replaces it.
+// Whether a visual instance of extras is drawn in place of the mesh of an
+// object: the instance of that mesh is hidden meanwhile.
 @(private)
-instance_shown :: proc(sync:^Render_Sync,at:int,extras:[]gpu.Instance_Desc) -> gpu.Instance_Desc {
-    shown:=sync.instances[at]
-    if at<len(sync.drawn.entities) {
-        for extra in extras {if extra.replace_source && extra.object_id==shown.object_id {shown.hidden=true}}
-    }
-    return shown
+replaces :: proc(extras:[]gpu.Instance_Desc,object:u64) -> bool {
+    for extra in extras {if extra.replace_source && extra.object_id==object {return true}}
+    return false
+}
+
+// Keeps through a round of derived rows those an instance shows: its
+// material, those of its slots and its layers.
+@(private)
+instance_materials_retain :: proc(a:^host.Assets,material:gpu.Material_Handle,slots:[32]u32,overlays:gpu.Instance_Overlays) {
+    host.assets_material_retain(a,u32(material))
+    for row in slots {if row>0 {host.assets_material_retain(a,row-1)}}
+    for i in 0..<min(int(overlays.count),len(overlays.entries)) {host.assets_material_retain(a,u32(overlays.entries[i].material))}
 }
 
 // Takes out the instance of an entity that is no longer drawn; the renderer
@@ -967,50 +970,66 @@ instance_drop :: proc(sync:^Render_Sync,t:Sync_Tables,e:core.Entity,structure:^b
 instance_remove :: proc(sync:^Render_Sync,at:int) {
     last:=len(sync.drawn.values)-1
     mesh_user_remove(sync,sync.drawn.values[at].shown.mesh,u32(at))
-    for i:=len(sync.lerping)-1;i>=0;i-=1 {if int(sync.lerping[i])==at {unordered_remove(&sync.lerping,i)}}
+    for list in ([2]^[dynamic]u32{&sync.lerping,&sync.deriving}) {
+        for i:=len(list)-1;i>=0;i-=1 {if int(list[i])==at {unordered_remove(list,i)}}
+    }
     if at!=last {
         mesh_user_remove(sync,sync.drawn.values[last].shown.mesh,u32(last))
         mesh_user_add(sync,sync.drawn.values[last].shown.mesh,u32(at))
-        for &moving in sync.lerping {if int(moving)==last {moving=u32(at)}}
-        sync.instances[at]=sync.instances[last]
-        sync.highlights[at]=sync.highlights[last]
+        for list in ([2]^[dynamic]u32{&sync.lerping,&sync.deriving}) {
+            for &listed in list {if int(listed)==last {listed=u32(at)}}
+        }
     }
     core.entity_map_remove_at(&sync.drawn,at)
-    ordered_remove(&sync.instances,last);ordered_remove(&sync.highlights,last)
     sync.stats.instance_updates+=1
-    if at!=last {append(&sync.taken,u32(at))}
+    // The one that takes the place may have taken another before in the frame: the renderer has it where it was first.
+    from:=u32(last)
+    for i:=len(sync.taken)-1;i>=0;i-=1 {
+        if int(sync.taken[i].at)==last {from=sync.taken[i].from}
+        if int(sync.taken[i].at)==last || int(sync.taken[i].at)==at {unordered_remove(&sync.taken,i)}
+    }
+    if at!=last {append(&sync.taken,Taken{u32(at),from})}
 }
 
 // Gives the renderer what instance_remove took out in the frame, at once:
-// the places others took, and the visual instances of the application after
-// those of the world, which end the scene. False when it refused them.
+// the instances that took the places of others, made again with the motion
+// from where they were, and the visual instances of the application after
+// those of the world, which end the scene. False when it refused them or one
+// cannot be made.
 @(private)
-instances_taken_publish :: proc(sync:^Render_Sync,r:^gpu.Renderer,extras:[]gpu.Instance_Desc) -> bool {
+instances_taken_publish :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,frame:core.Frame_Time,extras:[]gpu.Instance_Desc) -> bool {
     world:=len(sync.drawn.values)
     ok:=true
-    for at in sync.taken {if int(at)<world {ok&&=gpu.scene_update(r,at,{instance_shown(sync,int(at),extras)})}}
+    for taken in sync.taken {
+        if !ok {break}
+        e:=sync.drawn.entities[taken.at]
+        static,_:=core.get(t.meshes,e)
+        placed,_:=core.get(t.worlds,e)
+        instance,_,_,usable:=instance_make(a,t,e,static,placed,frame)
+        instance.hidden||=replaces(extras,instance.object_id)
+        host.assets_commit(a)
+        ok=usable && gpu.scene_update(r,taken.at,{instance}) && gpu.scene_instance_was(r,taken.at,taken.from)
+    }
     clear(&sync.taken)
-    return ok && gpu.scene_update(r,u32(world),sync.instances[world:],true)
+    return ok && gpu.scene_update(r,u32(world),sync.extras[:],true)
 }
 
 // Gives the renderer the instances of the world from first, which came in
-// the frame, and those of the application after them, at once. False when
-// it refused them.
+// the frame (instance_insert left them in shown), and those of the
+// application after them, at once. False when it refused them.
 @(private)
-instances_came_publish :: proc(sync:^Render_Sync,r:^gpu.Renderer,extras:[]gpu.Instance_Desc,first:int) -> bool {
-    world:=len(sync.drawn.values)
-    clear(&sync.shown)
-    for at in first..<world {append(&sync.shown,instance_shown(sync,at,extras))}
-    append(&sync.shown,..sync.instances[world:])
+instances_came_publish :: proc(sync:^Render_Sync,r:^gpu.Renderer,first:int) -> bool {
+    if reserve(&sync.shown,len(sync.shown)+len(sync.extras))!=nil {return false}
+    append(&sync.shown,..sync.extras[:])
     return gpu.scene_update(r,u32(first),sync.shown[:])
 }
 
 // Puts the instance of an entity after those of the world; the visual
 // instances of the application move up one. The renderer gets it with the
-// others that come (instances_came_publish). False when its mesh is not
-// usable yet: the scene is set again.
+// others that come (instances_came_publish), from shown. False when its mesh
+// is not usable yet: the scene is set again.
 @(private)
-instance_insert :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.Entity,frame:core.Frame_Time) -> bool {
+instance_insert :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.Entity,frame:core.Frame_Time,extras:[]gpu.Instance_Desc) -> bool {
     if instance_of(sync,e)>=0 || !instance_wanted(t,e) {return true}
     static,_:=core.get(t.meshes,e)
     world,_:=core.get(t.worlds,e)
@@ -1020,29 +1039,15 @@ instance_insert :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.En
     lerp:=world.previous!=world.transform
     // The instance of another generation of its index would stay in its place: the scene is set again.
     if core.entity_map_held(&sync.drawn,e)!=core.NONE {return false}
-    if !room(&sync.instances) || !room(&sync.highlights) || !room(&sync.lerping) {return false}
+    if !room(&sync.shown) || !room(&sync.lerping) || !room(&sync.deriving) {return false}
     if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,alpha=alpha,derives=derives,lerp=lerp});!kept {return false}
     if lerp {append(&sync.lerping,u32(at))}
-    inject_at(&sync.instances,at,instance);inject_at(&sync.highlights,at,instance.highlight)
+    if derives {append(&sync.deriving,u32(at))}
+    instance.hidden||=replaces(extras,instance.object_id)
+    append(&sync.shown,instance)
     mesh_user_add(sync,static.mesh,u32(at))
     sync.stats.instance_updates+=1
     return true
-}
-
-@(private)
-instances_composed :: proc(sync:^Render_Sync,extras:[]gpu.Instance_Desc) -> (composed:[]gpu.Instance_Desc,ok:bool) {
-    replaces:=false
-    for instance in extras {replaces||=instance.replace_source && instance.object_id!=0}
-    if !replaces {return sync.instances[:],true}
-    if resize(&sync.composed,len(sync.instances))!=nil {return nil,false}
-    copy(sync.composed[:],sync.instances[:])
-    for instance in extras {
-        if !instance.replace_source || instance.object_id==0 {continue}
-        e:=core.Entity(instance.object_id)
-        at:=instance_of(sync,e)
-        if at>=0 {sync.composed[at].hidden=true}
-    }
-    return sync.composed[:],true
 }
 
 @(private)
@@ -1059,6 +1064,18 @@ extras_unchanged :: proc(sync:^Render_Sync,extras:[]gpu.Instance_Desc) -> bool {
 // The entity an instance of the renderer was drawn for.
 instance_entity :: proc(sync:^Render_Sync,instance:int) -> core.Entity {
     return instance>=0 && instance<len(sync.drawn.entities)?sync.drawn.entities[instance]:core.NONE
+}
+
+// The instances the renderer has of the world: those of its meshes, then the
+// visual instances of the application.
+instance_count :: proc(sync:^Render_Sync) -> int {return len(sync.drawn.entities)+len(sync.extras)}
+
+// The object an instance of the renderer is drawn for (gpu.Instance_Desc.object_id):
+// the entity of a mesh of the world, or what a visual instance names. 0 for none.
+instance_object :: proc(sync:^Render_Sync,instance:int) -> u64 {
+    world:=len(sync.drawn.entities)
+    if instance<0 || instance>=world+len(sync.extras) {return 0}
+    return instance<world?u64(sync.drawn.entities[instance]):sync.extras[instance-world].object_id
 }
 
 // Whether e or something above it is Hidden.
@@ -1148,18 +1165,20 @@ instance_matrix :: proc(world:core.World_Transform,frame:core.Frame_Time,offsets
 @(private)
 room :: proc(a:^[dynamic]$E) -> bool {return len(a)<cap(a) || reserve(a,max(8,2*cap(a)))==nil}
 
-// The instances of the meshes of the world, made again, with room for the
-// visual instances of the application after them. False without memory.
+// The scene the renderer is set, in shown: the instances of the meshes of
+// the world, made again and hidden where a visual instance replaces them,
+// and the visual instances of the application after them. False without
+// memory.
 @(private)
-instances_build :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time,extras:int) -> bool {
-    clear(&sync.instances);clear(&sync.highlights);clear(&sync.lerping);clear(&sync.changed)
+instances_build :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time,extras:[]gpu.Instance_Desc) -> bool {
+    clear(&sync.shown);clear(&sync.lerping);clear(&sync.deriving);clear(&sync.changed)
     core.entity_map_clear(&sync.drawn)
     if sync.mesh_users==nil {sync.mesh_users=make(map[base.Asset_Id][dynamic]u32)}
     for _,users in sync.mesh_users {delete(users)}
     clear(&sync.mesh_users)
     count:=core.count(t.meshes)
-    if !core.entity_map_reserve(&sync.drawn,count) || reserve(&sync.instances,count+extras)!=nil || reserve(&sync.highlights,count+extras)!=nil ||
-       reserve(&sync.lerping,count)!=nil || reserve(&sync.changed,count)!=nil {return false}
+    if !core.entity_map_reserve(&sync.drawn,count) || reserve(&sync.shown,count+len(extras))!=nil ||
+       reserve(&sync.lerping,count)!=nil || reserve(&sync.deriving,count)!=nil || reserve(&sync.changed,count)!=nil {return false}
     for row in 0..<count {
         e:=core.entity_at(t.meshes,row)
         world,placed:=core.get(t.worlds,e)
@@ -1169,10 +1188,16 @@ instances_build :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,frame:cor
         if !ok {continue}
         lerp:=world.previous!=world.transform
         if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,alpha=alpha,derives=derives,lerp=lerp});!kept {return false}
-        if lerp {append(&sync.lerping,u32(len(sync.instances)))}
-        append(&sync.instances,instance);append(&sync.highlights,instance.highlight)
-        mesh_user_add(sync,static.mesh,u32(len(sync.instances)-1))
+        at:=u32(len(sync.shown))
+        if lerp {append(&sync.lerping,at)}
+        if derives {append(&sync.deriving,at)}
+        append(&sync.shown,instance)
+        mesh_user_add(sync,static.mesh,at)
     }
+    for extra in extras {
+        if at:=instance_of(sync,core.Entity(extra.object_id));at>=0 && extra.replace_source {sync.shown[at].hidden=true}
+    }
+    append(&sync.shown,..extras)
     return true
 }
 
@@ -1248,9 +1273,12 @@ sun_on :: proc(worlds:core.Read(core.World_Transform),lights:Lights,hidden:core.
     return
 }
 
-// The lights of the frame and its sun. False, with no light, without memory for them.
+// The lights of the frame and its sun. The material a rectangle shows is
+// read from r, or from set: the scene r is about to be set, which it does
+// not have yet (emission_material). False, with no light, without memory
+// for them.
 @(private)
-lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32) -> bool {
+lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32,r:^gpu.Renderer=nil,set:[]gpu.Instance_Desc=nil) -> bool {
     clear(&sync.lights)
     sync.sun={}
     sync.sun_fade={}
@@ -1286,7 +1314,7 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         world,placed:=core.get(worlds,e)
         if !placed || is_hidden(hidden,parents,e) {continue}
         desc:=rect_desc(world,core.at(lights.rects,row))
-        if emission,shows:=core.get(emissions,e);shows {desc.material=emission_material(sync,a,meshes,extras,e,u32(emission.slot))}
+        if emission,shows:=core.get(emissions,e);shows {desc.material=emission_material(sync,a,r,meshes,extras,set,e,u32(emission.slot))}
         append(&sync.lights,desc)
     }
     return true
@@ -1323,9 +1351,10 @@ rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc 
 
 // The material a rectangle of Light_Emission shows: the one the mesh of its
 // entity is drawn with in that slot, by what replaces it in this frame if
-// something does (a screen of a plugin). 0: none.
+// something does (a screen of a plugin). Its instance is read from set, or
+// from the renderer when it has the scene already. 0: none.
 @(private)
-emission_material :: proc(sync:^Render_Sync,a:^host.Assets,meshes:core.Read(Mesh_Renderer),extras:[]gpu.Instance_Desc,e:core.Entity,slot:u32) -> gpu.Material_Handle {
+emission_material :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,meshes:core.Read(Mesh_Renderer),extras,set:[]gpu.Instance_Desc,e:core.Entity,slot:u32) -> gpu.Material_Handle {
     static,has_mesh:=core.get(meshes,e)
     if !has_mesh {return 0}
     shown:gpu.Instance_Desc
@@ -1334,7 +1363,12 @@ emission_material :: proc(sync:^Render_Sync,a:^host.Assets,meshes:core.Read(Mesh
     if !found {
         at:=instance_of(sync,e)
         if at<0 {return 0}
-        shown=sync.instances[at]
+        if at<len(set) {shown=set[at]}
+        else if r==nil {return 0}
+        else if material,slots,_,held:=gpu.scene_instance_materials(r,u32(at));held {
+            shown.material=material
+            shown.slot_materials=slots
+        }
     }
     row,_:=mesh_slot_row(a,static,&shown,slot)
     return gpu.Material_Handle(row)
@@ -1365,16 +1399,15 @@ batches_retain :: proc(a:^host.Assets,r:^gpu.Renderer) {
     for row in rows {host.assets_material_retain(a,row)}
 }
 
-// The instances whose world rows were written since the last sync, and
-// those between two places, which move with the time of the frame.
+// Where the instances whose world rows were written since the last sync
+// are, and those between two places, which move with the time of the frame:
+// gpu.scene_move leaves where it is what did not move.
 @(private)
-instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,frame:core.Frame_Time) -> int {
+instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,frame:core.Frame_Time) {
     clear(&sync.moved);clear(&sync.moved_transforms);clear(&sync.moved_anchors)
     worlds:=t.worlds
     place :: proc(sync:^Render_Sync,t:Sync_Tables,world:core.World_Transform,at:int,frame:core.Frame_Time) {
         anchor,m:=instance_place(world,frame,t.offsets,t.parents,t.worlds,t.locals,t.cameras,sync.drawn.entities[at])
-        if sync.instances[at].transform==m && sync.instances[at].anchor==anchor {return}
-        sync.instances[at].transform,sync.instances[at].anchor=m,anchor
         append(&sync.moved,u32(at));append(&sync.moved_transforms,m);append(&sync.moved_anchors,anchor)
     }
     if core.version(worlds)!=sync.worlds_version {
@@ -1399,12 +1432,12 @@ instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,frame:core.Frame_Time) -
         world,_:=core.get(worlds,sync.drawn.entities[at])
         place(sync,t,world,at,frame)
     }
-    return len(sync.moved)
 }
 
+// The tints written, added or removed: a color given in place, which
+// gpu.scene_tint leaves as it is when it is the same, an opacity or a tint
+// gone by making the instance again.
 @(private)
-// The tints written, added or removed: a color changed in place, an opacity or
-// a tint gone by making the instance again.
 tints_settle :: proc(sync:^Render_Sync,tints:core.Read(Tint),c:core.Changes) {
     clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions)
     for e in c.gone {if at:=instance_of(sync,e);at>=0 {instance_changed(sync,u32(at))}}
@@ -1415,9 +1448,6 @@ tints_settle :: proc(sync:^Render_Sync,tints:core.Read(Tint),c:core.Changes) {
         if at<0 {continue}
         tint:=core.at(tints,row)
         if tint.color.a!=sync.drawn.values[at].alpha {instance_changed(sync,u32(at));continue}
-        instance:=&sync.instances[at]
-        if instance.tint==tint.color.rgb && instance.emission==tint.emission {continue}
-        instance.tint,instance.emission=tint.color.rgb,tint.emission
         append(&sync.tinted,u32(at));append(&sync.tinted_colors,tint.color.rgb);append(&sync.tinted_emissions,tint.emission)
     }
 }

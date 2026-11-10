@@ -675,7 +675,7 @@ pose_instance_box :: proc(s:^Scene_State,index:u32) -> bool {
     instance_resized(s,int(index),lo,hi)
     occluder_moved(s,index,before,inst^)
     s.tlas_items[index]={bounds_min=lo,bounds_max=hi,center=(lo+hi)*0.5}
-    if len(s.touched)<cap(s.touched) {append(&s.touched,index)} else {s.instances_dirty=true}
+    instance_touch(s, index)
     return true
 }
 

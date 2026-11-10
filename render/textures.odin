@@ -243,6 +243,7 @@ textures_init :: proc(r: ^Renderer) {
 	state.stored = make([dynamic]u64, r.allocator)
 	state.partial = make([dynamic]bool, r.allocator)
 	state.residency.streams = make([dynamic]Texture_Stream, r.allocator)
+	state.residency.seen_near = make([dynamic]f32, r.allocator)
 }
 
 @(private)
@@ -254,6 +255,7 @@ textures_destroy :: proc(r: ^Renderer) {
 	delete(state.stored)
 	delete(state.partial)
 	delete(state.residency.streams)
+	delete(state.residency.seen_near)
 }
 
 // Makes room for the texture of handle index + 1 in what the renderer keeps
