@@ -1645,7 +1645,7 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 		testing.expectf(t, inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED) == INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED, "%s: the instance is hidden by its transform", what)
 		testing.expectf(t, inst.world_inv == {} && s.hw_instances[index].transform == {} && s.hw_instances[index].mask_flags & 0xff == 0, "%s: rays have no way into it", what)
 		item := s.tlas_items[index]
-		testing.expectf(t, item.bounds_min == item.bounds_max, "%s: its box %v is a point", what, item)
+		testing.expectf(t, item.min == item.max, "%s: its box %v is a point", what, item)
 	}
 
 	testing.expect(t, scene_move(r, {2}, {trs({0, 1.5, 0}, {0, 0, 0})}))
@@ -1750,7 +1750,7 @@ tlas_exact :: proc(s: ^Scene_State, node: int) -> (bmin, bmax: Vec3, ok: bool) {
 	if n.count > 0 {
 		for ref in s.tlas_refs[n.left_first:][:n.count] {
 			item := s.tlas_items[ref &~ TLAS_REF_GLASS]
-			for axis in 0 ..< 3 {bmin[axis], bmax[axis] = min(bmin[axis], item.bounds_min[axis]), max(bmax[axis], item.bounds_max[axis])}
+			for axis in 0 ..< 3 {bmin[axis], bmax[axis] = min(bmin[axis], item.min[axis]), max(bmax[axis], item.max[axis])}
 		}
 	} else {
 		for child in ([2]int{int(n.left_first), int(n.left_first) + 1}) {

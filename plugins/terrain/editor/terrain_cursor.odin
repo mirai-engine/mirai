@@ -18,7 +18,7 @@ CURSOR_OUTLINE :: editor.BRUSH_OUTLINE
 @(private)
 cursor_color :: proc "contextless" (kind:terrain.Brush_Kind) -> ui.Color {
     #partial switch kind {
-    case .Lower,.Remove,.Erase,.Hole,.Subtract,.Erode: return CURSOR_TAKE
+    case .Lower,.Carve,.Erase,.Hole,.Erode: return CURSOR_TAKE
     case .Smooth:                                return CURSOR_SMOOTH
     }
     return CURSOR_ADD
@@ -34,16 +34,16 @@ cursor_draw :: proc(s:^editor.Session,tool:^Terrain_Tool,input:core.Input,view:c
     stroke:=&tool.stroke
     source:=&stroke.source
     local,normal:[3]f32;ok:bool
-    if stroke.active && !stroke.drag.active {local,normal,ok=stroke_aim(tool,s.viewport,input.mouse_position)} else {local,normal,ok=stroke_point(stroke,s.viewport,input.mouse_position)}
+    if stroke.active {local,normal,ok=stroke_aim(tool,s.viewport,input.mouse_position)} else {local,normal,ok=stroke_point(stroke,s.viewport,input.mouse_position)}
     if !ok {return}
     grid:=stroke.source.kind==.Heightfield
     if grid {normal={0,1,0}}
     kind,level,capped:=brush_held(tool,s.gui.ctx.input.modifiers,input.eraser)
-    radius:=stroke.active && stroke.drag.active?stroke.drag.brush.radius:brush_of(tool).radius/stroke.scale
+    radius:=brush_of(tool).radius/stroke.scale
     color:=cursor_color(kind)
     ring_draw(s,stroke,source,local,normal,radius,color,dashed=kind==.Smooth)
     if brush_strong(kind) {ring_draw(s,stroke,source,local,normal,radius*clamp(brush_of(tool).strength,0,1),faded(color),2)}
-    if !grid && (kind==.Add || kind==.Remove || tool_shaping(tool)) {
+    if !grid && (kind==.Add || kind==.Carve) {
         _,forward:=core.view_ray(view,view.size*0.5)
         sphere_draw(s,stroke,local,radius,(stroke.to_local*[4]f32{forward.x,forward.y,forward.z,0}).xyz,faded(color))
     }

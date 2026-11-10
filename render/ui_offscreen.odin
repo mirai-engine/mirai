@@ -80,7 +80,7 @@ Ui_Offscreen_State :: struct {
     asked_count:[rhi.MAX_FRAMES_IN_FLIGHT]int,
     results:[DEPTH_PROBE_CAPACITY]Depth_Probe_Result,
     result_count:int,
-    trees:[UI_TEXTURE_CAPACITY]Mesh_Ray_Tree,
+    trees:[dynamic]Mesh_Ray_Tree, // a slot whose rays have no cuts is free
 }
 
 @(private)
@@ -108,6 +108,7 @@ ui_offscreen_destroy :: proc(r:^Renderer) {
     if o.probes!=0 {rhi.buffer_destroy(r.device,o.probes)}
     for b in o.probe_readback {if b!=0 {rhi.buffer_destroy(r.device,b)}}
     for &tree in o.trees {mesh_rays_destroy(&tree.rays)}
+    delete(o.trees)
     o^={}
 }
 
@@ -382,15 +383,16 @@ depth_probe_hides :: proc(result:^Depth_Probe_Result,point:Vec3,share,metres:f32
     return depth>0 && linalg.dot(point-probe.camera.position,forward)>depth*share+metres,true
 }
 
-// Where a ray meets a mesh placed by transform, and the first texture
-// coordinates of the mesh there: the nearest triangle of level 0, from what
+// Where a ray meets a mesh placed by transform, the first texture
+// coordinates of the mesh there and the normal of its triangle in the world,
+// unit and against the ray: the nearest triangle of level 0, from what
 // the renderer keeps of the mesh on the CPU, its software BVH or the one
 // mesh_ray_prepare made. A pose of skin_create is met as its palette and
 // morph weights of the next frame pose it, triangle by triangle. ok false
 // for a miss, a mesh that is not there, a pose with more than
 // MESH_RAY_TRIANGLES triangles, or a mesh with as many and no tree. A pose
 // an extension deforms is met at rest.
-mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Vec3,limit:f32=max(f32)) -> (distance:f32,uv:Vec2,ok:bool) {
+mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Vec3,limit:f32=max(f32)) -> (distance:f32,uv:Vec2,normal:Vec3,ok:bool) {
     s:=&r.scene
     if int(mesh)>=len(s.meshes) {return}
     m:=&s.meshes[mesh]
@@ -399,6 +401,8 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
     inverse:=linalg.inverse(transform)
     from:=(inverse*Vec4{origin.x,origin.y,origin.z,1}).xyz
     along:=(inverse*Vec4{direction.x,direction.y,direction.z,0}).xyz
+    // x-x is zero only for a finite x: a transform without an inverse meets nothing.
+    if from-from!={} || along-along!={} {return}
     p:=record_pooled(s,m^)
     primitive:=-1
     distance=limit
@@ -442,7 +446,10 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
         a,b,d=posed_position(skin,a,first+u32(corners[0])),posed_position(skin,b,first+u32(corners[1])),posed_position(skin,d,first+u32(corners[2]))
     }
     _,weights,_:=mm.ray_triangle({from,along},{a,b,d})
-    return distance,va.uv*(1-weights.x-weights.y)+vb.uv*weights.x+vc.uv*weights.y,true
+    local:=linalg.cross(b-a,d-a)
+    normal=linalg.normalize0((linalg.transpose(inverse)*Vec4{local.x,local.y,local.z,0}).xyz)
+    if linalg.dot(normal,direction)>0 {normal=-normal}
+    return distance,va.uv*(1-weights.x-weights.y)+vb.uv*weights.x+vc.uv*weights.y,normal,true
 }
 
 // Where a vertex of a pose is in the next frame: at rest, with what its
@@ -491,19 +498,25 @@ mesh_ray_tree :: proc(r:^Renderer,mesh:Mesh_Handle) -> ^Mesh_Ray_Tree {
 
 // Makes what mesh_ray meets a mesh with when the renderer keeps no software
 // tree of it: a transaction, for a mesh a ray will meet in many frames, as
-// one a widget is drawn on. A pose needs none. False when no tree is left
-// (UI_TEXTURE_CAPACITY) or the mesh is not all there yet.
+// one a widget is drawn on or the editor picks. A pose needs none. The tree
+// stays until mesh_ray_release or the mesh goes. False without memory for it
+// or while the mesh is not all there yet.
 mesh_ray_prepare :: proc(r:^Renderer,mesh:Mesh_Handle) -> bool {
     s:=&r.scene
     if int(mesh)>=len(s.meshes) {return false}
     m:=&s.meshes[mesh]
     if m.vertex_count==0 {return false}
     if m.skin!=nil || m.rays[0].bvh_node_count>0 || mesh_ray_tree(r,mesh)!=nil {return true}
+    trees:=&r.ui_offscreen.trees
     free:^Mesh_Ray_Tree
-    for &tree in r.ui_offscreen.trees {
+    for &tree in trees {
         if tree.rays.count==0 {free=&tree;break}
     }
-    if free==nil {return false}
+    if free==nil {
+        if trees.allocator.procedure==nil {trees.allocator=r.allocator}
+        if _,error:=append(trees,Mesh_Ray_Tree{});error!=nil {return false}
+        free=&trees[len(trees)-1]
+    }
     g,decoded:=record_decode(s,m^,r.allocator)
     if !decoded {return false}
     defer geometry_decoded_free(&g,r.allocator)

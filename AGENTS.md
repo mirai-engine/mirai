@@ -129,9 +129,9 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
-- An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
-  and `bench compare` are `--dev` by themselves: two builds of the same mode compare. **`--release`
-  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers.
+- Every command builds `--dev` unless `--release` is given; `render check` and `bench compare`
+  build both sides alike: two builds of the same mode compare. **`--release` only when the task
+  cannot do without it or the user asks for it**: a budget in absolute numbers.
   If the user's editor holds the `--dev` build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the

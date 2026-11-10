@@ -24,10 +24,8 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   that of its network (`address_lan`: the one the system uses toward the internet, not a virtual
   adapter's), and the token. Whoever enters without that token gets no answer and times out; the
   host's log shows the code each time it changes.
-- The host sees two codes in Session: **Same network**, with its address on the network, and
-  **Internet**, with the one the router opened (`collab_internet_code`). From the host's network
-  one enters with the network one: the internet one depends on the router returning the traffic to
-  its network (hairpin), and if it does not respond the reason suggests it.
+- The host sees one code in Session, once the router answered: a guest asks at the address of the
+  code and nearby, so the same code joins from the host's network and from outside it.
 - **Rejoining.** Each editor has an id (`Collab.client`, in the Hello): one that enters again while
   the host holds its previous connection takes its place and its color, and that connection is
   closed with what it had selected. Whoever leaves the session's list retains nothing.

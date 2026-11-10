@@ -146,7 +146,7 @@ Explore_Run :: struct {
 @(private)
 explore_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Explore_Params{seed=1,cell=2}
-    editor.api_method_register(s,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World goes to the least visited cells as a drive of play.step goes, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,params_info=type_info_of(Api_Play_Explore_Params),result=Api_Play_Explore_Result,result_info=type_info_of(Api_Play_Explore_Result),writes_result=true,defaults=&defaults,run=api_play_explore})
+    editor.api_method_register(s,Api_Play_Explore_Params,Api_Play_Explore_Result,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World goes to the least visited cells as a drive of play.step goes, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",writes_result=true,defaults=&defaults,run=api_play_explore})
 }
 
 // ---------------------------------------------------------------- cells

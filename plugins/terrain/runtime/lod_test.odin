@@ -26,7 +26,7 @@ lod_levels_double_with_distance_and_hold_near_their_boundaries :: proc(t:^testin
     testing.expect_value(t,chunk_lod_max(&source,{1,0,0}),u8(1))
     volume:Source;defer source_destroy(&volume)
     testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,8))
-    testing.expect_value(t,chunk_lod_max(&volume,{0,0,0}),u8(2))
+    testing.expect_value(t,chunk_lod_max(&volume,{0,0,0}),u8(0)) // a Volume has no levels of its own
 }
 
 @(private)
@@ -123,7 +123,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     // The level its error allows there: one, whose vertices are about the spacing the view sees.
     testing.expectf(t,chunks[far].built.lod.level<=1,"the chunk of the bump is at level %d",chunks[far].built.lod.level)
     testing.expect(t,chunks[flat].built.lod.level>=2)
-    testing.expect_value(t,chunks[flat].built.lod.faces[0],min(chunks[flat].built.lod.level,chunks[flat-1].built.lod.level))
+    testing.expect_value(t,chunks[flat].built.lod.sides[0],min(chunks[flat].built.lod.level,chunks[flat-1].built.lod.level))
     apart :: proc(t:^testing.T,s:^Source,chunks:[]Resident_Chunk) {
         for i in 0..<64 {
             coord:=chunk_coord(s,i)

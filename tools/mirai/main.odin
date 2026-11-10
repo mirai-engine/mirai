@@ -15,7 +15,7 @@ Command :: struct {name,usage,summary:string,run:proc(root:string,args:[]string)
 COMMANDS :: [?]Command{
     {"build",BUILD_USAGE,"Builds the mirai tool into bin/",cmd_build},
     {"build",BUILD_ENGINE_USAGE,"Builds the engine libraries, their declarations and the programs that load a project",cmd_build},
-    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project",cmd_build},
+    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project; the game to ship with --release",cmd_build},
     {"generate",GENERATE_USAGE,"Generates the world of a project from the attributes of its packages",cmd_generate},
     {"edit",EDIT_USAGE,"Generates, builds and opens the editor of a project",cmd_edit},
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
@@ -84,6 +84,7 @@ installed_runs :: proc(args:[]string) -> bool {
 
 usage :: proc() {
     fmt.eprintln("Usage: mirai <command> [arguments]")
+    fmt.eprintln("A command that builds or picks engine binaries is --dev unless --release is given; package is always --release, and the game to ship is build game --release.")
     for command in COMMANDS {fmt.eprintfln("  %-52s %s",command.usage,command.summary)}
 }
 
@@ -263,7 +264,8 @@ check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
     clean:=plugin_api_lint_project(&opened)
-    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    // Against the declarations an agent builds with: a check comes before a --dev build.
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {

@@ -30,22 +30,21 @@ TERRAIN_API_DEFAULT :: Terrain_Api{provider={register=terrain_api_register}}
 
 Create_Params :: struct {
     name:[128]u8 `mirai:"text,optional,label=The name of its entity and of its file; omitted: of its kind and a number"`,
-    kind:[16]u8 `mirai:"text,optional,label=heightfield or mesh (a 3D Terrain that may have caves) or volume; omitted: heightfield"`,
+    kind:[16]u8 `mirai:"text,optional,label=heightfield (open ground) or volume (caves, overhangs and digging); omitted: heightfield"`,
     samples:u32 `mirai:"optional,min=3,max=16385,label=Samples on a side over x and z"`,
-    depth:u32 `mirai:"optional,min=3,max=129,label=Samples along y of a volume"`,
+    depth:u32 `mirai:"optional,min=3,max=16385,label=Samples along y of a volume"`,
     spacing:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Between two samples"`,
     chunk_cells:u32 `mirai:"optional,min=4,max=256,label=Cells on a side of a chunk"`,
     heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP of the project whose heights it takes in place of samples"`,
     height_scale:f32 `mirai:"optional,unit=m,label=How far the white of the heightmap stands over its black"`,
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
-    base_depth:f32 `mirai:"optional,min=0,unit=m,label=Of a 3D Terrain: how deep its solid goes under its lowest point; 0 an open surface"`,
     at:[3]f32 `mirai:"optional,label=Where its entity stands; omitted: under the target of the view"`,
     ground:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Of a volume: a Heightfield terrain it joins, standing on its samples and centered at at, its field its ground to dig into; it takes the spacing of the Heightfield"`,
 }
 
 Edit_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the terrain"`,
-    brush:[16]u8 `mirai:"text,label=raise or lower or smooth or flatten or set_height or ramp or terrace or noise or erode or paint or erase or hole or fill or add or remove or union or subtract"`,
+    brush:[16]u8 `mirai:"text,label=raise or lower or smooth or flatten or set_height or ramp or terrace or noise or erode or paint or erase or hole or fill or add or carve"`,
     at:[3]f32 `mirai:"label=Where it touches in the world; on a Heightfield the surface under its x and z"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to; the other end of a ramp (at its height) or of a capsule"`,
     radius:f32 `mirai:"optional,min=0.1,max=500,unit=m"`,
@@ -62,9 +61,9 @@ Edit_Params :: struct {
     sides:f32 `mirai:"optional,min=0,unit=m,label=Of ramp: how far its sides fall off past its radius"`,
     slope:[2]f32 `mirai:"optional,label=Degrees from horizontal of the Heightfield it touches: lowest and highest; omitted: any"`,
     slope_invert:bool `mirai:"optional,label=It touches outside slope instead"`,
-    layer:[LAYER_NAME_BYTES]u8 `mirai:"text,optional,label=Of paint and erase, and of add and union on a Volume: the layer by its material (a path or its stem; default is one without a material); omitted: the first"`,
+    layer:[LAYER_NAME_BYTES]u8 `mirai:"text,optional,label=Of paint and erase, and of add on a Volume: the layer by its material (a path or its stem; default is one without a material); omitted: the first"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of paint: the weight it takes the layer to in place of adding to it"`,
-    shape:[16]u8 `mirai:"text,optional,label=Of union and subtract: sphere or capsule or box"`,
+    shape:[16]u8 `mirai:"text,optional,label=Of add and carve: sphere or capsule or box; omitted: a sphere, or a capsule from at to to"`,
     alpha:[32]u8 `mirai:"text,optional,label=A shape of the brush by its name as the panel lists them"`,
     turn:f32 `mirai:"optional,label=Degrees the alpha turns"`,
     player:int `mirai:"optional,min=0,max=3,label=While a game plays: the run of that player of a game a turn plays on the network"`,
@@ -134,19 +133,19 @@ Resize_Params :: struct {
 @(private)
 terrain_api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,"terrain","Terrain",ui.icon_user(u8(editor.User_Icon.Terrain)),{key=.T,set=true})
-    create_defaults:=Create_Params{samples=65,depth=17,spacing=1,chunk_cells=32,height_scale=32,base_depth=8}
+    create_defaults:=Create_Params{samples=65,depth=17,spacing=1,chunk_cells=32,height_scale=32}
     edit_defaults:=Edit_Params{radius=4,strength=0.5,passes=1,interval=2,riser=0.25,scale=8,sides=2}
     layer_defaults:=Layer_Params{tiling=terrain.LAYER_DEFAULT.tiling}
     interior_defaults:=Interior_Params{wave_scale=16}
     for &stratum in interior_defaults.strata {stratum.depth=1}
     for &vein in interior_defaults.veins {vein.scale,vein.amount,vein.depth=4,0.3,{0,terrain.HEIGHT_LIMIT}}
-    editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z), a 3D Terrain (a mesh, for caves and overhangs) or a Volume (solid and air), flat or from a heightmap. Its .terrain stays in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),defaults=&create_defaults,result_schema=ID_RESULT,run=api_create})
-    editor.api_method_register(s,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or shapes of a 3D Terrain or a Volume (union, subtract). The error says what the terrain takes.",params=Edit_Params,params_info=type_info_of(Edit_Params),defaults=&edit_defaults,result_schema=`{"type":"object","properties":{"changed":{"type":"boolean"},"touches":{"type":"integer"}},"required":["changed"]}`,run=api_edit})
-    editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=Layer_Params,params_info=type_info_of(Layer_Params),defaults=&layer_defaults,result_schema=`{"type":"object","properties":{"layers":{"type":"integer"},"layer":{"type":"string"}},"required":["layers"]}`,run=api_layer})
-    editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=Interior_Params,params_info=type_info_of(Interior_Params),defaults=&interior_defaults,result_schema=`{"type":"object","properties":{"strata":{"type":"integer"},"veins":{"type":"integer"}},"required":["strata","veins"]}`,run=api_interior})
-    editor.api_method_register(s,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",params=Sample_Params,params_info=type_info_of(Sample_Params),flags={.Read_Only},result_schema=`{"type":"object","properties":{"found":{"type":"boolean"},"height":{"type":"number"},"normal":{"type":"array"},"slope":{"type":"number"},"weights":{"type":"object"},"hole":{"type":"boolean"},"layers":{"type":"integer"},"check":{"type":"string"}},"required":["found"]}`,run=api_sample})
-    editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG (the scale and offset it answers import it back).",params=Heightmap_Params,params_info=type_info_of(Heightmap_Params),result_schema=`{"type":"object","properties":{"written":{"type":"string"},"height_scale":{"type":"number"},"height_offset":{"type":"number"}}}`,run=api_heightmap})
-    editor.api_method_register(s,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",params=Resize_Params,params_info=type_info_of(Resize_Params),result_schema=ID_RESULT,run=api_resize})
+    editor.api_method_register(s,Create_Params,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z, for open ground) or a Volume (solid and air, for caves, overhangs and digging), flat or from a heightmap. Its .terrain stays in memory until it is saved; one step of undo takes it away.",defaults=&create_defaults,result_schema=ID_RESULT,run=api_create})
+    editor.api_method_register(s,Edit_Params,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or a shape it joins or takes out (add, carve: a sphere at at, a capsule to to, or a box), on a Heightfield or a Volume alike. The error says what failed and what to use.",defaults=&edit_defaults,result_schema=`{"type":"object","properties":{"changed":{"type":"boolean"},"touches":{"type":"integer"}},"required":["changed"]}`,run=api_edit})
+    editor.api_method_register(s,Layer_Params,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",defaults=&layer_defaults,result_schema=`{"type":"object","properties":{"layers":{"type":"integer"},"layer":{"type":"string"}},"required":["layers"]}`,run=api_layer})
+    editor.api_method_register(s,Interior_Params,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",defaults=&interior_defaults,result_schema=`{"type":"object","properties":{"strata":{"type":"integer"},"veins":{"type":"integer"}},"required":["strata","veins"]}`,run=api_interior})
+    editor.api_method_register(s,Sample_Params,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",flags={.Read_Only},result_schema=`{"type":"object","properties":{"found":{"type":"boolean"},"height":{"type":"number"},"normal":{"type":"array"},"slope":{"type":"number"},"weights":{"type":"object"},"hole":{"type":"boolean"},"layers":{"type":"integer"},"check":{"type":"string"}},"required":["found"]}`,run=api_sample})
+    editor.api_method_register(s,Heightmap_Params,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG (the scale and offset it answers import it back).",result_schema=`{"type":"object","properties":{"written":{"type":"string"},"height_scale":{"type":"number"},"height_offset":{"type":"number"}}}`,run=api_heightmap})
+    editor.api_method_register(s,Resize_Params,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",result_schema=ID_RESULT,run=api_resize})
 }
 
 // The tool, the edited world and the terrain of an id, ready to edit as
@@ -231,9 +230,8 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     kind:terrain.Source_Kind
     switch strings.to_lower(base.text_get(p.kind[:]),context.temp_allocator) {
     case "","heightfield": kind=.Heightfield
-    case "mesh":        kind=.Mesh
     case "volume":      kind=.Volume
-    case: api.call_fail(call,api.INVALID_PARAMS,"kind is heightfield, mesh or volume");return
+    case: api.call_fail(call,api.INVALID_PARAMS,"kind is heightfield or volume");return
     }
     name:=base.text_get(p.name[:])
     if name!="" && !api_name_free(s,call,name) {return}
@@ -243,10 +241,10 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,fmt.tprintf("heightmap: %s",problem));return}
         path=file
     }
-    if path!="" && kind==.Volume {api.call_fail(call,api.INVALID_PARAMS,"A volume starts as a solid block: a heightmap makes a heightfield or a mesh");return}
+    if path!="" && kind==.Volume {api.call_fail(call,api.INVALID_PARAMS,"A volume starts as a solid block: a heightmap makes a heightfield");return}
     tool.create_kind,tool.create_source=kind,path!=""?.Heightmap:.Plane
     tool.samples,tool.depth,tool.cell,tool.chunk_cells=int(p.samples),int(p.depth),p.spacing,int(p.chunk_cells)
-    tool.height_scale,tool.height_offset,tool.solid_depth=p.height_scale,p.height_offset,p.base_depth
+    tool.height_scale,tool.height_offset=p.height_scale,p.height_offset
     tool.heightmap_length=copy(tool.heightmap_path[:],path)
     s.toast_length=0
     placed:=editor.tool_call_given(call,"at")
@@ -284,9 +282,7 @@ brush_named :: proc(name:string) -> (kind:terrain.Brush_Kind,level,ok:bool) {
     case "hole":       return .Hole,false,true
     case "fill":       return .Fill,false,true
     case "add":        return .Add,false,true
-    case "remove":     return .Remove,false,true
-    case "union":      return .Union,false,true
-    case "subtract":   return .Subtract,false,true
+    case "carve":      return .Carve,false,true
     }
     return
 }
@@ -295,7 +291,7 @@ brush_named :: proc(name:string) -> (kind:terrain.Brush_Kind,level,ok:bool) {
 api_edit :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Edit_Params)
     kind,level,named:=brush_named(strings.to_lower(base.text_get(p.brush[:]),context.temp_allocator))
-    if !named {api.call_fail(call,api.INVALID_PARAMS,"brush is raise, lower, smooth, flatten, set_height, ramp, terrace, noise, erode, paint, erase, hole, fill, add, remove, union or subtract");return}
+    if !named {api.call_fail(call,api.INVALID_PARAMS,"brush is raise, lower, smooth, flatten, set_height, ramp, terrace, noise, erode, paint, erase, hole, fill, add or carve");return}
     if r,own:=editor.api_play_run(s,call,p.player);r!=nil {
         if !own {editor.api_play_refused(call);return}
         api_edit_play(s,call,p,editor.run_ref(s,r),kind,level)
@@ -305,18 +301,6 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     stroke:=&tool.stroke
     source:=&stroke.source
-    // What each representation takes, as the panel offers it.
-    taken:bool
-    switch source.kind {
-    case .Heightfield: taken=kind!=.Add && kind!=.Remove && kind!=.Union && kind!=.Subtract
-    case .Mesh:        taken=kind==.Raise || kind==.Lower || kind==.Smooth || kind==.Flatten || kind==.Paint || kind==.Erase || kind==.Union || kind==.Subtract
-    case .Volume:      taken=kind==.Add || kind==.Remove || kind==.Smooth || kind==.Flatten || kind==.Noise || kind==.Paint || kind==.Erase || kind==.Union || kind==.Subtract
-    }
-    if !taken {
-        offers:=[terrain.Source_Kind]string{.Heightfield="raise, lower, smooth, flatten, set_height, ramp, terrace, noise, erode, paint, erase, hole and fill",.Mesh="raise, lower, smooth, flatten, set_height, paint, erase, union and subtract",.Volume="add, remove, smooth, flatten, set_height, noise, paint, erase, union and subtract"}
-        api.call_failf(call,api.INVALID_PARAMS,"A %s takes %s",terrain_kind_name(source.kind),offers[source.kind])
-        return
-    }
     layer:=0
     if name:=base.text_get(p.layer[:]);name!="" {
         found:bool
@@ -353,7 +337,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     path:=p.to!={}
     if path {to=local(stroke,p.to)}
     radius:=p.radius/stroke.scale
-    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/stroke.scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/stroke.scale,layer=u32(layer),alpha=alpha,turn=math.to_radians(p.turn),seed=u32(stroke.id[0]),normal={0,1,0},max_edge=tool.edge_length/stroke.scale}
+    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/stroke.scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/stroke.scale,layer=u32(layer),alpha=alpha,turn=math.to_radians(p.turn),seed=u32(stroke.id[0])}
     if p.slope!={} && source.kind==.Heightfield {
         low,high:=math.to_radians(min(p.slope.x,p.slope.y)),math.to_radians(max(p.slope.x,p.slope.y))
         brush.slope,brush.slope_invert={clamp(low,0,math.PI/2),clamp(max(high,low+1e-4),0,math.PI/2)},p.slope_invert
@@ -370,7 +354,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     touches:=0
     s.toast_length=0
     // A ramp and a shape are one touch from at to to; the others touch along the stroke.
-    if kind==.Ramp || kind==.Union || kind==.Subtract {
+    if kind==.Ramp || kind==.Add || kind==.Carve {
         brush.center,brush.amount=from,1
         if kind==.Ramp {
             if !path {api.call_fail(call,api.INVALID_PARAMS,"A ramp goes from at to to: give to");return}
@@ -381,17 +365,19 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
         } else {
             names:=[?]string{"sphere","capsule","box"}
             shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
-            if shape=="" {shape="sphere"}
+            if shape=="" {shape=path?"capsule":"sphere"}
+            brush.center=(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).xyz
+            brush.alpha=nil
             found:=false
             for name,i in names {if name==shape {brush.shape,found=terrain.Brush_Shape(i),true}}
             if !found {api.call_fail(call,api.INVALID_PARAMS,"shape is sphere, capsule or box");return}
             brush.rotation=1
-            if brush.shape==.Capsule {brush.delta=to-from}
+            if brush.shape==.Capsule {brush.delta=(stroke.to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).xyz-brush.center}
             if brush.shape==.Box {brush.extent=radius}
             if source.kind==.Volume {brush.blend=max(tool.blend,0)/stroke.scale}
         }
-        change:=terrain.source_edit(source,brush,terrain_vertex_budget(world,stroke.id))
-        if change.error!=.None {edit_error(s,change.error);editor.tool_call_fail(s,call,"The terrain operation is invalid");return}
+        change:=terrain.source_edit(source,brush)
+        if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
         stroke_changed(stroke,change)
         touches=1
     } else {
@@ -401,7 +387,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
             for i in 0..=count {
                 if !path && i>0 {break}
                 point:=from+step*(f32(i)/f32(max(count,1)))
-                if source.kind==.Heightfield {point.y=terrain.source_height(source,point.x,point.z)} else if hit,normal,found:=terrain.source_ray(source,point+[3]f32{0,radius*4,0},{0,-1,0});found {point,brush.normal=hit,normal}
+                if source.kind==.Heightfield {point.y=terrain.source_height(source,point.x,point.z)} else if hit,_,found:=terrain.source_ray(source,point+[3]f32{0,radius*4,0},{0,-1,0});found {point=hit}
                 brush.center=point
                 #partial switch kind {
                 case .Raise,.Lower,.Noise: brush.amount=strength*radius*RAISE_PER_PASS
@@ -409,8 +395,8 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
                 }
                 if kind==.Erode {brush.seed=u32(base.hash_u64(u64(touches)+u64(stroke.id[1])))}
                 if !(brush.amount>0) {continue}
-                change:=terrain.source_edit(source,brush,terrain_vertex_budget(world,stroke.id))
-                if change.error!=.None {edit_error(s,change.error);editor.tool_call_fail(s,call,"The terrain operation is invalid");return}
+                change:=terrain.source_edit(source,brush)
+                if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
                 stroke_changed(stroke,change)
                 touches+=1
             }
@@ -428,7 +414,7 @@ fmt_label :: proc(kind:terrain.Brush_Kind,level:bool) -> string {
     case .Paint,.Erase: return "Paint terrain"
     case .Hole,.Fill:   return "Terrain holes"
     case .Ramp:         return "Ramp"
-    case .Union,.Subtract: return "Shape"
+    case .Add,.Carve:   return "Shape"
     }
     return "Sculpt"
 }
@@ -510,7 +496,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
     e,source,requests,to_local,scale,ok:=api_play_terrain(call,w,p.entity[:])
     if !ok {return}
     if base.text_get(p.alpha[:])!="" {api.call_fail(call,api.INVALID_PARAMS,"A game asks for brushes without an alpha: leave alpha out");return}
-    if kind==.Ramp || kind==.Union || kind==.Subtract {api.call_fail(call,api.INVALID_PARAMS,"While a game plays terrain.edit asks for the brushes that touch along a stroke; a ramp or a shape goes in a request of play.push");return}
+    if kind==.Ramp {api.call_fail(call,api.INVALID_PARAMS,"While a game plays terrain.edit asks for the brushes that touch along a stroke and for add and carve; a ramp goes in a request of play.push");return}
     layer:=0
     if name:=base.text_get(p.layer[:]);name!="" {
         found:bool
@@ -531,15 +517,33 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
         for f,i in names {if strings.equal_fold(f,name) {falloff,found=geom.Falloff(i),true}}
         if !found {api.call_fail(call,api.INVALID_PARAMS,"falloff is smooth, sphere, linear, sharp or flat");return}
     }
-    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),normal={0,1,0},rotation=1,seed=u32(editor.api_entity_id(w,e))}
+    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),rotation=1,seed=u32(editor.api_entity_id(w,e))}
     if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
     if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?(to_local*[4]f32{p.at.x,p.height,p.at.z,1}).y:from.y}
     step:=to-from
     count:=p.to!={}?clamp(int(math.ceil(linalg.length(step)/(radius*STROKE_SPACING))),1,4096):0
+    place,_:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e)
+    if kind==.Add || kind==.Carve {
+        // One shape: a sphere at at, a capsule to to, or a box.
+        shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
+        if shape=="" {shape=p.to!={}?"capsule":"sphere"}
+        found:=false
+        for name,i in ([?]string{"sphere","capsule","box"}) {if name==shape {brush.shape,found=terrain.Brush_Shape(i),true}}
+        if !found {api.call_fail(call,api.INVALID_PARAMS,"shape is sphere, capsule or box");return}
+        brush.center=(to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).xyz
+        if brush.shape==.Capsule {brush.delta=(to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).xyz-brush.center}
+        if brush.shape==.Box {brush.extent=radius}
+        brush.amount=1
+        if error:=terrain.dig(requests,terrain.brush_world(brush,place.transform),e);error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(error,kind));return}
+        serial.text_write_raw(call.out,"{")
+        api.write_bool(call.out,"changed",true,true)
+        api.write_int(call.out,"touches",1)
+        serial.text_write_raw(call.out,"}")
+        return
+    }
     touches:=(count+1)*int(max(p.passes,1))
     room:=cap(requests.edits.items)-len(requests.edits.items)
     if touches>room {api.call_failf(call,api.INVALID_PARAMS,"The stroke would ask for %d touches and the game has room for %d in this tick: make it shorter or the radius larger, go on after a tick, or raise Terrain_Settings.requests",touches,room);return}
-    place,_:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e)
     pushed:=0
     for _ in 0..<max(p.passes,1) {
         for i in 0..=count {
@@ -549,7 +553,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
             case .Raise,.Lower,.Noise: brush.amount=clamp(p.strength,0,1)*radius*RAISE_PER_PASS
             case:                      brush.amount=clamp(p.strength,0,1)
             }
-            if brush.amount>0 {terrain.dig(requests,terrain.brush_world(brush,place.transform),e);pushed+=1}
+            if brush.amount>0 && terrain.dig(requests,terrain.brush_world(brush,place.transform),e)==.None {pushed+=1}
         }
     }
     serial.text_write_raw(call.out,"{")

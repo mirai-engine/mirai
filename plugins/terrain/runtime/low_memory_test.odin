@@ -12,7 +12,7 @@ import "mirai:core"
 @(test)
 a_build_without_memory_for_its_border_does_not_start_and_leaves_its_slot_free :: proc(t:^testing.T) {
     owner:=context.allocator
-    failure:=Mesh_Conversion_Failure{owner=owner}
+    failure:=Failing_Allocator{owner=owner}
     border:Piece_Border
     defer piece_border_destroy(&border)
     for i in 0..<4 {
@@ -24,7 +24,7 @@ a_build_without_memory_for_its_border_does_not_start_and_leaves_its_slot_free ::
     slot:Work_Slot
     for served in 0..<8 {
         failure.remaining=served
-        context.allocator={mesh_conversion_failure_allocator,&failure}
+        context.allocator={failing_allocator,&failure}
         started:=work_build(&data,&slot,&entry,core.NONE,0,{},false,core.Phase(0),{},&border)
         context.allocator=owner
         piece_border_destroy(&slot.border)
@@ -38,8 +38,8 @@ a_build_without_memory_for_its_border_does_not_start_and_leaves_its_slot_free ::
 // enough the source is among the loaded.
 @(test)
 a_head_without_memory_loads_no_source :: proc(t:^testing.T) {
-    failure:=Mesh_Conversion_Failure{owner=context.allocator,remaining=-1}
-    limited:=runtime.Allocator{mesh_conversion_failure_allocator,&failure}
+    failure:=Failing_Allocator{owner=context.allocator,remaining=-1}
+    limited:=runtime.Allocator{failing_allocator,&failure}
     shape:Source
     if !testing.expect(t,source_make(&shape,.Heightfield,{9,1,9},1,4)) {return}
     head:=Head{origin=shape.origin,info=shape.info}
