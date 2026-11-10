@@ -116,6 +116,14 @@ Step_Info :: struct {
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
 }
 
+// A procedure @(draw="name") of the game: what draws the Draw nodes of the
+// interfaces that name it. call is a proc(ctx:^ui.Context,node:ui.Draw_Node),
+// which the library that shows the interfaces calls.
+Draw_Info :: struct {
+    name:string,
+    call:rawptr,
+}
+
 // A phase of a loop: its functions, one after another in their order.
 Loop_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
 Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
@@ -134,6 +142,7 @@ World_Info :: struct {
     name_bits:[]Name_Bits_Info, // the types @(name_bits)
     actions:[]Actions_Info,     // the enums @(actions), in the order of their values
     records:[]Record_Info,      // the types @(record)
+    draws:[]Draw_Info,          // the procedures @(draw)
     steps:[]Step_Info,
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,

@@ -23,14 +23,16 @@ import "mirai:std/serial"
 //   @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 //   @(net_message) @(net_message,from="client",reliable) @(net_message,from="owner")
 //   @(params) @(names) @(name_bits="T") @(name="...") @(actions)
+//   @(draw="minimap")
 //
 // The engine's libraries (core, engine/*), the runtime/ of the active plugins
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
+UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
 PHASE_TITLES :: [len(PHASES)]string{"Input","Fixed","Frame","Late","Ui","Render","Release"}
 FIXED_PHASE :: 1
 RELEASE_PHASE :: 6 // runs when a World is freed: from the game loop, never in a frame
@@ -207,6 +209,15 @@ Step :: struct {
     line:int,
 }
 
+// A procedure of the game that draws the Draw nodes of the interfaces that
+// name it, @(draw="name").
+@(private="file")
+Draw_Proc :: struct {
+    name,ident:string,
+    pkg:^Package,
+    where_:string,
+}
+
 @(private="file")
 Generator :: struct {
     packages:[dynamic]^Package,
@@ -224,6 +235,7 @@ Generator :: struct {
     records:[dynamic]^Record_Type,
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
+    draws:[dynamic]Draw_Proc,
     errors:[dynamic]string,
     engine_root,root:string,
 }
@@ -256,6 +268,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     names_settle(&g)
     bundles_settle(&g)
     for pkg in g.packages {steps_read(&g,pkg)}
+    for pkg in g.packages {draws_read(&g,pkg)}
     rules_check(&g)
     defaults_check(&g)
     out.errors=g.errors[:]
@@ -966,6 +979,58 @@ types_settle :: proc(g:^Generator) {
     }
 }
 
+// The procedures @(draw="name"): each receives the context it draws in and the
+// node, proc(ctx:^ui.Context,node:ui.Draw_Node), and is in the game binary.
+@(private="file")
+draws_read :: proc(g:^Generator,pkg:^Package) {
+    for file in pkg.files {
+        for stmt in file.decls {
+            decl,is_value:=stmt.derived.(^ast.Value_Decl)
+            if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+            options:=attributes_read(decl.attributes[:])
+            name,is_draw:=options["draw"]
+            if !is_draw {continue}
+            ident:=ident_name(decl.names[0])
+            where_:=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
+            literal,is_proc:=decl.values[0].derived.(^ast.Proc_Lit)
+            FORM :: "proc(ctx:^ui.Context,node:ui.Draw_Node)"
+            switch {
+            case !is_proc:
+                append(&g.errors,fmt.aprintf("%s: @(draw) on %s, which is not a procedure; it goes on a %s",where_,ident,FORM))
+                continue
+            case name=="":
+                append(&g.errors,fmt.aprintf("%s: %s has @(draw) without a name: write @(draw=\"name\"), the name the Draw nodes of the interfaces say in draw",where_,ident))
+                continue
+            case pkg.editor:
+                append(&g.errors,fmt.aprintf("%s: %s is a @(draw) of an editor package: the game has no editor code, and its interfaces draw in the game; declare it in a library or in game/",where_,ident))
+                continue
+            }
+            types:=make([dynamic]^ast.Expr,context.temp_allocator)
+            if literal.type.params!=nil {
+                for field in literal.type.params.list {for _ in field.names {append(&types,field.type)}}
+            }
+            fits:=len(types)==2 && (literal.type.results==nil || len(literal.type.results.list)==0)
+            if fits {
+                pointer,is_pointer:=types[0].derived.(^ast.Pointer_Type)
+                fits=is_pointer && type_key(g,file,pkg,pointer.elem)=="mirai:ui.Context" && type_key(g,file,pkg,types[1])=="mirai:ui.Draw_Node"
+            }
+            if !fits {
+                append(&g.errors,fmt.aprintf("%s: %s is a @(draw) and is not a %s: it draws from the node alone, whose data is the bytes of the field the node binds as its value (ui.draw_value); write what it shows into a component or a storage in a frame step and bind it",where_,ident,FORM))
+                continue
+            }
+            taken:=false
+            for other in g.draws {
+                if other.name!=name {continue}
+                append(&g.errors,fmt.aprintf("%s: %s draws %q, which %s already draws in %s; a name has one procedure",where_,ident,name,other.ident,other.where_))
+                taken=true
+            }
+            if taken {continue}
+            pkg.used=true
+            append(&g.draws,Draw_Proc{name=name,ident=ident,pkg=pkg,where_=where_})
+        }
+    }
+}
+
 @(private="file")
 steps_read :: proc(g:^Generator,pkg:^Package) {
     phases:=PHASES
@@ -996,6 +1061,9 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                     if phase==part {s.phases[i],found=true,true}
                 }
                 if !found {append(&g.errors,fmt.aprintf("%s: %s has the phase %q; the phases are input fixed frame late ui render release",where_,name,part))}
+            }
+            if s.phases[UI_PHASE] && !pkg.editor && !strings.has_prefix(pkg.path,"mirai:") {
+                append(&g.errors,fmt.aprintf("%s: %s is a step of the ui phase in a game: a game shows its interfaces as .ui documents on a UI_Screen or a World_Widget, which bind the components and storages it writes in a frame step; what only code can draw is a Draw node of the .ui and a procedure @(draw=\"name\")",where_,name))
             }
             if loop_text,has_loops:=options["loops"];has_loops {
                 for part in strings.fields(loop_text) {
@@ -1970,6 +2038,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         if s.loops[1] {strings.write_string(&loop_set,".Editor,")}
         fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name)
     }
+    fmt.sbprintf(w,"    draws:=make([]%s.Draw_Info,%d)\n",core_alias,len(g.draws))
+    for d,di in g.draws {fmt.sbprintf(w,"    draws[%d]={{%q,rawptr(%s.%s)}}\n",di,d.name,d.pkg.alias,d.ident)}
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")
     fmt.sbprint(w,"    info.aligns={.World=align_of(World),.Shared=align_of(Shared),.Editor=align_of(Editor)}\n")
@@ -1977,6 +2047,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.tables,info.storages,info.messages,info.steps=tables,storages,messages,steps\n")
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")
+    fmt.sbprint(w,"    info.draws=draws\n")
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

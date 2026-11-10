@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:reflect"
 import "mirai:std/base"
 import "mirai:std/serial"
+import std_anim "mirai:std/anim"
 import uf "mirai:std/ui_format"
 
 // A tree as records: what a .ui asset stores and what a tool edits. Names
@@ -63,12 +64,13 @@ Tree_Node :: struct {
     bind_variant:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // a text or an enum: the name of the variant
     index:u16,  // what a Switcher or a Tabs builds when it binds no value
     count:u16,  // how many times a List builds its node when it binds no array
-    choice:u16, // what a Radio writes
+    choice:u16, // what a Radio writes, and a Button that binds a value when it is clicked
     limit:u16,  // bytes a Field takes; 0: as many as its value holds
     delay:f32,  // seconds a Tooltip waits; 0: TOOLTIP_DELAY
     tag,accepts:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // what a Draggable carries; what a Drop takes, empty for anything
     ghost:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // the node built under the pointer while it is dragged; empty: a copy of it
     particle:base.Asset_Id, // the .particle a Particles plays
+    draw:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a Draw: the name a procedure of the game draws it by, @(draw="name")
     flags:Node_Flags,
     action:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // the input action a Button takes or a Prompt shows
     hold:f32,
@@ -152,7 +154,7 @@ Tree_Track :: struct {
 }
 Tree_Anim :: struct {
     kind:Anim_Kind,
-    loop:Anim_Loop,
+    loop:std_anim.Loop,
     first,count:u32, // rows of tracks for a Clip, of parts for a Sequence or a Parallel
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // what the game names to play it on a node
 }
@@ -167,7 +169,7 @@ Tree_Data :: struct {
     images:[]Tree_Image,
     anims:[]Tree_Anim,     // an Anim is its row plus one
     tracks:[]Tree_Track,
-    keys:[]Keyframe,
+    keys:[]std_anim.Keyframe,
     parts:[]Anim,          // what the groups play: animations of earlier rows
     anim_sets:[]Anim_Set,
     fonts:[]Tree_Font,
@@ -386,7 +388,7 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
             bind_text=serial.text_field(node.bind_text[:]),bind_value=serial.text_field(node.bind_value[:]),bind_visible=serial.text_field(node.bind_visible[:]),bind_selected=serial.text_field(node.bind_selected[:]),bind_disabled=serial.text_field(node.bind_disabled[:]),
             bind_items=serial.text_field(node.bind_items[:]),bind_image=serial.text_field(node.bind_image[:]),bind_tint=serial.text_field(node.bind_tint[:]),bind_variant=serial.text_field(node.bind_variant[:]),
             index=node.index,count=node.count,choice=node.choice,limit=node.limit,delay=node.delay,particle=node.particle,
-            tag=serial.text_field(node.tag[:]),accepts=serial.text_field(node.accepts[:]),ghost=serial.text_field(node.ghost[:]),
+            tag=serial.text_field(node.tag[:]),accepts=serial.text_field(node.accepts[:]),ghost=serial.text_field(node.ghost[:]),draw=serial.text_field(node.draw[:]),
             flags=node.flags,action=serial.text_field(node.action[:]),hold=node.hold,range=node.range,order=node.order,
             nav={serial.text_field(node.nav[0][:]),serial.text_field(node.nav[1][:]),serial.text_field(node.nav[2][:]),serial.text_field(node.nav[3][:])},
         })
@@ -447,7 +449,7 @@ tree_node_record :: proc(text:^[dynamic]u8,parent:i32,desc:Node_Desc) -> (node:T
         index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,particle=desc.particle,
         flags=desc.flags,hold=desc.hold,range=desc.range,order=desc.order,text_id=desc.text_id}
     node.text=tree_string_add(text,desc.text)
-    tree_text_set(node.tag[:],desc.tag);tree_text_set(node.accepts[:],desc.accepts);tree_text_set(node.ghost[:],desc.ghost)
+    tree_text_set(node.tag[:],desc.tag);tree_text_set(node.accepts[:],desc.accepts);tree_text_set(node.ghost[:],desc.ghost);tree_text_set(node.draw[:],desc.draw)
     for f,i in desc.fields {tree_text_set(node.fields[i].name[:],f.name);tree_text_set(node.fields[i].path[:],f.path)}
     tree_text_set(node.data[:],desc.data);tree_text_set(node.bind_items[:],desc.bind_items);tree_text_set(node.bind_image[:],desc.bind_image);tree_text_set(node.bind_tint[:],desc.bind_tint);tree_text_set(node.bind_variant[:],desc.bind_variant)
     tree_text_set(node.action[:],desc.action)
@@ -460,9 +462,9 @@ tree_node_record :: proc(text:^[dynamic]u8,parent:i32,desc:Node_Desc) -> (node:T
 
 // The text fields of a record, each of which must end in a zero.
 @(private)
-tree_node_texts :: proc "contextless" (node:^Tree_Node) -> [28][]u8 {
+tree_node_texts :: proc "contextless" (node:^Tree_Node) -> [29][]u8 {
     f:=&node.fields
-    return {node.name[:],node.tag[:],node.accepts[:],node.ghost[:],node.variant[:],node.data[:],node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],
+    return {node.name[:],node.tag[:],node.accepts[:],node.ghost[:],node.draw[:],node.variant[:],node.data[:],node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],
         node.bind_items[:],node.bind_image[:],node.bind_tint[:],node.bind_variant[:],node.action[:],node.nav[0][:],node.nav[1][:],node.nav[2][:],node.nav[3][:],
         f[0].name[:],f[0].path[:],f[1].name[:],f[1].path[:],f[2].name[:],f[2].path[:],f[3].name[:],f[3].path[:]}
 }

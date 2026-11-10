@@ -207,7 +207,7 @@ unsaved_copy :: proc(s:^Session,folder,path:string) -> string {
 // Keeps the unsaved assets in folder, which it replaces; with none it only
 // removes the folder. False when something could not be written.
 assets_unsaved_store :: proc(s:^Session,folder:string) -> bool {
-    os.remove_all(folder)
+    base.remove_all(folder)
     unsaved:=assets_unsaved(s)
     if len(unsaved)==0 {return true}
     manifest:=Unsaved_Manifest{make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)}
@@ -267,6 +267,6 @@ assets_unsaved_restore :: proc(s:^Session,folder:string) -> (restored:int,ok:boo
         unsaved_changed(s,path)
         restored+=1
     }
-    os.remove_all(folder)
+    base.remove_all(folder)
     return restored,true
 }

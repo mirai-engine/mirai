@@ -209,6 +209,10 @@ retained_frame_end :: proc(ctx:^Context) {
             if w.scope!=0 || w.effect_clip!=0 || w.surface!=0 {r.capturable=false;break}
             append(&r.widgets,w)
         }
+        // The pieces of its texts that took the pointer on other lines than their first.
+        for w in ctx.widgets[ctx.widget_pieces:ctx.widget_count] {
+            if r.capturable && int(w.piece_of)>r.widget_first && int(w.piece_of)<=r.widget_last {append(&r.widgets,w)}
+        }
         append(&r.links,..ctx.links[r.link_first:r.link_last])
         append(&r.groups,..ctx.groups[r.group_first:r.group_last])
         r.valid=r.capturable && len(r.segments)>0

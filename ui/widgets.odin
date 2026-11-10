@@ -18,35 +18,12 @@ color_hover :: proc "contextless" (th:^Theme) -> Color {return color_alpha(th.te
 // A single line of text that is clipped to its box instead of overflowing.
 // width: negative fits the text, 0 grows, positive is fixed. fade: a text that
 // does not fit fades out at its end.
-label :: proc(ctx:^Context,text:string,size:f32=0,color:Color={},width:f32=-1,center:bool=false,font:u8=0,fade:=false) {
+label :: proc(ctx:^Context,content:string,size:f32=0,color:Color={},width:f32=-1,center:bool=false,font:u8=0,fade:=false) {
     th:=&ctx.theme
     size:=size if size>0 else th.font
-    sizing:=fixed(width)
-    if width<0 {sizing=fixed(text_width(&ctx.font,text,size,int(font))+1)}
-    if width==0 {sizing=GROW}
-    paint:=paint_add(ctx,{kind=.Text,text=text,text_color=color if color!={} else th.text,size=size,center=center,style={font=font},fade=fade})
-    element_leaf(ctx,{layout={width=sizing,height=fixed(size+6)},custom=paint})
-}
-
-// A paragraph wrapped by the layout to the width its parent leaves it. Its
-// line box is line sizes of its text; PARAGRAPH_LINE when 0.
-paragraph :: proc(ctx:^Context,text:string,size:f32=0,color:Color={},font:u8=0,line:f32=0) {
-    th:=&ctx.theme
-    size:=size if size>0 else th.font_small
-    if ctx.skipped>0 || ctx.elements+ELEMENT_RESERVE>=ctx.max_elements {ctx.stats.dropped_elements+=1;return}
-    paint:=paint_add(ctx,{kind=.None,style={font=font,size=size,color=color if color!={} else th.text_muted,line_height=line}})
-    if paint==nil {return}
-    element_text(ctx,paint,text_store(ctx,text),size)
-}
-
-// Height of text as paragraph lays it out in width, without building it: the
-// same measure and the same breaks. A run is as wide as the width it is given,
-// no wider than its longest line and no narrower than its widest word.
-paragraph_height :: proc(ctx:^Context,text:string,width:f32,size:f32=0,font:u8=0,line:f32=0) -> f32 {
-    size:=size if size>0 else ctx.theme.font_small
-    line:=paragraph_line(size,line)
-    m:=layout_measure(&ctx.layout,&ctx.font,text,size,font)
-    return line*f32(max(layout_wrap(&ctx.layout,&ctx.font,text,m,size,font,max(m.min_width,min(m.width,width)),nil),1))
+    if !text_begin(ctx,{font=font,size=size,color=color if color!={} else th.text,align_x=.Center if center else .Start,align_y=.Center}) {return}
+    text_span(ctx,content)
+    text_end(ctx,{width=FIT if width<0 else GROW if width==0 else fixed(width),height=fixed(size+6)},fade=fade)
 }
 
 icon :: proc(ctx:^Context,icon:Icon,color:Color,size:f32=16) {
@@ -171,12 +148,19 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     fill:=look.fill
     if b.image.quad.kind!=.Solid && fill=={} {fill={255,255,255,255}}
     detail_color:=color_alpha(th.on_accent,170) if text_color==th.on_accent else th.text_faint
-    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
+    paint:=Paint{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
         shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
         style=style,text=b.label,detail=b.detail,text_color=text_color,detail_color=detail_color,size=size,center=b.center||(b.label==""&&b.detail==""),padding=padding,
         icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,quad=b.quad,
-        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv,multiline=b.block})
-    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint})
+        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv}
+    if b.block {
+        // Its label is a text over the whole of it.
+        paint.text,paint.style="",{}
+        if element_open(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)}) {text(ctx,b.label,style,GROW,GROW)}
+        element_close(ctx)
+        return it
+    }
+    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)})
     return it
 }
 
@@ -373,16 +357,10 @@ color_field :: proc(ctx:^Context,id:Id,rgb:^[3]f32,open:bool=false) -> (result:N
 // so the controls after it line up; one too long ends in an ellipsis.
 column_label :: proc(ctx:^Context,text:string,color:Color={}) {
     th:=&ctx.theme
-    text:=text
-    if text_width(&ctx.font,text,th.font_small)>th.label_width {
-        cut:=text_cut(&ctx.font,text,th.font_small,th.label_width)
-        if bytes:=text_reserve(ctx,len(cut)+len(ELLIPSIS));bytes!=nil {
-            used:=copy(bytes,cut);used+=copy(bytes[used:],ELLIPSIS)
-            text=text_commit(ctx,string(bytes[:used]))
-        }
-    }
-    paint:=paint_add(ctx,{kind=.Text,text=text,text_color=color if color!={} else th.text_label,size=th.font_small})
-    element_leaf(ctx,{layout={width=fixed(th.label_width),height=fixed(th.font_small+6)},custom=paint})
+    ui_text:=Text_Style{size=th.font_small,color=color if color!={} else th.text_label,align_y=.Center,ellipsis=true}
+    if !text_begin(ctx,ui_text) {return}
+    text_span(ctx,text)
+    text_end(ctx,{width=fixed(th.label_width),height=fixed(th.font_small+6)})
 }
 
 // A row with a label in the column of labels and controls after it.
@@ -466,28 +444,23 @@ tooltip :: proc(ctx:^Context,text:string) {
 
 TOOLTIP_DELAY :: 0.4 // s the pointer rests on something before its tooltip shows
 
+// The tooltip hangs under the pointer, and the layout puts it over the pointer
+// where it does not fit under it and keeps it inside the surface.
 @(private)
 tooltip_build :: proc(ctx:^Context) {
     th:=&ctx.theme
-    width,height:=ctx.size.x,ctx.size.y
     mouse:=ctx.screen_pointer
-    text:=text_width(&ctx.font,ctx.tooltip,th.font_small)+20
-    w:=min(text,min(420,width-2*th.margin))
-    x:=clamp(mouse.x+12,th.margin,max(width-w-th.margin,th.margin))
-    y:=mouse.y+20 if mouse.y+48<height-th.margin else mouse.y-30
-    y=clamp(y,th.bar_height+2,max(height-28,th.bar_height+2))
+    wide:=text_width(&ctx.font,ctx.tooltip,th.font_small)+20
+    most:=min(420,ctx.size.x-2*th.margin)
     ctx.surface=0;ctx.scope=0
-    if text>w || strings.contains(ctx.tooltip,"\n") {
-        above:=mouse.y>height*.5
-        y=clamp(mouse.y-8 if above else mouse.y+20,th.bar_height+2,height-th.margin)
-        if box(ctx,{id=id(ctx,"tooltip"),width=fixed(w),height=FIT,padding=padding_all(10),fill=th.popup,stroke=th.border,radius=th.radius_control,
-                    float={to=.Surface,offset={x,y},pivot=.Bottom_Left if above else .Top_Left,layer=LAYER_TOOLTIP}}) {
-            paragraph(ctx,ctx.tooltip,th.font_small,th.text)
-        }
+    b:=Box{id=id(ctx,"tooltip"),fill=th.popup,stroke=th.border,radius=th.radius_control,
+        float={to=.Surface,anchor=.Bottom_Left,pivot=.Top_Left,offset={12,0},layer=LAYER_TOOLTIP},
+        from=Rect{mouse.x,mouse.y-8,0,28},contain=true,inset={th.margin,th.bar_height+2,th.margin,th.margin}}
+    if wide>most || strings.contains(ctx.tooltip,"\n") {
+        b.width,b.height,b.padding=fixed(most),FIT,padding_all(10)
+        if box(ctx,b) {text(ctx,ctx.tooltip,prose(ctx,th.font_small,th.text))}
         return
     }
-    paint:=paint_add(ctx,{kind=.Box,fill=th.popup,stroke=th.border,radius=th.radius_control,text=ctx.tooltip,text_color=th.text,size=th.font_small,center=true})
-    declaration:=Element{layout={width=fixed(w),height=fixed(26)},custom=paint}
-    declaration.float={to=.Root,offset={x,y},layer=LAYER_TOOLTIP}
-    element_leaf(ctx,declaration)
+    b.width,b.height,b.align_y=fixed(wide),fixed(26),.Center
+    if box(ctx,b) {label(ctx,ctx.tooltip,th.font_small,th.text,0,true)}
 }

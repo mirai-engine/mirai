@@ -806,7 +806,6 @@ component_icon :: proc(s:^Session,t:^core.Table_Info) -> ui.Icon {
     case "Rigid_Body","Collider": return .Cube
     case "Spawn_Point": return .Spawn
     case "Animation","Pose_Source": return .Rotate
-    case "Keyframe_Path": return .Play
     case "Painted": return .Edit
     case "Terrain": return ui.icon_user(u8(User_Icon.Terrain))
     }

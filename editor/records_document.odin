@@ -218,7 +218,7 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     }
     e:=&r.edit
     if description:=s.app.info.records[e.record].description;description!="" {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.paragraph(ctx,description,th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.text(ctx,description,ui.prose(ctx,th.font_small,th.text_muted))}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control+12),padding={12,6,12,6},gap=6,align_y=.Center}) {
         if ui.button(ctx,ui.id(ctx,"add"),{label="Add row",icon=.Plus,style=.Field,height=th.control}).clicked {records_grid_add(s,r)}

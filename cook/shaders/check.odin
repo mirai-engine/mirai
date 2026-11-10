@@ -8,6 +8,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:thread"
+import "mirai:std/base"
 
 // Checks one program without publishing it: the rules below read its source
 // for the mistakes programs are written with, and Slang compiles it where it
@@ -580,7 +581,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
     temporary,temporary_error:=os.make_directory_temp("","mirai-program-check-*",context.temp_allocator)
     if temporary_error!=nil {result.error=strings.clone("the folder of the check could not be created",allocator);return}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     include:=path_join(temporary,"include",allocator=context.temp_allocator)
     copied:=path_join(include,"programs",allocator=context.temp_allocator)
     label,folder:=program_label(options,path)

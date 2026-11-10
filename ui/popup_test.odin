@@ -206,8 +206,7 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     testing.expect(t,popup_is_open(&ctx,list))
     popup_rect:=test_rect(t,&ctx,list)
     // 4 under the button, at least 180 wide, three rows and 4 of padding.
-    origin:=popup_origin(&ctx,button_rect,180,3*ctx.theme.row+8,false)
-    testing.expectf(t,test_rect_near(popup_rect,{origin.x,origin.y,180,3*ctx.theme.row+8}),"Popup %v from button %v",popup_rect,button_rect)
+    testing.expectf(t,test_rect_near(popup_rect,{max(button_rect.x,ctx.theme.margin),button_rect.y+button_rect.h+4,180,3*ctx.theme.row+8}),"Popup %v from button %v",popup_rect,button_rect)
     current:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.text=="Spot" && p.icon==.Check {current=&p}}
     testing.expect(t,current!=nil && current.fill==THEME_EDITOR.accent_soft,"The chosen option has the check and the row of the keyboard")
@@ -335,14 +334,56 @@ a_popup_that_does_not_fit_below_opens_above_and_stays_inside :: proc(t:^testing.
     testing.expect(t,context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
-    frame_begin(&ctx,input)
     th:=&ctx.theme
-    testing.expect_value(t,popup_origin(&ctx,{100,100,96,26},180,86,false),[2]f32{100,130})
-    testing.expect_value(t,popup_origin(&ctx,{100,100,96,26},180,86,true),[2]f32{th.margin,130})
-    testing.expect_value(t,popup_origin(&ctx,{100,540,96,26},180,86,false),[2]f32{100,450})
-    testing.expect_value(t,popup_origin(&ctx,{700,100,96,26},180,86,false),[2]f32{800-180-th.margin,130})
-    // Nor over the bar of the surface.
-    testing.expect_value(t,popup_origin(&ctx,{0,0,96,10},180,86,false),[2]f32{th.margin,th.bar_height+2})
+    // A popup of 180 by 86 hung from each anchor: where the layout puts it in the frame that opens it.
+    Case :: struct {anchor:Rect,desc:Popup,origin:[2]f32}
+    Placed :: struct {using c:Case,open:bool}
+    cases:=[]Case{
+        {{100,100,96,26},{},{100,130}},
+        {{100,100,96,26},{align_right=true},{th.margin,130}},
+        {{100,540,96,26},{},{100,450}},
+        {{700,100,96,26},{},{800-180-th.margin,130}},
+        {{100,300,96,26},{side=.Above},{100,300-86-4}},
+        // Nor over the bar of the surface.
+        {{0,0,96,10},{},{th.margin,th.bar_height+2}},
+        {{100,100,96,26},{within={300,0,200,0}},{300,130}},
+    }
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Placed)user
+        list:=id(ctx,"list")
+        if !s.open {popup_open(ctx,list,s.anchor);s.open=true}
+        desc:=s.desc
+        desc.width=180
+        if popup(ctx,list,desc) {spacer(ctx,10,78)}
+    }
+    for c in cases {
+        s:=Placed{c=c}
+        popup_close(&ctx)
+        frame:=test_frame(&ctx,&input,build,&s)
+        placed:=test_rect(t,&ctx,id(&ctx,"list"))
+        testing.expectf(t,test_rect_near(placed,{c.origin.x,c.origin.y,180,86}),"from %v: %v, expected at %v",c.anchor,placed,c.origin)
+        // Its first frame draws it, inside its rectangle, in no layer of its own.
+        testing.expect(t,len(frame.layers)==0 && len(frame.vertices)>0)
+    }
+    // A submenu hangs beside its item, on the other side of it where it does not fit.
+    side :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Placed)user
+        list:=id(ctx,"list")
+        if !s.open {
+            popup_open(ctx,list,s.anchor)
+            popup_find(ctx,list).side=true
+            s.open=true
+        }
+        if popup(ctx,list,{width=180}) {spacer(ctx,10,78)}
+    }
+    for c in ([]Case{{anchor={100,100,200,26},origin={304,96}},{anchor={500,100,200,26},origin={500-180-4,96}}}) {
+        s:=Placed{c=c}
+        popup_close(&ctx)
+        test_frame(&ctx,&input,side,&s)
+        placed:=test_rect(t,&ctx,id(&ctx,"list"))
+        testing.expectf(t,test_rect_near(placed,{c.origin.x,c.origin.y,180,86}),"beside %v: %v, expected at %v",c.anchor,placed,c.origin)
+    }
+    frame_begin(&ctx,input)
     frame_end(&ctx)
 }
 

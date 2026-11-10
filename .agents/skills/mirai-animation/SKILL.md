@@ -5,8 +5,9 @@ description: Mirai animation - the `animation` plugin (`plugins/animation/runtim
   `mirai-std`), with `.anim` clips, skeletons, skinning, locomotion by motion matching (`.match`,
   `match_goal`, `match_play`) with inertialization, layered actions, composition graphs (`.agraph`),
   aim offsets and additives (`.blend`), root motion, retarget, mirroring, rigs and IK, morph
-  targets, motion profiles and warping, grounding, budget, `Keyframe_Path` sequences, authoring by
-  intent and by API, and the auto-rig of an uploaded or generated character without a skeleton. Use
+  targets, motion profiles and warping, grounding, budget, clips that move props and fields,
+  authoring by intent and by API, and the auto-rig of an uploaded or generated character without a
+  skeleton. Use
   when animating characters or objects, building the locomotion or the actions of a character,
   porting a character's or a weapon's motion and events from another engine's data, looking for a
   state machine or a locomotion blend space (they do not exist; see the workflow), touching those
@@ -84,9 +85,12 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [execution and state](references/animation-grounding.md#execution-and-state).
 - `Animation_Budget` and parallel execution:
   [budget](references/animation-budget.md#animation_budget) and
-  [parallel execution](references/animation-budget.md#parallel-execution); `Keyframe_Path`
-  sequences: [keyframe path](references/animation-sequence.md#keyframe_path) and
-  [runtime](references/animation-sequence.md#runtime).
+  [parallel execution](references/animation-budget.md#parallel-execution).
+- A prop, a field of a component or an entity anywhere moved by a clip, and the one queue that
+  plays, pauses, stops and seeks it:
+  [what a track drives](references/animation-timeline.md#what-a-track-drives),
+  [when it writes](references/animation-timeline.md#when-it-writes) and
+  [commands](references/animation-timeline.md#commands).
 - Math and storage of `std/anim`:
   [clips](../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
   [pose](../mirai-std/references/anim.md#blending-poseodin),

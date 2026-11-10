@@ -104,12 +104,13 @@ Node :: struct {
     fields:[TREE_TEXT_FIELDS]Node_Field_Ref, // what the names in braces of its text show
     index:u16,        // what a Switcher or a Tabs builds when it binds no value
     count:u16,        // elements a List builds when it binds no array; of one that binds a table, the most rows it shows (TREE_TABLE_ROWS when 0)
-    choice:u16,       // what a Radio writes
+    choice:u16,       // what a Radio writes, and a Button that binds a value when it is clicked
     limit:u16,        // bytes a Field takes; 0: as many as its value holds
     delay:f32,        // seconds a Tooltip waits; 0: TOOLTIP_DELAY
     tag,accepts:u64,  // name_hash of what a Draggable carries and of what a Drop takes; 0: anything
     ghost:u64,        // name of the node built under the pointer while it is dragged; 0: a copy of it
     particle:base.Asset_Id, // what a Particles plays
+    draw:u64,         // name_hash of the procedure of the game that draws a Draw
     flags:Node_Flags,
     action:u64,       // name_hash of the input action a Button takes or a Prompt shows
     action_name:Name_Ref, // that name, in strings
@@ -256,6 +257,7 @@ Node_Desc :: struct {
     delay:f32,
     tag,accepts,ghost:string,
     particle:base.Asset_Id,
+    draw:string,
     flags:Node_Flags,
     action:string,
     hold:f32,
@@ -310,7 +312,7 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
     }
     node:=Node{kind=desc.kind,name=hashed(desc.name),parent=parent,layout=desc.layout,float=desc.float,clip=desc.clip,block=desc.block,
         style=desc.style,image=desc.image,anims=desc.anims,layer=desc.layer,variant=style_variant(desc.variant),selected=desc.selected,disabled=desc.disabled,
-        index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,tag=hashed(desc.tag),accepts=hashed(desc.accepts),ghost=hashed(desc.ghost),particle=desc.particle,
+        index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,tag=hashed(desc.tag),accepts=hashed(desc.accepts),ghost=hashed(desc.ghost),particle=desc.particle,draw=hashed(desc.draw),
         flags=desc.flags,action=hashed(desc.action),hold=desc.hold,range=desc.range,text_id=desc.text_id,
         nav={hashed(desc.nav[0]),hashed(desc.nav[1]),hashed(desc.nav[2]),hashed(desc.nav[3])},order=desc.order}
     text:=keep(tree,desc.text)
@@ -555,7 +557,7 @@ tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instan
 
 Tree_Event_Kind :: enum u8 {
     Clicked,   // a Button, by the pointer, by navigation or by its action
-    Changed,   // a Checkbox, Slider, Number, Field, Selector, Dropdown or Radio wrote its bound value
+    Changed,   // a Checkbox, Slider, Number, Field, Selector, Dropdown or Radio wrote its bound value, or a Button its choice
     Submitted, // Enter in a Field
     Hovered,   // the pointer came over the node
     Unhovered,
@@ -662,6 +664,15 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}
+    // An Action_Bar showed the buttons the last build found: when this one
+    // found others, or other texts (another language), the next frame shows them.
+    bar_changed:=instance.bar_next_count!=instance.bar_count
+    for i in 0..<instance.bar_next_count {
+        if bar_changed {break}
+        was,found:=&instance.bar[i],&instance.bar_next[i]
+        bar_changed=was.action!=found.action || string(was.text[:was.length])!=string(found.text[:found.length])
+    }
+    if bar_changed {b.animating=true}
     instance.bar,instance.bar_count=instance.bar_next,instance.bar_next_count
     if ctx.drag.id!=0 && ctx.drag.owner==ctx.owner {b.animating=true}
     return {count=b.count,dropped=b.dropped,present=b.built>0,animating=b.animating}
@@ -806,8 +817,7 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if !playing && node.anims!=0 && int(node.anims)<=tree.anim_set_count {
         anim:=&instance.states[slot]
         set:=tree.anim_sets[node.anims-1]
-        // Without animations of its own, the focus plays those of the pointer.
-        flags:=Anim_Flags{shown=visible,hovered=hovered || focused && set.focused==0 && set.unfocused==0,pressed=ctx.active==node_id,focused=focused,selected=selected,clicked=clicked}
+        flags:=Anim_Flags{shown=visible,clicked=clicked}
         present:=anim_react(&tree.anims,anim,set,flags,ctx.input.dt)
         if !present && !room {return next}
         if anim.playing {b.animating=true}
@@ -1022,6 +1032,7 @@ tree_value_want :: proc "contextless" (kind:Node_Kind) -> Bound_Want {
     case .View:              return .Entity
     case .Switcher:          return .Shown
     case .Selector,.Dropdown:return .Option
+    case .Draw:              return .Data
     }
     return .Number
 }

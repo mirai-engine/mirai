@@ -119,7 +119,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     // Bound fields are what the nodes show.
     testing.expect(t,test_paint(&ctx,"Hero")!=nil && test_paint(&ctx,"Player")==nil,"The bound text replaces the one of the node")
     score:=test_paint(&ctx,"120")
-    testing.expect(t,score!=nil && score.kind==.Text_Block && score.style.size==12)
+    testing.expect(t,score!=nil && test_paint_is_text(score^) && score.style.size==12)
     bar:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Progress {bar=&p}}
     testing.expect(t,bar!=nil && bar.value==0.75 && bar.fill==Color{200,40,40,255} && bar.fill2==Color{30,30,30,255})
@@ -370,7 +370,7 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     mem.copy(raw_data(target.anim_sets),raw_data(source.anim_sets),source.anim_set_count*size_of(Anim_Set));target.anim_set_count=source.anim_set_count
     mem.copy(raw_data(target.strings),raw_data(source.strings),source.string_length);target.string_length=source.string_length
     a,b:=&source.anims,&target.anims
-    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(Keyframe));b.key_count=a.key_count
+    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(b.keys[0]));b.key_count=a.key_count
     mem.copy(raw_data(b.tracks),raw_data(a.tracks),a.track_count*size_of(Anim_Track));b.track_count=a.track_count
     mem.copy(raw_data(b.nodes),raw_data(a.nodes),a.node_count*size_of(Anim_Node));b.node_count=a.node_count
     copied.values=s.values
