@@ -19,8 +19,9 @@ import mm "mirai:std/math"
 
 MATERIAL_SLOTS :: 8
 POST_PROCESS_CAPACITY :: 8
-MATERIAL_OVERRIDE_CAPACITY :: 16 // values among all the slots
-MATERIAL_OVERRIDE_TEXTURES :: 8
+MATERIAL_VALUES_CAPACITY :: gpu.INSTANCE_VALUES_MAX // values among all the slots
+MATERIAL_VALUES_TEXTURES :: 8
+FRAME_VALUES_CAPACITY :: host.FRAME_MESH_SHOWN_CAPACITY
 HIGHLIGHT_LEVELS :: gpu.HIGHLIGHT_LEVELS
 OUTLINE_STYLES :: gpu.OUTLINE_STYLES
 
@@ -35,14 +36,6 @@ Mesh_Renderer :: struct {
     shape:Shape,
     materials:[MATERIAL_SLOTS]base.Asset_Id,
 }
-
-@(component,shared,description="Overrides the rendered color and emission of this entity.")
-Tint :: struct {
-    color:[4]f32 `mirai:"color"`,
-    emission:[3]f32 `mirai:"color"`, // added to the emission of its materials: a luminance, nits
-}
-
-TINT_DEFAULT :: Tint{color={1,1,1,1}}
 
 // Not drawn, nor what hangs from it.
 @(component,description="Hides this entity and its descendants from rendering.")
@@ -210,27 +203,44 @@ Post_Process_Layer :: struct {
 }
 
 
-// What this entity alone shows of the materials of its slots: each value and
-// texture is of the slot beside it. names are base.name_hash of a parameter of
-// the program of the material, or of one of MATERIAL_VALUE_NAMES;
-// texture_names, of a texture of the program or of one of MATERIAL_MAP_NAMES.
-// With own_overlays its overlays replace those of the material of the first slot.
-// Several functions write it, in loop order: each sets and drops only the
-// names it gives (material_override_value_set, material_override_value_drop).
-@(component,shared)
-Material_Override :: struct {
+// What this entity alone shows of its materials. color multiplies their base
+// color and its alpha fades the entity; emission is added to their light.
+// Each value and texture is of the slot beside it: names are base.name_hash
+// of a parameter of the program of the material of that slot, or of one of
+// MATERIAL_VALUE_NAMES; texture_names, of a texture of the program or of one
+// of MATERIAL_MAP_NAMES. With own_overlays its overlays replace those of the
+// material of the first slot. Several functions write it, in loop order:
+// each sets and drops only the names it gives (material_value,
+// material_value_drop).
+//
+// color, emission, the parameters of a program and the values of
+// MATERIAL_VALUES_INSTANCED go to the instance of the entity: a few bytes of
+// its own, given in place when they change. What changes how the surface is
+// drawn (a texture, overlays, an alpha below 1, another value of the standard
+// model) makes the entity show a row of the material table of its own, which
+// the entities that give the same share.
+@(component,shared,description="What this entity alone shows of its materials: a color that multiplies theirs, light added to theirs, and values and textures by name.")
+Material_Values :: struct {
+    color:[4]f32 `mirai:"color"`,
+    emission:[3]f32 `mirai:"color"`, // added to the emission of its materials: a luminance, nits
     count:u32,
-    slots:[MATERIAL_OVERRIDE_CAPACITY]u8,
-    names:[MATERIAL_OVERRIDE_CAPACITY]u64,
-    values:[MATERIAL_OVERRIDE_CAPACITY][4]f32,
+    slots:[MATERIAL_VALUES_CAPACITY]u8,
+    names:[MATERIAL_VALUES_CAPACITY]u64,
+    values:[MATERIAL_VALUES_CAPACITY][4]f32,
     texture_count:u32,
-    texture_slots:[MATERIAL_OVERRIDE_TEXTURES]u8,
-    texture_names:[MATERIAL_OVERRIDE_TEXTURES]u64,
-    textures:[MATERIAL_OVERRIDE_TEXTURES]base.Asset_Id, // 0 takes the texture away
+    texture_slots:[MATERIAL_VALUES_TEXTURES]u8,
+    texture_names:[MATERIAL_VALUES_TEXTURES]u64,
+    textures:[MATERIAL_VALUES_TEXTURES]base.Asset_Id, // 0 takes the texture away
+    shown:[MATERIAL_VALUES_TEXTURES]gpu.Texture_Handle `mirai:"transient"`, // a texture the renderer made at run time, in place of the asset; 0: none
     own_overlays:bool,
     overlay_count:u32,
     overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay,
 }
+
+MATERIAL_VALUES_DEFAULT :: Material_Values{color={1,1,1,1}}
+
+// The values of the standard model an instance holds (gpu.Instance_Material_Value_Target), by their place in MATERIAL_VALUE_NAMES.
+MATERIAL_VALUES_INSTANCED :: [5]int{0,1,2,3,4}
 
 // The outline of the editor's selection: 1 to HIGHLIGHT_LEVELS. It is drawn
 // in place of the Outline of the entity.
@@ -286,7 +296,7 @@ MATERIAL_VALUE_NAMES :: [22]string{
     "emission_mode","diffuse_transmission","diffuse_transmission_color",
 }
 
-// The maps of the standard model as Material_Override names them, the paths
+// The maps of the standard model as Material_Values names them, the paths
 // of asset.material_revert.
 MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Base_Color="maps.base_color",.Metallic_Roughness="maps.metallic_roughness",.Normal="maps.normal",.Emission="maps.emission",
@@ -323,12 +333,15 @@ Render_Sync :: struct {
     moved_anchors:[dynamic][3]f32, // what each is relative to (instance_place)
     lerping:[dynamic]u32, // instances whose world is between its previous and its transform
     deriving:[dynamic]u32, // instances whose rows derive from the values of their materials (Drawn.derives)
-    tinted:[dynamic]u32,
+    tinted:[dynamic]u32, // instances whose Material_Values changed and that show the same rows: what they hold is given in place
     tinted_colors,tinted_emissions:[dynamic][3]f32,
+    tinted_values:[dynamic]gpu.Instance_Material_Values,
+    frame_values:[FRAME_VALUES_CAPACITY]Frame_Values, // values_show: what entities show this frame alone
+    frame_count:int,
     highlights:[dynamic]u8, // scratch: the outline level of each instance, when the outlines change
     previous_lights:[dynamic]gpu.Light_Desc,
     // What each table it reads was when it last looked: core.changes gives what moved since.
-    seen_meshes,seen_worlds,seen_tints,seen_hidden,seen_elsewhere,seen_parents,seen_overrides,seen_offsets,seen_layers:core.Seen,
+    seen_meshes,seen_worlds,seen_values,seen_hidden,seen_elsewhere,seen_parents,seen_offsets,seen_layers:core.Seen,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     coming:[dynamic]core.Entity, // scratch: the entities whose meshes start being drawn this frame
     taken:[dynamic]Taken, // scratch: the places of instances that went which another took this frame (instances_taken_publish)
@@ -347,7 +360,29 @@ Render_Sync :: struct {
 
 Sync_Stats :: struct {
     scene_sets,instance_updates,moves,tints,light_sets,highlight_sets,environment_sets,postprocess_sets,outline_sets:u64,
+    values:u64, // instances given other colors or values in place, without being made again
 }
+
+// What an entity shows in a frame over its Material_Values (values_show).
+Frame_Values :: struct {
+    entity:core.Entity,
+    values:Material_Values,
+}
+
+// Gives an entity, for this frame alone, values and textures over its
+// Material_Values: what is only drawn and no table holds, as the texture a
+// panel of the interface is drawn into (material_texture_shown). Whatever
+// draws the entity shows them: its mesh of the world, or what replaces it
+// (gpu.Instance_Desc.replace_source), as a skinned copy; what drew it is kept
+// for the next frame (host.extras_mesh_shown). Before render_sync; false
+// without room for another one.
+values_show :: proc(sync:^Render_Sync,e:core.Entity,values:Material_Values) -> bool {
+    if sync.frame_count>=len(sync.frame_values) {return false}
+    sync.frame_values[sync.frame_count]={e,values}
+    sync.frame_count+=1
+    return true
+}
+
 
 // A place among the instances of the world that the instance at `from` took:
 // where the renderer has it until it is told.
@@ -357,8 +392,7 @@ Taken :: struct {at,from:u32}
 // What the instance of an entity was made from.
 Drawn :: struct {
     shown:Mesh_Renderer,
-    alpha:f32,
-    derives:bool, // its rows derive from the values of its materials (an override, an alpha, layers): in deriving
+    derives:bool, // its rows or the values it holds come from those of its materials (named values, an alpha, layers): in deriving
     lerp:bool,    // in lerping
     changed:bool, // in changed
 }
@@ -470,34 +504,34 @@ world_light_forget :: proc(renderer:^Renderer,id:core.World_Id) {
 @(step="render",loops="game editor")
 render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
-    worlds:core.Read(core.World_Transform),meshes:core.Read(Mesh_Renderer),tints:core.Read(Tint),
+    worlds:core.Read(core.World_Transform),meshes:core.Read(Mesh_Renderer),values:core.Read(Material_Values),
     hidden:core.Read(Hidden),elsewhere:core.Read(Drawn_Elsewhere),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),
     suns:core.Read(Sun),points:core.Read(Point_Light),spots:core.Read(Spot_Light),rects:core.Read(Rect_Light),emissions:core.Read(Light_Emission),skies:core.Read(Sky),view_volumes:core.Read(View_Volume),volumes:core.Read(volume.Volume),
-    overrides:core.Read(Material_Override),highlights:core.Read(Highlight),outlines:core.Read(Outline),outline_styles:core.Ref(Outline_Styles),
+    highlights:core.Read(Highlight),outlines:core.Read(Outline),outline_styles:core.Ref(Outline_Styles),
     offsets:core.Read(Draw_Offset),layers:core.Read(Layers),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
     locals:core.Read(core.Transform),cameras:core.Read(Camera),
 ) {
     a:=app.assets
     r:=app.renderer
-    if a==nil || r==nil || app.ui_only {return}
+    if a==nil || r==nil || app.ui_only {sync.frame_count=0;return}
     owned:[VIEW_SLOTS]core.Entity
     if bodies.ptr!=nil {owned=bodies.bodies}
-    t:=Sync_Tables{worlds,meshes,tints,hidden,elsewhere,parents,overrides,highlights,outlines,offsets,layers,locals,cameras,owned}
+    t:=Sync_Tables{worlds,meshes,values,hidden,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,owned}
     defer sync.owned=owned
     for at in sync.changed {sync.drawn.values[at].changed=false}
     clear(&sync.changed)
-    clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions)
+    clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions);clear(&sync.tinted_values)
     // What each table changed since the last frame: only the instances it touches are made again.
     c:=Sync_Changes{
-        meshes=core.changes(meshes,&sync.seen_meshes),worlds=core.changes(worlds,&sync.seen_worlds),tints=core.changes(tints,&sync.seen_tints),
+        meshes=core.changes(meshes,&sync.seen_meshes),worlds=core.changes(worlds,&sync.seen_worlds),values=core.changes(values,&sync.seen_values),
         hidden=core.changes(hidden,&sync.seen_hidden),elsewhere=core.changes(elsewhere,&sync.seen_elsewhere),parents=core.changes(parents,&sync.seen_parents),
-        overrides=core.changes(overrides,&sync.seen_overrides),offsets=core.changes(offsets,&sync.seen_offsets),layers=core.changes(layers,&sync.seen_layers),
+        offsets=core.changes(offsets,&sync.seen_offsets),layers=core.changes(layers,&sync.seen_layers),
     }
-    slot_textures_apply(&app.extras,a,t,frame)
+    frame_values_apply(sync,&app.extras,a,t,frame)
     extras:=host.extras_instances(&app.extras)
     extras_inherit(t,extras)
-    rebuild:=!sync.synced || sync.world!=id || c.meshes.all || c.worlds.all || c.tints.all || c.hidden.all || c.elsewhere.all
-    rebuild||=c.parents.all || c.overrides.all || c.offsets.all || c.layers.all
+    rebuild:=!sync.synced || sync.world!=id || c.meshes.all || c.worlds.all || c.values.all || c.hidden.all || c.elsewhere.all
+    rebuild||=c.parents.all || c.offsets.all || c.layers.all
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
     rebuild||=!local_assets || a.appearance!=sync.assets_appearance
@@ -552,7 +586,6 @@ render_sync :: proc(
             changes_mark(sync,hierarchy,hidden,c.hidden,true)
             changes_mark(sync,hierarchy,parents,c.parents,true)
             changes_mark(sync,hierarchy,offsets,c.offsets,true)
-            changes_mark(sync,hierarchy,overrides,c.overrides,false)
             changes_mark(sync,hierarchy,layers,c.layers,false)
             // A body of a local player taken or given back: its meshes are marked again.
             for body,i in owned {
@@ -560,7 +593,7 @@ render_sync :: proc(
                 if sync.owned[i]!=core.NONE {subtree_changed(sync,hierarchy,sync.owned[i])}
                 if body!=core.NONE {subtree_changed(sync,hierarchy,body)}
             }
-            tints_settle(sync,tints,c.tints)
+            values_settle(sync,a,r,t,c.values)
             // The mesh a visual instance starts or stops replacing is made again, hidden or shown.
             if extras_changed {
                 for previous in sync.extras {
@@ -588,7 +621,7 @@ render_sync :: proc(
                 e:=sync.drawn.entities[at]
                 static,_:=core.get(meshes,e)
                 world,_:=core.get(worlds,e)
-                instance,alpha,derives,usable:=instance_make(a,t,e,static,world,frame)
+                instance,derives,usable:=instance_make(a,t,e,static,world,frame)
                 if !usable {rebuild=true;break}
                 drawn:=&sync.drawn.values[at]
                 if drawn.shown.mesh!=static.mesh {
@@ -601,7 +634,6 @@ render_sync :: proc(
                 }
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 drawn.shown=static
-                drawn.alpha=alpha
                 drawn.derives=derives
                 host.assets_commit(a)
                 instance.hidden||=replaces(extras,instance.object_id)
@@ -702,9 +734,11 @@ render_sync :: proc(
             if moved>0 {sync.stats.moves+=1}
         }
         if len(sync.tinted)>0 {
-            tinted:int
+            tinted,valued:int
             gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],&tinted)
+            gpu.scene_material_values(r,sync.tinted[:],sync.tinted_values[:],&valued)
             if tinted>0 {sync.stats.tints+=1}
+            sync.stats.values+=u64(max(tinted,valued))
         }
         if lights_seen!=sync.lights_seen {
             sync.lights_seen=lights_seen
@@ -769,11 +803,10 @@ render_sync :: proc(
 Sync_Tables :: struct {
     worlds:core.Read(core.World_Transform),
     meshes:core.Read(Mesh_Renderer),
-    tints:core.Read(Tint),
+    values:core.Read(Material_Values),
     hidden:core.Read(Hidden),
     elsewhere:core.Read(Drawn_Elsewhere),
     parents:core.Read(core.Parent),
-    overrides:core.Read(Material_Override),
     highlights:core.Read(Highlight),
     outlines:core.Read(Outline),
     offsets:core.Read(Draw_Offset),
@@ -802,7 +835,7 @@ outline_style_of :: proc(styles:Outline_Styles) -> (style:gpu.Highlight_Style) {
 
 // What each of those tables changed since the last frame.
 @(private)
-Sync_Changes :: struct {meshes,worlds,tints,hidden,elsewhere,parents,overrides,offsets,layers:core.Changes}
+Sync_Changes :: struct {meshes,worlds,values,hidden,elsewhere,parents,offsets,layers:core.Changes}
 
 @(private)
 instance_changed :: proc(sync:^Render_Sync,at:u32) {
@@ -868,15 +901,16 @@ instance_wanted :: proc(t:Sync_Tables,e:core.Entity) -> bool {
     return core.has(t.meshes,e) && core.has(t.worlds,e) && !core.has(t.elsewhere,e)
 }
 
-// The instance of the mesh of an entity, with its tint, values, visibility,
-// outline and layers.
+// The instance of the mesh of an entity, with its values, visibility,
+// outline and layers. over: what it shows this frame over its
+// Material_Values (values_show).
 @(private)
-instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Renderer,world:core.World_Transform,frame:core.Frame_Time) -> (instance:gpu.Instance_Desc,alpha:f32,derives,ok:bool) {
-    tint:=TINT_DEFAULT
-    if value,has_tint:=core.get(t.tints,e);has_tint {tint=value}
-    override,_:=core.get(t.overrides,e)
+instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Renderer,world:core.World_Transform,frame:core.Frame_Time,over:^Material_Values=nil) -> (instance:gpu.Instance_Desc,derives,ok:bool) {
+    values:=MATERIAL_VALUES_DEFAULT
+    if own,has_values:=core.get(t.values,e);has_values {values=own}
+    if over!=nil {material_values_over(&values,over)}
     anchor,transform:=instance_place(world,frame,t.offsets,t.parents,t.worlds,t.locals,t.cameras,e)
-    instance,ok=mesh_instance(a,static,transform,tint,override)
+    instance,ok=mesh_instance(a,static,transform,values)
     instance.anchor=anchor
     if !ok {return}
     instance.object_id=u64(e)
@@ -884,58 +918,74 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
     if !instance.hidden {instance.highlight=instance_outline(t.highlights,t.outlines,e)}
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {instance.layers=in_layers.mask}
     instance.owner=body_owner(t,e)
-    return instance,tint.color.a,!material_override_empty(&override) || tint.color.a<1 || instance.overlays.count>0,true
+    return instance,!material_values_plain(&values) || instance.overlays.count>0,true
 }
 
-// The textures that slots of meshes show this frame (host.Slot_Texture), in
-// what draws each entity: what replaces its mesh, or else a copy of its mesh
-// of the world that does. What drew each one is kept for the next frame
-// (host.extras_slot_shown).
+// What entities show this frame over their Material_Values (values_show), in
+// what draws each one: what replaces its mesh, whose rows take them, or else
+// a copy of its mesh of the world that does. What drew each one is kept for
+// the next frame (host.extras_mesh_shown).
 @(private)
-slot_textures_apply :: proc(extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
-    extras.slots_shown_count=0
-    for request in host.extras_slot_textures(extras) {
-        e:=core.Entity(request.object)
+frame_values_apply :: proc(sync:^Render_Sync,extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
+    extras.meshes_shown_count=0
+    for &request in sync.frame_values[:sync.frame_count] {
+        e:=request.entity
         static,has_mesh:=core.get(t.meshes,e)
-        if !has_mesh || request.texture==0 {continue}
+        if !has_mesh {continue}
         shown:^gpu.Instance_Desc
         for &extra in host.extras_instances(extras) {
-            if extra.replace_source && extra.object_id==request.object {shown=&extra;break}
+            if extra.replace_source && extra.object_id==u64(e) {shown=&extra;break}
         }
         if shown==nil {
             world,placed:=core.get(t.worlds,e)
             if !placed {continue}
-            instance,_,_,made:=instance_make(a,t,e,static,world,frame)
+            instance,_,made:=instance_make(a,t,e,static,world,frame,&request.values)
             if !made || instance.hidden {continue}
-            instance.copy_owner,instance.replace_source=SLOT_TEXTURE_OWNER,true
+            instance.copy_owner,instance.replace_source=FRAME_VALUES_OWNER,true
             if !host.extras_instance_add(extras,instance) {continue}
             added:=host.extras_instances(extras)
             shown=&added[len(added)-1]
-        }
-        row,at:=mesh_slot_row(a,static,shown,request.slot)
-        values:=host.assets_material_values(a,row)
-        if request.emission>0 {
-            values.textures[.Emission]=request.texture
-            values.emission=request.emission
-            values.base_color=0
-            values.textures[.Base_Color]=0
         } else {
-            values.textures[.Base_Color]=request.texture
-            values.base_color=1
+            // What replaces the mesh was made without them: each slot they name shows a row with
+            // them, where the values the instance held for that slot go on, but for those they give.
+            for slot in 0..<u32(MATERIAL_SLOTS) {
+                if !material_values_slot(&request.values,int(slot)) {continue}
+                row,at:=mesh_slot_row(a,static,shown,slot)
+                values:=host.assets_material_values(a,row)
+                material_values_apply(a,&values,&request.values,int(slot))
+                derived,derives:=host.assets_material_derive(a,values)
+                if !derives {continue}
+                if at!=nil {at^=derived+1} else {shown.material=gpu.Material_Handle(derived)}
+                given:gpu.Instance_Material_Values
+                values_hold(a,&given,row,&request.values,int(slot))
+                held:=&shown.material_values
+                kept:=0
+                each: for entry in held.entries[:min(int(held.count),len(held.entries))] {
+                    entry:=entry
+                    if entry.row==row {
+                        for other in given.entries[:given.count] {
+                            if other.target&0xff==entry.target&0xff {continue each}
+                        }
+                        entry.row=derived
+                    }
+                    held.entries[kept]=entry
+                    kept+=1
+                }
+                for &entry in held.entries[kept:] {entry={}}
+                held.count=u32(kept)
+            }
         }
-        derived,derives:=host.assets_material_derive(a,values)
-        if !derives {continue}
-        if at!=nil {at^=derived+1} else {shown.material=gpu.Material_Handle(derived)}
-        if extras.slots_shown_count<len(extras.slots_shown) {
-            extras.slots_shown[extras.slots_shown_count]={object=request.object,mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
-            extras.slots_shown_count+=1
+        if extras.meshes_shown_count<len(extras.meshes_shown) {
+            extras.meshes_shown[extras.meshes_shown_count]={object=u64(e),mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
+            extras.meshes_shown_count+=1
         }
     }
+    sync.frame_count=0
 }
 
-// What draws a mesh of the world with a host.Slot_Texture.
+// What draws a mesh of the world with the values of a frame.
 @(private)
-SLOT_TEXTURE_OWNER :: u64(0x736c6f7400000000)
+FRAME_VALUES_OWNER :: u64(0x736c6f7400000000)
 
 // Whether a visual instance of extras is drawn in place of the mesh of an
 // object: the instance of that mesh is hidden meanwhile.
@@ -1005,7 +1055,7 @@ instances_taken_publish :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer
         e:=sync.drawn.entities[taken.at]
         static,_:=core.get(t.meshes,e)
         placed,_:=core.get(t.worlds,e)
-        instance,_,_,usable:=instance_make(a,t,e,static,placed,frame)
+        instance,_,usable:=instance_make(a,t,e,static,placed,frame)
         instance.hidden||=replaces(extras,instance.object_id)
         host.assets_commit(a)
         ok=usable && gpu.scene_update(r,taken.at,{instance}) && gpu.scene_instance_was(r,taken.at,taken.from)
@@ -1033,14 +1083,14 @@ instance_insert :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.En
     if instance_of(sync,e)>=0 || !instance_wanted(t,e) {return true}
     static,_:=core.get(t.meshes,e)
     world,_:=core.get(t.worlds,e)
-    instance,alpha,derives,usable:=instance_make(a,t,e,static,world,frame)
+    instance,derives,usable:=instance_make(a,t,e,static,world,frame)
     if !usable {return false}
     at:=len(sync.drawn.values)
     lerp:=world.previous!=world.transform
     // The instance of another generation of its index would stay in its place: the scene is set again.
     if core.entity_map_held(&sync.drawn,e)!=core.NONE {return false}
     if !room(&sync.shown) || !room(&sync.lerping) || !room(&sync.deriving) {return false}
-    if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,alpha=alpha,derives=derives,lerp=lerp});!kept {return false}
+    if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,derives=derives,lerp=lerp});!kept {return false}
     if lerp {append(&sync.lerping,u32(at))}
     if derives {append(&sync.deriving,u32(at))}
     instance.hidden||=replaces(extras,instance.object_id)
@@ -1184,10 +1234,10 @@ instances_build :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,frame:cor
         world,placed:=core.get(t.worlds,e)
         if !placed || core.has(t.elsewhere,e) {continue}
         static:=core.at(t.meshes,row)
-        instance,alpha,derives,ok:=instance_make(a,t,e,static,world,frame)
+        instance,derives,ok:=instance_make(a,t,e,static,world,frame)
         if !ok {continue}
         lerp:=world.previous!=world.transform
-        if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,alpha=alpha,derives=derives,lerp=lerp});!kept {return false}
+        if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{shown=static,derives=derives,lerp=lerp});!kept {return false}
         at:=u32(len(sync.shown))
         if lerp {append(&sync.lerping,at)}
         if derives {append(&sync.deriving,at)}
@@ -1434,36 +1484,67 @@ instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,frame:core.Frame_Time) {
     }
 }
 
-// The tints written, added or removed: a color given in place, which
-// gpu.scene_tint leaves as it is when it is the same, an opacity or a tint
-// gone by making the instance again.
+// The Material_Values written, added or removed. Those of an entity that
+// shows the same rows with them are given in place: a color, an emission and
+// the values its instance holds, which the renderer leaves as they are when
+// they are the same. Others (a texture, an alpha, layers, another value of the
+// standard model), and those that went, make the instance again.
 @(private)
-tints_settle :: proc(sync:^Render_Sync,tints:core.Read(Tint),c:core.Changes) {
-    clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions)
+values_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,c:core.Changes) {
     for e in c.gone {if at:=instance_of(sync,e);at>=0 {instance_changed(sync,u32(at))}}
-    if core.version(tints)<=c.since {return}
-    for row in 0..<core.count(tints) {
-        if !core.changed(tints,c,row) {continue}
-        at:=instance_of(sync,core.entity_at(tints,row))
-        if at<0 {continue}
-        tint:=core.at(tints,row)
-        if tint.color.a!=sync.drawn.values[at].alpha {instance_changed(sync,u32(at));continue}
-        append(&sync.tinted,u32(at));append(&sync.tinted_colors,tint.color.rgb);append(&sync.tinted_emissions,tint.emission)
+    if core.version(t.values)<=c.since {return}
+    for row in 0..<core.count(t.values) {
+        if !core.changed(t.values,c,row) {continue}
+        at:=instance_of(sync,core.entity_at(t.values,row))
+        if at<0 || sync.drawn.values[at].changed {continue}
+        values:=core.at(t.values,row)
+        made,usable:=mesh_instance(a,sync.drawn.values[at].shown,1,values)
+        material,slots,overlays,held:=gpu.scene_instance_materials(r,u32(at))
+        if !usable || !held || made.material!=material || made.slot_materials!=slots || made.overlays!=overlays || !room(&sync.tinted) || !room(&sync.tinted_colors) || !room(&sync.tinted_emissions) || !room(&sync.tinted_values) {
+            instance_changed(sync,u32(at))
+            continue
+        }
+        sync.drawn.values[at].derives=!material_values_plain(&values) || made.overlays.count>0
+        if sync.drawn.values[at].derives && !slice.contains(sync.deriving[:],u32(at)) {
+            if !room(&sync.deriving) {instance_changed(sync,u32(at));continue}
+            append(&sync.deriving,u32(at))
+        }
+        append(&sync.tinted,u32(at));append(&sync.tinted_colors,made.tint);append(&sync.tinted_emissions,made.emission);append(&sync.tinted_values,made.material_values)
     }
+}
+
+// Where a name of the standard model an instance holds goes; false for the
+// others, which a row holds.
+@(private)
+material_value_instanced :: proc(name:u64) -> (target:gpu.Instance_Material_Value_Target,instanced:bool) {
+    TARGETS :: [5]gpu.Instance_Material_Value_Target{.Base_Color,.Opacity,.Metallic,.Roughness,.Emission}
+    names:=MATERIAL_VALUE_NAMES
+    targets:=TARGETS
+    for index,at in MATERIAL_VALUES_INSTANCED {
+        if base.name_hash(names[index])==name {return targets[at],true}
+    }
+    return
 }
 
 // Puts one named value over the values of a material: a parameter of its
 // program when the program declares one with that name, and otherwise the
 // value of the standard model with it. False for a name that is neither.
 material_value_apply :: proc(values:^gpu.Material_Desc,program:^gpu.Program,name:u64,value:[4]f32) -> bool {
-    if program!=nil {
-        for &parameter in program.parameters {
-            if parameter.kind==.Texture || base.name_hash(parameter.name)!=name {continue}
-            gpu.program_parameter_set(&values.custom_params,&parameter,{f64(value.x),f64(value.y),f64(value.z),f64(value.w)})
-            return true
-        }
+    if parameter:=material_value_parameter(program,name);parameter!=nil {
+        gpu.program_parameter_set(&values.custom_params,parameter,{f64(value.x),f64(value.y),f64(value.z),f64(value.w)})
+        return true
     }
     return material_standard_apply(&values.info,name,value)
+}
+
+// The parameter of a program a name of a value is; nil for another name.
+@(private)
+material_value_parameter :: proc(program:^gpu.Program,name:u64) -> ^gpu.Program_Parameter {
+    if program==nil {return nil}
+    for &parameter in program.parameters {
+        if parameter.kind!=.Texture && base.name_hash(parameter.name)==name {return &parameter}
+    }
+    return nil
 }
 
 // Puts a value of the standard model, by the name_hash of one of
@@ -1510,42 +1591,109 @@ surface_program :: proc(a:^host.Assets,id:u32) -> ^gpu.Program {
     return nil
 }
 
+// The row an entity shows in a slot whose material has that row: one of its
+// own when it gives the slot a texture or a value a row holds, or, with
+// `whole`, any value (held: what its instance would hold of them).
 @(private)
-overridden_row :: proc(a:^host.Assets,row:u32,override:^Material_Override,slot:int) -> u32 {
+values_row :: proc(a:^host.Assets,row:u32,o:^Material_Values,slot:int,whole:bool) -> u32 {
+    if !material_values_slot(o,slot,!whole) {return row}
     values:=host.assets_material_values(a,row)
-    material_override_apply(a,&values,override,slot)
+    material_values_apply(a,&values,o,slot,whole)
     derived,ok:=host.assets_material_derive(a,values)
     return ok?derived:row
 }
 
-// Whether an entity changes nothing of its materials.
-material_override_empty :: proc "contextless" (o:^Material_Override) -> bool {
+// The values of a slot an instance holds, for the points that show row;
+// false when they do not fit with those it has.
+@(private)
+values_hold :: proc(a:^host.Assets,held:^gpu.Instance_Material_Values,row:u32,o:^Material_Values,slot:int) -> bool {
+    program:=surface_program(a,host.assets_material_values(a,row).program_id)
+    for name,i in o.names[:min(int(o.count),len(o.names))] {
+        if int(o.slots[i])!=slot {continue}
+        value:gpu.Instance_Material_Value
+        if parameter:=material_value_parameter(program,name);parameter!=nil {
+            params:[16]gpu.Vec4
+            gpu.program_parameter_set(&params,parameter,{f64(o.values[i].x),f64(o.values[i].y),f64(o.values[i].z),f64(o.values[i].w)})
+            value,_=gpu.instance_material_value_parameter(row,parameter,&params)
+        } else if target,instanced:=material_value_instanced(name);instanced {
+            value=gpu.instance_material_value_standard(row,target,o.values[i])
+        } else {continue}
+        if !gpu.instance_material_values_put(held,value) {return false}
+    }
+    return true
+}
+
+// Whether an entity shows its materials as they are: an opaque white color, no light and nothing by name.
+material_values_plain :: proc "contextless" (o:^Material_Values) -> bool {
+    return o.color=={1,1,1,1} && o.emission=={} && material_values_unnamed(o)
+}
+
+// Whether an entity gives no value, texture or overlays by name: only its color and its light.
+material_values_unnamed :: proc "contextless" (o:^Material_Values) -> bool {
     return o.count==0 && o.texture_count==0 && !o.own_overlays
 }
 
-// Whether an entity changes a value or a texture of the material of a slot.
-material_override_changes :: proc "contextless" (o:^Material_Override,slot:int) -> bool {
-    for stored in o.slots[:min(int(o.count),len(o.slots))] {
-        if int(stored)==slot {return true}
-    }
+// Whether an entity gives a value or a texture to the material of a slot;
+// with `rows`, one that makes it show a row of its own (a texture, or a
+// value of the standard model its instance does not hold: a parameter of a
+// program is held).
+material_values_slot :: proc(o:^Material_Values,slot:int,rows:=false) -> bool {
     for stored in o.texture_slots[:min(int(o.texture_count),len(o.texture_slots))] {
         if int(stored)==slot {return true}
+    }
+    names:=MATERIAL_VALUE_NAMES
+    for stored,i in o.slots[:min(int(o.count),len(o.slots))] {
+        if int(stored)!=slot {continue}
+        if !rows {return true}
+        if _,instanced:=material_value_instanced(o.names[i]);instanced {continue}
+        for name in names {
+            if base.name_hash(name)==o.names[i] {return true}
+        }
     }
     return false
 }
 
+// What an entity shows with `over` given over its values: its color times
+// that of over, its light plus that of over, and each name of over in place
+// of the same of its own; what does not fit is left out.
+material_values_over :: proc(o:^Material_Values,over:^Material_Values) {
+    o.color*=over.color
+    o.emission+=over.emission
+    for name,i in over.names[:min(int(over.count),len(over.names))] {material_value_put(o,name,over.values[i],int(over.slots[i]))}
+    for name,i in over.texture_names[:min(int(over.texture_count),len(over.texture_names))] {
+        at:=-1
+        for stored,j in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
+            if stored==name && o.texture_slots[j]==over.texture_slots[i] {at=j;break}
+        }
+        if at<0 {
+            if int(o.texture_count)>=len(o.texture_names) {continue}
+            at=int(o.texture_count)
+            o.texture_count+=1
+        }
+        o.texture_slots[at],o.texture_names[at],o.textures[at],o.shown[at]=over.texture_slots[i],name,over.textures[i],over.shown[i]
+    }
+    if over.own_overlays {o.own_overlays,o.overlay_count,o.overlays=true,over.overlay_count,over.overlays}
+}
+
 // Puts the values and the textures an entity gives a slot over those of its
-// material, loading the textures.
-material_override_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Material_Override,slot:int) {
+// material, loading the textures. Without `held`, only what a row holds: the
+// textures and the values of the standard model the instance of the entity
+// does not hold.
+material_values_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Material_Values,slot:int,held:=true) {
     program:=surface_program(a,values.program_id)
     for name,i in o.names[:min(int(o.count),len(o.names))] {
-        if int(o.slots[i])==slot {material_value_apply(values,program,name,o.values[i])}
+        if int(o.slots[i])!=slot {continue}
+        if !held {
+            if material_value_parameter(program,name)!=nil {continue}
+            if _,instanced:=material_value_instanced(name);instanced {continue}
+        }
+        material_value_apply(values,program,name,o.values[i])
     }
     maps:=MATERIAL_MAP_NAMES
     each: for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
         if int(o.texture_slots[i])!=slot {continue}
-        loaded:=host.assets_texture_image(a,o.textures[i])
-        handle:=loaded!=nil && !loaded.failed?loaded.handle:0
+        handle:gpu.Texture_Handle
+        if o.shown[i]!=0 {handle=o.shown[i]} else if loaded:=host.assets_texture_image(a,o.textures[i]);loaded!=nil && !loaded.failed {handle=loaded.handle}
         if program!=nil {
             for &parameter in program.parameters {
                 if parameter.kind!=.Texture || base.name_hash(parameter.name)!=name {continue}
@@ -1564,25 +1712,67 @@ material_override_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Mate
 }
 
 // The texture an entity gives a map or a texture of the program of a slot, by its name.
-material_override_texture :: proc "contextless" (o:^Material_Override,slot:int,name:u64) -> (texture:base.Asset_Id,found:bool) {
+material_texture_of :: proc "contextless" (o:^Material_Values,slot:int,name:u64) -> (texture:base.Asset_Id,found:bool) {
     for stored,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
         if stored==name && int(o.texture_slots[i])==slot {return o.textures[i],true}
     }
     return
 }
 
+// Gives a map of the standard model (one of MATERIAL_MAP_NAMES) or a texture
+// of the program of a slot a texture the renderer made at run time, as the
+// one a panel of the interface is drawn into; 0 takes the texture away. False
+// when the entity gives MATERIAL_VALUES_TEXTURES other textures.
+material_texture_shown :: proc(o:^Material_Values,name:string,texture:gpu.Texture_Handle,slot:=0) -> bool {
+    hashed:=base.name_hash(name)
+    at:=-1
+    for stored,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
+        if stored==hashed && int(o.texture_slots[i])==slot {at=i;break}
+    }
+    if at<0 {
+        if int(o.texture_count)>=len(o.texture_names) || slot<0 || slot>=MATERIAL_SLOTS {return false}
+        at=int(o.texture_count)
+        o.texture_count+=1
+    }
+    o.texture_slots[at],o.texture_names[at],o.textures[at],o.shown[at]=u8(slot),hashed,{},texture
+    return true
+}
+
 // Where an entity keeps the value it gives a name of a slot; -1 without one.
-material_override_find :: proc "contextless" (o:^Material_Override,slot:int,name:u64) -> int {
+material_value_find :: proc "contextless" (o:^Material_Values,slot:int,name:u64) -> int {
     for stored,i in o.names[:min(int(o.count),len(o.names))] {
         if stored==name && int(o.slots[i])==slot {return i}
     }
     return -1
 }
 
-// Gives a name of a slot a value, leaving the other names as they are; false
-// when the override holds MATERIAL_OVERRIDE_CAPACITY values of other names.
-material_override_value_set :: proc "contextless" (o:^Material_Override,slot:int,name:u64,value:[4]f32) -> bool {
-    if at:=material_override_find(o,slot,name);at>=0 {
+// Gives a value to a name of the material of a slot of the entity, leaving
+// the other names as they are: a parameter of the program of that material,
+// or one of MATERIAL_VALUE_NAMES. False when the entity holds
+// MATERIAL_VALUES_CAPACITY values of other names, for a slot that does not
+// exist or for a value that is not finite.
+//
+//     values:=render.MATERIAL_VALUES_DEFAULT
+//     render.material_value(&values,"roughness",0.3)
+//     core.set(table,e,values)
+material_value :: proc{material_value_scalar,material_value_color,material_value_vector,material_value_put}
+
+material_value_scalar :: proc(o:^Material_Values,name:string,value:f32,slot:=0) -> bool {
+    return material_value_put(o,base.name_hash(name),{value,0,0,0},slot)
+}
+
+material_value_color :: proc(o:^Material_Values,name:string,value:[3]f32,slot:=0) -> bool {
+    return material_value_put(o,base.name_hash(name),{value.x,value.y,value.z,0},slot)
+}
+
+material_value_vector :: proc(o:^Material_Values,name:string,value:[4]f32,slot:=0) -> bool {
+    return material_value_put(o,base.name_hash(name),value,slot)
+}
+
+// name: base.name_hash of the name, for whoever keeps names hashed.
+material_value_put :: proc "contextless" (o:^Material_Values,name:u64,value:[4]f32,slot:=0) -> bool {
+    for component in value {if component-component!=0 {return false}}
+    if at:=material_value_find(o,slot,name);at>=0 {
         o.values[at]=value
         return true
     }
@@ -1593,9 +1783,13 @@ material_override_value_set :: proc "contextless" (o:^Material_Override,slot:int
 }
 
 // Takes the value of one name of a slot away: that of the material shows again.
-material_override_value_drop :: proc "contextless" (o:^Material_Override,slot:int,name:u64) {
+material_value_drop :: proc{material_value_drop_named,material_value_drop_hashed}
+
+material_value_drop_named :: proc(o:^Material_Values,name:string,slot:=0) {material_value_drop_hashed(o,base.name_hash(name),slot)}
+
+material_value_drop_hashed :: proc "contextless" (o:^Material_Values,name:u64,slot:=0) {
     count:=min(int(o.count),len(o.names))
-    if i:=material_override_find(o,slot,name);i>=0 {
+    if i:=material_value_find(o,slot,name);i>=0 {
         o.slots[i],o.names[i],o.values[i]=o.slots[count-1],o.names[count-1],o.values[count-1]
         o.slots[count-1],o.names[count-1],o.values[count-1]=0,0,{}
         o.count=u32(count-1)
@@ -1621,37 +1815,53 @@ sync_free :: proc(sync:^Render_Sync) {
     core.value_free(sync,type_info_of(Render_Sync))
 }
 
-// The same geometry and appearance for world entities and temporary visual instances.
-mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,tint:=TINT_DEFAULT,override:Material_Override={}) -> (instance:gpu.Instance_Desc,ok:bool) {
-    override:=override
+// The same geometry and appearance for world entities and temporary visual
+// instances. The instance holds the color, the light and the values of
+// `values` that an instance holds, for the rows its slots show; a slot whose
+// values a row holds (material_values_slot) shows a row of its own.
+mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,values:=MATERIAL_VALUES_DEFAULT) -> (instance:gpu.Instance_Desc,ok:bool) {
+    values:=values
     mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
     if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return {},false}
-    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=tint.color.rgb,emission=tint.emission}
-    alpha:=tint.color.a
+    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=values.color.rgb,emission=values.emission}
+    alpha:=values.color.a
     shown:=static.materials[0]
     if mesh.slot_count==0 {
-        material:=host.assets_material_row(a,shown)
-        if material_override_changes(&override,0) {material=overridden_row(a,material,&override,0)}
-        instance.material=gpu.Material_Handle(alpha<1?host.assets_material_faded(a,material,alpha):material)
+        material:=slot_row(a,&instance,host.assets_material_row(a,shown),&values,0,alpha)
+        instance.material=gpu.Material_Handle(material)
     } else {
         if shown=={} {shown=mesh.slot_materials[0]}
         for slot in 0..<mesh.slot_count {
             material:=slot<MATERIAL_SLOTS?static.materials[slot]:base.Asset_Id{}
-            own:=material_override_changes(&override,int(slot))
-            if alpha<1 || own {
+            if alpha<1 || material_values_slot(&values,int(slot)) {
                 shown_row:=host.assets_material_row(a,material!={}?material:mesh.slot_materials[slot])
-                if own {shown_row=overridden_row(a,shown_row,&override,int(slot))}
-                if alpha<1 {shown_row=host.assets_material_faded(a,shown_row,alpha)}
-                instance.slot_materials[slot]=shown_row+1
+                instance.slot_materials[slot]=slot_row(a,&instance,shown_row,&values,int(slot),alpha)+1
             } else if material!={} {
                 instance.slot_materials[slot]=host.assets_material_row(a,material)+1
             }
         }
     }
-    if override.own_overlays {
-        instance.overlays=host.assets_overlays(a,shown,override.overlays[:min(int(override.overlay_count),len(override.overlays))])
+    if values.own_overlays {
+        instance.overlays=host.assets_overlays(a,shown,values.overlays[:min(int(values.overlay_count),len(values.overlays))])
     } else {
         instance.overlays=host.assets_material_overlays(a,shown)
     }
     return instance,true
+}
+
+// The row a slot of an instance shows of a material with that row, with the
+// values an entity gives the slot: those an instance holds go to `instance`,
+// for that row. When they do not fit, or another slot holds other values
+// for the same row, the slot shows a row of its own with all of them.
+@(private)
+slot_row :: proc(a:^host.Assets,instance:^gpu.Instance_Desc,row:u32,values:^Material_Values,slot:int,alpha:f32) -> u32 {
+    shown:=values_row(a,row,values,slot,false)
+    if alpha<1 {shown=host.assets_material_faded(a,shown,alpha)}
+    before:=instance.material_values
+    shared:=false
+    for entry in before.entries[:min(int(before.count),len(before.entries))] {shared||=entry.row==shown}
+    if !shared && values_hold(a,&instance.material_values,shown,values,slot) {return shown}
+    instance.material_values=before
+    shown=values_row(a,row,values,slot,true)
+    return alpha<1?host.assets_material_faded(a,shown,alpha):shown
 }

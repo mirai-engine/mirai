@@ -212,7 +212,7 @@ Imprint_Gpu :: struct {
 @(step="render",loops="game editor",before="render_sync")
 imprint_render :: proc(
     state:^Imprint_Gpu,grounds:core.Read(Imprint_Ground),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
+    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),
     hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
     layers:core.Read(erender.Layers),locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),
     steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,
@@ -270,7 +270,7 @@ imprint_render :: proc(
 @(private)
 displace :: proc(
     state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
+    parents:core.Read(core.Parent),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
     locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
@@ -278,7 +278,7 @@ displace :: proc(
     static,has_mesh:=core.get(meshes,e)
     world,placed:=core.get(worlds,e)
     if !has_mesh || !placed || core.has(hidden,e) {return}
-    tint:=erender.TINT_DEFAULT
+    tint:=erender.MATERIAL_VALUES_DEFAULT
     if value,exists:=core.get(tints,e);exists {tint=value}
     override,_:=core.get(overrides,e)
     anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)

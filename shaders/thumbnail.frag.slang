@@ -4,6 +4,7 @@
 //! variant impostor MIRAI_THUMBNAIL_IMPOSTOR
 #include "native.slang"
 #define MIRAI_RASTER_STUDIO
+#define MIRAI_NO_INSTANCES
 #include "raster.slang"
 #include "studio.slang"
 #include "display.slang"

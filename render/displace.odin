@@ -9,8 +9,8 @@ import "mirai:std/base"
 // vertices, which the stage of each of those programs writes from the rest of
 // its clusters (surface_vertices__<program>.comp) before the Geometry stage of
 // a frame in which what it reads changed: the transform of the instance, the
-// rows of its materials (its parameters, those of a Material_Override too)
-// and, of an animated program, the time. The previous vertices are those the
+// rows of its materials (their parameters), the values the instance gives
+// over them and, of an animated program, the time. The previous vertices are those the
 // frame before showed. Raster, shadows, rays (the pose's tree and BLAS, refit
 // like a skin's), culling (its box grows by the reach of the programs) and
 // motion vectors read that geometry; no pass moves vertices of its own. A
@@ -27,12 +27,15 @@ Instance_Vertex :: struct {
 }
 
 // What the programs of the materials of an instance of mesh do to its
-// vertices. material: the row in place of the slots' (GPU_NONE: theirs).
+// vertices. material: the row in place of the slots' (GPU_NONE: theirs);
+// values: those the instance gives over its rows (Gpu_Instance.material_values).
 @(private)
-instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [32]u32) -> (v: Instance_Vertex) {
+instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [32]u32, values: u32 = 0) -> (v: Instance_Vertex) {
 	s := &r.scene
 	palette := slots
 	v.inputs = base.HASH_SEED
+	given := instance_material_values_words(s, values)
+	for word in given {v.inputs = base.hash_mix(v.inputs, u64(word))}
 	for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
 		row := instance_row(packed, material, &palette)
 		if int(row) >= len(s.materials) || s.materials[row].program_id == 0 {continue}
@@ -44,6 +47,9 @@ instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [
 		reach := program.vertex.reach
 		if offset := program.vertex.reach_offset; offset >= 0 {
 			words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)values.custom_params
+			for at := 0; at + INSTANCE_VALUE_WORDS <= len(given); at += INSTANCE_VALUE_WORDS {
+				if given[at] == row && i32(given[at + 1] & 0xff) == offset / 4 {words[offset / 4] = given[at + 2]}
+			}
 			reach = transmute(f32)words[offset / 4]
 			if !(reach >= 0) || reach > 1e30 {reach = 0}
 		}
@@ -193,7 +199,7 @@ displaced_prepare :: proc(r: ^Renderer) {
 		v: Instance_Vertex
 		if index := m.first_instance; index >= 0 {
 			inst := &s.instances[index]
-			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials)
+			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials, inst.material_values)
 			for row in inst.world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
 			for row in inst.prev_world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
 			if v.animated {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}

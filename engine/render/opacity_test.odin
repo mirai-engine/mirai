@@ -31,7 +31,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         pose:=mm.TRANSFORM_IDENTITY;pose.position.x=f32(i)*2-1
         core.add(&w.worlds,e,core.World_Transform{pose,pose})
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
-        core.add(&w.tints,e,Tint{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
+        core.add(&w.values,e,Material_Values{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
     }
     core.test_world_settle(&w)
     draw :: proc(sync:^Render_Sync,app:^host.App,w:^Render_World) {
@@ -40,7 +40,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     }
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
     for alpha,pass in alphas {
-        core.get(&w.tints,entities[0]).color.a=alpha
+        core.get(&w.values,entities[0]).color.a=alpha
         sets:=sync.stats.scene_sets
         updates:=sync.stats.instance_updates
         host.app_frame_begin(app)
@@ -87,7 +87,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     material_rows:=len(app.assets.material_descs)
     allocations:=tracking.total_allocation_count
     for pass in 0..<32 {
-        core.get(&w.tints,entities[0]).color.a=f32(pass%7)/6
+        core.get(&w.values,entities[0]).color.a=f32(pass%7)/6
         host.app_frame_begin(app)
         draw(&sync,app,&w)
         host.app_frame_end(app)

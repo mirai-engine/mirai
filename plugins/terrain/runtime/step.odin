@@ -25,8 +25,8 @@ Chunk_Tables :: struct {
     ids:core.Read(core.Id),
     colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
-    tints:^core.Table(render.Tint),
-    overrides:^core.Table(render.Material_Override),
+    tints:^core.Table(render.Material_Values),
+    overrides:^core.Table(render.Material_Values),
 }
 
 // The slots of Physics_Settings the colliders of terrain chunks can still
@@ -398,7 +398,7 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
 // The layers of a source as each chunk shows them, made again when its layers
 // or the assets change.
 @(private)
-resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Override {
+resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Values {
     a:=resident.assets
     stamp:=[2]u64{a.revision,a.structure}
     if source.override_info.layer_count!=s.layer_count || source.override_info.layers!=s.layers || source.override_assets!=stamp {
@@ -415,7 +415,7 @@ resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Sou
 owner_publish :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resident_Owner,entry:^Data_Source,source:^Resident_Source,marker:Terrain,physics:phys.Physics_Settings,problems:^core.Problems,seen:bool) {
     tint:=owner.tint
     if !seen || owner.full {
-        tint=render.TINT_DEFAULT
+        tint=render.MATERIAL_VALUES_DEFAULT
         if value,ok:=core.get(core.read(c.tints),owner.entity);ok {tint=value}
     }
     // A program of its own reads its parameters from its material.
@@ -510,7 +510,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     }
     core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
     core.add(c.tints,e,owner.tint)
-    if !render.material_override_empty(&owner.override) {core.add(c.overrides,e,owner.override)} else if core.has(c.overrides,e) {core.remove(c.overrides,e)}
+    if !render.material_values_unnamed(&owner.override) {core.add(c.overrides,e,owner.override)} else if core.has(c.overrides,e) {core.remove(c.overrides,e)}
     if wants {core.add(c.colliders,e,s.kind==.Heightfield?phys.collider_heightfield():phys.collider_mesh())} else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
 }
 
@@ -655,7 +655,7 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
 terrain_update :: proc(
     commands:core.Commands,terrains:^core.Table(Terrain),chunks:^core.Table(Terrain_Chunk),
     locals:core.Read(core.Transform),parents:core.Read(core.Parent),ids:core.Read(core.Id),colliders:^core.Table(phys.Collider),
-    meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),overrides:^core.Table(render.Material_Override),
+    meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),overrides:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
     view:core.View,worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),kept:core.Read(scene.Far_Kept),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,

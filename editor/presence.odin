@@ -107,14 +107,14 @@ presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,yaw:f32,color:u
     id,_,_,loaded:=presence_mesh(a)
     if !loaded {return false}
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
-    accent:=erender.Material_Override{count=u32(len(PRESENCE_COLOR_SLOTS)+1)}
+    accent:=erender.Material_Values{count=u32(len(PRESENCE_COLOR_SLOTS)+1)}
     for slot,i in PRESENCE_COLOR_SLOTS {
         accent.slots[i],accent.names[i],accent.values[i]=slot,base.name_hash("base_color"),{linear.x,linear.y,linear.z,1}
     }
     star:=len(PRESENCE_COLOR_SLOTS)
     accent.slots[star],accent.names[star],accent.values[star]=PRESENCE_STARS_SLOT,base.name_hash("emission"),{linear.x,linear.y,linear.z,1}
     place:=mm.Transform{position=eyes,rotation=mm.quat_axis_angle({0,1,0},yaw),scale=1}
-    instance,ok:=erender.mesh_instance(a,{mesh=id},mm.transform_matrix(place),erender.TINT_DEFAULT,accent)
+    instance,ok:=erender.mesh_instance(a,{mesh=id},mm.transform_matrix(place),erender.MATERIAL_VALUES_DEFAULT,accent)
     if !ok {return false}
     instance.copy_owner,instance.copy_variant=PRESENCE_OWNER,variant
     instance.highlight=level

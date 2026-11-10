@@ -125,7 +125,7 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 }
 
 // The globe of each lamp glows while it is lit (called by game_glow, the writer of Tint).
-horror_glow :: proc(tints:^core.Table(render.Tint),lamps:core.Read(House_Lamp)) {
+horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:core.Read(House_Lamp)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
         tint:=core.get(tints,lamp.globe)

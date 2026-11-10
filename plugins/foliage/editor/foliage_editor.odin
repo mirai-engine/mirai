@@ -683,7 +683,7 @@ foliage_thumbnail :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,s
     for id in asset.registry_dependencies(&a.registry,file) {
         used,found:=asset.registry_find(&a.registry,id)
         if !found {continue}
-        if used.kind==asset.KIND_MESH {subject^={mesh={mesh=id},tint=erender.TINT_DEFAULT};return true}
+        if used.kind==asset.KIND_MESH {subject^={mesh={mesh=id},tint=erender.MATERIAL_VALUES_DEFAULT};return true}
         if used.kind==asset.KIND_PREFAB && prefab=={} {prefab=id}
     }
     if prefab=={} {return false}

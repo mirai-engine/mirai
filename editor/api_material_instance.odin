@@ -11,7 +11,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // material.instance.inspect, set, revert and apply: what an entity shows of
-// the material of a slot of its mesh, its Material_Override, as the inspector
+// the material of a slot of its mesh, its Material_Values, as the inspector
 // edits it.
 
 @(private)
@@ -116,7 +116,7 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
             serial.text_write_string(out,parameter.name)
             serial.write_u8(out,':')
             if parameter.kind==.Texture {
-                texture,_:=erender.material_override_texture(o,slot,base.name_hash(parameter.name))
+                texture,_:=erender.material_texture_of(o,slot,base.name_hash(parameter.name))
                 api_asset_write(out,texture)
                 continue
             }
@@ -209,9 +209,9 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
             now:=material_parameter_value(&given,nil,name)
             erender.material_standard_apply(&kept,name,now)
             if now==material_parameter_value(&material,nil,name) {
-                erender.material_override_value_drop(&next,slot,name)
-            } else if !erender.material_override_value_set(&next,slot,name,now) {
-                api.call_failf(call,api.INVALID_PARAMS,"An entity changes up to %d values of its material",erender.MATERIAL_OVERRIDE_CAPACITY)
+                erender.material_value_drop(&next,name,slot)
+            } else if !erender.material_value(&next,name,now,slot) {
+                api.call_failf(call,api.INVALID_PARAMS,"An entity changes up to %d values of its material",erender.MATERIAL_VALUES_CAPACITY)
                 return
             }
         }
@@ -237,7 +237,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
             }
             name:=base.name_hash(parameter.name)
             if serial.text_keyword(&r.r,"null") {
-                erender.material_override_value_drop(&next,slot,name)
+                erender.material_value_drop(&next,name,slot)
                 continue
             }
             value:[4]f32
@@ -250,8 +250,8 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                 rpc_fail(&r,"parameters.%s must be an array of %d numbers",key,count)
                 break
             }
-            if !erender.material_override_value_set(&next,slot,name,value) {
-                rpc_fail(&r,"An entity changes up to %d values of its material",erender.MATERIAL_OVERRIDE_CAPACITY)
+            if !erender.material_value(&next,name,value,slot) {
+                rpc_fail(&r,"An entity changes up to %d values of its material",erender.MATERIAL_VALUES_CAPACITY)
                 break
             }
         }
@@ -286,7 +286,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                 if texture,named=asset_named(s,call,text,asset.KIND_TEXTURE,".tex","a texture");!named {return}
             }
             if !override_texture_put(&next,slot,name,texture,true) {
-                rpc_fail(&r,"An entity changes up to %d textures of its material",erender.MATERIAL_OVERRIDE_TEXTURES)
+                rpc_fail(&r,"An entity changes up to %d textures of its material",erender.MATERIAL_VALUES_TEXTURES)
                 break
             }
         }
@@ -351,9 +351,9 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
 
     if !api_edit_begin(s,call,"Material") {return}
     w=edited_world(s)
-    table:=core.world_table_of(w,erender.Material_Override)
+    table:=core.world_table_of(w,erender.Material_Values)
     if table==nil {api_edit_end(s,call,false);return}
-    if erender.material_override_empty(&next) {
+    if erender.material_values_unnamed(&next) {
         if core.has(table,e) {core.remove(table,e)}
     } else {
         core.add(table,e,next)
@@ -370,10 +370,10 @@ api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
     if !found {return}
     if !api_edit_begin(s,call,"Revert material") {return}
     w=edited_world(s)
-    if table:=core.world_table_of(w,erender.Material_Override);table!=nil {
+    if table:=core.world_table_of(w,erender.Material_Values);table!=nil {
         if override,overridden:=core.get(core.read(table),e);overridden {
             _,rest:=override_split(&override,p.slot)
-            if erender.material_override_empty(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
+            if erender.material_values_unnamed(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
         }
     }
     if !api_edit_end(s,call,true) {return}

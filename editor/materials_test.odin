@@ -94,12 +94,12 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     names:=erender.MATERIAL_VALUE_NAMES
     maps:=erender.MATERIAL_MAP_NAMES
     roughness:=base.name_hash(names[3])
-    override:=erender.Material_Override{own_overlays=true,overlay_count=1}
-    testing.expect(t,erender.material_override_value_set(&override,1,roughness,{0.7,0,0,0}) && erender.material_override_value_set(&override,0,roughness,{0.2,0,0,0}))
+    override:=erender.Material_Values{own_overlays=true,overlay_count=1}
+    testing.expect(t,erender.material_value(&override,roughness,{0.7,0,0,0},1) && erender.material_value(&override,roughness,{0.2,0,0,0},0))
     testing.expect(t,override_texture_put(&override,0,base.name_hash(maps[.Base_Color]),{7,7},true))
     override.overlays[0]={id=1,material={9,9},blend=.Multiply,enabled=true}
-    testing.expect(t,override.count==2 && erender.material_override_find(&override,0,roughness)!=erender.material_override_find(&override,1,roughness),"each slot keeps a value of its own")
-    testing.expect(t,erender.material_override_changes(&override,1) && !erender.material_override_changes(&override,2))
+    testing.expect(t,override.count==2 && erender.material_value_find(&override,0,roughness)!=erender.material_value_find(&override,1,roughness),"each slot keeps a value of its own")
+    testing.expect(t,erender.material_values_slot(&override,1) && !erender.material_values_slot(&override,2))
     given,rest:=override_split(&override,0)
     testing.expect(t,given.count==1 && given.texture_count==1 && given.own_overlays,"the first slot takes the overlays")
     testing.expect(t,rest.count==1 && rest.slots[0]==1 && rest.texture_count==0 && !rest.own_overlays)

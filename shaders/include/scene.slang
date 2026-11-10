@@ -424,6 +424,65 @@ Material material_row(uint row) {
 
 bool material_has(uint texture_index) { return texture_index != INVALID; }
 
+// The values an instance gives over the rows of its materials
+// (render.Instance_Material_Values): `block` is Instance.material_values. A
+// stage that draws no instance of a scene (MIRAI_NO_INSTANCES: the previews)
+// reads none, and does not bind the pool they are in.
+uint material_values_count(uint block) {
+#ifdef MIRAI_NO_INSTANCES
+    return 0u;
+#else
+    return block == 0u ? 0u : min(indices[block - 1u], INSTANCE_VALUES_MAX);
+#endif
+}
+// The value at `i` of a block, when it is for `row`: its target, how many
+// words it gives and the words.
+bool material_value_at(uint block, uint i, uint row, out uint target, out uint count, out uint4 words) {
+    target = 0u; count = 0u; words = uint4(0u, 0u, 0u, 0u);
+#ifdef MIRAI_NO_INSTANCES
+    return false;
+#else
+    uint at = block + i * INSTANCE_VALUE_WORDS;
+    if (indices[at] != row) return false;
+    uint key = indices[at + 1u];
+    target = key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u);
+    count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
+    words = uint4(indices[at + 2u], indices[at + 3u], indices[at + 4u], indices[at + 5u]);
+    return true;
+#endif
+}
+// A row with the values of the standard model an instance gives it.
+Material material_instanced(Material m, uint block) {
+    uint given = material_values_count(block);
+    for (uint i = 0u; i < given; i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
+        float4 value = asfloat(words);
+        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
+        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
+        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
+        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
+        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
+    }
+    return m;
+}
+// The parameters the program of a row reads at a point of an instance: those
+// of the row, under the ones the instance gives.
+void material_parameters(uint row, uint block, out float4 parameters[16]) {
+    parameters = materials[row].custom_params;
+    uint given = material_values_count(block);
+    for (uint i = 0u; i < given; i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(block, i, row, target, count, words) || target >= INSTANCE_VALUE_STANDARD) continue;
+        for (uint c = 0u; c < count; c++) {
+            uint word = min(target + c, PROGRAM_PARAMETER_BYTES / 4u - 1u);
+            parameters[word >> 2u][word & 3u] = asfloat(words[c]);
+        }
+    }
+}
+
 // Ray hits have no screen-space derivatives: `lod` is the level of a texture
 // of one texel, which the size of the texture then shifts (see hit_lod).
 float4 material_texel_at(uint texture_index, float2 uv, float lod) {
@@ -683,6 +742,7 @@ Mirai_Surface_Context material_context(float3 position, float3 normal, float3 ve
     ctx.vertex_color = float4(1.0);
     ctx.object_position = float3(0.0); ctx.object_x = float3(1.0, 0.0, 0.0); ctx.object_y = float3(0.0, 1.0, 0.0); ctx.object_z = float3(0.0, 0.0, 1.0);
     ctx.object_center = float3(0.0); ctx.object_radius = 0.0; ctx.object_low = float3(0.0); ctx.object_high = float3(0.0); ctx.wet = 0.0;
+    ctx.material_values = 0u;
     ctx.particle_data[0] = float4(0.0); ctx.particle_data[1] = float4(0.0); ctx.particle_data[2] = float4(0.0); ctx.particle_data[3] = float4(0.0); ctx.particle_given = 0u; ctx.particle_random = 0.0; ctx.particle_radius = 0.0;
     float4 clip = view_clip(position);
     float2 ndc = clip.xy / max(clip.w, 1e-6);
@@ -703,6 +763,7 @@ Mirai_Surface_Context material_context_instance(Mirai_Surface_Context ctx, Insta
     ctx.object_radius = length(float3(length(ctx.object_x) * half_size.x, length(ctx.object_y) * half_size.y, length(ctx.object_z) * half_size.z));
     ctx.object_low = mesh.bounds_min.xyz; ctx.object_high = mesh.bounds_max.xyz;
     ctx.wet = saturate(inst.wet);
+    ctx.material_values = inst.material_values;
     return ctx;
 }
 // The same for an instance an index names; INVALID (a surface an extension
@@ -761,7 +822,9 @@ bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3
     values = (Material_Sample)0;
     if (m.program_id == 0u) return false;
     Mirai_Surface result = mirai_surface_default(ctx);
-    if (!mirai_evaluate_program(m.program_id, materials[m.row].custom_params, ctx, result)) return false;
+    float4 parameters[16];
+    material_parameters(m.row, ctx.material_values, parameters);
+    if (!mirai_evaluate_program(m.program_id, parameters, ctx, result)) return false;
     material_program_apply(m, result, tint, added_emission, values, normal);
     return true;
 }
@@ -793,6 +856,7 @@ Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai
 }
 Material_Sample material_sample(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, inout float3 normal) {
     Material_Sample values;
+    m = material_instanced(m, ctx.material_values);
     if (!material_program(m, ctx, tint, added_emission, values, normal)) values = material_evaluate(m, ctx, tint, added_emission);
     return material_sample_finish(values, m, ctx);
 }
@@ -843,6 +907,7 @@ float3 hit_emission(Material_Sample m) {
 float material_alpha(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
     float3 normal = ctx.normal;
     Material_Sample values;
+    m = material_instanced(m, ctx.material_values);
     if (material_program(m, ctx, tint, added_emission, values, normal)) return values.alpha;
     return material_base_color(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), tint, ctx.ray).a;
 }
@@ -1069,7 +1134,9 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
 // program runs it (surface_points.comp).
 Mirai_Surface hit_program(Hit_Point h) {
     Mirai_Surface result = mirai_surface_default(h.ctx);
-    mirai_evaluate_program(h.m.program_id, materials[h.m.row].custom_params, h.ctx, result);
+    float4 parameters[16];
+    material_parameters(h.m.row, h.ctx.material_values, parameters);
+    mirai_evaluate_program(h.m.program_id, parameters, h.ctx, result);
     return result;
 }
 

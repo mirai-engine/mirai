@@ -116,7 +116,7 @@ physics_gallery_breakable :: proc(s:^asset.Scene_Builder,name:string,position:mm
 @(private)
 physics_gallery_primitive :: proc(s:^asset.Scene_Builder,name:string,position,size:mm.Vec3,shape:render.Shape,collider:phys.Collider,color:mm.Vec4,mass:f32=2) -> base.Entity_Id {
     e:=asset.builder_entity(s,name,{position=position,scale=size})
-    asset.builder_set(s,e,render.Mesh_Renderer{shape=shape});asset.builder_set(s,e,render.Tint{color=color})
+    asset.builder_set(s,e,render.Mesh_Renderer{shape=shape});asset.builder_set(s,e,render.Material_Values{color=color})
     rigid:=phys.RIGID_BODY_DYNAMIC;rigid.mass=mass;rigid.bullet=true
     collider:=collider
     asset.builder_set(s,e,rigid);asset.builder_set(s,e,collider)
@@ -199,7 +199,7 @@ write_physics_gallery :: proc(o:^Out) {
             if station==2 {config.hull_vertices=8}
             if station==9 {
                 config.removal_lifetime=8
-                tint:=render.TINT_DEFAULT;asset.builder_set(&s,target,tint)
+                tint:=render.MATERIAL_VALUES_DEFAULT;asset.builder_set(&s,target,tint)
             }
             asset.builder_set(&s,target,config)
             if station==14 {field=asset.builder_entity(&s,"Destructive box field",{position=origin});f:=fields.PHYSICS_FIELD_DEFAULT;f.shape=.Box;f.half_extents={1,2,1};f.strain=400;f.force=30;asset.builder_set(&s,field,f);turn_off(&s,field,"Physics_Field");asset.builder_set(&s,field,core.Transform{origin,mm.quat_axis_angle({0,1,0},.4),{1,1,1}})}
@@ -235,7 +235,7 @@ physics_gallery_extra :: proc(s:^asset.Scene_Builder,label:base.Asset_Id) {
     e:=asset.builder_entity(s,"Physical character",{position=origin-mm.Vec3{0,.8,0}})
     character,capsule,walk:=phys.character_default(),phys.collider_character(),phys.WALK_DEFAULT
     asset.builder_set(s,e,character);asset.builder_set(s,e,walk);asset.builder_set(s,e,capsule)
-    visual:=asset.builder_entity(s,"Character capsule",{position={0,.9,0},scale={.6,1.5,.6}},e);asset.builder_set(s,visual,render.Mesh_Renderer{shape=.Capsule});asset.builder_set(s,visual,render.Tint{color={.2,.9,.7,1}})
+    visual:=asset.builder_entity(s,"Character capsule",{position={0,.9,0},scale={.6,1.5,.6}},e);asset.builder_set(s,visual,render.Mesh_Renderer{shape=.Capsule});asset.builder_set(s,visual,render.Material_Values{color={.2,.9,.7,1}})
     gallery_cube(s,"Character step",origin+mm.Vec3{1,-.6,0},{.6,.4,2},{.3,.5,.6,1},true)
     physics_gallery_item(s,label,21,"Physical character","Physical capsule shares solver contacts. E launches it with the public radial impulse API.",origin,e)
     origin={12,1,-40}

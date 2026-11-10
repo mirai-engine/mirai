@@ -439,7 +439,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     }
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
     if statics==nil {return}
-    tints:=core.world_table_of(world,erender.Tint);overrides:=core.world_table_of(world,erender.Material_Override)
+    tints:=core.world_table_of(world,erender.Material_Values);overrides:=core.world_table_of(world,erender.Material_Values)
     // The view that shows the weights of the layers shows them on the preview too.
     overlay:=Terrain_Overlay.None
     if view:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_View);view!=nil {overlay=view.overlay}
@@ -456,7 +456,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if !has_pose || editor.entity_hidden(world,e) {continue}
         static,has_static:=core.get(core.read(statics),e)
         if !has_static {static.materials=terrain.chunk_materials(&stroke.source)}
-        tint:=erender.TINT_DEFAULT;override:erender.Material_Override
+        tint:=erender.MATERIAL_VALUES_DEFAULT;override:erender.Material_Values
         if tints!=nil {
             if value,ok:=core.get(core.read(tints),e);ok {tint=value} else if value,ok:=core.get(core.read(tints),chunk.owner);ok {tint=value}
         }

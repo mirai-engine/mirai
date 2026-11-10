@@ -82,6 +82,9 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
 // What scene_set built from the meshes. Instances are gone until the next scene_set.
 @(private)
 scene_instances_clear :: proc(s: ^Scene_State) {
+	for &inst in s.instances {instance_material_values_release(s, &inst)}
+	for _, &gone in s.previous {instance_material_values_release(s, &gone)}
+	clear(&s.previous)
 	clear(&s.translucent)
 	clear(&s.instances)
 	clear(&s.instance_next)

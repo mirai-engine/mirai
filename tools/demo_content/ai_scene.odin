@@ -103,7 +103,7 @@ ai_piece :: proc(s:^asset.Scene_Builder,piece:game.Arena_Piece) {
     case .Solid,.Cart:
         e:=asset.builder_entity(s,piece.name,{position=piece.position,scale=piece.half*2})
         asset.builder_set(s,e,render.Mesh_Renderer{shape=.Cube})
-        asset.builder_set(s,e,render.Tint{color=piece.color})
+        asset.builder_set(s,e,render.Material_Values{color=piece.color})
         collider:=phys.collider_box({0.5,0.5,0.5})
         asset.builder_set(s,e,collider)
         if piece.kind==.Cart {
@@ -117,7 +117,7 @@ ai_piece :: proc(s:^asset.Scene_Builder,piece:game.Arena_Piece) {
         asset.builder_set(s,e,nav.Nav_Area{half=piece.half+{0,1,0},area=piece.area})
         slab:=asset.builder_entity(s,"Slab",{position={0,0.01,0},scale=piece.half*2},e)
         asset.builder_set(s,slab,render.Mesh_Renderer{shape=.Cube})
-        asset.builder_set(s,slab,render.Tint{color=piece.color})
+        asset.builder_set(s,slab,render.Material_Values{color=piece.color})
     case .Link:
         e:=asset.builder_entity(s,piece.name,{position=piece.position})
         asset.builder_set(s,e,nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=game.arena_link_abilities(piece.link)})

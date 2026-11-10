@@ -51,7 +51,7 @@ Game_World :: struct {
     hidden:core.Table(erender.Hidden),
     disabled:core.Table(core.Disabled),
     meshes:core.Table(erender.Mesh_Renderer),
-    tints:core.Table(erender.Tint),
+    tints:core.Table(erender.Material_Values),
     point_lights:core.Table(erender.Point_Light),
     statuses:core.Table(Game_Status) `mirai:"game,name=Status"`,
     names:core.Table(core.Name),

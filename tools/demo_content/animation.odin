@@ -109,7 +109,7 @@ gallery_item :: proc(g:^Gallery_Build,root:base.Entity_Id,kind:game.Gallery_Kind
     widget:=gui.WORLD_WIDGET_DEFAULT;widget.asset=g.label;widget.size=game.GALLERY_PLAQUE_SIZE;widget.scale=.0062;widget.passive=true
     asset.builder_set(s,sign,widget)
     plate:=asset.builder_entity(s,fmt.tprintf("%s floor",title),{position=place.origin+mm.Vec3{0,.006,0},scale={3.6,.012,3.6}})
-    asset.builder_set(s,plate,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,plate,render.Tint{color={.2,.27,.36,1} if adjustable else {.17,.21,.27,1}})
+    asset.builder_set(s,plate,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,plate,render.Material_Values{color={.2,.27,.36,1} if adjustable else {.17,.21,.27,1}})
     if !adjustable {return}
     focus:=place.origin-place.along*.9
     view:=asset.builder_entity(s,fmt.tprintf("%s view",title),{position=focus+place.toward*3.7+mm.Vec3{0,1.75,0}})
@@ -128,7 +128,7 @@ gallery_item :: proc(g:^Gallery_Build,root:base.Entity_Id,kind:game.Gallery_Kind
 gallery_cube :: proc(s:^asset.Scene_Builder,name:string,position,scale:mm.Vec3,color:mm.Vec4,solid:bool=false,rotation:mm.Quat=1) -> base.Entity_Id {
     value:=asset.builder_entity(s,name,{position=position,scale=scale})
     if rotation!=1 {placed:=core.Transform{position,rotation,scale};asset.builder_set(s,value,placed)}
-    asset.builder_set(s,value,render.Mesh_Renderer{shape=.Cube});asset.builder_set(s,value,render.Tint{color=color})
+    asset.builder_set(s,value,render.Mesh_Renderer{shape=.Cube});asset.builder_set(s,value,render.Material_Values{color=color})
     if solid {collider:=phys.COLLIDER_DEFAULT;asset.builder_set(s,value,collider)}
     return value
 }
@@ -169,7 +169,7 @@ gallery_hand_ik :: proc(g:^Gallery_Build,root:base.Entity_Id,place:Gallery_Place
     at:=proc(place:Gallery_Place,local:mm.Vec3) -> mm.Vec3 {return place.origin+mm.quat_rotate(place.facing,local)}
     reach:=at(place,{.42,1.3,-.42})
     target:=asset.builder_entity(s,"Right hand target",{position=reach,scale={.075,.075,.075}})
-    asset.builder_set(s,target,render.Mesh_Renderer{shape=.Sphere});asset.builder_set(s,target,render.Tint{color={1,.3,.05,1},emission=nits(GALLERY_LIGHT,{2,.3,0})})
+    asset.builder_set(s,target,render.Mesh_Renderer{shape=.Sphere});asset.builder_set(s,target,render.Material_Values{color={1,.3,.05,1},emission=nits(GALLERY_LIGHT,{2,.3,0})})
     ik:=anim.IK_CONSTRAINT_DEFAULT;ik.rig,ik.target,ik.hold=core.Entity(root),anim.spatial_point(reach),.Joint
     ik.root,ik.joint,ik.end=anim.bone_ref("RightArm"),anim.bone_ref("RightForeArm"),anim.bone_ref("RightHand")
     ik.pole=at(place,{.9,.9,.6})
@@ -326,7 +326,7 @@ write_animation_scene :: proc(o:^Out) {
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai events and curves",place.origin,place.facing)
     indicator:=asset.builder_entity(&s,"Event curve indicator",{position=place.origin+mm.Vec3{0,2.15,0},scale={.2,.2,.2}})
-    asset.builder_set(&s,indicator,render.Mesh_Renderer{shape=.Sphere});asset.builder_set(&s,indicator,render.Tint{color={1,.6,.1,1},emission=nits(GALLERY_LIGHT,{1,.2,0})})
+    asset.builder_set(&s,indicator,render.Mesh_Renderer{shape=.Sphere});asset.builder_set(&s,indicator,render.Material_Values{color={1,.6,.1,1},emission=nits(GALLERY_LIGHT,{1,.2,0})})
     gallery_item(&g,root,.Events,place,"1.2  Events and curves","step markers / the pulse curve sizes the ball",indicator)
 
     place=gallery_next(&g)

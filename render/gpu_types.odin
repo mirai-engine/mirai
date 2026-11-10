@@ -147,7 +147,8 @@ Gpu_Instance :: struct {
 	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
-	reserved:   [3]u32, // the stride stays a multiple of 16, as Metal lays out a struct with float4
+	material_values: u32, // 1 + the word of the index pool where the values it gives over the rows of its materials start (Instance_Material_Values); 0: none
+	reserved:   [2]u32, // the stride stays a multiple of 16, as Metal lays out a struct with float4
 }
 #assert(size_of(Gpu_Instance) % 16 == 0)
 GPU_NONE :: max(u32)
@@ -257,6 +258,61 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
+
+// What an instance gives over the rows of its materials, which the shaders
+// read where they evaluate one of those rows at a point of it: a value of
+// the parameters of the program of a row, or one of the standard model
+// (Instance_Material_Value_Target). It costs the instance its words in the index pool
+// and no row of the material table.
+INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
+INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
+// A value of the standard model an instance gives: the others are of the row.
+Instance_Material_Value_Target :: enum u32 {
+	Base_Color = abi.INSTANCE_VALUE_BASE_COLOR,
+	Opacity    = abi.INSTANCE_VALUE_OPACITY,
+	Emission   = abi.INSTANCE_VALUE_EMISSION,
+	Roughness  = abi.INSTANCE_VALUE_ROUGHNESS,
+	Metallic   = abi.INSTANCE_VALUE_METALLIC,
+}
+Instance_Material_Value :: struct {
+	row:    u32,    // of the material table: the value is for the points of the instance that show it
+	target: u32,    // a word of the parameters of the program of the row, or an Instance_Material_Value_Target; its count of words from INSTANCE_VALUE_COUNT_SHIFT
+	words:  [4]u32, // as the row holds them
+}
+#assert(size_of(Instance_Material_Value) == INSTANCE_VALUE_WORDS * size_of(u32))
+Instance_Material_Values :: struct {
+	count:   u32,
+	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
+}
+
+// A value of the standard model for the points of an instance that show row.
+instance_material_value_standard :: proc "contextless" (row: u32, target: Instance_Material_Value_Target, value: Vec4) -> Instance_Material_Value {
+	count := u32(3) if target == .Base_Color || target == .Emission else 1
+	return {row = row, target = u32(target) | count << abi.INSTANCE_VALUE_COUNT_SHIFT, words = transmute([4]u32)value}
+}
+
+// The words a parameter of the program of row holds in params, for the points
+// of an instance that show row.
+instance_material_value_parameter :: proc "contextless" (row: u32, parameter: ^Program_Parameter, params: ^[16]Vec4) -> (value: Instance_Material_Value, ok: bool) {
+	if parameter == nil || parameter.kind == .Texture || parameter.components < 1 || parameter.components > 4 || int(parameter.offset) + int(parameter.components) * 4 > PROGRAM_PARAMETER_BYTES {return}
+	value = {row = row, target = u32(parameter.offset / 4) | u32(parameter.components) << abi.INSTANCE_VALUE_COUNT_SHIFT}
+	copy(value.words[:], (cast(^[PROGRAM_PARAMETER_BYTES / 4]u32)params)[parameter.offset / 4:][:parameter.components])
+	return value, true
+}
+
+// Adds a value; one for the same row and target takes its place. False when
+// the values hold INSTANCE_VALUES_MAX others.
+instance_material_values_put :: proc "contextless" (values: ^Instance_Material_Values, value: Instance_Material_Value) -> bool {
+	MASK :: u32(1) << abi.INSTANCE_VALUE_COUNT_SHIFT - 1
+	count := min(int(values.count), len(values.entries))
+	for &entry in values.entries[:count] {
+		if entry.row == value.row && entry.target & MASK == value.target & MASK {entry = value; return true}
+	}
+	if count >= len(values.entries) {return false}
+	values.entries[count] = value
+	values.count = u32(count + 1)
+	return true
+}
 
 // uv' = linear * uv + offset: the transform of the material and that of the
 // map, composed. ray_lod: the texture level a ray adds for what they shrink.

@@ -104,7 +104,7 @@ write_raft_scene :: proc(o:^Out) {
     gallery_cube(&s,"Seabed",{0,-13,0},{400,2,400},seabed,true)
     // A beach that rises out of the sea to an island: wading in and out.
     beach:=placed(&s,"Beach",{28,-3,0},mm.quat_axis_angle({0,0,1},0.3),{24,2,14})
-    asset.builder_set(&s,beach,render.Mesh_Renderer{shape=.Cube});asset.builder_set(&s,beach,render.Tint{color=sand})
+    asset.builder_set(&s,beach,render.Mesh_Renderer{shape=.Cube});asset.builder_set(&s,beach,render.Material_Values{color=sand})
     ground:=phys.COLLIDER_DEFAULT
     asset.builder_set(&s,beach,ground)
     gallery_cube(&s,"Island",{46,0.45,0},{14,2,14},sand,true)
@@ -122,14 +122,14 @@ write_raft_scene :: proc(o:^Out) {
 
     // Wood floats with a little more than half of it out of the sea.
     raft:=asset.builder_entity(&s,"Raft",{position={0,0.1,0},scale={3.2,0.4,2.4}})
-    asset.builder_set(&s,raft,render.Mesh_Renderer{shape=.Cube});asset.builder_set(&s,raft,render.Tint{color={0.45,0.3,0.17,1}})
+    asset.builder_set(&s,raft,render.Mesh_Renderer{shape=.Cube});asset.builder_set(&s,raft,render.Material_Values{color={0.45,0.3,0.17,1}})
     body:=phys.RIGID_BODY_DYNAMIC
     planks:=phys.collider_box({0.5,0.5,0.5})
     planks.density=450
     asset.builder_set(&s,raft,body);asset.builder_set(&s,raft,planks)
     floating :: proc(s:^asset.Scene_Builder,name:string,position,scale:mm.Vec3,shape:render.Shape,collider:phys.Collider,density:f32,color:mm.Vec4) {
         e:=asset.builder_entity(s,name,{position=position,scale=scale})
-        asset.builder_set(s,e,render.Mesh_Renderer{shape=shape});asset.builder_set(s,e,render.Tint{color=color})
+        asset.builder_set(s,e,render.Mesh_Renderer{shape=shape});asset.builder_set(s,e,render.Material_Values{color=color})
         rigid:=phys.RIGID_BODY_DYNAMIC
         collider:=collider
         collider.density=density

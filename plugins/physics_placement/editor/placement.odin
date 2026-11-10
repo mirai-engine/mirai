@@ -288,7 +288,7 @@ placement_hover :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement
     {
         pose:=placement_pose(desc,bounds)
         transform:=mm.transform_matrix(pose)
-        if instance,ok:=erender.mesh_instance(s.app.assets,desc.mesh,transform,erender.TINT_DEFAULT,{});ok {
+        if instance,ok:=erender.mesh_instance(s.app.assets,desc.mesh,transform,erender.MATERIAL_VALUES_DEFAULT,{});ok {
             instance.copy_owner,instance.copy_variant=0x70687973706c6163,1
             host.extras_instance_add(&s.app.extras,instance)
         }

@@ -139,7 +139,7 @@ gallery_morphs :: proc(g:^Gallery_Build,places:[3]Gallery_Place) {
         clip:=anim.ANIMATION_DEFAULT;clip.asset=graph;anim.animation_play(&clip,"Rubber",.2,layer=1,mode=.Additive,weight=.25);asset.builder_set(s,actor,clip)
         weights:=anim.Morph_Weights{source=core.Entity(actor)};base.text_set(weights.path[:],"JellySkinned" if skinned else "Jelly");asset.builder_set(s,actor,weights)
         asset.builder_set(s,actor,game.Morph_Playground{variant=u8(i)})
-        podium:=asset.builder_entity(s,"Candy podium",{position=origin+mm.Vec3{0,-.13,0},scale={2.55,.24,2.35}});asset.builder_set(s,podium,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,podium,render.Tint{color=podium_colors[i]})
+        podium:=asset.builder_entity(s,"Candy podium",{position=origin+mm.Vec3{0,-.13,0},scale={2.55,.24,2.35}});asset.builder_set(s,podium,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,podium,render.Material_Values{color=podium_colors[i]})
         gallery_item(g,actor,.Morph,places[i],titles[i],details[i])
     }
 }

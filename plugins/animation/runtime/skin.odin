@@ -210,7 +210,7 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),parents:core.Read(core.Parent),
-    worlds:core.Read(core.World_Transform),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
+    worlds:core.Read(core.World_Transform),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),
     hidden:core.Read(erender.Hidden),elsewhere:core.Read(erender.Drawn_Elsewhere),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),
     offsets:core.Read(erender.Draw_Offset),cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
@@ -284,7 +284,7 @@ animation_skin :: proc(
             instance.reset=true
         }
         instance.seen=state.frame
-        tint:=erender.TINT_DEFAULT
+        tint:=erender.MATERIAL_VALUES_DEFAULT
         if value,exists:=core.get(tints,entity);exists {tint=value}
         override,_:=core.get(overrides,entity)
         // The material values the curves of its rig move, drawn over its own.
@@ -293,7 +293,7 @@ animation_skin :: proc(
             mesh:=host.assets_mesh(assets,static.mesh)
             fits:bool
             if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(mesh.slot_count) if mesh!=nil else 1,&override);!fits {
-                core.report(problems,entity,"animation.curve_material","the curve materials of the pose profile of the rig of this entity, with its Material_Override, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_OVERRIDE_CAPACITY)
+                core.report(problems,entity,"animation.curve_material","the curve materials of the pose profile of the rig of this entity, with its Material_Values, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
             }
         }
         anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,entity)

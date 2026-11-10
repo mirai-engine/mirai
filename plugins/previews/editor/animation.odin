@@ -126,8 +126,8 @@ Scene :: struct {
     hierarchy:core.Ref(core.Hierarchy),
     meshes:^core.Table(erender.Mesh_Renderer),
     hidden:^core.Table(erender.Hidden),
-    tints:^core.Table(erender.Tint),
-    overrides:^core.Table(erender.Material_Override),
+    tints:^core.Table(erender.Material_Values),
+    overrides:^core.Table(erender.Material_Values),
     animations:^core.Table(eanim.Animation),
     skins:^core.Table(eanim.Pose_Source),
 }
@@ -136,8 +136,8 @@ Scene :: struct {
 scene_of :: proc(w:core.World_Ref) -> Scene {
     return {
         transforms=core.world_table_of(w,core.Transform),names=core.world_table_of(w,core.Name),targets=core.world_table_of(w,eanim.Animation_Target),parents=core.world_table_of(w,core.Parent),hierarchy=core.ref(core.world_storage_of(w,core.Hierarchy)),
-        meshes=core.world_table_of(w,erender.Mesh_Renderer),hidden=core.world_table_of(w,erender.Hidden),tints=core.world_table_of(w,erender.Tint),
-        overrides=core.world_table_of(w,erender.Material_Override),animations=core.world_table_of(w,eanim.Animation),
+        meshes=core.world_table_of(w,erender.Mesh_Renderer),hidden=core.world_table_of(w,erender.Hidden),tints=core.world_table_of(w,erender.Material_Values),
+        overrides=core.world_table_of(w,erender.Material_Values),animations=core.world_table_of(w,eanim.Animation),
         skins=core.world_table_of(w,eanim.Pose_Source),
     }
 }
@@ -291,7 +291,7 @@ subject_fit :: proc(p:^Animation,clip:anim.Clip) {
 // A part that shows a mesh: its triangles, skinned when the mesh has a
 // skeleton and no Pose_Source follows another rig.
 @(private)
-part_mesh_add :: proc(a:^host.Assets,sub:^Subject,part:^Part,mesh:erender.Mesh_Renderer,tint:erender.Tint,override:^erender.Material_Override,rig:core.Entity) {
+part_mesh_add :: proc(a:^host.Assets,sub:^Subject,part:^Part,mesh:erender.Mesh_Renderer,tint:erender.Material_Values,override:^erender.Material_Values,rig:core.Entity) {
     skinned:=Subject_Skin{rig=rig,part=sub.part_count-1,rig_part=-1}
     switch editor.triangles_append(a,mesh,tint,override,mm.TRANSFORM_IDENTITY,TRIANGLE_CAPACITY*3-len(sub.locals),&sub.locals,&sub.materials) {
     case .Nothing:
@@ -325,12 +325,12 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
     if scene.meshes==nil {return}
     mesh,has_mesh:=core.get(core.read(scene.meshes),e)
     if !has_mesh || scene.hidden!=nil && core.has(scene.hidden,e) {return}
-    tint:=erender.TINT_DEFAULT
+    tint:=erender.MATERIAL_VALUES_DEFAULT
     if scene.tints!=nil {
         if value,ok:=core.get(core.read(scene.tints),e);ok {tint=value}
     }
-    overridden:erender.Material_Override
-    override:^erender.Material_Override
+    overridden:erender.Material_Values
+    override:^erender.Material_Values
     if scene.overrides!=nil {
         if value,ok:=core.get(core.read(scene.overrides),e);ok {overridden,override=value,&overridden}
     }
@@ -393,7 +393,7 @@ subject_gather_mesh :: proc(app:^host.App,w:core.World_Ref,sub:^Subject,mesh:bas
     part:=&sub.parts[0]
     sub.part_count=1
     part^={entity=core.NONE,parent=-1,local=mm.TRANSFORM_IDENTITY}
-    part_mesh_add(app.assets,sub,part,{mesh=mesh},erender.TINT_DEFAULT,nil,core.NONE)
+    part_mesh_add(app.assets,sub,part,{mesh=mesh},erender.MATERIAL_VALUES_DEFAULT,nil,core.NONE)
     subject_end(app,w,sub)
 }
 

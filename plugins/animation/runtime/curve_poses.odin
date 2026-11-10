@@ -60,7 +60,7 @@ CURVE_DRIVE_DEFAULT :: Curve_Drive{scale=1,high=1,weight=1,enabled=true}
 // frames of a flipbook face, a switch) when it is positive. parameter names a
 // value of the material (emission, roughness...) or a parameter of its
 // program; slot is the material slot of the mesh, or every slot with every.
-// It is drawn over the Material_Override of the entity without changing it:
+// It is drawn over the Material_Values of the entity without changing it:
 // each distinct value is a material of its own, so few values (a step) cost
 // little and a value that changes in every frame makes one in every frame.
 Curve_Material :: struct {
@@ -322,12 +322,12 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     return valid
 }
 
-// The material values that the curves of rig give over the Material_Override
+// The material values that the curves of rig give over the Material_Values
 // of a mesh with slots material slots, in override itself, a copy the caller
 // draws with. fits is false when they do not fit in it (the others still
 // apply); moved, when the rig has curve materials at all.
 @(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,override:^erender.Material_Override) -> (fits,moved:bool) {
+curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,override:^erender.Material_Values) -> (fits,moved:bool) {
     fits=true
     if runtime==nil || rig==nil {return}
     first,end:=rig_rows(&runtime.curve_materials,rig.entity)
@@ -361,7 +361,7 @@ curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,o
 
 // Sets the value of a parameter of a slot in an override, replacing the one it has.
 @(private)
-material_override_value :: proc "contextless" (override:^erender.Material_Override,slot:u8,name:u64,value:[4]f32) -> bool {
+material_override_value :: proc "contextless" (override:^erender.Material_Values,slot:u8,name:u64,value:[4]f32) -> bool {
     count:=min(int(override.count),len(override.names))
     for i in 0..<count {
         if override.slots[i]==slot && override.names[i]==name {override.values[i]=value;return true}

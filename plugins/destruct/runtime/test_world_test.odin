@@ -18,7 +18,7 @@ Test_Destruct :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     meshes:core.Table(render.Mesh_Renderer),
-    tints:core.Table(render.Tint),
+    tints:core.Table(render.Material_Values),
     elsewhere:core.Table(render.Drawn_Elsewhere),
     ids:core.Table(core.Id),
     fractures:Fracture_State,

@@ -19,7 +19,7 @@ Physics_Bake :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     meshes:core.Table(render.Mesh_Renderer),
-    tints:core.Table(render.Tint),
+    tints:core.Table(render.Material_Values),
     configs:core.Table(destruct.Destructible),
     colliders:core.Table(phys.Collider),
     states:core.Table(destruct.Destructible_State),
@@ -58,7 +58,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     tables:=[3]core.Table_Info{
         {name="Mesh_Renderer",type=render.Mesh_Renderer,info=type_info_of(render.Mesh_Renderer),offset=offset_of(Physics_Bake,meshes)},
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Physics_Bake,parents)},
-        {name="Tint",type=render.Tint,info=type_info_of(render.Tint),offset=offset_of(Physics_Bake,tints)},
+        {name="Tint",type=render.Material_Values,info=type_info_of(render.Material_Values),offset=offset_of(Physics_Bake,tints)},
     }
     info:=core.World_Info{entities=offset_of(Physics_Bake,entities),tables=tables[:]}
     physics:phys.Physics_State;defer phys.state_destroy(&physics)

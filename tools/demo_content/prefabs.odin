@@ -158,7 +158,7 @@ write_prefabs :: proc(o:^Out) {
     thrown:asset.Scene_Builder
     prefab_root(o,&thrown,THROWN_CUBE_ID,"Thrown cube")
     asset.builder_set(&thrown,1,render.Mesh_Renderer{shape=.Cube})
-    asset.builder_set(&thrown,1,render.Tint{color={1,0.55,0.15,1},emission=game.BARK_GLOW})
+    asset.builder_set(&thrown,1,render.Material_Values{color={1,0.55,0.15,1},emission=game.BARK_GLOW})
     // Its glow lights around it from a light inside, as the globe of a lamp: what the
     // six faces give off, pi times their area times the glow, over the sphere.
     glow:=game.BARK_GLOW

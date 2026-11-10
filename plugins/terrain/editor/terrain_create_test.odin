@@ -27,7 +27,7 @@ Create_Test_World :: struct {
     meshes:core.Table(erender.Mesh_Renderer),
     terrains:core.Table(terrain.Terrain),
     worlds:core.Table(core.World_Transform),
-    overrides:core.Table(erender.Material_Override),
+    overrides:core.Table(erender.Material_Values),
 }
 
 @(test)

@@ -1,4 +1,5 @@
 #include "native.slang"
+#define MIRAI_NO_INSTANCES
 //! per surface program
 //! variant world MIRAI_UI_WORLD=1
 

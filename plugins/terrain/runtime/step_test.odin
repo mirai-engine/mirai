@@ -57,7 +57,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     view.fov=50*mm.RAD_PER_DEG
     owner:=core.create(&worlds[0].entities)
     core.add(&worlds[0].transforms,owner,core.TRANSFORM_IDENTITY)
-    core.add(&worlds[0].tints,owner,render.Tint{color={1,1,1,1},emission={3,3,3}})
+    core.add(&worlds[0].tints,owner,render.Material_Values{color={1,1,1,1},emission={3,3,3}})
     core.add(&worlds[0].terrains,owner,Terrain{source=id,revision=1})
     reference:[]u8;defer delete(reference)
     preview:base.Asset_Id
@@ -70,7 +70,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             duplicate:=core.create(&w.entities)
             transform:=core.TRANSFORM_IDENTITY;transform.position.x=72
             core.add(&w.transforms,duplicate,transform)
-            core.add(&w.tints,duplicate,render.Tint{color={0,1,0,1},emission={3,3,3}})
+            core.add(&w.tints,duplicate,render.Material_Values{color={0,1,0,1},emission={3,3,3}})
             core.add(&w.terrains,duplicate,Terrain{source=id,revision=1})
         }
         core.test_world_settle(&w.w)

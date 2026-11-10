@@ -145,10 +145,10 @@ scene_hides :: proc(user:rawptr,point:[3]f32,share,metres:f32) -> bool {
 }
 
 // Whether a view sees the mesh of a widget on it, as it was drawn in the last
-// frame (host.extras_slot_shown), and how far it is; one not drawn yet is seen.
+// frame (host.extras_mesh_shown), and how far it is; one not drawn yet is seen.
 @(private)
 mesh_seen :: proc(renderer:^render.Renderer,extras:^host.Frame_Extras,view:^Player_View,e:core.Entity,position:[3]f32) -> (distance:f32,seen:bool) {
-    shown,drawn:=host.extras_slot_shown(extras,u64(e))
+    shown,drawn:=host.extras_mesh_shown(extras,u64(e))
     low,high,known:=render.mesh_bounds(renderer,shown.mesh)
     if !drawn || !known {return linalg.length(position-view.camera.position),true}
     m:=shown.transform
@@ -208,14 +208,14 @@ mesh_surface_get :: proc(gui:^Gui,renderer:^render.Renderer,e:core.Entity,widget
 // Where the ray of the window meets each widget on a mesh, in the layout
 // units of its panel, for the routing of the next frame: the first texture
 // coordinates of the mesh there, as the last frame drew it, posed, offset or
-// carried (host.extras_slot_shown). A mesh the renderer cannot meet leaves the
+// carried (host.extras_mesh_shown). A mesh the renderer cannot meet leaves the
 // plane of the panel to the ray.
 @(private)
 meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,s:^Surface,p:int,ray:ui.World_Ray,meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform)) {
     if p!=0 || !ray.valid || assets==nil {return}
     for &entry in gui.plan {
         if entry.player!=p || entry.mesh<0 {continue}
-        shown,drawn:=host.extras_slot_shown(extras,u64(entry.entity))
+        shown,drawn:=host.extras_mesh_shown(extras,u64(entry.entity))
         if !drawn {
             static,has:=core.get(meshes,entry.entity)
             world,placed:=core.get(worlds,entry.entity)
@@ -267,12 +267,30 @@ ray_release :: proc(gui:^Gui,renderer:^render.Renderer,at:int) {
 
 // The textures of the World_Widgets drawn on meshes, in the material slots
 // they name: as the base color, lit, or as light. Whatever draws the mesh
-// shows them (host.Slot_Texture).
+// shows them (render.values_show).
 @(step="render",before="render_sync")
-gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,extras:^host.Frame_Extras) {
+gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,sync:^render.Render_Sync,extras:^host.Frame_Extras) {
     if gui==nil || renderer==nil {return}
     for &mesh in gui.meshes {
         if mesh.texture==0 || !mesh.drawn {continue}
-        host.extras_slot_texture_add(extras,{object=u64(mesh.entity),slot=mesh.slot,texture=mesh.texture,emission=mesh.emission})
+        if !render.values_show(sync,mesh.entity,mesh_values(mesh.texture,int(mesh.slot),mesh.emission)) {extras.dropped+=1}
     }
+}
+
+// What the mesh of a widget shows of its panel in a slot: its texture as the
+// base color of a white surface, or, with an emission, as the light of a
+// black one whose white has that luminance.
+@(private)
+mesh_values :: proc(texture:render.Texture_Handle,slot:int,emission:f32) -> (values:render.Material_Values) {
+    values=render.MATERIAL_VALUES_DEFAULT
+    if emission>0 {
+        render.material_texture_shown(&values,"maps.emission",texture,slot)
+        render.material_texture_shown(&values,"maps.base_color",0,slot)
+        render.material_value(&values,"emission",[3]f32{emission,emission,emission},slot)
+        render.material_value(&values,"base_color",[3]f32{0,0,0},slot)
+    } else {
+        render.material_texture_shown(&values,"maps.base_color",texture,slot)
+        render.material_value(&values,"base_color",[3]f32{1,1,1},slot)
+    }
+    return
 }

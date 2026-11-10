@@ -119,7 +119,7 @@ terrain_view_lit :: proc(pass:^erender.Pass,user:rawptr) {
 // The override of Terrain_Weights for an overlay: a color for each layer, or
 // the layer of the panel alone.
 @(private)
-weights_override :: proc(overlay:Terrain_Overlay,layer:int) -> (o:erender.Material_Override) {
+weights_override :: proc(overlay:Terrain_Overlay,layer:int) -> (o:erender.Material_Values) {
     o.count=1
     o.names[0]=base.name_hash("inspect")
     o.values[0]={overlay==.Layer?2:1,f32(layer),0,0}
@@ -139,7 +139,7 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
     a:=assets
     if a==nil {return}
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
-    tints:=core.world_table_of(world,erender.Tint)
+    tints:=core.world_table_of(world,erender.Material_Values)
     if statics==nil {return}
     override:=weights_override(view.overlay,tool.layer)
     for row in 0..<core.count(chunks) {
@@ -161,7 +161,7 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         static,has_static:=core.get(core.read(statics),e)
         if !has_static || static.mesh=={} {continue}
         static.materials[0]=WEIGHTS_MATERIAL
-        tint:=erender.TINT_DEFAULT
+        tint:=erender.MATERIAL_VALUES_DEFAULT
         if tints!=nil {if value,ok:=core.get(core.read(tints),e);ok {tint=value}}
         if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),tint,override);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,2

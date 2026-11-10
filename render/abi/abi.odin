@@ -204,6 +204,22 @@ PROGRAMS_COUNT    :: 0 // a word a phase
 PROGRAMS_DISPATCH :: 2 // three words a phase
 PROGRAMS_HEADER   :: 8
 
+// The values an instance gives over the rows of its materials, in the index
+// pool: a word with how many, then INSTANCE_VALUE_WORDS a value: the row it is
+// for, its target and how many of its four words it gives
+// (INSTANCE_VALUE_COUNT_SHIFT), and the words. A target below
+// INSTANCE_VALUE_STANDARD is a word of the parameters of the program of the
+// row; from it on, a value of the standard model.
+INSTANCE_VALUES_MAX         :: 16
+INSTANCE_VALUE_WORDS        :: 6
+INSTANCE_VALUE_COUNT_SHIFT  :: 8
+INSTANCE_VALUE_STANDARD     :: 64
+INSTANCE_VALUE_BASE_COLOR   :: 64
+INSTANCE_VALUE_OPACITY      :: 65
+INSTANCE_VALUE_EMISSION     :: 66
+INSTANCE_VALUE_ROUGHNESS    :: 67
+INSTANCE_VALUE_METALLIC     :: 68
+
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
 PARTICLE_ATTRIBUTE_BYTES :: 1024

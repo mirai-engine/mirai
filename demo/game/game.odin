@@ -360,7 +360,7 @@ bob_height :: proc(bob:^Bob,y,seconds:f32) -> f32 {
 // the globe of a lamp of the horror house glows while lit.
 @(step="fixed",after="physics_gallery_actions")
 game_glow :: proc(
-    tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
+    tints:^core.Table(render.Material_Values),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
     hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
     gallery:core.Read(Physics_Gallery),view:destruct.Destruct_View,
     lamps:core.Read(House_Lamp),

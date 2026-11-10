@@ -517,8 +517,8 @@ batch_ray :: proc(renderer:^Renderer,world:core.World_Id,origin,direction:[3]f32
 
 // The mesh and materials of a batch from what a Mesh_Renderer shows, as an
 // entity with it would be drawn. False while its mesh is not loaded.
-batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer,tint:=TINT_DEFAULT) -> (desc:Batch_Desc,ok:bool) {
-    instance:=mesh_instance(a,static,1,tint) or_return
+batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer) -> (desc:Batch_Desc,ok:bool) {
+    instance:=mesh_instance(a,static,1) or_return
     return {mesh=instance.mesh,material=instance.material,slot_materials=instance.slot_materials,tint=instance.tint},true
 }
 

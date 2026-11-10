@@ -349,7 +349,7 @@ model :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,mesh:base.Asset_Id,materi
 
 @(private)
 tinted :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,color:[3]f32,emission:[3]f32={}) {
-    tint:=render.Tint{color={color.r,color.g,color.b,1},emission=emission}
+    tint:=render.Material_Values{color={color.r,color.g,color.b,1},emission=emission}
     asset.builder_set(s,id,tint)
 }
 

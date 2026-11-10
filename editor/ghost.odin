@@ -24,8 +24,8 @@ ghosts_shown :: proc "contextless" (s:^Session) -> bool {return s.mode==.Edit ||
 
 Placement_Part :: struct {
     mesh:erender.Mesh_Renderer,
-    tint:erender.Tint,
-    override:erender.Material_Override,
+    tint:erender.Material_Values,
+    override:erender.Material_Values,
     transform:mm.Transform,
 }
 
@@ -71,7 +71,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
     p.key=key
     clear(&p.parts)
     p.low,p.high,p.measured={},{},false
-    part:=Placement_Part{tint=erender.TINT_DEFAULT,transform=mm.TRANSFORM_IDENTITY}
+    part:=Placement_Part{tint=erender.MATERIAL_VALUES_DEFAULT,transform=mm.TRANSFORM_IDENTITY}
     if d.kind==.Preset {
         card:=cards(s)[d.card]
         part.mesh.shape=card.body
@@ -97,9 +97,9 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
             for mesh,i in meshes.values[:core.count(meshes)] {
                 e:=meshes.entities[i]
                 if entity_hidden(w,e) || entity_has(w,e,erender.Drawn_Elsewhere) {continue}
-                part=Placement_Part{mesh=mesh,tint=erender.TINT_DEFAULT,transform=entity_world(w,e)}
-                if tint,ok:=entity_get(w,e,erender.Tint);ok {part.tint=tint}
-                if override,ok:=entity_get(w,e,erender.Material_Override);ok {part.override=override}
+                part=Placement_Part{mesh=mesh,tint=erender.MATERIAL_VALUES_DEFAULT,transform=entity_world(w,e)}
+                if tint,ok:=entity_get(w,e,erender.Material_Values);ok {part.tint=tint}
+                if override,ok:=entity_get(w,e,erender.Material_Values);ok {part.override=override}
                 placement_measure(s,p,part)
             }
         }

@@ -30,7 +30,7 @@ control_visual :: proc(s:^asset.Scene_Builder,body:base.Entity_Id,dog:bool) {
     for part in parts.items[:parts.count] {
         id:=asset.builder_entity(s,part.name,{position=part.position,scale=part.scale},body)
         mesh:=render.Mesh_Renderer{shape=.Cube}
-        tint:=render.Tint{color=part.color}
+        tint:=render.Material_Values{color=part.color}
         asset.builder_set(s,id,mesh)
         asset.builder_set(s,id,tint)
         // A camera at the eyes of the person does not draw its head.
@@ -68,7 +68,7 @@ write_control_scene :: proc(o:^Out) {
     solid(&s,asset.builder_entity(&s,"Floor",{position={0,-0.05,0},scale={14,0.1,14}}),"Tiles")
     north:=asset.builder_entity(&s,"Red wall",{position={0,1.5,-6},scale={14,3,0.2}})
     solid(&s,north,"Lacquer")
-    tint:=render.Tint{color={0.82,0.18,0.14,1}}
+    tint:=render.Material_Values{color={0.82,0.18,0.14,1}}
     asset.builder_set(&s,north,tint)
     solid(&s,asset.builder_entity(&s,"West wall",{position={-6,1.5,0},scale={0.2,3,14}}),"Marble")
     solid(&s,asset.builder_entity(&s,"Stone block",{position={-2,0.75,-1},scale={1.5,1.5,1.5}}),"Brushed steel")

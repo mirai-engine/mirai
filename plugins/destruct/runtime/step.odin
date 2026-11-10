@@ -38,7 +38,7 @@ Ctx :: struct {
     colliders:core.Read(physics.Collider),
     collision:^physics.Collision_Settings,
     meshes:^core.Table(render.Mesh_Renderer),
-    tints:^core.Table(render.Tint),
+    tints:^core.Table(render.Material_Values),
     parents:core.Read(core.Parent),
     locals:core.Read(core.Transform),
     states:^core.Table(Destructible_State),
@@ -57,7 +57,7 @@ Ctx :: struct {
 destruct_step :: proc(
     state:^physics.Physics_State,fractures:^Fracture_State,settings:core.Ref(Destruct_Settings),cache:^Destruct_Cache,requests:^Destruct_Requests,events:^Destruct_Events,
     authority:core.Ref(core.Network),assets:^host.Assets,job_system:^jobs.Job_System,time:core.Time,commands:core.Commands,
-    destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:core.Read(core.Parent),
+    destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),parents:core.Read(core.Parent),
     states:^core.Table(Destructible_State),groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
     colliders:core.Read(physics.Collider),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,

@@ -127,7 +127,7 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 monitors_render :: proc(
     state:^Monitors,screens:core.Read(Screen),cameras:core.Read(erender.Camera),exposures:core.Read(erender.Exposure),
     meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
+    tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
     view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),
     locals:core.Read(core.Transform),
@@ -237,7 +237,7 @@ monitors_render :: proc(
         static,has_mesh:=core.get(meshes,e)
         world,placed:=core.get(worlds,e)
         if fed.shown<0 || fed.textures[fed.shown]==0 || !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
-        tint:=erender.TINT_DEFAULT
+        tint:=erender.MATERIAL_VALUES_DEFAULT
         if value,exists:=core.get(tints,e);exists {tint=value}
         override,_:=core.get(overrides,e)
         anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)

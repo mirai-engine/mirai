@@ -49,6 +49,10 @@ struct Mirai_Surface_Context {
     // without an object. The engine darkens and smooths by it what the
     // material returns: a program reads it only for more (drops, puddles).
     float wet;
+    // Where the values the object gives over those of its materials are; 0
+    // without them. The engine reads it: a program receives those values in
+    // its parameters.
+    uint material_values;
     // What the particle that draws the point gives its material, as its
     // program says (Mirai_Vfx_Visual.data), and which of them it gives: bit
     // i for particle_data[i]. None where no particle draws.

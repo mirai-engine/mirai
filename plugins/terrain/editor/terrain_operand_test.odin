@@ -126,7 +126,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         operand_static:=erender.Mesh_Renderer{shape=.Cube}
         operand_static.materials[0]=shared_overrides?red:blue
         // Slot 0 shows the layers, which no override of an owner reaches: red joins it.
-        shared_override:=erender.Material_Override{count=1}
+        shared_override:=erender.Material_Values{count=1}
         shared_override.names[0],shared_override.values[0]=base.name_hash("roughness"),{0.2,0,0,0}
         for e in ([2]core.Entity{owner,operand}) {
             core.add(&world.ids,e,core.Id{value=base.Entity_Id(100+u64(e))})

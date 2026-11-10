@@ -107,7 +107,7 @@ source_displacement :: proc "contextless" (s:^Source) -> (reach:f32) {
 terrain_displace :: proc(
     d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:core.Read(Terrain),chunks:core.Read(Terrain_Chunk),
     meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    overrides:core.Read(render.Material_Override),tints:core.Read(render.Tint),hidden:core.Read(render.Hidden),
+    overrides:core.Read(render.Material_Values),tints:core.Read(render.Material_Values),hidden:core.Read(render.Hidden),
     highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),offsets:core.Read(render.Draw_Offset),
     layers:core.Read(render.Layers),locals:core.Read(core.Transform),cameras:core.Read(render.Camera),
     assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,
@@ -199,7 +199,7 @@ terrain_displace :: proc(
         world,placed:=core.get(worlds,e)
         entry:=data_find(data.ptr,item.source)
         if !has_mesh || !placed || entry==nil || render.is_hidden(hidden,parents,e) {continue}
-        tint:=render.TINT_DEFAULT
+        tint:=render.MATERIAL_VALUES_DEFAULT
         if value,exists:=core.get(tints,e);exists {tint=value}
         override,_:=core.get(overrides,e)
         anchor,transform:=render.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
