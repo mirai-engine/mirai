@@ -393,11 +393,10 @@ game_projectiles :: proc(
 // What the use action does where a body stands.
 Player_Hint :: enum u8 {None,Open_Door,Close_Door,Swatch}
 
-// What player_hud.ui shows of the body it is on, a person or the dog, while a
-// seat drives it: the screen is on the body, so it shows in the view of its player.
+// What player_hud.ui shows of the body it is on, a person or the dog: the
+// screen is on the body, so it shows in the view of its player, and only then.
 @(component,description="The HUD of a body a seat drives: the crosshair, the cubes it threw, what the use action does where it stands and the caption of the nearest exhibit.")
 Player_Hud :: struct {
-    shown:bool,       // a seat drives this body
     person:bool,      // it throws cubes
     thrown:i32,
     hint:Player_Hint,
@@ -432,7 +431,7 @@ exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(co
 @(step="frame")
 player_hud :: proc(
     huds:^core.Table(Player_Hud),players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
-    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
+    barkers:core.Read(Barker),demos:core.Read(Control_Demo),
     worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
     shown:=core.read(huds)
@@ -441,9 +440,9 @@ player_hud :: proc(
         next:Player_Hud
         player,has_player:=core.get(players,body)
         barker,has_barker:=core.get(barkers,body)
-        if placed,has_world:=core.get(worlds,body);has_world && inp.seat_of(drivables,body)!=core.NONE && (has_player || has_barker) {
+        if placed,has_world:=core.get(worlds,body);has_world && (has_player || has_barker) {
             feet:=placed.position
-            next.shown,next.person,next.thrown=true,has_player,i32(player.thrown)
+            next.person,next.thrown=has_player,i32(player.thrown)
             next.control,next.dog,next.barks=core.count(demos)>0,has_barker,i32(barker.count)
             for at in 0..<core.count(doors) {
                 if next.hint!=.None || !in_reach(worlds,feet,core.entity_at(doors,at),core.at(doors,at).reach) {continue}
