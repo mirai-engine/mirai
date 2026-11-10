@@ -20,44 +20,30 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
     gpu.renderer_set_display_transform(app.renderer,.ACES_2) // the pixels below are calibrated to it
-    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
-    worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
-    meshes:core.Table(Mesh_Renderer);defer core.table_destroy(&meshes)
-    tints:core.Table(Tint);defer core.table_destroy(&tints)
-    hidden:core.Table(Hidden);defer core.table_destroy(&hidden)
-    elsewhere:core.Table(Drawn_Elsewhere);defer core.table_destroy(&elsewhere)
-    parents:core.Table(core.Parent);defer core.table_destroy(&parents)
-    lights:Test_Lights;defer {core.table_destroy(&lights.suns);core.table_destroy(&lights.points);core.table_destroy(&lights.spots);core.table_destroy(&lights.rects)}
-    emissions:core.Table(Light_Emission);defer core.table_destroy(&emissions)
-    skies:core.Table(Sky);core.table_init(&skies,"Sky");defer core.table_destroy(&skies)
-    posts:core.Table(View_Volume);defer core.table_destroy(&posts)
-    overrides:core.Table(Material_Override);defer core.table_destroy(&overrides)
-    highlights:core.Table(Highlight);defer core.table_destroy(&highlights)
-    offsets:core.Table(Draw_Offset);defer core.table_destroy(&offsets)
-    layers:core.Table(Layers);defer core.table_destroy(&layers)
+    w:Render_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
-    view:=core.VIEW_DEFAULT;view.position,view.rotation,view.size={0,0,5},1,{160,120}
-    entities:=[2]core.Entity{core.create(&es),core.create(&es)}
+    w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
+    entities:=[2]core.Entity{core.create(&w.entities),core.create(&w.entities)}
     for e,i in entities {
         pose:=mm.TRANSFORM_IDENTITY;pose.position.x=f32(i)*2-1
-        core.add(&worlds,e,core.World_Transform{pose,pose})
-        core.add(&meshes,e,Mesh_Renderer{shape=.Cube})
-        core.add(&tints,e,Tint{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
+        core.add(&w.worlds,e,core.World_Transform{pose,pose})
+        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
+        core.add(&w.tints,e,Tint{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
     }
-    core.table_settle(&worlds,&es);core.table_settle(&meshes,&es);core.table_settle(&tints,&es)
-    draw :: proc(sync:^Render_Sync,app:^host.App,view:core.View,worlds:^core.Table(core.World_Transform),meshes:^core.Table(Mesh_Renderer),tints:^core.Table(Tint),hidden:^core.Table(Hidden),elsewhere:^core.Table(Drawn_Elsewhere),parents:^core.Table(core.Parent),lights:^Test_Lights,emissions:^core.Table(Light_Emission),sky:^core.Table(Sky),posts:^core.Table(View_Volume),overrides:^core.Table(Material_Override),highlights:^core.Table(Highlight),offsets:^core.Table(Draw_Offset),layers:^core.Table(Layers)) {
-        host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
-        outlines:core.Table(Outline);defer core.table_destroy(&outlines)
-        outline_styles:=OUTLINE_STYLES_DEFAULT
-        render_sync(sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(worlds),core.read(meshes),core.read(tints),core.read(hidden),core.read(elsewhere),core.read(parents),{},core.read(&lights.suns),core.read(&lights.points),core.read(&lights.spots),core.read(&lights.rects),core.read(emissions),core.read(sky),core.read(posts),{},core.read(overrides),core.read(highlights),core.read(&outlines),{&outline_styles},core.read(offsets),core.read(layers),{},{},{},{})
+    core.test_world_settle(&w)
+    draw :: proc(sync:^Render_Sync,app:^host.App,w:^Render_World) {
+        host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
+        world_sync(w,sync,app)
     }
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
     for alpha,pass in alphas {
-        core.get(&tints,entities[0]).color.a=alpha
+        core.get(&w.tints,entities[0]).color.a=alpha
         sets:=sync.stats.scene_sets
         updates:=sync.stats.instance_updates
         host.app_frame_begin(app)
-        draw(&sync,app,view,&worlds,&meshes,&tints,&hidden,&elsewhere,&parents,&lights,&emissions,&skies,&posts,&overrides,&highlights,&offsets,&layers)
+        draw(&sync,app,&w)
         if pass>0 {
             testing.expect_value(t,sync.stats.scene_sets,sets)
             testing.expect_value(t,sync.stats.instance_updates,updates+1)
@@ -99,33 +85,25 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     material_rows:=len(app.assets.material_descs)
     allocations:=tracking.total_allocation_count
     for pass in 0..<32 {
-        core.get(&tints,entities[0]).color.a=f32(pass%7)/6
+        core.get(&w.tints,entities[0]).color.a=f32(pass%7)/6
         host.app_frame_begin(app)
-        draw(&sync,app,view,&worlds,&meshes,&tints,&hidden,&elsewhere,&parents,&lights,&emissions,&skies,&posts,&overrides,&highlights,&offsets,&layers)
+        draw(&sync,app,&w)
         host.app_frame_end(app)
     }
     testing.expect_value(t,tracking.total_allocation_count,allocations)
     testing.expect_value(t,len(app.assets.material_descs),material_rows)
     testing.expect(t,app.assets.stats.derived<=1)
-    core.remove(&meshes,entities[1]);core.table_settle(&meshes,&es)
+    core.remove(&w.meshes,entities[1]);core.test_world_settle(&w)
     host.app_frame_begin(app)
-    draw(&sync,app,view,&worlds,&meshes,&tints,&hidden,&elsewhere,&parents,&lights,&emissions,&skies,&posts,&overrides,&highlights,&offsets,&layers)
+    draw(&sync,app,&w)
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,instance_entity(&sync,0),entities[0])
-    core.add(&meshes,entities[1],Mesh_Renderer{shape=.Cube});core.table_settle(&meshes,&es)
+    core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});core.test_world_settle(&w)
     host.app_frame_begin(app)
-    draw(&sync,app,view,&worlds,&meshes,&tints,&hidden,&elsewhere,&parents,&lights,&emissions,&skies,&posts,&overrides,&highlights,&offsets,&layers)
+    draw(&sync,app,&w)
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),2)
     testing.expect_value(t,instance_entity(&sync,1),entities[1])
     testing.expect_value(t,rhi.device_validation_errors(app.device),0)
-}
-
-@(private="file")
-Test_Lights :: struct {
-    suns:core.Table(Sun),
-    points:core.Table(Point_Light),
-    spots:core.Table(Spot_Light),
-    rects:core.Table(Rect_Light),
 }

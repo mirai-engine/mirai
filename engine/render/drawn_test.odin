@@ -8,19 +8,20 @@ import mm "mirai:std/math"
 
 @(test)
 set_hidden_gives_and_takes_hidden_once :: proc(t:^testing.T) {
-    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
-    hidden:core.Table(Hidden);core.table_init(&hidden,"Hidden");defer core.table_destroy(&hidden)
-    e:=core.create(&es)
-    set_hidden(&hidden,e,true)
-    set_hidden(&hidden,core.NONE,true)
-    core.table_settle(&hidden,&es)
-    testing.expect(t,core.has(&hidden,e) && core.count(core.read(&hidden))==1)
-    set_hidden(&hidden,e,true)
-    core.table_settle(&hidden,&es)
-    testing.expect_value(t,core.count(core.read(&hidden)),1)
-    set_hidden(&hidden,e,false)
-    core.table_settle(&hidden,&es)
-    testing.expect(t,!core.has(&hidden,e))
+    w:Render_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    e:=core.create(&w.entities)
+    set_hidden(&w.hidden,e,true)
+    set_hidden(&w.hidden,core.NONE,true)
+    core.test_world_settle(&w)
+    testing.expect(t,core.has(&w.hidden,e) && core.count(core.read(&w.hidden))==1)
+    set_hidden(&w.hidden,e,true)
+    core.test_world_settle(&w)
+    testing.expect_value(t,core.count(core.read(&w.hidden)),1)
+    set_hidden(&w.hidden,e,false)
+    core.test_world_settle(&w)
+    testing.expect(t,!core.has(&w.hidden,e))
 }
 
 @(test)
