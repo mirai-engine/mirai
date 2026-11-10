@@ -24,14 +24,11 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
     view,error:=asset.scene_view(file,types)
     if error!=.None {return false}
     count:=len(view.ids)
+    if !asset.asset_prefab(file) {return false}
     root:=-1
     for parent,row in view.parents {
-        if view.info.root!=0 ? view.ids[row]==view.info.root : parent==0 {
-            if root>=0 {return false}
-            root=row
-        }
+        if parent==0 {root=row}
     }
-    if root<0 {return false}
     row_of :: proc(view:asset.Scene_View,id:base.Entity_Id) -> int {
         for held,row in view.ids {if held==id {return row}}
         return -1

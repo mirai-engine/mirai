@@ -210,7 +210,7 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     defer core.entity_map_destroy(&voices.entries)
     near,far:=core.entity_make(1,1),core.entity_make(2,1)
     core.entity_map_put(&voices.entries,near,eaudio.Voice_Entry{sound={1,2},volume=0.5,pitch=2,pick={0.5,1.5},pan=-1,bus=eaudio.BUS_MUSIC,loop=true})
-    core.entity_map_put(&voices.entries,far,eaudio.Voice_Entry{sound={1,3},volume=1,pitch=1,pick={1,1},bus=eaudio.Audio_Bus(6),spatial=true,position={1,2,3},lowpass=500})
+    core.entity_map_put(&voices.entries,far,eaudio.Voice_Entry{sound={1,3},volume=1,pitch=1,pick={1,1},bus=eaudio.Audio_Bus(6),spatial=true,position={1,2,3},occlusion=0.5})
     voices.stats={started=3,ended=1}
     names:=[?]core.Name_Info{{type=eaudio.Audio_Bus,name="Music",value=1}}
     info:=core.World_Info{names=names[:]}
@@ -232,7 +232,8 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     testing.expect_value(t,second["bus"].(json.String) or_else "","6")
     _,has_pan:=second["pan"]
     position,_:=second["position"].(json.Array)
-    testing.expect(t,!has_pan && len(position)==3)
+    _,first_occlusion:=first["occlusion"]
+    testing.expect(t,!has_pan && len(position)==3 && (second["occlusion"].(json.Float) or_else 0)==0.5 && !first_occlusion)
     _,has_mixer:=result["mixer"]
     testing.expect(t,!has_mixer)
     testing.expect(t,strings.contains(text,`"stats":{"started":3,"ended":1}`))

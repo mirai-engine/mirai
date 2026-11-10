@@ -34,12 +34,12 @@ write_raft_player :: proc(o:^Out) {
     asset.builder_set(&s,eyes,audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,EYE_HEIGHT,0}}
     asset.builder_set(&s,eyes,first_person)
-    prefab_save(o,&s,"assets/raft/Swimmer.prefab")
+    prefab_save(o,&s,"assets/raft/Swimmer.scene")
 }
 
 write_raft_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","raft"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","raft"))
     // The sun alone lights the sea: a sun of 3 is noon.
     u:=daylight(3)
     environment:=render.SKY_DEFAULT

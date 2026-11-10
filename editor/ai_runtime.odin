@@ -316,6 +316,7 @@ ai_tool_note :: proc(s:^Session,task:^Ai_Task,method,target,refs,failure:string,
     named:=fmt.tprintf(" · ref %s",refs) if refs!="" else ""
     if failure!="" {ai_task_note(s,task,"Tool failed: %s%s%s%s · +%.1f s · %s",method,space,target,named,at,failure)}
     else {ai_task_note(s,task,"Tool: %s%s%s%s · +%.1f s · %.1f ms",method,space,target,named,at,time.duration_milliseconds(took))}
+    ai_task_persist(s,task)
 }
 
 // A tool call of the agent, as ACP reports it while it goes: when it ends it
@@ -853,17 +854,12 @@ ai_task_poll :: proc(s:^Session,m:^Ai) {
 
 AI_FLUSH_SECONDS :: f64(0.2)
 
-// Saves the chats that changed, after what the store kept while another
-// editor wrote the database; the frame never waits for it. While the store
-// keeps writes the chats stay dirty, and their lines go in one save once it
-// is free.
+// Tries again, without waiting, what the store kept while another editor
+// wrote the database; the chats are saved by their events (ai_task_persist).
 ai_persist_poll :: proc(s:^Session,m:^Ai,now:f64) {
-    if now-m.last_flush>=AI_FLUSH_SECONDS {
+    if ai_store.pending(&m.store)>0 && now-m.last_flush>=AI_FLUSH_SECONDS {
         m.last_flush=now
         if message:=ai_store.flush(&m.store);message!="" {notify(s,message)}
-        if ai_store.pending(&m.store)==0 {
-            for &task in m.tasks[:m.task_count] {if task.dirty {ai_task_persist(s,&task)}}
-        }
     }
     // What shows rows of the store reads them again once a kept write reached the database.
     if m.store.landed!=m.landed_seen {

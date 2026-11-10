@@ -305,7 +305,7 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
             }
             for id in job.wanted {
                 file,found:=asset.registry_find(&a.registry,id)
-                if !found || file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB {continue}
+                if !found || file.kind!=asset.KIND_SCENE {continue}
                 if source,known:=host.assets_source(a,id,runtime.heap_allocator());known {
                     append(&job.queue,source)
                     job.asked+=1
@@ -328,7 +328,8 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
 // The World is instantiated: what reads it on this thread does, and the
 // assets it names that are not loaded, with what they take, are read in jobs:
 // also what the other assets it names take, as the meshes of a foliage
-// source, but not what a scene takes, which is a section of its own.
+// source or of a prefab, but not what a scene of several roots takes, which
+// is a section of its own.
 @(private)
 load_named :: proc(job:^Load_Job) {
     app,a:=job.app,job.app.assets
@@ -350,7 +351,7 @@ load_named :: proc(job:^Load_Job) {
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE {continue}
+        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
         for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
