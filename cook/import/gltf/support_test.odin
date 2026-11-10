@@ -10,7 +10,7 @@ import importer "mirai:cook/import"
 import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
-DEMO :: #directory+"/../../../demo/source/"
+DEMO :: #directory+"/../../../demo/assets/"
 
 @(rodata)
 FORMATS:=[?]importer.Format{FORMAT}

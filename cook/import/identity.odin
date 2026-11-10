@@ -1,51 +1,29 @@
 package importer
 
 import "core:fmt"
-import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
-import "core:time"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
 
-// Which asset each part of a source is (its sidecar says: sidecar.odin) and
-// where its file is: one of the cache at the path the sidecar lists, in the
-// imported folder; a document where the file with its id is now, under the
-// folder searched (the assets of options.root, else options.root, else the
-// folder written to), found by reading the front of every asset there. Of
-// files with one id, the one a copy was made of is the asset.
+// Which asset each part of a source is and where its file is. The sidecar of
+// the source says the asset: the output of its kind and name (of its kind for
+// the root of the import), else a new one. An asset of the cache is a file of
+// the imported folder of the root named by its id and the key of what the
+// import builds from; a document is where the registry of the root has its
+// id, else a new file in the folder of the import.
 
-@(private)
-Earlier :: struct {
-    path:string, // under the folder searched, as it was given
-    key:string,  // the path made absolute: what files are compared by (path_key)
-    id,owner:base.Asset_Id,
-    kind:asset.Fourcc,
-    version:u16, // of what its kind stores
-    info:asset.Import_Info,
-    dependencies:[]base.Asset_Id,
-    imported:bool, // it has an Import_Info
-    taken:bool,    // by the import being written
-}
-
-// What an import writes besides its root, before its file and id are known.
+// What an import writes, before its file and id are known.
 @(private)
 Part :: struct {
     kind:asset.Fourcc,
     name:string,      // in the source: the mesh, the material, the image
     index:int,        // among those of its kind in the source
     extension:string,
-    file:string,      // of a texture: the image file as imports name it, "" for one inside the source
-    size,hash:u64,    // of a texture: of the bytes of its image
-    settings:u64,     // of a texture: textures.settings_hash of how it is built
-    fast:u64,         // of a texture built Fast, as the editor writes one until the cook encodes it again: its settings hash; 0 for an import that builds Final
     root:bool,        // the root of the import: the one of its kind, whatever its name
-    entry:int,        // the output of the sidecar it is; -1 for a new one
-    earlier:int,      // the file with its id, which it writes again; -1 without one
-    shared:int,       // what another import wrote with the same content, which the part names instead of writing: its file; SHARED_AWAY for one that is not there now; NOT_SHARED for none
     output:int,       // what the sidecar the import writes lists for it (Writer.outputs)
     decided:bool,     // whether it is a part of the root was decided by an import before: part says it
     part:bool,
@@ -54,145 +32,47 @@ Part :: struct {
     path:string,
 }
 
-@(private) NOT_SHARED :: -1
-// The asset the sidecar says another import writes has no file now: that
-// import did not run yet on this checkout, and the part names it all the same.
-@(private) SHARED_AWAY :: -2
-
-// The fronts of the assets earlier scans read, by file (path_key): the
-// writes of a level read the folder again for each package, and a file
-// whose size and times are those it had is not read again. Made by
-// earlier_cache_make, it serves one thread at a time.
-Earlier_Cache :: struct {
-    files:map[string]Earlier_Front,
-    allocator:mem.Allocator,
-}
-
-@(private)
-Earlier_Front :: struct {
-    size,created,changed:i64,
-    header:asset.Header,
-    info:asset.Import_Info,
-    imported:bool,
-    error:asset.Error,
-    dependencies:[]base.Asset_Id,
-}
-
-earlier_cache_make :: proc(allocator:=context.allocator) -> ^Earlier_Cache {
-    cache:=new(Earlier_Cache,allocator)
-    cache.files.allocator,cache.allocator=allocator,allocator
-    return cache
-}
-
-earlier_cache_destroy :: proc(cache:^Earlier_Cache) {
-    if cache==nil {return}
-    allocator:=cache.allocator
-    for key,front in cache.files {delete(key,allocator);delete(front.dependencies,allocator)}
-    delete(cache.files)
-    free(cache,allocator)
-}
-
-// The front of the asset of a file the walk found, from the cache when the
-// file is as it was.
-@(private="file")
-earlier_peek :: proc(w:^Writer,info:Found_File,key:string) -> (front:Earlier_Front) {
-    cache:=w.options.earlier_cache
-    created,changed:=info.created,info.changed
-    if cache!=nil {
-        if kept,found:=cache.files[key];found && kept.size==info.size && kept.created==created && kept.changed==changed {return kept}
-    }
-    dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    front.size,front.created,front.changed=info.size,created,changed
-    front.header,front.info,front.imported,front.error=asset.import_peek(info.path,&w.types,&dependencies)
-    front.dependencies=dependencies[:]
-    if cache==nil {return}
-    stored:=front
-    stored.dependencies=slice.clone(front.dependencies,cache.allocator)
-    if old,found:=&cache.files[key];found {
-        delete(old.dependencies,cache.allocator)
-        old^=stored
-    } else {
-        cache.files[strings.clone(key,cache.allocator)]=stored
-    }
-    return
-}
-
-// A file under the folder searched, as listing its folder gives it. Times
-// are nanoseconds since 1970.
-@(private)
-Found_File :: struct {
-    path,name:string,
-    size,created,changed:i64,
-}
-
-// Reads the front of every asset under folder but those under a folder whose
-// name starts with a dot: header and Import_Info.
-@(private)
-earlier_scan :: proc(w:^Writer,folder:string) {
-    absolute,error:=filepath.abs(folder,context.temp_allocator)
-    if error!=nil || !os.is_dir(absolute) {return}
-    prefix:=path_key(absolute)
-    for info in earlier_files(absolute) {
-        if strings.has_suffix(info.name,".tmp") {continue}
-        key:=path_key(info.path)
-        front:=earlier_peek(w,info,key)
-        if front.error!=.None {continue}
-        header,import_data,imported,dependencies:=front.header,front.info,front.imported,front.dependencies
-        path:=key
-        if len(key)>len(prefix) && strings.equal_fold(key[:len(prefix)],prefix) {
-            joined,_:=filepath.join({folder,key[len(prefix):]},context.temp_allocator)
-            path,_=strings.replace_all(joined,"\\","/",context.temp_allocator)
-        }
-        e:=Earlier{path=path,key=key,id=header.id,owner=header.owner,kind=header.kind,version=header.kind_version,info=import_data,dependencies=dependencies,imported=imported}
-        if at,seen:=w.by_id[e.id];seen {
-            if asset.file_newer(w.earlier[at].key,key) {w.earlier[at]=e}
-            continue
-        }
-        w.by_id[e.id]=len(w.earlier)
-        append(&w.earlier,e)
-    }
-}
-
 // Reads the sidecar of the source at path, which says which asset each thing
-// of the source is, and decides where what the import builds goes: the cache
-// kinds to the imported folder of the root when the source is in the source
-// folder of the root, everything else to the folder.
+// of the source is, and the folder of the source new documents go to: the
+// one its sidecar keeps, else folder. The source is in the assets of the
+// project or the plugin at options.root.
 @(private)
-writer_source :: proc(w:^Writer,path:string) -> bool {
-    w.source,w.path=source_path(w.options,path),path
-    w.inputs.allocator,w.held.allocator=context.temp_allocator,context.temp_allocator
-    w.sidecar_file=sidecar_path(path,w.options.root,w.folder,context.temp_allocator)
+writer_source :: proc(w:^Writer,path,folder:string) -> bool {
+    w.path=path
+    w.source=source_path(w.options,path)
+    w.inputs.allocator=context.temp_allocator
+    names:=project.FOLDER_NAMES
+    if w.options.root=="" {return writer_fail(w,.Not_Found,"%s: an import names the project or the plugin whose assets the source is in (root)",path)}
+    if !strings.has_prefix(w.source,names[.Assets]) || !strings.has_prefix(w.source[len(names[.Assets]):],"/") {
+        return writer_fail(w,.Not_Found,"%s is not in the %s folder of %s: move it there, with its %s when it has one, beside what it makes",path,names[.Assets],w.options.root,SIDECAR_EXTENSION)
+    }
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    sidecar,_,error:=sidecar_load(w.sidecar_file,context.temp_allocator)
+    sidecar,found,error:=sidecar_load(path,context.temp_allocator)
     if error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
     w.sidecar=sidecar
+    if !found {w.sidecar.folder=folder}
+    w.folder=filepath.dir(path) if w.sidecar.folder=="" else fmt.tprintf("%s/%s",filepath.dir(path),w.sidecar.folder)
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
     w.outputs=make([dynamic]Output,context.temp_allocator)
-    names:=project.FOLDER_NAMES
-    w.cached=w.options.root!="" && !w.options.documents && strings.has_prefix(w.source,names[.Source]) && strings.has_prefix(w.source[len(names[.Source]):],"/")
-    if w.cached {w.imported=project.imported_path(w.options.root,context.temp_allocator)}
-    // A texture is built Fast only where sync builds it Final later: in the cache.
-    if !w.cached {w.options.fast_textures=false}
+    w.imported=project.imported_path(w.options.root,context.temp_allocator)
+    w.registry=w.options.registry
+    if w.registry==nil {
+        w.registry=new(asset.Registry,context.temp_allocator)
+        asset.registry_init(w.registry,project.folder_path(w.options.root,.Assets,context.temp_allocator),"",context.temp_allocator,w.imported)
+        asset.registry_scan(w.registry)
+    }
     return true
 }
 
 // The file of an output of the cache: in the imported folder, by its id and
-// the key of what the import builds from (import_key). The file the id had
-// under another key takes that name first: the import keeps it or writes over
-// it, as it would the one of a document.
+// the key of what the import builds from (import_key).
 @(private)
 imported_file :: proc(w:^Writer,id:base.Asset_Id,extension:string) -> string {
     if w.key==0 {
         slice.sort(w.inputs[:])
         w.key=import_key(w.path,{settings=w.report.settings,inputs=w.inputs},w.version,w.options.fast_textures)
-        entries,_:=os.read_all_directory_by_path(w.imported,context.temp_allocator)
-        for entry in entries {
-            if held,_,named:=asset.imported_name(entry.name);named {w.held[held]=entry.name}
-        }
     }
-    path:=asset.imported_file(w.imported,id,w.key,extension,context.temp_allocator)
-    if name,held:=w.held[id];held && !os.exists(path) {_=os.rename(fmt.tprintf("%s/%s",w.imported,name),path)}
-    return path
+    return asset.imported_file(w.imported,id,w.key,extension,context.temp_allocator)
 }
 
 // Notes a file the import reads besides its source, as the sidecar lists it.
@@ -204,90 +84,40 @@ writer_input :: proc(w:^Writer,file:string) {
     if !slice.contains(w.inputs[:],slashed) {append(&w.inputs,slashed)}
 }
 
-// The output of the sidecar a part is: of its kind and, unless it is the root
-// of the import, of its name (the one of its index first), then of its index,
-// for a part renamed in the source. -1 for a part the sidecar does not list.
-@(private="file")
-output_find :: proc(w:^Writer,p:^Part,by_index:bool) -> int {
-    best,score:=-1,-1
-    for &output,at in w.sidecar.outputs {
-        if w.taken[at] || output.kind!=p.kind {continue}
-        if p.root {return at}
-        if by_index {
-            if output.index==p.index {return at}
-            continue
-        }
-        if output.name!=p.name {continue}
-        if rank:=output.index==p.index?1:0;rank>score {best,score=at,rank}
-    }
-    return best
-}
-
-// Gives each part its asset and its file. A part the sidecar of the source
-// lists is that asset: one of the cache in the imported folder, a
-// document where the file with its id is now, and one another import writes
-// (shared) only named, whether or not that import ran yet: the order sources
-// are imported in changes nothing. A part it does not list is new: a texture names one of
-// the project with the bytes of its image and its settings, when there is one
-// (the content is not written twice); any other gets a random id and a file
-// of its own. What the import gives is listed in w.outputs, the sidecar it
+// Gives each part its asset and its file: the output of the sidecar of its
+// kind and name (the one of its index first), or of its kind for the root,
+// else a new id. What the import gives is listed in w.outputs, the sidecar it
 // writes when it ends.
 @(private)
 parts_plan :: proc(w:^Writer,parts:[]Part) {
-    defaults:=make([]string,len(parts),context.temp_allocator)
-    seen:=make(map[string]bool,context.temp_allocator)
-    for &p,i in parts {
-        p.entry,p.earlier,p.shared=-1,-1,NOT_SHARED
-        defaults[i]=default_file(&seen,p.name,p.extension)
-    }
-    for by_index in ([2]bool{false,true}) {
-        for &p in parts {
-            if p.entry>=0 {continue}
-            if at:=output_find(w,&p,by_index);at>=0 {p.entry=at;w.taken[at]=true}
-        }
-    }
     for &p in parts {
-        if p.entry<0 {continue}
-        output:=&w.sidecar.outputs[p.entry]
-        p.id=output.id
-        at,found:=w.by_id[output.id]
-        if found && w.earlier[at].kind!=p.kind {found=false}
-        if output.shared {
-            p.shared=found?at:SHARED_AWAY
-            continue
+        entry:=-1
+        for output,at in w.sidecar.outputs {
+            if w.taken[at] || output.kind!=p.kind || !p.root && output.name!=p.name {continue}
+            entry=at
+            if p.root || output.index==p.index {break}
         }
-        if found {p.earlier=at;w.earlier[at].taken=true}
-    }
-    for &p in parts {
-        if p.entry>=0 || p.root || p.kind!=asset.KIND_TEXTURE {continue}
-        for &e,at in w.earlier {
-            if e.taken || e.kind!=asset.KIND_TEXTURE || !e.imported || e.info.source_size!=p.size || e.info.source_hash!=p.hash {continue}
-            if e.info.settings_hash!=p.settings && (p.fast==0 || e.info.settings_hash!=p.fast) {continue}
-            p.shared,p.id=at,e.id
-            break
+        p.id=writer_id(w)
+        if entry>=0 {
+            w.taken[entry]=true
+            p.id=w.sidecar.outputs[entry].id
         }
-    }
-    for &p,i in parts {
-        p.output=len(w.outputs)
-        if p.shared!=NOT_SHARED {
-            append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id,shared=true})
-            continue
-        }
-        if p.entry<0 {p.id=writer_id(w)}
-        cached:=w.cached && kind_cached(p.kind)
         switch {
-        case cached:
-            p.decided=p.entry>=0
-            p.part=p.decided && w.sidecar.outputs[p.entry].part
+        case asset.import_cached(p.kind):
+            p.decided=entry>=0
+            p.part=p.decided && w.sidecar.outputs[entry].part
             p.path=imported_file(w,p.id,p.extension)
-        case p.earlier>=0:
-            p.path=w.earlier[p.earlier].path
-            p.decided,p.part=true,w.earlier[p.earlier].owner!={}
         case:
-            p.path=fresh_path(w,defaults[i])
+            if file,found:=asset.registry_find(w.registry,p.id);found && file.kind==p.kind && file.imported==0 {
+                p.path=asset.registry_file_path(w.registry,file.path,context.temp_allocator)
+                p.decided,p.part=true,file.owner!={}
+            } else {
+                p.path=fresh_path(w,fmt.tprintf("%s%s",safe_name(p.name),p.extension))
+            }
         }
         if folder:=filepath.dir(p.path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
-        append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id,part=p.part && cached})
+        p.output=len(w.outputs)
+        append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id})
     }
 }
 
@@ -305,76 +135,42 @@ root_take :: proc(w:^Writer,kind:asset.Fourcc,name,extension:string) -> (id:base
 @(private)
 parts_record :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
-        if p.shared==NOT_SHARED && w.cached && kind_cached(p.kind) {w.outputs[p.output].part=p.owner!={}}
+        if asset.import_cached(p.kind) {w.outputs[p.output].part=p.owner!={}}
     }
 }
 
 // Ends the outputs of an import that wrote its assets: what its sidecar
-// listed and the source no longer gives leaves it, with its file when it is of
-// the cache (a document stays, a plain asset from then on), and the sidecar is
-// written with the settings the source was imported with.
+// listed and the source no longer gives leaves it (a document stays, a plain
+// asset from then on), the files of the imported folder its outputs had under
+// another key go, and the sidecar is written with the settings the source was
+// imported with.
 @(private)
 writer_finish :: proc(w:^Writer) -> bool {
+    current:=make(map[base.Asset_Id]string,context.temp_allocator)
+    for output in w.outputs {
+        info,known:=asset.kind_info(output.kind)
+        if known && asset.import_cached(output.kind) {current[output.id]=filepath.base(imported_file(w,output.id,info.extension))}
+    }
     for output,at in w.sidecar.outputs {
-        if w.taken[at] || output.shared {continue}
-        if name,held:=w.held[output.id];w.cached && held && kind_cached(output.kind) {
-            os.remove(fmt.tprintf("%s/%s",w.imported,name))
+        if w.taken[at] {continue}
+        if asset.import_cached(output.kind) {
+            current[output.id]=""
             writer_warn(w,"%s %s is no longer in the source: its asset is gone, and what named it names nothing",kind_name(output.kind),output.name)
-        } else if found,located:=w.by_id[output.id];located {
-            writer_warn(w,"%s is no longer in the source: it was left as it is",w.earlier[found].path)
+        } else if file,found:=asset.registry_find(w.registry,output.id);found {
+            writer_warn(w,"%s is no longer in the source: it was left as it is",file.path)
         }
+    }
+    entries,_:=os.read_all_directory_by_path(w.imported,context.temp_allocator)
+    for entry in entries {
+        id,_,named:=asset.imported_name(entry.name)
+        if name,listed:=current[id];named && listed && name!=entry.name {os.remove(entry.fullpath)}
     }
     slice.sort(w.inputs[:])
-    if !sidecar_save(w.sidecar_file,{settings=w.report.settings,documents=!w.cached,inputs=w.inputs,outputs=w.outputs}) {
-        return writer_fail(w,.Write,"%s, which keeps the ids of the import, could not be written",w.sidecar_file)
+    if !sidecar_save(w.path,{settings=w.report.settings,folder=w.sidecar.folder,inputs=w.inputs,outputs=w.outputs}) {
+        return writer_fail(w,.Write,"%s%s, which keeps the ids of the import, could not be written",w.path,SIDECAR_EXTENSION)
     }
-    w.report.saved=strings.clone(w.sidecar_file,w.allocator)
+    w.report.saved=strings.concatenate({w.path,SIDECAR_EXTENSION},w.allocator)
     return true
-}
-
-// Takes a part of the cache another import wrote out of the root of that
-// import, in its sidecar: what the next import of its source reads.
-@(private)
-sidecar_unpart :: proc(w:^Writer,e:^Earlier) -> bool {
-    if !e.imported {return true}
-    named:=base.text_get(e.info.source[:])
-    source:=named
-    if !filepath.is_abs(named) && w.options.root!="" {source,_=filepath.join({w.options.root,named},context.temp_allocator)}
-    // Without a root every output is a document, whose file says whether it is a part.
-    if w.options.root=="" {return true}
-    file:=sidecar_path(source,w.options.root,allocator=context.temp_allocator)
-    sidecar,found,error:=sidecar_load(file,context.temp_allocator)
-    if error.code!=.None || !found {return error.code==.None}
-    for &output in sidecar.outputs {
-        if output.id==e.id && output.part {
-            output.part=false
-            return sidecar_save(file,sidecar)
-        }
-    }
-    return true
-}
-
-// <name><extension> with a name a file can have, " (2)" and on when an
-// earlier part of the same write took it: the file a part gets when the
-// sidecar gives it none.
-@(private)
-default_file :: proc(seen:^map[string]bool,name,extension:string) -> string {
-    base_name:=safe_name(name)
-    for at:=1;;at+=1 {
-        file:=fmt.tprintf("%s%s",base_name,extension) if at==1 else fmt.tprintf("%s (%d)%s",base_name,at,extension)
-        key:=strings.to_lower(file,context.temp_allocator)
-        if seen[key] {continue}
-        seen[key]=true
-        return file
-    }
-}
-
-// A file of the folder an import writes to, with forward slashes.
-@(private)
-folder_path :: proc(w:^Writer,file:string) -> string {
-    path,_:=filepath.join({w.folder,file},context.temp_allocator)
-    slashed,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
-    return slashed
 }
 
 // A name a file can have: what no file system takes becomes _.
@@ -393,15 +189,16 @@ safe_name :: proc(name:string) -> string {
     return cleaned if cleaned!="" else "unnamed"
 }
 
-// The first of file in the folder, then file with " (2)" and on before its
-// extension, that no part of this write took and no file has.
+// The first of file in the folder of the import, then file with " (2)" and
+// on before its extension, that no part of this write took and no file has.
 @(private)
 fresh_path :: proc(w:^Writer,file:string) -> string {
     stem,extension:=filepath.stem(file),filepath.ext(file)
     for at:=1;;at+=1 {
         name:=fmt.tprintf("%s%s",stem,extension) if at==1 else fmt.tprintf("%s (%d)%s",stem,at,extension)
         key:=strings.to_lower(name,context.temp_allocator)
-        candidate:=folder_path(w,name)
+        joined,_:=filepath.join({w.folder,name},context.temp_allocator)
+        candidate,_:=strings.replace_all(joined,"\\","/",context.temp_allocator)
         if w.names[key] || os.exists(candidate) {continue}
         w.names[key]=true
         return candidate

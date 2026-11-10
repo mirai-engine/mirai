@@ -69,7 +69,7 @@ bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
 @(test)
 bench_import_of_a_skinned_glb :: proc(t:^testing.T) {
     if !BENCH {return}
-    path:=DEMO+"models/skeletal-character/robot.glb"
+    path:=DEMO+"characters/robot/robot.glb"
     best:=best_of(proc(data:rawptr) {
         model,error:=importer.import_model((^string)(data)^,FORMATS[:])
         assert(error.code==.None)

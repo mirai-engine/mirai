@@ -107,6 +107,8 @@ Job :: struct {
     testing:bool,               // Test: its executable builds or runs; the plugin libraries stand
     engine_folder:string,       // Test: the binaries of the engine its executable loads
     root,engine_root:string,
+    engine:Engine_Mode,
+    imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
     staged:string,              // what the compiler writes
@@ -216,14 +218,11 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     if p.engine_root=="" || desc.action!=.Build && desc.target==.Game {return job_fail(job,.Engine_Missing)}
-    // What the imports of the project keep outside version control, from its sources: every build starts from it.
+    job.engine=desc.engine
     if desc.action==.Build {
-        if ok,message:=imports_sync(p.engine_root,desc.engine,imports_roots(p));!ok {
-            job.result.text=strings.clone(message,a)
-            return job_fail(job,.Import_Failed)
-        } else if message!="" {
-            fmt.println(message)
-        }
+        roots:=imports_roots(p)
+        job.imports=make([]string,len(roots),a)
+        for root,i in roots {job.imports[i]=strings.clone(root,a)}
     }
     generated,written:=generated_write(p,desc.target)
     if !written {
@@ -526,6 +525,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 }
                 if present {
                     job.result.status=.Up_To_Date
+                    if !job_imports(job) {return job}
                     if job.target==.Game {
                         if failure:=job_ship(job);failure!=.None {return job_fail(job,failure)}
                     }
@@ -887,6 +887,23 @@ job_run :: proc(desc:Desc) -> ^Job {
     return job
 }
 
+// What the imports of the project keep outside version control, from its
+// sources, once the target stands: the library of its editor, built, has the
+// formats its plugins add. False, with the job failed, when a source did not
+// import.
+@(private)
+job_imports :: proc(job:^Job) -> bool {
+    if len(job.imports)==0 {return true}
+    ok,message:=imports_sync(job.engine_root,job.engine,job.imports)
+    if !ok {
+        job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
+        job_fail(job,.Import_Failed)
+        return false
+    }
+    if message!="" {fmt.println(message)}
+    return true
+}
+
 @(private)
 job_done :: proc(job:^Job) -> ^Job {
     if job.plugin_stored {
@@ -1015,6 +1032,7 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     job.result.status=.Built
     job_files_remove(job)
     objects_sweep(job.root,link_records(job.root))
+    if !job_imports(job) {return}
     if job.target==.Game {
         if failure:=job_ship(job);failure!=.None {job.result.status,job.result.failure=.Failed,failure}
     }

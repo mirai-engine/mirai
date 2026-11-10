@@ -1,6 +1,5 @@
 package host
 
-import "core:fmt"
 import "mirai:asset"
 import "mirai:platform"
 
@@ -16,7 +15,6 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
     assets.load_profile=&app.load_profile
     // Without a watch nothing reloads; the application still runs.
     app.assets_watch.watch,_=platform.watch_create(app.platform,{path=root,recursive=true})
-    app_assets_watch_sources(app)
     return .None
 }
 
@@ -26,7 +24,6 @@ app_assets_destroy :: proc(app:^App) {
     app_textures_stream_stop(app)
     app_assets_releases_stop(app)
     if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    if app.assets_watch.sources!=0 {platform.watch_destroy(app.platform,app.assets_watch.sources)}
     assets_destroy(app.assets)
     free(app.assets,app.allocator)
     app.assets=nil
@@ -38,28 +35,13 @@ ASSETS_WATCH_RATE :: ASSETS_WATCH_SLICE*60 // units per second at most: the pass
 
 app_assets_watch_reset :: proc(app:^App) {
     if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    if app.assets_watch.sources!=0 {platform.watch_destroy(app.platform,app.assets_watch.sources)}
     app.assets_watch={}
-    if app.assets!=nil {
-        app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})
-        app_assets_watch_sources(app)
-    }
-}
-
-// Watches the source folder beside the imported folder of the asset folder:
-// what its sources give is listed where they and their sidecars are, so one
-// that moves, comes or goes changes the listing, which is derived again.
-@(private)
-app_assets_watch_sources :: proc(app:^App) {
-    imported:=app.assets.registry.imported
-    if imported=="" || app.assets.indexed {return}
-    app.assets_watch.sources,_=platform.watch_create(app.platform,{path=fmt.tprintf("%s/../../source",imported),recursive=true})
+    if app.assets!=nil {app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})}
 }
 
 @(private)
 Assets_Watch :: struct {
     watch:platform.Watch,
-    sources:platform.Watch, // of the source folder of a project that is not shipped; 0 without one
     due:f32,   // units of the walk that time has earned
     spent:int, // units given since the last pass ended
     pass:int,  // units the last pass that walked the folder took; 0 before the first
@@ -89,12 +71,6 @@ app_assets_watch :: proc(app:^App,dt:f32) {
         aw.quiet,aw.spent=quiet,0
     }
     app_assets_watch_apply(app,events[:count])
-    if aw.sources!=0 {
-        if count,_=platform.watch_poll(app.platform,aw.sources,ASSETS_WATCH_SLICE,events[:]);count>0 {
-            assets_scan(app.assets)
-            content_refresh(app)
-        }
-    }
 }
 
 // Everything that changed in the asset folder until now, without pacing: for

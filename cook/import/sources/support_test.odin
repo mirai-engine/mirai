@@ -13,7 +13,7 @@ import "mirai:cook/import/usd"
 import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
-DEMO :: #directory+"/../../../demo/source/"
+DEMO :: #directory+"/../../../demo/assets/"
 
 @(rodata)
 USD_TEXT:=usd.Options{no_usdcat=true}

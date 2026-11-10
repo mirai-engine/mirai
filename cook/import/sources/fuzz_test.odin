@@ -109,7 +109,7 @@ sound_survives :: proc(t:^testing.T,name:string,bytes:[]u8) {
 
 @(test)
 damaged_wav_and_ogg_files_are_built_or_refused :: proc(t:^testing.T) {
-    wav,read_error:=os.read_entire_file(DEMO+"sounds/hum.wav",context.allocator)
+    wav,read_error:=os.read_entire_file(DEMO+"showcase/hum.wav",context.allocator)
     if testing.expect(t,read_error==nil,"the WAV of the demo is read") {
         // Its head and its first samples: the rest is more of the same.
         sound_survives(t,"hum.wav",wav[:min(len(wav),8192)])

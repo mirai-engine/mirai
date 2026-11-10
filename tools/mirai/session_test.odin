@@ -188,7 +188,7 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"copy")
     if folder=="" {return}
-    kept:=[]string{project.PROJECT_FILE,"assets/scenes/main.scene","game/game.odin","source/art.fbx",
+    kept:=[]string{project.PROJECT_FILE,"assets/scenes/main.scene","game/game.odin","assets/props/art.fbx",
         ".mirai/cache/registry/index",".mirai/thumbs/main.png"}
     left:=[]string{".git/HEAD",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
         ".mirai/session.log",".mirai/editor.dll",".mirai/editor-live-12-0.dll",".mirai/gen/world.odin",

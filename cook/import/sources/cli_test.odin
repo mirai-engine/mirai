@@ -81,7 +81,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
 
     // A model with a texture: mesh, three materials, the image of the leaves and the prefab.
     out:=fmt.tprintf("%s/plant",folder)
-    first:=import_run(DEMO+"models/plant.gltf","--out",out,"--max-texture","16")
+    first:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16")
     testing.expectf(t,first.code==0 && first.err=="","import fails: %d\n%s%s",first.code,first.out,first.err)
     paths:=reported_paths(first.out)
     testing.expect_value(t,len(paths),6)
@@ -96,14 +96,14 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     testing.expect(t,listing.code==0 && strings.count(listing.out,"\n")==6,listing.out)
 
     // Importing again keeps every id, and the mesh and the texture are not built again.
-    again:=import_run(DEMO+"models/plant.gltf","--out",out,"--max-texture","16")
+    again:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16")
     testing.expect(t,again.code==0 && strings.contains(again.out,"6 assets, 2 were already up to date") && slice.equal(reported_paths(again.out),paths),again.out)
-    rebuilt:=import_run(DEMO+"models/plant.gltf","--out",out,"--max-texture","16","--rebuild")
+    rebuilt:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16","--rebuild")
     testing.expect(t,rebuilt.code==0 && slice.equal(reported_assets(rebuilt.out),reported_assets(first.out)),"--rebuild builds everything again, to the same bytes")
 
     // An image on its own.
     image_out:=fmt.tprintf("%s/image",folder)
-    texture:=import_run(DEMO+"textures/bricks_color.png","--out",image_out,"--srgb")
+    texture:=import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",image_out,"--srgb")
     testing.expectf(t,texture.code==0 && strings.contains(texture.out,"texture") && strings.contains(texture.out,"bricks_color.tex"),"%d: %s%s",texture.code,texture.out,texture.err)
     verify_texture:=make([dynamic]string,context.temp_allocator)
     append(&verify_texture,"asset","verify")
@@ -114,8 +114,8 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     // The sidecar of an import keeps its settings: the options change them, and importing again uses them.
     // Without a root it is in the folder written to, and nothing is written next to the source.
     copy:=fmt.tprintf("%s/vase.obj",folder)
-    source,_:=os.read_entire_file(DEMO+"models/vase.obj",context.temp_allocator)
-    material,_:=os.read_entire_file(DEMO+"models/vase.mtl",context.temp_allocator)
+    source,_:=os.read_entire_file(DEMO+"gallery/vase.obj",context.temp_allocator)
+    material,_:=os.read_entire_file(DEMO+"gallery/vase.mtl",context.temp_allocator)
     _=os.write_entire_file(copy,source)
     _=os.write_entire_file(fmt.tprintf("%s/vase.mtl",folder),material)
     vase_out:=fmt.tprintf("%s/vase",folder)
@@ -136,18 +136,18 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     testing.expect(t,refused.code==1 && strings.contains(refused.err,"vase.obj.import"),refused.err)
 
     // Misuse and failures.
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--lods","some").code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--collision","soft").code,2)
-    testing.expect_value(t,import_run(DEMO+"textures/bricks_color.png","--out",out,"--collision","hull").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--lods","some").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--collision","soft").code,2)
+    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--collision","hull").code,2)
     testing.expect_value(t,import_run().code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj").code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--max-texture","0").code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--srgb").code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--alpha-coverage","0.5").code,2)
-    testing.expect_value(t,import_run(DEMO+"textures/bricks_color.png","--out",out,"--alpha-coverage","1.5").code,2)
-    testing.expect_value(t,import_run(DEMO+"textures/bricks_color.png","--out",out,"--rdo-lambda","101").code,2)
-    testing.expect_value(t,import_run(DEMO+"textures/bricks_color.png","--out",out,"--rdo-lambda","-1").code,2)
-    testing.expect_value(t,import_run(DEMO+"models/vase.obj","--out",out,"--nope").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--max-texture","0").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--srgb").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--alpha-coverage","0.5").code,2)
+    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--alpha-coverage","1.5").code,2)
+    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--rdo-lambda","101").code,2)
+    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--rdo-lambda","-1").code,2)
+    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--nope").code,2)
     missing:=import_run(fmt.tprintf("%s/missing.obj",folder),"--out",out)
     testing.expect(t,missing.code==1 && strings.contains(missing.err,"mirai import:") && strings.contains(missing.err,"missing.obj"),missing.err)
     write_text(folder,"broken.obj","v 0 0 0\nf 1 2 3\n")

@@ -82,7 +82,7 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
     for bone in ground_bones {if bone<0 {o.content.failed=true;return}}
     clips=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)
     copy(clips,model.animations)
-    skeleton:=imported_id(o,"source/models/mirai/mirai.glb",asset.KIND_SKELETON,model.skeletons[0].name)
+    skeleton:=imported_id(o,"assets/characters/mirai/mirai.glb",asset.KIND_SKELETON,model.skeletons[0].name)
     for &clip in clips {
         clip.skeleton=skeleton
         mirai_hands(model,rig,&clip)
@@ -164,7 +164,7 @@ write_sequence_clip :: proc(o:^Out) {
 // The clips, .character sets, rigs and meshes of the animation gallery
 // (animation_gallery/animation.scene), made from the import of Mirai.
 write_animation_assets :: proc(o:^Out) {
-    source:="source/models/mirai/mirai.glb"
+    source:="assets/characters/mirai/mirai.glb"
     model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=fmt.tprintf("%s/demo",o.root)})
     if error.code!=.None {fmt.eprintln(error.message);o.content.failed=true;return}
     defer importer.model_destroy(&model)

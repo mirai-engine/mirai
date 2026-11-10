@@ -61,7 +61,7 @@ a_single_node_keeps_its_own_transform :: proc(t:^testing.T) {
 
 @(test)
 the_plant_of_the_demo_has_slots_per_primitive_and_a_masked_texture :: proc(t:^testing.T) {
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.warnings),0)

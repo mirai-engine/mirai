@@ -146,8 +146,8 @@ strings_table :: proc(text:string,allocator:=context.allocator) -> (table:String
     return table,""
 }
 
-// Imports a CSV file of texts as <name>.strings in folder, the root of its import.
-import_strings :: proc(path,folder:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+// Imports a CSV file of texts as <name>.strings beside it, the root of its import.
+import_strings :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
@@ -162,12 +162,9 @@ import_strings :: proc(path,folder:string,options:Import_Options={},allocator:=c
     table,message:=strings_table(string(bytes),context.temp_allocator)
     if message!="" {return {},error_make(.Malformed,"%s: %s",path,message,allocator=caller)}
 
-    report.allocator=allocator
-    report.assets.allocator=allocator
-    report.warnings.allocator=allocator
-    report.others.allocator=allocator
+    report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,path,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,"",options,&report,allocator)
     defer asset.types_destroy(&w.types)
     if ok {
         source:=w.source

@@ -1,0 +1,34 @@
+{
+  "version": 3,
+  "settings": {
+    "max_texture_size": 0,
+    "textures": "Blocks",
+    "rdo_lambda": 0,
+    "image": "Data",
+    "alpha_coverage": 0,
+    "lods": "Auto",
+    "max_triangles": 0,
+    "collision": "None",
+    "force_collision": false,
+    "collision_hulls": 0,
+    "parts": "Auto",
+    "front": "Auto",
+    "rig": "Source",
+    "rig_crotch": 0,
+    "rig_neck": 0,
+    "skeleton": "00000000000000000000000000000000"
+  },
+  "outputs": [
+    {"kind": "SCEN", "name": "mirai", "index": 0, "id": "94f640750cf5246f1c0728cc4cd2a07c"},
+    {"kind": "TEX", "name": "texture_0", "index": 0, "id": "a3d324f2a5454495463d13c1ebad2c84", "part": true},
+    {"kind": "TEX", "name": "texture_0_metallic_roughness", "index": 1, "id": "08abe809e118473bb530ac037696309e", "part": true},
+    {"kind": "MAT", "name": "BakedMaterial", "index": 0, "id": "f1d4dfad902a16a7afc56bb3202b1d94"},
+    {"kind": "MAT", "name": "Mirai holograma violeta", "index": 1, "id": "dbb521d6ca206ef049b42c4fad14b7d5"},
+    {"kind": "MAT", "name": "Mirai borde luminoso", "index": 2, "id": "bbfe2f2406e2d1a5aaf297d5d2c8a990"},
+    {"kind": "SKEL", "name": "Armature", "index": 0, "id": "0208471f893327bdcf8bbaa108a26121"},
+    {"kind": "MESH", "name": "output_unwrapped", "index": 0, "id": "f0c947702bb8141dc1d27444a341d52c", "part": true},
+    {"kind": "MESH", "name": "Cinta orbital Left", "index": 1, "id": "8d6c8aa43c816332bca9f38c1dd0d17f", "part": true},
+    {"kind": "MESH", "name": "Cinta orbital Right", "index": 2, "id": "78744c9faee4ebd82e0f9ca443b72656", "part": true},
+    {"kind": "ANIM", "name": "mirai", "index": 0, "id": "f3016e0fca41fca429b049307bde6f9f"}
+  ]
+}

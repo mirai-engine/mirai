@@ -11,8 +11,8 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// Writes the assets of the demo project that code computes: the imports of
-// demo/source (sources.odin), the images, clips, meshes, sounds, particles,
+// Writes the assets of the demo project that code computes: the images,
+// the sources it imports (the hum, the jelly), clips, meshes, particles,
 // fractures, profiles and tables of game data its scenes use, with the same
 // bytes on every run. Its scenes, prefabs and interfaces are
 // authored assets, as are the materials of demo/assets/surfaces: scene.write or
@@ -123,8 +123,7 @@ write_hum :: proc(o:^Out) {
         tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
         le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
     }
-    source:=path(o,"source/sounds/hum.wav")
-    os.make_directory_all(path(o,"source/sounds"))
+    source:=path(o,"assets/showcase/hum.wav")
     // Written only when it differs, so that the import of an unchanged source is the same file.
     existing,read_error:=os.read_entire_file(source,context.temp_allocator)
     if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(source,file)!=nil {
@@ -132,14 +131,7 @@ write_hum :: proc(o:^Out) {
         o.content.failed=true
         return
     }
-    report,error:=sources.import_source(source,path(o,"assets/showcase"),{root=fmt.tprintf("%s/demo",o.root)})
-    if error.code!=.None {
-        fmt.eprintfln("demo_content: %s",error.message)
-        o.content.failed=true
-        return
-    }
-    defer importer.report_destroy(&report)
-    fmt.printfln("wrote source/sounds/hum.wav and imported %s",report.assets[0].path)
+    source_import(o,"assets/showcase/hum.wav")
 }
 
 // The id the import of source/materials/<name>.json gives the material <name>.mat.
@@ -155,7 +147,6 @@ main :: proc() {
     defer asset.content_destroy(&o.content)
     switch len(os.args)>2?os.args[2]:"" {
     case "":
-        import_sources(&o)
         write_badge(&o)
         write_panel(&o)
         write_lift(&o)
@@ -173,7 +164,7 @@ main :: proc() {
     case "--control-only":   write_control_intro(&o)
     case "--raft-only":      write_raft_particles(&o)
     case "--features-only":  write_feature_meshes(&o);write_decal_images(&o)
-    case "--animation-only": import_model(&o,"mirai/mirai.glb");if !o.content.failed {write_animation_assets(&o)}
+    case "--animation-only": write_animation_assets(&o)
     case "--interface-only": write_interface_assets(&o)
     case "--dig-only":       write_dig_assets(&o)
     case "--ai-only":        write_horde_records(&o)

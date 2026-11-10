@@ -102,7 +102,7 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
 a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"write-plant")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
     report,error:=importer.import_write(&model,folder)
@@ -236,7 +236,7 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
     options:=importer.Import_Options{ignore_stored=true}
     options.max_texture_size=4
     body_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (map_:anim.Body_Map,bones:[]asset.Skeleton_Bone,path:string,sockets:[]asset.Skeleton_Socket) {
-        model,ok:=import_ok(t,DEMO+"models/mirai/mirai.glb",options)
+        model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
         defer importer.model_destroy(&model)
         report,error:=importer.import_write(&model,folder,options)
@@ -305,7 +305,7 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
     options.max_texture_size=4
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     roots_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (roots:map[string]asset.Animation_Root,path:string,armature:string) {
-        model,ok:=import_ok(t,DEMO+"models/mirai/mirai.glb",options)
+        model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
         defer importer.model_destroy(&model)
         bones:=model.skeletons[0].bones
@@ -370,9 +370,9 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
     folder:=base.test_folder(t,"write-material-layers")
     if folder=="" {return}
     source:=fmt.tprintf("%s/plant.gltf",folder)
-    text,error:=os.read_entire_file(DEMO+"models/plant.gltf",context.temp_allocator)
+    text,error:=os.read_entire_file(DEMO+"gallery/plant.gltf",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
-    texture,_:=filepath.abs(DEMO+"textures/leaves_color.png",context.temp_allocator)
+    texture,_:=filepath.abs(DEMO+"gallery/leaves_color.png",context.temp_allocator)
     texture,_=strings.replace_all(texture,"\\","/",context.temp_allocator)
     gltf,_:=strings.replace_all(string(text),"../textures/leaves_color.png",texture,context.temp_allocator)
     if !testing.expect(t,os.write_entire_file(source,transmute([]u8)gltf)==nil) {return}
@@ -415,14 +415,14 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
 importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"write-identity")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
     first,first_error:=importer.import_write(&model,fmt.tprintf("%s/one",folder))
     defer importer.report_destroy(&first)
     testing.expect_value(t,first_error.code,importer.Error_Code.None)
 
-    again,again_ok:=import_ok(t,DEMO+"models/plant.gltf")
+    again,again_ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !again_ok {return}
     defer importer.model_destroy(&again)
     second,second_error:=importer.import_write(&again,fmt.tprintf("%s/one",folder))
@@ -446,9 +446,9 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     for root in ([]string{"a","b"}) {
         source:=fmt.tprintf("%s/%s/models",folder,root)
         os.make_directory_all(source)
-        data,_:=os.read_entire_file(DEMO+"models/vase.mtl",context.temp_allocator)
+        data,_:=os.read_entire_file(DEMO+"gallery/vase.mtl",context.temp_allocator)
         _=os.write_entire_file(fmt.tprintf("%s/vase.mtl",source),data)
-        data,_=os.read_entire_file(DEMO+"models/vase.obj",context.temp_allocator)
+        data,_=os.read_entire_file(DEMO+"gallery/vase.obj",context.temp_allocator)
         _=os.write_entire_file(fmt.tprintf("%s/vase.obj",source),data)
     }
     ids_by_root:[2][dynamic]base.Asset_Id
@@ -815,7 +815,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
     sources:=[]string{
         FIXTURES+"concave.obj",FIXTURES+"multiple.obj",FIXTURES+"hierarchy.gltf",FIXTURES+"hierarchy.glb",FIXTURES+"single-transform.gltf",
         FIXTURES+"skeletal-analytic.gltf",FIXTURES+"skeletal-analytic.glb",FIXTURES+"khronos-simple-skin/SimpleSkin.gltf",FIXTURES+"hierarchy.usda",
-        DEMO+"models/vase.obj",DEMO+"models/plant.gltf",DEMO+"models/skeletal-character/robot.glb",DEMO+"models/skeletal-character/robot.gltf",
+        DEMO+"gallery/vase.obj",DEMO+"gallery/plant.gltf",DEMO+"characters/robot/robot.glb",DEMO+"characters/robot/robot.gltf",
     }
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     for source,i in sources {
@@ -863,7 +863,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
 the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"write-rows")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
     report,error:=importer.import_write(&model,folder)

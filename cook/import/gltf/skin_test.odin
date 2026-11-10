@@ -72,7 +72,7 @@ skinned_meshes_preserve_bind_geometry_and_the_mesh_basis :: proc(t:^testing.T) {
 
 @(test)
 the_robot_is_one_skinned_mesh_with_its_rig :: proc(t:^testing.T) {
-    model,ok:=import_ok(t,DEMO+"models/skeletal-character/robot.glb")
+    model,ok:=import_ok(t,DEMO+"characters/robot/robot.glb")
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.nodes),14)

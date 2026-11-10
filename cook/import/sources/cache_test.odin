@@ -92,7 +92,7 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
     if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/models",folder))
     os.make_directory_all(fmt.tprintf("%s/textures",folder))
-    for file in ([]string{"models/vase.obj","models/vase.mtl","textures/vase_color.png"}) {
+    for file in ([]string{"gallery/vase.obj","gallery/vase.mtl","textures/vase_color.png"}) {
         data,_:=os.read_entire_file(fmt.tprintf("%s%s",DEMO,file),context.temp_allocator)
         _=os.write_entire_file(fmt.tprintf("%s/%s",folder,file),data)
     }
@@ -216,7 +216,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     folder:=base.test_folder(t,"mesh-cache")
     if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/models",folder))
-    for file in ([]string{"models/vase.obj","models/vase.mtl"}) {
+    for file in ([]string{"gallery/vase.obj","gallery/vase.mtl"}) {
         data,_:=os.read_entire_file(fmt.tprintf("%s%s",DEMO,file),context.temp_allocator)
         _=os.write_entire_file(fmt.tprintf("%s/%s",folder,file),data)
     }

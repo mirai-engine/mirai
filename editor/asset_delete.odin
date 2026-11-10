@@ -47,7 +47,7 @@ asset_delete_files :: proc(r:^asset.Registry,id:base.Asset_Id) -> []u32 {
 
 // As asset_delete_files, with what goes when the asset is the root of an
 // import: what that import keeps in the imported folder, which nothing builds
-// once its sidecar is gone.
+// once its source and its sidecar are gone.
 @(private)
 asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (files:[]u32,sidecar:string) {
     listed:=make([dynamic]u32,context.temp_allocator)
@@ -118,7 +118,10 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
         append(&done,path)
     }
     // The import is given up with its root: its source stays, and importing it again is a new import.
-    if message=="" && sidecar!="" {_=platform.trash(sidecar)}
+    if message=="" && sidecar!="" {
+        _=platform.trash(sidecar)
+        _=platform.trash(strings.trim_suffix(sidecar,asset.SIDECAR_EXTENSION))
+    }
     if len(done)>0 {
         host.assets_refresh(s.app.assets,done[:])
         host.content_refresh(s.app)
