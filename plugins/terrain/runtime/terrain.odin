@@ -215,7 +215,7 @@ Terrain_Resident :: struct {
     ready:bool,
     pass:u32,
     gc_stamps:[6]u64,
-    shown:[3]u64, // the versions of Terrain, Tint and Material_Values after the owners last showed their chunks
+    shown:[2]u64, // the versions of Terrain and Material_Values after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
     lod_stamp:[5]u64, // the version of the transforms, the revision of the streaming sources, the count of owners, marks, the version of the colliders
@@ -272,8 +272,8 @@ Resident_Owner :: struct {
     nodes:[]Owner_Node,   // by node: what this terrain wants and shows of it
     changed:[dynamic]u32, // nodes it began or stopped showing since it last published
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // its chunks show, chunk_materials
-    tint:render.Material_Values,
-    override:render.Material_Values,
+    tint:render.Material_Values,     // the color and the light of its entity, which its chunks take
+    override:render.Material_Values, // of its layers: what its chunks show over them
     solid:bool,
     far:bool,  // of a section that is not loaded (scene.Far_Kept): its far form alone, without colliders
     pass:u32,

@@ -216,6 +216,7 @@ chunk_materials :: proc "contextless" (s:^Source) -> (materials:[render.MATERIAL
 // layer material, its color, roughness and metallic, and the tiling and height
 // blend of the layer. A layer without a normal map gets no strength for it.
 layers_override :: proc(a:^host.Assets,s:^Source) -> (o:render.Material_Values) {
+    o=render.MATERIAL_VALUES_DEFAULT
     COLORS :: [LAYERS_MAX]string{"color0","color1","color2","color3"}
     NORMALS :: [LAYERS_MAX]string{"normal0","normal1","normal2","normal3"}
     VALUES :: [LAYERS_MAX]string{"layer0","layer1","layer2","layer3"}

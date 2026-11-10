@@ -47,7 +47,7 @@ material_instance_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.instance.inspect",params=Api_Material_Slot_Params,summary="What an entity shows of the material of a slot of its mesh: its values with those of the entity over them, what the entity changes of it, its parameters and its overlays.",result=Api_Material_Instance,writes_result=true,flags={.Read_Only},run=api_material_instance_inspect})
     api_register(s,st,{name="material.instance.set",params_schema=MATERIAL_INSTANCE_SET_SCHEMA,summary="Makes the values given that differ from the material of the slot, and the parameters, textures and overlays given, the entity's own; the material does not change. In Edit; one undo step.",result=Api_Material_Instance,writes_result=true,run=api_material_instance_set})
     api_register(s,st,{name="material.instance.revert",params=Api_Material_Slot_Params,summary="The entity takes back everything of the material of a slot, and for the first slot its overlays. In Edit; one undo step.",result=Api_Material_Instance,writes_result=true,run=api_material_instance_revert})
-    api_register(s,st,{name="material.instance.apply",params=Api_Material_Slot_Params,summary="Writes what the entity changes of the material of a slot into it for every entity that shows it (but what each changes itself), saves it at once and reverts the slot of the entity, in one undo step.",result=Api_Material_Result,writes_result=true,run=api_material_instance_apply})
+    api_register(s,st,{name="material.instance.apply",params=Api_Material_Slot_Params,summary="Writes what the entity changes of the material of a slot into it for every entity that shows it (but what each changes itself) and reverts the slot of the entity, in one undo step. The material changes in memory: asset.save writes its file.",result=Api_Material_Result,writes_result=true,run=api_material_instance_apply})
 }
 
 @(private)
@@ -353,7 +353,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
     w=edited_world(s)
     table:=core.world_table_of(w,erender.Material_Values)
     if table==nil {api_edit_end(s,call,false);return}
-    if erender.material_values_unnamed(&next) {
+    if erender.material_values_plain(&next) {
         if core.has(table,e) {core.remove(table,e)}
     } else {
         core.add(table,e,next)
@@ -373,7 +373,7 @@ api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
     if table:=core.world_table_of(w,erender.Material_Values);table!=nil {
         if override,overridden:=core.get(core.read(table),e);overridden {
             _,rest:=override_split(&override,p.slot)
-            if erender.material_values_unnamed(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
+            if erender.material_values_plain(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
         }
     }
     if !api_edit_end(s,call,true) {return}

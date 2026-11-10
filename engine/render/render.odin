@@ -223,18 +223,18 @@ Post_Process_Layer :: struct {
 Material_Values :: struct {
     color:[4]f32 `mirai:"color"`,
     emission:[3]f32 `mirai:"color"`, // added to the emission of its materials: a luminance, nits
-    count:u32,
-    slots:[MATERIAL_VALUES_CAPACITY]u8,
-    names:[MATERIAL_VALUES_CAPACITY]u64,
-    values:[MATERIAL_VALUES_CAPACITY][4]f32,
-    texture_count:u32,
-    texture_slots:[MATERIAL_VALUES_TEXTURES]u8,
-    texture_names:[MATERIAL_VALUES_TEXTURES]u64,
-    textures:[MATERIAL_VALUES_TEXTURES]base.Asset_Id, // 0 takes the texture away
+    count:u32 `mirai:"hidden"`,
+    slots:[MATERIAL_VALUES_CAPACITY]u8 `mirai:"hidden"`,
+    names:[MATERIAL_VALUES_CAPACITY]u64 `mirai:"hidden"`,
+    values:[MATERIAL_VALUES_CAPACITY][4]f32 `mirai:"hidden"`,
+    texture_count:u32 `mirai:"hidden"`,
+    texture_slots:[MATERIAL_VALUES_TEXTURES]u8 `mirai:"hidden"`,
+    texture_names:[MATERIAL_VALUES_TEXTURES]u64 `mirai:"hidden"`,
+    textures:[MATERIAL_VALUES_TEXTURES]base.Asset_Id `mirai:"hidden"`, // 0 takes the texture away
     shown:[MATERIAL_VALUES_TEXTURES]gpu.Texture_Handle `mirai:"transient"`, // a texture the renderer made at run time, in place of the asset; 0: none
-    own_overlays:bool,
-    overlay_count:u32,
-    overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay,
+    own_overlays:bool `mirai:"hidden"`,
+    overlay_count:u32 `mirai:"hidden"`,
+    overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay `mirai:"hidden"`,
 }
 
 MATERIAL_VALUES_DEFAULT :: Material_Values{color={1,1,1,1}}

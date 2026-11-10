@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -113,4 +114,85 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     testing.expect_value(t,view.info.roughness,f32(0.2))
     testing.expect_value(t,view.info.maps.base_color.texture,base.Asset_Id{7,7})
     testing.expect(t,len(view.overlays)==1 && view.overlays[0].material==base.Asset_Id{9,9} && view.overlays[0].blend==.Multiply)
+}
+
+Apply_Test_World :: struct {
+    using world:core.Test_World,
+    ids:core.Table(core.Id),
+    meshes:core.Table(erender.Mesh_Renderer),
+    looks:core.Table(erender.Material_Values),
+}
+
+// Apply to material edits the material in memory, as one step with what the
+// entity stops changing: undo gives both back, and only Save writes the file.
+@(test)
+applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"material-apply-memory")
+    if root=="" {return}
+    folder:=project.path(root,"assets",allocator=context.temp_allocator)
+    os.make_directory_all(folder)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    wall:=base.Asset_Id{6,6}
+    path:=fmt.tprintf("%s/wall.mat",folder)
+    testing.expect_value(t,asset.material_save(path,&types,{id=wall,info=asset.MATERIAL_DEFAULTS}),asset.Error.None)
+    saved,_:=os.read_entire_file(path,context.temp_allocator)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder,capacity=8})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets}
+
+    world:Apply_Test_World
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    e:=core.create(&world.entities)
+    mesh:=erender.Mesh_Renderer{shape=.Cube}
+    mesh.materials[0]=wall
+    look:=erender.MATERIAL_VALUES_DEFAULT
+    look.color={1,0,0,1}
+    testing.expect(t,erender.material_value(&look,"roughness",0.2) && erender.material_value(&look,"metallic",1,1))
+    core.add(&world.ids,e,core.Id{value=base.Entity_Id(77)})
+    core.add(&world.meshes,e,mesh)
+    core.add(&world.looks,e,look)
+    core.test_world_settle(&world)
+    f:Test_Session
+    test_session_open(&f,core.test_world_ref(&world))
+    defer test_session_close(&f)
+    materials:Materials
+    s:=&f.s
+    s.app,s.materials,s.assets_root=&app,&materials,folder
+    w:=edited_world(s)
+
+    roughness :: proc(t:^testing.T,s:^Session,assets:^host.Assets) -> f32 {
+        file:asset.Asset
+        if !testing.expect(t,asset_read(s,"wall.mat",&file)) {return -1}
+        defer asset.asset_close(&file)
+        view,error:=asset.material_view(&file,&assets.types)
+        if !testing.expect_value(t,error,asset.Error.None) {return -1}
+        return view.info.roughness
+    }
+    on_disk :: proc(path:string) -> string {
+        data,_:=os.read_entire_file(path,context.temp_allocator)
+        return string(data)
+    }
+
+    material,message:=material_apply(s,e,0)
+    history.edits_commit(&f.edits,w,&f.selection)
+    testing.expect(t,material==wall && message=="",message)
+    testing.expect_value(t,len(f.edits.steps),1)
+    testing.expect_value(t,roughness(t,s,&assets),f32(0.2))
+    testing.expect(t,asset_unsaved(s,wall) && on_disk(path)==string(saved),"the material changed in memory: its file is as it was")
+    left,_:=core.get(core.read(&world.looks),e)
+    testing.expect(t,left.color==[4]f32{1,0,0,1} && left.count==1 && left.slots[0]==1,"the entity keeps its color and what it changes of another slot")
+
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    testing.expect_value(t,roughness(t,s,&assets),asset.MATERIAL_DEFAULTS.roughness)
+    back,_:=core.get(core.read(&world.looks),e)
+    testing.expect(t,back==look,"undo gives the entity its values")
+    testing.expect(t,!asset_unsaved(s,wall),"and the material what it had")
+
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
+    testing.expect(t,asset_unsaved(s,wall) && on_disk(path)==string(saved))
+    written,ok:=assets_save(s,{"wall.mat"})
+    testing.expect(t,ok && written==1 && !asset_unsaved(s,wall) && on_disk(path)!=string(saved),"Save writes the file")
+    testing.expect_value(t,roughness(t,s,&assets),f32(0.2))
 }

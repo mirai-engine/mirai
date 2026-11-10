@@ -93,7 +93,7 @@ unit :: proc "contextless" (v,fallback:[3]f32) -> [3]f32 {
 @(step="render",loops="game editor",before="render_sync")
 deform_render :: proc(
     state:^Deform_Gpu,deforms:core.Read(Deform),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),
+    parents:core.Read(core.Parent),looks:core.Read(erender.Material_Values),
     hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
     layers:core.Read(erender.Layers),app:^host.App,time:core.Time,frame:core.Frame_Time,
     locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),id:core.World_Id,
@@ -115,11 +115,10 @@ deform_render :: proc(
             // The stage with the equation of the shape, that of this plugin without a name; 0 while the shaders in use have none.
             pipeline:=erender.stage_pipeline(app.renderer,{stage=.Geometry,shader=own!=""?own:"deform",name="deform"})
             if pipeline==0 {continue}
-            tint:=erender.MATERIAL_VALUES_DEFAULT
-            if value,exists:=core.get(tints,e);exists {tint=value}
-            override,_:=core.get(overrides,e)
+            look:=erender.MATERIAL_VALUES_DEFAULT
+            if value,exists:=core.get(looks,e);exists {look=value}
             anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-            shown,usable:=erender.mesh_instance(app.assets,static,transform,tint,override)
+            shown,usable:=erender.mesh_instance(app.assets,static,transform,look)
             shown.anchor=anchor
             if !usable {continue}
             at:=-1

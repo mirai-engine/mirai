@@ -117,8 +117,7 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
     if renderers==nil {return false}
     identity:=core.TRANSFORM_IDENTITY
     transforms,placed:=document_column(&data,&view,&a.types,"Transform",core.Transform,&identity)
-    tints,tinted:=document_column(&data,&view,&a.types,"Tint",erender.Material_Values)
-    overrides,overridden:=document_column(&data,&view,&a.types,"Material_Values",erender.Material_Values)
+    tints,tinted:=document_column(&data,&view,&a.types,"Material_Values",erender.Material_Values)
     hidden:=make([]bool,count,context.temp_allocator)
     for &component in view.components {
         if component.name!="Hidden" {continue}
@@ -163,10 +162,9 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
         if !shown[row] || hidden[row] || under!=nil && !under[row] {continue}
         room:=THUMBNAIL_TRIANGLES*3-len(vertices)
         if room<3 {break}
-        Look :: struct {mesh:erender.Mesh_Renderer,tint:erender.Material_Values,override:erender.Material_Values}
+        Look :: struct {mesh:erender.Mesh_Renderer,tint:erender.Material_Values}
         look:=Look{mesh=renderers[row],tint=erender.MATERIAL_VALUES_DEFAULT}
         if tinted!=nil && tinted[row] {look.tint=tints[row]}
-        if overridden!=nil && overridden[row] {look.override=overrides[row]}
         key:=base.hash64(mem.ptr_to_bytes(&look))
         shape:Document_Mesh
         read:=false
@@ -175,7 +173,7 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
         }
         if !read {
             shape={key=key,first=len(locals)}
-            triangles_append(a,look.mesh,look.tint,&look.override,mm.TRANSFORM_IDENTITY,THUMBNAIL_TRIANGLES*3-len(locals),&locals,materials)
+            triangles_append(a,look.mesh,look.tint,mm.TRANSFORM_IDENTITY,THUMBNAIL_TRIANGLES*3-len(locals),&locals,materials)
             shape.count=len(locals)-shape.first
             append(&meshes,shape)
         }

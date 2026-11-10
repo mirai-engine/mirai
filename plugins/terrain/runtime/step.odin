@@ -14,7 +14,7 @@ import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // The chunks of the terrains: entities terrain makes under each one, whose
-// meshes, tints and colliders it writes (shared tables). Their Transform and
+// meshes, material values and colliders it writes (shared tables). Their Transform and
 // Parent it gives through commands: those tables have other writers.
 @(private)
 Chunk_Tables :: struct {
@@ -25,8 +25,7 @@ Chunk_Tables :: struct {
     ids:core.Read(core.Id),
     colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
-    tints:^core.Table(render.Material_Values),
-    overrides:^core.Table(render.Material_Values),
+    looks:^core.Table(render.Material_Values),
 }
 
 // The slots of Physics_Settings the colliders of terrain chunks can still
@@ -416,10 +415,10 @@ owner_publish :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resident
     tint:=owner.tint
     if !seen || owner.full {
         tint=render.MATERIAL_VALUES_DEFAULT
-        if value,ok:=core.get(core.read(c.tints),owner.entity);ok {tint=value}
+        if value,ok:=core.get(core.read(c.looks),owner.entity);ok {tint.color,tint.emission=value.color,value.emission}
     }
     // A program of its own reads its parameters from its material.
-    override:=entry.source.layers_material=={}?resident_layers_override(resident,source,&entry.source):{}
+    override:=entry.source.layers_material=={}?resident_layers_override(resident,source,&entry.source):render.MATERIAL_VALUES_DEFAULT
     materials:=chunk_materials(&entry.source)
     solid:=marker.solid && !owner.far
     appearance:=materials!=owner.materials || tint!=owner.tint || override!=owner.override || solid!=owner.solid
@@ -509,8 +508,9 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
         } else if has {room_give(resident,collider.kind)}
     }
     core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
-    core.add(c.tints,e,owner.tint)
-    if !render.material_values_unnamed(&owner.override) {core.add(c.overrides,e,owner.override)} else if core.has(c.overrides,e) {core.remove(c.overrides,e)}
+    look:=owner.tint
+    render.material_values_over(&look,&owner.override)
+    core.add(c.looks,e,look)
     if wants {core.add(c.colliders,e,s.kind==.Heightfield?phys.collider_heightfield():phys.collider_mesh())} else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
 }
 
@@ -655,12 +655,12 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
 terrain_update :: proc(
     commands:core.Commands,terrains:^core.Table(Terrain),chunks:^core.Table(Terrain_Chunk),
     locals:core.Read(core.Transform),parents:core.Read(core.Parent),ids:core.Read(core.Id),colliders:^core.Table(phys.Collider),
-    meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),overrides:^core.Table(render.Material_Values),
+    meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
     view:core.View,worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),kept:core.Read(scene.Far_Kept),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,
 ) {
-    c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,tints,overrides}
+    c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
     if resident==nil || app.assets==nil {return}
     if !data_ready(data,settings,app.allocator) || !work_ready(data,&app.jobs,app.allocator) {
         core.report(problems,core.NONE,"terrain.memory","out of memory for the list of %d terrain sources of Terrain_Settings.sources; no terrain shows until it fits: free memory, or lower it",max(settings.sources,1))
@@ -815,7 +815,7 @@ terrain_update :: proc(
             if !took || round>QUAD_DEPTH_MAX {break}
         }
         for &entry in data.entries {pages_leave(data,resident,&entry)}
-        seen:=[3]u64{core.version(terrains),core.version(c.tints),core.version(c.overrides)}==resident.shown
+        seen:=[2]u64{core.version(terrains),core.version(c.looks)}==resident.shown
         for marker,row in terrains.values[:core.count(terrains)] {
             entry:=data_find(data,marker.source)
             if entry==nil {continue}
@@ -870,7 +870,7 @@ terrain_update :: proc(
         data_entry_free(entry)
         unordered_remove(&data.entries,i)
     }
-    resident.shown={core.version(terrains),core.version(c.tints),core.version(c.overrides)}
+    resident.shown={core.version(terrains),core.version(c.looks)}
     if resident.room.starved {resident.room.seen=core.version(c.colliders)}
     host.assets_commit(app.assets)
 }

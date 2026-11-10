@@ -212,7 +212,7 @@ Imprint_Gpu :: struct {
 @(step="render",loops="game editor",before="render_sync")
 imprint_render :: proc(
     state:^Imprint_Gpu,grounds:core.Read(Imprint_Ground),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),
+    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),looks:core.Read(erender.Material_Values),
     hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
     layers:core.Read(erender.Layers),locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),
     steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,
@@ -243,7 +243,7 @@ imprint_render :: proc(
             // The entity and those under it, depth first, DEPTH deep at most.
             e,depth:=root,0
             for e!=core.NONE {
-                displace(state,e,ground,write,meshes,worlds,parents,tints,overrides,hidden,highlights,outlines,offsets,layers,locals,cameras,app.assets,app.renderer,&app.extras,frame,place,start,low,high,made)
+                displace(state,e,ground,write,meshes,worlds,parents,looks,hidden,highlights,outlines,offsets,layers,locals,cameras,app.assets,app.renderer,&app.extras,frame,place,start,low,high,made)
                 i:=core.entity_index(e)
                 if depth<DEPTH && i<len(h.first_child) && h.first_child[i]!=core.NONE {e,depth=h.first_child[i],depth+1;continue}
                 // Up to the nearest that has a next sibling, never past the root.
@@ -270,7 +270,7 @@ imprint_render :: proc(
 @(private)
 displace :: proc(
     state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Material_Values),overrides:core.Read(erender.Material_Values),hidden:core.Read(erender.Hidden),
+    parents:core.Read(core.Parent),looks:core.Read(erender.Material_Values),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
     locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
@@ -278,11 +278,10 @@ displace :: proc(
     static,has_mesh:=core.get(meshes,e)
     world,placed:=core.get(worlds,e)
     if !has_mesh || !placed || core.has(hidden,e) {return}
-    tint:=erender.MATERIAL_VALUES_DEFAULT
-    if value,exists:=core.get(tints,e);exists {tint=value}
-    override,_:=core.get(overrides,e)
+    look:=erender.MATERIAL_VALUES_DEFAULT
+    if value,exists:=core.get(looks,e);exists {look=value}
     anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-    shown,usable:=erender.mesh_instance(assets,static,transform,tint,override)
+    shown,usable:=erender.mesh_instance(assets,static,transform,look)
     shown.anchor=anchor
     // A mesh whose geometry still goes to the GPU has no vertices to copy yet: it is drawn as it is.
     if !usable || erender.mesh_uploading(renderer,shown.mesh) {return}

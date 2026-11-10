@@ -48,6 +48,7 @@ material_parameter_value :: proc(v:^gpu.Material_Desc,program:^gpu.Program,name:
 // What the prefab of an entity gives it of its material: its reference. None out of a prefab.
 @(private)
 material_inherited :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (inherited:erender.Material_Values) {
+    inherited=erender.MATERIAL_VALUES_DEFAULT
     c:=inspect_component(s,w,erender.Material_Values,{e})
     if c.t!=nil {inherited=(cast(^erender.Material_Values)raw_data(inspect_default(s,w,c.t,e)))^}
     return
@@ -70,9 +71,7 @@ material_reset_button :: proc(s:^Session,p:Material_Color) {
     values:=gpu.DEFAULT_MATERIAL
     if s.app.assets!=nil {values=host.assets_material_values(s.app.assets,a.row)}
     inherited:=material_inherited(s,w,p.entity)
-    tint:=erender.MATERIAL_VALUES_DEFAULT
-    tc:=inspect_component(s,w,erender.Material_Values,{p.entity})
-    if tc.t!=nil {tint=(cast(^erender.Material_Values)raw_data(inspect_default(s,w,tc.t,p.entity)))^}
+    tint:=inherited
     for name,index in inherited.names[:min(int(inherited.count),len(inherited.names))] {
         if int(inherited.slots[index])==p.slot {erender.material_value_apply(&values,a.program,name,inherited.values[index])}
     }
@@ -80,7 +79,7 @@ material_reset_button :: proc(s:^Session,p:Material_Color) {
     changed:=current!=default_value
     if p.tint {changed=false}
     if p.tint || p.standard {
-        changed|=p.emission?a.tint.emission!=tint.emission:a.tint.color.rgb!=tint.color.rgb
+        changed|=p.emission?a.override.emission!=tint.emission:a.override.color.rgb!=tint.color.rgb
     }
     ctx:=s.gui.ctx
     if !changed {ui.spacer(ctx,REVERT_SIDE,1);return}

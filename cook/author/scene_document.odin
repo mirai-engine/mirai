@@ -79,7 +79,7 @@ COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a d
 // besides the identity and the place of an entity, which have keys of their own.
 component_listed :: proc(t:^core.Table_Info) -> bool {
     switch t.type {
-    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Values: return false
+    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden: return false
     }
     fields,structured:=runtime.type_info_base(t.info).variant.(runtime.Type_Info_Struct)
     if structured && fields.field_count>0 {

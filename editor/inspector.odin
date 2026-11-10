@@ -498,7 +498,7 @@ inspector_listed :: proc(s:^Session,t:^core.Table_Info) -> bool {
 
 @(private)
 inspector_visible :: proc(s:^Session,t:^core.Table_Info) -> bool {
-    return t.type!=erender.Material_Values && inspector_listed(s,t)
+    return inspector_listed(s,t)
 }
 
 // The sections shown first: what an entity is.

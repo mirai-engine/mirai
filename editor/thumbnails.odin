@@ -76,8 +76,7 @@ thumbnail_file_destroy :: proc(file:^Thumbnail_File) {
 // What a preview is drawn from. Its bytes are its signature.
 Thumbnail_Subject :: struct {
     mesh:erender.Mesh_Renderer,
-    tint:erender.Material_Values,
-    override:erender.Material_Values,
+    tint:erender.Material_Values, // what its entity shows of its materials
     rotation:mm.Quat, // of an entity in the world; a preview does not follow where it is
     scale:[3]f32,
     revision:u64,     // of the loaded assets and of the files of the registry
@@ -503,8 +502,7 @@ slot_values :: proc(a:^host.Assets,id:base.Asset_Id,override:^erender.Material_V
 preview_triangles :: proc(a:^host.Assets,subject:^Thumbnail_Subject,vertices:^[dynamic]gpu.Thumbnail_Vertex,materials:^[dynamic]gpu.Material_Desc) -> bool {
     place:=mm.TRANSFORM_IDENTITY
     if subject.scale!={} {place.rotation,place.scale=subject.rotation,subject.scale}
-    override:=subject.override
-    return triangles_append(a,subject.mesh,subject.tint,&override,place,THUMBNAIL_TRIANGLES*3,vertices,materials)==.Added
+    return triangles_append(a,subject.mesh,subject.tint,place,THUMBNAIL_TRIANGLES*3,vertices,materials)==.Added
 }
 
 // What triangles_append did with a Mesh_Renderer.
@@ -524,9 +522,11 @@ Triangles :: enum u8 {
 // primitive or a mesh made at run time takes the tangents of its corners. A
 // corner without a normal takes that of its face. room: the vertices that
 // still fit.
-triangles_append :: proc(a:^host.Assets,mesh:erender.Mesh_Renderer,tint:erender.Material_Values,override:^erender.Material_Values,place:mm.Transform,room:int,vertices:^[dynamic]gpu.Thumbnail_Vertex,materials:^[dynamic]gpu.Material_Desc) -> Triangles {
+triangles_append :: proc(a:^host.Assets,mesh:erender.Mesh_Renderer,tint:erender.Material_Values,place:mm.Transform,room:int,vertices:^[dynamic]gpu.Thumbnail_Vertex,materials:^[dynamic]gpu.Material_Desc) -> Triangles {
     first_vertex:=len(vertices)
     color,emission:=tint.color.rgb,tint.emission
+    tint:=tint
+    override:=&tint
     came:host.Assets_Slots
     if mesh.mesh!={} && !host.assets_mesh_generated(a,mesh.mesh) {
         file:asset.Asset
@@ -671,7 +671,6 @@ preview_entity :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> ui.Quad {
     if !has_mesh {return {}}
     subject:=Thumbnail_Subject{mesh=mesh,tint=erender.MATERIAL_VALUES_DEFAULT}
     if tint,ok:=entity_get(w,e,erender.Material_Values);ok {subject.tint=tint}
-    if override,ok:=entity_get(w,e,erender.Material_Values);ok {subject.override=override}
     world:=entity_world(w,e)
     subject.rotation,subject.scale=world.rotation,world.scale
     named:=[2]u64{u64(e),0x656e74697479}

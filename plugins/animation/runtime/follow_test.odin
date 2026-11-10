@@ -237,7 +237,7 @@ curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_st
     testing.expect(t,pose_profile_check({curve_materials={frame,blush}}))
     testing.expect(t,modifier_append(&modifiers.curve_materials,face,frame) && modifier_append(&modifiers.curve_materials,face,blush))
     override:erender.Material_Values
-    material_override_value(&override,1,base.name_hash("frame"),{9,9,9,9}) // the entity's own, which the curve replaces in the drawing
+    erender.material_value(&override,base.name_hash("frame"),{9,9,9,9},1) // the entity's own, which the curve replaces in the drawing
     applied,moved:=curve_materials_apply(&modifiers,state,2,&override)
     testing.expect(t,applied && moved)
     find :: proc(o:^erender.Material_Values,slot:u8,name:string) -> (value:[4]f32,found:bool) {
@@ -264,7 +264,7 @@ curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_st
     value,found=find(&drawn,1,"frame");testing.expect(t,found && value==[4]f32{1,1,1,1},"blush .5 rounded to its step")
     // A full override keeps what fits and says so; a bad row is refused by the profile.
     full:erender.Material_Values
-    for i in 0..<erender.MATERIAL_VALUES_CAPACITY {material_override_value(&full,0,u64(i+1),{})}
+    for i in 0..<erender.MATERIAL_VALUES_CAPACITY {erender.material_value(&full,u64(i+1),{},0)}
     applied,moved=curve_materials_apply(&modifiers,state,2,&full)
     testing.expect(t,!applied && moved && int(full.count)==erender.MATERIAL_VALUES_CAPACITY)
     nan:=f32(0);nan/=nan
