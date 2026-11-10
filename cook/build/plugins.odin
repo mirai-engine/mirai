@@ -287,13 +287,14 @@ plugin_link_file :: proc(lib:^Plugin_Library) -> string {
 }
 
 // Writes the stage and the declarations of a library, with the declarations
-// it compiles against beside its sources. The errors say what keeps a source
-// from being declared.
+// it compiles against beside its sources, and its module definition on
+// Windows, which names it by the file it is published as. The errors say what
+// keeps a source from being declared.
 @(private)
 plugin_library_prepare :: proc(lib:^Plugin_Library) -> []string {
 	_,decl:=plugin_folder_of(lib)
 	collection:=plugin_collection(lib)
-	errors,_:=declare({root=lib.root,packages=lib.packages,binary=collection,library=lib.linked,stage=lib.stage,decl=decl})
+	errors,_:=declare({root=lib.root,packages=lib.packages,binary=collection,library=lib.linked,stage=lib.stage,decl=decl,definition=plugin_definition(lib)})
 	if len(errors)>0 {return errors}
 	// The stage is its collection: what it compiles against of the same one is copied there.
 	if !decl_mirror(lib.stage,decl,lib.project_needs if lib.project else lib.needs) {
@@ -302,33 +303,16 @@ plugin_library_prepare :: proc(lib:^Plugin_Library) -> []string {
 		return failed
 	}
 	entry_write(lib.stage,PLUGIN_ENTRY,entry_imports(collection,lib.packages)[:])
-	if !plugin_definition_write(lib) {
-		failed:=make([]string,1)
-		failed[0]=fmt.aprintf("%s: its module definition could not be written",lib.stage)
-		return failed
-	}
 	return nil
 }
 
-// The module definition that names a library on Windows by the file it is
-// published as: the libraries that link it look for that name, not the one
-// it is staged as. It stands in the stage, and the compiler runs there
-// (plugin_work) so that the linker flag names it without a path.
+// The module definition its import library is made from (import_libraries_make).
 @(private)
-plugin_definition_write :: proc(lib:^Plugin_Library) -> bool {
-	when ODIN_OS==.Windows {
-		return os.write_entire_file(project.path(lib.stage,plugin_definition_file(lib),allocator=context.temp_allocator),fmt.tprintf("LIBRARY \"%s\"",project.library_file(lib.file,context.temp_allocator)))==nil
-	} else {
-		return true
-	}
+plugin_definition :: proc(lib:^Plugin_Library) -> string {
+	return project.path(lib.stage,fmt.tprintf("%s.def",lib.file),allocator=context.temp_allocator)
 }
 
-@(private="file")
-plugin_definition_file :: proc(lib:^Plugin_Library) -> string {
-	return fmt.tprintf("%s.def",lib.file)
-}
-
-// The compiler's command for a library, which writes it to staged and runs in its stage.
+// The compiler's command for a library, which writes it to staged.
 @(private)
 plugin_command :: proc(lib:^Plugin_Library,compiler,engine_decl,staged:string,flags:[]string,allocator:=context.allocator) -> []string {
 	command:=make([dynamic]string,allocator)
@@ -344,11 +328,9 @@ plugin_command :: proc(lib:^Plugin_Library,compiler,engine_decl,staged:string,fl
 	append(&command,"-json-errors")
 	file:=project.library_file(lib.file,context.temp_allocator)
 	// The library of the project finds them in their folder, and they find each other there.
-	// Odin passes no quotes in -extra-linker-flags (odin-lang/Odin#2741): a path with spaces would reach
-	// the linker split in two, so on Windows the definition is named relative to the stage.
 	when ODIN_OS==.Linux {linker_flags_append(&command,fmt.tprintf("-Wl,-soname,%s -Wl,-rpath,$ORIGIN %s",file,LIBRARY_OWN_RUNTIME),allocator)}
 	else when ODIN_OS==.Darwin {linker_flags_append(&command,fmt.tprintf("-Wl,-install_name,@rpath/%s -Wl,-rpath,@loader_path %s",file,LIBRARY_OWN_RUNTIME),allocator)}
-	else when ODIN_OS==.Windows {linker_flags_append(&command,fmt.tprintf("/DEF:%s",plugin_definition_file(lib)),allocator)}
+	else when ODIN_OS==.Windows {linker_flags_append(&command,"/NOIMPLIB",allocator)}
 	return command[:]
 }
 
@@ -385,29 +367,18 @@ plugin_cache_entry :: proc(engine_root:string,lib:^Plugin_Library,hash:u64) -> s
 	return project.path(workspace.cache_folder(engine_root,"plugins",context.temp_allocator),fmt.tprintf("%x-%s",hash,lib.family),allocator=context.temp_allocator)
 }
 
-// What an entry holds and where the library has it: the library and, on
-// Windows, the import library its dependents and the project link against.
-@(private)
-plugin_cache_files :: proc(lib:^Plugin_Library) -> (files:[2][2]string) {
-	files[0]={project.library_file(lib.file,context.temp_allocator),lib.library}
-	when ODIN_OS==.Windows {files[1]={library_import_file(lib.file,context.temp_allocator),lib.linked}}
-	return
-}
-
-// Keeps a library just built in the cache.
+// Keeps a library just built in the cache; what links against it on Windows
+// is made from its declarations (import_libraries_make).
 @(private)
 plugin_cache_store :: proc(engine_root:string,lib:^Plugin_Library,hash:u64) {
 	entry:=plugin_cache_entry(engine_root,lib,hash)
 	staging,fresh:=cache_entry_begin(entry)
 	if !fresh {return}
-	for file in plugin_cache_files(lib) {
-		if file[0]=="" {continue}
-		if os.copy_file(project.path(staging,file[0],allocator=context.temp_allocator),file[1])!=nil {
-			_=base.remove_all(staging)
-			return
-		}
+	if os.copy_file(project.path(staging,project.library_file(lib.file,context.temp_allocator),allocator=context.temp_allocator),lib.library)!=nil {
+		_=base.remove_all(staging)
+		return
 	}
-	// The job trims the cache once its libraries are stored (plugin_cache_trim).
+	// The job trims the cache once it ends (plugin_cache_trim).
 	cache_entry_commit(entry,staging)
 }
 
@@ -417,28 +388,16 @@ plugin_cache_trim :: proc(engine_root:string) {
 	cache_trim(workspace.cache_folder(engine_root,"plugins",context.temp_allocator),PLUGIN_CACHE_ENTRIES)
 }
 
-// Copies the library of an entry next to staged, the way the compiler leaves
-// it (staged and, on Windows, its import library beside it). False when the
-// cache has none or it cannot be copied whole.
+// Copies the library of an entry to staged. False when the cache has none or
+// it cannot be copied.
 @(private)
 plugin_cache_take :: proc(engine_root:string,lib:^Plugin_Library,hash:u64,staged:string) -> bool {
 	entry:=plugin_cache_entry(engine_root,lib,hash)
 	if !cache_entry_complete(entry) {return false}
-	targets:=[2]string{staged,""}
-	when ODIN_OS==.Windows {targets[1]=plugin_import_staged(staged)}
-	for file,i in plugin_cache_files(lib) {
-		if file[0]=="" {continue}
-		if os.copy_file(targets[i],project.path(entry,file[0],allocator=context.temp_allocator))!=nil {
-			for target in targets {if target!="" {_=os.remove(target)}}
-			return false
-		}
+	if os.copy_file(staged,project.path(entry,project.library_file(lib.file,context.temp_allocator),allocator=context.temp_allocator))!=nil {
+		_=os.remove(staged)
+		return false
 	}
 	cache_entry_used(entry)
 	return true
-}
-
-// The import library the compiler leaves next to a library on Windows.
-@(private)
-plugin_import_staged :: proc(staged:string) -> string {
-	return strings.concatenate({staged[:len(staged)-len(project.LIBRARY_SUFFIX)],".lib"},context.temp_allocator)
 }

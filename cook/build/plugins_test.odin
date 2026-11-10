@@ -96,36 +96,36 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
     testing.expect_value(t,hashes[1],hashes[0])
 }
 
-@(private="file")
-spaced_library :: proc(folder:string) -> Plugin_Library {
-    stage:=project.path(folder,"a folder","stage-thing-runtime",allocator=context.temp_allocator)
-    return {name="thing",path="thing/runtime",file="plugin-thing-runtime-minimal",stage=stage}
-}
-
-// The library of a project under a folder with spaces links with its definition
-// and the import library names the file it is published as.
+// On Windows what links against a library links against an import library
+// made from the module definition declare writes, before the library
+// compiles: it names the file the library is published as and what it
+// exports, and the library, here under a folder with spaces, compiles
+// without one of its own.
 @(test)
-a_plugin_library_under_a_folder_with_spaces_links_with_its_definition :: proc(t:^testing.T) {
-    when ODIN_OS==.Windows {
+a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testing.T) {
+    when IMPORT_LIBRARIES_AHEAD {
         context.allocator=context.temp_allocator
         root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
         compiler,found:=compiler_find(root,context.temp_allocator)
         if !testing.expect(t,found,"no Odin compiler") {return}
         folder:=base.test_folder(t,"plugin-spaces")
         if folder=="" {return}
-        lib:=spaced_library(folder)
-        testing.expect(t,os.make_directory_all(lib.stage)==nil)
-        entry_write(lib.stage,PLUGIN_ENTRY,{})
-        testing.expect(t,os.write_entire_file(project.path(lib.stage,PLUGIN_ENTRY,"answer.odin"),"package __plugin\n\n@(export)\nanswer :: proc \"c\" () -> i32 {return 42}\n")==nil)
-        testing.expect(t,plugin_definition_write(&lib))
+        sources:=project.path(folder,"a folder","plugins")
+        testing.expect(t,os.make_directory_all(project.path(sources,"thing/runtime"))==nil)
+        testing.expect(t,os.write_entire_file(project.path(sources,"thing/runtime/answer.odin"),"package thing\n\nanswer :: proc() -> i32 {return 42}\n")==nil)
+        lib:=Plugin_Library{name="thing",path="thing/runtime",packages={"thing/runtime"},root=sources,file="plugin-thing-runtime-minimal-00000001",
+            stage=project.path(folder,"a folder","minimal","stage-thing-runtime"),linked=project.path(folder,"a folder","lib","plugin-thing-runtime-minimal-00000001.lib")}
+        testing.expect(t,os.make_directory_all(project.path(folder,"a folder","lib"))==nil)
+        if failed:=plugin_library_prepare(&lib);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+        testing.expect_value(t,import_libraries_make(compiler,{{plugin_definition(&lib),lib.linked}}),"")
+        import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
+        testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
         staged:=project.path(folder,"a folder","staged.dll")
         command:=plugin_command(&lib,compiler,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
         memory,_:=compiler_memory()
-        state,_,errors,error:=subprocess.exec({command=command,working_dir=lib.stage,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
+        state,_,errors,error:=subprocess.exec({command=command,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
         if !testing.expectf(t,error==nil && state.exit_code==0,"the library does not link:\n%s",string(errors)) {return}
-        testing.expect(t,os.is_file(staged))
-        import_library,read:=os.read_entire_file(project.path(folder,"a folder","staged.lib"),context.temp_allocator)
-        testing.expect(t,read==nil && strings.contains(string(import_library),project.library_file(lib.file,context.temp_allocator)),"the import library names the published file")
+        testing.expect(t,os.is_file(staged) && !os.is_file(project.path(folder,"a folder","staged.lib")),"the library leaves no import library of its own")
     }
 }
 
@@ -444,9 +444,10 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     testing.expect_value(t,string(printed),"a Cancel of Request{kind = \"Section\", at = 7}, 42")
 }
 
-// The libraries of plugins compile at once, each as soon as the libraries it
-// links against are published: one that depends on another waits for it, and
-// one that does not starts beside it.
+// The libraries of plugins compile at once, each as soon as what it links
+// against is there: on Windows the import libraries made ahead, so all of
+// them start together; elsewhere the libraries, so one that depends on
+// another waits for it, and one that does not starts beside it.
 @(test)
 a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -492,9 +493,9 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     job.plugin_limit=3
     job_plugins_start(job)
     testing.expect(t,running(job,base_index) && running(job,lone_index),"what depends on nothing that is not published starts at once")
-    testing.expect(t,!running(job,middle_index),"a library waits for the one it links against")
+    testing.expect(t,running(job,middle_index)==IMPORT_LIBRARIES_AHEAD,"a library waits for the one it links against unless what it links was made ahead")
     for len(job.compiles)>0 {
-        if running(job,middle_index) {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
+        if running(job,middle_index) && !IMPORT_LIBRARIES_AHEAD {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
         compile:=job.compiles[0]
         ordered_remove(&job.compiles,0)
         state,_:=os.process_wait(compile.process)
