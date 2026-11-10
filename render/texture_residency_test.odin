@@ -121,8 +121,9 @@ the_feedback_of_the_frames_sets_the_level_of_each_texture :: proc(t: ^testing.T)
 	}
 }
 
-// The textures that need more levels go first, the farthest from their target
-// first, unless the pool is past its room; those being read are left out.
+// Only textures that need more levels are read, the farthest from their
+// target first, none while the textures take more than the pool; those being
+// read are left out. One that needs fewer gives them up alone.
 @(test)
 texture_requests_put_what_is_most_blurred_first :: proc(t: ^testing.T) {
 	r := new(Renderer)
@@ -136,13 +137,12 @@ texture_requests_put_what_is_most_blurred_first :: proc(t: ^testing.T) {
 	r.textures.count, r.textures.residency.pending = 3, 3
 	out: [4]Texture_Request
 	count := texture_requests(r, out[:], nil)
-	testing.expect(t, count == 3 && out[0].handle == 2 && out[1].handle == 3 && out[2].handle == 1, "grows first, the largest first")
+	testing.expect(t, count == 2 && out[0].handle == 2 && out[1].handle == 3, "what grows, the most first; not what shrinks")
 	testing.expect(t, out[0].level == 2 && out[0].stamp == streams[1].stamp)
 	count = texture_requests(r, out[:1], {2})
 	testing.expect(t, count == 1 && out[0].handle == 3, "what is being read is left out")
 	r.settings.texture_pool_megabytes, r.textures.bytes = 1, 2 << 20
-	count = texture_requests(r, out[:], nil)
-	testing.expect(t, count == 3 && out[0].handle == 1, "past the pool, what frees memory first")
+	testing.expect_value(t, texture_requests(r, out[:], nil), 0)
 }
 
 // A request is answered only while the texture is the one it asked about.
