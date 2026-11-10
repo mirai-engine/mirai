@@ -74,6 +74,7 @@ cmd_session :: proc(root:string,args:[]string) -> int {
 // What start and restart take; what is not theirs goes to the editor.
 Session_Options :: struct {
     mode:Build_Mode,
+    mode_asked:bool, // --dev or --release was given
     no_build,discard,orphans,copy:bool,
     timeout:int, // seconds for the API to answer
     editor_args:[]string,
@@ -87,8 +88,8 @@ session_options :: proc(args:[]string) -> (options:Session_Options,problem:strin
         switch args[i] {
         case "--dev","--release":
             mode:=args[i]=="--dev"?Build_Mode.Dev:Build_Mode.Release
-            if options.mode!=.Keep && options.mode!=mode {return {},"--dev and --release do not go together"}
-            options.mode=mode
+            if options.mode_asked && options.mode!=mode {return {},"--dev and --release do not go together"}
+            options.mode,options.mode_asked=mode,true
         case "--no-build": options.no_build=true
         case "--discard":  options.discard=true
         case "--orphans":  options.orphans=true
@@ -162,13 +163,13 @@ session_record :: proc(folder:string) -> (record:Session_Record,found:bool) {
     return record,true
 }
 
-// The mode of the binaries a record names; Keep when it names none.
-session_record_mode :: proc(record:Session_Record) -> Build_Mode {
+// The mode of the binaries a record names; false when it names none.
+session_record_mode :: proc(record:Session_Record) -> (mode:Build_Mode,named:bool) {
     switch record.mode {
-    case "dev":     return .Dev
-    case "release": return .Release
+    case "dev":     return .Dev,true
+    case "release": return .Release,true
     }
-    return .Keep
+    return
 }
 
 @(private="file")
@@ -224,7 +225,8 @@ session_restart :: proc(root,folder:string,args:[]string) -> int {
     if problem!="" {fmt.eprintfln("mirai session restart: %s. Usage: mirai %s",problem,SESSION_USAGE);return 2}
     mode,editor_args:=options.mode,options.editor_args
     if record,recorded:=session_record(folder);recorded {
-        if mode==.Keep {mode=session_record_mode(record)}
+        // The session opens again as it was opened, unless a mode is asked for.
+        if recorded_mode,named:=session_record_mode(record);named && !options.mode_asked {mode=recorded_mode}
         if len(editor_args)==0 {editor_args=record.args}
     }
     closed:=false
