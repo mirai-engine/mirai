@@ -287,8 +287,8 @@ this way.
 
 Fields of `Card`:
 
-- `label`: name of the card and of the entity. `scene.add` accepts it in `preset`, case-insensitive
-  and with `_` for space.
+- `label`: name of the card and of the entity. `scene.write` accepts it in `preset`,
+  case-insensitive and with `_` for space.
 - `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, which goes after those of the
   editor (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
 - `icon`, `drawing`, `color`: an existing `ui.Icon` or, with empty `icon`, a drawing of its own
@@ -302,7 +302,7 @@ Fields of `Card`:
 
 Rules:
 
-- `label` is the name of the card and of the entity; `scene.add` accepts it in `preset`,
+- `label` is the name of the card and of the entity; `scene.write` accepts it in `preset`,
   case-insensitive and with `_` for space. A `group` of its own goes after the editor's sections;
   empty, in Logic.
 - `make` runs inside the creation's undo step, on an entity that already has `Id`, `Name`,
@@ -310,7 +310,7 @@ Rules:
 - The entity that has the card's `component` carries its icon in outliner, Find, slots and its
   disk, and the component's section in its header.
 - `cards(s)` returns the presets first (a preset's index is its value) and then the cards.
-  Dragging, the placement click, Edit > Create and `scene.add` create the same:
+  Dragging, the placement click, Edit > Create and `scene.write` create the same:
   `entity_create` with `Create_Desc.card`.
 - What a selected entity shows besides the icon (a decal's box, a portal's opening and the path to
   its exit) is drawn by a `frame` `after="editor_tools"` step of the plugin with

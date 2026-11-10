@@ -12,7 +12,7 @@ This is a Mirai game project.
   Extend it instead of studying the engine.
 - A scene (a prefab is one with a single root) and a `.ui` are files of `assets/`, the source of
   the game: change them with
-  `scene.write`, `scene.add`, `scene.set` and `scene.save` (or `ui.write`) or in the editor. Only
+  `scene.write` and `scene.save` (or `ui.write`) or in the editor. Only
   generated assets (`tools/content`) come from code, and nothing writes over what the API saved.
 - Engine sources are not the documentation. Do not read them to learn the API.
 

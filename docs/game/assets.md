@@ -13,7 +13,7 @@ has an id in its header: components and scenes name it by id; code, by its path.
 ## Map
 
 - Import a file: [Import](#import). Kinds: [Kinds](#kinds). Use an asset: [Reference](#reference).
-- Check or edit a file: [Inspect](#inspect). Interfaces and scenes as files of text:
+- Check or edit a file: [Inspect](#inspect). Interfaces and scenes as text:
   [text-sources.md](assets/text-sources.md). By code: [content-tool.md](assets/content-tool.md),
   props [props.md](assets/props.md), terrain and sea [whole-scene.md](assets/whole-scene.md).
 

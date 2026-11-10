@@ -542,7 +542,8 @@ points) and these plugins:
   prefab (with `Rigid_Body`, of the layer's material, which leaves with `speed`) and a drop one,
   each per so many cubic meters removed; what does not reach is owed to the next edit of that
   terrain (`Debris_Owed`), with a cap per tick for each.
-- Both are configured in the inspector and by `scene.set`; the demo builds them in the `dig` scene.
+- Both are configured in the inspector and by `scene.write`; the demo has them in the `dig`
+  scene.
 
 ## Network
 

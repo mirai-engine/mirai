@@ -29,8 +29,8 @@ The nodes of `hud.ui` bind by path; the entity of the screen carries `Status`:
 Write it with [ui.write](writing-ui.md). In the scene, the screen and its data on one entity:
 
 ```json
-{"method":"scene.add","params":{"name":"Hud","components":{
- "UI_Screen":{"asset":"hud/hud.ui"},"Status":{"message":"Hit the wall"}}}}
+{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Hud","components":{
+ "UI_Screen":{"asset":"hud/hud.ui"},"Status":{"message":"Hit the wall"}}}]}}
 ```
 
 - A path starts at a component of the entity of the screen (`UI_Screen.entity` names another
@@ -79,10 +79,10 @@ An entity with a `World_Widget` shows a `.ui` at its place; its paths name compo
 entity first, so one `.ui` serves every entity that has them.
 
 ```json
-{"method":"scene.add","params":{"name":"Sign","position":[-3,1.6,2],"components":{
+{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Sign","position":[-3,1.6,2],"components":{
  "World_Widget":{"asset":"arena/sign.ui","size":[220,70],"scale":0.01,
   "facing":"Billboard_Upright","pivot":"Bottom_Center"},
- "Status":{"message":"Hit the wall"}}}}
+ "Status":{"message":"Hit the wall"}}}]}}
 ```
 
 `scale` is metres per layout unit; `Status` is what its paths read.
