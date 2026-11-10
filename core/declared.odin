@@ -73,7 +73,8 @@ default_names :: proc(name:string,buffer:[]u8) -> (constant,maker,for_device:str
 // options: each attribute of the declaration by its name, with its value or
 // "". editor: its package is of the editor. invalid: the option whose value
 // is not one it takes, "replicated" or "setting"; "" when all are.
-declared_read :: proc(options:map[string]string,editor:bool) -> (d:Declared,invalid:string) {
+declared_read :: proc(d:^Declared,options:map[string]string,editor:bool) -> (invalid:string) {
+    d^={}
     _,d.shared=options["shared"]
     _,d.host=options["host"]
     _,d.by_world=options["by_world"]

@@ -486,9 +486,7 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             t.file,t.value=file,decl.values[0]
             t.key=fmt.aprintf("%s.%s",pkg.path,name)
             t.kind=is_component?.Component:.Storage
-            invalid:string
-            t.declared,invalid=core.declared_read(options,pkg.editor)
-            switch invalid {
+            switch core.declared_read(&t.declared,options,pkg.editor) {
             case "replicated":
                 append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",pkg.folder,name,options["replicated"]))
                 continue
@@ -1978,7 +1976,6 @@ for_device_value :: proc(t:^Type) -> string {
 }
 
 // The options of the attributes of a declaration: name, or name="value", or name=number.
-@(private="file")
 attributes_read :: proc(attributes:[]^ast.Attribute) -> map[string]string {
     options:=make(map[string]string,context.temp_allocator)
     for attribute in attributes {

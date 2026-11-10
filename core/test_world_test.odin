@@ -325,13 +325,15 @@ Source :: struct {path,text:string}
 // nil with what is wrong, in the temp allocator.
 @(private="file")
 made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_set[Place],verify:bool,allocator:runtime.Allocator) -> (made:^Test_Made,problem:string) {
-    given:=make([dynamic]Test_Type,context.temp_allocator)
-    test_types_core(&given)
-    types(&given)
-    sources:=make([dynamic]Source,context.temp_allocator)
-    defer for source in sources {delete(source.text,allocator)}
-    tables:=make([dynamic]Test_Field,context.temp_allocator)
-    storages:=make([dynamic]Test_Field,context.temp_allocator)
+    b:Build
+    b.read,b.allocator=read,allocator
+    b.given=make([dynamic]Test_Type,context.temp_allocator)
+    test_types_core(&b.given)
+    types(&b.given)
+    b.sources=make([dynamic]Source,context.temp_allocator)
+    defer for source in b.sources {delete(source.text,allocator)}
+    b.tables=make([dynamic]Test_Field,context.temp_allocator)
+    b.storages=make([dynamic]Test_Field,context.temp_allocator)
     for place in ([3]Place{.World,.Shared,.Editor}) {
         if structs[place]==nil {continue}
         layout,is_struct:=runtime.type_info_base(structs[place]).variant.(runtime.Type_Info_Struct)
@@ -339,40 +341,14 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
         if place==.World && (layout.field_count==0 || layout.types[0].id!=Test_World || layout.offsets[0]!=0) {
             return nil,fmt.tprintf("%v does not start with `using world:core.Test_World`: its entities and the revisions of its storages go first",structs[place])
         }
-        for i in 0..<int(layout.field_count) {
-            if layout.names[i]=="_" || layout.types[i].id==Test_World {continue}
-            f:=Test_Field{place=place,offset=layout.offsets[i],info=layout.types[i],name=layout.names[i]}
-            _,f.game=field_option(reflect.Struct_Tag(layout.tags[i]),"game")
-            if held,kind:=field_held(layout.types[i]);held!=nil {
-                f.kind,f.info=kind,held
-                if kind==.Table {f.values=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct).types[0]}
+        if problem=build_fields(&b,place,layout,0);problem!="" {return nil,problem}
+    }
+    tables,storages,sources:=b.tables,b.storages,b.sources
+    for list in ([2][]Test_Field{tables[:],storages[:]}) {
+        for &f,i in list {
+            for &other in list[:i] {
+                if other.type==f.type && other.place==f.place && other.name==f.name {return nil,fmt.tprintf("%s.%s is held twice: a World has one table of a component and one value of a storage",f.library,f.name)}
             }
-            if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
-                return nil,fmt.tprintf("%v.%s: a table goes in the World or in the editor, and a By_World in the struct of the application",structs[place],layout.names[i])
-            }
-            f.type=f.info.id
-            named,is_named:=f.info.variant.(runtime.Type_Info_Named)
-            if is_named {f.name,f.library=named.name,named.pkg}
-            if name,renamed:=field_option(reflect.Struct_Tag(layout.tags[i]),"name");renamed {f.name=name}
-            for type in given {
-                if type.type==f.type {
-                    f.procs=type
-                    break
-                }
-            }
-            if is_named && named.loc!=nil && place in read {
-                if problem=field_declared(&f,named.loc^,&sources,allocator);problem!="" {return nil,problem}
-            }
-            if f.file!="" {
-                if f.kind==.By_World && !f.declared.by_world || f.kind==.Storage && f.declared.by_world {
-                    return nil,fmt.tprintf("%s is %sby_world: the struct of the application holds it as %s",f.name,f.declared.by_world?"":"not ",f.declared.by_world?fmt.tprintf("core.By_World(%s)",f.name):"a value")
-                }
-                if f.declared.host!=(place==.Shared) {
-                    return nil,fmt.tprintf("%s is %s: it goes in the struct of %s",f.name,f.declared.host?"@(storage,host)":"not @(storage,host)",f.declared.host?"the application":"the World, or of the editor")
-                }
-                if problem=field_procs(&f);problem!="" {return nil,problem}
-            }
-            append(f.kind==.Table?&tables:&storages,f)
         }
     }
     if len(storages)>TEST_STORAGES {return nil,fmt.tprintf("a test world of %d storages: TEST_STORAGES holds the revisions of %d",len(storages),TEST_STORAGES)}
@@ -414,6 +390,64 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
     return made,""
 }
 
+@(private="file")
+Build :: struct {
+    given:[dynamic]Test_Type,
+    sources:[dynamic]Source,
+    tables,storages:[dynamic]Test_Field,
+    read:bit_set[Place],
+    allocator:runtime.Allocator,
+}
+
+// The fields of a struct of a place, base bytes into it. A field with using
+// that is a struct is a group: the tables and storages a library gives its
+// test worlds together.
+@(private="file")
+build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:uintptr) -> (problem:string) {
+    for i in 0..<int(layout.field_count) {
+        if layout.names[i]=="_" || layout.types[i].id==Test_World {continue}
+        held,kind:=field_held(layout.types[i])
+        if group,is_group:=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct);is_group && layout.usings[i] && held==nil {
+            if problem=build_fields(b,place,group,base+layout.offsets[i]);problem!="" {return}
+            continue
+        }
+        tag:=reflect.Struct_Tag(layout.tags[i])
+        f:=Test_Field{place=place,offset=base+layout.offsets[i],info=layout.types[i],name=layout.names[i]}
+        _,f.game=field_option(tag,"game")
+        if held!=nil {
+            f.kind,f.info=kind,held
+            if kind==.Table {f.values=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct).types[0]}
+        }
+        if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
+            return fmt.tprintf("%s: a table goes in the World or in the editor, and a By_World in the struct of the application",layout.names[i])
+        }
+        f.type=f.info.id
+        named,is_named:=f.info.variant.(runtime.Type_Info_Named)
+        if is_named {f.name,f.library=named.name,named.pkg}
+        if name,renamed:=field_option(tag,"name");renamed {f.name=name}
+        for type in b.given {
+            if type.type==f.type {
+                f.procs=type
+                break
+            }
+        }
+        if is_named && named.loc!=nil && place in b.read {
+            if problem=field_declared(&f,named.loc^,&b.sources,b.allocator);problem!="" {return}
+        }
+        if f.file!="" {
+            if f.kind==.By_World && !f.declared.by_world || f.kind==.Storage && f.declared.by_world {
+                return fmt.tprintf("%s is %sby_world: the struct of the application holds it as %s",f.name,f.declared.by_world?"":"not ",f.declared.by_world?fmt.tprintf("core.By_World(%s)",f.name):"a value")
+            }
+            if f.declared.host!=(place==.Shared) {
+                return fmt.tprintf("%s is %s: it goes in the struct of %s",f.name,f.declared.host?"@(storage,host)":"not @(storage,host)",f.declared.host?"the application":"the World, or of the editor")
+            }
+            if problem=field_procs(&f);problem!="" {return}
+        }
+        append(f.kind==.Table?&b.tables:&b.storages,f)
+    }
+    return ""
+}
+
 // The type a Table or a By_World of core holds, and which of them it is; nil for another type.
 @(private="file")
 field_held :: proc(info:^runtime.Type_Info) -> (held:^runtime.Type_Info,kind:Test_Field_Kind) {
@@ -451,9 +485,7 @@ field_declared :: proc(f:^Test_Field,loc:runtime.Source_Code_Location,sources:^[
     if component!=(f.kind==.Table) {
         return fmt.tprintf("%s.%s is a %s: a test world holds it as %s",f.library,f.name,component?"@(component)":"@(storage)",component?fmt.tprintf("core.Table(%s)",f.name):"a value")
     }
-    invalid:string
-    f.declared,invalid=declared_read(options,f.place==.Editor)
-    if invalid!="" {return fmt.tprintf("%s.%s has %s=%q, which the generator refuses",f.library,f.name,invalid,options[invalid])}
+    if invalid:=declared_read(&f.declared,options,f.place==.Editor);invalid!="" {return fmt.tprintf("%s.%s has %s=%q, which the generator refuses",f.library,f.name,invalid,options[invalid])}
     f.file=loc.file_path
     folder:=path_folder(loc.file_path)
     f.base=component && path_folder(#file)==folder && !strings.has_suffix(loc.file_path,"_test.odin")
