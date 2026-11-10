@@ -929,8 +929,10 @@ Copy_Mark :: struct {
 // of src or of a World made from src, whose rows carry the stamps of the
 // writes that made them: a World into which a World of another origin was
 // copied is copied whole first. Nothing when src did not change since the
-// copy mark says; the rows whose stamps differ when both have the same rows;
-// all of it otherwise. To the readers of dst it is a copy like table_copy.
+// copy mark says; the rows stamped since, skipping whole the pages written
+// before, when src kept its rows since; the rows whose stamps differ when
+// both have the same rows; all of it otherwise. To the readers of dst it is
+// a copy like table_copy.
 table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
     return raw_copy_changed(raw(dst),raw(src),type_info_of(T),false,mark)
 }
@@ -939,23 +941,29 @@ table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
 raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool,mark:^Copy_Mark) -> bool {
     if dst==src {return true}
     if mark.valid && mark.version==src.version && mark.layout==src.layout {return true}
+    since:=rows_since(src,dst,mark^)
     mark.valid=false
-    same:=dst.on==src.on && len(dst.entities)==len(src.entities) && slice.equal(dst.entities[:],src.entities[:]) && slice.equal(dst.off[:],src.off[:])
-    if !same {
+    if since<0 {
         if !raw_copy(dst,src,info,flat) {return false}
         mark^={src.version,src.layout,true}
         return true
     }
     size,asked:=info.size,flat
     flat:=flat
-    for stamp,row in src.stamps {
-        if dst.stamps[row]==stamp {continue}
-        if !asked {flat,asked=value_flat(info),true}
-        if flat {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
-        dst.stamps[row]=stamp
+    for row:=0;row<len(src.stamps); {
+        if row&(STAMP_PAGE-1)==0 && src.page_stamps[row>>STAMP_PAGE_BITS]<=u64(since) {
+            row+=STAMP_PAGE
+            continue
+        }
+        if stamp:=src.stamps[row];stamp>u64(since) && dst.stamps[row]!=stamp {
+            if !asked {flat,asked=value_flat(info),true}
+            if flat {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
+            dst.stamps[row]=stamp
+        }
+        row+=1
     }
-    // The same rows take the same pages.
-    copy(dst.page_stamps[:],src.page_stamps[:])
+    // The same rows take the same pages; a row skipped may keep a stamp of its own.
+    for &page,p in dst.page_stamps {page=max(page,src.page_stamps[p])}
     // The rows by entity follow from the entities, which are the same.
     if !slice.equal(dst.turns[:],src.turns[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.turns,cast(^runtime.Raw_Dynamic_Array)&src.turns,size_of(u64),align_of(u64)) {return false}
     if !slice.equal(dst.owners[:],src.owners[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
@@ -968,6 +976,57 @@ raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool,ma
     dst.layout=max(dst.layout,src.layout)+1
     mark^={src.version,src.layout,true}
     return true
+}
+
+// Of a table and b, a copy of it when mark was taken of a, whether they hold
+// the same rows, and from which stamp on those of a may differ from those of
+// b: the version of the mark when a kept its rows since (the rows stamped up
+// to it are as the copy took them), 0 when the rows only came out the same,
+// -1 when they are others.
+@(private)
+rows_since :: proc "contextless" (a,b:^Raw_Table,mark:Copy_Mark) -> i64 {
+    if a.on!=b.on || len(a.stamps)!=len(b.stamps) {return -1}
+    if mark.valid && mark.layout==a.layout {return i64(mark.version)}
+    return slice.equal(a.entities[:],b.entities[:]) && slice.equal(a.off[:],b.off[:])?0:-1
+}
+
+// Whether raw_restore can bring back src into dst, a src that
+// world_copy_changed keeps as a copy of dst with mark: both still hold the
+// same rows, on and off, with the same turns and owners. The stamp from
+// which it looks, as rows_since gives it, or -1.
+@(private)
+restore_since :: proc "contextless" (dst,src:^Raw_Table,mark:Copy_Mark) -> i64 {
+    since:=rows_since(dst,src,mark)
+    return since>=0 && slice.equal(dst.turns[:],src.turns[:]) && slice.equal(dst.owners[:],src.owners[:])?since:-1
+}
+
+// Makes the rows of dst those of src in place, for a restore_since that is
+// not -1 and values that hold nothing behind a pointer. Each row whose value
+// or whose being added differs takes a stamp above every other, with the
+// parity of its stamp in src, so a reader sees exactly the rows that went
+// back, and none goes to gone; what waits for the settle is dropped. It
+// allocates nothing.
+@(private)
+raw_restore :: proc "contextless" (dst,src:^Raw_Table,size:int,since:i64) {
+    next:=(dst.version+2)&~u64(1)
+    written:=false
+    for row:=0;row<len(dst.stamps); {
+        if row&(STAMP_PAGE-1)==0 && dst.page_stamps[row>>STAMP_PAGE_BITS]<=u64(since) {
+            row+=STAMP_PAGE
+            continue
+        }
+        stamp,from:=dst.stamps[row],src.stamps[row]
+        if stamp>u64(since) && stamp!=from && ((stamp~from)&1==1 || mem.compare_ptrs(raw_at(dst,size,row),raw_at(src,size,row),size)!=0) {
+            if size>0 {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)}
+            stamp_set(dst,row,next+(from&1))
+            written=true
+        }
+        row+=1
+    }
+    if written {dst.version=next+1}
+    clear(&dst.pending)
+    dst.added.len=0
+    table_waits(dst,false)
 }
 
 table_swap :: proc(a,b:^Table($T)) {raw_swap(raw(a),raw(b))}
