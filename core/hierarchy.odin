@@ -20,12 +20,43 @@ Hierarchy :: struct {
     cut:[dynamic]Entity, // with a Parent left out for a cycle: tried again when a link changes
     seen:Seen,           // of Parent
     version:u64,         // grows when a link changes
+    moved:[dynamic]Entity, // the entities whose link changed, oldest first, as the gone of a table: hierarchy_moved
+    moved_first:u64,       // how many moved before moved[0]
 }
+
+// The links a reader of the tree is told one by one between two of its reads; past them it reads the tree whole.
+HIERARCHY_MOVED :: 1024
 
 hierarchy_clear :: proc(h:^Hierarchy) {
     clear(&h.parent);clear(&h.first_child);clear(&h.last_child);clear(&h.next_sibling);clear(&h.previous_sibling);clear(&h.cut)
     h.seen={}
     h.version+=1
+    moved_reset(h)
+}
+
+// No reader has seen the tree there is now.
+@(private)
+moved_reset :: proc "contextless" (h:^Hierarchy) {
+    h.moved_first+=u64(len(h.moved))+1
+    clear(&h.moved)
+}
+
+@(private)
+moved_push :: proc(h:^Hierarchy,e:Entity) {
+    if len(h.moved)>=HIERARCHY_MOVED {moved_reset(h)}
+    if _,error:=append(&h.moved,e);error!=nil {moved_reset(h)}
+}
+
+// The entities whose link in the tree changed since seen, which it moves to
+// now: each hangs from another entity, or from none, or among its siblings in
+// another order. whole: the reader had not seen the tree there is, and goes
+// through all of it. Valid until the next settle.
+hierarchy_moved :: proc "contextless" (h:Ref(Hierarchy),seen:^u64) -> (moved:[]Entity,whole:bool) {
+    if h.ptr==nil {return nil,false}
+    end:=h.moved_first+u64(len(h.moved))
+    if seen^<h.moved_first || seen^>end {whole=true} else {moved=h.moved[seen^-h.moved_first:]}
+    seen^=end
+    return
 }
 
 // Makes the tree follow what Parent settled since it last looked: the
@@ -49,12 +80,16 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
         slice.zero(h.next_sibling[:]);slice.zero(h.previous_sibling[:])
         clear(&h.cut)
         for row in 0..<count(parents) {hierarchy_place(h,parents,es,entity_at(parents,row))}
+        moved_reset(h)
         moved=true
     } else {
         for e in es.doomed {moved=hierarchy_orphan(h,e) || moved}
         for e in c.gone {
             cut_drop(h,e)
-            moved=hierarchy_unlink(h,e) || moved
+            if hierarchy_unlink(h,e) {
+                moved_push(h,e)
+                moved=true
+            }
         }
         for row in each_changed(parents,&c) {
             e:=entity_at(parents,row)
@@ -62,6 +97,7 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
             cut_drop(h,e)
             hierarchy_unlink(h,e)
             hierarchy_place(h,parents,es,e)
+            moved_push(h,e)
             moved=true
         }
     }
@@ -71,9 +107,8 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
         for _ in 0..<tried {
             e:=h.cut[0]
             ordered_remove(&h.cut,0)
-            if alive(es,e) && has(parents,e) && !hierarchy_link(h,parents,es,e) {
-                if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
-            }
+            if !alive(es,e) || !has(parents,e) {continue}
+            if hierarchy_link(h,parents,es,e) {moved_push(h,e)} else if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
         }
         if len(h.cut)==tried {break}
     }
@@ -143,6 +178,7 @@ hierarchy_orphan :: proc(h:^Hierarchy,e:Entity) -> bool {
     if child==NONE {return false}
     for child!=NONE {
         ci:=entity_index(child)
+        moved_push(h,child)
         child,h.parent[ci],h.previous_sibling[ci],h.next_sibling[ci]=h.next_sibling[ci],NONE,NONE,NONE
     }
     h.first_child[i],h.last_child[i]=NONE,NONE
