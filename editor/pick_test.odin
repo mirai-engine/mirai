@@ -10,45 +10,19 @@ import mm "mirai:std/math"
 
 @(private)
 Pick_Test_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     meshes:core.Table(erender.Mesh_Renderer),
     highlights:core.Table(erender.Highlight),
     hidden:core.Table(erender.Hidden),
-    hierarchy:core.Hierarchy,
 }
 
 @(test)
 marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.T) {
     world:Pick_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.meshes,"Mesh_Renderer")
-    core.table_init(&world.highlights,"Highlight")
-    core.table_init(&world.hidden,"Hidden")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    defer core.table_destroy(&world.meshes)
-    defer core.table_destroy(&world.highlights)
-    defer core.table_destroy(&world.hidden)
-    tables:=[6]core.Table_Info{
-        {type=core.Id,offset=offset_of(Pick_Test_World,ids)},
-        {type=core.Transform,offset=offset_of(Pick_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Pick_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Pick_Test_World,meshes)},
-        {type=erender.Highlight,offset=offset_of(Pick_Test_World,highlights)},
-        {type=erender.Hidden,offset=offset_of(Pick_Test_World,hidden)},
-    }
-    storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Pick_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Pick_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     owner,child,other:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,core.Id{value=1})
     core.add(&world.ids,other,core.Id{value=2})
@@ -57,11 +31,7 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     core.add(&world.parents,child,core.Parent{entity=owner})
     core.add(&world.meshes,child,{shape=.Cube})
     core.add(&world.meshes,other,{shape=.Cube})
-    core.table_settle(&world.ids,&world.entities)
-    core.table_settle(&world.transforms,&world.entities)
-    core.table_settle(&world.parents,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
-    core.table_settle(&world.meshes,&world.entities)
+    core.test_world_settle(&world)
     viewport:=Viewport{size={800,600},capture=.Select,moved=true,press={300,200},pointer={500,400},show_indicators=true}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})
@@ -124,26 +94,9 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
 @(test)
 derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: proc(t:^testing.T) {
     world:Pick_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.meshes,"Mesh_Renderer")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    defer core.table_destroy(&world.meshes)
-    tables:=[4]core.Table_Info{
-        {type=core.Id,offset=offset_of(Pick_Test_World,ids)},
-        {type=core.Transform,offset=offset_of(Pick_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Pick_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Pick_Test_World,meshes)},
-    }
-    storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Pick_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Pick_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     owner,child,empty,orphan:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,core.Id{value=1})
     for e in ([3]core.Entity{owner,child,empty}) {core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)}
@@ -152,11 +105,7 @@ derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: 
     core.add(&world.parents,empty,core.Parent{entity=owner})
     core.add(&world.meshes,owner,{})
     core.add(&world.meshes,child,{shape=.Cube})
-    core.table_settle(&world.ids,&world.entities)
-    core.table_settle(&world.transforms,&world.entities)
-    core.table_settle(&world.parents,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
-    core.table_settle(&world.meshes,&world.entities)
+    core.test_world_settle(&world)
     testing.expect_value(t,entity_author(ref,child),owner)
     testing.expect_value(t,entity_author(ref,empty),owner)
     testing.expect_value(t,entity_author(ref,orphan),orphan)
@@ -190,7 +139,7 @@ derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: 
 @(test)
 hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: proc(t:^testing.T) {
     Ghost_Test_World :: struct {
-        entities:core.Entities,
+        using world:core.Test_World,
         disabled:core.Table(core.Disabled),
         transforms:core.Table(core.Transform),
         parents:core.Table(core.Parent),
@@ -199,24 +148,9 @@ hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: p
         hierarchy:core.Hierarchy,
     }
     world:Ghost_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.disabled,"Disabled");core.table_init(&world.transforms,"Transform");core.table_init(&world.parents,"Parent")
-    core.table_init(&world.meshes,"Mesh_Renderer");core.table_init(&world.hidden,"Hidden")
-    world.disabled.base,world.transforms.base,world.parents.base=true,true,true
-    defer core.entities_destroy(&world.entities)
-    defer {core.table_destroy(&world.disabled);core.table_destroy(&world.transforms);core.table_destroy(&world.parents)}
-    defer {core.table_destroy(&world.meshes);core.table_destroy(&world.hidden)}
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    tables:=[5]core.Table_Info{
-        {type=core.Disabled,offset=offset_of(Ghost_Test_World,disabled)},
-        {type=core.Transform,offset=offset_of(Ghost_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Ghost_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Ghost_Test_World,meshes)},
-        {type=erender.Hidden,offset=offset_of(Ghost_Test_World,hidden)},
-    }
-    storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Ghost_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Ghost_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     hidden,off,turned:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     places:=[3][3]f32{{-2,0,0},{2,0,0},{0,2,0}}
     for e,i in ([3]core.Entity{hidden,off,turned}) {
@@ -226,14 +160,7 @@ hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: p
     core.add(&world.hidden,hidden,{})
     core.add(&world.disabled,off,{})
     core.disable(&world.meshes,turned)
-    core.table_settle(&world.disabled,&world.entities)
-    core.table_settle(&world.parents,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
-    core.entities_activity(&world.entities,core.read(&world.disabled),core.ref(&world.hierarchy))
-    core.table_settle(&world.transforms,&world.entities)
-    core.table_settle(&world.meshes,&world.entities)
-    core.table_settle(&world.hidden,&world.entities)
-    core.entities_settle(&world.entities)
+    core.test_world_settle(&world)
     viewport:=Viewport{size={800,600}}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})
@@ -301,26 +228,9 @@ a_pick_builds_only_what_its_ray_reaches_and_keeps_it_while_other_meshes_change :
     far,ok2:=host.assets_mesh_generate(&assets,triangle,options={collision=true,no_lods=true})
     if !testing.expect(t,ok && ok2) {return}
     world:Pick_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.meshes,"Mesh_Renderer")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    defer core.table_destroy(&world.meshes)
-    tables:=[4]core.Table_Info{
-        {type=core.Id,offset=offset_of(Pick_Test_World,ids)},
-        {type=core.Transform,offset=offset_of(Pick_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Pick_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Pick_Test_World,meshes)},
-    }
-    storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Pick_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Pick_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     a,b:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,a,core.Id{value=1})
     core.add(&world.ids,b,core.Id{value=2})
@@ -328,11 +238,7 @@ a_pick_builds_only_what_its_ray_reaches_and_keeps_it_while_other_meshes_change :
     core.add(&world.transforms,b,core.Transform{position={100,0,0},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,a,{mesh=near})
     core.add(&world.meshes,b,{mesh=far})
-    core.table_settle(&world.ids,&world.entities)
-    core.table_settle(&world.transforms,&world.entities)
-    core.table_settle(&world.parents,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
-    core.table_settle(&world.meshes,&world.entities)
+    core.test_world_settle(&world)
     picker:Picker
     defer picker_clear(&picker);defer delete(picker.meshes)
     app:=host.App{assets=&assets}
@@ -365,34 +271,22 @@ a_pick_builds_only_what_its_ray_reaches_and_keeps_it_while_other_meshes_change :
 @(test)
 a_ray_through_the_scene_lists_what_it_crosses_nearest_first :: proc(t:^testing.T) {
     Through_Test_World :: struct {
-        entities:core.Entities,
+        using world:core.Test_World,
         transforms:core.Table(core.Transform),
         parents:core.Table(core.Parent),
         meshes:core.Table(erender.Mesh_Renderer),
     }
     world:Through_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.transforms,"Transform");core.table_init(&world.parents,"Parent");core.table_init(&world.meshes,"Mesh_Renderer")
-    world.transforms.base,world.parents.base=true,true
-    defer core.entities_destroy(&world.entities)
-    defer {core.table_destroy(&world.transforms);core.table_destroy(&world.parents);core.table_destroy(&world.meshes)}
-    tables:=[3]core.Table_Info{
-        {type=core.Transform,offset=offset_of(Through_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Through_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Through_Test_World,meshes)},
-    }
-    info:=core.World_Info{entities=offset_of(Through_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     far,near,middle,aside:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     places:=[4][3]f32{{0,0,-6},{0,0,0},{0,0,-3},{4,0,0}}
     for e,i in ([4]core.Entity{far,near,middle,aside}) {
         core.add(&world.transforms,e,core.Transform{position=places[i],rotation=1,scale={1,1,1}})
         core.add(&world.meshes,e,{shape=.Cube})
     }
-    core.table_settle(&world.transforms,&world.entities)
-    core.table_settle(&world.parents,&world.entities)
-    core.table_settle(&world.meshes,&world.entities)
-    core.entities_settle(&world.entities)
+    core.test_world_settle(&world)
     viewport:=Viewport{size={800,600}}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})

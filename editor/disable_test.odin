@@ -7,11 +7,8 @@ import erender "mirai:engine/render"
 
 @(private="file")
 Disable_Test_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    parents:core.Table(core.Parent),
-    hierarchy:core.Hierarchy,
-    disabled:core.Table(core.Disabled),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     points:core.Table(erender.Point_Light),
 }
 
@@ -20,20 +17,9 @@ Disable_Test_World :: struct {
 @(test)
 turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
     w:Disable_Test_World
-    core.entities_init(&w.entities);defer core.entities_destroy(&w.entities)
-    defer core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-    core.table_init(&w.ids,"Id");core.table_init(&w.parents,"Parent");core.table_init(&w.disabled,"Disabled");core.table_init(&w.points,"Point_Light")
-    w.ids.base,w.parents.base,w.disabled.base=true,true,true
-    defer {core.table_destroy(&w.ids);core.table_destroy(&w.parents);core.table_destroy(&w.disabled);core.table_destroy(&w.points)}
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Disable_Test_World,ids)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Disable_Test_World,parents)},
-        {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Disable_Test_World,disabled)},
-        {name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),offset=offset_of(Disable_Test_World,points)},
-    }
-    storages:=[1]core.Storage_Info{{name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Disable_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Disable_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&w,&info)
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    ref:=core.test_world_ref(&w)
     lamp,bulb:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,lamp,core.Id{1});core.add(&w.ids,bulb,core.Id{2})
     core.add(&w.parents,bulb,core.Parent{lamp,0})

@@ -13,19 +13,22 @@ import "mirai:std/serial"
 Api_Diagnostics_Test_Editor :: struct {api:Api}
 
 @(private="file")
-api_diagnostics_session :: proc(world:^Api_Diagnostics_Test_Editor,edits:^history.Edits,storages:^[1]core.Storage_Info,info:^core.World_Info) -> Session {
-    storages^={{name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Api_Diagnostics_Test_Editor,api)}}
-    info^={storages=storages[:]}
-    return {info=info,editor_world=world,edits=edits}
+Api_Diagnostics_Test_World :: struct {using world:core.Test_World}
+
+@(private="file")
+api_diagnostics_session :: proc(t:^testing.T,world:^Api_Diagnostics_Test_Editor,edits:^history.Edits,info:^core.World_Info) -> (s:Session,ok:bool) {
+    info^=core.test_info(t,Api_Diagnostics_Test_World,core.Test_None,Api_Diagnostics_Test_Editor) or_return
+    return {info=info,editor_world=world,edits=edits},true
 }
 
 @(test)
 editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testing.T) {
     world:Api_Diagnostics_Test_Editor
     edits:history.Edits
-    storages:[1]core.Storage_Info
     info:core.World_Info
-    session:=api_diagnostics_session(&world,&edits,&storages,&info)
+    session,described:=api_diagnostics_session(t,&world,&edits,&info)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
     defer api_close(&session)
     state:=api_state(&session)
@@ -52,12 +55,13 @@ editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testin
 editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T) {
     world:Api_Diagnostics_Test_Editor
     edits:history.Edits
-    storages:[1]core.Storage_Info
     info:core.World_Info
     console:Console
     resize(&console.entries,CONSOLE_CAPACITY)
     defer console_destroy(&console)
-    session:=api_diagnostics_session(&world,&edits,&storages,&info)
+    session,described:=api_diagnostics_session(t,&world,&edits,&info)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     session.console=&console
     if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
     defer api_close(&session)
@@ -102,25 +106,19 @@ editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T)
 }
 
 @(private="file")
-Problems_Test_World :: struct {entities:core.Entities,ids:core.Table(core.Id),names:core.Table(core.Name)}
+Problems_Test_World :: struct {using world:core.Test_World,ids:core.Table(core.Id),names:core.Table(core.Name)}
 
 @(test)
 editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T) {
     world:Problems_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.names,"Name")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.names)
-    tables:=[2]core.Table_Info{{type=core.Id,offset=offset_of(Problems_Test_World,ids)},{type=core.Name,offset=offset_of(Problems_Test_World,names)}}
-    info:=core.World_Info{entities=offset_of(Problems_Test_World,entities),tables=tables[:]}
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     hero:=core.create(&world.entities)
     name:core.Name
     base.text_set(name.text[:],"Hero")
     core.add(&world.ids,hero,{value=7})
     core.add(&world.names,hero,name)
-    core.table_settle(&world.ids,&world.entities);core.table_settle(&world.names,&world.entities)
+    core.test_world_settle(&world)
     problems:core.Problems
     core.report(&problems,core.NONE,"scene.spawn","The prefab 'props/crate.prefab' did not spawn: the file is missing. Import it again.")
     core.report(&problems,hero,"animation.clip","Animation.clip is '%s', which the skeleton does not have; name one of its clips.","run")
@@ -130,7 +128,7 @@ editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T)
     defer serial.writer_destroy(&out)
     serial.write_u8(&out,'{')
     api.write_text(&out,"world","edit",true)
-    api_problems_write(core.world_ref(&world,&info),&problems,&out)
+    api_problems_write(core.test_world_ref(&world),&problems,&out)
     serial.write_u8(&out,'}')
     value,parsed:=json.parse(serial.writer_bytes(&out),allocator=context.temp_allocator)
     if !testing.expectf(t,parsed==.None,"%v: %s",parsed,string(serial.writer_bytes(&out))) {return}

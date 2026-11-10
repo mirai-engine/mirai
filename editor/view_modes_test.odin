@@ -8,9 +8,7 @@ import "mirai:std/base"
 import "mirai:ui"
 
 @(private="file")
-View_Modes_Test_World :: struct {
-    entities:core.Entities,
-}
+View_Modes_Test_World :: struct {using world:core.Test_World}
 
 @(private="file")
 view_modes_test_record :: proc(s:^gpu.Stage_Pass,user:rawptr) {}
@@ -22,13 +20,14 @@ view_modes_test_record :: proc(s:^gpu.Stage_Pass,user:rawptr) {}
 @(test)
 view_modes_list_the_core_then_the_plugins_and_go_back_to_lit_when_undeclared :: proc(t:^testing.T) {
     world:View_Modes_Test_World
-    info:=core.World_Info{entities=offset_of(View_Modes_Test_World,entities)}
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     modes:View_Modes
     defer view_modes_free(&modes)
     viewport:Viewport
     document:Document
     app:host.App
-    s:=Session{info=&info,edit_world=&world,app=&app,viewport=&viewport,document=&document,view_modes=&modes}
+    s:=Session{info=core.test_world_info(&world),edit_world=&world,app=&app,viewport=&viewport,document=&document,view_modes=&modes}
     marker:int
 
     testing.expect(t,view_mode_declare(&s,{name="nested",label="Nested views",group="Advanced",icon=.Split,record=view_modes_test_record,user=&marker}))
@@ -109,7 +108,8 @@ view_modes_test_click :: proc(t:^testing.T,s:^Session,id:ui.Id) {
 @(test)
 view_mode_menu_groups_its_modes_under_headers_and_families_in_submenus :: proc(t:^testing.T) {
     world:View_Modes_Test_World
-    info:=core.World_Info{entities=offset_of(View_Modes_Test_World,entities)}
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     ctx:ui.Context
     if !testing.expect(t,ui.context_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
@@ -119,7 +119,7 @@ view_mode_menu_groups_its_modes_under_headers_and_families_in_submenus :: proc(t
     viewport:Viewport
     document:Document
     app:host.App
-    s:=Session{info=&info,edit_world=&world,app=&app,gui=&g,viewport=&viewport,document=&document,view_modes=&modes}
+    s:=Session{info=core.test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,document=&document,view_modes=&modes}
     testing.expect(t,view_mode_declare(&s,{name="nested",label="Nested views",group="Advanced",icon=.Split,record=view_modes_test_record}))
     // As physics declares its Collision modes: the family is its first mode.
     testing.expect(t,view_mode_declare(&s,{name="collision",label="All layers",title="Collision",group="Advanced",submenu="Collision",icon=.Collider,record=view_modes_test_record}))
