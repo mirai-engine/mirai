@@ -234,7 +234,7 @@ Outgoing :: struct {
 @(storage,queue,copy=false)
 Net_Outbox :: struct {
     queue:core.Queue(Outgoing),
-    replaying:bool `mirai:"readonly"`, // the tick under way runs again: it sent the first time
+    replaying:bool `mirai:"readonly"`, // what runs now runs again (core.Time.resimulating): it sent the first time
 }
 
 // Client: ticks the client already simulated that a library learned were

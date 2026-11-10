@@ -1393,13 +1393,6 @@ client_rewinds :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,ticks:[]u32
     s.stats.resimulate_seconds+=time.duration_seconds(time.tick_since(started))
 }
 
-// The ticks that follow run again, or no longer: their Time says so, and their sends are dropped.
-@(private)
-replaying :: proc(w:core.World_Ref,clock:^core.Time,on:bool) {
-    clock.resimulating=on
-    if outbox:=core.world_storage_of(w,Net_Outbox);outbox!=nil {outbox.replaying=on}
-}
-
 // A rollback to target when this frame and the budget have room for it.
 @(private)
 client_rewind :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32) -> bool {
@@ -1446,7 +1439,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         if &frame!=restored {core.copy_marks_follow(w,restored.marks,frame.marks)}
     }
     core.copy_marks_follow(w,restored.marks,restored.marks)
-    replaying(w,clock,true)
+    clock.resimulating=true
     replicas_relink(s,w,app.assets,start)
     driven_list(c)
     authoritative_apply(s,w,target,true)
@@ -1463,7 +1456,8 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         records_capture(s,w,tick)
         s.stats.resimulated+=1
     }
-    replaying(w,clock,false)
+    clock.resimulating=false
+    outbox_follow(w)
     if input!=nil {input^=present_input}
     for &x in c.replicas[:c.replica_high] {
         if x.object==0 || x.waits {continue}
@@ -1520,10 +1514,11 @@ client_sync_test :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     for tick:=first;i32(last-tick)>=0;tick+=1 {
         frame:=&c.frames[int(tick)%len(c.frames)]
         if !host.app_world_replace(app,w.data,frame.world) {break}
-        replaying(w,clock,true)
+        clock.resimulating=true
         if input!=nil {input^=frame.input}
         host.app_tick_replay(app,w.data,frame.content)
-        replaying(w,clock,false)
+        clock.resimulating=false
+        outbox_follow(w)
         s.stats.sync_tested+=1
         // The network gave the tick something else: a state of the server that came after it ran.
         if c.sync_fed[c.history]!=c.sync_fed[int(tick)%c.history] {

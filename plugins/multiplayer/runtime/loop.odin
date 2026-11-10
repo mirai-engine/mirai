@@ -25,8 +25,8 @@ import wire "mirai:net"
 // Each step first catches up with a scene that replaced the world (world.odin).
 // A paused game runs no phase: pump keeps its connections instead.
 //
-// A correction runs the fixed loop again with core.Time.resimulating and
-// Net_Outbox.replaying set (replaying): send drops what the ticks ask again,
+// A correction, or whoever plays a frame again, sets core.Time.resimulating:
+// the outbox follows it (outbox_follow), so send drops what is asked again,
 // and the tail neither publishes nor sends.
 
 @(step="input",loops="game",stage="begin",before="clock_requests")
@@ -35,6 +35,7 @@ net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settin
     session.problems=problems
     defer session.problems=previous
     defer authority_follow(session,world)
+    outbox_follow(world)
     if !session.opened {session_start(session,world,app,settings)}
     if !session.host_ready {
         report_update(session,app)
@@ -74,6 +75,7 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
     authority_follow(session,world)
     time:=core.world_storage_of(world,core.Time)
     if time==nil {return}
+    outbox_follow(world)
     // A tick run again has those it had.
     if connections!=nil && !time.resimulating {
         core.queue_clear(&connections.events)
@@ -119,10 +121,19 @@ net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outb
 
 @(step="frame",loops="game",stage="begin")
 net_frame :: proc(world:core.World_Ref,session:^Net_Session) {
+    outbox_follow(world)
     if !session.host_ready || session.mode!=.Client {return}
     world_follow(session,world)
     frame:=core.world_storage_of(world,core.Frame_Time)
     client_frame(session,world,frame!=nil?frame.dt:0)
+}
+
+// The outbox of a world knows whether what runs now runs again (core.Time.resimulating), at
+// the start of each phase and of each tick: send needs no Time.
+@(private)
+outbox_follow :: proc(w:core.World_Ref) {
+    time,outbox:=core.world_storage_of(w,core.Time),core.world_storage_of(w,Net_Outbox)
+    if time!=nil && outbox!=nil {outbox.replaying=time.resimulating}
 }
 
 STATUS_TICKS :: 60
