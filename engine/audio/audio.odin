@@ -720,18 +720,17 @@ hidden :: proc(h:^Hearing,listener:[3]f32,e:core.Entity,world:core.World_Transfo
 voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     world,placed:=core.get(h.worlds,e)
-    if entry.voice=={} || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
+    valid:=mixer.voice_valid(m,entry.voice)
+    if entry.voice!={} && !valid && !source.loop {
+        core.entity_map_remove(&voices.entries,e)
+        state.voice,state.ended={},true
+        voices.stats.ended+=1
+        return
+    }
+    if !valid || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
         mixer.voice_stop(m,entry.voice)
         core.entity_map_remove(&voices.entries,e)
         source_start(voices,m,app,h,listener,source,e,state,problems)
-        return
-    }
-    if !mixer.voice_valid(m,entry.voice) {
-        core.entity_map_remove(&voices.entries,e)
-        state.voice={}
-        if source.loop {source_start(voices,m,app,h,listener,source,e,state,problems);return}
-        state.ended=true
-        voices.stats.ended+=1
         return
     }
     if !entry.kind.spatial {return}
