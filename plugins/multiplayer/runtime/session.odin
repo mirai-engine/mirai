@@ -30,7 +30,7 @@ Open_Error :: enum u8 {
     None,
     Transport_Failed, // the socket could not be opened, or the address is not one
     Protocol_Failed,  // a replicated component or a message does not fit the protocol
-    Host_Failed,
+    Host_Failed,      // also a system without secure random bytes, which every connection is sealed with
     Out_Of_Memory,
 }
 
@@ -171,7 +171,7 @@ Net_Session :: struct {
 @(private)
 Told :: struct {
     joined,lost,served,invited:bool,
-    seen,refused:u64,
+    seen,refused,dropped:u64,
 }
 
 // The UDP port of the game: Net_Settings.port, or DEFAULT_PORT for 0. valid
@@ -295,7 +295,11 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         if s.wanted.invite {
             s.invite=s.wanted.invite_token
             if s.invite==0 {
-                s.invite=wire.invite_token()
+                made:bool
+                if s.invite,made=wire.invite_token();!made {
+                    session_destroy(s)
+                    return .Host_Failed,{field="invite",range="a system that gives secure random bytes"}
+                }
                 s.mapping_on=wire.mapping_start(&s.mapping,u16(s.port))
             }
         }
@@ -351,7 +355,8 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
     }
     world_seen(s,w)
     if s.mode==.Client {
-        if wire.host_connect(&s.host,target)!=.None {
+        // A code is also looked for on this machine and its network: its address may be a router that does not loop back.
+        if wire.host_connect(&s.host,target,nearby=s.invite!=0)!=.None {
             session_destroy(s)
             return .Host_Failed,{}
         }
@@ -536,12 +541,11 @@ close :: proc(s:^Net_Session) {
 @(private)
 reason_text :: proc(reason:Disconnect_Reason,address:string,protocol:u64) -> string {
     #partial switch reason {
-    case .Connect_Timeout:   return fmt.tprintf("the server %s does not answer",address)
+    case .Connect_Timeout:   return fmt.tprintf("the server %s does not answer: it is not reachable, the invitation is not the one of its game, or it is behind the router of this network, which does not loop back to its public address, and not on this machine nor in reach of its broadcast; join it with --connect and its address on the network, served without --invite",address)
     case .Denied_Protocol:   return fmt.tprintf("the server %s refused the connection: its libraries do not produce the same network protocol as those of this project (here %016x); build both ends from the same sources",address,protocol)
     case .Denied_Version:    return fmt.tprintf("the server %s refused the connection: it is of another version",address)
     case .Denied_Full:       return fmt.tprintf("the server %s is full",address)
-    case .Denied_Invite:     return fmt.tprintf("the server %s refused the connection: the invitation is not the one of its game",address)
-    case .Denied_Security:   return fmt.tprintf("the server %s refused the connection: one end encrypts and the other does not",address)
+    case .Denied_Security:   return fmt.tprintf("the server %s answered with keys it could not have made: it is not the server it says",address)
     case .Closed:            return fmt.tprintf("the server %s closed the connection",address)
     case .Timeout:           return fmt.tprintf("the connection to the server %s was lost: it stopped answering",address)
     case .Kicked:            return fmt.tprintf("the server %s kicked this client",address)
@@ -593,7 +597,11 @@ report_update :: proc(s:^Net_Session,app:^host.App) {
     }
     if refused:=s.host.stats.handshakes_refused;refused!=told.refused {
         told.refused=refused
-        fmt.printfln("mirai: %d connection attempts refused: another version, another protocol, without the invitation or a full server",refused)
+        fmt.printfln("mirai: %d connection attempts refused: another protocol or a full server",refused)
+    }
+    if dropped:=s.host.stats.handshakes_dropped;dropped!=told.dropped {
+        told.dropped=dropped
+        fmt.printfln("mirai: %d connection attempts left without an answer: without the invitation of this game, or an old or forged cookie",dropped)
     }
     if s.until_empty && s.joined>0 && s.connections==0 {host.app_exit(app,host.PLAYER_OK)}
 }
@@ -607,10 +615,12 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
     rtt:=0.0
     if s.mode==.Client && s.host_ready {rtt=wire.clock_state(&s.host).rtt*1000}
     // The UDP bytes of the whole host both ways: the bandwidth of a run.
-    sent,received:u64
+    // And the connection attempts it denied, or left without an answer.
+    sent,received,refused,dropped:u64
     if s.host_ready {
         totals:=wire.host_stats(&s.host)
         sent,received=totals.bytes_sent,totals.bytes_received
+        refused,dropped=totals.handshakes_refused,totals.handshakes_dropped
     }
     // Of the client, how far its tick runs ahead of the estimate of the
     // server's and why (bias, jitter), and the corrections it could not
@@ -621,12 +631,12 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
         ahead,bias,jitter=f64(tick)-clock.server,clock.bias,clock.jitter*1000
         margin,margin_low=wire.clock_margin_take(&s.host)
     }
-    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d blended=%d rtt_ms=%.0f sent=%d received=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d overtaken=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
-        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
+    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d blended=%d rtt_ms=%.0f sent=%d received=%d refused=%d dropped=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d overtaken=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
+        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,refused,dropped,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
     transforms:=core.world_table_of(w,core.Transform)
     line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:bool) {
-        local:=core.get(transforms,e)
-        if local==nil {return}
+        local,ok:=core.get(transforms,e)
+        if !ok {return}
         os.write_string(file,fmt.tprintf("object %d %d %.3f %.3f %.3f\n",u64(object),int(own),local.position.x,local.position.y,local.position.z))
     }
     if s.mode==.Server {

@@ -27,12 +27,13 @@ session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^tes
     options,problem:=session_options({"--dev","--discard","--copy","--timeout","30","--frames","5","--dev"})
     testing.expect_value(t,problem,"")
     testing.expect_value(t,options.mode,Build_Mode.Dev)
+    testing.expect(t,options.mode_asked)
     testing.expect(t,options.discard && options.copy && !options.no_build && !options.orphans)
     testing.expect_value(t,options.timeout,30)
     testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5"}))
     options,problem=session_options({})
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,options.mode,Build_Mode.Keep)
+    testing.expect(t,options.mode==.Release && !options.mode_asked,"release unless a mode is asked for")
     testing.expect_value(t,options.timeout,180)
     testing.expect_value(t,len(options.editor_args),0)
 }
@@ -137,7 +138,10 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     testing.expect_value(t,engine_process_role(other),Engine_Role.Orphan)
     record,found:=session_record(folder)
     testing.expect(t,found)
-    testing.expect_value(t,session_record_mode(record),Build_Mode.Dev)
+    mode,named:=session_record_mode(record)
+    testing.expect(t,named && mode==.Dev)
+    _,named=session_record_mode({pid=pid})
+    testing.expect(t,!named,"a record without a mode names none")
     testing.expect(t,slice.equal(record.args,[]string{"--frames","2"}))
     file,alive:=session_find(folder)
     testing.expect(t,alive && file.port==7999 && file.manual,"this process is the one the port file names")
@@ -239,7 +243,7 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
         data,_:=os.read_entire_file(project.path(root,file),context.temp_allocator)
         return string(data)
     }
-    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.prefab","assets/old.tex"}) {write(t,folder,file,"before")}
+    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.scene","assets/old.tex"}) {write(t,folder,file,"before")}
     copy,lock,problem:=session_copy(folder)
     if !testing.expect_value(t,problem,"") {return}
     workspace.lock_release(&lock)
@@ -247,18 +251,18 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
     // Another session half-edits game.odin; this one changes blade.odin and the prefab and deletes old.tex.
     write(t,folder,"game/game.odin","half edited")
     write(t,folder,"game/blade.odin","after")
-    write(t,folder,"assets/items/Blade.prefab","after")
+    write(t,folder,"assets/items/Blade.scene","after")
     testing.expect(t,os.remove(project.path(folder,"assets/old.tex"))==nil)
 
-    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.prefab",`assets\old.tex`})
+    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.scene",`assets\old.tex`})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,!plan.rebuild,"assets alone are read again")
-    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.prefab","assets/old.tex"})
+    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.scene","assets/old.tex"})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,plan.rebuild,"code asks for a restart")
     testing.expect_value(t,session_sync_apply(folder,copy,plan),"")
     testing.expect_value(t,read(copy,"game/blade.odin"),"after")
-    testing.expect_value(t,read(copy,"assets/items/Blade.prefab"),"after")
+    testing.expect_value(t,read(copy,"assets/items/Blade.scene"),"after")
     testing.expect_value(t,read(copy,"game/game.odin"),"before")
     testing.expect(t,!os.exists(project.path(copy,"assets/old.tex")),"what the project deleted leaves the copy")
 

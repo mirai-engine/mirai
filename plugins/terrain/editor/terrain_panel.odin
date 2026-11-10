@@ -22,18 +22,15 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool);ctx:=g.ctx
-    if core.key_pressed(input,.T) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,"terrain",!tool.active)}
-    tool.active=editor.tool_on(s,"terrain")
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),ui.icon_user(u8(editor.User_Icon.Terrain)),"Terrain","T",tool.active) {editor.tool_set(s,"terrain",!tool.active)}
     tool.active=editor.tool_on(s,"terrain")
     if !tool.active || s.viewport.pick.active {return}
     selected_entity:=history.selection_active(s.selection)
     if !tool.stroke.active {
         terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
         target:=history.selection_has(s.selection,tool.stroke.entity)?tool.stroke.entity:core.NONE
-        if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(core.read(terrains),selected_entity) {target=selected_entity}
+        if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(terrains,selected_entity) {target=selected_entity}
         tool.selection=selected_entity
-        if terrains!=nil && worlds!=nil && core.has(core.read(terrains),target) {
+        if terrains!=nil && worlds!=nil && core.has(terrains,target) {
             _=stroke_prepare(tool,app.assets,app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
         } else if tool.stroke.id!={} {stroke_free(tool)}
     }
@@ -298,7 +295,7 @@ choice_grid :: proc(ctx:^ui.Context,id:ui.Id,names:[]string,selected,columns:int
 terrain_choose_panel :: proc(s:^editor.Session,world:core.World_Ref) {
     ctx:=s.gui.ctx
     terrains:=core.world_table_of(world,terrain.Terrain)
-    if terrains==nil || core.count(core.read(terrains))==0 {return}
+    if terrains==nil || core.count(terrains)==0 {return}
     ui.section(ctx,"Terrains","",80)
     table:=core.read(terrains)
     for i in 0..<core.count(table) {

@@ -58,7 +58,7 @@ tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tre
     if .Layer in fields {node.layer=v.layer}
     if .Clip in fields {node.clip=v.clip}
     if .Block in fields {node.block=v.block}
-    if .Values in fields {node.index,node.count,node.choice,node.range,node.limit,node.delay,node.particle=v.index,v.count,v.choice,v.range,v.limit,v.delay,v.particle}
+    if .Values in fields {node.index,node.count,node.choice,node.range,node.limit,node.delay,node.particle,node.draw=v.index,v.count,v.choice,v.range,v.limit,v.delay,v.particle,v.draw}
     if .Action in fields {node.action=v.action;node.hold=v.hold}
     if .Focus in fields {node.nav=v.nav;node.order=v.order;node.flags=v.flags}
     if .Drag in fields {node.tag,node.accepts,node.ghost=v.tag,v.accepts,v.ghost}

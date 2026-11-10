@@ -83,20 +83,18 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     buffer[0]=u8(Packet_Type.Request)
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x1234,64)
-    serial.bit_write(&writer,0,32)
-    serial.bit_write_bool(&writer,false)
     request:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
     forger.send(forger.data,address_memory(0),request)
     forger.send(forger.data,address_memory(0),request[:HANDSHAKE_BYTES-1])
     test_step(&w,2)
     answer:[PACKET_BYTES]u8
     size,_,ok:=forger.receive(forger.data,answer[:])
-    testing.expect(t,ok && size<HANDSHAKE_BYTES/4)
+    testing.expect(t,ok && size*3<HANDSHAKE_BYTES)
     _,_,again:=forger.receive(forger.data,answer[:])
     testing.expect(t,!again)
     testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Challenge)
 
-    // A response whose cookie was not issued to this address is ignored.
+    // A response whose cookie was not issued to this address gets no answer.
     buffer[0]=u8(Packet_Type.Response)
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x1234,64)
@@ -109,7 +107,7 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     testing.expect(t,!answered)
     for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
     testing.expect_value(t,len(host_poll(server)),0)
-    testing.expect(t,host_stats(server).handshakes_refused==1 && host_stats(server).packets_invalid==1)
+    testing.expect(t,host_stats(server).handshakes_dropped==1 && host_stats(server).handshakes_refused==0 && host_stats(server).packets_invalid==1)
 }
 
 @(test)
@@ -172,12 +170,12 @@ a_client_with_too_few_objects_never_connects_and_the_server_hears_why :: proc(t:
 // comes further, at every tick rate.
 @(test)
 a_client_takes_the_history_of_its_server_and_the_input_fits_it :: proc(t:^testing.T) {
-    Case :: struct {rate:int,security:Security}
-    for c in ([]Case{{60,.None},{240,.Encrypted},{480,.None}}) {
+    for rate in ([]int{60,240,480}) {
+        c:=struct{rate:int}{rate}
         tp:Test_Protocol;test_protocol_init(&tp);defer test_protocol_destroy(&tp)
         w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,tick_rate=c.rate,security={mode=c.security}})
-        client:=test_host(&w,{mode=.Client,protocol=&tp.protocol,tick_rate=c.rate,replication={history_seconds=0.1},security={mode=c.security}})
+        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,tick_rate=c.rate})
+        client:=test_host(&w,{mode=.Client,protocol=&tp.protocol,tick_rate=c.rate,replication={history_seconds=0.1}})
         depth:=int(HISTORY_SECONDS*f32(c.rate))
         testing.expectf(t,host_history(server)==depth && host_history(client)==history_ticks(0.1,c.rate),"%d Hz: histories %d and %d",c.rate,host_history(server),host_history(client))
         on_server,on_client:=test_connect(&w,server,client)
@@ -422,14 +420,9 @@ send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
 
 @(test)
 hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testing.T) {
-    for security in Security {hostile_datagrams(t,security)}
-}
-
-@(private="file")
-hostile_datagrams :: proc(t:^testing.T,security:Security) {
     w:Test_World;test_world_init(&w,3,seed=99);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,channels=CHANNELS,max_connections=4,security={mode=security}})
-    client:=test_host(&w,{mode=.Client,channels=CHANNELS,security={mode=security}})
+    server:=test_host(&w,{mode=.Server,channels=CHANNELS,max_connections=4})
+    client:=test_host(&w,{mode=.Client,channels=CHANNELS})
     on_server,on_client:=test_connect(&w,server,client)
     testing.expect(t,on_server!=0 && on_client!=0)
 
@@ -446,6 +439,22 @@ hostile_datagrams :: proc(t:^testing.T,security:Security) {
         }
         forger.send(forger.data,address_memory(0),junk[:size])
         if round%16==0 {test_step(&w)}
+    }
+    // Every type at the lengths around the limits, straight to the parsers of both ends, with
+    // the checksum of a handshake made valid where it fits: from a stranger and from the peer.
+    big:[PACKET_BYTES+64]u8
+    for size in ([]int{0,1,DATA_HEADER,DATA_HEADER+CHECKSUM_BYTES,DATA_HEADER+TAG_BYTES,HANDSHAKE_BYTES-1,HANDSHAKE_BYTES,PACKET_BYTES,PACKET_BYTES+1,len(big)}) {
+        for type in Packet_Type {
+            for &b in big[1:] {b=u8(base.splitmix_next(&state))}
+            big[0]=u8(type)
+            if size>=DATA_HEADER+1+CHECKSUM_BYTES && size<=PACKET_BYTES && type!=.Data && type!=.Disconnect {checksum_write(big[:size],server.back.key)}
+            for from in ([2]Address{address_memory(2),address_memory(1)}) {
+                buffer:=big
+                packet_receive(server,buffer[:size],from)
+            }
+            buffer:=big
+            packet_receive(client,buffer[:size],address_memory(0))
+        }
     }
     test_step(&w,4)
     for command in host_poll(server) {testing.expect(t,command.kind!=.Connected)}

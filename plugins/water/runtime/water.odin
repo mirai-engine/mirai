@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import phys "plugins:physics/runtime"
 
-// Water: the Fluid_Volume rows of the physics drawn as water, from the same
+// Water: the Fluid rows of the physics drawn as water, from the same
 // fluids the physics floats bodies in. Each surface is a solid of the glass
 // of the renderer: a plane, an open grid around the camera on its waves; a
 // box, its cube. Under it, a medium of the fog plugin that takes the light of
@@ -27,7 +27,7 @@ WATER_IOR :: f32(1.333)
 CAUSTIC_TEXELS :: 256 // across the caustic pattern
 LENS_WIDTH :: f32(0.01) // m of the surface over and under the near plane where its line shows on the lens
 
-@(component,description="How the water of the Fluid_Volume of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid_Volume without it looks as the default.")
+@(component,description="How the water of the Fluid of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid without it looks as the default.")
 Water :: struct {
     material:base.Asset_Id,                          // of its surface and its solid; zero: a glass of water with the program of Water_Settings and the values below
     attenuation_color:[3]f32 `mirai:"color"`,        // what the water leaves of white light that crosses attenuation_distance of it
@@ -82,7 +82,8 @@ Water_Gpu :: struct {
     looks:[CAPACITY]Water_Look,
     look_count:int,
     air:u32,       // the row of the air of a dry box the camera is in; 0 until one is
-    looks_seen:u64, // the versions of the Water rows and of the assets the looks were made with
+    waters_seen:core.Seen, // the Water rows the looks were made with
+    looks_seen:u64, // and the rounds of the assets
     sheets:[CAPACITY]Sheet,
     sheet_pipeline:render.Pipeline,
     frame:u64,
@@ -206,7 +207,7 @@ water_render :: proc(
     // A derived row lasts while the rounds of the assets keep it: a new round asks for them again.
     settings:=settings
     program:=base.text_get(settings.surface_program[:])
-    if seen:=core.version(waters)+core.layout(waters)+app.assets.revision+app.assets.appearance+base.name_hash(program);seen!=state.looks_seen {
+    if seen:=app.assets.revision+app.assets.appearance+base.name_hash(program);core.touched(waters,&state.waters_seen) | (seen!=state.looks_seen) {
         state.looks_seen,state.look_count,state.air=seen,0,0
     }
     state.time=waves_time(physics,time,frame,app)

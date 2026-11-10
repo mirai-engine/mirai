@@ -158,7 +158,7 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
 [text sources](../../../../docs/game/assets/text-sources.md).
 
 - **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
-  `.scene.json` and `.prefab.json`. `read <asset>` prints the document or writes it to `--out`;
+  `.scene.json` and `.scene.json`. `read <asset>` prints the document or writes it to `--out`;
   `read --sources` writes one per asset of the project (not of its plugins); `write` takes those
   files or a folder of them, or `<asset> <file>` for a file kept elsewhere, and tries again what
   failed while a round writes something, so a file may use one the same run makes.
@@ -166,6 +166,10 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
   file stays as it was; a file that already says the document is not written. An asset that does
   not exist is made with an id that follows from its path. A `.ui` written with other `params`
   takes along the files that use it as a widget, as the editor does.
+- **`ui check` reads the code too.** Checking every `.ui`, it also parses the Odin of `game/`
+  (`cook/author/ui_code_names.odin`): a literal a call of `gui.clicked` and its like names a node
+  by is a node of some `.ui` of the project, a node inside a widget as `use/node`; and the `draw`
+  of each `Draw` node is a `@(draw)` procedure of the built game.
 - **Types of the game.** The paths an interface binds and the components of a scene are read
   against the `editor` library of the project, which also has the cards of its plugins. Only
   `ui read` runs without it: the tool refuses every other command, with the `mirai build editor`

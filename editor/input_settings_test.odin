@@ -18,25 +18,20 @@ import "mirai:std/serial"
 @(private="file") JUMP :: input.Action(1)
 @(private="file") HIT :: input.Action(40)
 
-@(private="file") Input_Defaults :: struct {defaults:[Input_Test_Action]input.Action_Default}
-@(private="file") Input_World :: struct {using world:core.Test_World,bindings:input.Input_Map,defaults:Input_Defaults}
+@(private="file") Input_World :: struct {using world:core.Test_World,bindings:input.Input_Map}
 @(private="file") Input_Editor :: struct {api:Api}
 
-@(private="file")
-input_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    append(types,core.test_type(Input_Defaults,default=proc(dst:^Input_Defaults) {
-        dst^={defaults={
-            .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
-            .Jump=input.action_default(.Button,input.binding_key(.Space)),
-        }}
-    }))
-}
-
+// The defaults of Input_Test_Action, as the generator finds them beside the enum.
 @(private="file")
 input_test_actions :: proc() -> []core.Actions_Info {
+    defaults :: proc(dst:rawptr) {
+        (cast(^[Input_Test_Action]input.Action_Default)dst)^={
+            .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
+            .Jump=input.action_default(.Button,input.binding_key(.Space)),
+        }
+    }
     @(static) actions:[1]core.Actions_Info
-    actions[0]={type=Input_Test_Action,info=type_info_of(Input_Test_Action)}
+    actions[0]={type=Input_Test_Action,info=type_info_of(Input_Test_Action),defaults=defaults}
     return actions[:]
 }
 
@@ -63,7 +58,7 @@ Input_Fixture :: struct {
 input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     f.folder=base.test_folder(t,"input-settings")
     if f.folder=="" {return false}
-    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,input_test_types) or_return
+    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,test_types) or_return
     f.names={
         {type=input.Action,value=0,name="move",file="engine/input/input.odin",line=1},
         {type=input.Action,value=1,name="jump",file="engine/input/input.odin",line=2},
@@ -119,7 +114,7 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
 
     text,error:=input_call(f,"input.get","{}")
     testing.expect_value(t,error.code,0)
-    for want in ([]string{`"tap_ticks":12`,`"hold_ticks":30`,`"problem":""`,`{"name":"move","kind":"Axis2","source":"code","bindings":[{"keys": ["A", "D", "S", "W"]}, {"gamepad_stick": "Left"}]}`,`{"name":"hit","kind":"Button","source":"code","bindings":[]}`}) {
+    for want in ([]string{`"tap_seconds":0.2`,`"hold_seconds":0.5`,`"problem":""`,`{"name":"move","kind":"Axis2","source":"code","bindings":[{"keys": ["A", "D", "S", "W"]}, {"gamepad_stick": "Left"}]}`,`{"name":"hit","kind":"Button","source":"code","bindings":[]}`}) {
         testing.expectf(t,strings.contains(text,want),"%q is not in %s",want,text)
     }
     _,exists:=input_file(f)
@@ -135,20 +130,20 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
 
     _,error=input_call(f,"input.set",`{"action":"hit","kind":"Axis","bindings":[{"keys":["Q","E"],"scale":2}]}`)
     testing.expect_value(t,error.code,0)
-    _,error=input_call(f,"input.set",`{"tap_ticks":20,"hold_ticks":30}`)
+    _,error=input_call(f,"input.set",`{"tap_seconds":0.3,"hold_seconds":0.5}`)
     testing.expect_value(t,error.code,0)
     file,_=input_file(f)
-    testing.expect(t,strings.contains(file,`"tap_ticks": 20`) && !strings.contains(file,`"hold_ticks"`) && strings.contains(file,`"hit"`) && strings.contains(file,`"jump"`),file)
+    testing.expect(t,strings.contains(file,`"tap_seconds": 0.3`) && !strings.contains(file,`"hold_seconds"`) && strings.contains(file,`"hit"`) && strings.contains(file,`"jump"`),file)
 
     // What the file says is what the game builds.
     built:input.Input_Map
     problems:core.Problems
     input.input_map_make(&built,&f.info,"input.mirai",file,&problems)
     testing.expect_value(t,problems.count,0)
-    testing.expect(t,input.input_map_has(&built,HIT,.Axis) && built.tap_ticks==20)
+    testing.expect(t,input.input_map_has(&built,HIT,.Axis) && built.tap_seconds==0.3)
     actions:input.Actions
     device:=core.Input{keys_down={.E,.J},keys_pressed={.E,.J}}
-    input.actions_update(&actions,&built,&device)
+    input.actions_update(&actions,&built,&device,1.0/60)
     testing.expect_value(t,input.action(&actions,HIT).value,f32(2))
     testing.expect(t,input.action(&actions,JUMP).pressed)
 
@@ -158,7 +153,7 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
     file,_=input_file(f)
     testing.expect(t,!strings.contains(file,`"jump"`) && strings.contains(file,`"hit"`),file)
 
-    _,error=input_call(f,"input.set",`{"action":"hit","reset":true,"tap_ticks":12}`)
+    _,error=input_call(f,"input.set",`{"action":"hit","reset":true,"tap_seconds":0.2}`)
     testing.expect_value(t,error.code,0)
     _,exists=input_file(f)
     testing.expect(t,!exists,"nothing differs from the code: no file")
@@ -195,7 +190,7 @@ input_set_errors_name_what_is_valid :: proc(t:^testing.T) {
         {`{"action":"jump","bindings":[{"key":"J","gamepad":7}]}`,{"a gamepad is 0 to 3"}},
         {`{"action":"jump","kind":"Axis"}`,{"give the bindings"}},
         {`{"action":"jump","reset":true,"bindings":[]}`,{"leave out kind and bindings"}},
-        {`{"tap_ticks":0}`,{"tap_ticks is a whole number of ticks from 1"}},
+        {`{"tap_seconds":0}`,{"tap_seconds is seconds above 0"}},
         {`{"bind":"jump"}`,{`"bind" is not a field`}},
         {`{}`,{"action is missing"}},
     }
@@ -276,7 +271,7 @@ a_binding_chosen_from_the_menus_is_written :: proc(t:^testing.T) {
 @(test)
 a_listening_binding_takes_what_is_pressed :: proc(t:^testing.T) {
     names:=[]core.Name_Info{{type=input.Action,value=0,name="move"},{type=input.Action,value=1,name="jump"}}
-    info,made:=core.test_info(t,struct {using world:core.Test_World,defaults:Input_Defaults},input_test_types)
+    info,made:=core.test_info(t,struct {using world:core.Test_World},test_types)
     if !made {return}
     defer core.test_info_destroy(&info)
     info.names,info.actions=names,input_test_actions()

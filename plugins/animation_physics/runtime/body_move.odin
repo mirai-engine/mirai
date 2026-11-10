@@ -6,14 +6,16 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 
-// Actions that move their body. While an action whose body_move is not None plays on a Character
-// (a lunge, a slash that steps in, a slam), the root motion its actions give the body in this tick
+// Actions that move their body. While an action whose body_move is not None plays on a Character,
+// in a layer or over the whole body of its .match (a lunge, a slash that steps in, a vault, a death
+// that falls forward), the root motion its actions give the body in this tick
 // (anim.animation_body_motion: by their share of the root, mirrored and warped with it) becomes a
 // one-tick layered move of its mix, across the up of the Character unless the action keeps the
-// vertical. A game writes no code for it; a climb is driven by its own (mantle.odin).
+// vertical. A game writes no code for it, and names no locomotion mode: the Character keeps the
+// one it has. A climb is driven by its own (mantle.odin).
 BODY_ROOT_MOVE :: u32(0x41435452) // the id of its layered moves
 
-@(step="fixed",stage="apply",after="animation_sample")
+@(step="fixed",stage="apply")
 animation_body_move :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {

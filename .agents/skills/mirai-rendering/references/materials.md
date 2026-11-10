@@ -153,7 +153,7 @@ previews studio use it.
   RGBA8, RGBA16 (data precision) and RGBA16F (HDR). The renderer uploads the file's format; the
   encoders are in `cook/textures`
   ([imports](../../mirai-imports/references/imports.md#textures-cooktextures)). Without
-  `Features.texture_bc` or with `texture_compression` off (`texture_limits`), `host` decodes each
+  `Features.texture_bc` (`texture_limits`), `host` decodes each
   level to RGBA8, and BC6H to RGBA16F, before uploading it.
 - **Arrays and cubes.** A layered `.tex` is uploaded through the same `texture_add_data`, all its
   layers in each level (`Texture_Data.layers`, `cube`), whole and without following the distance.
@@ -328,8 +328,8 @@ A Surface program that moves the vertices of what shows it declares
 `//! vertex [animated] [reach <metres>|reach <parameter>]` and
 `Mirai_Vertex vertex(Mirai_Vertex_Context ctx, Parameters p)` (`mirai_material.slang`), which
 gives where a vertex goes, its normal and tangent, in the space of the object
-([declaration](shaders.md#programs)). `Pieces` (`shaders/materials/pieces.slang`) is the engine's:
-the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes to 1.
+([declaration](shaders.md#programs)). `Pieces` (`render/testdata/pieces.slang`) is that of the
+tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes to 1.
 
 - **One geometry for everything** (`displace.odin`). An instance whose materials have such a program
   shows a pose of its own of level 0 of its mesh (`Skin_State.displaced`, current and previous

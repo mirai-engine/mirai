@@ -1,5 +1,6 @@
 package editor
 
+import "core:crypto"
 import "core:log"
 import "core:mem"
 import "core:slice"
@@ -63,6 +64,7 @@ Collab_Error :: enum u8 {
     Transport,   // the port could not be opened
     No_Assets,
     Dirty,       // the scene has unsaved changes
+    No_Random,   // the system gives no secure random bytes, which the session is sealed with
 }
 
 collab_error_text :: proc(error:Collab_Error) -> string {
@@ -74,6 +76,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .Dirty:     return "the scene has unsaved changes; save it or discard them"
+    case .No_Random: return "this system gives no secure random bytes to seal the session with"
     }
     return ""
 }
@@ -220,7 +223,9 @@ collab_of :: proc(s:^Session) -> ^Collab {
 // Who this editor is, the same in every session it shares or joins.
 @(private)
 collab_client :: proc(c:^Collab) -> u64 {
-    if c.client==0 {c.client=u64(wire.invite_token())<<32|u64(wire.invite_token())}
+    when crypto.HAS_RAND_BYTES {
+        for c.client==0 {crypto.rand_bytes(mem.ptr_to_bytes(&c.client))}
+    }
     return c.client
 }
 
@@ -323,7 +328,7 @@ collab_name_set :: proc(c:^Collab,name:string) {
 }
 
 @(private)
-collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32) -> (st:^Collab_State,error:Collab_Error) {
+collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32,target:wire.Address={}) -> (st:^Collab_State,error:Collab_Error) {
     c:=collab_of(s)
     if c.state!=nil && c.state.role!=.None && c.state.phase!=.Ended {return nil,.Busy}
     if s.app.assets==nil {return nil,.No_Assets}
@@ -337,7 +342,8 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
         {kind=.Reliable,max_message_bytes=COLLAB_MESSAGE,queue_bytes=256<<10},
         {kind=.Unreliable},
     }
-    bind:=wire.address_any6(role==.Host?port:0)
+    // A guest of an IPv4 host binds IPv4, which can also look for it by broadcast on its network.
+    bind:=role==.Guest && target.kind==.IP4?wire.address_ip4(0,0,0,0,0):wire.address_any6(role==.Host?port:0)
     if !wire.udp_open(&st.udp,bind) {
         free(st)
         return nil,.Transport
@@ -364,7 +370,9 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
 
 // Shares the scene: guests connect to this editor.
 collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
-    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,wire.invite_token())
+    invite,made:=wire.invite_token()
+    if !made {return .No_Random}
+    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,invite)
     if error!=.None {return error}
     st.phase=.Joined
     st.self=0
@@ -383,9 +391,10 @@ collab_join :: proc(s:^Session,code,name:string,discard:bool) -> Collab_Error {
     target,invite,valid:=wire.invite_decode(code)
     if !valid {return .Invite}
     if document_dirty(s) && !discard {return .Dirty}
-    st,error:=collab_start(s,.Guest,0,name,invite)
+    st,error:=collab_start(s,.Guest,0,name,invite,target)
     if error!=.None {return error}
-    if wire.host_connect(&st.host,target)!=.None {
+    // Also on this machine and its network: the address of the code may be a router that does not loop back.
+    if wire.host_connect(&st.host,target,nearby=true)!=.None {
         collab_destroy(s)
         return .Transport
     }
@@ -675,10 +684,9 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
             #partial switch command.reason {
             case .Denied_Version: reason="the host has another version of the project"
             case .Denied_Full:    reason="the session is full"
-            case .Denied_Invite:  reason="the invitation is not the one of the session"
             case .Timeout:        reason="the host stopped answering"
             case .Reliable_Overflow: reason="the connection could not keep up with what the session sends"
-            case .Connect_Timeout: reason="the host did not answer; on its network, join with its Same network code"
+            case .Connect_Timeout: reason="the host did not answer: the invitation is not the one of the session, or, on its network, join with its Same network code"
             }
             collab_end(st,reason)
             return

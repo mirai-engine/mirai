@@ -381,6 +381,9 @@ ai_stream_does_not_wait_for_another_editor_and_loses_no_line :: proc(t:^testing.
 
     testing.expect(t,sqlite.exec(other,"COMMIT",nil,nil,nil)==sqlite.OK)
     ai_persist_poll(&s,m,now+AI_FLUSH_SECONDS)
+    testing.expect(t,ai_store.pending(&m.store)==0 && task.dirty,"the poll writes what was kept, and leaves the chat to what happens to it")
+    // The turn ends.
+    ai_task_persist(&s,task)
     testing.expect(t,ai_store.pending(&m.store)==0 && !task.dirty)
     count,_=ai_store.page(&m.store,1,-1,lines)
     testing.expect_value(t,count,400)

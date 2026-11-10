@@ -16,7 +16,7 @@ import phys "plugins:physics/runtime"
 // While it walks a clip of matching, the warping of its Animation.motion stretches the stride to
 // the speed of the root of its pose. A game writes no code for locomotion; the clips and their
 // modes are in the .match.
-@(step="fixed",before="animation_sample")
+@(step="fixed")
 animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(phys.Walk_Action),walks:core.Read(phys.Walk),tacticals:core.Read(phys.Tactical_Sprint),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,warps:^anim.Motion_Requests,problems:^core.Problems) {
     for row in 0..<core.count(characters) {
         entity:=core.entity_at(characters,row)

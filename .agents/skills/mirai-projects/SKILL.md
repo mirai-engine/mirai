@@ -68,8 +68,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
    in `manifest_validate` or `plugin_validate`.
 2. A new engine package goes into `ENGINE_PACKAGES`, in the lowest
-   [library](references/projects.md#engine-binaries) that has what it imports, and, if it is
-   engine-time, into `engine_time_packages`.
+   [layer](references/projects.md#engine-binaries) that has what it imports and after the
+   packages it imports, and, if it is engine-time, into `engine_time_packages`.
 3. A change in what `declare` writes bumps `DECLARE_VERSION`.
 4. Update [projects.md](references/projects.md) or [build.md](references/build.md) in the same task
    if an invariant or a workflow changes.
@@ -90,8 +90,18 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - A private procedure is declared and exported only when the declarations of its package name it:
   what `declare` copies as text and what it looks for names in are the same set.
+- What compiles against the engine declarations follows the declarations it names and what they
+  reach, by the names in the text: a name that is hidden or inside a comment still counts, and a
+  type reached through a pointer too. More is followed, never less.
+- In dev a package that is edited often is a library of its own, and a library imports only
+  packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
+- Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
+  (`cook/build/tests.odin`), is current by the content fingerprint of what its build read and
+  runs in the engine root: a relative path in a test is relative to the engine.
+- No library compiles a `_test.odin`: the engine, plugin and project libraries compile from
+  stages without them. A test helper a game's tests use is public API of the engine.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
   `host` chooses what to load with `project.shader_generation_find`; do not duplicate that path.
 - Manifests are flat structs read and written by their schema; an unknown field is a read error.
@@ -121,9 +131,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Verification
 
 - `mirai test project` (manifests, order, paths), `mirai test cook/build` (cooking, shaders, copy,
-  fingerprint, engine modes, `declare` and the IR without stores of aggregates of more than 64
-  bytes) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare the
-  sources, output of `mirai test`, known failures); `mirai check cook/build` and `mirai check
+  fingerprint, engine modes, `declare`, the IR without stores of aggregates of more than 64 bytes,
+  and the test runner: currency of an executable and what it reads from the output of
+  `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
+  the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
   lock) and `mirai test std/subprocess` (low priority of a child).
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the

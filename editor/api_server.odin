@@ -26,7 +26,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "14"
+API_VERSION :: "15"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with methods, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and a read-only one _wait_until, a condition (phase=Built) it is called again until; a method that changes things is called once, and the wait goes on its status method. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -73,6 +73,9 @@ Api_State :: struct {
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
+    commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
+    person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
+    left_going:bool,   // that call left what it started going, which a call of an agent waits for
 }
 
 @(storage)
@@ -86,6 +89,7 @@ Api :: struct {
 
 @(private)
 api_of :: proc(s:^Session) -> ^Api {
+    if s.api!=nil {return s.api}
     if s.info==nil || s.editor_world==nil {return nil}
     return core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Api)
 }
@@ -117,15 +121,17 @@ api_port :: proc(s:^Session) -> int {
 
 Api_Open_Error :: enum {None,No_Storage,Server,Methods}
 
-// Opens the server and registers the methods. port 0 lets the system choose.
-// A method that cannot be registered stops the opening with the reason.
-api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
+// Opens the registry of the methods, which the menus, the shortcuts and the
+// buttons of the editor call too, and with listen the server that answers
+// agents. port 0 lets the system choose. A method that cannot be registered
+// stops the opening with the reason.
+api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error {
     a:=api_of(s)
     if a==nil {return .No_Storage}
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
-    if error:=api.server_init(&st.server,{port=port,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
+    if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server
     }
@@ -137,6 +143,7 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
     guides:=AI_GUIDES
     api.server_guides_set(&st.server,guides[:])
     api_methods_register(s,st)
+    commands_register(s,st)
     api_providers_register(s)
     if st.refused>0 {
         fmt.eprintfln("mirai: the API does not open: %d methods did not register, the first: %s",st.refused,st.refusal)
@@ -146,7 +153,7 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
     st.library_generation=s.library_generation
     st.server.pause,st.server.user=api_server_pause,s
     api_disk_baseline(s)
-    api_port_file_write(s,st.port)
+    if listen {api_port_file_write(s,st.port)}
     return .None
 }
 
@@ -248,10 +255,12 @@ api_poll :: proc(s:^Session) {
     if st.library_generation!=s.library_generation {
         if !api.server_methods_reset(&st.server) {return}
         st.count,st.refused=0,0
+        st.commands={}
         api_schema_free(st)
         api_schema_build(s,st)
         api_plugins_set(s,st)
         api_methods_register(s,st)
+        commands_register(s,st)
         api_providers_register(s)
         if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
         st.library_generation=s.library_generation
@@ -300,6 +309,11 @@ api_jobs :: proc(s:^Session) {
 api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,what:="working") -> bool {
     st:=api_state(s)
     if st==nil {return !pending(s,user)}
+    // A person does not wait for the answer: the editor shows what goes on.
+    if st.person {
+        st.left_going=pending(s,user)
+        return !st.left_going
+    }
     started:=time.tick_now()
     st.waiting+=1
     defer {
@@ -411,7 +425,7 @@ api_trampoline :: proc(call:^api.Call) {
     context.temp_allocator=st.poll_temp
     st.in_call+=1
     defer st.in_call-=1
-    st.last_call=time.tick_now()
+    if !st.person {st.last_call=time.tick_now()}
     task:^Ai_Task
     if call.client_tag!="" {
         if entry.session.ai==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no AI task context");return}
@@ -445,10 +459,13 @@ api_trampoline :: proc(call:^api.Call) {
     refs:=ai_call_refs(call.raw,refs_buffer[:]) if turn!=nil else ""
     serial_before:=edits!=nil?edits.serial:0
     started:=time.tick_now()
+    // A gesture of the user that runs while a call of an agent waits leaves that call its author.
+    author_before:=edits!=nil?edits.author:history.EDIT_AUTHOR_USER
+    if edits!=nil && st.person {edits.author=history.EDIT_AUTHOR_USER}
     if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
     api_refusal_begin(entry.session)
-    event(entry.session,"api",call.method.name)
-    if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
+    event(entry.session,st.person?"command":"api",call.method.name)
+    if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
     api_refusal_end(entry.session,call)
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
@@ -458,7 +475,7 @@ api_trampoline :: proc(call:^api.Call) {
         }
         // What the call selected is a step of its author.
         history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))
-        edits.author=history.EDIT_AUTHOR_USER
+        edits.author=st.person?author_before:history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
@@ -484,12 +501,28 @@ api_call_edits :: proc(call:^api.Call) -> bool {
 }
 
 // Whether a method runs frames, input or captures of the editor as the user
-// would: what they change is the user's.
+// would, or the user ran it from a menu, a shortcut or a button: what they
+// change is the user's.
 @(private)
 api_call_as_user :: proc(call:^api.Call) -> bool {
+    if entry:=(^Api_Entry)(call.user);entry!=nil && entry.state.person {return true}
     name:=call.method.name
     return name=="editor.input" || name=="capture" || strings.has_prefix(name,"engine.")
 }
+
+// Whether the call that runs is a gesture of the person at the editor (a
+// menu entry, a shortcut, a button) and not a call of an agent. The method is
+// the same; a person is asked what the call lacks where an agent is told what
+// to pass (unsaved changes, a file to choose), and sees what goes on where an
+// agent waits for the answer.
+api_person :: proc(s:^Session) -> bool {
+    st:=api_state(s)
+    return st!=nil && st.person
+}
+
+// Whether a param is one the person at the editor is asked for: a binding
+// gives COMMAND_ASK in its place.
+api_asks :: proc(s:^Session,text:string) -> bool {return text==COMMAND_ASK && api_person(s)}
 
 Api_Method :: struct {
     name,summary:string,
@@ -500,6 +533,7 @@ Api_Method :: struct {
     flags:api.Method_Flags,
     params_schema,result_schema:string,
     writes_result:bool, // the handler writes the result into call.out; result only gives its schema
+    entry:Binding,      // with a label: its menu entry, shortcut or button (commands.odin); its method is this one
 }
 
 // A provider is the sole field of an Editor storage with a default procedure.
@@ -548,15 +582,25 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     }
     entry:=&st.entries[st.count]
     entry^={state=st,session=s,run=m.run}
+    // The types of the editor are known here: the library of the API has its own type table.
+    params_info,result_info:=m.params_info,m.result_info
+    if params_info==nil && m.params!=nil {params_info=type_info_of(m.params)}
+    if result_info==nil && m.result!=nil {result_info=type_info_of(m.result)}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        params_info=m.params_info,result_info=m.result_info,
+        params_info=params_info,result_info=result_info,
         params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)
     }
     st.count+=1
+    if m.entry.label!="" {
+        entry:=m.entry
+        entry.method=m.name
+        if entry.name=="" {entry.name=m.name}
+        if !command_bind(s,entry) {return refuse(st,"%s: its entry did not fit or has the name of another",m.name)}
+    }
     return true
 }
 

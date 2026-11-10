@@ -14,11 +14,11 @@ import anim "plugins:animation/runtime"
 
 PREVIEW_TRACE_BYTES :: 256<<10
 PREVIEW_TRACE_ROWS :: 256
-Preview_Parameter_Result :: struct {name:[32]u8 `mirai:"text"`,value:f32}
 Preview_Program_Result :: struct {
     asset:base.Asset_Id,ready:bool,
     fade_remaining:f32 `mirai:"unit=s,label=Of the inertial blend into the last clip matching jumped to or a play"`,
-    error:anim.Program_Error,parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter_Result,
+    error:anim.Program_Error,
+    parameters:[anim.STACK_PARAMETERS*2]anim.Stack_Parameter_Info `mirai:"label=What its action set declares: the weight of each layer and the axes of their spaces, at the value they have"`,
     match:Preview_Match_Result `mirai:"optional,label=A .match: what its matching plays"`,
 }
 // clip: of the library of the .match; mode: the Locomotion_Mode it serves; forced: a play of
@@ -35,7 +35,9 @@ Preview_Match_Result :: struct {
 Preview_Pose_Result :: struct {id:base.Entity_Id,path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,name:[64]u8 `mirai:"text"`,position,scale:mm.Vec3,rotation:[4]f32}
 Preview_Leaf_Source :: enum u8 {Base,Program,Layer}
 Preview_Leaf_Result :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight,time,phase,duration:f32,sync_mode:anim.Sync_Mode}
-Preview_Marker_Result :: struct {clip,marker:[64]u8 `mirai:"text"`,animation:base.Asset_Id,clip_hash,marker_hash:u64,time,weight:f32,source:u32,group:u16}
+// An event of Animation_Events in the tick. Marker: marker of clip; the others are of action, and
+// name is its section, or for Span_Begin and Span_End its window.
+Preview_Marker_Result :: struct {kind:anim.Animation_Event_Kind,action,name:[64]u8 `mirai:"text,optional"`,clip,marker:[64]u8 `mirai:"text,optional"`,animation:base.Asset_Id,clip_hash,marker_hash:u64,time,weight:f32,source:u32,group:u16}
 Preview_Curve_Result :: struct {target:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,target_hash:u64,property:lib.Property,slot:u8,value:mm.Vec4,weight:f32}
 Preview_Root_Result :: struct {translation:mm.Vec3,rotation:mm.Quat}
 // problems: those the preview reported on the entity, the most recent first.
@@ -45,11 +47,10 @@ Preview_Trace_Result :: struct {
     leaves_total,events_total,curves_total:u32,
     leaves:[PREVIEW_TRACE_ROWS]Preview_Leaf_Result,events:[PREVIEW_TRACE_ROWS]Preview_Marker_Result,curves:[PREVIEW_TRACE_ROWS]Preview_Curve_Result,
     root_delta:Preview_Root_Result,root_enabled:bool,diagnostics:Preview_Diagnostics,
-    actions:[anim.ACTION_EVENT_CAPACITY]Action_Event_Result,
 }
 Preview_Result :: struct {id:base.Entity_Id,time:f32,ended:bool,program:Preview_Program_Result,poses:[1024]Preview_Pose_Result,total,shown:u32,trace:[64]Preview_Trace_Result,trace_total,trace_shown:u32,trace_truncated:bool}
 Preview_Trace_Source :: struct {id:base.Asset_Id,file:asset.Asset,view:asset.Animation_View}
-Preview_Trace :: struct {writer:serial.Writer,view:asset.Animation_View,primary:base.Asset_Id,sources:[anim.ANIMATION_SOURCES]Preview_Trace_Source,source_count:int,source_generation:u32,graph:anim.Graph_Profile,shown:u32,truncated:bool}
+Preview_Trace :: struct {writer:serial.Writer,view:asset.Animation_View,primary:base.Asset_Id,sources:[anim.ANIMATION_SOURCES]Preview_Trace_Source,source_count:int,source_generation:u32,shown:u32,truncated:bool}
 
 @(private)
 preview_trace_sources_close :: proc(trace:^Preview_Trace) {
@@ -111,14 +112,19 @@ preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> 
     return result,true
 }
 @(private)
-preview_program_write :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:^anim.Playing,animation:anim.Animation,graph:anim.Graph_Profile) {
+preview_program_write :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:^anim.Playing,animation:anim.Animation) {
     value:=Preview_Program_Result{asset=animation.asset}
     if state!=nil {runtime:=&state.program;value.ready,value.error,value.fade_remaining=runtime.ready,runtime.error,max(0,runtime.fade-runtime.elapsed)}
     serial.text_write_raw(call.out,"{");api.write_key(call.out,"asset",true);serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,value.asset);serial.write_u8(call.out,'"')
     api.write_bool(call.out,"ready",value.ready);api.write_key(call.out,"fade_remaining");api.write_number(call.out,value.fade_remaining)
     api.write_key(call.out,"error");authoring_write_value(call,&value.error,type_info_of(anim.Program_Error))
     serial.text_write_raw(call.out,",\"parameters\":[")
-    for &parameter,i in graph.parameters {if i>0 {serial.write_u8(call.out,',')};result:=Preview_Parameter_Result{name=parameter.name,value=parameter.value};if set,ok:=anim.animation_parameter_value(animation,base.text_get(parameter.name[:]));ok {result.value=set};authoring_write_value(call,&result,type_info_of(Preview_Parameter_Result))}
+    if state!=nil {
+        parameters:[anim.STACK_PARAMETERS*2]anim.Stack_Parameter_Info
+        blends:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Blend_Assets)
+        count:=anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),blends,core.world_storage_of(world,anim.Playback),state.entity,parameters[:])
+        for &parameter,i in parameters[:count] {if i>0 {serial.write_u8(call.out,',')};authoring_write_value(call,&parameter,type_info_of(anim.Stack_Parameter_Info))}
+    }
     serial.text_write_raw(call.out,"]")
     if state!=nil {if match,ok:=preview_match(world,app,state.entity);ok {api.write_key(call.out,"match");authoring_write_value(call,&match,type_info_of(Preview_Match_Result))}}
     serial.text_write_raw(call.out,"}")
@@ -128,15 +134,6 @@ preview_leaf_write :: proc(call:^api.Call,cache:^anim.Source_Assets,state:^anim.
     value:=Preview_Leaf_Result{source=source,key=key,group=group,layer=layer,outgoing=outgoing,weight=weight,sync_mode=mode}
     if content!=nil && lib.clip_valid(&content.lib,player.clip) {value.clip=anim.source_clip_label(content,player.clip);value.animation=anim.source_clip_source(cache,state,player.clip);value.time=lib.player_time(&content.lib,player);value.phase=lib.player_normalized(&content.lib,player);value.duration=lib.clip_duration(&content.lib,player.clip)}
     authoring_write_value(call,&value,type_info_of(Preview_Leaf_Result))
-}
-@(private)
-preview_action_events_write :: proc(call:^api.Call,runtime:^anim.Action_Runtime,entity:core.Entity) {
-    serial.text_write_raw(call.out,"[");written:=0
-    if runtime!=nil {for event in runtime.events.items {if event.entity!=entity {continue};value:=Action_Event_Result{kind=event.kind,layer=event.layer,time=event.time,weight=event.weight}
-        for &plan in runtime.plans {for &action in plan.profile.actions {if base.name_hash(base.text_get(action.name[:]))==event.action {value.name=action.name}};for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.section {value.section=section.name}};for &window in plan.profile.windows {if base.name_hash(base.text_get(window.name[:]))==event.window {value.window=window.name}}}
-        if written>0 {serial.write_u8(call.out,',')};written+=1;authoring_write_value(call,&value,type_info_of(Action_Event_Result))
-    }}
-    serial.text_write_raw(call.out,"]")
 }
 @(private)
 preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World_Ref,entity:core.Entity,p:^Preview_Params,tick:u32,app:^host.App) -> bool {
@@ -150,7 +147,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     start:=trace.writer.count
     if trace.shown>0 {serial.write_u8(call.out,',')}
     serial.text_write_raw(call.out,"{");api.write_uint(call.out,"tick",u64(tick),true);api.write_key(call.out,"dt");api.write_number(call.out,p.dt if tick>0 else 0);api.write_key(call.out,"time");api.write_number(call.out,state.time);api.write_key(call.out,"duration");api.write_number(call.out,state.duration);api.write_bool(call.out,"ended",state.ended)
-    api.write_key(call.out,"program");preview_program_write(call,world,app,state,description,trace.graph)
+    api.write_key(call.out,"program");preview_program_write(call,world,app,state,description)
     serial.text_write_raw(call.out,",\"leaves\":[");written,total:=0,0
     if state.program.ready {
         runtime:=&state.program;output:=&runtime.output
@@ -163,15 +160,32 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
         for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {total+=1;if written>=PREVIEW_TRACE_ROWS {continue};serial.write_u8(call.out,',');written+=1;preview_leaf_write(call,sources,state,content,outgoing.player,.Base,0,0,0,true,lib.fade_out_weight(outgoing)*description.weight,.Independent)}
     }
     actions:=core.world_storage_of(world,anim.Action_Runtime)
-    for &layer,i in state.layers {if layer.clip==0 {continue};sync:=anim.Sync_Mode.Markers if description.layers[i].sync else .Independent
-        if actions!=nil {for active in actions.states {if active.entity==entity && active.layers[i].active {sync=.Independent;break}}}
-        total+=1;if written<PREVIEW_TRACE_ROWS {if written>0 {serial.write_u8(call.out,',')};written+=1;preview_leaf_write(call,sources,state,content,layer.fader.current,.Layer,u32(i+1),0,u8(i+1),false,lib.fader_current_weight(layer.fader)*layer.weight*description.weight,sync)}
-        for outgoing in layer.fader.outgoing[:layer.fader.outgoing_count] {total+=1;if written>=PREVIEW_TRACE_ROWS {continue};if written>0 {serial.write_u8(call.out,',')};written+=1;preview_leaf_write(call,sources,state,content,outgoing.player,.Layer,u32(i+1),0,u8(i+1),true,lib.fade_out_weight(outgoing)*layer.weight*description.weight,.Independent)}
+    for &layer,i in state.layers[:state.stack] {
+        asked:=state.asked[i]
+        if asked.injected || layer.weight<=0 {continue}
+        players:[anim.LAYER_PLAYERS]lib.Player
+        for player,k in players[:anim.layer_players(&layer,&players)] {
+            total+=1;if written>=PREVIEW_TRACE_ROWS {continue}
+            if written>0 {serial.write_u8(call.out,',')};written+=1
+            preview_leaf_write(call,sources,state,content,player,.Layer,u32(i),0,u8(i),k>0 && layer.leaf_count==0,player.weight*layer.weight*description.weight,.Markers if asked.sync else .Independent)
+        }
     }
     serial.text_write_raw(call.out,"]");api.write_uint(call.out,"leaves_total",u64(total))
     serial.text_write_raw(call.out,",\"events\":[");written,total=0,0
     events:=core.world_storage_of(world,anim.Animation_Events)
-    if events!=nil {for event in events.items {if event.entity!=entity {continue};total+=1;if written>=PREVIEW_TRACE_ROWS {continue};if written>0 {serial.write_u8(call.out,',')};written+=1;view:=preview_trace_source_view(trace,event.animation);value:=Preview_Marker_Result{clip=preview_clip_name(view,event.clip),marker=preview_marker_name(view,event.marker),animation=event.animation,clip_hash=event.clip,marker_hash=event.marker,time=event.time,weight=event.weight,source=event.source,group=event.group};authoring_write_value(call,&value,type_info_of(Preview_Marker_Result))}}
+    if events!=nil {for event in events.items {
+        if event.entity!=entity {continue}
+        total+=1;if written>=PREVIEW_TRACE_ROWS {continue}
+        if written>0 {serial.write_u8(call.out,',')};written+=1
+        value:=Preview_Marker_Result{kind=event.kind,animation=event.animation,clip_hash=event.clip,time=event.time,weight=event.weight,source=event.source,group=event.group}
+        if event.kind==.Marker {view:=preview_trace_source_view(trace,event.animation);value.clip,value.marker,value.marker_hash=preview_clip_name(view,event.clip),preview_marker_name(view,event.name),event.name}
+        if actions!=nil && event.action!=0 {for &plan in actions.plans {
+            if plan.asset!=description.actions {continue}
+            for &action in plan.profile.actions {if base.name_hash(base.text_get(action.name[:]))==event.action {value.action=action.name}}
+            if event.kind==.Span_Begin || event.kind==.Span_End {for &window in plan.profile.windows {if base.name_hash(base.text_get(window.name[:]))==event.name {value.name=window.name}}} else if event.kind!=.Marker {for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name {value.name=section.name}}}
+        }}
+        authoring_write_value(call,&value,type_info_of(Preview_Marker_Result))
+    }}
     serial.text_write_raw(call.out,"]");api.write_uint(call.out,"events_total",u64(total));serial.text_write_raw(call.out,",\"curves\":[");written=0
     for curve in state.curves {if written>=PREVIEW_TRACE_ROWS {break};if written>0 {serial.write_u8(call.out,',')};written+=1;value:=Preview_Curve_Result{target=preview_curve_name(trace,curve.target),target_hash=curve.target,property=curve.property,slot=curve.slot,value=curve.value,weight=curve.weight};authoring_write_value(call,&value,type_info_of(Preview_Curve_Result))}
     serial.text_write_raw(call.out,"]");api.write_uint(call.out,"curves_total",u64(len(state.curves)));api.write_key(call.out,"root_delta");root:=Preview_Root_Result{state.motion.translation,state.motion.rotation};authoring_write_value(call,&root,type_info_of(Preview_Root_Result));api.write_bool(call.out,"root_enabled",state.root_enabled)
@@ -179,7 +193,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     if modifiers:=core.world_storage_of(world,anim.Modifier_Runtime);modifiers!=nil {diagnostics.modifiers_last_request_error=anim.modifier_request_error(modifiers,entity)}
     _,problems_total:=entity_problems(app,world,entity,"",diagnostics.problems[:]);diagnostics.problems_total=u32(problems_total)
     if motion,ok:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity);ok {diagnostics.motion=motion.error}
-    api.write_key(call.out,"diagnostics");authoring_write_value(call,&diagnostics,type_info_of(Preview_Diagnostics));api.write_key(call.out,"actions");preview_action_events_write(call,actions,entity)
+    api.write_key(call.out,"diagnostics");authoring_write_value(call,&diagnostics,type_info_of(Preview_Diagnostics))
     serial.text_write_raw(call.out,"}")
     if trace.writer.overflow!=0 || trace.writer.count>PREVIEW_TRACE_BYTES {trace.writer.count=start;trace.writer.overflow=0;trace.truncated=true;return true}
     trace.shown+=1

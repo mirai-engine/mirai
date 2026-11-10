@@ -166,24 +166,24 @@ TEXT_CASES :: []Text_Case{
 @(private)
 corpus_texts :: proc(ctx:^Context,user:rawptr) {
     for c in TEXT_CASES {
-        if box(ctx,{id=id(ctx,c.name),width=fixed(c.width),height=FIT,track=true}) {paragraph(ctx,c.text,c.size)}
+        if box(ctx,{id=id(ctx,c.name),width=fixed(c.width),height=FIT,track=true}) {text(ctx,c.text,prose(ctx,c.size))}
     }
     if box(ctx,{id=id(ctx,"pair"),width=fixed(180),height=FIT,gap=8,track=true}) {
-        paragraph(ctx,"the first of two runs that share a row",12)
-        paragraph(ctx,"and the second one",12)
+        text(ctx,"the first of two runs that share a row",prose(ctx,12))
+        text(ctx,"and the second one",prose(ctx,12))
     }
     if box(ctx,{id=id(ctx,"column"),width=fixed(150),height=FIT,direction=.Column,padding=padding_all(4),gap=2,track=true}) {
-        paragraph(ctx,"a column takes the width of its parent and breaks the text to it",12)
-        paragraph(ctx,"short",12)
+        text(ctx,"a column takes the width of its parent and breaks the text to it",prose(ctx,12))
+        text(ctx,"short",prose(ctx,12))
     }
     if box(ctx,{id=id(ctx,"beside"),width=fixed(200),height=FIT,gap=4,track=true}) {
         if box(ctx,{id=id(ctx,"beside.icon"),width=fixed(24),height=fixed(24),track=true}) {}
         if box(ctx,{id=id(ctx,"beside.text"),width=GROW,height=FIT,direction=.Column,track=true}) {
-            paragraph(ctx,"what is left of the row once the icon is in",12)
+            text(ctx,"what is left of the row once the icon is in",prose(ctx,12))
         }
     }
     if box(ctx,{id=id(ctx,"clipped"),width=fixed(100),height=FIT,clip_x=true,track=true}) {
-        paragraph(ctx,"a clip moves what does not fit instead of breaking it",12)
+        text(ctx,"a clip moves what does not fit instead of breaking it",prose(ctx,12))
     }
 }
 
@@ -209,7 +209,12 @@ test_layout_commands :: proc(ctx:^Context,out:[]Test_Command) -> int {
     for c,i in t.commands[:min(t.command_count,len(out))] {
         n:=&t.nodes[c.node]
         out[i]={c.kind,n.id,"",n.box}
-        if c.kind==.Text {out[i].text,out[i].rect,_=layout_line(t,c)}
+        if c.kind==.Text {
+            line:=&t.lines[c.line]
+            piece:=&t.pieces[line.pieces_first]
+            out[i].text=t.spans[piece.span].text[piece.start:][:piece.length]
+            out[i].rect={line.x,line.y,line.width,line.height}
+        }
     }
     return t.command_count
 }
@@ -275,7 +280,7 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
         frame_end(&ctx)
         testing.expect_value(t,ctx.stats.dropped_elements,u32(0))
         walked:=0
-        for r in ctx.layout.runs[:ctx.layout.run_count] {if r.measure.words_first<0 {walked+=1}}
+        for r in ctx.layout.spans[:ctx.layout.span_count] {if r.measure.words_first<0 {walked+=1}}
         testing.expectf(t,(walked>0)==(words>0),"%d words: %d runs walked",words,walked)
         for want in GOLDEN_TEXT_BOXES {
             got:=test_rect(t,&ctx,id(&ctx,want.name))
@@ -305,7 +310,7 @@ a_frame_that_shows_the_same_text_measures_none_of_it :: proc(t:^testing.T) {
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     test_frame(&ctx,&input,corpus_texts,nil)
-    runs:=u32(ctx.layout.run_count)
+    runs:=u32(ctx.layout.span_count)
     testing.expect(t,runs>0)
     testing.expect_value(t,ctx.stats.text_measured+ctx.stats.text_reused,runs)
     test_frame(&ctx,&input,corpus_texts,nil)
@@ -327,7 +332,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
         buffer:[32]u8
         for i in 0..<RUNS {
             if box(ctx,{id=id(ctx,"run",i+1),width=fixed(40),height=FIT,track=true}) {
-                paragraph(ctx,fmt.bprintf(buffer[:],"unique run %d",i+1),12)
+                text(ctx,fmt.bprintf(buffer[:],"unique run %d",i+1),prose(ctx,12))
             }
         }
     }

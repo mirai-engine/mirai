@@ -276,7 +276,7 @@ scene_thumbnails_kept :: proc(s:^Session) -> bool {
 // Whether the scene in front is one of the assets, whose view can be its thumbnail.
 @(private)
 scene_thumbnail_takes :: proc(s:^Session) -> bool {
-    if !scene_thumbnails_kept(s) || scene_covered(s) {return false}
+    if !scene_thumbnails_kept(s) || scene_covered(s) || document_is_prefab(s) {return false}
     file,found:=asset.registry_find(&s.app.assets.registry,s.document.id)
     return found && file.kind==asset.KIND_SCENE
 }

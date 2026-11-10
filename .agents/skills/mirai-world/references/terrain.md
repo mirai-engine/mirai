@@ -595,9 +595,10 @@ Construction in jobs:
 
 A source has a tree over its chunks (`quad.odin`), even one of a single chunk. A Heightfield has a
 quadtree: four chunks have a parent that covers the same, and so on up to one root per source. A
-Volume has an octree as deep as a node of `VOLUME_NODE_CELLS` cells a side allows, with one root
-for each such region: a node is one build, so its size is bounded and a large Volume has many
-roots. A root with no surface under it shows nothing and costs no build.
+Volume has an octree as deep as a node of `VOLUME_NODE_CELLS` cells a side allows (two chunks a
+side at least), with one root for each such region: a node is one build, so its size is bounded
+and a large Volume has many roots. A root with no surface under it shows nothing and costs no
+build.
 `Terrain` is `@(component,far)`: when its section is not loaded the terrain is left without
 colliders (`Resident_Owner.far`, with `scene.Far_Kept`: it chooses its pieces as a solid one, but
 none carries a collider or is urgent, they are built in jobs), and far from the sources it shows
@@ -628,7 +629,8 @@ per frame (in the first call); what the data changes, in each call.
   no holes.
 - A Volume node is built from the blocks of its chunks (`node_build`), read for the build and let
   go once it shows ([levels](#geometry-and-collision)). Its job is taken when it ends, without
-  waiting for it, and chunks are built before nodes. An edit under a node that shows builds it
+  waiting for it, and its levels are made in a second job that reads no source, so an edit does
+  not wait for them. Chunks are built before nodes. An edit under a node that shows builds it
   again.
 - A node has no collider; it keeps its triangles for picking while the world is not playing.
 - The distance of an unbuilt piece uses the heights of its samples (`Data_Source.ranges`, from

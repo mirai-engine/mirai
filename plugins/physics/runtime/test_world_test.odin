@@ -27,11 +27,11 @@ Test_Physics :: struct {
     replicas:core.Table(core.Pose_Target),
     character_states:core.Table(Character_State),
     joint_states:core.Table(Joint_State),
-    volumes:core.Table(Fluid_Volume),
+    fluids:core.Table(Fluid),
     verticals:core.Table(core.Vertical),
+    volumes:core.Table(volume.Volume), // where the fluids and the gravities are
     // The gravity of the places of the world: a step reads them when its host says fields.
     gravities:core.Table(volume.Gravity),
-    gravity_volumes:core.Table(volume.Volume),
     worlds:core.Table(core.World_Transform), // of what has a Gravity: the bodies of a test have none
     hierarchy:core.Hierarchy,
     state:Physics_State,
@@ -67,7 +67,8 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Rigid_Body,default=proc(dst:^Rigid_Body) {dst^=RIGID_BODY_DEFAULT}),
         core.test_type(Collider,default=proc(dst:^Collider) {dst^=COLLIDER_DEFAULT}),
         core.test_type(Character,default=proc(dst:^Character) {dst^=character_default()}),
-        core.test_type(Fluid_Volume,default=proc(dst:^Fluid_Volume) {dst^=FLUID_VOLUME_DEFAULT}),
+        core.test_type(Fluid,default=proc(dst:^Fluid) {dst^=FLUID_DEFAULT}),
+        core.test_type(Force_Field,default=proc(dst:^Force_Field) {dst^=FORCE_FIELD_DEFAULT}),
         core.test_type(Fluid_Waves,default=proc(dst:^Fluid_Waves) {dst^=FLUID_WAVES_DEFAULT}),
         core.test_type(Walk,default=proc(dst:^Walk) {dst^=WALK_DEFAULT}),
         core.test_type(Fly,default=proc(dst:^Fly) {dst^=FLY_DEFAULT}),
@@ -76,7 +77,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Mantle,default=proc(dst:^Mantle) {dst^=MANTLE_DEFAULT}),
         core.test_type(Tactical_Sprint,default=proc(dst:^Tactical_Sprint) {dst^=TACTICAL_SPRINT_DEFAULT}),
         core.test_type(Ledge_Jump,default=proc(dst:^Ledge_Jump) {dst^=LEDGE_JUMP_DEFAULT}),
-        core.test_type(Walk_Actions,default=proc(dst:^Walk_Actions) {dst^=walk_actions_default()}),
     )
 }
 
@@ -89,14 +89,41 @@ test_state_make :: proc(state:^Physics_State,settings:=Physics_Settings{}) -> bo
     return state_make(state,&settings,&job_system,&problems)
 }
 
+// A dynamic ball in a simulation alone, which the test of a library throws at what it made there.
+test_ball :: proc(state:^Physics_State,position,velocity:[3]f32,radius:f32=0.25,gravity_scale:f32=0,bullet:=true) -> Body_Handle {
+    desc:=sim.BODY_DESC_DEFAULT
+    desc.position,desc.linear_velocity,desc.gravity_scale,desc.bullet=position,velocity,gravity_scale,bullet
+    body:=sim.body_create(&state.world,desc)
+    shape:=sim.SHAPE_DESC_DEFAULT
+    shape.geometry=sim.Sphere{radius}
+    sim.shape_create(&state.world,body,shape)
+    return body
+}
+
+// A strain around a point that fades to nothing at the radius, on every body of a breakable; with weaken
+// it breaks nothing yet.
+test_strain :: proc(state:^Physics_State,h:Breakable_Handle,point:[3]f32,radius,amount:f32,impulse:[3]f32={},weaken:=false) -> (changed,strained:bool) {
+    _,changed,strained=break_apply(state,{breakable=h,piece=-1,region={point=point,radius=radius,blend=radius},vector=impulse,strain=amount,kind=weaken?.Weaken:.Damage})
+    return
+}
+
+// A cut of every body of a breakable by the plane through a point.
+test_slice :: proc(state:^Physics_State,h:Breakable_Handle,point,normal:[3]f32) -> bool {
+    _,cut,_:=break_apply(state,{breakable=h,piece=-1,region={point=point},vector=normal,kind=.Slice})
+    return cut
+}
+
+// Ends a body test_ball made: its handle is then one of a body that is gone.
+test_body_end :: proc(state:^Physics_State,body:Body_Handle) {sim.body_destroy(&state.world,body)}
+
 test_host_destroy :: proc(h:^Test_Physics_Host) {
     collider_meshes_destroy(&h.meshes)
 }
 
 // physics_step alone, on the rows as they are and as the loop calls it.
 test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
-    gravities:core.Read(volume.Gravity);gravity_volumes:core.Read(volume.Volume);worlds:core.Read(core.World_Transform)
-    if h.fields {gravities,gravity_volumes,worlds=core.read(&p.gravities),core.read(&p.gravity_volumes),core.read(&p.worlds)}
+    gravities:core.Read(volume.Gravity);worlds:core.Read(core.World_Transform)
+    if h.fields {gravities,worlds=core.read(&p.gravities),core.read(&p.worlds)}
     if state_make(&p.state,&p.settings,&h.app.jobs,&h.problems) {
         if !h.fields {sim.world_set_gravity(&p.state.world,h.gravity)}
     }
@@ -104,7 +131,7 @@ test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
         &p.state,core.ref(&p.settings),&p.requests,&p.events,&h.meshes,&h.app,{dt=dt,playing=dt>0},
         core.read(&p.rigids),core.read(&p.colliders),core.read(&p.characters),core.read(&p.moves),
         &p.joints,core.read(&p.statics),core.read(&p.parents),core.read(&p.names),
-        &p.transforms,&p.bodies,core.read(&p.replicas),&p.character_states,&p.joint_states,core.read(&p.volumes),&p.joint_requests,core.ref(&p.collision),core.ref(&p.sync_check),&p.simulation_hash,nil,&h.problems,
-        gravities,gravity_volumes,worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),
+        &p.transforms,&p.bodies,core.read(&p.replicas),&p.character_states,&p.joint_states,core.read(&p.fluids),&p.joint_requests,core.ref(&p.collision),core.ref(&p.sync_check),&p.simulation_hash,nil,&h.problems,
+        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),
     )
 }

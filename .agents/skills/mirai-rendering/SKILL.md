@@ -86,7 +86,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
   [display](references/display.md#units); display transform (Neutral or ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
-- Scene resolution, `render_scale` and a preset's target of lines →
+- Scene resolution (`Settings.resolution`) and a preset's target of lines →
   [resolution](references/settings.md#scene-resolution)
 - `render.Settings` → [settings](references/settings.md#settings); inspection modes of a view
   (`View_Inspection`, `Debug_View`) → [modes](references/settings.md#inspection-modes)
@@ -120,6 +120,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - The graphics API is the own `rhi` over Vulkan and Metal; wgpu is not used.
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.
+- What a pass chooses of a stage is a constant of its pipelines, not another compilation; a
+  variant is only for what the stage declares to the device
+  ([constants and variants](references/shaders.md#compilation)).
+- The engine has no Surface program: those of the tests are in `render/testdata/`.
 - A shadow technique costs no more than tracing one ray per 2×2 block.
 - The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
   into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives

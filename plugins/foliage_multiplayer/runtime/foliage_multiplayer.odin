@@ -20,7 +20,7 @@ REPLICATE :: multiplayer.Replicate{simulation=.Server,audience=.Always,priority=
 // What foliage_net_removals last looked at.
 @(storage)
 Foliage_Net :: struct {
-    removed:u64, // the version of the table of Foliage_Removed
+    removed:core.Seen, // the table of Foliage_Removed it last looked at
     role:core.Network_Role,
 }
 
@@ -29,8 +29,8 @@ Foliage_Net :: struct {
 @(step="fixed",loops="game",stage="react")
 foliage_net_removals :: proc(net:^Foliage_Net,authority:core.Ref(core.Network),removed:core.Read(foliage.Foliage_Removed),objects:core.Read(multiplayer.Replicate),transforms:core.Read(core.Transform),commands:core.Commands) {
     role:=authority.ptr!=nil?authority.role:.Standalone
-    if core.version(removed)==net.removed && role==net.role {return}
-    net.removed,net.role=core.version(removed),role
+    if !core.touched(removed,&net.removed) && role==net.role {return}
+    net.role=role
     if role!=.Server {return}
     for row in 0..<core.count(removed) {
         e:=core.entity_at(removed,row)

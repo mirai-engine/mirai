@@ -13,6 +13,7 @@ import "mirai:editor/api"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
+import "mirai:std/base"
 
 SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--dev|--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
 
@@ -73,6 +74,7 @@ cmd_session :: proc(root:string,args:[]string) -> int {
 // What start and restart take; what is not theirs goes to the editor.
 Session_Options :: struct {
     mode:Build_Mode,
+    mode_asked:bool, // --dev or --release was given
     no_build,discard,orphans,copy:bool,
     timeout:int, // seconds for the API to answer
     editor_args:[]string,
@@ -86,8 +88,8 @@ session_options :: proc(args:[]string) -> (options:Session_Options,problem:strin
         switch args[i] {
         case "--dev","--release":
             mode:=args[i]=="--dev"?Build_Mode.Dev:Build_Mode.Release
-            if options.mode!=.Keep && options.mode!=mode {return {},"--dev and --release do not go together"}
-            options.mode=mode
+            if options.mode_asked && options.mode!=mode {return {},"--dev and --release do not go together"}
+            options.mode,options.mode_asked=mode,true
         case "--no-build": options.no_build=true
         case "--discard":  options.discard=true
         case "--orphans":  options.orphans=true
@@ -161,13 +163,13 @@ session_record :: proc(folder:string) -> (record:Session_Record,found:bool) {
     return record,true
 }
 
-// The mode of the binaries a record names; Keep when it names none.
-session_record_mode :: proc(record:Session_Record) -> Build_Mode {
+// The mode of the binaries a record names; false when it names none.
+session_record_mode :: proc(record:Session_Record) -> (mode:Build_Mode,named:bool) {
     switch record.mode {
-    case "dev":     return .Dev
-    case "release": return .Release
+    case "dev":     return .Dev,true
+    case "release": return .Release,true
     }
-    return .Keep
+    return
 }
 
 @(private="file")
@@ -223,7 +225,8 @@ session_restart :: proc(root,folder:string,args:[]string) -> int {
     if problem!="" {fmt.eprintfln("mirai session restart: %s. Usage: mirai %s",problem,SESSION_USAGE);return 2}
     mode,editor_args:=options.mode,options.editor_args
     if record,recorded:=session_record(folder);recorded {
-        if mode==.Keep {mode=session_record_mode(record)}
+        // The session opens again as it was opened, unless a mode is asked for.
+        if recorded_mode,named:=session_record_mode(record);named && !options.mode_asked {mode=recorded_mode}
         if len(editor_args)==0 {editor_args=record.args}
     }
     closed:=false
@@ -450,7 +453,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     if copies_locked {workspace.lock_release(&copies)}
     if error!=nil {return "",{},fmt.tprintf("could not create a copy in %s (%v); check that it is writable",temporary,error)}
     if problem!="" {
-        _=os.remove_all(copy)
+        _=base.remove_all(copy)
         return "",{},problem
     }
     walker:=os.walker_create(folder)
@@ -477,7 +480,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     }
     if problem!="" {
         workspace.lock_release(&lock)
-        _=os.remove_all(copy)
+        _=base.remove_all(copy)
         return "",{},fmt.tprintf("%s; free the disk or close what holds the file, and start again",problem)
     }
     return copy,lock,""
@@ -499,7 +502,7 @@ session_copies_sweep :: proc(folder:string) -> (swept,kept:int) {
         if entry.type!=.Directory || !strings.has_prefix(entry.name,SESSION_COPY_PREFIX) {continue}
         copy:=project.path_absolute(entry.fullpath)
         if session_copy_live(copy) {continue}
-        if os.remove_all(copy)!=nil {kept+=1;continue}
+        if base.remove_all(copy)!=nil {kept+=1;continue}
         swept+=1
     }
     return
@@ -549,7 +552,7 @@ session_copied :: proc(folder:string) -> bool {
 
 // Deletes a copy whose editor ended; false after saying why it could not.
 session_copy_remove :: proc(copy,command:string) -> bool {
-    if error:=os.remove_all(copy);error!=nil {
+    if error:=base.remove_all(copy);error!=nil {
         fmt.eprintfln("mirai %s: could not delete the copy %s (%v); delete the folder once no process holds its files",command,copy,error)
         return false
     }

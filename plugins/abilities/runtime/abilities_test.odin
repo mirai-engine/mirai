@@ -59,7 +59,6 @@ Abilities_World :: struct {
     requests:Ability_Requests,
     events:Ability_Events,
     moves:phys.Locomotion_Requests,
-    actions:anim.Action_Requests,
     animations:anim.Animation_Requests,
     time:core.Time,
 }
@@ -171,18 +170,18 @@ test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,re
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.read(&f.seats),drivables=core.read(&f.drivables),characters=core.read(&f.characters),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,actions=&f.actions,animations=&f.animations,problems=&f.problems}
+    return {time=f.time,seats=core.read(&f.seats),drivables=core.read(&f.drivables),characters=core.read(&f.characters),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
 }
 
 @(private="file")
 step :: proc(f:^Fixture,ticks:=1) {
     for _ in 0..<ticks {
-        seat:=core.get(&f.seats,f.seat)
+        seat:=core.edit(&f.seats,f.seat)
         seat.actions.count=2
         for a in 0..<2 {
             st:=&seat.actions.states[a]
             st^={down=f.down[a],pressed=f.down[a] && !f.was[a],released=!f.down[a] && f.was[a]}
-            if f.down[a] {f.held[a]+=1;st.held_ticks=f.held[a]} else {if f.was[a] {st.released_held=f.held[a]};f.held[a]=0}
+            if f.down[a] {f.held[a]+=1;st.held=f32(f.held[a])*f.time.dt} else {if f.was[a] {st.released_held=f32(f.held[a])*f.time.dt};f.held[a]=0}
             f.was[a]=f.down[a]
         }
         w:=world_of(f)
@@ -194,7 +193,7 @@ step :: proc(f:^Fixture,ticks:=1) {
 
 @(private="file")
 user :: proc(f:^Fixture,e:core.Entity) -> Ability_User {
-    u,_:=core.get(core.read(&f.users),e)
+    u,_:=core.get(&f.users,e)
     return u
 }
 
@@ -220,7 +219,7 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
     testing.expect_value(t,logged(f,.Started,f.player,SLASH_1),1)
-    testing.expect(t,len(f.actions.queue.items)==1 && base.text_get(f.actions.queue.items[0].action[:])=="slash_1")
+    testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="slash_1")
     // Letting go too early leaves nothing: the buffer is shorter than the wait to the window.
     step(f,seconds(0.2))
     f.down[0]=false
@@ -239,10 +238,10 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_2))
     testing.expect_value(t,logged(f,.Interrupted,f.player,SLASH_1),1)
-    // The opener's action is cancelled before the follow-up fires its own: on another layer it would
+    // The opener's action is stopped before the follow-up plays its own: in another layer it would
     // otherwise play on.
-    asked:=f.actions.queue.items[:]
-    testing.expectf(t,len(asked)==3 && asked[1].kind==.Cancel && base.text_get(asked[1].action[:])=="slash_1" && asked[2].kind==.Fire && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
+    asked:=f.animations.plays.items[:]
+    testing.expectf(t,len(asked)==3 && asked[1].stop && base.text_get(asked[1].action[:])=="slash_1" && !asked[2].stop && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
     step(f,seconds(0.2))
     testing.expect_value(t,user(f,f.dummy).attributes[0].base,30)
     testing.expect(t,ability_has(user(f,f.dummy),STUNNED))
@@ -278,7 +277,7 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     dash:=false
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Add_Move && m.move.id==MOVE_ID && m.move.velocity.x>39 && m.move.ticks==u32(seconds(0.24)) {dash=true}}
     testing.expect(t,dash)
-    testing.expect(t,len(f.animations.match_plays.items)==1)
+    testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="dash")
     charges,_:=ability_value(user(f,f.player),CHARGES)
     testing.expect(t,charges>1.9 && charges<2.1)
     // Holding through the whole charge dashes when it ends.
@@ -418,11 +417,11 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.kit")!=nil)
     f.kit[0].buffer=0.2
-    p:=core.get(&f.users,f.player)
+    p:=core.edit(&f.users,f.player)
     p.kit={KIT_TABLE,99}
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"records.missing")!=nil)
-    p=core.get(&f.users,f.player)
+    p=core.edit(&f.users,f.player)
     p.attributes[1].regen=math.inf_f32(1)
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)
@@ -458,7 +457,7 @@ a_stable_tick_allocates_nothing :: proc(t:^testing.T) {
     if !fixture_make(t,f) {return}
     defer fixture_destroy(f)
     reserve(&f.log,4096)
-    reserve(&f.moves.queue.items,64);reserve(&f.actions.queue.items,64);reserve(&f.animations.match_plays.items,64)
+    reserve(&f.moves.queue.items,64);reserve(&f.animations.plays.items,64)
     reserve(&f.requests.queue.items,int(ABILITY_SETTINGS_DEFAULT.requests))
     f.down[0]=true
     step(f,2)

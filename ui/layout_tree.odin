@@ -7,7 +7,7 @@ import "mirai:std/base"
 // The layout of a frame. The widgets open and close its elements, and the size
 // an element asks for follows from its children as they close. layout_finish
 // hands the space of every container out among its children, one axis at a
-// time, breaks the paragraphs into lines, places every element and lists what
+// time, breaks the texts into lines, places every element and lists what
 // is drawn in the order it is drawn.
 //
 // A modified version, written in Odin, of the layout of Clay v0.14 (zlib,
@@ -19,16 +19,10 @@ LAYOUT_DEPTH :: 64
 
 @(private)
 LAYOUT_EPSILON :: 0.01
-// The line box of a paragraph in em, that of the messages of the chat,
-// rounded down to a whole unit. Each line of text is centered
-// in its box.
+// The line box of the running text of the editor in sizes, that of the
+// messages of the chat: prose rounds it down to a whole unit.
 @(private)
 PARAGRAPH_LINE :: f32(1.6)
-
-// The line box of a paragraph of text of size whose lines are line sizes
-// apart, PARAGRAPH_LINE when 0, in whole units.
-@(private)
-paragraph_line :: proc "contextless" (size,line:f32) -> f32 {return math.floor(size*(line if line>0 else PARAGRAPH_LINE))}
 
 @(private)
 Layout_Node :: struct {
@@ -40,11 +34,13 @@ Layout_Node :: struct {
     user_data:rawptr,   // what its scissor and border commands carry
     id:Id,
     kids_first,kids_len:i32,
-    run:i32,            // its row in runs when it is a run of text; -1 otherwise
+    text:i32,           // its row in texts when it is a text; -1 otherwise
     clip_x,clip_y,floating:bool,
     clip_floats:bool,   // the roots that float inside it are cut by it
     clip_outer:i32,     // of one that does: the one it is inside that does too; 0: none
     border:u16,
+    row_span:u8,        // rows of a Grid it takes; 0 is 1
+    row_tracks:u16,     // of a Grid: row plus one of row_tracks; 0: none
 }
 // What a run measures to in one line: its width, the width of its widest word
 // and of a space, and the words it is cut into. A word carries the space that
@@ -75,20 +71,50 @@ Layout_Measures :: struct {
     words:[]Layout_Word,word_count:int,
     chars:[]u8,char_count:int,
 }
+// A piece of the content of a text: words in one size and face, a box that
+// stands in their line (an image, a pill), or room as wide as width where a
+// word ends when it has neither text nor box.
 @(private)
-Layout_Run :: struct {
+Layout_Span :: struct {
     text:string,
-    size,line_height:f32,
-    face:u8,
+    using look:Text_Span, // the font, the size and the color it is drawn with
+    box:bool,
+    width:f32,     // on one line: of its text with pad, or its own when it is a box or room
+    gap:f32,       // room after it that is no part of it
     measure:Layout_Measure,
+    paint:^Paint,  // of a box: what draws it
+    widget:i32,    // the widget its pieces are, plus one; 0: the pointer goes through
+}
+// What a text asks of its lines.
+@(private)
+Layout_Text_Desc :: struct {
+    size:f32,    // of its style: a line shows while the box of a line of this size fits in the element
+    line:f32,    // the box of a line; one that holds a taller piece is as tall as it
+    wrap:Text_Wrap,
+    cut:bool,    // a word wider than a line goes on in the next one instead of past its end
+    ellipsis:bool,
+    hits:bool,   // pieces of it take the pointer: frame_end gives them their rectangles
+    align_x,align_y:Align,
+}
+// A text: the spans it says, and the lines the width it was given breaks them into.
+@(private)
+Layout_Text :: struct {
+    using desc:Layout_Text_Desc,
     node:i32,
+    spans_first,spans_len:i32,
     lines_first,lines_len:i32,
+    shown:i32,   // lines that fit in its element, once placed
+    height:f32,  // of its lines
 }
 @(private)
 Layout_Word :: struct {start,length:i32,width:f32}
-// y: from the top of the run.
+// x, y: from the corner of the text until it is placed, on the surface after.
+// base: its baseline under its top. cut: it ends in an ellipsis.
 @(private)
-Layout_Line :: struct {start,length:i32,width,y:f32}
+Layout_Line :: struct {pieces_first,pieces_len:i32,x,y,width,height,base:f32,cut:bool}
+// The part of a span on a line. x, y: from the corner of its line.
+@(private)
+Layout_Piece :: struct {span,start,length:i32,x,y,width:f32}
 // A floating element is a root of its own, placed against the node it hangs from.
 @(private)
 Layout_Root :: struct {
@@ -101,6 +127,9 @@ Layout_Root :: struct {
     clip:i32,           // the node it floats inside that cuts it (clip_floats); 0: none
     contain:bool,       // it stays inside within
     within:i32,         // the node it stays inside: a world panel, the part of a player or the surface (0)
+    inset:[4]f32,       // how far inside it
+    hung:bool,          // it hangs from rect instead of from parent
+    rect:Rect,
 }
 @(private)
 Layout_Attach :: enum u8 {None,Root,Parent}
@@ -116,17 +145,22 @@ Layout_Float :: struct {
     retained:u8,
     contain:bool,
     within:Id,  // what it stays inside when it contains itself; 0: the surface
+    inset:[4]f32,
+    hung:bool,  // it hangs from rect, a rectangle of the layout, instead of from an element
+    rect:Rect,
 }
 @(private)
 Layout_Command_Kind :: enum u8 {Custom,Border,Text,Scissor_Start,Scissor_End}
-// line: its row in lines, for a line of text.
+// line: its row in lines, for a line of a text.
 @(private)
 Layout_Command :: struct {kind:Layout_Command_Kind,node,line:i32}
 
 @(private)
 Layout_Tree :: struct {
     nodes:[]Layout_Node,node_count:int,
-    runs:[]Layout_Run,run_count:int,
+    texts:[]Layout_Text,text_count:int,
+    spans:[]Layout_Span,span_count:int,
+    pieces:[]Layout_Piece,piece_count:int,
     kids:[]i32,kids_len:int,       // the children of each container, one after the other
     pending:[]i32,pending_len:int, // closed and not yet handed to their parent; the work list of a pass
     scratch:[]i32,                 // the containers a pass still has to go through
@@ -158,7 +192,9 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     a:=allocator
     nodes:=max_elements+1
     t.nodes=alloc(Layout_Node,nodes,a,&ok)
-    t.runs=alloc(Layout_Run,nodes,a,&ok)
+    t.texts=alloc(Layout_Text,nodes,a,&ok)
+    t.spans=alloc(Layout_Span,nodes,a,&ok)
+    t.pieces=alloc(Layout_Piece,max_elements*4,a,&ok)
     t.kids=alloc(i32,nodes,a,&ok)
     t.pending=alloc(i32,nodes,a,&ok)
     t.scratch=alloc(i32,nodes,a,&ok)
@@ -191,7 +227,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
 @(private)
 layout_destroy :: proc(t:^Layout_Tree) {
     a:=t.allocator
-    delete(t.nodes,a);delete(t.runs,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
+    delete(t.nodes,a);delete(t.texts,a);delete(t.spans,a);delete(t.pieces,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
     delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a)
     id_table_destroy(&t.ids,a)
     for g in t.measures {
@@ -204,7 +240,7 @@ layout_destroy :: proc(t:^Layout_Tree) {
 // surface: every element at the top level is inside it.
 @(private)
 layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
-    t.run_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
+    t.text_count=0;t.span_count=0;t.piece_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
     t.duplicates=0;t.overflow=false;t.aspects=false
     id_table_clear(&t.ids)
     // The generations change places only between frames, because the runs of
@@ -217,7 +253,7 @@ layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
         if g.generation==0 {mem.zero_slice(g.generations);g.generation=1}
         g.count,g.word_count,g.char_count=0,0,0
     }
-    t.nodes[0]={layout={width=fixed(size.x),height=fixed(size.y)},dim=size,min_dim=size,box={0,0,size.x,size.y},run=-1}
+    t.nodes[0]={layout={width=fixed(size.x),height=fixed(size.y)},dim=size,min_dim=size,box={0,0,size.x,size.y},text=-1}
     t.node_count=1
     t.open[0]=0
     t.open_len=1
@@ -241,11 +277,12 @@ layout_open :: proc(t:^Layout_Tree,e:Element,f:Layout_Float) -> bool {
     n.user_data=e.user_data
     n.id=e.id
     n.kids_len=0
-    n.run=-1
+    n.text=-1
     n.clip_x,n.clip_y=e.clip.x,e.clip.y
     n.clip_floats=e.clip.floats
     n.floating=f.to!=.None
     n.border=e.border
+    n.row_span,n.row_tracks=e.row_span,e.row_tracks
     t.node_count+=1
     t.aspects||=e.layout.aspect>0
     layout_id_put(t,e.id,index)
@@ -263,7 +300,7 @@ layout_open :: proc(t:^Layout_Tree,e:Element,f:Layout_Float) -> bool {
             if f.parent!=0 {parent=layout_index(t,f.parent)}
         }
         t.roots[t.root_count]={node=index,parent=parent,anchor=f.anchor,pivot=f.pivot,offset=f.offset,layer=f.layer,retained=f.retained,clip=clip,
-            contain=f.contain,within=layout_index(t,f.within) if f.contain else 0}
+            contain=f.contain,within=layout_index(t,f.within) if f.contain else 0,inset=f.inset,hung=f.hung,rect=f.rect}
         t.root_count+=1
     }
     t.open[t.open_len]=index
@@ -282,32 +319,126 @@ layout_close :: proc(t:^Layout_Tree) {
     if !n.floating {layout_attach(t,index)}
 }
 
-// A run of text, measured once for what it says and broken into lines by the
-// layout. False when the tree has no room for it.
+// Starts a text: the spans put until it ends are what it says. False when the tree has no room for it.
 @(private)
-layout_text :: proc(t:^Layout_Tree,font:^Font,text:string,size,line:f32,face:u8,paint:rawptr) -> bool {
-    if t.node_count>=len(t.nodes) {return false}
-    m:=layout_measure(t,font,text,size,face)
+layout_text_begin :: proc(t:^Layout_Tree,desc:Layout_Text_Desc) -> bool {
+    if t.text_count>=len(t.texts) {return false}
+    text:=&t.texts[t.text_count]
+    text^={desc=desc,node=-1,spans_first=i32(t.span_count)}
+    // A size or a line that is no number is none.
+    if !(text.size>0) {text.size=0}
+    if !(text.line>0) {text.line=0}
+    return true
+}
+// A span of the text begun, measured once for what it says. False when the
+// tree has no room for it.
+@(private)
+layout_text_span :: proc(t:^Layout_Tree,font:^Font,span:Layout_Span) -> bool {
+    if t.span_count>=len(t.spans) {return false}
+    s:=&t.spans[t.span_count]
+    s^=span
+    if !(s.size>0) {s.size=0}
+    if !(s.width>0) {s.width=0}
+    if !(s.pad>0) {s.pad=0}
+    if !(s.gap>0) {s.gap=0}
+    if !(s.height>0) {s.height=0}
+    if !s.box && s.text!="" {
+        s.measure=layout_measure(t,font,s.text,s.size,s.font)
+        s.width=s.measure.width+s.pad
+    }
+    t.span_count+=1
+    t.texts[t.text_count].spans_len+=1
+    return true
+}
+// Ends the text begun as an element. Only a width that fits asks for what it
+// says, on one line: any other width is what the layout gives it, and the
+// text breaks to it. False when the tree has no room for it.
+@(private)
+layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
+    text:=&t.texts[t.text_count]
+    if t.node_count>=len(t.nodes) {
+        t.span_count=int(text.spans_first)
+        return false
+    }
     index:=i32(t.node_count)
-    run:=i32(t.run_count)
-    t.runs[run]={text=text,size=size,face=face,line_height=line,measure=m,node=index}
-    t.run_count+=1
+    text.node=index
     n:=&t.nodes[index]
-    n.layout={}
+    n.layout=e.layout
+    n.layout.aspect=0
     n.scroll={}
     n.box={}
-    n.custom=paint
+    n.custom=e.custom
     n.user_data=nil
-    n.id=0
+    n.id=e.id
     n.kids_len=0
-    n.run=run
+    n.text=i32(t.text_count)
     n.clip_x,n.clip_y,n.floating,n.clip_floats,n.clip_outer=false,false,false,false,0
     n.border=0
-    n.dim={m.width,line}
-    n.min_dim={m.min_width,line}
+    n.row_span,n.row_tracks=e.row_span,0
+    t.text_count+=1
     t.node_count+=1
+    layout_id_put(t,e.id,index)
+    l:=&n.layout
+    n.dim,n.min_dim={},{}
+    if l.width.kind==.Fit {
+        wide,least:=layout_text_ask(t,font,text)
+        // One unit more than a line that does not break: the edge of its last glyph.
+        n.dim.x=wide+1 if text.wrap==.None else wide
+        n.min_dim.x=n.dim.x if text.wrap==.None else least
+    }
+    if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
+    if l.width.kind!=.Percent {
+        n.dim.x=clamp(n.dim.x,axis_min(l.width),axis_max(l.width))
+        n.min_dim.x=clamp(n.min_dim.x,axis_min(l.width),axis_max(l.width))
+    } else {n.dim.x=0}
+    if l.height.kind!=.Percent {
+        n.dim.y=clamp(n.dim.y,axis_min(l.height),axis_max(l.height))
+        n.min_dim.y=clamp(n.min_dim.y,axis_min(l.height),axis_max(l.height))
+    } else {n.dim.y=0}
     layout_attach(t,index)
     return true
+}
+// The words of a span in order: those its measure kept, or the span walked again.
+@(private)
+Layout_Words :: struct {words:[]Layout_Word,index:int,walk:Layout_Walk,walked:bool}
+@(private)
+layout_words :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Words) {
+    m:=&s.measure
+    if m.words_first>=0 {w.words=t.measures[0].words[m.words_first:][:m.words_len];return}
+    w.walked,w.walk=true,{font=font,text=s.text,size=s.size,face=int(s.font),space=m.space}
+    return
+}
+@(private)
+layout_words_next :: #force_inline proc "contextless" (w:^Layout_Words) -> (word:Layout_Word,ok:bool) {
+    if w.walked {word,_,ok=layout_walk(&w.walk);return}
+    if w.index>=len(w.words) {return}
+    w.index+=1
+    return w.words[w.index-1],true
+}
+
+// What a text asks for: the width of its widest line when nothing but its own
+// line breaks breaks it, and the least it breaks down to.
+@(private)
+layout_text_ask :: proc "contextless" (t:^Layout_Tree,font:^Font,text:^Layout_Text) -> (wide,least:f32) {
+    spans:=t.spans[text.spans_first:][:text.spans_len]
+    line:f32
+    for &s in spans {
+        m:=&s.measure
+        if s.box || s.pad>0 || s.solid || s.text=="" || !m.breaks {
+            line+=s.width+s.gap
+            if s.box {least=max(least,s.width)} else if s.text!="" && !text.cut {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
+            continue
+        }
+        if !text.cut {least=max(least,m.min_width)}
+        if len(spans)==1 {wide=m.width;continue}
+        words:=layout_words(t,font,&s)
+        for {
+            w,ok:=layout_words_next(&words)
+            if !ok {break}
+            if w.length==0 {wide=max(wide,line);line=0} else {line+=w.width}
+        }
+    }
+    return max(wide,line),least
 }
 
 @(private)
@@ -398,25 +529,18 @@ layout_measure_run :: proc(g:^Layout_Measures,font:^Font,text:string,size:f32,fa
     m.words_first=i32(g.word_count)
     m.length=i32(len(text))
     kept:=true
-    line:f32
     walk:=Layout_Walk{font=font,text=text,size=size,face=face,space=m.space}
     for {
         w,bare,more:=layout_walk(&walk)
         if !more {break}
-        if w.length==0 {
-            m.width=max(m.width,line)
-            line=0
-            m.breaks=true
-        } else {
-            line+=w.width
-            m.min_width=max(m.min_width,bare)
-        }
+        if w.length==0 {m.breaks=true} else {m.min_width=max(m.min_width,bare)}
         if kept && g.word_count<len(g.words) {
             g.words[g.word_count]=w
             g.word_count+=1
         } else {kept=false}
     }
-    m.width=max(m.width,line)
+    // As wide as it is drawn on one line, with the kerning across its spaces.
+    m.width=text_width(font,text,size,face)
     m.words_len=i32(g.word_count)-m.words_first
     if !kept {
         g.word_count=int(m.words_first)
@@ -512,40 +636,143 @@ layout_break_next :: proc "contextless" (b:^Layout_Break) -> (start,length:i32,w
     return b.start,chars,width,chars>0
 }
 
-// Breaks a measured run into the lines it takes in width. With a run the lines
-// are kept for it; either way it returns how many there are.
+// Where the baseline of a line of text of a face is under its top, in sizes.
 @(private)
-layout_wrap :: proc(t:^Layout_Tree,font:^Font,text:string,m:Layout_Measure,size:f32,face:u8,width:f32,run:^Layout_Run) -> int {
-    count:=0
-    y:=f32(0)
-    add :: proc(t:^Layout_Tree,run:^Layout_Run,count:^int,y:^f32,start,length:i32,width:f32) {
-        count^+=1
-        if run==nil {return}
-        if t.line_count<len(t.lines) {
-            t.lines[t.line_count]={start,length,width,y^}
-            t.line_count+=1
-            run.lines_len+=1
-        } else {t.overflow=true}
-        y^+=run.line_height
-    }
-    if !m.breaks && m.width<=width {
-        add(t,run,&count,&y,0,i32(len(text)),m.width)
-        return count
-    }
-    b:=Layout_Break{text=text,walk={font=font,text=text,size=size,face=int(face),space=m.space},walked=m.words_first<0,width=width,space=m.space}
-    if !b.walked {b.words=t.measures[0].words[m.words_first:][:m.words_len]}
-    layout_break_word(&b)
-    for {
-        start,length,line_width,ok:=layout_break_next(&b)
-        if !ok {break}
-        add(t,run,&count,&y,start,length,line_width)
-    }
-    return count
+face_ascent :: #force_inline proc "contextless" (font:^Font,face:u8) -> f32 {
+    return font.metrics[face].ascent if font.ready && int(face)<font.font_count else 0.97
 }
 
-FLOW_PIECES :: 64 // pieces of one line of runs; a line that holds more goes on in the next
+// The line a span of a text asks for: that of the text, taller by what a
+// larger size adds, or the height of a box.
+@(private)
+layout_span_line :: #force_inline proc "contextless" (text:^Layout_Text,s:^Layout_Span) -> f32 {
+    if s.box || s.pad>0 {return max(text.line,s.height)}
+    return text.line+max(s.size-text.size,0)*TEXT_LINE
+}
 
-// A piece of a line of runs: the words of one run that are on it, or a box.
+// Ends a line of the pieces kept since first, as tall as the tallest of them
+// asks: text sits on one baseline, a box or a chip is centered.
+@(private)
+layout_line_end :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,first:int,width:f32,y:^f32) {
+    high:=text.line
+    pieces:=t.pieces[first:t.piece_count]
+    big:^Layout_Span
+    for &p in pieces {
+        s:=&t.spans[p.span]
+        high=max(high,layout_span_line(text,s))
+        if !s.box && s.pad==0 && (big==nil || s.size>big.size) {big=s}
+    }
+    // A line without text stands on its bottom.
+    baseline:=high
+    if big!=nil {baseline=(high-big.size*TEXT_LINE)*0.5+face_ascent(font,big.font)*big.size}
+    for &p in pieces {
+        s:=&t.spans[p.span]
+        switch {
+        case s.box || s.pad>0: p.y=(high-(s.height if s.height>0 else s.size*TEXT_LINE))*0.5
+        case big==nil || s.size==big.size && s.font==big.font: p.y=(high-s.size*TEXT_LINE)*0.5
+        case: p.y=baseline-face_ascent(font,s.font)*s.size
+        }
+    }
+    if t.line_count<len(t.lines) {
+        t.lines[t.line_count]={pieces_first=i32(first),pieces_len=i32(len(pieces)),y=y^,width=width,height=high,base=baseline}
+        t.line_count+=1
+        text.lines_len+=1
+    } else {t.overflow=true}
+    y^+=high
+}
+@(private)
+layout_piece :: #force_inline proc(t:^Layout_Tree,p:Layout_Piece) {
+    if t.piece_count<len(t.pieces) {
+        t.pieces[t.piece_count]=p
+        t.piece_count+=1
+    } else {t.overflow=true}
+}
+// Ends the line a flow filled, or all it holds.
+@(private)
+layout_flow_line :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,keep:bool,f:^Flow(i32),y:^f32) {
+    line:=flow_line(f,font)
+    if keep {
+        first:=t.piece_count
+        width:f32
+        for &p in line {
+            s:=&t.spans[p.run]
+            start:=i32(uintptr(raw_data(p.text))-uintptr(raw_data(s.text))) if p.text!="" else 0
+            layout_piece(t,{span=p.run,start=start,length=i32(len(p.text)),x=p.x,width=p.width})
+            width=p.x+p.width
+        }
+        layout_line_end(t,font,text,first,width,y)
+    } else {
+        high:=text.line
+        for &p in line {high=max(high,layout_span_line(text,&t.spans[p.run]))}
+        y^+=high
+    }
+    flow_next(f)
+}
+
+// Breaks a text into the lines it takes in width and returns their height.
+// keep: the lines and their pieces stay for it. A text of one span of words
+// breaks as Clay breaks a text; any other fills its lines with a Flow.
+@(private)
+layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,keep:bool) -> (height:f32) {
+    if keep {text.lines_first,text.lines_len=i32(t.line_count),0}
+    spans:=t.spans[text.spans_first:][:text.spans_len]
+    room:=width if text.wrap==.Words else max(f32)
+    y:f32
+    defer if keep {text.height=max(y,text.line)}
+    if len(spans)==1 && !spans[0].box && spans[0].pad==0 && !spans[0].solid && !text.cut {
+        s:=&spans[0]
+        m:=&s.measure
+        if s.text=="" {return text.line}
+        line:=layout_span_line(text,s)
+        if !m.breaks && m.width<=room {
+            if keep {
+                first:=t.piece_count
+                layout_piece(t,{span=text.spans_first,length=i32(len(s.text)),width=m.width})
+                layout_line_end(t,font,text,first,m.width,&y)
+            } else {y=line}
+            return max(y,text.line)
+        }
+        b:=Layout_Break{text=s.text,walk={font=font,text=s.text,size=s.size,face=int(s.font),space=m.space},walked=m.words_first<0,width=room,space=m.space}
+        if !b.walked {b.words=t.measures[0].words[m.words_first:][:m.words_len]}
+        layout_break_word(&b)
+        for {
+            start,length,line_width,ok:=layout_break_next(&b)
+            if !ok {break}
+            if !keep {y+=line;continue}
+            first:=t.piece_count
+            if length>0 {layout_piece(t,{span=text.spans_first,start=start,length=length,width=line_width})}
+            layout_line_end(t,font,text,first,line_width,&y)
+        }
+        return max(y,text.line)
+    }
+    f:Flow(i32)
+    f.width,f.cut=room,text.cut
+    for &s,i in spans {
+        index:=text.spans_first+i32(i)
+        if s.box || s.pad>0 || s.solid {
+            p:=Flow_Piece(i32){text=s.text,width=s.width,gap=s.gap,pad=s.pad,size=s.size,font=s.font,box=s.box,run=index}
+            // What is solid fills the line it starts on, whatever it follows.
+            if s.solid {f.glued,f.unit,f.unit_at,f.unit_x=true,f.count,0,0}
+            for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
+            continue
+        }
+        if s.text=="" {flow_space(&f,s.width);continue}
+        words:=layout_words(t,font,&s)
+        for {
+            w,ok:=layout_words_next(&words)
+            if !ok {break}
+            if w.length==0 {layout_flow_line(t,font,text,keep,&f,&y);continue}
+            p:=Flow_Piece(i32){text=s.text[w.start:][:w.length],width=w.width,size=s.size,font=s.font,run=index}
+            for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
+        }
+    }
+    if f.count>0 {layout_flow_line(t,font,text,keep,&f,&y)}
+    return max(y,text.line)
+}
+
+FLOW_PIECES :: 64 // pieces of one line of spans; a line that holds more goes on in the next
+
+// A piece of a line of spans: the words of one span that are on it, or a box.
 @(private)
 Flow_Piece :: struct($Run:typeid) {
     text:string,
@@ -557,11 +784,11 @@ Flow_Piece :: struct($Run:typeid) {
     box:bool,    // it does not break: a pill, an image
     run:Run,     // what its owner draws it with
 }
-// A line being filled with the words of runs of different styles, as rich text
-// and Markdown lay theirs out. Words come from layout_walk and break as the
-// layout breaks a paragraph; pieces that no space parts stay on one line. When
-// flow_put refuses a piece the line is full: its owner builds what flow_line
-// gives, calls flow_next and puts the piece again.
+// A line being filled with the words of spans of different styles: how a text
+// of several spans breaks. Words come from layout_walk and break as a text of
+// one span does; pieces that no space parts stay on one line. When flow_put
+// refuses a piece the line is full: its owner keeps what flow_line gives,
+// calls flow_next and puts the piece again.
 @(private)
 Flow :: struct($Run:typeid) {
     pieces:[FLOW_PIECES]Flow_Piece(Run),
@@ -685,15 +912,6 @@ flow_next :: proc "contextless" (f:^Flow($Run)) {
     for &p in f.pieces[:left] {p.x-=start}
     f.count,f.used,f.ready=left,f.used-start,0
     f.unit,f.unit_at,f.unit_x=0,0,0
-}
-
-// A line of text as it is drawn: what it says and where.
-@(private)
-layout_line :: proc(t:^Layout_Tree,c:Layout_Command) -> (text:string,rect:Rect,run:^Layout_Run) {
-    n:=&t.nodes[c.node]
-    run=&t.runs[n.run]
-    line:=t.lines[c.line]
-    return run.text[line.start:][:line.length],{n.box.x,n.box.y+line.y,line.width,run.line_height},run
 }
 
 // ---------------------------------------------------------------- sizes
@@ -823,28 +1041,27 @@ layout_fit_grid :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32) {
     fits,leasts:[GRID_TRACKS]f32
     n.dim={0,top_bottom}
     n.min_dim={0,top_bottom}
-    rows:=0
-    for start:=0;start<len(kids);rows+=1 {
-        end,high:=grid_line(t,kids,columns,start)
-        low:f32
-        column:=0
-        for index in kids[start:end] {
-            child:=&t.nodes[index]
-            span:=grid_span(child,columns)
-            if tracks==nil {
-                spanned:=f32(span-1)*l.gap
-                cell=max(cell,(child.dim.x-spanned)/f32(span))
-                least=max(least,(child.min_dim.x-spanned)/f32(span))
-            } else if span==1 {
-                fits[column]=max(fits[column],child.dim.x)
-                leasts[column]=max(leasts[column],child.min_dim.x)
-            }
-            low=max(low,child.min_dim.y)
-            column+=span
+    g:=Grid_Cells{kids=kids,columns=columns}
+    for {
+        c,more:=grid_cell_next(t,&g)
+        if !more {break}
+        child:=&t.nodes[c.kid]
+        if tracks==nil {
+            spanned:=f32(c.span-1)*l.gap
+            cell=max(cell,(child.dim.x-spanned)/f32(c.span))
+            least=max(least,(child.min_dim.x-spanned)/f32(c.span))
+        } else if c.span==1 {
+            fits[c.column]=max(fits[c.column],child.dim.x)
+            leasts[c.column]=max(leasts[c.column],child.min_dim.x)
         }
-        n.dim.y+=high
-        if !n.clip_y {n.min_dim.y+=low}
-        start=end
+    }
+    // The room the children it just closed with left in pending is free.
+    heights:=grid_scratch(t.pending[t.pending_len:])
+    rows:=grid_rows(t,n,kids,heights,.Asked,false)
+    for high in heights[:rows] {n.dim.y+=high}
+    if !n.clip_y {
+        rows=grid_rows(t,n,kids,heights,.Least,false)
+        for low in heights[:rows] {n.min_dim.y+=low}
     }
     gaps:=[2]f32{f32(columns-1),f32(max(rows-1,0))}*l.gap
     if len(kids)==0 {gaps={}}
@@ -875,9 +1092,9 @@ layout_size :: proc(t:^Layout_Tree,x:bool) {
         r:=&t.nodes[root.node]
         // A growing floating element takes the size of what it hangs from.
         if r.floating {
-            p:=&t.nodes[root.parent]
-            if r.layout.width.kind==.Grow {r.dim.x=p.dim.x}
-            if r.layout.height.kind==.Grow {r.dim.y=p.dim.y}
+            p:=[2]f32{root.rect.w,root.rect.h} if root.hung else t.nodes[root.parent].dim
+            if r.layout.width.kind==.Grow {r.dim.x=p.x}
+            if r.layout.height.kind==.Grow {r.dim.y=p.y}
         }
         r.dim.x=clamp(r.dim.x,axis_min(r.layout.width),axis_max(r.layout.width))
         r.dim.y=clamp(r.dim.y,axis_min(r.layout.height),axis_max(r.layout.height))
@@ -888,7 +1105,7 @@ layout_size :: proc(t:^Layout_Tree,x:bool) {
             l:=&parent.layout
             kids:=t.kids[parent.kids_first:][:parent.kids_len]
             for index in kids {
-                if child:=&t.nodes[index];child.run<0 && child.kids_len>0 {
+                if child:=&t.nodes[index];child.text<0 && child.kids_len>0 {
                     t.scratch[queued]=index
                     queued+=1
                 }
@@ -1081,7 +1298,7 @@ layout_grow_weighted :: proc(t:^Layout_Tree,x:bool,left:f32) {
 @(private)
 layout_heights :: proc(t:^Layout_Tree,index:i32) {
     n:=&t.nodes[index]
-    if n.run>=0 || n.kids_len==0 {return}
+    if n.text>=0 || n.kids_len==0 {return}
     kids:=t.kids[n.kids_first:][:n.kids_len]
     for kid in kids {layout_heights(t,kid)}
     l:=&n.layout
@@ -1089,13 +1306,9 @@ layout_heights :: proc(t:^Layout_Tree,index:i32) {
     switch l.direction {
     case .Grid:
         content:=l.padding[1]+l.padding[3]
-        columns:=grid_columns(t,l)
-        rows:=0
-        for start:=0;start<len(kids);rows+=1 {
-            end,high:=grid_line(t,kids,columns,start)
-            content+=high
-            start=end
-        }
+        heights:=grid_scratch(t.scratch)
+        rows:=grid_rows(t,n,kids,heights,.Asked,false)
+        for high in heights[:rows] {content+=high}
         content+=f32(max(rows-1,0))*l.gap
         n.dim.y=clamp(content,axis_min(l.height),axis_max(l.height))
     case .Wrap:
@@ -1114,6 +1327,15 @@ layout_heights :: proc(t:^Layout_Tree,index:i32) {
     case .Row,.Stack:
         for kid in kids {
             n.dim.y=clamp(max(t.nodes[kid].dim.y+l.padding[1]+l.padding[3],n.dim.y),axis_min(l.height),axis_max(l.height))
+        }
+        // On one baseline the children take what the highest takes over it and the deepest under it.
+        if l.direction==.Row && l.align_y==.Baseline {
+            above,below:f32
+            for kid in kids {
+                ascent:=layout_ascent(t,kid)
+                above,below=max(above,ascent),max(below,t.nodes[kid].dim.y-ascent)
+            }
+            n.dim.y=clamp(max(above+below+l.padding[1]+l.padding[3],n.dim.y),axis_min(l.height),axis_max(l.height))
         }
     case .Column:
         content:=l.padding[1]+l.padding[3]
@@ -1140,11 +1362,11 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font) {
             n.min_dim.y=n.dim.y
         }
     }
-    for &run in t.runs[:t.run_count] {
-        n:=&t.nodes[run.node]
-        run.lines_first=i32(t.line_count)
-        run.lines_len=0
-        n.dim.y=run.line_height*f32(max(layout_wrap(t,font,run.text,run.measure,run.size,run.face,n.dim.x,&run),1))
+    // Every text breaks at the width it was given, and one whose height fits takes that of its lines.
+    for &text in t.texts[:t.text_count] {
+        n:=&t.nodes[text.node]
+        height:=layout_text_wrap(t,font,&text,n.dim.x,true)
+        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(height,axis_min(l.height),axis_max(l.height))}
     }
     for root in t.roots[:t.root_count] {layout_heights(t,root.node)}
     layout_size(t,false)
@@ -1161,9 +1383,13 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font) {
         r:=&t.nodes[root.node]
         position:[2]f32
         if r.floating {
-            p:=t.nodes[root.parent].box
+            p:=root.rect if root.hung else t.nodes[root.parent].box
             position=float_position(p,root.anchor,root.pivot,root.offset,r.dim)
-            if root.contain {position=float_contain(p,&root,r.dim,t.nodes[root.within].box,position)}
+            if root.contain {
+                bounds:=t.nodes[root.within].box
+                bounds={bounds.x+root.inset[0],bounds.y+root.inset[1],max(bounds.w-root.inset[0]-root.inset[2],0),max(bounds.h-root.inset[1]-root.inset[3],0)}
+                position=float_contain(p,&root,r.dim,bounds,position)
+            }
         }
         layout_place(t,root.node,position)
     }
@@ -1179,7 +1405,8 @@ float_position :: proc "contextless" (p:Rect,anchor,pivot:Anchor,offset,dim:[2]f
 
 // A floating element that does not fit inside bounds in an axis goes to the
 // other side of what it hangs from when it fits better there, and then moves
-// in as far as it has to.
+// in as far as it has to. One lined up with what it hangs from in that axis,
+// its own point on the same side, only moves in.
 @(private)
 float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:Rect,position:[2]f32) -> [2]f32 {
     position:=position
@@ -1191,7 +1418,7 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
     out :: proc "contextless" (at,dim,low,high:f32) -> f32 {return max(low-at,0)+max(at+dim-high,0)}
     for axis in 0..<2 {
         if out(position[axis],dim[axis],low[axis],high[axis])<=LAYOUT_EPSILON {continue}
-        if anchor[axis]!=1 || pivot[axis]!=1 {
+        if anchor[axis]!=pivot[axis] {
             other:=origin[axis]+size[axis]*f32(2-anchor[axis])*0.5-dim[axis]*f32(2-pivot[axis])*0.5-root.offset[axis]
             if out(other,dim[axis],low[axis],high[axis])<out(position[axis],dim[axis],low[axis],high[axis]) {position[axis]=other}
         }
@@ -1204,11 +1431,8 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
 layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
     n:=&t.nodes[index]
     n.box={position.x,position.y,n.dim.x,n.dim.y}
-    if n.run>=0 {
-        run:=&t.runs[n.run]
-        for line in run.lines_first..<run.lines_first+run.lines_len {
-            if t.lines[line].length>0 {layout_command(t,{.Text,index,line})}
-        }
+    if n.text>=0 {
+        layout_place_text(t,index)
         return
     }
     clips:=n.clip_x || n.clip_y
@@ -1225,24 +1449,27 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
         case .Grid:
             widths:[GRID_TRACKS]f32
             columns,cell,tracked:=grid_widths(t,n,kids,&widths)
+            // The heights of the rows are in a room a child placed would write over: every child gets its place first.
+            heights:=grid_scratch(t.pending)
+            rows:=grid_rows(t,n,kids,heights,.Given,true)
             y:=position.y+l.padding[1]
-            for start:=0;start<len(kids); {
-                end,high:=grid_line(t,kids,columns,start)
-                column:=0
+            row:=0
+            g:=Grid_Cells{kids=kids,columns=columns}
+            for {
+                c,more:=grid_cell_next(t,&g)
+                if !more {break}
+                for row<c.row && row<rows {y+=heights[row]+l.gap;row+=1}
+                child:=&t.nodes[c.kid]
+                width:=grid_span_width(widths[:],cell,tracked,c.column,c.span,l.gap)
                 x:=position.x+l.padding[0]
-                for kid in kids[start:end] {
-                    child:=&t.nodes[kid]
-                    span:=grid_span(child,columns)
-                    width:=grid_span_width(widths[:],cell,tracked,column,span,l.gap)
-                    if !tracked {x=position.x+l.padding[0]+f32(column)*(cell+l.gap)}
-                    at:=[2]f32{x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x),y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}
-                    layout_place(t,kid,at+offset)
-                    x+=width+l.gap
-                    column+=span
-                }
-                y+=high+l.gap
-                start=end
+                if tracked {
+                    for w in widths[:c.column] {x+=w+l.gap}
+                } else {x+=f32(c.column)*(cell+l.gap)}
+                high:=grid_span_height(heights[:rows],c,l.gap)
+                child.box.x=x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x)+offset.x
+                child.box.y=y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)+offset.y
             }
+            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y})}
         case .Wrap:
             inner:=n.dim.x-left_right
             y:=position.y+l.padding[1]
@@ -1271,6 +1498,11 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
             row:=l.direction==.Row
             next:=position
             content:f32
+            baseline:=row && l.align_y==.Baseline
+            ascent:f32
+            if baseline {
+                for kid in kids {ascent=max(ascent,layout_ascent(t,kid))}
+            }
             if row {
                 for kid in kids {content+=t.nodes[kid].dim.x}
                 next.x+=l.padding[0]+align_offset(l.align_x,n.dim.x-left_right-(content+gaps))
@@ -1283,7 +1515,9 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
             for kid in kids {
                 child:=&t.nodes[kid]
                 at:=next+offset
-                if row {
+                if baseline && child.layout.self_y==.Parent {
+                    at.y=position.y+l.padding[1]+ascent-layout_ascent(t,kid)+offset.y
+                } else if row {
                     at.y=position.y+l.padding[1]+align_offset(self_align(l.align_y,child.layout.self_y),n.dim.y-top_bottom-child.dim.y)+offset.y
                 } else {
                     at.x=position.x+l.padding[0]+align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)+offset.x
@@ -1297,6 +1531,34 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
     if clips {layout_command(t,{.Scissor_End,index,0})}
 }
 
+// The lines of a text inside its element: those whose text fits, the first
+// always, aligned as the text says. The last one in sight of more, or one too
+// wide, ends in an ellipsis when the text asks for it.
+@(private)
+layout_place_text :: proc(t:^Layout_Tree,index:i32) {
+    n:=&t.nodes[index]
+    text:=&t.texts[n.text]
+    lines:=t.lines[text.lines_first:][:text.lines_len]
+    shown:=len(lines)
+    if text.height>n.dim.y+LAYOUT_EPSILON {
+        glyphs:=text.size*TEXT_LINE
+        shown=0
+        for &line in lines {
+            if shown>0 && line.y+(line.height+glyphs)*0.5>n.dim.y+LAYOUT_EPSILON {break}
+            shown+=1
+        }
+    }
+    text.shown=i32(shown)
+    if shown==0 {return}
+    y:=n.box.y+align_offset(text.align_y,n.dim.y-(lines[shown-1].y+lines[shown-1].height))
+    for &line,i in lines[:shown] {
+        line.x=n.box.x+align_offset(text.align_x,n.dim.x-line.width)
+        line.y+=y
+        line.cut=text.ellipsis && (line.width>n.dim.x+LAYOUT_EPSILON || i==shown-1 && shown<len(lines))
+        if line.pieces_len>0 {layout_command(t,{.Text,index,text.lines_first+i32(i)})}
+    }
+}
+
 // ---------------------------------------------------------------- grids and wraps
 
 // The tracks of a Grid, when it names a row of those of the frame that has columns.
@@ -1304,6 +1566,12 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
 grid_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> ^Grid_Tracks {
     if l.tracks==0 || int(l.tracks)>t.track_count || t.tracks[l.tracks-1].count==0 {return nil}
     return &t.tracks[l.tracks-1]
+}
+// The tracks of the rows of a Grid, when it names a row of those of the frame that has rows.
+@(private)
+grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,n:^Layout_Node) -> ^Grid_Tracks {
+    if n.row_tracks==0 || int(n.row_tracks)>t.track_count || t.tracks[n.row_tracks-1].count==0 {return nil}
+    return &t.tracks[n.row_tracks-1]
 }
 @(private)
 grid_columns :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> int {
@@ -1321,19 +1589,54 @@ grid_cell :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node) -> f32 {
     return max((n.dim.x-l.padding[0]-l.padding[2]-f32(columns-1)*l.gap)/f32(columns),0)
 }
 
-// The children of the row of a Grid that starts at start, as they flow into
-// its columns, and the height of the highest of them.
+// Columns a child that takes more than one row holds under it; past them a
+// child takes one row.
 @(private)
-grid_line :: proc "contextless" (t:^Layout_Tree,kids:[]i32,columns,start:int) -> (end:int,high:f32) {
-    used:=0
-    for end=start;end<len(kids);end+=1 {
-        child:=&t.nodes[kids[end]]
-        span:=grid_span(child,columns)
-        if used>0 && used+span>columns {break}
-        used+=span
-        high=max(high,child.dim.y)
+GRID_HELD_COLUMNS :: 64
+
+// The cells of a Grid in the order of its children: each takes the next
+// columns that are free in its row, on the row below when the row has no
+// room left for it. A child of several rows keeps its columns in the rows
+// under it, and the children after it flow around them.
+@(private)
+Grid_Cells :: struct {
+    kids:[]i32,
+    columns:int,
+    at,row,column:int,
+    held:[GRID_HELD_COLUMNS]u16, // rows a column is taken for from above, this one included
+}
+@(private)
+Grid_Cell :: struct {kid:i32,row,column,span,rows:int}
+@(private)
+grid_cell_next :: proc "contextless" (t:^Layout_Tree,g:^Grid_Cells) -> (cell:Grid_Cell,ok:bool) {
+    if g.at>=len(g.kids) {return}
+    child:=&t.nodes[g.kids[g.at]]
+    span:=grid_span(child,g.columns)
+    held:=g.held[:min(g.columns,GRID_HELD_COLUMNS)]
+    place: for {
+        if g.column>0 && g.column+span>g.columns {
+            g.row+=1
+            g.column=0
+            for &h in held {if h>0 {h-=1}}
+            continue
+        }
+        for c in g.column..<min(g.column+span,len(held)) {
+            if held[c]>0 {
+                g.column=c+1
+                continue place
+            }
+        }
+        break
     }
-    return
+    rows:=max(int(child.row_span),1)
+    if g.column+span>len(held) {rows=1}
+    if rows>1 {
+        for c in g.column..<g.column+span {held[c]=u16(rows)}
+    }
+    cell={g.kids[g.at],g.row,g.column,span,rows}
+    g.column+=span
+    g.at+=1
+    return cell,true
 }
 
 // The width of span columns from column, with the gaps between them.
@@ -1343,6 +1646,99 @@ grid_span_width :: proc "contextless" (widths:[]f32,cell:f32,tracked:bool,column
     width:=f32(span-1)*gap
     for w in widths[column:][:span] {width+=w}
     return width
+}
+// The height of the rows a cell takes, with the gaps between them.
+@(private)
+grid_span_height :: proc "contextless" (heights:[]f32,c:Grid_Cell,gap:f32) -> (height:f32) {
+    last:=min(c.row+c.rows,len(heights))
+    for r in c.row..<last {height+=heights[r]}
+    return height+f32(max(last-c.row-1,0))*gap
+}
+
+// A room of whole numbers the layout is not using, as room for heights.
+@(private)
+grid_scratch :: #force_inline proc "contextless" (room:[]i32) -> []f32 {
+    return ([^]f32)(raw_data(room))[:len(room)]
+}
+
+// Which height of a child counts for its row: what it asks for, the least it
+// accepts, or, when the heights are handed out, the least of a child that
+// takes the height of its row and what any other asks for.
+@(private)
+Grid_Height :: enum u8 {Asked,Least,Given}
+@(private)
+grid_child_height :: #force_inline proc "contextless" (n:^Layout_Node,mode:Grid_Height) -> f32 {
+    switch mode {
+    case .Asked: return n.dim.y
+    case .Least: return n.min_dim.y
+    case .Given:
+        sizing:=axis_sizing(n,false)
+        if sizing.kind==.Grow || sizing.kind==.Percent || sizing.kind==.Fit && stretches(n,false) {return n.min_dim.y}
+    }
+    return n.dim.y
+}
+
+// The height of each row of a Grid, into heights, and how many there are: a
+// row is as high as its highest child of one row, or what its track says; a
+// child of several rows that needs more than they have gives the rest to its
+// last one. final: the height of the Grid is known, and its Percent rows take
+// their part of it and its Grow rows share what is left by their weights.
+@(private)
+grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,heights:[]f32,mode:Grid_Height,final:bool) -> (rows:int) {
+    l:=&n.layout
+    columns:=grid_columns(t,l)
+    tracks:=grid_row_tracks_of(t,n)
+    tracked:=0
+    spans:=false
+    g:=Grid_Cells{kids=kids,columns=columns}
+    for {
+        c,more:=grid_cell_next(t,&g)
+        if !more {break}
+        for rows<c.row+c.rows && rows<len(heights) {heights[rows]=0;rows+=1}
+        if c.rows>1 {spans=true} else if c.row<rows {heights[c.row]=max(heights[c.row],grid_child_height(&t.nodes[c.kid],mode))}
+    }
+    inner:=max(n.dim.y-l.padding[1]-l.padding[3]-f32(max(rows-1,0))*l.gap,0)
+    if tracks!=nil {
+        tracked=min(rows,int(tracks.count),GRID_TRACKS)
+        for track,r in tracks.columns[:tracked] {
+            switch track.kind {
+            case .Fixed:    heights[r]=track.value
+            case .Percent:  if final {heights[r]=inner*track.value}
+            case .Fit,.Grow:heights[r]=clamp(heights[r],track.min,axis_max(track))
+            }
+        }
+    }
+    if spans {
+        g={kids=kids,columns=columns}
+        for {
+            c,more:=grid_cell_next(t,&g)
+            if !more {break}
+            if c.rows<=1 || c.row>=rows {continue}
+            last:=min(c.row+c.rows,rows)-1
+            if last<tracked && tracks.columns[last].kind==.Fixed {continue}
+            if need:=grid_child_height(&t.nodes[c.kid],mode)-grid_span_height(heights[:rows],c,l.gap);need>0 {heights[last]+=need}
+        }
+    }
+    if !final || tracked==0 {return}
+    left:=inner
+    for high in heights[:rows] {left-=high}
+    for left>LAYOUT_EPSILON {
+        weights:f32
+        for track,r in tracks.columns[:tracked] {
+            if track.kind==.Grow && heights[r]<axis_max(track)-LAYOUT_EPSILON {weights+=grow_weight(track)}
+        }
+        if weights==0 {break}
+        given:f32
+        for track,r in tracks.columns[:tracked] {
+            if track.kind!=.Grow || heights[r]>=axis_max(track)-LAYOUT_EPSILON {continue}
+            before:=heights[r]
+            heights[r]=min(axis_max(track),heights[r]+left*grow_weight(track)/weights)
+            given+=heights[r]-before
+        }
+        left-=given
+        if given<=LAYOUT_EPSILON*0.01 {break}
+    }
+    return
 }
 
 // The width of each column of a Grid from the width it was given: all the
@@ -1356,16 +1752,11 @@ grid_widths :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32,widths:^[GRID_TRACK
     if tracks==nil {return columns,grid_cell(t,n),false}
     inner:=max(n.dim.x-l.padding[0]-l.padding[2]-f32(columns-1)*l.gap,0)
     fits:[GRID_TRACKS]f32
-    for start:=0;start<len(kids); {
-        end,_:=grid_line(t,kids,columns,start)
-        column:=0
-        for kid in kids[start:end] {
-            child:=&t.nodes[kid]
-            span:=grid_span(child,columns)
-            if span==1 {fits[column]=max(fits[column],child.dim.x)}
-            column+=span
-        }
-        start=end
+    g:=Grid_Cells{kids=kids,columns=columns}
+    for {
+        c,more:=grid_cell_next(t,&g)
+        if !more {break}
+        if c.span==1 {fits[c.column]=max(fits[c.column],t.nodes[c.kid].dim.x)}
     }
     left:=inner
     for track,c in tracks.columns[:columns] {
@@ -1398,7 +1789,8 @@ grid_widths :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32,widths:^[GRID_TRACK
 
 // The sizes of the children of a Grid in one axis: across the columns each
 // takes the width of the columns it spans; down the rows a growing or
-// stretching child takes the height of its row, which the others decide.
+// stretching child takes the height of the rows it spans, which the others
+// and the tracks of the rows decide.
 @(private)
 layout_size_grid :: proc(t:^Layout_Tree,parent:^Layout_Node,x:bool) {
     l:=&parent.layout
@@ -1406,44 +1798,35 @@ layout_size_grid :: proc(t:^Layout_Tree,parent:^Layout_Node,x:bool) {
     if x {
         widths:[GRID_TRACKS]f32
         columns,cell,tracked:=grid_widths(t,parent,kids,&widths)
-        for start:=0;start<len(kids); {
-            end,_:=grid_line(t,kids,columns,start)
-            column:=0
-            for index in kids[start:end] {
-                child:=&t.nodes[index]
-                span:=grid_span(child,columns)
-                width:=grid_span_width(widths[:],cell,tracked,column,span,l.gap)
-                column+=span
-                sizing:=axis_sizing(child,true)
-                switch {
-                case sizing.kind==.Percent:                                 child.dim.x=width*sizing.value
-                case sizing.kind==.Grow || sizing.kind==.Fit && stretches(child,true): child.dim.x=min(width,axis_max(sizing))
-                }
-                child.dim.x=max(child.min_dim.x,min(child.dim.x,width))
+        g:=Grid_Cells{kids=kids,columns=columns}
+        for {
+            c,more:=grid_cell_next(t,&g)
+            if !more {break}
+            child:=&t.nodes[c.kid]
+            width:=grid_span_width(widths[:],cell,tracked,c.column,c.span,l.gap)
+            sizing:=axis_sizing(child,true)
+            switch {
+            case sizing.kind==.Percent:                                 child.dim.x=width*sizing.value
+            case sizing.kind==.Grow || sizing.kind==.Fit && stretches(child,true): child.dim.x=min(width,axis_max(sizing))
             }
-            start=end
+            child.dim.x=max(child.min_dim.x,min(child.dim.x,width))
         }
         return
     }
-    columns:=grid_columns(t,l)
-    for start:=0;start<len(kids); {
-        end,_:=grid_line(t,kids,columns,start)
-        cells:=kids[start:end]
-        high:f32
-        for index in cells {
-            child:=&t.nodes[index]
-            sizing:=axis_sizing(child,false)
-            if sizing.kind==.Grow || sizing.kind==.Percent || sizing.kind==.Fit && stretches(child,false) {high=max(high,child.min_dim.y)} else {high=max(high,child.dim.y)}
+    // The children the pass keeps in pending are those of a parent it is done with.
+    heights:=grid_scratch(t.pending)
+    rows:=grid_rows(t,parent,kids,heights,.Given,true)
+    g:=Grid_Cells{kids=kids,columns=grid_columns(t,l)}
+    for {
+        c,more:=grid_cell_next(t,&g)
+        if !more {break}
+        child:=&t.nodes[c.kid]
+        high:=grid_span_height(heights[:rows],c,l.gap)
+        sizing:=axis_sizing(child,false)
+        switch {
+        case sizing.kind==.Percent: child.dim.y=high*sizing.value
+        case sizing.kind==.Grow || sizing.kind==.Fit && stretches(child,false): child.dim.y=max(child.min_dim.y,min(high,axis_max(sizing)))
         }
-        for index in cells {
-            child:=&t.nodes[index]
-            sizing:=axis_sizing(child,false)
-            switch {
-            case sizing.kind==.Percent: child.dim.y=high*sizing.value
-            case sizing.kind==.Grow || sizing.kind==.Fit && stretches(child,false): child.dim.y=max(child.min_dim.y,min(high,axis_max(sizing)))
-            }
-        }
-        start=end
     }
 }
 
@@ -1524,11 +1907,47 @@ layout_size_wrap :: proc(t:^Layout_Tree,parent:^Layout_Node,x:bool) {
 @(private)
 align_offset :: #force_inline proc "contextless" (a:Align,extra:f32) -> f32 {
     switch a {
-    case .Start:  return 0
+    case .Start,.Baseline: return 0
     case .Center: return extra*0.5
     case .End:    return extra
     }
     return 0
+}
+
+// How far under its top the baseline of the first line of text of an element
+// is, as its sizes are now: of a text, that of its first line; of a
+// container, that of its first child where it places it, or the lowest of
+// the children it puts on one baseline; of anything else, its bottom.
+@(private)
+layout_ascent :: proc(t:^Layout_Tree,index:i32) -> f32 {
+    n:=&t.nodes[index]
+    if n.text>=0 {
+        text:=&t.texts[n.text]
+        if text.lines_len==0 {return n.dim.y}
+        return align_offset(text.align_y,max(n.dim.y-text.height,0))+t.lines[text.lines_first].base
+    }
+    if n.kids_len==0 {return n.dim.y}
+    l:=&n.layout
+    kids:=t.kids[n.kids_first:][:n.kids_len]
+    first:=&t.nodes[kids[0]]
+    inner:=n.dim.y-l.padding[1]-l.padding[3]
+    switch l.direction {
+    case .Row:
+        if l.align_y==.Baseline {
+            ascent:f32
+            for kid in kids {ascent=max(ascent,layout_ascent(t,kid))}
+            return l.padding[1]+ascent
+        }
+        return l.padding[1]+align_offset(self_align(l.align_y,first.layout.self_y),inner-first.dim.y)+layout_ascent(t,kids[0])
+    case .Stack:
+        return l.padding[1]+align_offset(self_align(l.align_y,first.layout.self_y),inner-first.dim.y)+layout_ascent(t,kids[0])
+    case .Column:
+        content:=f32(max(n.kids_len-1,0))*l.gap
+        for kid in kids {content+=t.nodes[kid].dim.y}
+        return l.padding[1]+align_offset(l.align_y,inner-content)+layout_ascent(t,kids[0])
+    case .Grid,.Wrap:
+    }
+    return l.padding[1]+layout_ascent(t,kids[0])
 }
 
 @(private)

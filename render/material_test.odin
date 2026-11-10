@@ -17,7 +17,6 @@ material_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
-	s.occlusion_culling = false
 	return s
 }
 
@@ -432,7 +431,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 	settings.probe_rays = 64
 	settings.probe_grid, settings.probe_cascades = 8, 2
 	settings.probe_spacing = 1.5
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !fixture_init(t, &f, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	red := [4]u8{255, 0, 0, 255}
@@ -514,7 +513,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 		// from the walls: from walls a program paints red over a blue row as from
 		// a red row.
 		grid := program_find(r, "Grid", .Surface)
-		if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
+		if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
 		black, row, painted := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 		black.base_color = {0, 0, 0}
 		row.base_color = {1, 0, 0}
@@ -556,7 +555,6 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.texture_max_size = 4
-	settings.texture_compression = false
 	if !fixture_init(t, &f, 32, 32, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -696,11 +694,11 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 @(test)
 material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid, ocean := program_find(r, "Grid", .Surface), program_find(r, "Ocean", .Surface)
-	testing.expect(t, grid != nil && ocean != nil, "the engine has the Grid and Ocean programs")
+	testing.expect(t, grid != nil && ocean != nil, "the tests have the Grid and Ocean programs")
 	if grid == nil || ocean == nil {return}
 	mirror, wall, sea := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	sea.program_id = ocean.id
@@ -744,11 +742,11 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 @(test)
 material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), desc = {pipeline_thread = true}) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), desc = {pipeline_thread = true}, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
-	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
 	mirror, wall := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
 	// Its row is blue; its program paints it red.
@@ -810,11 +808,11 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 @(test)
 material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
-	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
 	// Their rows are blue; their program paints them red.
 	painted := DEFAULT_MATERIAL
 	painted.base_color = {0, 0, 1}
@@ -862,11 +860,11 @@ pieces_material :: proc(t: ^testing.T, pieces: ^Program, progress: f64) -> Mater
 @(test)
 material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	pieces := program_find(r, "Pieces", .Surface)
-	if !testing.expect(t, pieces != nil && pieces.vertex.declared, "the engine has the Pieces program, which moves vertices") {return}
+	if !testing.expect(t, pieces != nil && pieces.vertex.declared, "the tests have the Pieces program, which moves vertices") {return}
 	materials_set(r, {pieces_material(t, pieces, 0)})
 	// One piece (uv1.x 0) whose pivot is the centre of its bounds (a grey color).
 	corners := [4]Vec3{{-0.5, 0, -0.5}, {0.5, 0, -0.5}, {0.5, 0, 0.5}, {-0.5, 0, 0.5}}
@@ -1052,7 +1050,7 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
     // independently of the scene lighting/history beneath the editor coat.
     renderer_resize(r,192,128,2,2)
     for scale in ([]f32{0.5,1}) {
-        settings.render_scale=scale;settings.taa=true
+        settings.resolution=Render_Scale(scale);settings.taa=true
         testing.expect(t,renderer_apply_settings(r,settings),r.error)
         solid_scaled:=screen_color(t,&f,camera,{-0.25,0,0})
         hole_scaled:=screen_color(t,&f,camera,{0.25,0,0})
@@ -1197,7 +1195,7 @@ read_light :: proc(t:^testing.T,f:^Fixture,camera:Camera,world:Vec3,target:rhi.T
 @(test)
 material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), programs = true) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     image:[16*16*4]u8
@@ -1224,7 +1222,7 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
     sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true}
     spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7}
     grid:=program_find(r,"Grid",.Surface)
-    if !testing.expect(t,grid!=nil,"the engine has the Grid program") {return}
+    if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
         if provider==.Hardware && !r.hardware_rt_verified {continue}
         for mesh,uv_set in ([2]Mesh_Handle{quad,secondary}) {
@@ -1524,9 +1522,6 @@ block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
 	_, ok := texture_add(r, {pixels = image[:], width = 8, height = 8, srgb = true, name = "plain"})
 	testing.expect(t, ok, r.error)
 	testing.expect_value(t, rhi.texture_desc(f.device, r.textures.textures[4]).format, rhi.Format.RGBA8_Srgb)
-	settings.texture_compression = false
-	testing.expect(t, renderer_apply_settings(r, settings))
-	testing.expect(t, !texture_limits(r).blocks, "with the setting off a loader decodes blocks")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

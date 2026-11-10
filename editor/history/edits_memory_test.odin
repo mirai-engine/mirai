@@ -17,13 +17,13 @@ edits_prepare_memory_failure_preserves_baselines_redo_and_the_open_gesture :: pr
         w:=core.world_ref(&f.world,&f.info)
         for value in 11..=12 {
             testing.expect(t,edits_begin(&f.edits,&f.selection,"Original"))
-            core.get(&f.world.values,f.entity).value=value
+            core.edit(&f.world.values,f.entity).value=value
             testing.expect(t,edits_commit(&f.edits,w,&f.selection))
         }
         testing.expect(t,undo(&f.edits,w,&f.selection))
         serial,cursor,steps,bytes:=f.edits.serial,f.edits.cursor,len(f.edits.steps),f.edits.bytes
         testing.expect(t,edits_begin(&f.edits,&f.selection,"Candidate"))
-        core.get(&f.world.values,f.entity).value=20
+        core.edit(&f.world.values,f.entity).value=20
         core.remove(&f.world.others,f.entity)
         added:=core.create(&f.world.entities)
         core.add(&f.world.ids,added,{value=2});core.add(&f.world.values,added,{value=30})
@@ -48,7 +48,7 @@ edits_prepare_memory_failure_preserves_baselines_redo_and_the_open_gesture :: pr
             image:=&f.edits.image[1]
             copied:=cast(^Test_Memory_Value)journal_value(image,size_of(Test_Memory_Value),journal_row(image,f.entity))
             testing.expect_value(t,copied.value,11)
-            actual,_:=core.get(core.read(&f.world.values),f.entity)
+            actual,_:=core.get(&f.world.values,f.entity)
             testing.expect_value(t,actual.value,20)
             testing.expect(t,core.alive(&f.world.entities,added))
             prepared,error=edits_prepare(&f.edits,w,&f.selection)
@@ -65,11 +65,11 @@ edits_prepare_memory_failure_preserves_baselines_redo_and_the_open_gesture :: pr
         failure.remaining=-1
         edits_preparation_destroy(&prepared)
         testing.expect(t,undo(&f.edits,w,&f.selection))
-        actual,_:=core.get(core.read(&f.world.values),f.entity)
+        actual,_:=core.get(&f.world.values,f.entity)
         testing.expect_value(t,actual.value,11)
         testing.expect(t,core.has(&f.world.others,f.entity) && !core.alive(&f.world.entities,added))
         testing.expect(t,redo(&f.edits,w,&f.selection))
-        actual,_=core.get(core.read(&f.world.values),f.entity)
+        actual,_=core.get(&f.world.values,f.entity)
         testing.expect_value(t,actual.value,20)
         testing.expect(t,!core.has(&f.world.others,f.entity) && core.alive(&f.world.entities,added))
         test_memory_free(&f)
@@ -114,7 +114,7 @@ edits_reserved_cancel_restores_deleted_rows_and_handles_without_allocating :: pr
     testing.expect(t,!f.edits.open && f.edits.error==.None)
     testing.expect(t,core.alive(&f.world.entities,f.entity) && !core.alive(&f.world.entities,reused))
     testing.expect(t,core.has(&f.world.others,f.entity))
-    actual,_:=core.get(core.read(&f.world.values),f.entity)
+    actual,_:=core.get(&f.world.values,f.entity)
     testing.expect_value(t,actual.value,10)
     testing.expect_value(t,f.edits.serial,serial)
     testing.expect_value(t,len(f.edits.steps),0)
@@ -127,12 +127,12 @@ edits_prepared_tokens_reject_changed_tables_pending_writes_and_selection :: proc
     defer test_memory_free(&f)
     w:=core.world_ref(&f.world,&f.info)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Candidate"))
-    core.get(&f.world.values,f.entity).value=20
+    core.edit(&f.world.values,f.entity).value=20
     for kind in 0..<3 {
         prepared,error:=edits_prepare(&f.edits,w,&f.selection)
         testing.expect_value(t,error,Edit_Error.None)
         switch kind {
-        case 0:core.get(&f.world.values,f.entity).value+=1
+        case 0:core.edit(&f.world.values,f.entity).value+=1
         case 1:core.add(&f.world.others,f.entity,{value=3})
         case 2:selection_clear(&f.selection)
         }
@@ -142,6 +142,6 @@ edits_prepared_tokens_reject_changed_tables_pending_writes_and_selection :: proc
         edits_preparation_destroy(&prepared)
     }
     edits_cancel(&f.edits,w)
-    actual,_:=core.get(core.read(&f.world.values),f.entity)
+    actual,_:=core.get(&f.world.values,f.entity)
     testing.expect_value(t,actual.value,10)
 }

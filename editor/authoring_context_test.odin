@@ -97,13 +97,13 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     testing.expect(t,world.entities.alive==9,"only the author and its authored child are duplicated")
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     history.edits_begin(&edits,&selection,"Terrain source")
-    core.get(&world.authored,owner).value=43
-    core.get(&world.meshes,left).shape=.Sphere
+    core.edit(&world.authored,owner).value=43
+    core.edit(&world.meshes,left).shape=.Sphere
     history.edits_end(&edits)
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,history.undo(&edits,ref,&selection))
-    authored,_:=core.get(core.read(&world.authored),owner)
-    derived,_:=core.get(core.read(&world.meshes),left)
+    authored,_:=core.get(&world.authored,owner)
+    derived,_:=core.get(&world.meshes,left)
     testing.expect_value(t,authored.value,42)
     testing.expect_value(t,derived.shape,erender.Shape.Sphere)
     testing.expect(t,history.redo(&edits,ref,&selection))

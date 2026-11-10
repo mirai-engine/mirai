@@ -22,9 +22,9 @@ import "mirai:std/math"
 // core.Input of the tick and from its own state of the tick before, so a tick
 // simulated again gives the same.
 //
-// Each library declares its actions as an enum @(actions), and the defaults
-// of the ones it wants driven without input.mirai ([E]Action_Default). The
-// map is built once, in the first input phase: those defaults, and then
+// Each library declares its actions as an enum @(actions), and beside it the
+// defaults of the ones it wants driven without input.mirai (Action_Default).
+// The map is built once, in the first input phase: those defaults, and then
 // input.mirai of the project, which gives the kind and the bindings of the
 // actions it names. A step reads the actions of an enum through Input_Of(E).
 
@@ -77,16 +77,13 @@ Look_Action :: enum u8 {Look}
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
 
 // The bindings of look when input.mirai of the project does not name it.
-@(storage,host)
-Look_Actions :: struct {defaults:[Look_Action]Action_Default}
-
-look_actions_default :: proc "contextless" () -> Look_Actions {
-    return {defaults={.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}}
+look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Default {
+    return {.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}
 }
 
 Action_Kind :: si.Action_Kind
-TAP_TICKS :: si.TAP_TICKS
-HOLD_TICKS :: si.HOLD_TICKS
+TAP_SECONDS :: si.TAP_SECONDS
+HOLD_SECONDS :: si.HOLD_SECONDS
 Action_State :: si.Action_State
 
 // The dead zone of a binding that leaves it at 0: an axis pressed as a
@@ -126,11 +123,10 @@ Input_Binding :: struct {
 }
 
 // How an action is driven when input.mirai of the project does not name it.
-// Whoever declares an enum @(actions) gives the defaults of its members in a
-// storage of its package that has a field [E]Action_Default, set by the
-// default of the storage (<name>_default() or <NAME>_DEFAULT): the compiler
-// asks for every member, the map reads those defaults when it is built, and
-// nothing reads the storage.
+// Whoever declares an enum @(actions) E gives the defaults of its members
+// beside it, by the naming rule of defaults: <e>_defaults :: proc() ->
+// [E]Action_Default, or a constant <E>_DEFAULTS. The compiler asks for every
+// member, and the map reads them when it is built.
 Action_Default :: struct {
     kind:Action_Kind,
     input_context:Input_Context,
@@ -159,7 +155,7 @@ Input_Map :: struct {
     bindings:[BINDING_CAPACITY]Input_Binding,
     declared:Action_Mask,
     binding_count:u32,
-    tap_ticks,hold_ticks:u32, // 0: TAP_TICKS and HOLD_TICKS
+    tap_seconds,hold_seconds:f32, // 0: TAP_SECONDS and HOLD_SECONDS
     built:bool,               // from the defaults of the code and input.mirai
 }
 
@@ -273,15 +269,15 @@ input_map_build :: proc(bindings:^Input_Map,app:^host.App,problems:^core.Problem
 
 // The actions of the machine, in the contexts of the focused seat.
 @(step="fixed",stage="input")
-input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat)) {
+input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat),time:core.Time) {
     input:=input
-    actions_update(actions,bindings,&input,focused_contexts(state.ptr,seats))
+    actions_update(actions,bindings,&input,time.dt,focused_contexts(state.ptr,seats))
 }
 
 @(step="input",stage="end")
-input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat)) {
+input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat),frame:core.Frame_Time) {
     input:=input.input
-    actions_update(&actions.actions,bindings.ptr,&input,focused_contexts(state.ptr,seats))
+    actions_update(&actions.actions,bindings.ptr,&input,frame.dt,focused_contexts(state.ptr,seats))
 }
 
 binding_key :: proc "contextless" (key:core.Key) -> Input_Binding {
@@ -393,34 +389,28 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
         if entry.value<CONTEXT_CAPACITY {continue}
         input_report(problems,"input.context_value","the input context %q (%s:%d) has the value %d; contexts take values below %d: give it a free one",entry.name,entry.file,entry.line,entry.value,CONTEXT_CAPACITY)
     }
-    defaulted:Action_Mask
     if info!=nil {
-        for &storage in info.storages {
-            for &given in action_defaults(info,&storage) {
-                d,action:=given.default,given.action
+        for &enum_actions in info.actions {
+            if enum_actions.defaults==nil || enum_actions.info==nil {continue}
+            members:=runtime.type_info_base(enum_actions.info).variant.(runtime.Type_Info_Enum) or_continue
+            defaults:=make([]Action_Default,len(members.values),context.temp_allocator)
+            enum_actions.defaults(raw_data(defaults))
+            for &d,member in defaults {
+                action:=Action(enum_actions.base+i64(member))
                 name,declared:=core.name_of(info,Action,i64(action))
-                switch {
-                case given.unknown!=nil:
-                    input_report(problems,"input.default_unknown","%s gives defaults to the members of %v, which is not an enum @(actions); mark it @(actions), or remove the defaults",storage.name,given.unknown)
-                case !declared || int(action)>=ACTION_CAPACITY:
-                    input_report(problems,"input.default_unknown","%s gives a default to the action of value %d, which no enum @(actions) declares; declare the action or remove its default",storage.name,action)
-                case defaulted&action_bit(action)!=0:
-                    input_report(problems,"input.default_twice","the action %q has two defaults, the second in %s; leave one",name,storage.name)
-                case int(d.count)>DEFAULT_BINDING_CAPACITY:
-                    input_report(problems,"input.default_bindings","the default of the action %q in %s has %d bindings, and a default holds %d; bind the rest in %s",name,storage.name,d.count,DEFAULT_BINDING_CAPACITY,project.INPUT_FILE)
-                    fallthrough
-                case:
-                    defaulted|=action_bit(action)
-                    input_map_action(&result,action,d.kind)
-                    if int(d.input_context)<CONTEXT_CAPACITY {
-                        result.contexts[action]=d.input_context
-                    } else {
-                        input_report(problems,"input.default_context","the default of the action %q in %s puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,storage.name,d.input_context,CONTEXT_CAPACITY)
-                    }
-                    for binding in d.bindings[:min(int(d.count),DEFAULT_BINDING_CAPACITY)] {
-                        if !input_map_bind(&result,action,binding) {
-                            input_report(problems,"input.default_binding","a default binding of the action %q in %s does not suit its kind %v, or the map holds %d bindings already; fix that binding",name,storage.name,d.kind,BINDING_CAPACITY)
-                        }
+                if !declared || int(action)>=ACTION_CAPACITY {continue}
+                if int(d.count)>DEFAULT_BINDING_CAPACITY {
+                    input_report(problems,"input.default_bindings","the default of the action %q has %d bindings, and a default holds %d; bind the rest in %s",name,d.count,DEFAULT_BINDING_CAPACITY,project.INPUT_FILE)
+                }
+                input_map_action(&result,action,d.kind)
+                if int(d.input_context)<CONTEXT_CAPACITY {
+                    result.contexts[action]=d.input_context
+                } else {
+                    input_report(problems,"input.default_context","the default of the action %q puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,d.input_context,CONTEXT_CAPACITY)
+                }
+                for binding in d.bindings[:min(int(d.count),DEFAULT_BINDING_CAPACITY)] {
+                    if !input_map_bind(&result,action,binding) {
+                        input_report(problems,"input.default_binding","a default binding of the action %q does not suit its kind %v, or the map holds %d bindings already; fix that binding",name,d.kind,BINDING_CAPACITY)
                     }
                 }
             }
@@ -456,7 +446,7 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
     }
     if strings.builder_len(unbound)>0 {
         where_:=file!=""?file:project.INPUT_FILE
-        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in %s; give each its kind and default bindings where it is declared (a host storage with a field [E]Action_Default), or bind it in Project Settings > Input",strings.to_string(unbound),where_)
+        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in %s; give each its kind and default bindings beside its enum (<enum>_defaults :: proc() -> [E]Action_Default), or bind it in Project Settings > Input",strings.to_string(unbound),where_)
     }
     m^=result
 }
@@ -472,7 +462,7 @@ input_report :: proc(problems:^core.Problems,code,format:string,args:..any) {
 // How to fix a file with that error.
 input_map_error_fix :: proc(error:Input_Map_Error) -> string {
     #partial switch error {
-    case .Syntax:        return `write {"actions":[{"name":...,"kind":...,"bindings":[...]}]} in JSON`
+    case .Syntax:        return `write {"tap_seconds":...,"hold_seconds":...,"actions":[{"name":...,"kind":...,"bindings":[...]}]} in JSON`
     case .Unknown_Context: return "name a constant of input.Input_Context in its context, or leave it out for the base one"
     case .Unknown_Kind:  return "its kind is Button, Axis or Axis2"
     case .Unknown_Input: return "name keys, buttons, axes and sticks as the enums of core and input name them"
@@ -490,40 +480,6 @@ member_name :: proc(name:string) -> string {
         strings.write_byte(&b,(i==0 || name[i-1]=='_') && c>='a' && c<='z'?c-32:c)
     }
     return strings.to_string(b)
-}
-
-@(private)
-Given_Default :: struct {
-    action:Action,
-    default:Action_Default,
-    unknown:typeid, // the enum of a field [E]Action_Default that is not @(actions)
-}
-
-// The defaults of a storage: those of its fields [E]Action_Default, in the
-// value its default gives it, each with the action of its member.
-@(private)
-action_defaults :: proc(info:^core.World_Info,storage:^core.Storage_Info) -> []Given_Default {
-    if storage.default==nil || storage.info==nil {return nil}
-    record,is_struct:=runtime.type_info_base(storage.info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return nil}
-    value:[]u8
-    found:=make([dynamic]Given_Default,context.temp_allocator)
-    for i in 0..<int(record.field_count) {
-        array,is_array:=runtime.type_info_base(record.types[i]).variant.(runtime.Type_Info_Enumerated_Array)
-        if !is_array || array.elem.id!=Action_Default {continue}
-        actions:=core.actions_of(info,array.index.id)
-        if actions==nil {
-            append(&found,Given_Default{unknown=array.index.id})
-            continue
-        }
-        if value==nil {
-            value=make([]u8,storage.info.size,context.temp_allocator)
-            storage.default(raw_data(value))
-        }
-        defaults:=([^]Action_Default)(&value[record.offsets[i]])[:array.count]
-        for d,member in defaults {append(&found,Given_Default{action=Action(actions.base+i64(member)),default=d})}
-    }
-    return found[:]
 }
 
 // How std/input reads a binding of an action of that kind.
@@ -632,7 +588,7 @@ inputs_taken :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8
 // the base one), and a binding does not when a higher layer reads one of its
 // inputs, or a modal one is above it. A hold drives its action as one more
 // binding, in the same contexts. It allocates nothing.
-actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
+actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
     // The layer of each context the seat is in, plus one; 0: not in it.
     layers:[CONTEXT_CAPACITY]u8
     layers[CONTEXT_BASE]=1
@@ -658,7 +614,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
     count:=action_end(m)
     if count==0 || !si.input_init(&state,{
         max_actions=count,max_bindings=max(int(m.binding_count),1),code_count=ACTION_CODES,axis_count=ACTION_AXES,
-        tap_ticks=m.tap_ticks,hold_ticks=m.hold_ticks,allocator=mem.arena_allocator(&arena),
+        tap=m.tap_seconds,hold=m.hold_seconds,allocator=mem.arena_allocator(&arena),
     }) {
         actions^={}
         return
@@ -735,7 +691,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
         si.input_feed_action(&state,si.Action(a+1),hold.value.x!=0,hold.value.x,hold.value)
     }
 
-    si.input_update(&state)
+    si.input_update(&state,dt)
     copy(actions.states[:count],state.states[:count])
     for i in count..<int(actions.count) {actions.states[i]={}}
     actions.count=u32(count)
@@ -752,7 +708,7 @@ action :: #force_inline proc "contextless" (actions:^Actions,a:Action) -> Action
 // actions the file does not name stay. On an error the map is left as it
 // was, and at is the name of the action where it was found.
 //
-//   {"tap_ticks":12,"hold_ticks":30,"actions":[
+//   {"tap_seconds":0.2,"hold_seconds":0.5,"actions":[
 //     {"name":"move","kind":"Axis2","bindings":[{"keys":["A","D","S","W"]},{"gamepad_stick":"Left"}]},
 //     {"name":"look","kind":"Axis2","bindings":[{"mouse":"Delta","scale":0.1}]},
 //     {"name":"jump","kind":"Button","bindings":[{"key":"Space"},{"gamepad_button":"South"}]}]}
@@ -774,8 +730,9 @@ input_map_parse :: proc(m:^Input_Map,info:^core.World_Info,text:string,skipped:^
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return .Syntax,""}
     result:=m^
-    if ticks,has:=input_number(root["tap_ticks"]);has {result.tap_ticks=u32(max(ticks,0))}
-    if ticks,has:=input_number(root["hold_ticks"]);has {result.hold_ticks=u32(max(ticks,0))}
+    for old in ([]string{"tap_ticks","hold_ticks"}) {if old in root {return .Syntax,old}}
+    if seconds,has:=input_number(root["tap_seconds"]);has {result.tap_seconds=f32(max(seconds,0))}
+    if seconds,has:=input_number(root["hold_seconds"]);has {result.hold_seconds=f32(max(seconds,0))}
     list,_:=root["actions"].(json.Array)
     for item in list {
         entry,is_action:=item.(json.Object)

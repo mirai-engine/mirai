@@ -31,7 +31,7 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
     asset_id:=authoring_test_id(f,"actions.action");asset_text:=authoring_test_id_text(asset_id);revision:=authoring_test_revision(f,"actions.action")
     file:asset.Asset;testing.expect_value(t,authoring_test_load(f,"actions.action",&file),asset.Error.None)
     profile,error:=anim.action_profile_view(&file,&f.assets.types);testing.expect_value(t,error,asset.Error.None)
-    testing.expect(t,profile.actions[0].weight==1 && profile.actions[0].speed==1 && profile.actions[0].layer==1 && profile.sections[0].next==1 && profile.sections[1].next== -1);asset.asset_close(&file)
+    testing.expect(t,profile.actions[0].weight==1 && profile.actions[0].speed==1 && profile.actions[0].exit==1 && profile.actions[0].layer=={} && profile.sections[0].next==1 && profile.sections[1].next== -1);asset.asset_close(&file)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,asset_text));testing.expect_value(t,result.code,0)
     text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"next": "end"`) && !strings.contains(text,"section_count"))
     for size in ([2]int{2*size_of(Action_Section_Params),size_of(Action_Window_Params)}) {
@@ -50,8 +50,13 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
     bad,_=strings.replace_all(definition,`"end":0.8`,`"end":9`,context.temp_allocator)
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actions.action",%s}}`,bad));testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"sections[1].end"))
     testing.expect_value(t,authoring_test_revision(f,"actions.action"),revision)
-    bad=fmt.tprintf(`"animation":"%s","actions":[{{"name":"attack","clip":"walk"}},{{"name":"second","clip":"walk","mode":"Additive"}}]`,identity)
+    // An action plays in a layer of its set, and one with root motion not in a layer that adds.
+    bad=fmt.tprintf(`"animation":"%s","actions":[{{"name":"attack","clip":"walk"}},{{"name":"second","clip":"walk","layer":"Arm"}}]`,identity)
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actions.action",%s}}`,bad));testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"actions[1].layer") && strings.contains(result.data,"Missing_Reference"))
+    bad=fmt.tprintf(`"animation":"%s","layers":[{{"name":"Lean","mode":"Additive"}}],"actions":[{{"name":"attack","clip":"walk","layer":"Lean","root_motion":"Extract"}}]`,identity)
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actions.action",%s}}`,bad));testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"UnsupportedPolicy"))
+    bad=fmt.tprintf(`"animation":"%s","layers":[{{"name":"Arm","clip":"missing"}}]`,identity)
+    result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actions.action",%s}}`,bad));testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"layers[0].clip"))
     testing.expect_value(t,authoring_test_revision(f,"actions.action"),revision)
     // A body moves by root motion, and its vertical asks for a move.
     for c in ([2][2]string{{`"body_move":"Additive"`,"actions[0].body_move"},{`"body_vertical":true`,"actions[0].body_vertical"}}) {

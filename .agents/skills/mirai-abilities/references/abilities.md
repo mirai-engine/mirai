@@ -96,11 +96,11 @@ reports for each ability of the kit.
   `Canceled`, `Window_Begin` and `Window_End` with the window and its cue, `Hit` with the target,
   `Depleted` with the attribute, `Effect_Begin` and `Effect_End` with the cue of a timer (at the
   end that decides the user). VFX, sound and camera shake are the game's answer to cues.
-- Animation: `anim.action_fire` / `action_cancel` for `action`, `anim.match_play` / `match_stop`
-  for `clip`, in the mode the `Character` is in. The animation action should allow cancellation:
-  the ability decides the timing and the animation follows. An ability interrupted or cancelled
-  cancels its action unless the one that follows fires the same action: on another layer nothing
-  else would end it, and a looping section would play on.
+- Animation: `anim.play` / `anim.stop` of the action of the user's action set that `action` (one
+  in a layer) or `clip` (one over the whole body) names. The animation action should allow
+  cancellation: the ability decides the timing and the animation follows. An ability interrupted
+  or cancelled stops its action unless the one that follows plays the same action: in another
+  layer nothing else would end it, and a looping section would play on.
 - Movement: `phys.add_move` with the window's velocity and length, `phys.remove_moves` when the
   ability ends before the window closes; knockback is a move of the target. The dash is a layered
   move, not a teleport.

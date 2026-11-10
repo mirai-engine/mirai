@@ -13,7 +13,7 @@ import phys "plugins:physics/runtime"
 // point (rings, a grid, the points of the navigation mesh joined to it) or
 // takes entities or the offers of smart objects as them,
 // keeps those on the navigation mesh of the querier, measures each by its
-// tests and scores them with the considerations of utility; the best come
+// tests and scores them with their considerations; the best come
 // back in the Place_Result of the querier, with the request it answers.
 // Queries run in order of arrival, Behavior_Settings.queries of them a tick.
 
@@ -129,6 +129,7 @@ places_run :: proc(
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
     objects:core.Read(Smart_Object),states:core.Read(Smart_State),claims:^Claims,influence:core.Ref(Influence),time:core.Time,problems:^core.Problems,
 ) {
+    if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
     for query in core.take(&requests.queue) {
         append(&places.waiting,query)
         result:=core.staged(results,query.querier)
@@ -148,7 +149,7 @@ places_run :: proc(
         budget-=1
         result:Place_Result
         filter:=place_filter(navigation,query.querier,paths,agents,walks,swims,physics)
-        smart:=Smart_View{objects=objects,states=states,worlds=worlds,claims=claims,time=time.seconds,tick=time.tick}
+        smart:=Smart_View{objects=objects,states=states,worlds=worlds,claims=claims,time=time}
         if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,&smart,agents,influence.ptr) {
             core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
         }

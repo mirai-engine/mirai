@@ -25,13 +25,6 @@ Seat_World :: struct {
     bindings:input.Input_Map,
 }
 
-// The defaults of the actions, which the application holds.
-@(private="file")
-Seat_Shared :: struct {
-    walk:Walk_Actions,
-    look:input.Look_Actions,
-}
-
 @(private="file")
 Seat_Test :: struct {
     using w:Seat_World,
@@ -72,17 +65,19 @@ seat_test_seat :: proc(f:^Seat_Test) -> core.Entity {
     core.add(&f.seats,seat,input.Seat{})
     seat_test_settle(f)
     device:=core.Input{keys_down={.W,.Space},keys_pressed={.W,.Space},mouse_delta={10,0}}
-    input.seat_feed(core.get(&f.seats,seat),&device,&f.bindings,false)
+    input.seat_feed(core.edit(&f.seats,seat),&device,&f.bindings,false,1.0/60)
     return seat
 }
 
 // The input map of a world whose code declares the walk actions, without input.mirai.
 @(private="file")
 seat_test_map :: proc(t:^testing.T,m:^input.Input_Map,problems:^core.Problems) -> bool {
-    info:=core.test_info(t,Seat_World,Seat_Shared,core.Test_None,test_types) or_return
+    info:=core.test_info(t,Seat_World,core.Test_None,core.Test_None,test_types) or_return
     defer core.test_info_destroy(&info)
     names:=[]core.Name_Info{{type=input.Action,value=0,name="look"},{type=input.Action,value=i64(TEST_MOVE),name="move"},{type=input.Action,value=i64(TEST_JUMP),name="jump"},{type=input.Action,value=i64(TEST_SPRINT),name="sprint"},{type=input.Action,value=i64(TEST_CROUCH),name="crouch"}}
-    actions:=[]core.Actions_Info{{type=input.Look_Action,info=type_info_of(input.Look_Action)},{type=Walk_Action,info=type_info_of(Walk_Action),base=i64(TEST_WALK_BASE)}}
+    look_defaults :: proc(dst:rawptr) {(cast(^[input.Look_Action]input.Action_Default)dst)^=input.look_action_defaults()}
+    walk_defaults :: proc(dst:rawptr) {(cast(^[Walk_Action]input.Action_Default)dst)^=walk_action_defaults()}
+    actions:=[]core.Actions_Info{{type=input.Look_Action,info=type_info_of(input.Look_Action),defaults=look_defaults},{type=Walk_Action,info=type_info_of(Walk_Action),base=i64(TEST_WALK_BASE),defaults=walk_defaults}}
     info.names,info.actions=names,actions
     input.input_map_make(m,&info,"","",problems)
     return true
@@ -107,13 +102,13 @@ a_seat_walks_the_character_it_drives_and_leaves_the_others :: proc(t:^testing.T)
     seat_test_settle(f)
     seat_test_run(f)
 
-    walked,_:=core.get(core.read(&f.moves),driven)
+    walked,_:=core.get(&f.moves,driven)
     wanted:=f32(math.PI/2)+0.1-10*input.LOOK_SPEED
     testing.expect(t,abs(walked.look_yaw-wanted)<1e-4)
     testing.expect_value(t,walked.move,[3]f32{0,0,-1})
     testing.expect_value(t,walked.buttons,input.action_bit(TEST_JUMP))
     for e in ([3]core.Entity{idle,remote,by_game}) {
-        left,_:=core.get(core.read(&f.moves),e)
+        left,_:=core.get(&f.moves,e)
         testing.expect_value(t,left,input.Move_Input{look_yaw=math.PI/2})
     }
     testing.expect_value(t,f.problems.count,0)
@@ -137,10 +132,10 @@ a_seat_walks_toward_where_the_camera_or_the_world_says :: proc(t:^testing.T) {
     seat_test_settle(f)
     seat_test_run(f)
 
-    turned,_:=core.get(core.read(&f.moves),followed)
+    turned,_:=core.get(&f.moves,followed)
     testing.expectf(t,abs(turned.look_yaw+math.PI/2)<1e-4,"it faces where the camera looks: %v",turned.look_yaw)
     testing.expectf(t,abs(turned.move.z+1)<1e-4 && abs(turned.move.x)<1e-4,"and walks forward: %v",turned.move)
-    north,_:=core.get(core.read(&f.moves),mapped)
+    north,_:=core.get(&f.moves,mapped)
     testing.expectf(t,abs(north.look_yaw)<1e-4 && abs(north.move.z+1)<1e-4,"it walks to -Z of the world: %v",north)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -163,9 +158,9 @@ a_seat_walks_as_the_mode_of_its_camera_wants :: proc(t:^testing.T) {
     seat_test_settle(f)
     seat_test_run(f)
 
-    looked,_:=core.get(core.read(&f.moves),eyes)
+    looked,_:=core.get(&f.moves,eyes)
     testing.expectf(t,abs(looked.look_yaw-(math.PI/2-10*input.LOOK_SPEED))<1e-4 && abs(looked.move.z+1)<1e-4,"a camera at its eyes: it turns with the look: %v",looked)
-    turned,_:=core.get(core.read(&f.moves),orbit)
+    turned,_:=core.get(&f.moves,orbit)
     testing.expectf(t,abs(turned.look_yaw+math.PI/2)<1e-4,"a free camera: it faces where the camera looks: %v",turned.look_yaw)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -187,6 +182,6 @@ a_seat_without_the_walk_actions_is_a_problem :: proc(t:^testing.T) {
 
     testing.expect_value(t,f.problems.count,1)
     testing.expect(t,core.problem_find(&f.problems,body,"locomotion.seat_action")!=nil)
-    walked,_:=core.get(core.read(&f.moves),body)
+    walked,_:=core.get(&f.moves,body)
     testing.expect_value(t,walked,input.Move_Input{look_yaw=math.PI/2})
 }

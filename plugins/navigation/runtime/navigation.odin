@@ -15,7 +15,7 @@ import phys "plugins:physics/runtime"
 // those of Nav_Link components, and those the build finds where a class can
 // jump or drop. A class that flies or swims has a volume instead: the free
 // space of the Nav_Bounds marked for the air, or of the water of the
-// Fluid_Volume rows less their dry boxes, in zones built the same way. The meshes and
+// Fluid rows less their dry boxes, in zones built the same way. The meshes and
 // volumes are state of the world: they copy with it, so a run starts with
 // those of the document. A section saves the tiles over its box with its own
 // scene, and they come and go with it; where the mesh is not there, the
@@ -125,35 +125,36 @@ NAVIGATION_SETTINGS_DEFAULT :: Navigation_Settings{
     path_iterations=2048,
 }
 
-// Where meshes are made: a box in the frame of the entity. Without any, the
-// box of all the static collision. A box of the air is where agents fly,
+// The three that follow say what the Volume of their entity is to the
+// navigation: it is to be a Box, taken upright where the entity is (its yaw
+// turns it). Its blend, priority and mode do nothing here.
+
+// Where meshes are made: the box of the Volume of its entity. Without any,
+// the box of all the static collision. A box of the air is where agents fly,
 // instead: the sky has no edge of its own.
-@(component,description="Navigation meshes are made inside this box, in the frame of the entity; without any bounds, inside the box of all the static collision. With air, it is the space where agents fly instead.")
+@(component,description="Navigation meshes are made inside the box of the Volume of its entity; without any bounds, inside the box of all the static collision. With air, it is the space where agents fly instead.")
 Nav_Bounds :: struct {
-    half:[3]f32 `mirai:"min=0,unit=m"`,
     air:bool,
 }
-NAV_BOUNDS_DEFAULT :: Nav_Bounds{half={20,5,20}}
+NAV_BOUNDS_DEFAULT :: Nav_Bounds{}
 
-// The surface inside a box (in the frame of the entity, upright) is of an
-// area: cheaper or dearer to walk, or Blocked.
-@(component,description="The walkable surface inside this box is of an area: dearer or cheaper to walk, or blocked.")
+// The surface inside the box of the Volume of its entity is of an area:
+// cheaper or dearer to walk, or Blocked.
+@(component,description="The walkable surface inside the box of the Volume of its entity is of an area: dearer or cheaper to walk, or blocked.")
 Nav_Area :: struct {
-    half:[3]f32 `mirai:"min=0,unit=m"`,
     area:Nav_Area_Kind,
 }
-NAV_AREA_DEFAULT :: Nav_Area{half={1,1,1},area=AREA_BLOCKED}
+NAV_AREA_DEFAULT :: Nav_Area{area=AREA_BLOCKED}
 
 // Something that moves and stops (a car, a crate, a door): while it moves,
 // agents step aside from it; once it has been still `settle` seconds, the
-// surface inside its box (in the frame of the entity, upright) is blocked
-// until it moves again.
-@(component,description="A thing agents step aside from while it moves; once still for a while, the surface under its box is blocked until it moves again.")
+// surface inside the box of the Volume of its entity is blocked until it
+// moves again.
+@(component,description="A thing agents step aside from while it moves; once still for a while, the surface under the box of the Volume of its entity is blocked until it moves again.")
 Nav_Obstacle :: struct {
-    half:[3]f32 `mirai:"min=0,unit=m"`,
     settle:f32 `mirai:"min=0,unit=s"`,
 }
-NAV_OBSTACLE_DEFAULT :: Nav_Obstacle{half={0.5,0.5,0.5},settle=1}
+NAV_OBSTACLE_DEFAULT :: Nav_Obstacle{settle=1}
 
 // A way from the entity to `end` (in its frame) or to the entity `target`:
 // a jump, a ladder, a door. Agents that cannot do what it needs go around.
@@ -180,6 +181,7 @@ Navigation :: struct {
     settings:Navigation_Settings, // those the meshes were made with
     uid:u64,                      // of this copy, for the builds that write to it; 0 until a build looks
     revision:u64,                 // any tile or link of any class changed
+    made:u32,                     // times its meshes were made anew: a search begun in those before reads nothing of these
     kept:[3]u64,                  // of a copy: the uid and the revision of the Navigation its meshes were built in, and its own revision when it took them (meshes_of)
     stats:Build_Stats,
     ready:bool,
@@ -208,6 +210,7 @@ Tile_Mark :: struct {
     building:bool,
     links:bool,    // its generated links wait to be made again
     unloaded:bool, // dirty, it waits for the collision it reads to load: it keeps what it has
+    collision:bool, // dirty, the collision under it may have changed, not only its areas and obstacles: its build reads it again
 }
 
 // Where the static collision is not loaded: a library that pages geometry in
@@ -386,7 +389,8 @@ filter_make :: proc "contextless" (settings:^Navigation_Settings,excluded:Nav_Ar
 // What the mesh of a class is made of: the static collision that blocks a
 // collider of its preset under the collision settings of the physics.
 class_filter :: proc "contextless" (collision:^phys.Collision_Settings,class:Nav_Class) -> phys.Query_Filter {
-    filter:=phys.QUERY_FILTER_DEFAULT
-    filter.filter=phys.collision_filter(collision,phys.Collider{preset=class.collision})
+    filter,collider:=phys.QUERY_FILTER_DEFAULT,phys.COLLIDER_DEFAULT
+    collider.preset=class.collision
+    filter.filter=phys.collision_filter(collision,collider)
     return filter
 }

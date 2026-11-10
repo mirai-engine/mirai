@@ -391,7 +391,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         above,_:=core.world_of(locals,core.read(parents),s.reference)
         for x in s.content {
             if !kept[core.entity_index(x)] {continue}
-            parent,_:=core.get(core.read(parents),x)
+            parent,_:=core.get(parents,x)
             if parent.entity==s.reference || kept[core.entity_index(parent.entity)] {continue}
             at,placed:=core.world_of(locals,core.read(parents),x)
             local,fits:=mm.transform_relative(at,above)
@@ -400,7 +400,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         }
         // A far form under what goes, or sleeps off, would go or turn off with it.
         for x in s.far {
-            parent,_:=core.get(core.read(parents),x)
+            parent,_:=core.get(parents,x)
             if parent.entity==s.reference {continue}
             at,placed:=core.world_of(locals,core.read(parents),x)
             local,fits:=mm.transform_relative(at,above)
@@ -436,7 +436,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         return order
     }
     for move in moves {
-        if transform:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),move.entity));transform!=nil {transform^=core.from_math(move.local)}
+        if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),move.entity));transform!=nil {transform^=core.from_math(move.local)}
         if move.parent==core.NONE {
             core.remove(parents,move.entity)
             core.remove(members,move.entity)
@@ -468,7 +468,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
             if tombstones!=nil {core.add(tombstones,t,Tombstone{id_in(salt,local)})}
             marks(disabled,held,t,false)
         }
-        if reference:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),s.reference));reference!=nil {
+        if reference:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),s.reference));reference!=nil {
             reference.loaded,reference.held,reference.far={},false,reference.scene
         }
         records_drop(records,s.reference)
@@ -596,7 +596,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
         references:=core.world_table_of(w,Scene_Reference)
         at:=x
         for _ in 0..<core.HIERARCHY_DEPTH {
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             if !placed || parent.entity==e {return true}
             at=parent.entity
             if references==nil || core.raw_row(core.raw(references),at)<0 {continue}
@@ -654,7 +654,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
         s.applied[x]=took
         append(&s.took,took)
         values_apply(w,apart,x,took)
-        parent,_:=core.get(core.read(parents),x)
+        parent,_:=core.get(parents,x)
         switch {
         case parent.entity==e:
             if apart_parents!=nil {core.remove(apart_parents,took)}
@@ -768,7 +768,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
     for x,into in s.applied {
         for child:=core.first_child(h,x);child!=core.NONE;child=core.next_sibling(h,child) {
             if child in s.applied || buried[child] {continue}
-            parent,_:=core.get(core.read(parents),child)
+            parent,_:=core.get(parents,child)
             core.add(parents,child,core.Parent{took(made,into),parent.order})
         }
         core.destroy(es,x)
@@ -788,7 +788,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
             into:=took(made,k.parent) if k.parent!=core.NONE else core.NONE
             if into==core.NONE {continue}
             core.add(parents,k.entity,core.Parent{into,k.order})
-            if transform:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),k.entity));transform!=nil {transform^=k.local}
+            if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),k.entity));transform!=nil {transform^=k.local}
         }
     }
     dormants:=core.world_table_of(w,Dormant)
@@ -796,7 +796,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
     marks:=core.world_table_of(w,Section_Held)
     for x in s.woken {
         if dormants!=nil {core.remove(dormants,x)}
-        parent,_:=core.get(core.read(parents),x)
+        parent,_:=core.get(parents,x)
         if held && parent.entity==e {continue}
         if row_has(marks,x) {
             if disabled!=nil {core.remove(disabled,x)}
@@ -866,7 +866,7 @@ far_keep :: proc(apart:core.World_Ref) {
     }
     for p in placed {
         core.remove(parents,p.entity)
-        if local:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),p.entity));local!=nil {local^=core.from_math(p.pose)}
+        if local:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),p.entity));local!=nil {local^=core.from_math(p.pose)}
         core.add(kept,p.entity,Far_Kept{})
     }
     core.world_settle(apart)

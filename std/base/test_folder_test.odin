@@ -19,13 +19,13 @@ test_folder :: proc(t:^testing.T,name:string,loc:=#caller_location) -> string {
     folder=strings.trim_right(folder,"/")
     heap:=runtime.heap_allocator()
     kept,kept_error:=new(string,heap)
-    if !testing.expect(t,kept_error==nil,"the folder of the test could not be kept",loc=loc) {_=os.remove_all(folder);return ""}
+    if !testing.expect(t,kept_error==nil,"the folder of the test could not be kept",loc=loc) {_=remove_all(folder);return ""}
     kept^,kept_error=strings.clone(folder,heap)
-    if !testing.expect(t,kept_error==nil,"the folder of the test could not be kept",loc=loc) {_=os.remove_all(folder);free(kept,heap);return ""}
+    if !testing.expect(t,kept_error==nil,"the folder of the test could not be kept",loc=loc) {_=remove_all(folder);free(kept,heap);return ""}
     testing.cleanup(t,proc(folder:rawptr) {
         kept:=cast(^string)folder
         heap:=runtime.heap_allocator()
-        _=os.remove_all(kept^)
+        _=remove_all(kept^)
         delete(kept^,heap);free(kept,heap)
     },kept)
     return kept^

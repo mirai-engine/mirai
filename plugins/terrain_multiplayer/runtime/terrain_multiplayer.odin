@@ -417,7 +417,7 @@ region_differs :: proc(src:^Net_Source,low,high:[3]i32) {
 
 // What arrived this frame, for the ticks that follow. An edit of another for
 // a tick already simulated, over one this client predicts, asks to go back.
-@(step="input",stage="begin",after="net_begin",before="net_rewind")
+@(step="input",stage="begin")
 terrain_net_receive :: proc(
     events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Terrain_Net,state:core.Ref(Terrain_Net_World),session:core.Ref(multiplayer.Net_Session),
     time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),settings:Terrain_Net_Settings,problems:^core.Problems,
@@ -582,7 +582,7 @@ ask_check :: proc(ask:Net_Terrain_Ask,connection:multiplayer.Connection,data:cor
 
 // What applies in this tick, before terrain does. Server: the asks whose tick
 // came, or a refusal. Client: the stream of each source where it stands.
-@(step="fixed",loops="game",stage="simulate",before="terrain_replay")
+@(step="fixed",loops="game",stage="simulate")
 terrain_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Terrain_Net,state:^Terrain_Net_World,time:core.Time,replays:^terrain.Terrain_Replays,outbox:^multiplayer.Net_Outbox,
     session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:core.Read(terrain.Terrain),

@@ -55,7 +55,7 @@ register :: proc(s:^editor.Session) {
     query_defaults:=Query_Params{inner=2,outer=8,rings=3,per_ring=12,spacing=1,keep=5}
     editor.api_method_register(s,{name="behavior.minds",summary="The minds the game ticks (behavior.minds_tick): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=minds})
     editor.api_method_register(s,{name="behavior.inspect",summary="What the mind of a Mind_Agent does and why: the action and the step it runs by name, its stage and since when, its commit, the best proposals of its last decision with their scores, its last exits with their cause and what interrupted them, and what it holds of the claims. Use it in Play to see why an agent decides what it does.",params=Entity_Params,params_info=type_info_of(Entity_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
-    editor.api_method_register(s,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is and since when.",params=Entity_Params,params_info=type_info_of(Entity_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=perception})
+    editor.api_method_register(s,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is, and the seconds since it first and last perceived it.",params=Entity_Params,params_info=type_info_of(Entity_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=perception})
     editor.api_method_register(s,{name="behavior.offers",summary="The offers of a Smart_Object: each use, where its user stands, who may take it, how many at once, how many times and how often, how many times it was used, when it is offered again and who holds it now.",params=Entity_Params,params_info=type_info_of(Entity_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=offers})
     editor.api_method_register(s,{name="behavior.influence",summary="The influence maps at a point of the shown world: the influence of each team there (threat or allies, as an agent reads it) and how covered the point is from 'from'.",params=Influence_Params,params_info=type_info_of(Influence_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=influence})
     editor.api_method_register(s,{name="behavior.query",summary="Runs a query of places now, for an agent of the shown world: candidates on rings, a grid or the points of its navigation mesh joined to it (around it, another entity or a point), entities (those given, or the Perceivables of some teams) or the offers of a use of smart objects, kept on its navigation mesh and scored by what is asked (nearer, hidden from, seen by or covered from 'from', reachable, low threat, many allies); returns the best with their scores. What a game asks with behavior.place_query.",params=Query_Params,params_info=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result_schema=`{"type":"object"}`,run=query})
@@ -84,7 +84,7 @@ entity_of :: proc(s:^editor.Session,call:^api.Call,named:[]u8,$T:typeid,what:str
     w=editor.shown_world(s)
     e=editor.api_call_entity(call,w,named,game=s.mode!=.Edit) or_return
     table=core.world_table_of(w,T)
-    if table==nil || !core.has(core.read(table),e) {
+    if table==nil || !core.has(table,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a %s in the shown world",base.text_get(named),what)
         return
     }
@@ -106,7 +106,7 @@ action_name :: proc(entry:^behavior.Mind_Entry,action:u16) -> string {
 
 @(private)
 id_of :: proc(world:core.World_Ref,e:core.Entity) -> base.Entity_Id {
-    if ids:=core.world_table_of(world,core.Id);ids!=nil {if value,has:=core.get(core.read(ids),e);has {return value.value}}
+    if ids:=core.world_table_of(world,core.Id);ids!=nil {if value,has:=core.get(ids,e);has {return value.value}}
     return 0
 }
 
@@ -157,18 +157,18 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     m:=&agent.state
-    now:f64
-    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t.seconds}
+    now:core.Time
+    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t^}
     api.write_uint(w,"ticks",u64(m.ticks))
     action,step:=ai.mind_running(m)
-    frame_write :: proc(w:^serial.Writer,world:core.World_Ref,key:string,entry:^behavior.Mind_Entry,action:u16,frame:^ai.Act_Frame,now:f64) {
+    frame_write :: proc(w:^serial.Writer,world:core.World_Ref,key:string,entry:^behavior.Mind_Entry,action:u16,frame:^ai.Act_Frame,now:core.Time) {
         api.write_key(w,key)
         if action==ai.MIND_NONE {serial.text_write_raw(w,"null");return}
         serial.text_write_raw(w,"{")
         api.write_text(w,"action",action_name(entry,action),true)
         api.write_int(w,"stage",i64(frame.stage))
-        api.write_key(w,"seconds");api.write_number(w,f32(now-frame.entered))
-        api.write_key(w,"stage_seconds");api.write_number(w,f32(now-frame.staged))
+        api.write_key(w,"seconds");api.write_number(w,core.elapsed(now,frame.entered))
+        api.write_key(w,"stage_seconds");api.write_number(w,core.elapsed(now,frame.staged))
         if frame.reserved.target!=0 {
             api.write_key(w,"holds")
             serial.text_write_raw(w,"{")
@@ -216,9 +216,11 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     w:=call.out
     serial.text_write_raw(w,`{"remembers":[`)
+    now:core.Time
+    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t^}
     perceptions:=core.world_table_of(world,behavior.Perception)
     if perceptions!=nil {
-        if mine,found:=core.get(core.read(perceptions),e);found {
+        if mine,found:=core.get(perceptions,e);found {
             for o,i in mine.memory.items[:clamp(mine.memory.count,0,ai.PERCEPTION_CAPACITY)] {
                 if i>0 {serial.text_write_raw(w,",")}
                 serial.text_write_raw(w,"{")
@@ -227,8 +229,8 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
                 api.write_numbers(w,"position",o.position)
                 api.write_text(w,"senses",fmt.tprintf("%v",o.senses))
                 api.write_key(w,"confidence");api.write_number(w,o.confidence)
-                api.write_key(w,"since");api.write_number(w,f32(o.first))
-                api.write_key(w,"last");api.write_number(w,f32(o.last))
+                api.write_key(w,"seconds");api.write_number(w,core.elapsed(now,o.first))
+                api.write_key(w,"last_seconds");api.write_number(w,core.elapsed(now,o.last))
                 serial.text_write_raw(w,"}")
             }
         }
@@ -241,12 +243,12 @@ offers :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
     world,e,objects,ok:=entity_of(s,call,p.entity[:],behavior.Smart_Object,"Smart_Object")
     if !ok {return}
-    object,_:=core.get(core.read(objects),e)
+    object,_:=core.get(objects,e)
     state:behavior.Smart_State
-    if states:=core.world_table_of(world,behavior.Smart_State);states!=nil {state,_=core.get(core.read(states),e)}
+    if states:=core.world_table_of(world,behavior.Smart_State);states!=nil {state,_=core.get(states,e)}
     claims:=core.world_storage_of(world,behavior.Claims)
-    tick:u64
-    if t:=core.world_storage_of(world,core.Time);t!=nil {tick=t.tick}
+    now:core.Time
+    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t^}
     w:=call.out
     serial.text_write_raw(w,`{"offers":[`)
     first:=true
@@ -262,9 +264,9 @@ offers :: proc(s:^editor.Session,call:^api.Call) {
         api.write_int(w,"uses",i64(offer.uses))
         api.write_int(w,"used",i64(state.used[i]))
         api.write_key(w,"cooldown");api.write_number(w,offer.cooldown)
-        api.write_key(w,"ready");api.write_number(w,f32(state.ready[i]))
+        api.write_key(w,"ready_seconds");api.write_number(w,core.due(now,state.ready[i])?0:core.seconds_of(now,state.ready[i]-now.tick))
         if claims!=nil {
-            api.write_int(w,"held",i64(ai.reserve_count(&claims.reservations,{u64(e),u16(i+1)},tick)))
+            api.write_int(w,"held",i64(ai.reserve_count(&claims.reservations,{u64(e),u16(i+1)},now.tick)))
         }
         serial.text_write_raw(w,"}")
     }
@@ -364,7 +366,7 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     agents_read:=core.read(agents if agents!=nil else &empty_agents)
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
-    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.world_storage_of(world,behavior.Claims),time=time.seconds,tick=time.tick}
+    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.world_storage_of(world,behavior.Claims),time=time}
     filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,core.read(walks if walks!=nil else &empty_walks),core.read(swims if swims!=nil else &empty_swims),core.ref(physics))
     if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,&smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     w:=call.out

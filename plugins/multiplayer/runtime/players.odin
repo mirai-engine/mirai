@@ -17,7 +17,7 @@ import wire "mirai:net"
 // the client of that connection predict it and its view follow it. A client
 // drives with its first local seat the body the server lets it predict.
 
-@(step="fixed",loops="game",stage="begin",after="net_tick_head")
+@(step="fixed",loops="game",stage="begin")
 net_seats :: proc(
     es:^core.Entities,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
     objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:core.Read(Net_Link),
@@ -73,7 +73,7 @@ net_seats :: proc(
         connection:=Connection(value.peer)
         if serving && connected(connections,connection) {
             sent,_:=remote_input(connections,connection)
-            input.seat_receive(value,bindings.ptr,sent)
+            input.seat_receive(value,bindings.ptr,sent,time.dt)
             continue
         }
         // A connection that left: its seat waits for its player, or goes.
@@ -129,16 +129,16 @@ connected :: proc(connections:core.Ref(Remote_Inputs),connection:Connection) -> 
 owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
     drivables,seats:=core.world_table_of(w,input.Drivable),core.world_table_of(w,input.Seat)
     if seats==nil {return 0}
-    if seat,is:=core.get(core.read(seats),e);is {return Connection(seat.peer)}
+    if seat,is:=core.get(seats,e);is {return Connection(seat.peer)}
     if drivables==nil {return 0}
-    driven,_:=core.get(core.read(drivables),e)
-    seat,_:=core.get(core.read(seats),driven.seat)
+    driven,_:=core.get(drivables,e)
+    seat,_:=core.get(seats,driven.seat)
     return Connection(seat.peer)
 }
 
 // A client: its first local seat asks to drive the body the server lets it
 // predict, and to let go of a replicated one it no longer predicts.
-@(step="fixed",loops="game",stage="input",before="input_drive")
+@(step="fixed",loops="game",stage="input")
 net_driving :: proc(
     links:core.Read(Net_Link),replicas:core.Read(core.Pose_Target),elsewhere:core.Read(core.Remote),
     drivables:core.Read(input.Drivable),seats:core.Read(input.Seat),requests:^input.Seat_Requests,network:core.Ref(core.Network),

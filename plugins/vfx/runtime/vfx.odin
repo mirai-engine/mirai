@@ -132,7 +132,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 
 // The clocks of the emitters one step further: the requests of the step,
 // what each starts and the entities of the effects that are done.
-@(step="fixed",loops="game editor",stage="end",after="transforms_propagate")
+@(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
     emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
     worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:^core.Entities,
@@ -163,7 +163,7 @@ particles_tick :: proc(
         stamp:=core.layout(overrides)
         if at:=core.row_of(overrides,e);at>=0 {stamp=base.hash_combine(stamp,core.stamp(overrides,at))}
         if key:=emission_key(emitter.particle,a,stamp);clock.resolved!=key {
-            override,_:=core.get(core.read(overrides),e)
+            override,_:=core.get(overrides,e)
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
             clock.resolved=key

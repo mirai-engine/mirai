@@ -22,7 +22,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [Watch](references/editor.md#watching-another-run),
   [networked Play](references/editor.md#networked-play), [Simulate](references/editor.md#simulate),
   [Build and reload](references/editor.md#build-and-reload) and
-  [shortcuts](references/editor.md#shortcuts-and-actions); the past of a Play, going back to a
+  [commands and shortcuts](references/editor.md#commands-and-shortcuts) (what a menu entry, a
+  shortcut and a button run, and how a plugin adds its own); the past of a Play, going back to a
   tick and recording it at fixed fps: [history and recording](references/editor.md#play).
 - **Documents, tabs, recovery, undo, edit procedures, selection**:
   [documents](references/document.md#document-and-scenes),
@@ -149,6 +150,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 
 ## Invariants
 
+- The methods of the API are the only catalog of commands: a menu entry, a shortcut and a button
+  are an entry that names a method and its params, a gesture runs the handler of the method, and a
+  plugin gives its method its entry ([commands](references/editor.md#commands-and-shortcuts)).
 - Asset folders are thematic, never by type (the browser filters by type): what the editor
   imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
@@ -240,9 +244,12 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `mirai test editor/history`; the rows and texts of a table of game data:
   `mirai test editor/records`; the line diff: `mirai test editor/diff`. The editor's tests need
   more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
+- Commands: `editor/commands_test.odin` (every entry calls a registered method with params it
+  takes, a gesture runs between frames as a step of the person, the selection is no param of an
+  agent); the entry a plugin gives with its method, in `editor/api_provider_test.odin`.
 - AI panel: `editor/ai_chat_test.odin` (one status line, the answers as one Markdown message with
-  pills, the cards of subagents, the settings of the header gear); its image, `editor.action`
-  `ai_chat` and `capture` with the UI in a session, also expanded. The steps of the agent's tools,
+  pills, the cards of subagents, the settings of the header gear); its image, `editor.view` with
+  `Chat` and `capture` with the UI in a session, also expanded. The steps of the agent's tools,
   the models and the connections of the machine: `editor/ai_runtime_test.odin`; the popup of the
   check of connections (Linux and macOS only): `editor/ai_connections_test.odin`.
 - Chat database and its search: `mirai test editor/ai_store` (reopening, search ranked and kept up

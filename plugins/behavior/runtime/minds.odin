@@ -170,12 +170,12 @@ minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:
         return
     }
     key:=mind_name(name)
-    ctx.time,ctx.tick,ctx.lease=time.seconds,time.tick,1
+    ctx.tick,ctx.dt,ctx.lease=time.tick,time.dt,1
     w.far=false
     for row in 0..<core.count(agents) {
         if agents.values[row].mind!=key {continue}
         w.entity=core.entity_at(agents,row)
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        mind_run(&core.edit_at(agents,row).state,acts,think,ctx,w)
     }
     if w.fars.table==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
@@ -186,7 +186,7 @@ minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:
         e:=agents.entities[row]
         if core.raw_find(core.raw(w.fars.table),type_info_of(nav.Nav_Far),e)==nil {continue}
         w.entity,w.far=e,true
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        mind_run(&core.edit_at(agents,row).state,acts,think,ctx,w)
     }
     w.far=false
     ctx.lease=1
@@ -306,7 +306,7 @@ Mind_Tick :: struct {
 mind_tick :: proc(world:Mind_World) -> Mind_Tick {
     return {
         act={requests=world.requests,paths=world.paths,fars=world.fars,presentations=world.presentations},
-        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time.seconds,tick=world.time.tick},
+        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time},
         world=world,worlds=world.worlds,perceptions=world.perceptions,perceivables=world.perceivables,agents=world.nav_agents,links=world.links,
         places=world.places,results=world.results,uses=world.uses,noises=world.noises,influence=world.influence.ptr,
     }

@@ -116,16 +116,18 @@ import "mirai:core"
 @(params) Empty :: struct {}
 @(params,component) Both :: struct {value:f32}
 @(step="fixed") game_pointer :: proc(move:^core.Mover) {}
+@(step="fixed") game_untyped :: proc(marks:core.Read(core.Mark),count:=3) {}
 `)
-    found:[5]bool
+    found:[6]bool
     for message in errors {
         found[0]||=strings.contains(message,"Outer has a field of Looker, another @(params): they do not nest")
         found[1]||=strings.contains(message,"the field count of Odd is int")
         found[2]||=strings.contains(message,"Empty is @(params) and has no fields")
         found[3]||=strings.contains(message,"Both is @(params) and a component")
         found[4]||=strings.contains(message,"game_pointer receives ^core.Mover, a @(params) struct, by pointer: receive it by value, core.Mover")
+        found[5]||=strings.contains(message,"game_untyped gives a default to count")
     }
-    testing.expectf(t,found==[5]bool{true,true,true,true,true},"%v",errors)
+    testing.expectf(t,found==[6]bool{true,true,true,true,true,true},"%v",errors)
 }
 
 // What the application owns reaches a step by the type that names it, alone

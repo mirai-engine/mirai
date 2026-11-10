@@ -23,7 +23,7 @@ Showcase :: struct {
 
 // The button of the sign stops and resumes the lift; every arrival at the
 // top, a marker of the clip, is counted.
-@(step="fixed",stage="react",after="animation_advance")
+@(step="fixed",stage="react")
 game_showcase :: proc(
     shown:^core.Table(Showcase),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
     markers:core.Ref(anim.Animation_Events),names:core.Read(core.Name),
@@ -31,7 +31,7 @@ game_showcase :: proc(
     if core.count(shown)==0 {return}
     arrivals:=i32(0)
     for marker in markers.items {
-        if marker.marker==base.name_hash("top") {arrivals+=1}
+        if marker.kind==.Marker && marker.name==base.name_hash("top") {arrivals+=1}
     }
     lift:=core.entity_named(names,SHOWCASE_LIFT)
     animation,animated:=core.get(animations,lift)

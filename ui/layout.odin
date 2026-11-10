@@ -24,13 +24,16 @@ Direction :: enum u8 {
     Wrap,  // a row that goes on in another row below where the next child does not fit
     Stack, // children over one another, each placed by its alignment
 }
-Align :: enum u8 {Start,Center,End}
+// Baseline: of the children of a Row, down it: the first line of the text of
+// each on one baseline, a child without text standing on it. Anywhere else it is Start.
+Align :: enum u8 {Start,Center,End,Baseline}
 // How a child places itself across the direction of its parent, or inside its
 // cell or the stack: as its parent aligns its children, or on its own.
 Self_Align :: enum u8 {Parent,Start,Center,End,Stretch}
 
-// The widths of the columns of a Grid: Fixed, Percent, Fit or Grow, whose
-// value is its weight (0 is 1).
+// The widths of the columns of a Grid, or the heights of its first rows for
+// the Grid that names it by Box.row_tracks: Fixed, Percent, Fit or Grow, whose
+// value is its weight (0 is 1). The rows after them are as high as their highest child.
 GRID_TRACKS :: 12
 Grid_Tracks :: struct {
     count:u8,
@@ -73,8 +76,12 @@ Layout :: struct {
 Box :: struct {
     id:Id,
     using layout:Layout,
+    row_span:u8,     // rows of a Grid it takes; 0 is 1
+    row_tracks:u16,  // of a Grid: what grid_tracks_add gave for the heights of its first rows; 0: each as high as its highest child
     float:Float,
     contain:bool,    // floating: it stays inside its surface, on the other side of what it hangs from when it does not fit
+    inset:[4]f32,    // contained: how far inside its surface it stays (left, top, right, bottom)
+    from:Maybe(Rect),// floating: the rectangle it hangs from, in the units of the layout, instead of what float.to names
     clip_x,clip_y:bool,
     corners:[4]f32,  // of each corner, top left first clockwise, instead of radius when any is set
     clip_floats:bool,// what floats inside it is cut by its clip too, as its content is
@@ -124,7 +131,7 @@ box_scope_end :: proc(ctx:^Context,b:Box) {box_end(ctx,b)}
 box_begin :: proc(ctx:^Context,b:Box) {
     identifier:=b.id
     if b.layer.enabled && identifier==0 {identifier=id(ctx,"composition",ctx.elements+1)}
-    element:=Element{id=identifier,layout=b.layout,float=b.float,contain=b.contain}
+    element:=Element{id=identifier,layout=b.layout,row_span=b.row_span,row_tracks=b.row_tracks,float=b.float,contain=b.contain,inset=b.inset,from=b.from}
     if b.float.to!=.None {layer_push(ctx,float_layer(b.float,ctx.layer))}
     paint:Paint
     if b.image.kind!=.Solid {

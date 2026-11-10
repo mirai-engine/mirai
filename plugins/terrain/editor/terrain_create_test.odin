@@ -203,7 +203,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     testing.expect_value(t,edits.cursor,1)
     source:terrain.Source;defer terrain.source_destroy(&source)
     testing.expect(t,!os.exists(path))
-    if !testing.expect(t,terrain.terrain_read(&source,&assets,core.get(&world.terrains,owner).source)) {return}
+    if !testing.expect(t,terrain.terrain_read(&source,&assets,core.at(&world.terrains,core.row_of(&world.terrains,owner)).source)) {return}
     testing.expect_value(t,source.kind,kind)
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
@@ -247,7 +247,7 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     tool.create_source,tool.samples,tool.chunk_cells=.Plane,5,4
     e:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={0,0,0},placed=true,name="Island")
     if !testing.expect(t,e!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
-    name:=core.get(&world.names,e)
+    name:=core.edit(&world.names,e)
     testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
     testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
 }
@@ -276,7 +276,7 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     tool.create_kind=.Volume
     owner:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={10,0,10},placed=true,ground=ground)
     if !testing.expect(t,owner!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
-    marker:=core.get(&world.terrains,owner)
+    marker,_:=core.get(&world.terrains,owner)
     testing.expect_value(t,marker.ground,editor.api_entity_id(ref,ground))
     volume:terrain.Source;defer terrain.source_destroy(&volume)
     if !testing.expect(t,terrain.terrain_read(&volume,&assets,marker.source)) {return}
@@ -353,9 +353,9 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     testing.expect_value(t,edits.cursor,1)
     e:=history.selection_active(&selection)
     testing.expect(t,core.has(&world.terrains,e) && core.has(&world.ids,e))
-    testing.expect_value(t,core.get(&world.transforms,e).position,[3]f32{7,0,9})
+    testing.expect_value(t,core.at(&world.transforms,core.row_of(&world.transforms,e)).position,[3]f32{7,0,9})
     testing.expect(t,!core.has(&world.meshes,e),"a terrain shows the materials of its source")
-    marker:=core.get(&world.terrains,e)^
+    marker:=core.at(&world.terrains,core.row_of(&world.terrains,e))
     testing.expect(t,marker.solid && marker.revision==1)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.terrain_read(&source,&assets,marker.source) && !os.exists(saved)) {return}
@@ -415,7 +415,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,len(edits.steps),1)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,tool.stroke.id,id)
     testing.expect_value(t,tool.stroke.revision,u32(2))
     testing.expect_value(t,raw_data(tool.stroke.source.heights.pages[0].values),cached_values)
@@ -431,7 +431,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     restored:=test_held(t,&assets,relative)
     defer delete(restored)
     testing.expect_value(t,string(restored),string(original))
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(1))
     serial_before,bytes_before:=edits.serial,edits.bytes
     stats_before:=edits.stats
     stroke_free(&tool)
@@ -449,7 +449,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,edits.bytes,bytes_before)
     testing.expect_value(t,edits.stats,stats_before)
     testing.expect(t,!edits.open && !edits.commit)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(1))
     testing.expect_value(t,editor.revision_applied(&tool.history,id).revision,u32(1))
     testing.expect(t,core.alive(&world.entities,operand) && core.has(&world.meshes,operand))
     testing.expect_value(t,len(selection.entities),2)
@@ -467,7 +467,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,string(after_failure),string(original))
     if !testing.expect(t,history.redo(&edits,ref,&selection)) {return}
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,editor.revision_applied(&tool.history,id).revision,u32(2))
     after_redo:=test_held(t,&assets,relative)
     defer delete(after_redo)

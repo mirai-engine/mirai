@@ -236,7 +236,7 @@ git_merge_resolved :: proc(s:^Session,f:int,allocator:=context.temp_allocator) -
     doc:asset.Document
     if asset.document_read(&doc,file.merged,allocator)!=.None {return file.merged}
     scene:asset.Scene
-    is_scene:=doc.kind==asset.KIND_SCENE || doc.kind==asset.KIND_PREFAB
+    is_scene:=doc.kind==asset.KIND_SCENE
     if is_scene {
         if asset.scene_from_document(&scene,&a.types,&doc)!=.None {return file.merged}
     }

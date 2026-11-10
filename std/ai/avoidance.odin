@@ -7,18 +7,31 @@ import "core:math/linalg"
 // plane (discs), N=3 for agents that fly or swim (spheres). Every neighbor
 // forbids a half-space of velocities, the ones that would bring the two
 // together within the time horizon, and each agent takes half of the change
-// needed to leave it. The new velocity is the allowed one nearest to the
-// preferred velocity, found with a linear program in N dimensions; when the
-// half-spaces leave nothing, the one that violates them least. Agents that
-// all run it do not collide and do not oscillate. A neighbor that does not
-// avoid (a parked vehicle) is only given half the room: steer around those
-// with avoid_obstacles or block them on the navmesh.
+// needed to leave it. On the plane, every wall near the agent forbids the
+// velocities that would cross it within its own horizon, before any neighbor:
+// what the walls forbid is never chosen, whatever the neighbors ask. The new
+// velocity is the allowed one nearest to the preferred velocity, found with a
+// linear program in N dimensions; when the half-spaces leave nothing, the one
+// that violates those of the neighbors least. Agents that all run it do not
+// collide and do not oscillate. A neighbor that does not avoid (a parked
+// vehicle) is only given half the room: block those on the navmesh.
 
 AVOID_MAX_NEIGHBORS :: #config(MIRAI_AVOID_MAX_NEIGHBORS,16)
+AVOID_MAX_WALLS :: #config(MIRAI_AVOID_MAX_WALLS,8)
+AVOID_WALL_TOUCH :: f32(0.01) // m from a wall within which an agent is on it
 
 Avoid_Agent :: struct($N:int) {
     position,velocity:[N]f32,
     radius:f32,
+}
+
+// A wall the center of an agent on the plane does not cross: the segment
+// from a to b, walked on the side to its right ((d.y,-d.x) for the direction
+// d from a to b). The walls of one boundary follow each other with that side
+// kept: where one ends and the next begins, the corner is known to turn
+// toward the agent or away from it.
+Avoid_Wall :: struct {
+    a,b:[2]f32,
 }
 
 // The velocities v with dot(v,normal)>=offset.
@@ -40,11 +53,17 @@ Avoid_Space :: struct($N:int) {
 AVOID_EPSILON :: 1e-5
 
 // The velocity for `self`, no faster than `max_speed` and as near to
-// `preferred` as the neighbors allow. `horizon` is how far ahead, in seconds,
-// collisions are avoided; `dt` is the step of the simulation, in which agents
-// that already overlap are pushed apart. Only the AVOID_MAX_NEIGHBORS nearest
-// neighbors count.
-avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_speed:f32,neighbors:[]Avoid_Agent(N),horizon,dt:f32) -> [N]f32 {
+// `preferred` as the walls and the neighbors allow. `horizon` is how far
+// ahead, in seconds, collisions are avoided; `dt` is the step of the
+// simulation, in which agents that already overlap are pushed apart. Only the
+// AVOID_MAX_NEIGHBORS nearest neighbors count. On the plane, `walls` are those
+// near the agent, nearest first, of which the first AVOID_MAX_WALLS count,
+// and `wall_horizon` how far ahead, in seconds, it keeps from crossing them
+// (at least dt). A wall the agent is behind is none of its own.
+avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_speed:f32,neighbors:[]Avoid_Agent(N),horizon,dt:f32,walls:[]Avoid_Wall=nil,wall_horizon:f32=0) -> [N]f32 {
+    planes:[AVOID_MAX_WALLS+AVOID_MAX_NEIGHBORS]Avoid_Plane(N)
+    fixed:=0
+    when N==2 {fixed=avoid_wall_planes(self,preferred,walls,max(wall_horizon,dt),planes[:AVOID_MAX_WALLS])}
     nearest:[AVOID_MAX_NEIGHBORS]i32
     distances:[AVOID_MAX_NEIGHBORS]f32
     count:=0
@@ -59,7 +78,6 @@ avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_
         nearest[slot]=i32(index);distances[slot]=distance
         count=min(count+1,AVOID_MAX_NEIGHBORS)
     }
-    planes:[AVOID_MAX_NEIGHBORS]Avoid_Plane(N)
     inverse_horizon:=1/max(horizon,AVOID_EPSILON)
     for i in 0..<count {
         other:=neighbors[nearest[i]]
@@ -99,11 +117,121 @@ avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_
             push=combined*inverse_dt-w_length
         }
         plane.offset=linalg.dot(self.velocity,plane.normal)+push*0.5
-        planes[i]=plane
+        planes[fixed+i]=plane
     }
+    count+=fixed
     result,failed:=#force_inline avoid_program(planes[:count],Avoid_Space(N){},max_speed,preferred,false,0)
-    if failed<count {result=avoid_least_violation(planes[:count],failed,max_speed,result)}
+    if failed<count {result=avoid_least_violation(planes[:count],failed,fixed,max_speed,result)}
     return result
+}
+
+// The half-planes of the walls near an agent on the plane, written to
+// `planes`; how many. A wall away from the agent forbids the velocities that
+// reach it within the horizon: the cone from the agent to its two ends, cut
+// at the wall, linearized at the side of it nearest to the velocity of the
+// agent. That part is adapted from the obstacle lines of the RVO2 Library
+// (Agent.cpp, computeNewVelocity; Apache License 2.0, Copyright 2008
+// University of North Carolina at Chapel Hill), for an agent that is a point
+// to the walls. A wall the agent is on forbids moving into it; at the
+// corner of two walls that turns away from the agent (a pillar), only the one
+// of the two the preferred velocity breaks least, as either side is walked.
+@(private)
+avoid_wall_planes :: proc "contextless" (self:Avoid_Agent(2),preferred:[2]f32,walls:[]Avoid_Wall,horizon:f32,planes:[]Avoid_Plane(2)) -> (count:int) {
+    inverse:=1/max(horizon,AVOID_EPSILON)
+    near:=walls[:min(len(walls),AVOID_MAX_WALLS)]
+    for wall,index in near {
+        if count>=len(planes) {break}
+        direction,open,length,valid:=avoid_wall_frame(wall)
+        if !valid {continue}
+        left,right:=wall.a-self.position,wall.b-self.position
+        distance:=-linalg.dot(left,open)   // from its line, on the side that is walked
+        along:=-linalg.dot(left,direction) // from a toward b
+        if !(distance>=-AVOID_WALL_TOUCH) {continue}
+        if distance<=AVOID_WALL_TOUCH {
+            // Edge-on beyond an end it is no wall of here: those that meet it at that end are.
+            if along<-AVOID_WALL_TOUCH || along>length+AVOID_WALL_TOUCH {continue}
+            at_start,at_end:=along<=AVOID_WALL_TOUCH,along>=length-AVOID_WALL_TOUCH
+            keeps:=true
+            if at_start || at_end {
+                corner:=wall.a if at_start else wall.b
+                keeps=false
+                for other,k in near {
+                    if k==index {continue}
+                    other_direction,other_open,_,other_valid:=avoid_wall_frame(other)
+                    if !other_valid {continue}
+                    touch2:=AVOID_WALL_TOUCH*AVOID_WALL_TOUCH
+                    // The wall that comes to this corner, or goes on from it.
+                    joins:=other.b if at_start else other.a
+                    if linalg.length2(joins-corner)>touch2 {
+                        // Two boundaries that touch at a point: both hold.
+                        meets:=other.a if at_start else other.b
+                        if linalg.length2(meets-corner)<=touch2 {keeps=true}
+                        continue
+                    }
+                    incoming,outgoing:=other_direction,direction
+                    if at_end {incoming,outgoing=direction,other_direction}
+                    turns_away:=incoming.x*outgoing.y-incoming.y*outgoing.x>0
+                    mine,theirs:=linalg.dot(preferred,open),linalg.dot(preferred,other_open)
+                    keeps=!turns_away || mine>theirs || mine==theirs && at_end
+                    break
+                }
+            }
+            if keeps {
+                planes[count]={open,0}
+                count+=1
+            }
+            continue
+        }
+        left_cut,right_cut:=left*inverse,right*inverse
+        covered:=false
+        for plane in planes[:count] {
+            if linalg.dot(left_cut,plane.normal)<=plane.offset+AVOID_EPSILON && linalg.dot(right_cut,plane.normal)<=plane.offset+AVOID_EPSILON {covered=true;break}
+        }
+        if covered {continue}
+        left_leg,right_leg:=linalg.normalize0(left),linalg.normalize0(right)
+        cut:=right_cut-left_cut
+        t:=linalg.dot(self.velocity-left_cut,cut)/linalg.length2(cut)
+        t_left:=linalg.dot(self.velocity-left_cut,left_leg)
+        t_right:=linalg.dot(self.velocity-right_cut,right_leg)
+        plane:Avoid_Plane(2)
+        switch {
+        case t<0 && t_left<0:
+            // Nearest to the left end of the cut: around it.
+            w:=linalg.normalize0(self.velocity-left_cut)
+            if w=={} {w=open}
+            plane={w,linalg.dot(left_cut,w)}
+        case t>1 && t_right<0:
+            w:=linalg.normalize0(self.velocity-right_cut)
+            if w=={} {w=open}
+            plane={w,linalg.dot(right_cut,w)}
+        case:
+            to_cut:=max(f32) if t<0 || t>1 else linalg.length2(self.velocity-(left_cut+cut*t))
+            to_left:=max(f32) if t_left<0 else linalg.length2(self.velocity-(left_cut+left_leg*t_left))
+            to_right:=max(f32) if t_right<0 else linalg.length2(self.velocity-(right_cut+right_leg*t_right))
+            if to_cut<=to_left && to_cut<=to_right {
+                plane={open,linalg.dot(left_cut,open)}
+            } else if to_left<=to_right {
+                plane={{-left_leg.y,left_leg.x},0}
+            } else {
+                plane={{right_leg.y,-right_leg.x},0}
+            }
+        }
+        planes[count]=plane
+        count+=1
+    }
+    return
+}
+
+// The direction of a wall from a to b, the side it is walked on and its
+// length; not valid for one without length or that is not finite.
+@(private)
+avoid_wall_frame :: #force_inline proc "contextless" (wall:Avoid_Wall) -> (direction,open:[2]f32,length:f32,valid:bool) {
+    along:=wall.b-wall.a
+    length2:=linalg.length2(along)
+    if !(length2>AVOID_EPSILON*AVOID_EPSILON) || !(length2<=max(f32)) || !(abs(wall.a.x)<=max(f32)) || !(abs(wall.a.y)<=max(f32)) {return}
+    length=linalg.sqrt(length2)
+    direction=along/length
+    return direction,{direction.y,-direction.x},length,true
 }
 
 // A vector perpendicular to `axis` that turns with it, so that agents that
@@ -269,24 +397,28 @@ avoid_program_line :: proc "contextless" (planes:[]Avoid_Plane($N),center,along:
 }
 
 // With no velocity that every plane allows, the one that goes least far into
-// the forbidden side of any of them.
+// the forbidden side of any of them past the first `fixed`, the walls, which
+// stay as they are.
 @(private)
-avoid_least_violation :: proc "contextless" (planes:[]Avoid_Plane($N),begin:int,radius:f32,start:[N]f32) -> [N]f32 {
+avoid_least_violation :: proc "contextless" (planes:[]Avoid_Plane($N),begin,fixed:int,radius:f32,start:[N]f32) -> [N]f32 {
     result:=start
     distance:f32
-    projected:[AVOID_MAX_NEIGHBORS]Avoid_Plane(N)
+    projected:[AVOID_MAX_WALLS+AVOID_MAX_NEIGHBORS]Avoid_Plane(N)
+    copy(projected[:fixed],planes[:fixed])
     for i in begin..<len(planes) {
         plane:=planes[i]
         if plane.offset-linalg.dot(result,plane.normal)<=distance {continue}
-        count:=0
-        for other in planes[:i] {
-            // Where the two are broken alike; nowhere, when they face the same way.
-            normal:=other.normal-plane.normal
-            length2:=linalg.length2(normal)
-            if length2<=AVOID_EPSILON*AVOID_EPSILON {continue}
-            inverse:=1/linalg.sqrt(length2)
-            projected[count]={normal*inverse,(other.offset-plane.offset)*inverse}
-            count+=1
+        count:=fixed
+        if i>fixed {
+            for other in planes[fixed:i] {
+                // Where the two are broken alike; nowhere, when they face the same way.
+                normal:=other.normal-plane.normal
+                length2:=linalg.length2(normal)
+                if length2<=AVOID_EPSILON*AVOID_EPSILON {continue}
+                inverse:=1/linalg.sqrt(length2)
+                projected[count]={normal*inverse,(other.offset-plane.offset)*inverse}
+                count+=1
+            }
         }
         candidate,failed:=#force_inline avoid_program(projected[:count],Avoid_Space(N){},radius,plane.normal,true,0)
         if failed==count {result=candidate}

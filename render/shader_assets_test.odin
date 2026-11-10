@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // The stages the executable embeds, with their code decoded into the temporary allocator.
 @(private="file")
@@ -134,7 +135,7 @@ shader_generation_of_other_engine_sources_is_not_loaded :: proc(t:^testing.T) {
         changed,_:=strings.replace_all(manifest,SHADERS_FINGERPRINT,"0000000000000000000000000000000000000000000000000000000000000000",context.temp_allocator)
         return changed
     })
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     testing.expect(t,!shader_generation_current(folder))
     assets,problem:=shader_assets_load(folder)
     testing.expect(t,problem!="" && !assets.owned,"a generation of other sources is refused")
@@ -156,6 +157,6 @@ shader_generation_with_a_broken_manifest_is_not_loaded :: proc(t:^testing.T) {
         folder:=generation_copy(t,c.edit)
         assets,problem:=shader_assets_load(folder)
         testing.expectf(t,strings.contains(problem,c.expected) && !assets.owned,"%s: %s",c.expected,problem)
-        os.remove_all(folder)
+        base.remove_all(folder)
     }
 }

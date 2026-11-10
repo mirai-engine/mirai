@@ -375,7 +375,7 @@ those a mesh uses; repeated names are told apart with `name (n)`.
 ## What is written
 
 What is new goes to flat files in the folder (`<name>.mesh`, `.skeleton`, `.anim`, `.mat`, `.tex`
-and, with `import_source`, the model's `.prefab`), with a valid file name that does not overwrite
+and, with `import_source`, the model's `.scene`), with a valid file name that does not overwrite
 another asset; what already existed is written where it is ([identity](#identity-and-reimport)).
 Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#import-cache)).
 
@@ -401,9 +401,8 @@ Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#im
 engine build leaves next to the editor: the importers are engine code, and the tool compiles
 without them.
 
-- It first builds the engine if it is not up to date, in the mode of `--dev` or `--release`
-  (with neither, the last built); what that build says goes to stderr and stdout is left with the
-  report.
+- It first builds the engine if it is not up to date, in the mode of `--dev` (`--release`
+  without it); what that build says goes to stderr and stdout is left with the report.
 - It starts from the settings of `<file>.import`, applies the given options (`IMPORT_USAGE`) and
   writes the file again: repeating the command without options gives the same assets.
 - The report gives one line per asset (`id kind bytes path (detail)`), how many were already up to
@@ -565,8 +564,8 @@ libraries](../../mirai-physics/references/engine.md).
   go in parallel with scratch from the heap; a large level without one runs on a job system of the
   build's own. `asset` decodes ([texture](../../mirai-assets/references/kinds.md#texture)).
 - **Devices without BC.** The file carries no alternative formats: `host` decodes the blocks when
-  loading, to RGBA8 and BC6H to RGBA16F, when the device does not sample them or
-  `texture_compression` is off; the renderer's limits discard large levels without re-encoding
+  loading, to RGBA8 and BC6H to RGBA16F, when the device does not sample them; the renderer's
+  limits discard large levels without re-encoding
   ([rendering](../../mirai-rendering/references/materials.md#textures)).
 - Bump `BUILD_VERSION` when `build` would give other bytes for the same image.
 

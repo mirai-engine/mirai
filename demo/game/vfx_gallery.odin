@@ -1,15 +1,11 @@
 package game
 
-import "core:fmt"
 import "core:math/linalg"
 import "mirai:core"
-import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
 import "mirai:engine/scene"
-import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 
 VFX_GALLERY_STATIONS :: 5
@@ -48,7 +44,7 @@ Vfx_Impacts :: struct {
     count:u32,  // particles of a hit; 0: those of the effect
     volley:u32,
     station:u32,
-    clock:f32 `mirai:"transient,readonly"`,
+    next:u64 `mirai:"transient,readonly"`, // the tick of the next hit
     hits:u32 `mirai:"transient,readonly"`,
     volleys:u32 `mirai:"transient,readonly"`, // of the view it fired
 }
@@ -60,7 +56,7 @@ vfx_gallery_reset :: proc(views:core.Read(Vfx_Gallery_View),actions:inp.Frame_In
 
 @(step="fixed")
 vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Input_Of(Action),time:core.Time) {
-    if !time.playing || !(time.dt>0) || core.count(core.read(views))==0 {return}
+    if !time.playing || !(time.dt>0) || core.count(views)==0 {return}
     previous,next,overview:=inp.pressed(actions,.Gallery_Previous),inp.pressed(actions,.Gallery_Next),inp.pressed(actions,.Gallery_Overview)
     use:=inp.pressed(actions,.Use)
     if !(previous || next || overview || use) {return}
@@ -72,24 +68,21 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
     }
 }
 
-@(step="fixed",after="vfx_gallery_actions")
+@(step="fixed")
 vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),channels:^vfx.Particle_Channels,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
-    view:=core.at(views,0) if core.count(views)>0 else Vfx_Gallery_View{}
-    for row in 0..<core.count(core.read(impacts)) {
-        e:=core.entity_at(core.read(impacts),row)
+    view:=core.at(views,0) if core.count(views)>0 else VFX_GALLERY_VIEW_DEFAULT
+    for row in 0..<core.count(impacts) {
+        e:=core.entity_at(impacts,row)
         world,placed:=core.get(worlds,e)
         if !placed {continue}
-        wall:=core.at(impacts,row)
+        wall:=core.edit_at(impacts,row)
         due:=u32(0)
         if view.volleys!=wall.volleys {
             if i32(wall.station)==view.volley_station {due=wall.volley}
             wall.volleys=view.volleys
         }
-        if wall.interval>0 {
-            wall.clock+=time.dt
-            for wall.clock>=wall.interval {wall.clock-=wall.interval;due+=1}
-        }
+        if wall.interval>0 && core.due(time,wall.next) {wall.next,due=core.deadline(time,wall.interval),due+1}
         origin:=mm.transform_point(world.transform,{0,0,0})
         out:=linalg.normalize0(mm.transform_point(world.transform,{0,0,1})-origin)
         for _ in 0..<min(due,64) {
@@ -120,7 +113,7 @@ vfx_gallery_camera :: proc(views:core.Read(Vfx_Gallery_View),stations:core.Read(
             break
         }
         entity:=core.entity_at(views,row)
-        current,found:=core.get(core.read(transforms),entity)
+        current,found:=core.get(transforms,entity)
         rotation:=mm.quat_look(target-position,{0,1,0})
         if found && (current.position!=position || current.rotation!=rotation) {
             if output:=core.free(transforms,entity);output!=nil {output.position,output.rotation=position,rotation}
@@ -128,25 +121,30 @@ vfx_gallery_camera :: proc(views:core.Read(Vfx_Gallery_View),stations:core.Read(
     }
 }
 
-@(step="ui")
-vfx_gallery_hud :: proc(g:^gui.Gui,views:core.Read(Vfx_Gallery_View),stations:core.Read(Vfx_Gallery)) {
-    ctx:=gui.gui_context(g)
-    if ctx==nil || core.count(views)==0 {return}
-    selected:=core.at(views,0).station
-    title,detail,progress:="Particles and grids","Five exhibits of the plugin vfx, from particle lights to sprite materials.","Overview"
-    for row in 0..<core.count(stations) {
-        item:=core.at(stations,row)
-        if i32(item.station)!=selected {continue}
-        title,detail=base.text_get(item.title[:]),base.text_get(item.detail[:])
-        progress=fmt.tprintf("Exhibit %d / %d",item.station+1,VFX_GALLERY_STATIONS)
-        break
-    }
-    width:=min(650,ctx.size.x-40)
-    box:=ui.Box{id=ui.id(ctx,"vfx.gallery.hud"),layout={width=ui.fixed(width),direction=.Column,padding=ui.padding_all(14),gap=5},float={to=.Surface,anchor=.Top_Left,pivot=.Top_Left,offset={20,20},layer=1000},fill={16,22,32,235},radius=8}
-    if ui.box(ctx,box) {
-        ui.label(ctx,progress,size=12,color={138,184,225,255})
-        ui.label(ctx,title,size=20,color={255,255,255,255})
-        ui.text(ctx,detail,{size=14,color={203,216,232,255},wrap=.Words},width=ui.fixed(width-28))
-        ui.text(ctx,"Left / Right: exhibit    Home: overview    E: volley of impacts    R: reset scene",{size=13,color={255,210,116,255},wrap=.Words},width=ui.fixed(width-28))
+// What vfx_hud.ui shows of the exhibit the view it is on looks at.
+@(component,description="The HUD of the gallery of effects: the exhibit its view looks at.")
+Vfx_Gallery_Hud :: struct {
+    overview:bool, // it looks at all of them
+    exhibit:bool,  // at one: number of count
+    number,count:i32,
+    title:[64]u8 `mirai:"text"`,
+    detail:[320]u8 `mirai:"text"`,
+}
+
+@(step="frame")
+vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:core.Read(Vfx_Gallery_View),stations:core.Read(Vfx_Gallery)) {
+    shown:=core.read(huds)
+    for row in 0..<core.count(shown) {
+        view,has_view:=core.get(views,core.entity_at(shown,row))
+        if !has_view {continue}
+        next:=Vfx_Gallery_Hud{overview=true,count=VFX_GALLERY_STATIONS}
+        for at in 0..<core.count(stations) {
+            item:=core.at(stations,at)
+            if i32(item.station)!=view.station {continue}
+            next.overview,next.exhibit,next.number=false,true,i32(item.station)+1
+            next.title,next.detail=item.title,item.detail
+            break
+        }
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

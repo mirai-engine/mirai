@@ -23,6 +23,8 @@ Shader_Assets :: struct {
 @(private)
 shader_code_destroy :: proc(c:rhi.Shader_Code,allocator:runtime.Allocator) {
     delete(c.name,allocator);delete(c.bindings,allocator)
+    for constant in c.constants {delete(constant,allocator)}
+    delete(c.constants,allocator)
     delete(rhi.shader_code_bytes(c),allocator);delete(rhi.shader_code_entry(c),allocator)
 }
 shader_assets_destroy :: proc(assets:^Shader_Assets) {
@@ -159,6 +161,8 @@ shader_assets_match_codes :: proc(assets:^Shader_Assets,codes:^[Shader_Id]rhi.Sh
 shader_code_matches :: proc(next,current:rhi.Shader_Code)->bool {
     if next.name!=current.name || next.stage!=current.stage || next.threadgroup!=current.threadgroup || len(next.bindings)!=len(current.bindings) {return false}
     for binding,i in next.bindings {if binding!=current.bindings[i] {return false}}
+    if len(next.constants)!=len(current.constants) {return false}
+    for constant,i in next.constants {if constant!=current.constants[i] {return false}}
     return string(rhi.shader_code_bytes(next))==string(rhi.shader_code_bytes(current)) && rhi.shader_code_entry(next)==rhi.shader_code_entry(current)
 }
 // Whether two generations bring the same stages of extensions, or of programs.
@@ -251,6 +255,17 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
             code.bindings[i]={slot=slot,kind=kind,stages={stage}}
         }
         if error!="" {break}
+        constants:=item["constants"].(json.Array) or_else nil
+        if len(constants)>rhi.MAX_SHADER_CONSTANTS {error=fmt.tprintf("shader %s declares more constants than a pipeline sets",code.name);break}
+        constants_error:runtime.Allocator_Error
+        code.constants,constants_error=make([]string,len(constants),allocator)
+        if constants_error!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
+        for constant,i in constants {
+            if text(constant)=="" {error="invalid shader constant";break}
+            no_constant:runtime.Allocator_Error
+            if code.constants[i],no_constant=strings.clone(text(constant),allocator);no_constant!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
+        }
+        if error!="" {break}
     }
     if error=="" {for c in assets.codes {if c.name=="" {error="shader catalog is incomplete";break}}}
     if error=="" {
@@ -277,13 +292,14 @@ renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^boo
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
 }
+// Makes the pipelines of the tracer the renderer used when the reload began.
 // False when a pipeline is refused: candidate.error says which. And for the
 // candidate renderer_shader_reload_begin had no memory for.
 renderer_shader_reload_build :: proc(candidate:^Renderer)->bool {
-    if candidate==nil || !create_pipelines(candidate) {return false}
-    if rhi.device_info(candidate.device).features.ray_query {
-        for p,id in candidate.pipelines {if pipeline_uses_hardware(id) && id not_in LAZY_PIPELINES && p==0 {set_error(candidate,"pipeline %v: %s",id,rhi.device_error(candidate.device));return false}}
-    }
+    if candidate==nil {return false}
+    tracer:=Pipeline_Rays.Hardware if candidate.hardware_rt else .Software
+    if !create_pipelines(candidate,{.Any,tracer}) {return false}
+    if missing:=tracer_missing(candidate,tracer);missing!="" {set_error(candidate,"pipeline %s: %s",missing,rhi.device_error(candidate.device));return false}
     return true
 }
 renderer_abort_shader_reload :: proc(candidate:^Renderer) {
@@ -303,7 +319,15 @@ preview_shader :: proc "contextless" (id:Shader_Id) -> bool {
     return false
 }
 
-renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candidate:^Renderer) {
+// False, with r.error, when the pipelines of a tracer the renderer switched
+// to while the candidate was made are not made: the generation is not taken.
+renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candidate:^Renderer)->bool {
+    tracer:=Pipeline_Rays.Hardware if r.hardware_rt else .Software
+    if tracer_missing(candidate,tracer)!="" {create_pipelines(candidate,{tracer})}
+    if missing:=tracer_missing(candidate,tracer);missing!="" {
+        set_error(r,"the new shaders lack the pipeline %s of the tracer in use, which the device did not make (%s); loading them again retries it",missing,rhi.device_error(r.device))
+        return false
+    }
     scene:=false
     idle:=renderer_shaders_idle(r)
     for code,id in candidate.shader_codes {
@@ -324,10 +348,11 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines;r.overlay_pipelines=candidate.overlay_pipelines
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
     candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={}
-    if !scene {return}
+    if !scene {return true}
     r.targets.reflect_valid=false;r.targets.gi_reference_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
     renderer_camera_cut(r)
     world_light_stale(r)
+    return true
 }
 renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     if !assets.owned {return false}
@@ -344,7 +369,7 @@ renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     if candidate==nil {return false}
     defer renderer_abort_shader_reload(candidate)
     if !renderer_shader_reload_build(candidate) {set_error(r,"%s",candidate.error);return false}
-    renderer_publish_shader_reload(r,assets,candidate)
+    if !renderer_publish_shader_reload(r,assets,candidate) {return false}
     r.programs=catalog;r.programs.loaded=true;catalog={}
     displaced_programs_changed(r)
     return true

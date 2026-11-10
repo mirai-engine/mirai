@@ -52,12 +52,12 @@ benchmark_a_frame_of_a_long_transcript :: proc(t:^testing.T) {
         area:=id(ctx,"transcript")
         first,last:=rows_begin(ctx,area,&s.offset,s.heights[:],fixed(300),600)
         for i in first..<last {
-            if box(ctx,{id=id(ctx,"message",i+1),width=GROW,height=fixed(s.heights[i]),direction=.Column}) {paragraph(ctx,MESSAGE)}
+            if box(ctx,{id=id(ctx,"message",i+1),width=GROW,height=fixed(s.heights[i]),direction=.Column}) {text(ctx,MESSAGE,prose(ctx))}
         }
         rows_end(ctx,area,&s.offset,s.heights[:],last)
     }
     s:Transcript
-    for &h in s.heights {h=paragraph_height(&ctx,MESSAGE,300)}
+    for &h in s.heights {h=text_height(&ctx,MESSAGE,prose(&ctx),300)}
     input:=test_input(1440,900)
     for _ in 0..<10 {test_frame(&ctx,&input,build,&s)}
     FRAMES :: 500

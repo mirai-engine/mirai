@@ -128,11 +128,13 @@ Material_Layers gbuffer_layers_unpack(uint4 v, uint bits) {
 Material_Layers gbuffer_layers(int2 p, uint bits) {
     Material_Layers l = material_layers_none();
     l.bits = bits & MATERIAL_LAYER_UNLIT;
-    // A pass that runs while no instance with layers is in sight reads none:
-    // its shading of them folds away, and with it what it would hold.
-#ifndef MIRAI_GBUFFER_NO_LAYERS
-    if ((bits & (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION)) != 0u) l = gbuffer_layers_unpack(gbuffer_layers_target.Load(int3(p, 0)), bits);
+    // A pass that runs while no instance with layers is in sight reads none
+    // (its constant MIRAI_GBUFFER_NO_LAYERS): its shading of them folds away,
+    // and with it what it would hold.
+#ifdef MIRAI_GBUFFER_NO_LAYERS
+    if (MIRAI_GBUFFER_NO_LAYERS) return l;
 #endif
+    if ((bits & (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION)) != 0u) l = gbuffer_layers_unpack(gbuffer_layers_target.Load(int3(p, 0)), bits);
     return l;
 }
 

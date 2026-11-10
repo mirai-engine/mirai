@@ -547,7 +547,7 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
         append(&data.unread,load.id)
         return
     }
-    for shared,index in terrains.values[:core.count(terrains)] {if shared.source==entry.id && shared.revision!=entry.source.revision {core.at(terrains,index).revision=entry.source.revision}}
+    for shared,index in terrains.values[:core.count(terrains)] {if shared.source==entry.id && shared.revision!=entry.source.revision {core.edit_at(terrains,index).revision=entry.source.revision}}
     return
 }
 

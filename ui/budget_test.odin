@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:hash"
 import "core:mem"
 import "core:testing"
+import std_anim "mirai:std/anim"
 import "core:thread"
 
 // A scene with a little of everything: the panels of the editor, a world
@@ -35,7 +36,7 @@ test_everything_init :: proc(t:^testing.T,s:^Test_Everything) {
     test_hud_init(t,&s.hud,true)
     s.hud.values.paused=true
     testing.expect(t,anim_library_init(&s.library))
-    keys:=[3]Keyframe{{time=0,value={1,1,0,0}},{time=0.5,value={1.2,1.2,0,0},ease=.Out_Cubic},{time=1,value={1,1,0,0},ease=.In_Cubic}}
+    keys:=[3]std_anim.Keyframe{{time=0,value={1,1,0,0}},{time=0.5,value={1.2,1.2,0,0},ease=.Cubic_Out},{time=1,value={1,1,0,0},ease=.Cubic_In}}
     anim_play(&s.pulse,anim_clip(&s.library,{{.Scale,keys[:]}},.Loop))
 }
 test_everything_destroy :: proc(s:^Test_Everything) {

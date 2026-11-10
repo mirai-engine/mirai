@@ -2,14 +2,12 @@ package destruct
 
 import "mirai:core"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/geom"
 
 Group_Info :: struct {
     group:u32,
     entity:core.Entity,
-    body:sim.Body_Handle,
+    body:phys.Body_Handle,
     position:[3]f32,
     rotation:quaternion128,
     linear,angular:[3]f32,
@@ -22,7 +20,6 @@ Group_Info :: struct {
 @(params)
 Destruct_View :: struct {
     physics:core.Ref(phys.Physics_State),
-    fractures:core.Ref(Fracture_State),
     states:core.Read(Destructible_State),
     groups:core.Read(Destructible_Group),
 }
@@ -34,26 +31,24 @@ owner :: proc(v:Destruct_View,e:core.Entity) -> core.Entity {
     return core.has(v.states,e)?e:core.NONE
 }
 
-pieces :: proc(v:Destruct_View,e:core.Entity,out:[]fr.Piece_Info) -> int {
+pieces :: proc(v:Destruct_View,e:core.Entity,out:[]phys.Piece_Info) -> int {
     state,has:=core.get(v.states,e)
-    return has && v.physics.ready && v.fractures.ready?fr.destructible_pieces(&v.fractures.ptr.fracture,&v.physics.ptr.world,state.handle,out):0
+    return has?phys.breakable_pieces(v.physics,state.handle,out):0
 }
 
-clusters :: proc(v:Destruct_View,e:core.Entity,out:[]fr.Cluster_Info) -> int {
+clusters :: proc(v:Destruct_View,e:core.Entity,out:[]phys.Cluster_Info) -> int {
     state,has:=core.get(v.states,e)
-    return has && v.fractures.ready?fr.destructible_clusters(&v.fractures.ptr.fracture,state.handle,out):0
+    return has?phys.breakable_clusters(v.physics,state.handle,out):0
 }
 
 groups :: proc(v:Destruct_View,e:core.Entity,out:[]Group_Info) -> int {
     state,has:=core.get(v.states,e)
-    if !has || !v.physics.ready || !v.fractures.ready {return 0}
-    fill :: proc(v:Destruct_View,handle:fr.Destructible_Handle,e:core.Entity,id:u32,body:sim.Body_Handle,debris:bool,out:[]Group_Info,at:int) -> bool {
-        world:=&v.physics.ptr.world
-        if !sim.body_valid(world,body) {return false}
+    if !has {return 0}
+    fill :: proc(v:Destruct_View,handle:phys.Breakable_Handle,e:core.Entity,id:u32,body:phys.Body_Handle,debris:bool,out:[]Group_Info,at:int) -> bool {
+        info:=phys.body_info(v.physics,body) or_return
         if at<len(out) {
-            pose:=sim.body_transform(world,body)
-            ticks,expires:=fr.destructible_body_remaining_ticks(&v.fractures.ptr.fracture,world,handle,body)
-            out[at]={id,e,body,pose.p,pose.q,sim.body_linear_velocity(world,body),sim.body_angular_velocity(world,body),sim.body_is_awake(world,body),debris,ticks,expires}
+            ticks,expires:=phys.breakable_body_remaining_ticks(v.physics,handle,body)
+            out[at]={id,e,body,info.pose.position,info.pose.rotation,info.linear,info.angular,info.awake,debris,ticks,expires}
         }
         return true
     }
