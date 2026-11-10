@@ -26,9 +26,9 @@ A player is a seat (`inp.Seat`) that drives a body (`inp.Drivable`); a body that
 ## Body
 
 No spawn or camera code: `settings.mirai` has `{"Spawn_Settings":{"players":true}}`, the scene a
-`spawn.Spawn_Point{prefab=PLAYER_PREFAB_ID}` entity (an `Asset_Id`), and the prefab the pieces of
-[a whole player](third-person.md#2-the-player), a file of `assets/` written through the API; a
-body and a camera both face -Z, so the eyes child needs no turn. For a first-person view:
+`spawn.Spawn_Point{prefab=PLAYER_PREFAB_ID,players=true}` entity (an `Asset_Id`), and the prefab
+the pieces of [a whole player](third-person.md#2-the-player), a file of `assets/` written through
+the API; a body and a camera both face -Z, so the eyes child needs no turn. For a first-person view:
 
 ```json
 {"method":"scene.write","params":{"root":"Player","merge":true,"entities":[{
@@ -59,4 +59,5 @@ adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are compone
   `engine.diagnostics`.
 - A `Camera_Follow` owns the `Transform` of its entity; do not write it. The player sees through
   the `Drivable.camera` of the body its seat drives; `Camera.active` is only the fallback.
-- A `Spawn_Point` with no `prefab` only places bodies the game gives.
+- A `Spawn_Point` with no `prefab` only places bodies the game gives, and one with `players` off
+  never gives a seat its body: it is for enemies ([prefabs](core/prefabs.md#at-spawn-points)).

@@ -74,7 +74,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.
-- A runtime-spawned agent needs a `core.Id` for the API (`behavior.inspect`, `nav.agent`).
+- Agents that appear while playing: [at spawn points](core/prefabs.md#at-spawn-points).
 - The navmesh builds in the background: an early `Nav_Path` is `Waiting`. `Failed`: see
   `engine.diagnostics` (`navigation.off_mesh`: the agent must start on walkable ground).
 - To see why an agent chose, in Play: `behavior.inspect`, `behavior.perception`, `nav.agent`.

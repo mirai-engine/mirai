@@ -60,8 +60,8 @@ A seat is a player of this machine (`slot`) or of a connection (`peer`); it exis
 - `inp.drive(seats,seat,body)`, `inp.release(seats,seat)`, `inp.swap(seats,first,second)` and
   `inp.focus(seats,slot)` push into `^inp.Seat_Requests`; they apply at the start of the tick.
 - `inp.body_of(drivables,seat)` and `inp.seat_of(drivables,body)` read `core.Read(inp.Drivable)`.
-- Bodies appear at spawn points: `Spawn_Settings.players` gives each seat one, or ask with
-  `spawn.spawn(requests,seat,PLAYER_PREFAB)` and `spawn.respawn(requests,body,point)` in
+- Bodies appear at spawn points with `players` on: `Spawn_Settings.players` gives each seat one,
+  or ask with `spawn.spawn(requests,seat,PLAYER_PREFAB)` and `spawn.respawn(requests,body,point)` in
   `^spawn.Spawn_Requests` (a client cannot: the server decides).
 - A body no seat drives is moved by writing its `inp.Move_Input`: `move` (x right, z back, up to
   length 1), `look_yaw`, `look_pitch`, `buttons`. An AI writes it only where the rules are decided.

@@ -188,38 +188,44 @@ its own seats; `Drivable` is not replicated.
 
 ## Spawn points
 
-The `spawn` plugin gives bodies to seats. A game without driven bodies (strategy, cards) does not
-activate it and uses seats, `Move_Input` and cameras directly.
+The `spawn` plugin gives bodies to seats and places what the game spawns (enemies, pickups). A
+game without driven bodies or spawn points (strategy, cards) does not activate it and uses seats,
+`Move_Input` and cameras directly.
 
-`Spawn_Point{prefab}` marks a place where bodies appear, with the prefab of a player's body
-(empty: the point only places bodies the game gives). A turned-off point is not used. Without a
-requested point, the points are used in turn in table order; a game with another criterion (teams,
-distance) picks the point and passes it.
+`Spawn_Point{prefab,players}` marks a place where bodies of its prefab appear (empty: the point only
+places bodies the request or `Spawn_Settings.prefab` names). With `players` on it is one of the
+players'; with it off only what the game spawns without a seat appears there, so the point of an
+enemy never gives a seat its body. A turned-off point is not used. Without a requested point, the
+points of the request's kind (the players' for a seat or for a body a seat drives, the others
+otherwise) are used in turn in table order; a game with another criterion (teams, distance) picks
+the point and passes it.
 
 - Requests in `^spawn.Spawn_Requests`, which `spawn_step` (`fixed`, `input`) takes before driving.
-- `spawn(r, seat, path="", point=NONE)`: takes the requested point or the next one with a prefab,
-  instantiates the prefab at `path`, the point's or `Spawn_Settings.prefab` (the project's player
-  body) with its world transform (`scene.spawn`, `transient`) and asks the seat to drive it, in the
-  same tick. In the editor's Play, a scene without points makes it appear at the editor camera
-  (`scene.Play_Origin`, which the editor fills when Play starts). With Play from here or from
-  camera (`Play_Origin.asked`), the first body of player 1 (`slot` 0 of this machine) appears there
-  before at any point, once per Play (`Spawning.asked_given`), with the prefab the scene would give
-  it (without a requested or project one, that of the point it was due); the other seats, their
-  respawns and the shipped game use the points. What appears at `Play_Origin` and not at a point is
-  left in the event `Spawned_At_Origin`: with `physics`, the `spawn_physics` bridge rests it with
-  the collider of its root on what is below, without burying it; from inside something, or with
-  nothing below within reach, it stays where the editor put it. Up to `SPAWN_CAPACITY` bodies per
-  tick (`spawn.spawns_full`). Without a point with a prefab it is the problem
-  `spawn.no_spawn_point` of the seat; a prefab that does not appear, `scene.spawn` of the
-  point. On a client it is rejected (`spawn.client_spawn`): the server decides.
+- `spawn(r, seat, path="", point=NONE)`: takes the requested point or the next one of its kind with
+  a prefab, instantiates the prefab at `path`, the point's or, for a seat, `Spawn_Settings.prefab`
+  (the project's player body) with its world transform (`scene.spawn`; `transient` for a seat's
+  body, while what the game spawns with `seat` NONE keeps its `Id`) and asks the seat to drive it,
+  in the same tick. In the editor's Play, a scene without players' points makes a player's body
+  appear at the editor camera (`scene.Play_Origin`, which the editor fills when Play starts). With
+  Play from here or from camera (`Play_Origin.asked`), the first body of player 1 (`slot` 0 of this
+  machine) appears there before at any point, once per Play (`Spawning.asked_given`), with the
+  prefab the scene would give it (without a requested or project one, that of the point it was due);
+  the other seats, their respawns and the shipped game use the points. What appears at `Play_Origin`
+  and not at a point is left in the event `Spawned_At_Origin`: with `physics`, the `spawn_physics`
+  bridge rests it with the collider of its root on what is below, without burying it; from inside
+  something, or with nothing below within reach, it stays where the editor put it. Up to
+  `SPAWN_CAPACITY` bodies per tick for seats (`spawn.spawns_full`). Without a point of its kind with
+  a prefab it is the problem `spawn.no_spawn_point` of the seat, or of the world for what the game
+  spawns; a prefab that does not appear, `scene.spawn` of the point. On a client it is rejected
+  (`spawn.client_spawn`): the server decides.
 - A body given to a seat carries `Seat_Body`: `spawn_seat_bodies` (`fixed`, `input`) destroys it
   when its seat no longer exists (a player who left). A body given by the game does not carry it,
   and the game decides what to do with it.
 - `Spawn_Settings.players` (project setting in `settings.mirai`) gives a body to each seat, local
   or of a connection, that has none (it arrived, its body was destroyed) and did not receive one in
   this tick; if it fails, the seats wait `SPAWN_RETRY` ticks. It is the route to give players a
-  body without code; turned off, the game gives them a body. `scene.spawn` remains for what nobody
-  drives.
+  body without code; turned off, the game gives them a body. `scene.spawn` remains for what
+  appears at no point (effects, projectiles).
 - What the body is (its collision kind, components, values) is its prefab: to change how the
   player collides, its `Collider` names the game's preset
   ([kinds of actors](../../mirai-physics/references/engine.md#collision-categories-and-presets)),
