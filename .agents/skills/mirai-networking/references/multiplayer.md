@@ -271,8 +271,11 @@ reason, and with `--until-empty` a server that emptied ends normally.
   delayed `latency`: the ping is double.
 - The editor's Play serves the game from its own world and opens its online players this way
   ([networked Play](#networked-play)).
-- `invite_code(session)` gives the invitation code of a server, when the router answered: one
-  code from the internet, its network and its machine (a client with a code asks nearby too).
+- **Two ways in.** By address: `--server` serves, anyone who reaches its port joins with
+  `--connect <address>`. By invitation: `--server --invite` serves only who brings its code, which
+  it prints and `invite_code(session)` gives once the router answered; it carries the host's
+  address on its network and on its router, so the same `--connect <code>` joins from both.
+  `--invite <token>` fixes the token and maps nothing: the code carries only the LAN address.
 - A server saves and loads its world with `save`; a client does not (`Unavailable`). Loading with
   clients is a [scene change](#scene-change).
 

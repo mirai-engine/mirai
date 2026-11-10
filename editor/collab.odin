@@ -34,7 +34,7 @@ import "mirai:ui"
 // draw as avatars and outlines: selecting holds nothing.
 //
 // A guest joins with the code of the invitation of the host (net/invite.odin):
-// its address on the router, or on its network, and the token of the session.
+// its address on its network and on its router, and the token of the session.
 
 COLLAB_PORT :: 7950
 COLLAB_VERSION :: 5 // of the messages: an editor of another one has another version of the project
@@ -72,7 +72,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like K7Q2-9XMA-PL3F-0B2C"
+    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .Dirty:     return "the scene has unsaved changes; save it or discard them"
@@ -164,7 +164,7 @@ Collab_State :: struct {
     mapping_on:bool,
     port:int,
     invite:u32,           // the token of the session
-    target:wire.Address,  // a guest: the host
+    invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,
     layout:u32,
@@ -326,7 +326,7 @@ collab_name_set :: proc(c:^Collab,name:string) {
 }
 
 @(private)
-collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32,target:wire.Address={}) -> (st:^Collab_State,error:Collab_Error) {
+collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation:wire.Invitation) -> (st:^Collab_State,error:Collab_Error) {
     c:=collab_of(s)
     if c.state!=nil && c.state.role!=.None && c.state.phase!=.Ended {return nil,.Busy}
     if s.app.assets==nil {return nil,.No_Assets}
@@ -340,14 +340,14 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
         {kind=.Reliable,max_message_bytes=COLLAB_MESSAGE,queue_bytes=256<<10},
         {kind=.Unreliable},
     }
-    // A guest of an IPv4 host binds IPv4, which can also look for it by broadcast on its network.
-    bind:=role==.Guest && target.kind==.IP4?wire.address_ip4(0,0,0,0,0):wire.address_any6(role==.Host?port:0)
+    // The addresses of an invitation are IPv4.
+    bind:=role==.Guest?wire.address_ip4(0,0,0,0,0):wire.address_any6(port)
     if !wire.udp_open(&st.udp,bind) {
         free(st)
         return nil,.Transport
     }
     desc:=wire.Host_Desc{
-        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invite,
+        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invitation.token,
         max_connections=COLLAB_PEERS-1,channels=channels[:],
     }
     // Its network half runs on a thread of its own: an editor busy for a while
@@ -361,7 +361,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
     collab_tables_build(s,st)
     st.epoch=s.edits.epoch
     st.port=int(st.udp.address.port)
-    st.invite=invite
+    st.invite=invitation.token
     c.state=st
     return st,.None
 }
@@ -370,7 +370,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
 collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
     invite,made:=wire.invite_token()
     if !made {return .No_Random}
-    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,invite)
+    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{token=invite})
     if error!=.None {return error}
     st.phase=.Joined
     st.self=0
@@ -386,19 +386,18 @@ collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
 
 // Enters the session of another editor with the code of its invitation: the scene is replaced by the one of the host.
 collab_join :: proc(s:^Session,code,name:string,discard:bool) -> Collab_Error {
-    target,invite,valid:=wire.invite_decode(code)
+    invitation,valid:=wire.invite_decode(code)
     if !valid {return .Invite}
     if document_dirty(s) && !discard {return .Dirty}
-    st,error:=collab_start(s,.Guest,0,name,invite,target)
+    st,error:=collab_start(s,.Guest,0,name,invitation)
     if error!=.None {return error}
-    // Also on this machine and its network: the address of the code may be a router that does not loop back.
-    if wire.host_connect(&st.host,target,nearby=true)!=.None {
+    if wire.host_connect(&st.host,invitation.lan,invitation.public)!=.None {
         collab_destroy(s)
         return .Transport
     }
     st.phase=.Connecting
     st.self=0xff
-    st.target=target
+    st.invitation=invitation
     st.peers[0].connected_at=wire.host_time(&st.host)
     return .None
 }
@@ -455,12 +454,12 @@ collab_close :: proc(s:^Session) {
     collab_destroy(s)
 }
 
-// The code others join with, from anywhere: by the address the router mapped, or the one of the
-// adapter. None until the router answered: the code is of the address it opens.
+// The code others join with, from anywhere: with the address of the adapter and the one the
+// router mapped. None until the router answered, so the code has the address it opens.
 @(private)
 collab_codes_update :: proc(st:^Collab_State) {
     if st.mapping_on && wire.mapping_poll(&st.mapping).phase==.Pending {return}
-    code:=wire.invite_encode(wire.address_reachable(&st.mapping,st.mapping_on,st.port),st.invite,context.temp_allocator)
+    code:=wire.invite_encode(wire.invite_make(st.invite,st.port,st.mapping_on?&st.mapping:nil),context.temp_allocator)
     if code!=string(st.code[:st.code_length]) {log.infof("invitation to the session: %s",code)}
     st.code_length=copy(st.code[:],code)
 }

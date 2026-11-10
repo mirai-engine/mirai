@@ -137,6 +137,9 @@ In `plugins/multiplayer/runtime`:
   allocate.
 - **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
   only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
+- **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
+  reaches it) and by invitation code (only its holders). The code carries the host's real
+  addresses, on its network and on its router; a client asks only those, never guesses others.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another

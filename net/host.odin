@@ -3,6 +3,7 @@ package mirai_net
 import "base:runtime"
 import "core:crypto"
 import "core:mem"
+import "core:slice"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -47,7 +48,7 @@ Disconnect_Reason :: enum u8 {
     None,
     Closed,            // either side asked for it
     Timeout,
-    Connect_Timeout,   // also what a wrong invitation, or a server without the key the client pinned, ends in: they get no answer
+    Connect_Timeout,   // also what a wrong invitation ends in: it gets no answer
     Denied_Full,
     Denied_Version,
     Denied_Protocol,   // the two ends registered different object types, events or channels
@@ -56,9 +57,7 @@ Disconnect_Reason :: enum u8 {
     Capacity,          // this end ran out of room for what the other end sent
     Kicked,
     Denied_Security,      // the server answered with keys that leave nothing secret or that it could not have made
-    Denied_Token,         // the server wants a connect token and this one is missing, forged or for another server
-    Denied_Token_Expired,
-    Replaced,             // the same client id connected again
+    Replaced,             // another connection of the same player took its place
     Scene_Missing,        // the client does not have the scene the server is in
     Denied_Player,        // the client presented no player, or a second one
 }
@@ -70,7 +69,7 @@ Host_Desc :: struct {
     protocol_id:u32,          // identity of the application: datagrams of any other are ignored
     version:u32,              // both ends must have the same
     seed:u64,                 // source of salts; 0 takes it from the system
-    invite:u32,               // the invitation both ends must have, 0 at both for none: every key of a connection depends on it (invite.odin)
+    invite:u32,               // the invitation both ends must have; 0 at both: anyone who reaches the server joins. Every key of a connection depends on it (invite.odin)
     max_connections:int,      // server; default 32. A client has one
     channels:[]Channel_Desc,  // at most USER_CHANNELS
     tick_rate:int,            // Hz, default 60
@@ -84,7 +83,7 @@ Host_Desc :: struct {
     frame_bytes:int,          // their payload, default 256 KiB
     command_count:int,        // commands between two host_poll; by default 4096 or what the protocol needs
     command_bytes:int,        // their payload; by default 512 KiB or what the protocol needs
-    security:Security_Desc,
+    handshakes_per_update:int, // server: key exchanges computed in one update, default 8
     replication:Replication_Desc,
     hold:bool,                // server: a connection that arrives is held (connection_hold) until it is let go
     allocator:runtime.Allocator,
@@ -116,7 +115,6 @@ Command :: struct {
     event:Event_Id,
     tick:u32,
     connection:Connection,
-    client_id:u64, // Connected, on a server: the id in the connect token of the client, or zero
     object:Object,
     ended:bool,   // Object_Destroyed: the object is gone on the server; false: it only left what this connection sees
     retyped:bool, // Object_Created: the replica of this object goes on, with the type and the whole state of the command
@@ -132,7 +130,6 @@ Host_Stats :: struct {
     packets_invalid:u64,     // wrong size, checksum or contents
     handshakes_refused:u64,  // answered with a denial, after the cookie and the proof of the client
     handshakes_dropped:u64,  // answered with nothing: a cookie that is not this host's or is old, or a proof that does not open
-    readdressed:u64,         // connections of a client that went on with the address the server answered from
     handshakes_deferred:u64, // key exchanges put off because the update had computed its share
     commands_dropped:u64,    // the command buffer was full
     receive_stalls:u64,      // updates that stopped reading because the command buffer had no reserve left
@@ -173,7 +170,7 @@ Op :: struct {
     offset,size:u32,
 }
 @(private)
-Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int,credentials:Credentials}
+Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int}
 // Bytes of messages given to the game channels of one connection: 4 more than each one's data.
 @(private)
 Queued_Bytes :: struct {connection:Connection,bytes:[MAX_CHANNELS]u64}
@@ -329,7 +326,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     b.scale=1
     if d.seed==0 {crypto.rand_bytes(mem.ptr_to_bytes(&b.rng))}
     crypto.rand_bytes(b.secret[:])
-    if !secure_host_init(h) {return refuse(h,"security","a token_key that is an Ed25519 public key, and one when require_token")}
+    secure_host_init(h)
     b.key=base.hash_combine(0x6d697261696e6574,u64(d.protocol_id))
 
     for &frame in h.frames {
@@ -441,18 +438,20 @@ frame_submit :: proc(h:^Host) {
     sync.mutex_unlock(&h.lock)
 }
 
-// Client: starts connecting. The answer is a Connected or a Disconnected command.
-// credentials are what the client knows of the server: its key, and the connect token it may ask for.
-// nearby also looks for the server on this machine and on its network, at the same port, in the same
-// attempts: for the address of an invitation code, a router that may not loop its own traffic back.
-// Only the server that holds the invitation can accept, so whoever else answers gains nothing.
-host_connect :: proc(h:^Host,address:Address,credentials:Credentials={},nearby:=false) -> Error {
-    if h.desc.mode!=.Client || address.kind==.None {return .Invalid}
-    zero:Key
-    if credentials.has_token && credentials.server_key==zero {return .Invalid}
-    request:=Connect_Request{credentials=credentials}
-    request.candidates[0],request.count=address,1
-    if nearby {request.candidates,request.count=connect_candidates(address,address.kind==.IP4?address_lan_broadcast(int(address.port)):{})}
+// Client: starts connecting to a server at one of addresses: those of its
+// invitation, its address on its network and the one its router mapped, are
+// asked at once, and the first that accepts is the connection. The answer is
+// a Connected or a Disconnected command.
+host_connect :: proc(h:^Host,addresses:..Address) -> Error {
+    if h.desc.mode!=.Client {return .Invalid}
+    request:Connect_Request
+    for address in addresses {
+        if address.kind==.None || slice.contains(request.candidates[:request.count],address) {continue}
+        if request.count==CANDIDATES {return .Invalid}
+        request.candidates[request.count]=address
+        request.count+=1
+    }
+    if request.count==0 {return .Invalid}
     return op_push(h,{kind=.Connect},mem.ptr_to_bytes(&request))?.None:.Full
 }
 // Closes a connection and tells the other end why. Zero closes every connection.
@@ -573,7 +572,7 @@ back_update :: proc(h:^Host,now:f64) {
     }
     applied:=time.tick_now()
 
-    b.secure.handshakes=h.desc.security.handshakes_per_update
+    b.secure.handshakes=h.desc.handshakes_per_update
     for {
         out:=b.outbox
         if len(out.bytes)-out.used<b.reserve_bytes || len(out.commands)-out.count<b.reserve_count {b.stats.receive_stalls+=1;break}

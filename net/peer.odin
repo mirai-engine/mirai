@@ -4,6 +4,7 @@ import "core:crypto"
 import "core:crypto/siphash"
 import "core:hash/xxhash"
 import "core:mem"
+import "core:slice"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -15,7 +16,7 @@ import "mirai:std/serial"
 // sender's address, its version and its lasting key, and keeps nothing. Only
 // a client that returns the cookie, proving it receives at that address,
 // costs the server a key exchange, and only one whose proof opens (the right
-// invitation, the server it expects: see secure.odin) is answered again: a
+// invitation: see secure.odin) is answered again: a
 // denial, or the acceptance and a connection slot. Anything else gets no
 // answer, so nobody can make the host send datagrams to an address that did
 // not return a cookie, nor learn from it whether an invitation was right.
@@ -43,8 +44,8 @@ MAX_CONNECTIONS :: 1024
 @(private) DATA_HEADER :: 3     // bytes: type and sequence
 @(private) CHECKSUM_BYTES :: 4
 @(private) ACCEPT_BYTES :: 16   // server salt, object capacity and ticks of history, sealed
-@(private) CANDIDATES :: 4      // addresses a client tries at once, and servers it proves itself to in one attempt
-@(private) TRANSPORT_VERSION :: 5 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
+@(private) TRANSPORT_VERSION :: 6 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -76,23 +77,22 @@ Connection_Stats :: struct {
 Challenger :: struct {
     address:Address,
     stamp,cookie:u64,
-    server_key:Key, // the one the client pinned, or the one of the challenge
+    server_key:Key, // the one of the challenge
     shared:Key,     // what the client's key and server_key give
-    proof:[TOKEN_BYTES+TAG_BYTES]u8, // the token, if any, and the tag, sealed with the proof key
+    proof:[TAG_BYTES]u8, // the tag of nothing, sealed with the proof key
     denied:bool,
 }
 // The connection attempt of a client: where it asks, and who answered. Each
 // interval it asks every candidate that has not answered and presents its
 // proof to every challenger; only the server with the invitation accepts it.
+// Answers count only from a candidate.
 @(private)
 Attempt :: struct {
     candidates:[CANDIDATES]Address,
     candidate_count:int,
     challengers:[CANDIDATES]Challenger,
     challenger_count:int,
-    server_key:Key, // pinned; zero: none
-    token:[TOKEN_BYTES]u8,
-    denied:Disconnect_Reason, // why a challenger refused it, told when the attempt ends
+    denied:Disconnect_Reason, // why a challenger refused it: the attempt ends with it once every candidate did, or when its time is up
 }
 @(private) Record_Kind :: enum u8 {Chunk,Create,Update,Destroy,Input}
 @(private) Record :: struct {kind:Record_Kind,flags:u8,aux:u16,object:u32,mask:u64}
@@ -256,10 +256,9 @@ peer_connect :: proc(h:^Host,request:^Connect_Request) {
     p.client_salt=base.splitmix_next(&h.back.rng)
     p.state=.Requesting
     peer_list(&h.back,p)
-    secure_client_begin(p,&request.credentials)
+    secure_client_begin(p)
     a:=&h.back.attempt
     a.candidates,a.candidate_count=request.candidates,clamp(request.count,1,CANDIDATES)
-    a.server_key,a.token=request.credentials.server_key,request.credentials.token
 }
 @(private)
 challenger_find :: proc(a:^Attempt,address:Address) -> ^Challenger {
@@ -268,13 +267,23 @@ challenger_find :: proc(a:^Attempt,address:Address) -> ^Challenger {
     }
     return nil
 }
+// A candidate refused the attempt: it ends with why once every candidate did.
+@(private)
+challenger_deny :: proc(h:^Host,p:^Peer,c:^Challenger,why:Disconnect_Reason) {
+    a:=&h.back.attempt
+    c.denied,a.denied=true,why
+    for other in a.challengers[:a.challenger_count] {
+        if !other.denied {return}
+    }
+    if a.challenger_count==a.candidate_count {peer_drop(h,p,why,false)}
+}
 
 @(private)
 peer_established :: proc(h:^Host,p:^Peer,history:int) {
     if p.state==.Free {peer_list(&h.back,p)}
     p.state=.Connected
     p.last_receive=h.back.now
-    command_push(h,{kind=.Connected,connection=peer_handle(h,p),client_id=p.secure.client_id,tick=u32(history)})
+    command_push(h,{kind=.Connected,connection=peer_handle(h,p),tick=u32(history)})
     repl_peer_connected(h,p)
 }
 
@@ -470,11 +479,8 @@ handshake_response :: proc(h:^Host,p:^Peer,c:^Challenger) {
     serial.bit_write(&w,c.stamp,64)
     serial.bit_write(&w,c.cookie,64)
     serial.bit_write(&w,host_protocol_hash(h),64)
-    s:=&p.secure
-    serial.bit_write_bool(&w,s.has_token)
-    serial.bit_write_align(&w)
-    serial.bit_write_bytes(&w,s.public[:])
-    serial.bit_write_bytes(&w,c.proof[:s.has_token?TOKEN_BYTES+TAG_BYTES:TAG_BYTES])
+    serial.bit_write_bytes(&w,p.secure.public[:])
+    serial.bit_write_bytes(&w,c.proof[:])
     handshake_send(h,&w,c.address,HANDSHAKE_BYTES)
 }
 @(private)
@@ -545,13 +551,13 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     serial.bit_reader_init(&r,bytes[1:len(bytes)-CHECKSUM_BYTES])
     salt:=serial.bit_read(&r,64)
     server:=h.desc.mode==.Server
-    // An answer to an attempt comes from wherever its server is: the address
-    // asked, its own on the network behind a router that sends a datagram back
-    // to the network it came from, or one that heard the broadcast. The salt
-    // says it is to the attempt, which goes on with the address that accepts.
+    // An answer to an attempt comes from one of its candidates, and the salt
+    // says it is to the attempt, which goes on with the candidate that accepts.
     if !server && (type==.Challenge || type==.Accepted || type==.Denied) {
         p=nil
-        if attempt:=&b.peers[0];(attempt.state==.Requesting || attempt.state==.Responding) && attempt.client_salt==salt {p=attempt}
+        attempt:=&b.peers[0]
+        asked:=slice.contains(b.attempt.candidates[:b.attempt.candidate_count],from)
+        if asked && (attempt.state==.Requesting || attempt.state==.Responding) && attempt.client_salt==salt {p=attempt}
     }
     #partial switch type {
     case .Request:
@@ -570,13 +576,10 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         stamp:=serial.bit_read(&r,64)
         cookie:=serial.bit_read(&r,64)
         hash:=serial.bit_read(&r,64)
-        has_token:=serial.bit_read_bool(&r)
-        serial.bit_read_align(&r)
         client_public:Key
+        proof:[TAG_BYTES]u8
         serial.bit_read_bytes(&r,client_public[:])
-        proof:[TOKEN_BYTES+TAG_BYTES]u8
-        sealed:=proof[:has_token?TOKEN_BYTES+TAG_BYTES:TAG_BYTES]
-        serial.bit_read_bytes(&r,sealed)
+        serial.bit_read_bytes(&r,proof[:])
         if !server || len(bytes)!=HANDSHAKE_BYTES || r.error {b.stats.packets_invalid+=1;return}
         now:=u64(b.now*1000)
         if stamp>now || now-stamp>COOKIE_SECONDS*1000 || cookie!=cookie_make(b,from,salt,stamp) {b.stats.handshakes_dropped+=1;return}
@@ -593,15 +596,8 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         if b.secure.handshakes<=0 {b.stats.handshakes_deferred+=1;return}
         b.secure.handshakes-=1
         session:Peer_Secure
-        reason,proven:=secure_server_accept(h,&session,salt,&client_public,has_token,sealed)
-        // A wrong invitation, or a client that expects another server: no answer tells it which.
-        if !proven {b.stats.handshakes_dropped+=1;return}
-        if reason!=.None {handshake_deny(h,from,salt,reason);return}
-        if session.client_id!=0 {
-            for &other in b.peers {
-                if other.state==.Connected && &other!=p && other.secure.client_id==session.client_id {peer_drop(h,&other,.Replaced,true)}
-            }
-        }
+        // A wrong invitation: no answer tells it so.
+        if !secure_server_accept(h,&session,salt,&client_public,proof[:]) {b.stats.handshakes_dropped+=1;return}
         slot:=p
         for &candidate in b.peers {
             if slot!=nil {break}
@@ -625,14 +621,14 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         if server || r.error || p==nil {b.stats.packets_invalid+=1;return}
         a:=&b.attempt
         if challenger_find(a,from)!=nil {return}
-        if a.challenger_count>=CANDIDATES {b.stats.packets_invalid+=1;return}
-        // With several candidates, one of another version may be another server: the attempt goes on.
-        if version!=h.desc.version {
-            if a.candidate_count==1 {peer_drop(h,p,.Denied_Version,false)} else {a.denied=.Denied_Version}
-            return
-        }
         c:=&a.challengers[a.challenger_count]
         c^={address=from,stamp=stamp,cookie=cookie}
+        // The other candidate may be the server: one of another version is another machine.
+        if version!=h.desc.version {
+            a.challenger_count+=1
+            challenger_deny(h,p,c,.Denied_Version)
+            return
+        }
         if !secure_client_prove(h,p,c,&server_key) {
             p.secure.refused=true
             b.stats.packets_invalid+=1
@@ -658,7 +654,6 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
             peer_unlist(b,p)
             p.address=from
             peer_list(b,p)
-            b.stats.readdressed+=1
         }
         answer:=sealed[:ACCEPT_BYTES]
         server_salt:u64le
@@ -680,9 +675,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         c:=p!=nil?challenger_find(&b.attempt,from):nil
         if server || r.error || c==nil {b.stats.packets_invalid+=1;return}
         why:=reason>u64(max(Disconnect_Reason)) || reason==0?Disconnect_Reason.Closed:Disconnect_Reason(reason)
-        // With several candidates the one that refused may be another server: the attempt ends with why when its time is up.
-        if b.attempt.candidate_count==1 {peer_drop(h,p,why,false);return}
-        c.denied,b.attempt.denied=true,why
+        challenger_deny(h,p,c,why)
     case:
         b.stats.packets_invalid+=1
     }

@@ -27,49 +27,61 @@ client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing
     testing.expect(t,!stale)
 }
 
-// The client reaches the server at another address, as through the router it
-// is behind: what it sends there arrives at the server, which answers from
-// its own address on the network.
-@(private="file")
-Test_Router :: struct {inner:Transport,public,server:Address}
-
+// An invitation carries the host's address on its network and the one its
+// router mapped: the client asks both at once and goes on with the one that
+// accepts. The other may be nobody, or another machine of the client's own
+// network at that address, whose answers do not end the attempt while the
+// host may still answer.
 @(test)
-a_client_goes_on_with_the_address_a_server_behind_its_router_answers_from :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,3);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a})
-    router:=Test_Router{inner=sim_endpoint_transport(&w.sim,1),public=address_memory(2),server=address_memory(0)}
-    client:=new(Host)
-    desc:=Host_Desc{mode=.Client,channels=CHANNELS,seed=1001,protocol_id=77,invite=0x5a5a}
-    desc.transport={&router,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
-        r:=(^Test_Router)(data)
-        return r.inner.send(r.inner.data,to==r.public?r.server:to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
-        r:=(^Test_Router)(data)
-        return r.inner.receive(r.inner.data,buffer)
-    }}
-    if !testing.expect_value(t,host_init(client,desc),Error.None) {free(client);return}
-    w.hosts[w.count]=client
-    w.count+=1
-    testing.expect_value(t,host_connect(client,router.public),Error.None)
-    on_server,on_client:Connection
-    for _ in 0..<600 {
-        test_step(&w)
-        for command in host_poll(server) {if command.kind==.Connected {on_server=command.connection}}
-        for command in host_poll(client) {if command.kind==.Connected {on_client=command.connection}}
-        if on_server!=0 && on_client!=0 {break}
+a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
+    Case :: struct {lan,public:Address,decoy:Host_Desc,want:Disconnect_Reason}
+    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=3}
+    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x6b6b,version=2}
+    for c in ([]Case{
+        {address_memory(0),address_memory(5),other_version,.None},
+        {address_memory(5),address_memory(0),other_version,.None},
+        {address_memory(1),address_memory(0),other_version,.None},
+        {address_memory(1),address_memory(0),other_invite,.None},
+        {address_memory(1),address_memory(5),other_version,.Denied_Version},
+    }) {
+        w:Test_World;test_world_init(&w,3)
+        defer test_world_destroy(&w)
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=2})
+        test_host(&w,c.decoy)
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=0x5a5a,version=2,connect_timeout=1})
+        testing.expect_value(t,host_connect(client,c.lan,c.public),Error.None)
+        on_server,on_client:Connection
+        reason:Disconnect_Reason
+        for _ in 0..<120 {
+            test_step(&w)
+            for command in host_poll(server) {if command.kind==.Connected {on_server=command.connection}}
+            for command in host_poll(client) {
+                if command.kind==.Connected {on_client=command.connection}
+                if command.kind==.Disconnected {reason=command.reason}
+            }
+            if on_server!=0 && on_client!=0 || reason!=.None {break}
+        }
+        if c.want!=.None {
+            testing.expectf(t,on_client==0 && reason==c.want,"%v: %v",c,reason)
+            continue
+        }
+        testing.expectf(t,on_server!=0 && on_client!=0 && client.back.peers[0].address==address_memory(0),"%v: %v",c,reason)
+        message:=[3]u8{1,2,3}
+        testing.expect_value(t,message_send(client,on_client,0,message[:]),Error.None)
+        arrived:=false
+        for _ in 0..<60 {
+            test_step(&w)
+            for command in host_poll(server) {arrived||=command.kind==.Message && len(command.data)==3}
+            host_poll(client)
+            if arrived {break}
+        }
+        testing.expectf(t,arrived,"%v: the connection carries messages",c)
     }
-    testing.expect(t,on_server!=0 && on_client!=0,"the client connects although the server answers from another address")
-    testing.expect_value(t,host_stats(client).readdressed,u64(1))
-    message:=[3]u8{1,2,3}
-    testing.expect_value(t,message_send(client,on_client,0,message[:]),Error.None)
-    arrived:=false
-    for _ in 0..<60 {
-        test_step(&w)
-        for command in host_poll(server) {arrived||=command.kind==.Message && len(command.data)==3}
-        host_poll(client)
-        if arrived {break}
-    }
-    testing.expect(t,arrived,"the connection carries messages from the new address on")
+    w:Test_World;test_world_init(&w,1);defer test_world_destroy(&w)
+    client:=test_host(&w,{mode=.Client})
+    testing.expect_value(t,host_connect(client),Error.Invalid)
+    testing.expect_value(t,host_connect(client,{}),Error.Invalid)
+    testing.expect_value(t,host_connect(client,address_memory(1),address_memory(2),address_memory(3)),Error.Invalid)
 }
 
 @(test)
