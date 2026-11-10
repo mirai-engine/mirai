@@ -104,12 +104,10 @@ reflection :: proc "contextless" (plane:[4]f32) -> (m:mm.Mat4) {
 // nothing.
 portal_way :: proc(portals:core.Read(Portal),worlds:core.Read(core.World_Transform),a,b:[3]f32) -> (portal:core.Entity,entrance,through:mm.Transform,share:f32,found:bool) {
     share=2
-    for row in 0..<core.count(portals) {
-        e:=core.entity_at(portals,row)
-        config:=core.at(portals,row)
-        placed,has_place:=core.get(worlds,e)
-        exit,has_exit:=core.get(worlds,config.exit)
-        if !has_place || !has_exit || config.mirror {continue}
+    openings:=core.join(portals,worlds)
+    for e,config,placed in core.each_joined(&openings) {
+        if config.mirror {continue}
+        exit:=core.get(worlds,config.exit) or_continue
         at,crossed:=crosses(placed.transform,config.ellipse,a,b)
         if !crossed || at>=share {continue}
         portal,entrance,through,share,found=e,placed.transform,through_of(placed.transform,exit.transform),at,true
@@ -133,14 +131,12 @@ portals_travel :: proc(
     placer:core.Placer,requests:^phys.Body_Requests,crossings:^Portal_Crossings,
 ) {
     if core.count(portals)==0 {return}
-    for row in 0..<core.count(travelers) {
-        e:=core.entity_at(travelers,row)
-        world,placed:=core.get(worlds,e)
-        motion,moving:=core.get(motions,e)
-        _,walking:=core.get(characters,e)
-        // Only the physics carries an entity: one it does not move stays where it is.
-        if !placed || !moving || world.previous==world.transform {continue}
-        point:=core.at(travelers,row).point
+    // Only the physics carries an entity: one it does not move stays where it is.
+    carried:=core.join(travelers,worlds,motions)
+    for e,traveler,world,motion in core.each_joined(&carried) {
+        if world.previous==world.transform {continue}
+        walking:=core.has(characters,e)
+        point:=traveler.point
         portal,_,through,_,found:=portal_way(portals,worlds,mm.transform_point(world.previous,point),mm.transform_point(world.transform,point))
         if !found {continue}
         if !walking {
@@ -234,10 +230,10 @@ portals_view :: proc(
         last.eye,last.rotation,last.seen,last.righting,last.shift=view.position,view.rotation,true,1,{}
         return
     }
-    for row in 0..<core.count(travelers) {
-        world,placed:=core.get(worlds,core.entity_at(travelers,row))
-        if !placed || world.previous==world.transform {continue}
-        point:=core.at(travelers,row).point
+    placed:=core.join(travelers,worlds)
+    for _,traveler,world in core.each_joined(&placed) {
+        if world.previous==world.transform {continue}
+        point:=traveler.point
         a,b:=mm.transform_point(world.previous,point),mm.transform_point(world.transform,point)
         // The view looks through the eyes of the traveler whose way it is on.
         if way_distance2(view.position,a,b)>RIDE_DISTANCE*RIDE_DISTANCE {continue}

@@ -59,7 +59,7 @@ App_Shaders :: struct {
     root:string, // folder of the project; "": no generation is looked for
     state:Shaders_State,
     stamp:Shaders_Stamp, // of the manifest last read; zero: none
-    identity:u64,        // of the generation the renderer runs; 0: the shaders of the executable (render.SHADERS_FINGERPRINT)
+    identity:u64,        // of the generation the renderer runs; 0: the shaders of the executable (render.embedded_shaders_decode)
     frames:int,          // since the last look
     reloads:u64,         // generations that replaced a running one
     published_frame:u64, // App_Stats.frames when the last one did
@@ -92,7 +92,7 @@ app_shaders_read :: proc(app:^App,folder:string,assets:^render.Shader_Assets) ->
     sh:=&app.shaders
     if !render.shader_generation_current(folder) {
         sh.state=.Stale
-        log.warnf("shaders: %s was built from other engine shaders than this executable has; build the project again",folder)
+        log.warnf("shaders: the engine stages of %s bind or lay out otherwise than this executable does; build the engine again",folder)
         return false
     }
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
@@ -146,6 +146,12 @@ app_shaders_reload :: proc(app:^App) -> u64 {
     sh.stamp=shaders_stamp(folder)
     if folder=="" {return 0}
     return app_shaders_load(app,folder)
+}
+
+// Whether the generation published for the project is not the one last read.
+app_shaders_behind :: proc(app:^App) -> bool {
+    sh:=&app.shaders
+    return sh.root!="" && shaders_stamp(project.shader_generation_find(sh.root,context.temp_allocator))!=sh.stamp
 }
 
 // Loads the generation in a folder other than the one of the project, as
