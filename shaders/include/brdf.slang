@@ -148,7 +148,6 @@ float3 fresnel_schlick(float3 f0, float f90, float voh) { return fresnel_schlick
 // F0 and the grazing reflectance of a surface in a target of 8 bits per
 // channel: the color is stored as sRGB by the target, and alpha keeps f90.
 float4 specular_pack(float3 f0, float f90) { return float4(saturate(f0), saturate(f90)); }
-float4 specular_unpack(float4 texel) { return texel; }
 float diffuse_remaining(float3 reflectance) { return 1.0 - saturate(max(reflectance.r, max(reflectance.g, reflectance.b))); }
 
 // Smith's masking of the GGX lobe: the share of its microfacets a direction

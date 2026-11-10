@@ -1727,8 +1727,7 @@ read_reflectance :: proc(t:^testing.T,device:^rhi.Device,r:^Renderer,target:rhi.
         v:=f32(b)/255
         return v/12.92 if v<=0.04045 else math.pow((v+0.055)/1.055,2.4)
     }
-    alpha:=f32(bytes[at+3])/255
-    return {linear(bytes[at]),linear(bytes[at+1]),linear(bytes[at+2]),-1 if alpha>254.5/255 else alpha*255/254}
+    return {linear(bytes[at]),linear(bytes[at+1]),linear(bytes[at+2]),f32(bytes[at+3])/255}
 }
 
 // ---------------------------------------------------------------- layers

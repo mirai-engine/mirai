@@ -346,7 +346,7 @@ Glass glass_of(int2 p, float2 uv, float depth, float4 albedo, float4 normal, flo
     g.roughness = normal.z;
     g.emission = emission.rgb;
     g.occlusion = 1.0;
-    float4 specular = specular_unpack(layer_specular.Load(int3(p, 0)));
+    float4 specular = layer_specular.Load(int3(p, 0));
     g.f0 = specular.rgb;
     g.f90 = specular.a;
     // The layers target of the layer is bound in place of the G-buffer's.

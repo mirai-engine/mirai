@@ -1056,7 +1056,10 @@ GEOMETRY_STAGING_KEPT :: u64(64) << 20
 renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slot := 0) -> bool {
 	s := &r.scene
 	dirty := s.geometry_dirty
-	if !dirty && !geometry_uploads_left(s) {return true}
+	// Words written in place (the values of an instance) go without a BLAS or TLAS to build.
+	written := false
+	for ranges in s.pool_dirty {written ||= len(ranges) > 0}
+	if !dirty && !written && !geometry_uploads_left(s) {return true}
 	d := r.device
 	blas_inputs_release(r)
 	left := geometry_blas_inputs(r, cmd != nil)

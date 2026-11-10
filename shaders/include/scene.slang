@@ -78,7 +78,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 // itself; the G-buffer keeps what each pixel evaluated (`stored`) while some
 // surface departs from it: specular maps and factors, another IOR, a program.
 float4 pixel_reflectance(int2 p, float4 albedo, bool stored) {
-    if (stored) return specular_unpack(surface_specular.Load(int3(p, 0)));
+    if (stored) return surface_specular.Load(int3(p, 0));
     return float4(specular_f0(albedo.rgb, albedo.a), 1.0);
 }
 
