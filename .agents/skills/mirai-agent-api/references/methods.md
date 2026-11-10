@@ -906,18 +906,13 @@ instance" are `-32602`; the rest, `-32000`
 
 ## Graphics and settings
 
-- `graphics.status`: those of the game while one plays, else of the edited world; `preset` is
-  `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_scale` and
-  `preset_height` say how the scene resolution is chosen; the size it is drawn at is given by
-  `engine.status` (`render_width`, `render_height`). `options` lists every option of the popup with
-  its current choice and its choices.
-- `settings.get` (read-only): `{machine, settings, engine, project}`, narrowed to `sections`
-  ([settings](../../mirai-projects/references/projects.md#project-settings)).
-  - `machine`: the names of the machine settings, the only ones the engine file stores; only
-    without `sections`.
-  - `settings`: all the effective values, one section per setting.
-  - `engine`: what the engine file sets over the code.
-  - `project`: what the project's file sets over both.
+- `graphics.status` (read-only): the graphics of the game while one plays, else of the edited
+  world, with every option of the popup and its choices; the size the scene is drawn at is in
+  `engine.status`.
+- `settings.get` (read-only): the effective values per section and what the engine and project
+  files set over the code, narrowed to `sections`
+  ([settings](../../mirai-projects/references/projects.md#project-settings)); the shape is in
+  `engine.describe`.
 - `settings.set {layer, settings, graphics_preset}`: `layer` is `"project"` (default) or
   `"engine"`; `settings` are sections with the fields that change
   (`{"Particle_Settings":{"capacity":100000}}`), and `graphics_preset` sets the quality fields of
@@ -933,10 +928,10 @@ instance" are `-32602`; the rest, `-32000`
     skipped).
   - An unknown key, an out-of-range value or `engine` without an engine root is `-32602` and
     changes nothing.
-- `preferences.get` (read-only): `{file, preferences, kept}`, the
-  [editor preferences](../../mirai-editor/references/panels.md#preferences) by area: the
-  effective values and what the file stores over the code. `file` empty: the editor does not save
-  (`--headless` without `--preferences`) and a change lasts until it closes.
+- `preferences.get` (read-only): the
+  [editor preferences](../../mirai-editor/references/panels.md#preferences) by area, with what the
+  file stores over the code. Without a `file` the editor does not save (`--headless` without
+  `--preferences`) and a change lasts until it closes.
 - `preferences.set {preferences}`: the areas with the fields that change
   (`{"Viewport_Preferences":{"snap":true}}`); they apply instantly and are written. An area or
   field that does not exist or an out-of-range value is `-32602` with those that exist, and changes
