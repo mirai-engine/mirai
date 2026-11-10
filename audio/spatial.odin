@@ -110,10 +110,12 @@ direct_update :: proc "contextless" (m:^Mixer,v:^Mix_Voice) {
 
 // Turns the mono signal a spatial voice left in the left channel of frames
 // [from,to) of out into its place: the direct effect (EQ and gain), then the
-// HRTF on headphones or the pan on speakers.
+// pan on speakers. On headphones it leaves the signal in both channels and
+// returns true: the HRTF is applied with the other voices of its bus.
 @(private)
-spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,from,to:int) #no_bounds_check {
+spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,from,to:int) -> (binaural:bool) #no_bounds_check {
     count:=to-from
+    binaural=m.output_now==.Headphones && m.channels==2
     if count<=0 {return}
     mono:=m.spatial_mono[:count]
     for i in 0..<count {mono[i]=out[(from+i)*2]}
@@ -126,7 +128,7 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,f
         v.direct_ready=true
     }
     current:=int(v.eq_current)
-    if v.eq_target!=v.eq_gains {
+    if eq_moved(v.eq_gains,v.eq_target) {
         // EQEffect: the cascade of the old gains and that of the new ones, which
         // starts from its state, crossfade over the chunk.
         previous:=current
@@ -149,8 +151,8 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,f
     g0,dg:=v.direct_gain_now,(v.direct_gain-v.direct_gain_now)/f32(count)
     for i in 0..<count {mono[i]*=g0+dg*f32(i)}
     v.direct_gain_now=v.direct_gain
-    if m.output_now==.Headphones && m.channels==2 {
-        binaural_run(m,v,index,mono,out[from*2:],v.direction)
+    if binaural {
+        for i in 0..<count {out[(from+i)*2],out[(from+i)*2+1]=mono[i],mono[i]}
         return
     }
     weights:=pan_gains(speaker_pan(v.direction) if m.channels==2 else 0)
@@ -162,6 +164,7 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,f
         out[(from+i)*2+1]=mono[i]*g[1]
     }
     v.pan_now=weights
+    return
 }
 
 // Where the listener is, how it is turned and how fast it moves. False for a

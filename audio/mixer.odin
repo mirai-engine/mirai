@@ -144,15 +144,20 @@ Mixer :: struct {
     spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES: a spatial voice before it is placed
     hrtf:Hrtf,
     conv:Fft, // of the binaural convolution
-    // Per voice slot (binaural.odin): the HRTF spectra of both ears, the rings
-    // of binaural_ring samples of both ears and the last input.
+    // Per voice slot (binaural.odin): the HRTF spectra of both ears and the last input.
     binaural_spectra:[]f32, // complex
-    binaural_rings:[]f32,
-    binaural_ring:int,
     binaural_dry:[]f32,
+    // Per bus and ear: what its voices add up to in the chunk (complex) and the
+    // ring of binaural_ring frames still to play.
+    binaural_sums,binaural_rings:[]f32,
+    binaural_used:[]bool,
+    binaural_left:[]i32, // per bus: frames of its rings that may still hold sound
+    binaural_ring:int,
+    binaural_read:int, // where the rings play from
+    binaural_kept:int, // samples the last chunk fell over
     binaural_window:[]f32, // the rise over BINAURAL_OVERLAP samples
-    binaural_windowed,binaural_wet:[]f32,
-    binaural_dry_spectrum,binaural_wet_spectrum:[]f32, // complex
+    binaural_windowed,binaural_wet,binaural_input:[]f32,
+    binaural_dry_spectrum:[]f32, // complex
 
     // Written by the audio thread, read by the game thread; atomic.
     finished:[]u32,        // per voice slot: generation of the voice that last ended there
@@ -264,13 +269,16 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     bins:=m.conv.n/2+1
     m.binaural_ring=next_pow2(m.conv.n+BINAURAL_OVERLAP)
     if m.binaural_spectra,failed=make([]f32,voices*2*bins*2,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.binaural_rings,failed=make([]f32,voices*2*m.binaural_ring,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_sums,failed=make([]f32,buses*2*bins*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_rings,failed=make([]f32,buses*2*m.binaural_ring,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_used,failed=make([]bool,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_left,failed=make([]i32,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_input,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_dry,failed=make([]f32,voices*BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_window,failed=make([]f32,BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_windowed,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_wet,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_dry_spectrum,failed=make([]f32,2*bins,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.binaural_wet_spectrum,failed=make([]f32,2*bins,allocator);failed!=nil {return .Out_Of_Memory}
     for &w,i in m.binaural_window {w=0.5*(1+math.cos(math.PI*(f32(i)/f32(BINAURAL_OVERLAP-1)-1)))}
     return .None
 }
@@ -299,7 +307,8 @@ mixer_destroy :: proc(m:^Mixer) {
     fft_destroy(&m.conv,allocator)
     delete(m.binaural_spectra,allocator);delete(m.binaural_rings,allocator);delete(m.binaural_dry,allocator)
     delete(m.binaural_window,allocator);delete(m.binaural_windowed,allocator);delete(m.binaural_wet,allocator)
-    delete(m.binaural_dry_spectrum,allocator);delete(m.binaural_wet_spectrum,allocator)
+    delete(m.binaural_dry_spectrum,allocator);delete(m.binaural_sums,allocator);delete(m.binaural_used,allocator)
+    delete(m.binaural_left,allocator);delete(m.binaural_input,allocator)
     free(m,allocator)
 }
 
@@ -436,6 +445,7 @@ chunk_render :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
         if v.phase!=.Free {active+=1}
     }
     sync.atomic_store_explicit(&m.voices_active,active,.Relaxed)
+    binaural_flush(m,n)
     room:=raw_data(m.bus_buffers[int(m.reverb_bus)*CHUNK_FRAMES*2:])
     reverb_run(&m.reverb,raw_data(m.reverb_input),room,n)
     buses_mix(m,out,n)

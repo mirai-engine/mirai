@@ -100,8 +100,9 @@ invalid one return false.
   frame, even if it falls in the middle of a render.
 - **Filter and send.** A spatial voice, or one with a low-pass or a reverb send, is mixed apart: a
   spatial one goes through its [direct effect and its output](#positional-audio), then any voice
-  through its one-pole filter, which changes cutoff without clicks, and its send. Any other goes
-  straight to its bus, at no extra cost.
+  through its one-pole filter, which changes cutoff without clicks, and its send; a binaural voice
+  is filtered and sent as one source, before its HRTF. Any other goes straight to its bus, at no
+  extra cost.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
   The stolen handle stops being valid at once and its sound drops to silence within a chunk.
@@ -144,9 +145,12 @@ binaural and panning effects.
   gains crossfades the old and the new cascade over the chunk.
 - **Output.** `Output_Kind` is one per mixer: on headphones each voice is convolved with the HRTF of
   its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements
-  around it), overlapped in blocks whose shared samples crossfade a change of direction; the output
-  is `BINAURAL_OVERLAP` samples late whatever size the render has. On speakers the direction,
-  brought to the horizontal plane, pans with constant power; a mono output plays it centered.
+  around it), in blocks cut at the chunks whose shared samples crossfade a change of direction.
+  Every voice is transformed once and its products with the HRTF add up per bus, which goes back
+  to time once per chunk into one ring per bus; the output is `BINAURAL_OVERLAP` samples late
+  whatever size the render has. A source that turned less than a quarter of the finest spacing of
+  the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
+  pans with constant power; a mono output plays it centered.
 - The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
   only runs at the rates it was measured at. It is loaded and transformed when the mixer is
   created; the binaural state of every voice slot is reserved then.

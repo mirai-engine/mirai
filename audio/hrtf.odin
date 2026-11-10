@@ -25,6 +25,9 @@ Hrtf :: struct {
     // unwrapped phase of the spectrum of its HRIR.
     magnitude,phase:[]f32,
     interp:Fft,
+    // A source that turned less than this cosine from the direction of its
+    // filters keeps them: a quarter of the finest spacing of the measurements.
+    reblend_cos:f32,
     // Scratch of the audio thread.
     blend_magnitude,blend_phase:[]f32,
     blend_spectrum:[]f32, // complex
@@ -101,6 +104,12 @@ hrtf_load :: proc(h:^Hrtf,data:[]u8,sample_rate:int,allocator:runtime.Allocator)
         h.elevations[i]=f32(elevations[i])
         if i%h.rings>0 && h.elevations[i]<h.elevations[i-1] {return .Invalid_Data}
     }
+    finest:=f32(360)
+    for i in 1..<rings {finest=min(finest,h.azimuths[i]-h.azimuths[i-1])}
+    for i in 0..<count {
+        if i%h.rings>0 && h.elevations[i]>h.elevations[i-1] {finest=min(finest,h.elevations[i]-h.elevations[i-1])}
+    }
+    h.reblend_cos=math.cos(finest*0.25*math.RAD_PER_DEG)
     rates,read_rates:=hrtf_read_i32(data,&at)
     if !read_rates || rates<=0 || rates>16 {return .Invalid_Data}
     skip,found:=0,false

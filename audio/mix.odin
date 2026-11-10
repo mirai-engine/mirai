@@ -58,10 +58,9 @@ Mix_Voice :: struct {
     direction:[3]f32,
     pan_now:[2]f32,pan_valid:bool,
     binaural_live,binaural_direction_valid:bool,
-    binaural_kept:u8,
-    binaural_read:u32,
-    binaural_direction:[3]f32,
-    // Frames of the binaural tail still to play after the voice went silent,
+    binaural_clock:u64, // the chunk its next block continues from
+    binaural_direction:[3]f32, // that of its HRTF
+    // Blocks of the binaural tail still to add after the voice went silent,
     // and whether it pauses rather than ends then.
     tail_left:i32,tail_pause:bool,
     // The filter and the send, ramped over every chunk from where they were:
@@ -229,7 +228,7 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
     if clock+u64(n)<=v.start_frame {return}
     if v.tail_left>0 {
-        voice_tail(m,index,n)
+        voice_tail(m,index,n,clock)
         return
     }
     offset:=0
@@ -256,12 +255,19 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
         alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,out,offset,n,max(step,1),target,span)
     }
     v.base=target
-    if v.spatial {spatial_post(m,v,index,out,offset,n)}
-    if apart {voice_post(m,v,out,bus,offset,n,filter)}
+    if v.spatial && spatial_post(m,v,index,out,offset,n) {
+        // Binaural: filtered and sent as one source, then added to the sums of its bus.
+        voice_post(m,v,out,nil,offset,n,filter)
+        x:=m.binaural_input[:n]
+        #no_bounds_check for i in 0..<n {x[i]=out[i*2] if i>=offset else 0}
+        binaural_add(m,v,index,x,v.direction,clock)
+    } else if apart {
+        voice_post(m,v,out,bus,offset,n,filter)
+    }
     ended:=!alive || v.stopping
     if (ended || v.pausing) && v.binaural_live && m.output_now==.Headphones && m.channels==2 {
-        // What the convolution still holds plays out before it ends or pauses.
-        v.tail_left=i32(BINAURAL_OVERLAP+m.hrtf.interp.n)
+        // The samples its last block fell over still rise in one more block.
+        v.tail_left=1
         v.tail_pause=!ended
         v.stopping,v.pausing=false,false
         return
@@ -270,17 +276,13 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     if v.pausing {v.pausing=false;v.phase=.Paused}
 }
 
-// Plays n frames of the binaural tail of a voice that went silent.
-voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int) {
+// Adds the silent block of a voice that went silent, which completes its last one.
+voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
-    out:=raw_data(m.voice_scratch)
-    #no_bounds_check for i in 0..<n*2 {out[i]=0}
-    silence:=m.spatial_mono[:n]
+    silence:=m.binaural_input[:n]
     for &x in silence {x=0}
-    binaural_run(m,v,index,silence,out,v.binaural_direction)
-    bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
-    voice_post(m,v,out,bus,0,n,lowpass_coefficient(v.lowpass,f32(m.sample_rate)))
-    v.tail_left-=i32(n)
+    binaural_add(m,v,index,silence,v.binaural_direction,clock)
+    v.tail_left-=1
     if v.tail_left>0 {return}
     v.tail_left=0
     if !v.tail_pause {voice_end(m,index);return}
@@ -289,7 +291,8 @@ voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int) {
     v.binaural_live=false
 }
 
-// Filters frames [from,to) of a voice mixed apart into its bus and sends them to the reverb.
+// Filters frames [from,to) of a voice mixed apart into its bus, or back into
+// src without one, and sends them to the reverb.
 voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:int,filter:f32) {
     span:=f32(to-from)
     a0,da:=v.filter,(filter-v.filter)/span
@@ -301,8 +304,12 @@ voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:i
         a:=a0+da*ramp
         left+=a*(src[k*2]-left)
         right+=a*(src[k*2+1]-right)
-        bus[k*2]+=left
-        bus[k*2+1]+=right
+        if bus!=nil {
+            bus[k*2]+=left
+            bus[k*2+1]+=right
+        } else {
+            src[k*2],src[k*2+1]=left,right
+        }
         g:=s0+ds*ramp
         send[k*2]+=left*g
         send[k*2+1]+=right*g

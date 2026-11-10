@@ -199,6 +199,9 @@ distance_and_occlusion_dull_a_source_and_never_raise_it :: proc(t:^testing.T) {
         for i in 0..<BANDS {testing.expect(t,g[i]<=previous[i]+1e-6,"more hidden is never louder")}
         previous=g
     }
+    // A move of less than a tenth of a decibel keeps the filters; more designs new ones.
+    testing.expect(t,!eq_moved({1,0.5,0.25},{1,0.504,0.2501}) && eq_moved({1,0.5,0.25},{1,0.5,0.2}))
+    testing.expect(t,eq_moved({1,1,1},{1,1,math.nan_f32()}))
     hidden:=band_gains(2,1)
     testing.expect(t,hidden[0]>0.05 && hidden[2]<hidden[0]*0.5,"a hidden source is muffled, not silent")
     // The EQ never goes below its floor; all is finite at absurd distances.
@@ -319,7 +322,8 @@ binaural_output_does_not_depend_on_how_the_render_is_cut :: proc(t:^testing.T) {
     }
 }
 
-// A binaural voice that stops plays what its convolution still holds, then ends.
+// A binaural voice that stops completes its last block, then ends; its bus
+// plays what the convolution still holds.
 @(test)
 binaural_voice_plays_its_tail_when_it_stops :: proc(t:^testing.T) {
     m:=test_mixer(t)
@@ -334,11 +338,10 @@ binaural_voice_plays_its_tail_when_it_stops :: proc(t:^testing.T) {
     tail:=test_render(m,CHUNK_FRAMES)
     testing.expect(t,energy(tail,2,0)>0 && energy(tail,2,1)>0,"its tail plays after it went silent")
     mixer_update(m)
-    testing.expect(t,voice_valid(m,voice),"it ends once its tail played")
+    testing.expect(t,!voice_valid(m,voice),"it ends once its last block is complete; its bus plays the rest")
     last:=test_render(m,CHUNK_FRAMES)
+    testing.expect(t,energy(last[:BINAURAL_OVERLAP],2,0)>0)
     for x in last[CHUNK_FRAMES:] {testing.expect(t,abs(x)<1e-6,"then it is silent")}
-    mixer_update(m)
-    testing.expect(t,!voice_valid(m,voice))
 }
 
 @(test)
@@ -501,4 +504,75 @@ doppler_changes_the_speed_of_a_spatial_voice :: proc(t:^testing.T) {
     out=test_render(m,4)
     test_near(t,out[2]-out[0],2*0.5*half,1e-3)
     testing.expect(t,voice_valid(m,away))
+}
+
+// One noise voice two meters away, turned to a new direction between renders
+// of uneven sizes: the binaural output the per-voice path of Steam Audio's
+// overlap-add gave, which the mix in frequency must reproduce.
+@(private)
+binaural_one_voice :: proc(t:^testing.T) -> []f32 {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    noise:=test_mono(t,m,RATE,test_noise)
+    desc:=VOICE_DEFAULT
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-2},{model=.None}
+    voice:=voice_play(m,noise,desc)
+    FRAMES :: 4096
+    out:=make([]f32,FRAMES*2,context.temp_allocator)
+    sizes:=[?]int{100,256,37,300,1}
+    turn:=0
+    for done:=0;done<FRAMES; {
+        n:=min(sizes[turn%len(sizes)],FRAMES-done)
+        mixer_render(m,out[done*2:][:n*2])
+        done+=n
+        turn+=1
+        angle,elevation:=f32(turn)*0.9,f32(turn%3-1)*0.4
+        voice_set_position(m,voice,{2*math.sin(angle)*math.cos(elevation),2*math.sin(elevation),-2*math.cos(angle)*math.cos(elevation)})
+    }
+    return out
+}
+
+@(private="file") BINAURAL_ONE_VOICE :: #load("testdata/binaural_one_voice.f32")
+
+// Adding the voices of a bus in frequency gives one voice what its own
+// overlap-add gave it, recorded before the voices were added up.
+@(test)
+binaural_mix_in_frequency_keeps_the_output_of_a_voice :: proc(t:^testing.T) {
+    recorded:=BINAURAL_ONE_VOICE
+    got:=binaural_one_voice(t)
+    if !testing.expect_value(t,len(recorded),len(got)*4) {return}
+    worst:=f32(0)
+    for x,i in got {
+        want:=transmute(f32)([4]u8{recorded[i*4],recorded[i*4+1],recorded[i*4+2],recorded[i*4+3]})
+        worst=max(worst,abs(x-want))
+    }
+    testing.expectf(t,worst<1e-5,"the voice differs from its own overlap-add by %v",worst)
+}
+
+// A source that turns less than the measurements can tell apart keeps its
+// filters; one that turns more gets new ones.
+@(test)
+a_slowly_turning_source_keeps_its_filters :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    step:=math.acos(m.hrtf.reblend_cos)*math.DEG_PER_RAD
+    testing.expectf(t,step>0.5 && step<3,"filters are kept within %v degrees",step)
+    noise:=test_mono(t,m,RATE,test_noise)
+    desc:=VOICE_DEFAULT
+    desc.loop,desc.spatial,desc.position=true,true,{0,0,-2}
+    voice:=voice_play(m,noise,desc)
+    test_render(m,CHUNK_FRAMES)
+    index:=0
+    for v,i in m.voices {
+        if v.phase!=.Free {index=i}
+    }
+    first:=m.voices[index].binaural_direction
+    turn:=step*0.5*math.RAD_PER_DEG
+    voice_set_position(m,voice,{2*math.sin(turn),0,-2*math.cos(turn)})
+    test_render(m,CHUNK_FRAMES)
+    testing.expect(t,m.voices[index].binaural_direction==first,"half a step keeps the filters")
+    turn=step*2*math.RAD_PER_DEG
+    voice_set_position(m,voice,{2*math.sin(turn),0,-2*math.cos(turn)})
+    test_render(m,CHUNK_FRAMES)
+    testing.expect(t,m.voices[index].binaural_direction!=first,"two steps blend new ones")
 }
