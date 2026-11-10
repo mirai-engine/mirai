@@ -3,7 +3,6 @@ package editor
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
-import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
