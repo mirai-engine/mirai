@@ -2,5 +2,6 @@
   "name": "paint",
   "version": "0.1.0",
   "dependencies": [],
-  "parts": ["Runtime", "Editor"]
+  "parts": ["Runtime", "Editor"],
+  "asset_kinds": [{"extension": ".paint"}]
 }

@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
+import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -2095,3 +2096,55 @@ material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
+
+// The colors two instances of one mesh are given are drawn over it at every
+// level of detail the view chooses, each instance with its own.
+@(test)
+gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	CELLS :: 48
+	vertices := make([dynamic]asset.Vertex, context.temp_allocator)
+	indices := make([dynamic]u32, context.temp_allocator)
+	for z in 0 ..= CELLS {for x in 0 ..= CELLS {
+		u, v := f32(x) / CELLS, f32(z) / CELLS
+		p := Vec3{(u - 0.5) * 0.8, 0.05 * math.sin(f32(x) * 0.7) * math.cos(f32(z) * 0.5), (v - 0.5) * 0.8}
+		append(&vertices, asset.Vertex{position = p, normal = mm.normal_pack({0, 1, 0}), uv = {u, v}, color = 0xffffffff, tangent = mm.tangent_pack({1, 0, 0}, 1)})
+	}}
+	for z in 0 ..< u32(CELLS) {for x in 0 ..< u32(CELLS) {
+		a := z * (CELLS + 1) + x
+		append(&indices, a, a + CELLS + 1, a + 1, a + 1, a + CELLS + 1, a + CELLS + 2)
+	}}
+	g: asset.Mesh_Geometry
+	if !testing.expect(t, asset.mesh_build_dag({vertices = vertices[:]}, indices[:], &g, context.temp_allocator)) {return}
+	materials_set(r, {DEFAULT_MATERIAL})
+	mesh, added := mesh_add_geometry(r, g, {1})
+	if !testing.expect(t, added && r.scene.meshes[mesh].level_count > 1, "a mesh of levels") {return}
+	count := r.scene.meshes[mesh].vertex_count
+	red := make([]u32, count, context.temp_allocator)
+	blue := make([]u32, count, context.temp_allocator)
+	for &color in red {color = 0xff0000ff}
+	for &color in blue {color = 0xffff0000}
+	reds, made_red := colors_load(r, red)
+	blues, made_blue := colors_load(r, blue)
+	if !testing.expect(t, made_red && made_blue) {return}
+	left, right := Mat4(1), Mat4(1)
+	left[0, 3], right[0, 3] = -0.5, 0.5
+	scene_set(r, {{object_id = 1, mesh = mesh, transform = left, tint = 1}, {object_id = 2, mesh = mesh, transform = right, tint = 1}}, nil, {}, {})
+	testing.expect(t, scene_set_instance_colors(r, 0, reds) && scene_set_instance_colors(r, 1, blues))
+	clusters: [2]u32
+	// Every level at 0 pixels of error, the coarsest at 100.
+	for error, at in ([2]f32{0, 100}) {
+		settings := r.settings
+		settings.lod_error_pixels = error
+		testing.expect(t, renderer_apply_settings(r, settings))
+		frames(t, r, OVERHEAD, 4)
+		clusters[at] = r.stats.visible_kinds[.Levels].clusters
+		testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.5, 0, 0}), {255, 0, 0, 0}, 3), "the left instance shows its red at %v pixels: %v", error, read_albedo(t, &f, OVERHEAD, {-0.5, 0, 0}))
+		testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {0.5, 0, 0}), {0, 0, 255, 0}, 3), "the right instance shows its blue at %v pixels: %v", error, read_albedo(t, &f, OVERHEAD, {0.5, 0, 0}))
+	}
+	testing.expectf(t, clusters[1] < clusters[0], "a coarser level is drawn: %d clusters, %d at level 0", clusters[1], clusters[0])
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}

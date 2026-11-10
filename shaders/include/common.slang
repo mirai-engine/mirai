@@ -180,7 +180,9 @@ struct Instance {
     float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
-    uint reserved[3];
+    uint colors;          // its own color of each vertex of its mesh in vertex_words, by index in the mesh (render.scene_set_instance_colors)
+    uint color_count;     // 0: the colors of its mesh
+    uint reserved;
 };
 uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }

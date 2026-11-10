@@ -174,7 +174,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {
-            Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+            Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
             // The ray leaves a solid where its face looks along it.
             float3 face = transform_normal(inst.world_inv, cross(tri.b.position - tri.a.position, tri.c.position - tri.a.position));
             bool exit = dot(face, ray_filter_direction) >= 0.0;
@@ -201,7 +201,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
         return blend == BLEND_STOPS;
     }
     if (m.alpha_mode == ALPHA_OPAQUE) return true;
-    Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+    Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
     float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
     float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);

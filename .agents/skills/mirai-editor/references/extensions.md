@@ -87,7 +87,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
   entity), without changing components or history. The mesh is released on replacing it, cancelling
   or finishing, before `render_sync`.
 - To confirm, it writes the asset in the registry's memory, unsaved, and what is loaded reloads by
-  itself. A new copy per stroke (`.mesh` of paint) is a file of the step (`editor.file_write`); a
+  itself. A new `.paint` per stroke is a file of the step (`editor.file_write`); a
   tool that keeps its own undo by revision (`.terrain`) writes it outside the history with
   `editor.file_set`, and the step restores the component that keeps the revision.
 

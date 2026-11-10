@@ -258,9 +258,9 @@ leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#pain
 [Physics placement](../../mirai-plugins/references/plugins.md#physics-placement).
 
 - `paint.stroke`: the points are world points and need not be on the surface; paints the vertices
-  within `radius` of the stroke. A stroke that reaches no vertex is `-32602` and does not write the
-  copy. Each stroke writes a new unsaved `.mesh` copy; `paint.clear` goes back to what the entity
-  showed before the first one.
+  within `radius` of the stroke, at every level of detail. A stroke that reaches no vertex is
+  `-32602` and writes nothing. Each stroke writes a new unsaved `.paint` that the entity's
+  `Painted` names; `paint.clear` gives it back the colors of its mesh.
 - `shapes.stamp` and `shapes.corner`: the Stamp and Corners modes of the Shapes tool at world
   points ([shapes tool](../../mirai-world/references/shapes.md#shapes-tool)). A cut that touches
   no outline shape, a refused stamp or a corner move that would cross edges is `-32602`. The

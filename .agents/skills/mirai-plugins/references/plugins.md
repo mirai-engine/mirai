@@ -166,15 +166,11 @@ demo enables. How an `editor/` adds steps, panels and tools:
   ([cinematics](../../mirai-gameplay/references/cinematics.md)).
 
 - **`paint`** (`Runtime`, `Editor`)
-  - Game: `Painted{source, shape}` stores what the entity showed before its first stroke. Its
-    `Mesh_Renderer` points to a painted copy (own mesh that differs only in the vertex colors).
-  - Editor: vertex color brush that writes painted copies of a mesh. The copy is a file of the
-    stroke step (`editor.file_write`): it stays unsaved in the registry's memory until Save, undo
-    and cancel remove it, and the next stroke reads it through `host.assets_file`. It paints the
-    decoded level 0 of the clusters and stores it with `asset.mesh_build` in one level: the copy
-    does not keep the coarser levels of the source.
-    Test: `painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel`. API:
-    [Paint](#paint).
+  - Game: `Painted{colors}` names a `.paint`, the colors of the entity over the shared mesh its
+    `Mesh_Renderer` shows: one per vertex by index in the mesh (cluster order, every level). The
+    runtime gives them to the instance through `engine/render` (`colors_load`,
+    `instance_colors_set`); the mesh and its levels stay shared and untouched.
+  - Editor: vertex color brush that writes a `.paint` per stroke. API: [Paint](#paint).
 - **`terrain`** (`Runtime`, `Editor`, `Shaders`, `Assets`)
   - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield or Volume
     sources, derived chunks and immutable geometry replaced by region, material layers, levels of
@@ -250,15 +246,16 @@ demo enables. How an `editor/` adds steps, panels and tools:
 
 Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin`).
 
-- `Painted` stores what the entity showed before its first stroke and its `Mesh_Renderer` points
-  to a painted copy, which is a file of the stroke step (`editor.file_write`): it stays in memory
-  until Save, undo and cancel remove it, and the next stroke reads it through `host.assets_file`.
+- A stroke paints every vertex of every level of the mesh and writes the colors of the entity as
+  a `.paint`, a file of the stroke step (`editor.file_write`) that `Painted` names: it stays in
+  memory until Save, undo and cancel remove it, and the next stroke reads it through
+  `host.assets_file`. Another entity of the same mesh keeps its own colors.
 - A stroke stamps the brush by distance in the world onto the vertices, with a soft falloff up to
   the radius, and each vertex keeps the maximum of its stamps: passing twice in one stroke paints
   once.
 - `paint.stroke` and `paint.clear` are the brush and **Clear paint** by API
   ([methods](../../mirai-agent-api/references/methods.md#painting-and-placement)): they load, stamp
-  and write the copy with the same procedures as the tool, on an entity by id and without
+  and write the colors with the same procedures as the tool, on an entity by id and without
   touching its state or the user's current stroke. The whole stroke is one undo step.
 
 ## Physics placement
@@ -308,10 +305,12 @@ Transaction:
   generated resources. The component stores the identity and revision of its source.
 - Derived fields carry `transient`; those that must not travel over the network, `local`.
 - Test with `generate` of the demo, `check` of each part and a run with the editor or the game.
-- `paint/editor`: unsaved copies that go with undo and cancel, and stroke and clear by API
-  (`painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel`,
-  `paint_api_strokes_along_points_and_clears_as_steps_of_undo`). The stroke with the pointer is
-  verified by the user.
+- `paint/editor`: unsaved colors that go with undo and cancel, every level painted, and stroke
+  and clear by API (`painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel`,
+  `a_stroke_paints_every_level_of_a_mesh_two_entities_share`,
+  `paint_api_strokes_along_points_and_clears_as_steps_of_undo`); drawn at every level, per
+  instance: `gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level` (`render`). The
+  stroke with the pointer is verified by the user.
 - `physics_placement/editor`: drop and stacking without gameplay, a single undo/redo,
   cancellation, tool removal, selection preservation, atomic rejection of invalid geometry and
   the drop by API without an open preview

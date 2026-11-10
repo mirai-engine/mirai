@@ -147,7 +147,9 @@ Gpu_Instance :: struct {
 	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
-	reserved:   [3]u32, // the stride stays a multiple of 16, as Metal lays out a struct with float4
+	colors:     u32,    // its own color of each vertex of its mesh in the vertex pool, by index in the mesh (scene_set_instance_colors)
+	color_count: u32,   // the vertices of its mesh; 0: the colors of the mesh
+	reserved:   u32,    // the stride stays a multiple of 16, as Metal lays out a struct with float4
 }
 #assert(size_of(Gpu_Instance) % 16 == 0)
 GPU_NONE :: max(u32)
