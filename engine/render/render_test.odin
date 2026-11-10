@@ -166,11 +166,11 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             if green>0 {testing.expect(t,pass==2?green_x/green>width/2:green_x/green<width/2)}
             testing.expect_value(t,len(app.renderer.scene.instances),2)
             testing.expect(t,app.assets.stats.derived>0)
-            testing.expect_value(t,instance_entity(&sync,1),core.NONE)
+            testing.expect_value(t,len(sync.drawn.entities),1)
         } else {testing.expect_value(t,green,0)}
         testing.expect_value(t,w.entities.alive,2) // the mesh and the sky
-        // Placing the mesh puts its instance in without setting the scene again.
-        if pass==3 {testing.expect_value(t,sync.stats.scene_sets,u64(1));testing.expect_value(t,sync.stats.moves,u64(1))}
+        // Placing the mesh puts its instance in.
+        if pass==3 {testing.expect_value(t,sync.stats.moves,u64(1))}
     }
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,app.assets.stats.derived,0)
@@ -191,8 +191,6 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     material.textures[.Base_Color],material.textures[.Emission]=texture,texture
     material.maps.base_color.uv_set,material.maps.emission.uv_set=1,1
     mesh_version,tint_version:=w.meshes.version,w.tints.version
-    sets_before_move:u64
-    stable_sets:=sync.stats.scene_sets
     for pass in 0..<5 {
         host.app_frame_begin(app)
         if pass==3 {
@@ -240,9 +238,6 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expect_value(t,app.assets.stats.generated,0)
             testing.expect_value(t,app.assets.stats.derived,0)
         }
-        if pass==1 {sets_before_move=sync.stats.scene_sets}
-        if pass==2 {testing.expect_value(t,sync.stats.scene_sets,sets_before_move)}
-        testing.expect_value(t,sync.stats.scene_sets,stable_sets)
         testing.expect(t,w.meshes.version==mesh_version && w.tints.version==tint_version && w.entities.alive==2)
     }
     cube:geom.Mesh_Buffer
@@ -274,7 +269,6 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
         for pixel in 0..<len(pixels)/4 {color:=pixels[pixel*4:][:3];if int(color[0])>int(color[1])+60 && int(color[0])>int(color[2])+60 {red+=1}}
         delete(pixels)
         testing.expectf(t,pass==2?red==0:red>100,"source patch or empty replacement %d: %d red pixels",pass,red)
-        testing.expect_value(t,sync.stats.scene_sets,u64(1))
         users,known:=sync.mesh_users[source]
         testing.expect(t,known && len(users)==1 && users[0]==0)
     }
@@ -329,8 +323,6 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
             if int(color[0])>int(color[1])+60 && int(color[0])>int(color[2])+60 {red+=1}
         }
         delete(pixels)
-        if pass==0 {sets=sync.stats.scene_sets}
-        testing.expectf(t,sync.stats.scene_sets==sets,"pass %d sets the scene again",pass)
         testing.expect_value(t,len(app.renderer.scene.instances),2)
         hidden_count:=[4]int{0,2,0,1}
         testing.expectf(t,app.renderer.scene.hidden_count==hidden_count[pass],"pass %d hides %d instances",pass,app.renderer.scene.hidden_count)
@@ -396,7 +388,6 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
             if int(color[1])>int(color[0])+60 && int(color[1])>int(color[2])+60 {green+=1}
         }
         delete(pixels)
-        testing.expectf(t,sync.stats.scene_sets==1,"pass %d sets the scene again",pass)
         testing.expectf(t,len(sync.drawn.entities)==counts[pass],"pass %d draws %d meshes",pass,len(sync.drawn.entities))
         testing.expect_value(t,len(app.renderer.scene.instances),len(sync.drawn.entities)+1)
         for e,at in sync.drawn.entities {

@@ -379,7 +379,6 @@ Scene_State :: struct {
 
 // The tables of the scene grow in the allocator of the renderer. False
 // without memory for the lists of a fixed size.
-@(private)
 scene_init :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	a := r.allocator
@@ -1527,7 +1526,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
     // An instance whose material programs move its vertices shows its own pose of its mesh.
     desc.mesh=displaced_mesh(r,desc)
     values:=given.values
-    s.ray_cuts_stale=true
     count:=int(index)+1
     if before:=len(s.instances);count>before {
         if resize(&s.instances,count)!=nil || resize(&s.instance_next,count)!=nil || resize(&s.instance_prev,count)!=nil || resize(&s.overlays,count)!=nil ||
@@ -1613,11 +1611,11 @@ instance_unlink :: proc(s:^Scene_State,index:u32) {
     if inst.meta.w&(INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_TRANSLUCENT)==0 {
         for layer in s.overlays[index].entries[:s.overlays[index].count] {if layer.enabled {s.overlay_count-=1}}
     }
-    for i:=len(s.translucent)-1;i>=0;i-=1 {if s.translucent[i].instance==index {unordered_remove(&s.translucent,i)}}
-    for i:=len(s.reflective)-1;i>=0;i-=1 {if s.reflective[i].instance==index {unordered_remove(&s.reflective,i)}}
 }
 
 // Replaces a descriptor range, optionally appending or truncating its suffix.
+// An instance given again as it is changes nothing and goes nowhere: whoever
+// gives the same ones in every frame keeps no copy to compare them with.
 // A set that skipped invalid meshes must be replaced with scene_set first.
 // False also without memory for the instances it appends: none is changed.
 scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bool=false) -> bool {
@@ -1631,6 +1629,11 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
     if end>old && !instances_reserve(s,end) {
         set_error(r,"scene of %d instances: out of memory",end)
         return false
+    }
+    // What the range held leaves the lists of glass and of reflection in one pass, however many it replaces.
+    if left:=u32(old if truncate else min(end,old));first<left {
+        for i:=len(s.translucent)-1;i>=0;i-=1 {if at:=s.translucent[i].instance;at>=first && at<left {unordered_remove(&s.translucent,i)}}
+        for i:=len(s.reflective)-1;i>=0;i-=1 {if at:=s.reflective[i].instance;at>=first && at<left {unordered_remove(&s.reflective,i)}}
     }
     written:=true
     for given,at in instances {
@@ -1647,7 +1650,6 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             before=inst
             layers=s.overlays[index]
             flags=inst.meta.w
-            instance_changed_near(s,&s.instances[index])
             if s.instance_keys[index]==(Instance_Key{desc.object_id,desc.copy_owner,desc.copy_variant}) {
                 for row in 0..<3 {for col in 0..<4 {previous[row,col]=s.instances[index].world[row][col]}}
                 given=instance_given(inst)
@@ -1656,7 +1658,13 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         } else {append(&s.desc_instance,i32(index))}
         // Only an instance past the old ones takes room, and it was reserved.
         if !instance_write(r,index,desc,previous,given) {pop(&s.desc_instance);written=false;break}
-        instance_changed_near(s,&s.instances[index])
+        if int(index)<old && before==s.instances[index] && layers==s.overlays[index] {continue}
+        s.ray_cuts_stale=true
+        // The light changes around one that comes or shows something else, where it was and where it is.
+        if int(index)>=old || !instance_lit_same(before,s.instances[index]) || layers!=s.overlays[index] {
+            if int(index)<old {instance_changed_near(s,&before)}
+            instance_changed_near(s,&s.instances[index])
+        }
         if int(index)<old {
             mesh:=s.instances[index].meta.x&INSTANCE_MESH_MASK
             spatial||=before.meta.x&INSTANCE_MESH_MASK!=mesh || before.world!=s.instances[index].world
@@ -1681,6 +1689,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             if mesh_displaced(s,s.instances[index].meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
             instance_unlink(s,u32(index))
         }
+        s.ray_cuts_stale=true
         base.truncate(&s.instances,end);base.truncate(&s.instance_next,end);base.truncate(&s.instance_prev,end);base.truncate(&s.overlays,end)
         base.truncate(&s.instance_keys,end);base.truncate(&s.tlas_items,end);base.truncate(&s.hw_instances,end);base.truncate(&s.desc_instance,end)
         touched_trim(s,end)
@@ -1753,6 +1762,7 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	s.bounds_max = {-1e30, -1e30, -1e30}
 	// The poses of the instances that do not come again go.
 	if len(s.displaced) > 0 {s.displaced_stale = true}
+	s.ray_cuts_stale = true
 	for given in instances {
         desc:=given
         desc.transform=origin_matrix(given.transform,r.origin-given.anchor)
@@ -1787,11 +1797,7 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	tlas_build(s)
 	s.instances_dirty = true
 	s.tlas_dirty = true
-	lit := scene_set_lights(r, lights, sun, environment)
-	// A world shown again (scene_world) has the light of this scene already.
-	if r.world_kept {s.changes = {}}
-	r.world_kept = false
-	return lit
+	return scene_set_lights(r, lights, sun, environment)
 }
 
 // Lighting runs in render units: a luminance in nits by the light scale of
