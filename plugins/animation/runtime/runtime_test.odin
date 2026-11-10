@@ -320,8 +320,8 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil))
     testing.expect_value(t,len(state.bindings),2)
     testing.expect_value(t,state.bindings[1].entity,bone)
-    core.get(&w.transforms,bone).position={9,0,0}
-    core.get(&w.transforms,bone).rotation=mm.quat_axis_angle({0,0,1},0.5)
+    core.edit(&w.transforms,bone).position={9,0,0}
+    core.edit(&w.transforms,bone).rotation=mm.quat_axis_angle({0,0,1},0.5)
     old_rest:=state.rest[1]
     old_pointer:=raw_data(state.bindings)
     succeeded:=false

@@ -113,7 +113,7 @@ interface_demo :: proc(
     holder,found:=core.sole(demos)
     if !found {return}
     events:=ui_events.ptr
-    demo:=core.get(demos,holder)
+    demo:=core.edit(demos,holder)
     hud,menu,inventory:=core.entity_named(names,INTERFACE_HUD),core.entity_named(names,INTERFACE_MENU),core.entity_named(names,INTERFACE_INVENTORY)
     dialogue:=core.entity_named(names,INTERFACE_DIALOGUE)
     dt:=f32(time.dt)
@@ -192,7 +192,7 @@ interface_demo :: proc(
     }
 
     // The HUD shows the style chosen.
-    if screen:=core.get(screens,hud);screen!=nil {base.text_set(screen.variant[:],styles[clamp(int(demo.style),0,len(styles)-1)])}
+    if screen:=core.edit(screens,hud);screen!=nil {base.text_set(screen.variant[:],styles[clamp(int(demo.style),0,len(styles)-1)])}
 
     // The texts of the rows, made again when a table loads again, the
     // language changes or the conversation moves.

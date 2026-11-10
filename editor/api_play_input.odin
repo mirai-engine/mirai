@@ -136,7 +136,7 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     if count>0 || (p.release_all && seats!=nil) {
         found:bool
         if seat,found=play_seat(s,call,w,p.slot);!found {return}
-        if value,_:=core.get(core.read(seats),seat);!input.seat_local(value) {
+        if value,_:=core.get(seats,seat);!input.seat_local(value) {
             api.call_failf(call,api.INVALID_PARAMS,"the seat of slot %d is of a player at another end, which takes the actions its client sends: give play.input the player of that client's run",p.slot)
             return
         }
@@ -157,7 +157,7 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     queued:=0
     if p.release_all {
         if requests!=nil {
-            source,_:=core.get(core.read(seats),seat)
+            source,_:=core.get(seats,seat)
             for hold in source.holds[:source.hold_count] {input.let_go(requests,seat,hold.action);queued+=1}
             for i in 0..<len(requests.queue.items) {
                 asked:=requests.queue.items[i]

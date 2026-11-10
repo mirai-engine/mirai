@@ -48,7 +48,7 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         for _ in 0..<5 {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
-                if case_index==3 {core.at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
+                if case_index==3 {core.edit_at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
                 valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,&events,app.assets,app.allocator,&problems)
                 valid &&=motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
             }

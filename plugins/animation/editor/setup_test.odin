@@ -253,13 +253,13 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     testing.expectf(t,result.code==0 && strings.contains(string(serial_bytes(a)),`"gestures":["Wave_3"]`),"%s %s",result.message,result.data)
 
     // With the skeleton alone it writes the assets and changes no entity.
-    before,_:=core.get(core.read(&f.world.animations),f.rig)
+    before,_:=core.get(&f.world.animations,f.rig)
     solo:=fmt.tprintf(`"skeleton":"%s","library":"%s","folder":"solo"`,authoring_test_id_text(base.Asset_Id{840,2}),authoring_test_id_text(library))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s}}`,solo))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
     testing.expectf(t,strings.has_prefix(text,`{"skeleton":`) && authoring_test_exists(a,"solo/figure.match") && authoring_test_exists(a,"solo/figure.action"),"%s",text)
-    after,_:=core.get(core.read(&f.world.animations),f.rig)
+    after,_:=core.get(&f.world.animations,f.rig)
     testing.expect(t,after==before && after.asset!=authoring_test_id(a,"solo/figure.match"))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"entity":"0000000000000011"}}`,solo))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Exclusive_Reference"))

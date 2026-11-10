@@ -397,19 +397,19 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     empty:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,empty && len(actions.states)==0 && len(events.items)==0)
-    core.get(&w.descriptions,first).actions={3,4};core.get(&w.descriptions,second).actions={3,5}
+    core.edit(&w.descriptions,first).actions={3,4};core.edit(&w.descriptions,second).actions={3,5}
     play(&requests,first,"attack")
-    observed:=actions.animation_version
+    observed:=actions.animations_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
-    testing.expect(t,!prepared && len(requests.plays.items)==1 && len(actions.states)==0 && actions.animation_version==observed)
+    testing.expect(t,!prepared && len(requests.plays.items)==1 && len(actions.states)==0 && actions.animations_seen==observed)
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil) && len(actions.states)==2 && action_state(&actions,first).slots[0].active)
     copied:Action_Runtime;core.value_copy(&copied,&actions,type_info_of(Action_Runtime));defer actions_runtime_free(&copied)
     first_state:=action_state(&copied,first);first_state.slots[0].time=9
     testing.expect(t,action_state(&actions,first).slots[0].time!=9)
-    core.get(&w.descriptions,first).actions={3,5}
-    core.get(&w.descriptions,plain).weight=.4
+    core.edit(&w.descriptions,first).actions={3,5}
+    core.edit(&w.descriptions,plain).weight=.4
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator

@@ -52,7 +52,7 @@ the_index_follows_writes_removals_destruction_and_undo :: proc(t:^testing.T) {
     a,b,c:=id_world_add(&w,7),id_world_add(&w,9),id_world_add(&w,13)
     test_world_settle(&w)
 
-    get(&w.ids,a).value=11
+    edit(&w.ids,a).value=11
     test_world_settle(&w)
     testing.expect_value(t,entity_of(&w.entities,7),NONE)
     testing.expect_value(t,entity_of(&w.entities,11),a)

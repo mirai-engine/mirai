@@ -348,7 +348,7 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     clear(&f.events.items)
     goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,-1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
     copy(f.state.local[:],f.state.rest[:])
-    core.get(&f.animations,f.rig)^=f.animation
+    core.edit(&f.animations,f.rig)^=f.animation
     if !actions_prepare(&f.actions,&f.requests,&f.action_sets,core.read(&f.animations),&f.playback,&f.events,f.app.assets,f.app.allocator,&f.problems) {return false}
     for value in core.take(&f.requests.values) {stack_parameter_set(f.state,value.name,value.value)}
     stack_asks(&f.actions,f.state,f.animation,content)

@@ -574,7 +574,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         for generation,index in apart_es.generation {
             x:=core.entity_make(index,generation)
             if index==0 || !core.alive(apart_es,x) {continue}
-            parent,_:=core.get(core.read(apart_parents),x)
+            parent,_:=core.get(apart_parents,x)
             of[index]=core.ancestor_with(core.read(apart_parents),core.read(inner),parent.entity)
         }
     }
@@ -586,7 +586,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         return e!=core.NONE && index<len(made)?made[index]:core.NONE
     }
     sleepers_join(w,e,&sleepers,made[:],held)
-    if r:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
+    if r:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
     // Its unbounded volumes rule in its box: they are found where they wait to join.
     if places,joined_places:=core.world_table_of(apart,volume.Volume),core.world_table_of(w,volume.Volume);places!=nil && joined_places!=nil {
         for row in 0..<core.raw_count(core.raw(places)) {
@@ -655,7 +655,7 @@ apart_locals :: proc(apart:core.World_Ref) -> []base.Entity_Id {
     for row in 0..<core.raw_count(core.raw(members)) {
         x:=core.raw(members).entities[row]
         if parents!=nil && references!=nil {
-            parent,placed:=core.get(core.read(parents),x)
+            parent,placed:=core.get(parents,x)
             if placed && core.ancestor_with(core.read(parents),core.read(references),parent.entity)!=core.NONE {continue}
         }
         append(&locals,(^Section_Member)(core.raw_value(core.raw(members),type_info_of(Section_Member),row)).local)

@@ -233,7 +233,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     for _ in 0..<40 {physics_test_step(&f)}
     pose:=physics_test_pose(&f,walker)
     testing.expectf(t,linalg.length(pose.position-[3]f32{PLANET_RADIUS,0,0})<0.02,"stands at %v",pose.position)
-    found,_:=core.get(core.read(&f.character_states),walker)
+    found,_:=core.get(&f.character_states,walker)
     testing.expect(t,found.standing)
     testing.expectf(t,linalg.length(mm.quat_rotate(pose.rotation,{0,1,0})-[3]f32{1,0,0})<1e-4,"its Transform turned %v",pose.rotation)
     up:=vertical(&f,&f.verticals,walker)
@@ -245,7 +245,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     for _ in 0..<30 {physics_test_step(&f)}
     pose=physics_test_pose(&f,walker)
     testing.expectf(t,linalg.length(pose.position-[3]f32{0,-PLANET_RADIUS,0})<0.02,"stands underneath at %v",pose.position)
-    found,_=core.get(core.read(&f.character_states),walker)
+    found,_=core.get(&f.character_states,walker)
     testing.expect(t,found.standing)
 
 }
@@ -263,6 +263,6 @@ a_character_says_its_vertical_speed_in_its_state :: proc(t:^testing.T) {
     core.add(&f.characters,faller,character_default())
     core.add(&f.moves,faller,Character_Move{value={launch={0,3,0}}})
     for _ in 0..<3 {physics_test_step(&f)}
-    found,_:=core.get(core.read(&f.character_states),faller)
+    found,_:=core.get(&f.character_states,faller)
     testing.expectf(t,found.velocity.y>2,"goes up at %v",found.velocity)
 }

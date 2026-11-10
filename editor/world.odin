@@ -100,7 +100,7 @@ entity_label :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
 entity_parent :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return core.NONE}
-    if parent,ok:=core.get(core.read(parents),e);ok {return parent.entity}
+    if parent,ok:=core.get(parents,e);ok {return parent.entity}
     return core.NONE
 }
 
@@ -123,7 +123,7 @@ entity_under :: proc(w:core.World_Ref,e,ancestor:core.Entity) -> bool {
 entity_local :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return mm.TRANSFORM_IDENTITY}
-    if t,ok:=core.get(core.read(transforms),e);ok {return core.to_math(t)}
+    if t,ok:=core.get(transforms,e);ok {return core.to_math(t)}
     return mm.TRANSFORM_IDENTITY
 }
 
@@ -226,7 +226,7 @@ name_free :: proc(w:core.World_Ref,name:string,allocator:=context.temp_allocator
 order_next :: proc(w:core.World_Ref,parent:core.Entity) -> i32 {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil || parent==core.NONE {return 0}
-    last,ok:=core.get(core.read(parents),core.last_child(entity_hierarchy(w),parent))
+    last,ok:=core.get(parents,core.last_child(entity_hierarchy(w),parent))
     return ok?max(last.order+1,0):0
 }
 
@@ -420,7 +420,7 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
     opened,edit_ready:=edit_open(s,"Rename")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    if row:=core.get(names,e);row!=nil {
+    if row:=core.edit(names,e);row!=nil {
         row^=core.name_make(text)
     } else {
         core.add(names,e,core.name_make(text))
@@ -445,7 +445,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if !edit_ready {return false}
     defer edit_close(s,opened)
     if transforms!=nil {
-        if row:=core.get(transforms,e);row!=nil {row^=core.from_math(local)}
+        if row:=core.edit(transforms,e);row!=nil {row^=core.from_math(local)}
     }
     if parent==core.NONE {core.remove(parents,e)} else {core.add(parents,e,core.Parent{parent,order_next(w,parent)})}
     return true
@@ -457,12 +457,12 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
     w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
-    current,placed:=core.get(core.read(parents),e)
+    current,placed:=core.get(parents,e)
     if !placed || current.order==order {return}
     opened,edit_ready:=edit_open(s,"Order")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    if row:=core.get(parents,e);row!=nil {row.order=order}
+    if row:=core.edit(parents,e);row!=nil {row.order=order}
 }
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
@@ -486,7 +486,7 @@ transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
     opened,edit_ready:=edit_open(s,"Transform")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    row:=w.data==s.edit_world?core.get(transforms,e):core.free(transforms,e)
+    row:=w.data==s.edit_world?core.edit(transforms,e):core.free(transforms,e)
     if row==nil {return false}
     row^=core.from_math(t)
     return true
@@ -582,7 +582,7 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
     written:=false
     for e in entities {
         if t.type==core.Transform && s.mode!=.Edit && core.owner(cast(^core.Table(core.Transform))table,e)!=0 {continue}
-        value:=core.raw_get(table,t.info,e)
+        value:=core.raw_edit(table,t.info,e)
         if value==nil {continue}
         mem.copy(rawptr(uintptr(value)+uintptr(offset)),raw_data(bytes),len(bytes))
         written=true

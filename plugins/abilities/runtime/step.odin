@@ -77,7 +77,7 @@ abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ab
         e:=core.entity_at(users,row)
         u:=users.values[row]
         if core.owned(w.remotes,e) {user_tick(&t,e,&u)} else {replica_tick(&t,e,&u)}
-        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.at(users,row)^=u}
+        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.edit_at(users,row)^=u}
     }
 }
 
@@ -87,18 +87,18 @@ request_apply :: proc(t:^Tick,r:Ability_Request) {
     switch r.kind {
     case .Use:
         // As if its input fired: it waits as its sheet says.
-        if u:=core.get(t.users,r.entity);u!=nil {
+        if u:=core.edit(t.users,r.entity);u!=nil {
             a:=ability_sheet(t.abilities,r.ability)
             buffer_add(u,r.ability,t.tick,a!=nil && a.input.wait==.Running)
         }
     case .Cancel:
-        u:=core.get(t.users,r.entity)
+        u:=core.edit(t.users,r.entity)
         if u==nil || u.ability=={} {return}
         ability_end(t,r.entity,u,ability_sheet(t.abilities,u.ability),time_of(t,u),.Canceled,nil)
     case .Effect:
         effect_apply(t,r.entity,r.source,r.effect)
     case .Kit:
-        if u:=core.get(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
+        if u:=core.edit(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
     }
 }
 
@@ -108,11 +108,11 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         core.report(t.w.problems,target,"abilities.effect","an effect asked for it %s",text)
         return
     }
-    u:=core.get(t.users,target)
+    u:=core.edit(t.users,target)
     if u!=nil && u.statuses&effect.blocked_by!=0 {return}
     amount:=effect.amount
     if effect.scale_by!=ATTRIBUTE_NONE && amount!=0 {
-        from,found:=core.get(core.read(t.users),source)
+        from,found:=core.get(t.users,source)
         scale,has:=ability_value(from,effect.scale_by)
         if !found || !has {core.report(t.w.problems,target,"abilities.effect","an effect scaled by an attribute its source does not have hit it: give the source that attribute, or clear scale_by")}
         amount*=scale

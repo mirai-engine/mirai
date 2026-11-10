@@ -20,7 +20,8 @@ Entities :: struct {
     off:[dynamic]bool,       // by index: it or something above it has Disabled
     turned:[dynamic]Entity,  // their off changed in this settle: the tables move their rows
     walk:[dynamic]bool,      // by index, while entities_activity runs: under a Disabled
-    activity:u64,            // the versions and layouts of Disabled and the Hierarchy that off follows
+    activity:Seen,           // the Disabled that off follows
+    activity_tree:u64,       // and the version of the Hierarchy
     alive:int,
     disabled:int,            // the entities off
     ids:Id_Index,            // the entities by their Id
@@ -76,7 +77,7 @@ entities_clear :: proc(es:^Entities) -> bool {
     clear(&es.doomed)
     clear(&es.off)
     clear(&es.turned)
-    es.activity=0
+    es.activity,es.activity_tree={},0
     es.alive=0
     es.disabled=0
     ids_clear(&es.ids)
@@ -124,10 +125,10 @@ entity_off :: #force_inline proc "contextless" (es:^Entities,e:Entity) -> bool {
 // the Hierarchy. False without memory: what it could not do waits for the
 // next settle.
 entities_activity :: proc(es:^Entities,disabled:Read(Disabled),hierarchy:Ref(Hierarchy)) -> bool {
-    seen:=version(disabled)+layout(disabled)+hierarchy.version
-    if seen==es.activity {return true}
+    seen:=es.activity
+    if !touched(disabled,&seen) && hierarchy.version==es.activity_tree {return true}
     if count(disabled)==0 && es.disabled==0 {
-        es.activity=seen
+        es.activity,es.activity_tree=seen,hierarchy.version
         return true
     }
     n:=len(es.generation)
@@ -153,7 +154,7 @@ entities_activity :: proc(es:^Entities,disabled:Read(Disabled),hierarchy:Ref(Hie
         es.off[i]=off
         es.disabled+=off?1:-1
     }
-    es.activity=seen
+    es.activity,es.activity_tree=seen,hierarchy.version
     return true
 }
 

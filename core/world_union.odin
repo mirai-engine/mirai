@@ -58,7 +58,7 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
                 if made[k]!=UNKNOWN {state=made[k];break}
                 if n<len(chain) {chain[n]=k;n+=1}
                 if parents==nil {break}
-                up,has:=get(read(parents),at)
+                up,has:=get(parents,at)
                 if !has || !alive(ses,up.entity) {break}
                 at=up.entity
             }
@@ -135,7 +135,7 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
     if under!=nil {
         order:i32=0
         for row in 0..<count(under) {
-            if up:=at(read(under),row);up.entity==parent {order=max(order,up.order+1)}
+            if up:=at(under,row);up.entity==parent {order=max(order,up.order+1)}
         }
         for e,i in made {
             if e==NONE || !union_root(made,ses,parents,entity_make(i,ses.generation[i])) {continue}
@@ -157,6 +157,6 @@ union_remap :: #force_inline proc "contextless" (made:[]Entity,ses:^Entities,e:E
 @(private="file")
 union_root :: proc(made:[]Entity,ses:^Entities,parents:^Table(Parent),e:Entity) -> bool {
     if parents==nil {return true}
-    up,has:=get(read(parents),e)
+    up,has:=get(parents,e)
     return !has || union_remap(made,ses,up.entity)==NONE
 }

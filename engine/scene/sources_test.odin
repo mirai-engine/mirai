@@ -39,10 +39,10 @@ sources_that_do_not_fit_are_a_problem_and_only_a_move_is_looked_at_again :: proc
     testing.expect_value(t,sources.count,SOURCES_MAX)
     testing.expect(t,core.problem_find(problems,core.NONE,"scene.sources")!=nil,"the sources past SOURCES_MAX are a problem")
     revision:=sources.revision
-    core.get(&w.worlds,first).position.x+=SOURCE_MOVE/2
+    core.edit(&w.worlds,first).position.x+=SOURCE_MOVE/2
     run(&sources,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect_value(t,sources.revision,revision)
-    core.get(&w.worlds,first).position.x+=SOURCE_MOVE
+    core.edit(&w.worlds,first).position.x+=SOURCE_MOVE
     run(&sources,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect_value(t,sources.revision,revision+1)
 }

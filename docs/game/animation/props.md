@@ -30,7 +30,7 @@ The target of each track says what it drives, by text:
 
 ```odin
 // animations:^core.Table(anim.Animation), requests:^anim.Animation_Requests
-if a:=core.get(animations,door);a!=nil {
+if a:=core.edit(animations,door);a!=nil {
     anim.animation_clip(a,"open",.2,loop=false)          // cross-fades from the clip it played
     a.speed=-1                                           // backwards
 }

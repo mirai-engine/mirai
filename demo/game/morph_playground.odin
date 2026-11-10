@@ -14,6 +14,6 @@ morph_playground_animate :: proc(items:core.Read(Morph_Playground),requests:^ani
         // The layers of its moods: how sleepy the dance is, and how much the rubber adds.
         anim.set(requests,entity,"Mood",.5+.5*math.sin(seconds*.65))
         anim.set(requests,entity,"Rubber",.25+.25*math.sin(seconds*.9))
-        if item.variant==2 {if value:=core.get(weights,entity);value!=nil {anim.morph_weight_set(value,"Squash",1.35*math.sin(seconds));anim.morph_weight_set(value,"Wobble",.8*math.cos(seconds*.7),.Additive)}}
+        if item.variant==2 {if value:=core.edit(weights,entity);value!=nil {anim.morph_weight_set(value,"Squash",1.35*math.sin(seconds));anim.morph_weight_set(value,"Wobble",.8*math.cos(seconds*.7),.Additive)}}
     }
 }

@@ -190,7 +190,7 @@ subject_skins_place :: proc(p:^Animation)->bool {
 @(private)
 animation_subject :: proc(scene:Scene,entity:core.Entity)->core.Entity {
     if scene.skins!=nil {
-        if skin,found:=core.get(core.read(scene.skins),entity);found && skin.rig!=core.NONE {return skin.rig}
+        if skin,found:=core.get(scene.skins,entity);found && skin.rig!=core.NONE {return skin.rig}
     }
     return entity
 }

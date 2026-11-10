@@ -14,7 +14,7 @@ import mm "mirai:std/math"
 // The next event of the sequence of a destructible, in the frame of its body.
 @(private)
 event_note :: proc(c:^Ctx,e:core.Entity,event:fr.Fracture_Event) {
-    st:=core.get(c.states,e)
+    st:=core.edit(c.states,e)
     if st==nil || !fr.destructible_valid(c.f,st.handle) {return}
     count:=min(fr.destructible_pieces(c.f,c.w,st.handle,c.cache.infos),len(c.cache.infos))
     frame:=sim.body_transform(c.w,fr.destructible_body(c.f,st.handle))
@@ -40,7 +40,7 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
     for asked in states {
         done,failed:bool
         check:u32
-        if st:=core.get(c.states,asked.entity);st!=nil && fr.destructible_valid(c.f,st.handle) {
+        if st:=core.edit(c.states,asked.entity);st!=nil && fr.destructible_valid(c.f,st.handle) {
             done,failed=state_apply(c,asked.entity,st,asked)
             if done {check=fr.destructible_check(c.f,st.handle)}
         }
@@ -48,7 +48,7 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
     }
     for asked in replays {
         if replay_stopped(c,asked.entity) {continue}
-        st:=core.get(c.states,asked.entity)
+        st:=core.edit(c.states,asked.entity)
         entry:=entry_find(c.cache,asked.entity)
         done:=false
         check:u32

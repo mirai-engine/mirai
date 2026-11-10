@@ -54,7 +54,7 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
         case .Action: anim.play(requests,command.entity,base.text_get(command.name[:]));continue
         case .Speed,.Value,.Warp: continue
         }
-        animation:=core.get(animations,command.entity);if animation==nil {continue}
+        animation:=core.edit(animations,command.entity);if animation==nil {continue}
         #partial switch command.kind {
         case .Automatic: if command.enabled {animation.playing=true}
         case .Playing: animation.playing=command.enabled
@@ -152,7 +152,7 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
 @(step="fixed",stage="react")
 gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
     for row in 0..<core.count(panels) {
-        current:=core.at(core.read(panels),row)
+        current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
         if !exists {continue}
         animation,_:=core.get(animations,current.station)
@@ -179,6 +179,6 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
         hint:="manual    E: back" if item.manual else "automatic    E: back"
         if item.kind==.Sequence {hint="playing    E: back" if animation.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
-        if next!=current {core.at(panels,row)^=next}
+        if next!=current {core.edit_at(panels,row)^=next}
     }
 }

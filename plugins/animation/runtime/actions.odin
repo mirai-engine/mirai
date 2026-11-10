@@ -255,7 +255,7 @@ Action_Playing :: struct {
 }
 Action_State :: struct {entity:core.Entity,plan,content:i32,slots:[STACK_SLOTS]Action_Playing,seen:u64,retry:bool}
 @(storage,free="actions_runtime_free")
-Action_Runtime :: struct {allocator:mem.Allocator,plans:[dynamic]Action_Plan,states:[dynamic]Action_State,rows:[dynamic]i32,frame,animation_version,animation_layout:u64,discovered:bool}
+Action_Runtime :: struct {allocator:mem.Allocator,plans:[dynamic]Action_Plan,states:[dynamic]Action_State,rows:[dynamic]i32,frame:u64,animations_seen:core.Seen}
 actions_runtime_free :: proc(runtime:^Action_Runtime) {allocator:=runtime.allocator if runtime.allocator.procedure!=nil else context.allocator;for &plan in runtime.plans {action_profile_free(&plan.profile,allocator)};delete(runtime.plans);delete(runtime.states);delete(runtime.rows);runtime^={}}
 @(private)
 action_state :: proc(runtime:^Action_Runtime,entity:core.Entity) -> ^Action_State {
@@ -368,19 +368,22 @@ actions_interrupt :: proc(runtime:^Action_Runtime,state:^Action_State,playback:^
 
 @(private)
 actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation),playback:^Playback,events:^Animation_Events,problems:^core.Problems) -> bool {
-    changed:=!runtime.discovered || runtime.animation_layout!=core.layout(animations) || runtime.animation_version!=core.version(animations)
-    layout:=!runtime.discovered || runtime.animation_layout!=core.layout(animations)
+    // Kept only when the entities found have their room: without it they are looked for again.
+    seen:=runtime.animations_seen
+    c:=core.changes(animations,&seen)
+    changed:=seen!=runtime.animations_seen
     added,rows:=0,len(runtime.rows)
-    if changed {for i in 0..<core.count(animations) {
-        if !layout && core.stamp(animations,i)<=runtime.animation_version || animations.table.values[i].actions=={} {continue}
+    counted:=c
+    for i in core.each_changed(animations,&counted) {
+        if animations.table.values[i].actions=={} {continue}
         index:=core.entity_index(core.entity_at(animations,i));rows=max(rows,index+1)
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.states) || core.entity_index(runtime.states[slot].entity)!=index {added+=1}
-    }}
+    }
     if !changed {return true}
     if !program_array_reserve(&runtime.states,len(runtime.states)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities that play actions, so no action plays");return false}
-    for i in 0..<core.count(animations) {
-        if !layout && core.stamp(animations,i)<=runtime.animation_version || animations.table.values[i].actions=={} {continue}
+    for i in core.each_changed(animations,&c) {
+        if animations.table.values[i].actions=={} {continue}
         entity:=core.entity_at(animations,i);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot>=0 && slot<len(runtime.states) && core.entity_index(runtime.states[slot].entity)==index {
             if runtime.states[slot].entity==entity {continue}
@@ -389,7 +392,7 @@ actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation)
         } else {slot=len(runtime.states);append(&runtime.states,Action_State{entity=entity,plan=-1})}
         runtime.rows[index]=i32(slot+1)
     }
-    runtime.animation_layout,runtime.animation_version=core.layout(animations),core.version(animations);runtime.discovered=true
+    runtime.animations_seen=seen
     return true
 }
 

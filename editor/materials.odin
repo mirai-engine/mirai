@@ -260,7 +260,7 @@ tint_store :: proc(s:^Session,e:core.Entity,emission:bool,value:[3]f32) -> bool 
     table:=core.world_table_of(w,erender.Tint)
     if table==nil || !entity_alive(w,e) {return false}
     next:=erender.TINT_DEFAULT
-    if row,ok:=core.get(core.read(table),e);ok {next=row}
+    if row,ok:=core.get(table,e);ok {next=row}
     if emission {next.emission=value} else {next.color.rgb=value}
     opened,edit_ready:=edit_open(s,"Color")
     if !edit_ready {return false}

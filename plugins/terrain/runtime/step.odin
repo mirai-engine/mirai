@@ -47,7 +47,7 @@ Collider_Room :: struct {
 @(private)
 chunk_entity_matches :: proc(c:^Chunk_Tables,e,owner:core.Entity,coord:[3]i32,depth:u8) -> bool {
     if !core.alive(c.commands.entities,e) || core.has(c.ids,e) {return false}
-    chunk,has_chunk:=core.get(core.read(c.chunks),e)
+    chunk,has_chunk:=core.get(c.chunks,e)
     parent,has_parent:=core.get(c.parents,e)
     return has_chunk && has_parent && core.has(c.locals,e) && chunk.owner==owner && chunk.coord==coord && chunk.depth==depth && parent.entity==owner
 }
@@ -117,9 +117,9 @@ starved_report :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:b
 resident_owner_remove :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,index:int) {
     owner:=&resident.owners[index]
     for e in owner.chunks {
-        chunk,known:=core.get(core.read(c.chunks),e)
+        chunk,known:=core.get(c.chunks,e)
         if !known || !chunk_entity_matches(c,e,owner.entity,chunk.coord,chunk.depth) {continue}
-        if collider,has:=core.get(core.read(c.colliders),e);has {room_give(resident,collider.kind)}
+        if collider,has:=core.get(c.colliders,e);has {room_give(resident,collider.kind)}
         core.destroy(c.commands.entities,e)
     }
     // Its pieces go with it.
@@ -416,7 +416,7 @@ owner_publish :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resident
     tint:=owner.tint
     if !seen || owner.full {
         tint=render.TINT_DEFAULT
-        if value,ok:=core.get(core.read(c.tints),owner.entity);ok {tint=value}
+        if value,ok:=core.get(c.tints,owner.entity);ok {tint=value}
     }
     // A program of its own reads its parameters from its material.
     override:=entry.source.layers_material=={}?resident_layers_override(resident,source,&entry.source):{}
@@ -453,7 +453,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     if !node.visible || !chunk.shown {
         if e==core.NONE {return}
         if chunk_entity_matches(c,e,owner.entity,coord,depth) {
-            if collider,has:=core.get(core.read(c.colliders),e);has {room_give(resident,collider.kind)}
+            if collider,has:=core.get(c.colliders,e);has {room_give(resident,collider.kind)}
             core.destroy(c.commands.entities,e)
         }
         owner.chunks[index]=core.NONE
@@ -469,7 +469,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
         return has && local==place
     }
     if chunk_entity_matches(c,e,owner.entity,coord,depth) && !placed(c,e,place) {
-        if collider,has:=core.get(core.read(c.colliders),e);has {room_give(resident,collider.kind)}
+        if collider,has:=core.get(c.colliders,e);has {room_give(resident,collider.kind)}
         core.destroy(c.commands.entities,e)
     }
     if !chunk_entity_matches(c,e,owner.entity,coord,depth) {
@@ -488,9 +488,9 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     }
     kind:=collider_kind(s.kind)
     wants:=owner.solid && chunk.built.collision && node.collide && chunk.mesh!={}
-    old,has_old:=core.get(core.read(c.chunks),e)
-    held,_:=core.get(core.read(c.meshes),e)
-    collider,has:=core.get(core.read(c.colliders),e)
+    old,has_old:=core.get(c.chunks,e)
+    held,_:=core.get(c.meshes,e)
+    collider,has:=core.get(c.colliders,e)
     joined:=depth==0 && chunk.built.join!=0
     if has_old && old.revision==chunk.revision && old.lod==chunk.built.lod && old.joined==joined && held.mesh==chunk.mesh && (has && collider.kind==kind)==wants && !appearance && !created {resident.stats.reused+=1;return}
     core.add(c.chunks,e,Terrain_Chunk{owner.entity,coord,chunk.revision,chunk.built.lod,depth,joined})
@@ -724,7 +724,7 @@ terrain_update :: proc(
         }
         if entry==nil {continue}
         if loaded {
-            for shared,index in terrains.values[:core.count(terrains)] {if shared.source==marker.source && shared.revision!=entry.source.revision {core.at(terrains,index).revision=entry.source.revision}}
+            for shared,index in terrains.values[:core.count(terrains)] {if shared.source==marker.source && shared.revision!=entry.source.revision {core.edit_at(terrains,index).revision=entry.source.revision}}
             continue
         }
         if entry.source.revision!=marker.revision {
@@ -733,7 +733,7 @@ terrain_update :: proc(
                 e:=terrains.entities[row]
                 for owner in resident.owners {if owner.entity==e && owner.source!=marker.source {rebound=true;break}}
             }
-            if rebound {core.at(terrains,row).revision=entry.source.revision}
+            if rebound {core.edit_at(terrains,row).revision=entry.source.revision}
         }
     }
     if !time.playing || frame.phase==.Fixed {
@@ -748,7 +748,7 @@ terrain_update :: proc(
             if !change.changed {continue}
             if time.playing {dig_push(digs,request.owner,entry,worlds)}
             entry.source.revision+=1
-            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.at(terrains,row).revision=entry.source.revision}}
+            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
         for request in core.take(&requests.layers) {
             entry:=request_source(data,core.read(terrains),request.owner,"a layer change",problems,app.assets) or_continue
@@ -756,7 +756,7 @@ terrain_update :: proc(
             layer_report(problems,request.owner,app.assets,entry,request.change,error)
             if !applied {continue}
             entry.source.revision+=1
-            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.at(terrains,row).revision=entry.source.revision}}
+            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
     }
     full:=terrain_chunks_prune(&c,terrains,resident)
@@ -767,7 +767,7 @@ terrain_update :: proc(
     }
     for i:=len(resident.owners)-1;i>=0;i-=1 {
         owner:=&resident.owners[i]
-        marker,known:=core.get(core.read(terrains),owner.entity)
+        marker,known:=core.get(terrains,owner.entity)
         entry:=data_find(data,marker.source)
         if known && (marker.source!=owner.source || entry!=nil && (owner.quad!=entry.quad || len(owner.chunks)!=quad_total(&entry.quad))) {resident_owner_remove(&c,resident,i)}
     }
