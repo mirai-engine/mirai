@@ -78,7 +78,7 @@ Scenes:
 - **`ocean`**: a water material program.
 - **`animation`**: the only animation scene, a hall that the player walks with Mirai, with a
   numbered station per feature: clips, events, root motion, a prop moved by a clip, layers,
-  additives, graphs, actions, motion matching, physical locomotion with foot IK, warping,
+  additives, actions, motion matching, physical locomotion with foot IK, warping,
   constraints, retargeting, rigs ([rigs](../../mirai-animation/references/animation-rigs.md)),
   procedural gait, morphs
   ([morphs](../../mirai-animation/references/animation-morphs.md)) and budget. Each plays in a

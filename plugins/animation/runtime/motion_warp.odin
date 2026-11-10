@@ -152,9 +152,9 @@ motion_profile_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:b
     view,read:=motion_profile_view(&file,&assets.types);if read!=.None {return {},read}
     profile.info=view.info
     ok:bool
-    profile.windows,ok=graph_clone(view.windows,allocator);if !ok {return {},.Out_Of_Memory}
-    profile.distances,ok=graph_clone(view.distances,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
-    profile.keys,ok=graph_clone(view.keys,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
+    profile.windows,ok=rows_clone(view.windows,allocator);if !ok {return {},.Out_Of_Memory}
+    profile.distances,ok=rows_clone(view.distances,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
+    profile.keys,ok=rows_clone(view.keys,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
     return profile,.None
 }
 
