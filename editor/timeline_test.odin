@@ -133,7 +133,7 @@ copy_range_names_the_time_and_what_plays_and_nothing_else :: proc(t:^testing.T) 
     others:=[?]struct{range:Ai_Range,path,name,text:string}{
         {{kind=.Asset,from=12,to=40,rate=30},"hero/moves.anim","jump","Range: frames 12 to 40 at 30 fps\nAsset: hero/moves.anim\nClip: jump"},
         {{kind=.Asset,from=0,to=9,rate=30},"fx/smoke.particle","","Range: frames 0 to 9 at 30 fps\nAsset: fx/smoke.particle"},
-        {{kind=.Cinematic,from=60,to=120},"levels/arena.scene","Intro","Range: ticks 60 to 120\nCinematic: Intro\nScene: levels/arena.scene"},
+        {{kind=.Clip,from=60,to=120},"levels/arena.scene","Intro","Range: ticks 60 to 120\nClip of: Intro\nScene: levels/arena.scene"},
     }
     for &c in others {
         base.text_set(c.range.path[:],c.path);base.text_set(c.range.name[:],c.name)
