@@ -3,7 +3,6 @@ package ragdoll_editor
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import "core:slice"
 import "core:strings"
 import aa "mirai:asset"
 import "mirai:core"
@@ -165,15 +164,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     stem:=editor.entity_name(w,rig)
     stem=fmt.tprintf("%s ragdoll",stem) if stem!="" else "Ragdoll"
     if !editor.api_edit_begin(s,call,"Ragdoll setup") {return}
-    if len(previous)>0 {
-        // The entities of their joints go first, as a tree under them would.
-        doomed:=make([dynamic]core.Entity,0,2*len(previous),call.allocator)
-        for row in 0..<core.count(joints) {
-            if parent,placed:=core.get(parents,core.entity_at(joints,row));placed && slice.contains(previous[:],parent.entity) {append(&doomed,core.entity_at(joints,row))}
-        }
-        append(&doomed,..previous[:])
-        editor.entities_delete(s,doomed[:])
-    }
+    if len(previous)>0 {editor.entities_delete(s,previous[:])}
     for body in previous {
         if editor.entity_alive(w,body) {
             failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})

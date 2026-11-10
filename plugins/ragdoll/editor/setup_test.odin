@@ -33,6 +33,7 @@ Setup_Test_World :: struct {
     joints:core.Table(phys.Joint),
     configs:core.Table(rag.Ragdoll),
     bones:core.Table(rag.Ragdoll_Bone),
+    hierarchy:core.Hierarchy, // a body goes with the entity of its joint
 }
 Setup_Test :: struct {
     root:string,
@@ -138,6 +139,7 @@ setup_test_destroy :: proc(f:^Setup_Test) {
 setup_test_call :: proc(f:^Setup_Test,params:string) -> (api.Error,string) {
     base.arena_reset(&f.server.scratch);serial.writer_reset(&f.out)
     error,_:=api.method_execute(&f.server,api.method_find(&f.server,"ragdoll.setup"),params,&f.out)
+    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
     return error,string(serial.writer_bytes(&f.out))
 }
 
