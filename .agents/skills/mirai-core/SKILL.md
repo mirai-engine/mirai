@@ -97,8 +97,8 @@ A game is a struct in memory and a list of functions that transform it
    functions from what they read, write, push and take; `after="a b"` or `before="c"` say only
    what the parameters do not ([order](references/generator.md#order)). Function names are unique
    across the whole world. What only a lone game or a server decides carries `server`.
-8. What waits keeps the tick it waits for: `core.deadline` and `core.due`
-   ([waiting](references/core.md#waiting)).
+8. What waits keeps the tick it waits for: `core.deadline` and `core.due`, or a request pushed
+   with `core.later` ([waiting](references/core.md#waiting)).
 9. `mirai generate` lists the generator errors; the generated code is read in
    `<project>/.mirai/gen/` and is never edited.
 
@@ -127,10 +127,10 @@ A game is a struct in memory and a list of functions that transform it
   it, and whoever writes a table or a storage before whoever reads it. `after` and `before` name
   functions of the engine or of the plugins a library depends on, only for what its parameters do
   not say; a cycle is a generator error that one name settles.
-- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`),
-  plain data in a component that a rollback and a save keep, the same seconds at any tick rate.
-  No delayed request, no countdown written every tick, no count of ticks in code, no coroutines
-  ([waiting](references/core.md#waiting)).
+- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`), or
+  is a request that carries it (`core.later`, `core.take_due`): plain data that a rollback keeps,
+  the same seconds at any tick rate. No countdown written every tick, no count of ticks in code,
+  no coroutines ([waiting](references/core.md#waiting)).
 - **A function touches only what it receives.** Its parameters say what it reads and writes:
   from them come the settle after it, the revisions of the storages a rollback copies again and
   the single writer of each datum ([parameters](references/generator.md#parameters)).

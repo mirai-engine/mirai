@@ -76,21 +76,17 @@ Door :: struct {
     reach:f32 `mirai:"min=0,unit=m,local"`,  // how near the player has to stand
     open:bool,
     lamp:core.Entity `mirai:"local"`,         // glows green while the door is open, red while it is closed
+    closed_y:f32 `mirai:"transient,local"`,   // where the door was when it started
 }
 
-@(component)
-Door_State :: struct {
-    closed_y:f32 `mirai:"transient,local"`, // where the door was when it started
-}
-
-// A thrown cube: a body that gets its velocity once it exists.
+// A thrown cube: a body that gets its velocity once it exists. Until then
+// its row is new (core.added): it is written when it is launched.
 @(component)
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
-    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is seen first
-    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at; 0 until it is seen first
+    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is launched
+    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at
     velocity:[3]f32 `mirai:"transient"`,
-    launched:bool `mirai:"transient"`,
 }
 
 CAPTION_CAPACITY :: 128
@@ -217,9 +213,10 @@ game_use :: proc(
         feet:=placed.position
         if inp.pressed(actions,e,.Use) {
             for at in 0..<core.count(doors) {
-                door:=core.edit_at(doors,at)
                 other:=core.entity_at(doors,at)
-                if !in_reach(worlds,feet,other,door.reach) {continue}
+                // A door that has not taken its place yet (game_doors) does not open.
+                if core.added(doors,at) || !in_reach(worlds,feet,other,core.at(doors,at).reach) {continue}
+                door:=core.edit_at(doors,at)
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
@@ -239,18 +236,14 @@ game_use :: proc(
 
 // Doors slide towards where their state, or a button pressed for them, says, at a constant speed.
 @(step="fixed")
-game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:^core.Table(Door_State),transforms:^core.Table(core.Transform),time:core.Time) {
+game_doors :: proc(doors:^core.Table(Door),buttons:core.Read(Floor_Button),transforms:^core.Table(core.Transform),time:core.Time) {
     for row in 0..<core.count(doors) {
         e:=core.entity_at(doors,row)
-        door:=core.at(doors,row)
         placed,has_place:=core.get(transforms,e)
         if !has_place {continue}
-        state,known:=core.get(states,e)
-        if !known {
-            core.add(states,e,Door_State{closed_y=placed.position.y})
-            continue
-        }
-        target:=state.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
+        if core.added(doors,row) {core.edit_at(doors,row).closed_y=placed.position.y}
+        door:=core.at(doors,row)
+        target:=door.closed_y+(door_opened(core.read(doors),buttons,e)?door.travel:0)
         if placed.position.y==target {continue}
         step:=door.speed*time.dt
         if local:=core.free(transforms,e);local!=nil {local.position.y+=clamp(target-local.position.y,-step,step)}
@@ -362,9 +355,9 @@ game_projectiles :: proc(
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {
     strike :: proc(projectiles:^core.Table(Projectile),damage:^destruct.Destruct_Requests,cube,struck:core.Entity,point:[3]f32) {
-        projectile,ok:=core.get(projectiles,cube)
-        if !ok || !projectile.launched {return}
-        destruct.damage(damage,struck,point,PROJECTILE_REACH,projectile.velocity*PROJECTILE_MASS)
+        row:=core.row_of(projectiles,cube)
+        if row<0 || core.added(projectiles,row) {return}
+        destruct.damage(damage,struck,point,PROJECTILE_REACH,core.at(projectiles,row).velocity*PROJECTILE_MASS)
     }
     for contact in events.contact_begin.items {
         strike(projectiles,damage,contact.a,contact.b,contact.point)
@@ -372,20 +365,20 @@ game_projectiles :: proc(
     }
     for row in 0..<core.count(projectiles) {
         e:=core.entity_at(projectiles,row)
-        projectile:=core.edit_at(projectiles,row)
-        if state,has:=core.get(body_states,e);has {
-            if projectile.launched {
-                projectile.velocity=state.linear
-            } else if local,placed:=core.get(transforms,e);placed {
-                projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
-                phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
-                projectile.launched=true
-            }
+        state,has:=core.get(body_states,e)
+        if core.added(projectiles,row) {
+            local,placed:=core.get(transforms,e)
+            if !has || !placed {continue}
+            projectile:=core.edit_at(projectiles,row)
+            projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
+            projectile.until=core.deadline(time,projectile.seconds_left)
+            phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
+            continue
         }
-        if projectile.until==0 {
-            projectile.until=max(core.deadline(time,projectile.seconds_left),1)
-        } else if core.due(time,projectile.until) {
+        if core.due(time,core.at(projectiles,row).until) {
             core.destroy(es,e)
+        } else if has {
+            core.edit_at(projectiles,row).velocity=state.linear
         }
     }
 }

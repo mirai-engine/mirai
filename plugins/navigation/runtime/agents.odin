@@ -172,7 +172,7 @@ Navigation_Agents :: struct {
     far_sections:u64,      // the sections the far simulation last looked at
     waiting:[dynamic]core.Entity, // from head on, in order of arrival
     head:int,
-    layouts:[2]u64,        // of the agents and the paths when the agents last got their Nav_Path
+    shapes:[2]core.Shape,  // of the agents and the paths when the agents last got their Nav_Path
     refs:[dynamic]ai.Nav_Ref,
     sorted:[dynamic]base.Sort_Key64, // the agents of the tick by the cell they are in
     scratch:[dynamic]base.Sort_Key64,
@@ -270,9 +270,7 @@ navigation_agents :: proc(
     obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
-    layouts:=[2]u64{core.layout(agents),core.layout(paths)}
-    if layouts!=a.layouts {
-        a.layouts=layouts
+    if core.reshaped(agents,&a.shapes[0]) | core.reshaped(paths,&a.shapes[1]) {
         for row in 0..<core.count(agents) {
             e:=core.entity_at(agents,row)
             if !core.has(paths,e) {core.add(paths,e,NAV_PATH_DEFAULT)}
