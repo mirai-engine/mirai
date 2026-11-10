@@ -519,26 +519,6 @@ blocked :: proc(query:core.World_Query,source:core.Entity,from,to:[3]f32,clearan
     return hit
 }
 
-// Point i of OCCLUSION_SAMPLES spread through a sphere of radius 1 by Halton
-// sequences (Steam Audio's Sampling::generateSphereVolumeSamples).
-@(private)
-sphere_volume_sample :: proc "contextless" (i:int) -> [3]f32 {
-    radical_inverse :: proc "contextless" (base,i:int) -> f32 {
-        inverse,reversed,scale,n:=1/f32(base),0,f32(1),i
-        for n>0 {
-            next:=n/base
-            reversed=reversed*base+(n-next*base)
-            scale*=inverse
-            n=next
-        }
-        return min(f32(reversed)*scale,1)
-    }
-    phi:=2*math.PI*radical_inverse(2,i)
-    theta:=math.acos(2*radical_inverse(3,i)-1)
-    r:=math.cbrt(radical_inverse(5,i))
-    return {r*math.sin(theta)*math.cos(phi),r*math.sin(theta)*math.sin(phi),r*math.cos(theta)}
-}
-
 // The part of a source out of the listener's sight, 0 to 1. A point source
 // is in sight or not; one with a radius is as hidden as the points of its
 // sphere the source reaches and the listener does not see (Steam Audio's
@@ -556,7 +536,20 @@ occlusion_amount :: proc(query:core.World_Query,source:core.Entity,from,listener
         bit:=u16(1)<<uint(i)
         state.rays_valid&~=bit
         state.rays_open&~=bit
-        point:=from+sphere_volume_sample(i)*radius
+        // Point i spread through the sphere by Halton sequences (Steam Audio's
+        // Sampling::generateSphereVolumeSamples).
+        radical_inverse :: proc "contextless" (base,i:int) -> f32 {
+            inverse,reversed,scale,n:=1/f32(base),0,f32(1),i
+            for n>0 {
+                next:=n/base
+                reversed=reversed*base+(n-next*base)
+                scale*=inverse
+                n=next
+            }
+            return min(f32(reversed)*scale,1)
+        }
+        phi,theta,r:=2*math.PI*radical_inverse(2,i),math.acos(2*radical_inverse(3,i)-1),math.cbrt(radical_inverse(5,i))
+        point:=from+[3]f32{r*math.sin(theta)*math.cos(phi),r*math.sin(theta)*math.sin(phi),r*math.cos(theta)}*radius
         if blocked(query,source,from,point,0) {continue}
         state.rays_valid|=bit
         if !blocked(query,source,point,listener,OCCLUSION_CLEARANCE) {state.rays_open|=bit}

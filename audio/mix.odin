@@ -60,9 +60,9 @@ Mix_Voice :: struct {
     binaural_live,binaural_direction_valid:bool,
     binaural_clock:u64, // the chunk its next block continues from
     binaural_direction:[3]f32, // that of its HRTF
-    // Blocks of the binaural tail still to add after the voice went silent,
-    // and whether it pauses rather than ends then.
-    tail_left:i32,tail_pause:bool,
+    // A binaural voice that went silent adds one more block, and then ends
+    // or, with tail_pause, pauses.
+    tail,tail_pause:bool,
     // The filter and the send, ramped over every chunk from where they were:
     // a coefficient of 1 lets everything through.
     filter:f32,filter_state:[2]f32,
@@ -143,15 +143,15 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     #partial switch command.kind {
     case .Voice_Stop:
         started:=m.clock>=v.start_frame
-        if v.tail_left>0 {v.tail_pause=false;return}
+        if v.tail {v.tail_pause=false;return}
         if v.phase==.Paused || !started {voice_end(m,command.index);return}
         if command.frames==0 {v.stopping=true;return}
         v.fade_target=0;v.fade_left=command.frames;v.fade_step=-v.fade/f32(command.frames)
         v.end_after_fade=true
     case .Voice_Pause:
-        if v.tail_left>0 {
-            // Resumed while its tail plays: it goes on from there.
-            if !command.flag && v.tail_pause {v.tail_left,v.tail_pause=0,false}
+        if v.tail {
+            // Resumed before its last block: it goes on from there.
+            if !command.flag && v.tail_pause {v.tail,v.tail_pause=false,false}
             return
         }
         if command.flag {
@@ -191,7 +191,12 @@ voice_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> (gains:[4]f32) {
     sides:[2]f32
     if v.spatial {
         if v.spatial_dirty || v.listener_serial!=m.listener_serial {
-            direct_update(m,v)
+            l:=m.listener
+            direction,distance:=listener_direction(l.position,l.rotation,v.position)
+            directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
+            v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance),v.occlusion,v.transmission)
+            v.direction=direction
+            v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
             v.spatial_dirty=false;v.listener_serial=m.listener_serial
         }
         if v.source.channels==2 {return {v.volume*0.5,0,v.volume*0.5,0}}
@@ -227,7 +232,7 @@ voice_mix :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
 voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
     if clock+u64(n)<=v.start_frame {return}
-    if v.tail_left>0 {
+    if v.tail {
         voice_tail(m,index,n,clock)
         return
     }
@@ -267,7 +272,7 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     ended:=!alive || v.stopping
     if (ended || v.pausing) && v.binaural_live && m.output_now==.Headphones && m.channels==2 {
         // The samples its last block fell over still rise in one more block.
-        v.tail_left=1
+        v.tail=true
         v.tail_pause=!ended
         v.stopping,v.pausing=false,false
         return
@@ -282,9 +287,7 @@ voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     silence:=m.binaural_input[:n]
     for &x in silence {x=0}
     binaural_add(m,v,index,silence,v.binaural_direction,clock)
-    v.tail_left-=1
-    if v.tail_left>0 {return}
-    v.tail_left=0
+    v.tail=false
     if !v.tail_pause {voice_end(m,index);return}
     v.tail_pause=false
     v.phase=.Paused

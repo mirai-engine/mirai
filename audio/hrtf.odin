@@ -12,8 +12,6 @@ import "core:math"
 // per direction an HRIR of f32.
 
 HRTF_DATA :: #load("hrtf/cipic_124.hrtf")
-HRTF_DIRECTIONS_MAX :: 1<<14
-HRTF_SAMPLES_MAX :: 1<<12
 
 Hrtf :: struct {
     count:int,   // measured directions
@@ -35,16 +33,10 @@ Hrtf :: struct {
 }
 
 @(private="file")
-hrtf_read_i32 :: proc "contextless" (data:[]u8,at:^int) -> (value:i32,ok:bool) {
-    if at^<0 || at^+4>len(data) {return 0,false}
-    value=transmute(i32)([4]u8{data[at^],data[at^+1],data[at^+2],data[at^+3]})
+hrtf_read :: proc(data:[]u8,at:^int) -> u32 {
+    value:=transmute(u32)([4]u8{data[at^],data[at^+1],data[at^+2],data[at^+3]})
     at^+=4
-    return value,true
-}
-@(private="file")
-hrtf_read_f32 :: proc "contextless" (data:[]u8,at:^int) -> (value:f32,ok:bool) {
-    bits:=hrtf_read_i32(data,at) or_return
-    return transmute(f32)bits,true
+    return value
 }
 
 // Interaural spherical coordinates (InterauralSphericalVector3) of a canonical
@@ -52,31 +44,24 @@ hrtf_read_f32 :: proc "contextless" (data:[]u8,at:^int) -> (value:f32,ok:bool) {
 // interaural axis from below through ahead (90) and above (180) to behind.
 interaural_angles :: proc "contextless" (direction:[3]f32) -> (azimuth,elevation:f32) {
     radius:=math.sqrt(direction.x*direction.x+direction.y*direction.y+direction.z*direction.z)
-    if !(radius>1e-6) {return 0,180}
     azimuth=math.asin(clamp(direction.x/radius,-1,1))
     if abs(azimuth-math.PI/2)<1e-5 || abs(azimuth+math.PI/2)<1e-5 {return azimuth,0}
     elevation=math.mod(math.PI+math.atan2(direction.z/radius,direction.y/radius),2*math.PI)
     return
 }
 
-// Reads the HRIRs of one sampling rate: Unsupported_Format when the data has none.
-hrtf_load :: proc(h:^Hrtf,data:[]u8,sample_rate:int,allocator:runtime.Allocator) -> Error {
-    at:=0
-    if len(data)<4 || string(data[:4])!="HRTF" {return .Invalid_Data}
-    at=4
-    version,_:=hrtf_read_i32(data,&at)
-    if version<2 || version>3 {return .Invalid_Data}
-    count_i32,ok:=hrtf_read_i32(data,&at)
-    if !ok || count_i32<=0 || count_i32>HRTF_DIRECTIONS_MAX {return .Invalid_Data}
-    count:=int(count_i32)
+// Reads the HRIRs of one sampling rate of HRTF_DATA: Unsupported_Format when
+// it has none.
+hrtf_load :: proc(h:^Hrtf,sample_rate:int,allocator:runtime.Allocator) -> Error {
+    data:=HRTF_DATA
+    at:=8 // past 'HRTF' and the version
+    count:=int(hrtf_read(data,&at))
     h.count=count
     azimuths:=make([]int,count,context.temp_allocator)
     elevations:=make([]int,count,context.temp_allocator)
     for i in 0..<count {
-        elevation_deg,_:=hrtf_read_f32(data,&at)
-        azimuth_deg,read:=hrtf_read_f32(data,&at)
-        if !read || !finite(elevation_deg) || !finite(azimuth_deg) {return .Invalid_Data}
-        e,a:=elevation_deg*math.RAD_PER_DEG,azimuth_deg*math.RAD_PER_DEG
+        e:=transmute(f32)hrtf_read(data,&at)*math.RAD_PER_DEG
+        a:=transmute(f32)hrtf_read(data,&at)*math.RAD_PER_DEG
         canonical:=[3]f32{math.cos(e)*-math.sin(a),math.sin(e),math.cos(e)*-math.cos(a)}
         ia,ie:=interaural_angles(canonical)
         azimuths[i]=int(math.round(ia*math.DEG_PER_RAD))
@@ -94,36 +79,29 @@ hrtf_load :: proc(h:^Hrtf,data:[]u8,sample_rate:int,allocator:runtime.Allocator)
     for i in 0..<count {
         if i==0 || unique[i]!=unique[i-1] {unique[rings]=unique[i];rings+=1}
     }
-    if count%rings!=0 {return .Invalid_Data}
     h.rings=count/rings
     failed:runtime.Allocator_Error
     if h.azimuths,failed=make([]f32,rings,allocator);failed!=nil {return .Out_Of_Memory}
     if h.elevations,failed=make([]f32,count,allocator);failed!=nil {return .Out_Of_Memory}
     for i in 0..<rings {h.azimuths[i]=f32(unique[i])}
-    for i in 0..<count {
-        h.elevations[i]=f32(elevations[i])
-        if i%h.rings>0 && h.elevations[i]<h.elevations[i-1] {return .Invalid_Data}
-    }
+    for i in 0..<count {h.elevations[i]=f32(elevations[i])}
     finest:=f32(360)
     for i in 1..<rings {finest=min(finest,h.azimuths[i]-h.azimuths[i-1])}
     for i in 0..<count {
         if i%h.rings>0 && h.elevations[i]>h.elevations[i-1] {finest=min(finest,h.elevations[i]-h.elevations[i-1])}
     }
     h.reblend_cos=math.cos(finest*0.25*math.RAD_PER_DEG)
-    rates,read_rates:=hrtf_read_i32(data,&at)
-    if !read_rates || rates<=0 || rates>16 {return .Invalid_Data}
     skip,found:=0,false
+    rates:=int(hrtf_read(data,&at))
     for _ in 0..<rates {
-        rate,_:=hrtf_read_i32(data,&at)
-        samples,read:=hrtf_read_i32(data,&at)
-        if !read || samples<=0 || samples>HRTF_SAMPLES_MAX {return .Invalid_Data}
+        rate:=int(hrtf_read(data,&at))
+        samples:=int(hrtf_read(data,&at))
         if found {continue}
-        if int(rate)==sample_rate {h.samples=int(samples);found=true;continue}
-        skip+=2*count*int(samples)*4
+        if rate==sample_rate {h.samples,found=samples,true;continue}
+        skip+=2*count*samples*4
     }
     if !found {return .Unsupported_Format}
     at+=skip
-    if at+2*count*h.samples*4>len(data) {return .Invalid_Data}
     fft_init(&h.interp,h.samples,allocator) or_return
     bins:=h.interp.n/2+1
     if h.magnitude,failed=make([]f32,2*count*bins,allocator);failed!=nil {return .Out_Of_Memory}
@@ -135,10 +113,7 @@ hrtf_load :: proc(h:^Hrtf,data:[]u8,sample_rate:int,allocator:runtime.Allocator)
     signal:=make([]f32,h.interp.n,context.temp_allocator)
     spectrum:=make([]f32,2*bins,context.temp_allocator)
     for row in 0..<2*count {
-        for k in 0..<h.samples {
-            value,_:=hrtf_read_f32(data,&at)
-            signal[k]=value if finite(value) else 0
-        }
+        for k in 0..<h.samples {signal[k]=transmute(f32)hrtf_read(data,&at)}
         fft_forward(&h.interp,signal,spectrum)
         magnitude:=h.magnitude[row*bins:][:bins]
         phase:=h.phase[row*bins:][:bins]
@@ -225,9 +200,6 @@ hrtf_weights :: proc "contextless" (h:^Hrtf,direction:[3]f32) -> (indices:[4]int
     w_low_max,w_high_max:=hrtf_linear_weights(theta_for_max,ring_max[low_for_max],ring_max[high_for_max],low_for_max,high_for_max)
     weights={weight_phi_min*w_low_min,weight_phi_min*w_high_min,weight_phi_max*w_low_max,weight_phi_max*w_high_max}
     indices={min_index*h.rings+low_for_min,min_index*h.rings+high_for_min,max_index*h.rings+low_for_max,max_index*h.rings+high_for_max}
-    for &w in weights {
-        if !finite(w) {w=0}
-    }
     return
 }
 

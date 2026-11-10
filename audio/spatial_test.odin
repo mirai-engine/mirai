@@ -78,15 +78,6 @@ listener_orientation_decides_where_a_source_comes_from :: proc(t:^testing.T) {
     // A rotation that is not of unit length is taken as its direction, and zero as none.
     d,_=listener_direction({},left*3,{0,0,-5});near(t,d,{1,0,0})
     d,_=listener_direction({},quaternion128(0),{0,0,-5});near(t,d,{0,0,-1})
-
-    // Speakers: the side once in the horizontal plane; ahead, behind and above are in the middle.
-    test_near(t,speaker_pan({1,0,0}),1)
-    test_near(t,speaker_pan({-1,0,0}),-1)
-    test_near(t,speaker_pan({0,0,-1}),0)
-    test_near(t,speaker_pan({0,0,1}),0)
-    test_near(t,speaker_pan({0,1,0}),0)
-    test_near(t,speaker_pan({0.6,0.8,0}),1)
-    test_near(t,speaker_pan({1,0,-1}*math.SQRT_TWO/2),math.SQRT_TWO/2)
 }
 
 @(test)
@@ -141,7 +132,7 @@ fft_matches_the_discrete_fourier_transform_and_inverts :: proc(t:^testing.T) {
 hrtf_covers_every_direction_with_weights_that_add_up_to_one :: proc(t:^testing.T) {
     for rate in ([?]int{24000,44100,48000}) {
         h:Hrtf
-        testing.expect_value(t,hrtf_load(&h,HRTF_DATA,rate,context.allocator),Error.None)
+        testing.expect_value(t,hrtf_load(&h,rate,context.allocator),Error.None)
         defer hrtf_destroy(&h,context.allocator)
         testing.expect(t,h.count==1250 && h.samples>0 && h.rings*len(h.azimuths)==h.count)
         for i in 0..<400 {
@@ -160,14 +151,8 @@ hrtf_covers_every_direction_with_weights_that_add_up_to_one :: proc(t:^testing.T
         }
     }
     h:Hrtf
-    testing.expect_value(t,hrtf_load(&h,HRTF_DATA,22050,context.allocator),Error.Unsupported_Format)
+    testing.expect_value(t,hrtf_load(&h,22050,context.allocator),Error.Unsupported_Format)
     hrtf_destroy(&h,context.allocator)
-    // Damaged data is refused, not read past its end.
-    data:=HRTF_DATA
-    for cut in ([?]int{0,3,8,13,4000,len(data)/2}) {
-        testing.expect(t,hrtf_load(&h,data[:cut],48000,context.allocator)==.Invalid_Data)
-        hrtf_destroy(&h,context.allocator)
-    }
     _,error:=mixer_create({sample_rate=22050})
     testing.expect_value(t,error,Error.Invalid_Desc)
 }
@@ -199,9 +184,6 @@ distance_and_occlusion_dull_a_source_and_never_raise_it :: proc(t:^testing.T) {
         for i in 0..<BANDS {testing.expect(t,g[i]<=previous[i]+1e-6,"more hidden is never louder")}
         previous=g
     }
-    // A move of less than a tenth of a decibel keeps the filters; more designs new ones.
-    testing.expect(t,!eq_moved({1,0.5,0.25},{1,0.504,0.2501}) && eq_moved({1,0.5,0.25},{1,0.5,0.2}))
-    testing.expect(t,eq_moved({1,1,1},{1,1,math.nan_f32()}))
     hidden:=band_gains(2,1)
     testing.expect(t,hidden[0]>0.05 && hidden[2]<hidden[0]*0.5,"a hidden source is muffled, not silent")
     // The EQ never goes below its floor; all is finite at absurd distances.

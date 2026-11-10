@@ -71,15 +71,6 @@ listener_direction :: proc "contextless" (listener_position:[3]f32,listener_rota
     return mm.quat_rotate(conj(quat_unit(listener_rotation)),offset/distance),distance
 }
 
-// The pan of a direction on two speakers (PanningEffect::stereoPanningWeight):
-// its side once brought to the horizontal plane, so ahead and behind both sit
-// in the middle.
-speaker_pan :: proc "contextless" (direction:[3]f32) -> f32 {
-    length:=math.sqrt(direction.x*direction.x+direction.z*direction.z)
-    if !(length>1e-6) {return 0}
-    return clamp(direction.x/length,-1,1)
-}
-
 // Factor on the pitch of a source heard by a listener, both moving. factor
 // scales the effect: 0 turns it off, 1 is the physical one.
 doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_position,source_velocity:[3]f32,factor,speed_of_sound:f32) -> f32 {
@@ -92,20 +83,7 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
     limit:=speed_of_sound/factor*0.99
     listener_speed:=clamp(listener_velocity.x*direction.x+listener_velocity.y*direction.y+listener_velocity.z*direction.z,-limit,limit)
     source_speed:=clamp(source_velocity.x*direction.x+source_velocity.y*direction.y+source_velocity.z*direction.z,-limit,limit)
-    pitch:=clamp((speed_of_sound-factor*listener_speed)/(speed_of_sound-factor*source_speed),0.25,4)
-    return pitch if finite(pitch) else 1
-}
-
-// The gain, EQ, direction and pitch of a spatial voice for the listener.
-@(private)
-direct_update :: proc "contextless" (m:^Mixer,v:^Mix_Voice) {
-    l:=m.listener
-    direction,distance:=listener_direction(l.position,l.rotation,v.position)
-    attenuation:=attenuation_gain(v.attenuation,distance)
-    directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
-    v.direct_gain,v.eq_target=direct_gain_eq(attenuation,directivity,air_absorption(distance),v.occlusion,v.transmission)
-    v.direction=direction
-    v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
+    return clamp((speed_of_sound-factor*listener_speed)/(speed_of_sound-factor*source_speed),0.25,4)
 }
 
 // Turns the mono signal a spatial voice left in the left channel of frames
@@ -128,7 +106,10 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,f
         v.direct_ready=true
     }
     current:=int(v.eq_current)
-    if eq_moved(v.eq_gains,v.eq_target) {
+    // A band that moved less than EQ_GAIN_STEP of its gain keeps the filters it has.
+    moved:=false
+    for i in 0..<BANDS {moved||=!(abs(v.eq_target[i]-v.eq_gains[i])<=EQ_GAIN_STEP*v.eq_gains[i])}
+    if moved {
         // EQEffect: the cascade of the old gains and that of the new ones, which
         // starts from its state, crossfade over the chunk.
         previous:=current
@@ -155,7 +136,11 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,f
         for i in 0..<count {out[(from+i)*2],out[(from+i)*2+1]=mono[i],mono[i]}
         return
     }
-    weights:=pan_gains(speaker_pan(v.direction) if m.channels==2 else 0)
+    // PanningEffect::stereoPanningWeight: the side once brought to the
+    // horizontal plane, so ahead and behind both sit in the middle.
+    pan:=f32(0)
+    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.channels==2 && horizontal>1e-6 {pan=v.direction.x/horizontal}
+    weights:=pan_gains(pan)
     if !v.pan_valid {v.pan_now,v.pan_valid=weights,true}
     dw:=(weights-v.pan_now)/f32(count)
     for i in 0..<count {

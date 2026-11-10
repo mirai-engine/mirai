@@ -259,12 +259,7 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     m.listener.rotation=1
     if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
     if m.spatial_old,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
-    switch hrtf_load(&m.hrtf,HRTF_DATA,m.sample_rate,allocator) {
-    case .None:
-    case .Out_Of_Memory:return .Out_Of_Memory
-    case .Unsupported_Format:return .Invalid_Desc
-    case .Invalid_Desc,.Capacity_Exhausted,.Invalid_Data:return .Invalid_Data
-    }
+    if error:=hrtf_load(&m.hrtf,m.sample_rate,allocator);error!=.None {return .Invalid_Desc if error==.Unsupported_Format else error}
     fft_init(&m.conv,BINAURAL_WINDOW+m.hrtf.samples-1,allocator) or_return
     bins:=m.conv.n/2+1
     m.binaural_ring=next_pow2(m.conv.n+BINAURAL_OVERLAP)

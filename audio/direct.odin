@@ -24,17 +24,7 @@ Directivity :: struct {
 
 @(private) AIR_ABSORPTION :: [BANDS]f32{0.0002,0.0017,0.0182} // per meter
 @(private) EQ_GAIN_MIN :: f32(0.0625)
-// A band that moved less than this part of its gain (0.1 dB, below what an ear
-// tells apart) keeps the filters it has.
-@(private) EQ_GAIN_STEP :: f32(0.0115)
-
-@(private)
-eq_moved :: proc "contextless" (from,to:[BANDS]f32) -> bool {
-    for i in 0..<BANDS {
-        if !(abs(to[i]-from[i])<=EQ_GAIN_STEP*from[i]) {return true}
-    }
-    return false
-}
+@(private) EQ_GAIN_STEP :: f32(0.0115) // 0.1 dB: below what an ear tells apart
 @(private) BAND_EDGES :: [2]f32{800,8000}
 
 // The part of each band the air lets through over distance meters.
@@ -73,7 +63,6 @@ direct_gain_eq :: proc "contextless" (attenuation,directivity:f32,air:[BANDS]f32
     if !(peak>=1.17549435e-38) {return 0,{1,1,1}}
     for &g in eq {g=max(g/peak,EQ_GAIN_MIN)}
     gain*=peak
-    if !finite(gain) {gain=0}
     return
 }
 
