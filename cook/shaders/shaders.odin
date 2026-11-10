@@ -297,13 +297,8 @@ variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
 @(private)
 software_rays :: proc(text:string,variant:Variant) -> bool {
     if variant.name!="" {return false}
-    rest:=text
-    for line in strings.split_lines_iterator(&rest) {
-        if !strings.has_prefix(line,"//!") {continue}
-        words:=strings.fields(line[3:],context.temp_allocator)
-        if len(words)>=2 && (words[0]=="variant" && words[1]=="hw" || words[0]=="software" && words[1]=="rays") {return true}
-    }
-    return false
+    for other in variants(text,context.temp_allocator) {if other.name=="hw" {return true}}
+    return strings.contains(text,"//! software rays")
 }
 
 // A boolean a pipeline of the stage chooses (rhi.Shader_Constants), false

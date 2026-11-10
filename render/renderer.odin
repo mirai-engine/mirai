@@ -705,12 +705,8 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 		r.hardware_rt_note = string(r.note_buffer[:copy(r.note_buffer[:], note)])
 	}
 	when !SOFTWARE_TRACER {
-		if !info.features.ray_query {
-			set_error(r, "the GPU %s does not trace rays by hardware (MTLDevice.supportsRaytracing), and on Metal Mirai traces them by hardware alone: it needs an Apple GPU that does", info.name)
-			return false
-		}
 		if !r.hardware_rt_verified {
-			set_error(r, "the self-test of the rays traced by hardware failed on %s (%s), and on Metal Mirai traces them by hardware alone: a newer macOS may fix it", info.name, r.hardware_rt_note)
+			set_error(r, "Metal traces rays by hardware alone, and the GPU %s %s", info.name, fmt.tprintf("failed their self-test (%s): a newer macOS may pass it", r.hardware_rt_note) if info.features.ray_query else "does not trace them (MTLDevice.supportsRaytracing): it needs an Apple GPU that does")
 			return false
 		}
 	}
@@ -1176,24 +1172,16 @@ tracer_wanted :: proc(r: ^Renderer, settings: Settings) -> Pipeline_Rays {
 // r.error, when the software ones are not made.
 @(private)
 tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardware: bool, ok: bool) {
-	when !SOFTWARE_TRACER {
-		if settings.trace_mode == .Software {
-			set_error(r, "rays are traced by software only on Vulkan: on Metal Settings.trace_mode is Auto or Hardware")
-			return false, false
-		}
-		if retry && tracer_missing(r, .Hardware) != "" {create_pipelines(r, {.Hardware})}
-		if missing := tracer_missing(r, .Hardware); missing != "" {
-			set_error(r, "the pipeline %s of rays traced by hardware was not made (%s), and on Metal Mirai traces rays by hardware alone: a newer macOS may make it", missing, rhi.device_error(r.device))
-			return false, false
-		}
-		r.hardware_rt_note = ""
-		return true, true
-	}
 	if tracer_wanted(r, settings) == .Hardware {
 		if retry && tracer_missing(r, .Hardware) != "" {create_pipelines(r, {.Hardware})}
 		missing := tracer_missing(r, .Hardware)
 		if missing == "" {r.hardware_rt_note = ""; return true, true}
 		r.hardware_rt_note = fmt.bprintf(r.note_buffer[:], "the pipeline %s of rays traced by hardware was not made (%s): rays are traced by software. A newer GPU driver may make it", missing, rhi.device_error(r.device))
+	}
+	when !SOFTWARE_TRACER {
+		if settings.trace_mode == .Software {set_error(r, "rays are traced by software only on Vulkan: on Metal Settings.trace_mode is Auto or Hardware")}
+		else {set_error(r, "Metal traces rays by hardware alone, and the pipeline %s of them was not made (%s): a newer macOS may make it", tracer_missing(r, .Hardware), rhi.device_error(r.device))}
+		return false, false
 	}
 	if tracer_missing(r, .Software) == "" {return false, true}
 	if !create_pipelines(r, {.Software}) || tracer_missing(r, .Software) != "" {

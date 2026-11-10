@@ -361,13 +361,6 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 	if .Geometry not_in seen || .Composite not_in seen || .Output not_in seen {
 		return fail(buffer, "render pipeline: it has no %v stage; every pipeline draws its view with Geometry, lights it in Composite and finishes it in Output", .Geometry not_in seen ? Render_Stage.Geometry : .Composite not_in seen ? Render_Stage.Composite : Render_Stage.Output)
 	}
-	for &pass in plan.passes[:len(desc.passes)] {
-		for use in pass.uses[:pass.use_count] {
-			if pass.stage == .Custom && use.resource == .Gi && use.access == .Write && .Indirect in seen {
-				return fail(buffer, "render pipeline: custom pass %s writes Gi and the pipeline has the Indirect stage, which writes it too; leave the Indirect stage out to give Gi", plan_pass_name(&pass))
-			}
-		}
-	}
 	if desc.jitter == .Resolve && .Resolve not_in seen {
 		writes_taa := false
 		for &pass in plan.passes[:len(desc.passes)] {
@@ -424,6 +417,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			plan.generates ||= use.resource == .Generated && use.access == .Write
 			plan.gi_given ||= pass.stage == .Custom && use.resource == .Gi && use.access == .Write
 		}
+		if plan.gi_given && .Indirect in seen {return fail(buffer, "render pipeline: custom pass %s writes Gi and the pipeline has the Indirect stage, which writes it too; leave the Indirect stage out to give Gi", plan_pass_name(&pass))}
 		for use in pass.uses[:pass.use_count] {
 			if use.resource < .Custom0 {continue}
 			index := custom_index(use.resource)
