@@ -321,6 +321,10 @@ head_parse :: proc(s:^Server,conn:^Conn,head:string) -> (status:int,message:stri
             if !client_name_valid(value) {return 400,"invalid X-Mirai-Client: up to 31 letters, digits, '.', '_' or '-'"}
             if previous:=base.text_get(conn.client_name[:]);previous!="" && previous!=value {return 400,"conflicting X-Mirai-Client"}
             base.text_set(conn.client_name[:],value)
+        case strings.equal_fold(name,"x-mirai-measure"):
+            if len(value)==0 || len(value)>=len(conn.measure) {return 400,"invalid X-Mirai-Measure: the pid of the measurement"}
+            for byte in value {if byte<'0' || byte>'9' {return 400,"invalid X-Mirai-Measure: the pid of the measurement"}}
+            base.text_set(conn.measure[:],value)
         case strings.equal_fold(name,"x-mirai-plugins"):
             if len(value)==0 || len(value)>=len(conn.plugins) {return 400,"invalid X-Mirai-Plugins: names of plugins separated by commas, or *"}
             if previous:=base.text_get(conn.plugins[:]);previous!="" && previous!=value {return 400,"conflicting X-Mirai-Plugins"}
@@ -351,7 +355,7 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
     } else {
         body:=string(conn.buffer[conn.head:][:conn.length])
         s.running={conn=index}
-        has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]))
+        has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]),base.text_get(conn.measure[:]))
         running_end(s)
         if !has_body {status=202}
     }

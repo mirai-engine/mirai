@@ -125,9 +125,9 @@ request_read :: proc(s:^Server,r:^serial.Text_Reader) -> (req:Request) {
 // Answers the message in body into s.out. False when nothing is to be sent:
 // the body held only notifications.
 // plugins: those whose tools tools/list adds to the ones of the editor, as X-Mirai-Plugins names them.
-process :: proc(s:^Server,body:string,route:Route,client_tag:string="",plugins:string="",client_name:string="") -> bool {
-    s.client_tag,s.client_plugins,s.client_name=client_tag,plugins,client_name
-    defer {s.client_tag,s.client_plugins,s.client_name="","",""}
+process :: proc(s:^Server,body:string,route:Route,client_tag:string="",plugins:string="",client_name:string="",measure:string="") -> bool {
+    s.client_tag,s.client_plugins,s.client_name,s.client_measure=client_tag,plugins,client_name,measure
+    defer {s.client_tag,s.client_plugins,s.client_name,s.client_measure="","","",""}
     context.temp_allocator=base.arena_allocator(&s.scratch)
     base.arena_reset(&s.scratch)
     base.arena_reset(&s.text)
@@ -347,7 +347,7 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     params_bytes,shaped,read_error,read:=params_read(s,method,params)
     if !read {return read_error,false}
     clamped:=s.clamped
-    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,allocator=allocator}
+    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,measure=s.client_measure,allocator=allocator}
     if params_bytes!=nil {call.params=raw_data(params_bytes)}
     typed:=method.result!=serial.TYPE_NONE && !method.writes_result
     if typed {

@@ -143,7 +143,11 @@ lock_path :: proc(root,name:string,allocator:=context.allocator) -> string {
 // compilation runs. Compilations and test runs do not wait for it: what they
 // start while it runs runs at low priority (measurement_running). A process
 // whose MEASURE_ENV is set is part of a measurement (its children): it
-// neither takes MEASURE_LOCK nor waits for it.
+// neither takes MEASURE_LOCK nor waits for it. MEASURE_ENV holds the pid of
+// the holder, which is also what the holder wrote first in the lock
+// (measure_holder): a process that is no child of the measurement, like the
+// editor of a session a command of it calls, is told that pid and runs as
+// part of it while the lock says the same (measurement_holds).
 BUILD_LOCK :: "build.lock"
 SHADERS_LOCK :: "shaders.lock"
 BUILD_NOTE :: "build.last"
@@ -152,8 +156,27 @@ MEASURE_ENV :: "MIRAI_MEASURE"
 
 // Whether this process is part of a measurement that holds MEASURE_LOCK.
 measuring :: proc() -> bool {
-    value,found:=os.lookup_env(MEASURE_ENV,context.temp_allocator)
-    return found && value!=""
+    return measurement(context.temp_allocator)!=""
+}
+
+// The measurement this process is part of, as MEASURE_ENV names it; "" outside one.
+measurement :: proc(allocator:=context.allocator) -> string {
+    value,_:=os.lookup_env(MEASURE_ENV,allocator)
+    return value
+}
+
+// What the holder of MEASURE_LOCK writes in it: its pid, as MEASURE_ENV gives
+// it to its children, and what it measures.
+measure_holder :: proc(what:string,allocator:=context.temp_allocator) -> string {
+    return fmt.aprintf("pid %d, %s",os.get_pid(),what,allocator=allocator)
+}
+
+// Whether the measurement a caller says it is part of (its MEASURE_ENV)
+// holds MEASURE_LOCK now.
+measurement_holds :: proc(root,measurement:string) -> bool {
+    if measurement=="" {return false}
+    held,holder,_:=lock_holder(lock_path(root,MEASURE_LOCK,context.temp_allocator),context.temp_allocator)
+    return held && strings.has_prefix(holder,fmt.tprintf("pid %s,",measurement))
 }
 
 // The most turns of the compilations of a machine, and the memory free that
@@ -310,9 +333,10 @@ lock_holder :: proc(path:string,allocator:=context.allocator) -> (held:bool,hold
 // MEASURE_LOCK and then waits for the compilations that run; those that start
 // later run at low priority. When the time runs out, holder is who holds the
 // measurement, or the compilation when compiling. A lock that cannot be made
-// does not stop it, nor does being part of a measurement: lock is then not held.
-measure_try :: proc(root,what:string,wait:=time.Duration(0)) -> (lock:Lock,ok:bool,holder:string,compiling:bool) {
-    if measuring() {return {},true,"",false}
+// does not stop it, nor does being part of a measurement, this process or
+// the caller it measures for (part_of, its MEASURE_ENV): lock is then not held.
+measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="") -> (lock:Lock,ok:bool,holder:string,compiling:bool) {
+    if measuring() || measurement_holds(root,part_of) {return {},true,"",false}
     start:=time.tick_now()
     measure_path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
     for {

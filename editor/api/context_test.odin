@@ -28,6 +28,7 @@ http_task_context_is_isolated_per_request_and_rejects_conflicting_headers :: pro
         "Content-Type: application/json\r\nX-Mirai-Ai-Task: \r\n",
         "Content-Type: application/json\r\nX-Mirai-Client: two words\r\n",
         "Content-Type: application/json\r\nX-Mirai-Client: codex\r\nX-Mirai-Client: cursor\r\n",
+        "Content-Type: application/json\r\nX-Mirai-Measure: mine\r\n",
     }) {
         response:=exchange(server_port(&f.server),http_request("/rpc",body,headers))
         testing.expect(t,strings.has_prefix(response,"HTTP/1.1 400"))
@@ -35,7 +36,8 @@ http_task_context_is_isolated_per_request_and_rejects_conflicting_headers :: pro
 }
 
 // A turn of the editor names its turn and not its client; an agent outside
-// the editor, its client, which mirai mcp takes from the initialize it forwards.
+// the editor, its client, which mirai mcp takes from the initialize it
+// forwards; a command inside a measurement, which one.
 @(test)
 the_client_sends_the_turn_of_a_task_or_the_name_of_its_agent_with_its_calls :: proc(t:^testing.T) {
     f:Fixture
@@ -43,11 +45,11 @@ the_client_sends_the_turn_of_a_task_or_the_name_of_its_agent_with_its_calls :: p
     defer fixture_finish(&f)
     method:=method_find(&f.server,"test.echo")
     original:=method.handler
-    method.handler=proc(call:^Call) {base.text_set(call_result(call,Echo_Result).text[:],strings.concatenate({call.client_tag,"|",call.client_name},context.temp_allocator))}
+    method.handler=proc(call:^Call) {base.text_set(call_result(call,Echo_Result).text[:],strings.concatenate({call.client_tag,"|",call.client_name,"|",call.measure},context.temp_allocator))}
     defer {method.handler=original}
-    cases:=[?]struct{tag,client,text:string}{{"7-3","","7-3|"},{"7-3","claude-code","7-3|"},{"","claude-code","|claude-code"},{"","","|"}}
+    cases:=[?]struct{tag,client,measure,text:string}{{"7-3","","","7-3||"},{"7-3","claude-code","","7-3||"},{"","claude-code","","|claude-code|"},{"","claude-code","4120","|claude-code|4120"},{"","","","||"}}
     for c in cases {
-        result,error,ok:=rpc_call(server_port(&f.server),"test.echo",`{"text":"ignored"}`,1,3000,context.temp_allocator,c.tag,c.client)
+        result,error,ok:=rpc_call(server_port(&f.server),"test.echo",`{"text":"ignored"}`,1,3000,context.temp_allocator,c.tag,c.client,measure=c.measure)
         if !testing.expectf(t,ok,"%v",error) {return}
         testing.expect_value(t,string_of(at(parse_json(t,result),"text")),c.text)
     }

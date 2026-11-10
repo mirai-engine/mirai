@@ -483,7 +483,8 @@ View_State :: struct {
 	prev_jitter:Vec2,
 	has_previous:bool,
 	generated:bool, // the frame being recorded generated the image shown before its own (Targets.generated)
-	frames:u64, // it was drawn: the turn of its histories, of its jitter and of the pixels that share a ray
+	frames:u64, // it was drawn: the turn of its histories
+	turn:u64,   // frames drawn since its last discontinuity (view_camera_cut): the turn of its jitter and of the pixels that share a ray, so what follows a cut does not depend on what was drawn before it
 	glass_dispatch,glass_seen:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded, and whether the glass passes ran in the one before
 	dispatch_start:rhi.Buffer, // {0,1,1,0}: copied over an indirect dispatch whose groups in x the GPU counts, to start it each frame
 	prev_depth_plane:Vec4,
@@ -509,6 +510,7 @@ renderer_camera_cut :: proc(r:^Renderer) {
 @(private)
 view_camera_cut :: proc(v:^View_State) {
     v.has_previous=false
+    v.turn=0
     v.exposure_generation+=1
     v.prev_jitter={}
     t:=&v.targets

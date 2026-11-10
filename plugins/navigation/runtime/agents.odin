@@ -271,6 +271,8 @@ navigation_agents :: proc(
         }
     }
     if !n.ready || n.count==0 || !time.playing || time.dt<=0 {return}
+    // Without an agent, near or far, nothing searches, steps aside or steers: no memory for it and no look at the characters.
+    if len(paths.entities)==0 {return}
     budget:=int(n.settings.path_iterations) if n.settings.path_iterations>0 else 2048
     if a.uid!=n.uid {
         // Another copy of the world: the search under way was in the other.
