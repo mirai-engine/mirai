@@ -84,11 +84,11 @@ Scratch_World :: struct {
 }
 
 scratch_world_make :: proc(info:^core.World_Info,allocator:=context.allocator) -> (scratch:Scratch_World,ok:bool) {
-    if info==nil || info.init[.World]==nil || info.sizes[.World]<=0 {return}
+    if info==nil || info.sizes[.World]<=0 {return}
     data,error:=mem.alloc(info.sizes[.World],max(info.aligns[.World],1),allocator)
     if error!=nil {return}
-    if !info.init[.World](data,allocator) {
-        if info.destroy[.World]!=nil {info.destroy[.World](data)}
+    if !core.world_init(info,.World,data,allocator) {
+        core.world_destroy(info,.World,data)
         mem.free(data,allocator)
         return
     }
@@ -97,7 +97,7 @@ scratch_world_make :: proc(info:^core.World_Info,allocator:=context.allocator) -
 
 scratch_world_free :: proc(scratch:^Scratch_World) {
     if scratch.w.data==nil {return}
-    if destroy:=scratch.w.info.destroy[.World];destroy!=nil {destroy(scratch.w.data)}
+    core.world_destroy(scratch.w.info,.World,scratch.w.data)
     mem.free(scratch.w.data,scratch.allocator)
     scratch^={}
 }

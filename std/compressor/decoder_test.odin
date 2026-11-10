@@ -1,5 +1,6 @@
 package compressor
 
+import "base:sanitizer"
 import "core:mem"
 import "core:testing"
 
@@ -86,38 +87,82 @@ fixture_raw :: proc(f:Fixture) -> []u8 {
     return raw
 }
 
-@(private="file") GUARD :: 64
+@(private="file") SANITIZED :: .Address in ODIN_SANITIZER_FLAGS
+// A multiple of the 8 bytes the sanitizer tracks at once, so that a buffer starts where its guard
+// ends.
+@(private="file") GUARD :: 4096 when SANITIZED else 64
 
-// Decodes into the middle of a buffer of canaries and checks nothing outside
-// dst was written.
+// size bytes between two guards of canaries. Under the address sanitizer the guards are
+// poisoned: it reports any read or write of them, which the canaries alone do not see when it is
+// a read. The allocator of a test hands out parts of larger blocks, which the sanitizer does not
+// tell apart.
 @(private="file")
-guarded_decode :: proc(t:^testing.T,d:^Decoder,src:[]u8,size:int,
-    loc:=#caller_location) -> (out:[]u8,written:int,err:Error) {
+guarded_make :: proc(size:int) -> []u8 {
     buf:=make([]u8,size+2*GUARD)
     for &b in buf {b=0xa5}
-    out=buf[GUARD:][:size]
-    written,err=decompress(d,src,out)
-    ok:=true
-    for b in buf[:GUARD] {ok&=b==0xa5}
-    for b in buf[GUARD+size:] {ok&=b==0xa5}
-    testing.expect(t,ok,"nothing written outside dst",loc=loc)
+    when SANITIZED {
+        sanitizer.address_poison(buf[:GUARD])
+        sanitizer.address_poison(buf[GUARD+size:])
+    }
+    return buf[GUARD:][:size]
+}
+
+// Whether the guards hold their canaries, and the buffer freed.
+@(private="file")
+guarded_free :: proc(out:[]u8) -> (intact:bool) {
+    buf:=([^]u8)(raw_data(out))[-GUARD:][:len(out)+2*GUARD]
+    when SANITIZED {sanitizer.address_unpoison(buf)}
+    intact=true
+    for b in buf[:GUARD] {intact&=b==0xa5}
+    for b in buf[GUARD+len(out):] {intact&=b==0xa5}
+    delete(buf)
+    return
+}
+
+// A decoder whose scratch is between guards, as what it decodes from and into.
+@(private="file")
+guarded_decoder_init :: proc(t:^testing.T,d:^Decoder) -> (own:[]u8) {
+    testing.expect_value(t,decoder_init(d),Error.None)
+    own=d.scratch
+    d.scratch=guarded_make(len(own))
     return
 }
 
 @(private="file")
-release :: proc(out:[]u8) {
-    p:=([^]u8)(raw_data(out))
-    delete(p[-GUARD:][:len(out)+2*GUARD])
+guarded_decoder_destroy :: proc(t:^testing.T,d:^Decoder,own:[]u8) {
+    testing.expect(t,guarded_free(d.scratch),"nothing written outside the scratch")
+    d.scratch=own
+    decoder_destroy(d)
+}
+
+// Decodes into a guarded buffer; under the sanitizer, from a guarded copy of src too.
+@(private="file")
+guarded_decode :: proc(t:^testing.T,d:^Decoder,src:[]u8,size:int) -> (out:[]u8,written:int,err:Error) {
+    out=guarded_make(size)
+    when SANITIZED {
+        from:=guarded_make(len(src))
+        copy(from,src)
+        written,err=decompress(d,from,out)
+        guarded_free(from)
+    } else {
+        written,err=decompress(d,src,out)
+    }
+    return
+}
+
+@(private="file")
+release :: proc(t:^testing.T,out:[]u8,loc:=#caller_location) {
+    testing.expect(t,guarded_free(out),"nothing written outside dst",loc=loc)
 }
 
 @(test)
 library_streams_decode_to_their_input :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
     for f in FIXTURES {
         raw:=fixture_raw(f);defer delete(raw)
-        out,n,err:=guarded_decode(t,&d,f.stream,f.size);defer release(out)
+        out,n,err:=guarded_decode(t,&d,f.stream,f.size);defer release(t,out)
         testing.expectf(t,err==.None && n==f.size,"%s: %v, %d bytes",f.name,err,n)
         testing.expectf(t,string(out)==string(raw),"%s decodes to its input",f.name)
     }
@@ -153,13 +198,13 @@ an_uninitialized_decoder_fails :: proc(t:^testing.T) {
 @(test)
 truncated_streams_fail :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
     for f in FIXTURES {
         step:=max(1,len(f.stream)/3000)
         for n:=0;n<len(f.stream);n+=step {
             out,_,err:=guarded_decode(t,&d,f.stream[:n],f.size)
-            release(out)
+            release(t,out)
             testing.expectf(t,err!=.None,"%s cut at %d fails",f.name,n)
         }
     }
@@ -168,13 +213,13 @@ truncated_streams_fail :: proc(t:^testing.T) {
 @(test)
 a_wrong_output_size_fails :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
     for f in FIXTURES {
         for size in ([?]int{f.size-1,f.size-200,f.size/2+3,f.size+1,f.size+5000}) {
             if size<=0 {continue}
             out,_,err:=guarded_decode(t,&d,f.stream,size)
-            release(out)
+            release(t,out)
             testing.expectf(t,err!=.None,"%s into %d bytes fails",f.name,size)
         }
     }
@@ -190,20 +235,146 @@ next_random :: proc(state:^u64) -> u64 {
 }
 
 @(private="file") MUTATIONS :: #config(COMPRESSOR_MUTATIONS,1500)
+@(private="file") MUTATION_SEED :: #config(COMPRESSOR_MUTATION_SEED,7)
+
+// A run of bytes the decoder takes sizes, counts or a table from.
+@(private="file")
+Field :: struct {at,len:int}
+
+// The header of the entropy array at at and the start of what it codes, where its code lengths
+// or its state table are; the arrays of a split, each. Returns the bytes of the array, or -1.
+@(private="file")
+array_fields :: proc(out:^[dynamic]Field,stream:[]u8,at,end:int) -> int {
+    if at>=end {return -1}
+    from:=raw_data(stream)[at:]
+    n:int
+    used:=get_arraylens(from,raw_data(stream)[end:],&n,CHUNK_LEN)
+    if used<0 {return -1}
+    small:=from[0]>=ARRAY_SMALL_FLAG
+    kind:=int(from[0]>>4)&(small ? 7 : 15)
+    header:=kind==ARRAY_TYPE_UNCOMPRESSED ? (small ? 2 : 3) : (small ? 3 : 5)
+    append(out,Field{at,min(header,used)})
+    if kind==ARRAY_TYPE_UNCOMPRESSED || used<=header {return used}
+    TABLE :: 24
+    append(out,Field{at+header,min(TABLE,used-header)})
+    if used-header>2*TABLE {append(out,Field{at+used-TABLE,TABLE})}
+    if kind==ARRAY_TYPE_SPLIT && stream[at+header]&0x80==0 {
+        p:=at+header+1
+        for _ in 0..<int(stream[at+header]&0x7f) {
+            part:=array_fields(out,stream,p,at+used)
+            if part<0 {break}
+            p+=part
+        }
+    }
+    return used
+}
+
+// The fields of a chunk of LZ arrays, in the order lz_phase1 reads them: the excess header, the
+// arrays of literals, packets, offsets and excesses, and the two ends of the bits after them.
+@(private="file")
+chunk_fields :: proc(out:^[dynamic]Field,stream:[]u8,at,end:int,first:bool) {
+    p:=at
+    if first {p+=MIN_OFFSET}
+    if p<end && stream[p]>=LZ_EXCESS_HEADER {
+        long:=stream[p]&0x3f>=32
+        append(out,Field{p,long ? 2 : 1})
+        p+=long ? 2 : 1
+    }
+    arrays:=3
+    for i:=0;i<arrays;i+=1 {
+        if i==2 && p<end && stream[p]>=LZ_ALT_OFFSETS {
+            append(out,Field{p,1})
+            if stream[p]!=LZ_ALT_OFFSETS {arrays+=1}
+            p+=1
+        }
+        used:=array_fields(out,stream,p,end)
+        if used<0 {return}
+        p+=used
+    }
+    if used:=array_fields(out,stream,p,end);used>=0 {p+=used} else {return}
+    if p<end {
+        append(out,Field{p,min(8,end-p)})
+        append(out,Field{max(p,end-8),end-max(p,end-8)})
+    }
+}
+
+// Where a valid stream keeps what the decoder trusts: the headers of its blocks, quanta, chunks
+// and entropy arrays, and the tables of those arrays.
+@(private="file")
+stream_fields :: proc(stream:[]u8,size:int) -> [dynamic]Field {
+    out:=make([dynamic]Field)
+    pos,at,since_reset:=0,0,0
+    for pos<size {
+        block_len:=min(BLOCK_LEN,size-pos)
+        b,err:=block_read(raw_data(stream),len(stream),at,block_len,pos==0)
+        if err!=.None {break}
+        if b.reset {since_reset=0}
+        append(&out,Field{at,b.data-at})
+        if b.size>0 && b.size<block_len {
+            p,end:=b.data,b.data+b.size
+            for raw:=0;raw<block_len && end-p>=4; {
+                chunk_len:=min(CHUNK_LEN,block_len-raw)
+                header:=int(load24be(raw_data(stream)[p:]))
+                if header>=CHUNK_COMPRESSED {
+                    append(&out,Field{p,CHUNK_HEADER_SIZE})
+                    comp_len:=header&CHUNK_COMP_LEN_MASK
+                    p+=CHUNK_HEADER_SIZE
+                    if comp_len>end-p {break}
+                    if comp_len<chunk_len {chunk_fields(&out,stream,p,p+comp_len,since_reset+raw==0)}
+                    p+=comp_len
+                } else {
+                    used:=array_fields(&out,stream,p,end)
+                    if used<0 {break}
+                    p+=used
+                }
+                raw+=chunk_len
+            }
+        }
+        at=b.data+b.size
+        pos+=block_len
+        since_reset+=block_len
+    }
+    return out
+}
+
+// A field with a value its writer would not put there: an extreme, a neighbor of what it holds,
+// noise in all of it, or one bit.
+@(private="file")
+field_mutate :: proc(work:[]u8,field:Field,state:^u64) {
+    if field.len<=0 {return}
+    HOSTILE :: [?]u8{0x00,0x01,0x7f,0x80,0xfe,0xff}
+    hostile:=HOSTILE
+    at:=field.at+int(next_random(state)%u64(field.len))
+    switch next_random(state)%5 {
+    case 0: work[at]=hostile[next_random(state)%len(hostile)]
+    case 1: work[at]=u8(int(work[at])+int(next_random(state)%5)-2)
+    case 2: for &b in work[field.at:][:field.len] {b=u8(next_random(state))}
+    case 3: work[at]~=u8(1)<<(next_random(state)%8)
+    case 4: for &b in work[field.at:][:field.len] {b=hostile[next_random(state)%len(hostile)]}
+    }
+}
 
 // Mutated streams decode to anything or fail, without reading or writing out
-// of bounds (run under the sanitizer for the reads).
+// of bounds (run under the sanitizer for the reads). Half of the rounds change
+// bytes anywhere, which mostly lands in what the arrays code; the other half
+// keeps the stream valid up to a header or a table and changes that.
 @(test)
 mutated_streams_never_escape_their_buffers :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
-    state:=u64(7)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
+    state:=u64(MUTATION_SEED)
     for f in FIXTURES {
+        fields:=stream_fields(f.stream,f.size);defer delete(fields)
+        testing.expectf(t,len(fields)>=2,"%s has headers to mutate",f.name)
         work:=make([]u8,len(f.stream));defer delete(work)
-        for _ in 0..<MUTATIONS/len(FIXTURES) {
+        for round in 0..<MUTATIONS/len(FIXTURES) {
             copy(work,f.stream)
             for _ in 0..<1+int(next_random(&state)%4) {
+                if round&1==1 && len(fields)>0 {
+                    field_mutate(work,fields[next_random(&state)%u64(len(fields))],&state)
+                    continue
+                }
                 at:=int(next_random(&state)%u64(len(work)))
                 switch next_random(&state)%3 {
                 case 0: work[at]~=u8(1)<<(next_random(&state)%8)
@@ -212,7 +383,7 @@ mutated_streams_never_escape_their_buffers :: proc(t:^testing.T) {
                 }
             }
             out,_,_:=guarded_decode(t,&d,work,f.size)
-            release(out)
+            release(t,out)
         }
     }
 }
@@ -220,8 +391,8 @@ mutated_streams_never_escape_their_buffers :: proc(t:^testing.T) {
 @(test)
 random_data_fails :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
     state:=u64(11)
     buf:=make([]u8,64*1024);defer delete(buf)
     for round in 0..<200 {
@@ -233,7 +404,7 @@ random_data_fails :: proc(t:^testing.T) {
             buf[1]=u8(round&2==0 ? DECODE_TYPE_LZ : round%DECODE_TYPE_COUNT)
         }
         out,_,err:=guarded_decode(t,&d,buf[:n],1+int(next_random(&state)%300000))
-        release(out)
+        release(t,out)
         testing.expect(t,err!=.None,"random data fails")
     }
 }
@@ -262,7 +433,7 @@ pieces_decode :: proc(t:^testing.T,d:^Decoder,src:[]u8,out:[]u8,found:[]Piece) -
         if i+1<len(found) {src_end,dst_end=found[i+1].src,found[i+1].dst}
         testing.expect(t,piece.src<src_end && piece.dst<dst_end && src_end<=len(src))
         part,written,err:=guarded_decode(t,d,src[piece.src:src_end],dst_end-piece.dst)
-        defer release(part)
+        defer release(t,part)
         if err!=.None || written!=len(part) {return false}
         copy(out[piece.dst:],part)
     }
@@ -274,8 +445,8 @@ pieces_decode :: proc(t:^testing.T,d:^Decoder,src:[]u8,out:[]u8,found:[]Piece) -
 @(test)
 pieces_decode_on_their_own_to_the_whole_stream :: proc(t:^testing.T) {
     d:Decoder
-    testing.expect_value(t,decoder_init(&d),Error.None)
-    defer decoder_destroy(&d)
+    own:=guarded_decoder_init(t,&d)
+    defer guarded_decoder_destroy(t,&d,own)
     stream,size:=pieced_stream();defer delete(stream)
     found:[8]Piece
     count,err:=pieces(stream,size,found[:])
@@ -285,7 +456,7 @@ pieces_decode_on_their_own_to_the_whole_stream :: proc(t:^testing.T) {
     one:[1]Piece
     count,err=pieces(stream,size,one[:])
     testing.expect(t,count==2 && err==.None && one[0]=={0,0},"count goes past what out holds")
-    whole,_,whole_err:=guarded_decode(t,&d,stream,size);defer release(whole)
+    whole,_,whole_err:=guarded_decode(t,&d,stream,size);defer release(t,whole)
     testing.expect_value(t,whole_err,Error.None)
     raw:=fixture_raw(FIXTURES[1]);defer delete(raw)
     testing.expect(t,string(whole[2*BLOCK_LEN:])==string(raw))
@@ -299,7 +470,7 @@ pieces_decode_on_their_own_to_the_whole_stream :: proc(t:^testing.T) {
     reaching[BLOCK_HEADER_SIZE+BLOCK_LEN]|=BLOCK_HEADER_RESET
     count,err=pieces(reaching,size,found[:])
     testing.expect(t,count==3 && err==.None)
-    reached,_,reached_err:=guarded_decode(t,&d,reaching,size);release(reached)
+    reached,_,reached_err:=guarded_decode(t,&d,reaching,size);release(t,reached)
     testing.expect_value(t,reached_err,Error.Corrupt)
     testing.expect(t,!pieces_decode(t,&d,reaching,apart,found[:count]))
     // A stream whose first block does not reset has no pieces.
@@ -316,7 +487,7 @@ pieces_decode_on_their_own_to_the_whole_stream :: proc(t:^testing.T) {
             work[at]~=u8(1)<<(next_random(&state)%8)
         }
         out,written,whole_error:=guarded_decode(t,&d,work,size)
-        defer release(out)
+        defer release(t,out)
         n,scan_error:=pieces(work,size,found[:])
         if whole_error==.None {
             testing.expect(t,written==size && scan_error==.None && n>=1 && n<=len(found))

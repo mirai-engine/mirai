@@ -145,6 +145,7 @@ App :: struct {
     worlds:[dynamic]World_Slot, // the Worlds it made, by the index of their core.World_Id
     reserved:map[rawptr]int,    // the address space of each struct of a place it made (world_alloc)
     scratch:rawptr,  // a World app_world_replace prepares the replacements in; made the first time
+    scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
     animation_cache:string,          // App_Desc.animation_cache
     start_ns:u64,
@@ -445,14 +446,14 @@ world_register :: proc(app:^App,at:int,data:rawptr) -> bool {
     if slot.generation==0 {slot.generation=1}
     slot.data=data
     if id:=core.world_storage_of(app_world_ref(app,data),core.World_Id);id!=nil {id^={u32(at),slot.generation}}
-    return app.info.attach==nil || app.info.attach(data,app.shared,app.allocator)
+    return core.world_attach(app.info,data,app.shared,app.allocator)
 }
 
 // Takes the World out of its slot with the values of its by_world storages.
 @(private)
 world_unregister :: proc(app:^App,data:rawptr) {
     if app.allocator.procedure!=nil {context.allocator=app.allocator}
-    if app.info.detach!=nil {app.info.detach(data,app.shared)}
+    core.world_detach(app.info,data,app.shared)
     if at:=world_slot_of(app,data);at>=0 {app.worlds[at].data=nil}
 }
 
@@ -461,25 +462,31 @@ world_unregister :: proc(app:^App,data:rawptr) {
 // without allocating. False when memory ran out: dst stays as it was. What
 // the World does not copy (copy=false) stays in dst. The traded contents wait
 // in that World for the next replacement, which copies over them without
-// allocating when they fit.
-app_world_replace :: proc(app:^App,dst,src:rawptr) -> bool {
+// allocating when they fit. marks: when src is a copy core.world_copy_changed
+// keeps of dst, its marks: only what dst changed since that copy is copied
+// and traded, and the readers of the rest see no change (core.world_restore).
+app_world_replace :: proc(app:^App,dst,src:rawptr,marks:[]core.Copy_Mark=nil) -> bool {
     if dst==src {return true}
     if dst==nil || src==nil {return false}
     if app.scratch==nil {
         if app.scratch=app_world_create(app);app.scratch==nil {return false}
     }
     context.allocator=app.allocator
-    if !app.info.copy(app.scratch,src) {return false}
-    app.info.swap(dst,app.scratch)
-    return true
+    ok,mixed:=core.world_restore(app.info,dst,src,app.scratch,marks)
+    app.scratch_mixed=mixed
+    return ok
 }
 
 // Frees the World app_world_replace keeps: what a replacement that happens
 // seldom, as opening a scene, need not hold until the next one.
 app_world_scratch_free :: proc(app:^App) {
     if app.scratch==nil {return}
-    app_world_free(app,app.scratch)
-    app.scratch=nil
+    // Parts of several Worlds are no World to run a release phase on: it runs on it cleared.
+    if app.scratch_mixed && !core.world_clear(app.info,app.scratch) {
+        world_unregister(app,app.scratch)
+        world_free(app,app.scratch,.World)
+    } else {app_world_free(app,app.scratch)}
+    app.scratch,app.scratch_mixed=nil,false
 }
 
 // An Editor_World of the project, initialized.
@@ -508,7 +515,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
     }
     app.reserved.allocator=app.allocator
     app.reserved[data]=reserved
-    if !info.init[place](data,app.allocator) {
+    if !core.world_init(info,place,data,app.allocator) {
         world_free(app,data,place)
         return nil
     }
@@ -519,7 +526,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
 @(private)
 world_free :: proc(app:^App,data:rawptr,place:core.Place) {
     context.allocator=app.allocator
-    app.info.destroy[place](data)
+    core.world_destroy(app.info,place,data)
     _,reserved:=delete_key(&app.reserved,data)
     virtual.release(data,uint(reserved))
     if len(app.reserved)==0 {
@@ -574,17 +581,17 @@ app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bo
 place_replace :: proc(app:^App,m:^core.World_Migration,place:core.Place,data:rawptr) {
     size:=max(m.to.sizes[place],1)
     fresh,error:=mem.alloc(size,max(m.to.aligns[place],1),app.allocator)
-    if error!=nil || !m.to.init[place](fresh,app.allocator) {
+    if error!=nil || !core.world_init(m.to,place,fresh,app.allocator) {
         // Without memory for it, the struct starts as the new library makes it.
-        if fresh!=nil {m.to.destroy[place](fresh);mem.free(fresh,app.allocator)}
-        m.from.destroy[place](data)
+        if fresh!=nil {core.world_destroy(m.to,place,fresh);mem.free(fresh,app.allocator)}
+        core.world_destroy(m.from,place,data)
         mem.zero(data,size)
-        _=m.to.init[place](data,app.allocator)
+        _=core.world_init(m.to,place,data,app.allocator)
         return
     }
     if place!=.Editor {app_settings_load(app,fresh,place)}
     core.place_migrate(m,place,data,fresh,app.allocator)
-    m.from.destroy[place](data)
+    core.world_destroy(m.from,place,data)
     old:=max(m.from.sizes[place],1)
     if page_round(size)>page_round(old) {_=virtual.commit(data,uint(page_round(size)))}
     mem.copy(data,fresh,size)

@@ -19,7 +19,7 @@ bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     references:=make([]core.Entity,sections,context.temp_allocator)
     for &r,i in references {
         r=core.create(&world.entities)

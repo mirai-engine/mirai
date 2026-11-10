@@ -511,7 +511,7 @@ load_end :: proc(job:^Load_Job,w:core.World_Ref) -> (report:Report,error:Error) 
         core.world_settle(loaded)
     }
     root_set(loaded,job.root)
-    w.info.swap(w.data,job.world)
+    core.world_swap(w.info,w.data,job.world)
     // A swap moves the versions of the tables on: the records look at them
     // after it. One without memory for it stays asked for: scene_sections
     // looks again, and reports it.

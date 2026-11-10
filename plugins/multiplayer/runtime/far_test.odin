@@ -30,7 +30,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     server,client:=&worlds[0],&worlds[1]
     // Both ends loaded the agent with their scene; only the client draws it.
     agent:=core.create(&server.entities)

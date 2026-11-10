@@ -5,8 +5,9 @@ import "mirai:std/compressor/lz/entropy"
 import "mirai:std/compressor/lz/match"
 import "mirai:std/compressor"
 
-// LZ encoder: the chunk parsers (fast, lazy and optimal) and the packing of their
-// literals, packets, offsets and excesses into the chunk format.
+// LZ encoder: the fast and lazy chunk parsers and the packing of the literals, packets, offsets
+// and excesses of a parse into the chunk format. The optimal parser of the levels above Normal is
+// in cook/compressor/lz and comes in as an Optimal.
 
 ESCAPE_OFFSET_MIN :: (1<<23)-256+compressor.MIN_OFFSET
 MML_NORMAL :: 4
@@ -43,17 +44,26 @@ Ctmf_Hyper16 :: match.Fast_Ctmf(u16)
 
 Matcher :: union {Ctmf_Very_Fast, Ctmf_Fast, Ctmf_Normal, Ctmf_Hyper32, Ctmf_Hyper16}
 
+// What the levels above Normal add to the encoder. A program that hands none compiles no
+// optimal parser or find-all match finder, and those levels are invalid for it.
+Optimal :: struct {
+    // The rest of setup: the flags of the level and the scratch of its parse.
+    setup:proc(e:^Encoder, arena:^entropy.Arena) -> bool,
+    // The parse of one chunk over match.NEWLZ_MATCH_NUM_PAIRS found pairs per position.
+    encode_chunk:proc(c:^Chunk, pairs:[^]match.Unpacked_Match_Pair, chunk_type:^i32, J:^f32) -> int,
+}
+
 Encoder :: struct {
     level:i32, lambda:f32, entropy_flags:u32, bitstream_flags:u32, chunk_len:int,
     try_huff_chunks:bool, decode_type:i32,
-    finder:match.Finder_Kind,
-    find_all_matches_num_pairs:int, wants_dic_limit_splits:bool,
+    optimal:Optimal,
 
     options:Options,
     raw:[]u8,
     matcher:Matcher,
     hash_len:int,
     arrays_space:[]u8,
+    // scratch of the optimal parse, which its setup allocates
     parse_space:[]Parse,
     arrivals_space:[]u8,
     last_tll_len_space:[]i32,
@@ -90,16 +100,19 @@ arrays_space_size :: proc "contextless" (chunk_len:int) -> int {
         (chunk_len/256)*4+256+8
 }
 
-@(private) PARSE_CHUNK_LEN_MAX :: 4096
-
 // LZ_FillVTable and newlz_vtable_setup_ctmf for the whole input `raw`, with the dictionary
-// base at raw start and no preload. Returns false on invalid level or out of memory.
+// base at raw start and no preload. Returns false on invalid level, on a level above Normal
+// without its optimal, or out of memory.
 setup :: proc(e:^Encoder, level:i32, raw:[]u8, arena:^entropy.Arena,
-    options:=DEFAULT_OPTIONS) -> bool {
+    options:=DEFAULT_OPTIONS, optimal:=Optimal{}) -> bool {
     e^={}
     e.carried_chunktype=-1
     if level<compressor.LEVEL_HYPER_FAST4 || level>compressor.LEVEL_OPTIMAL5 || level==compressor.LEVEL_NONE ||
         arena==nil {return false}
+    if level>=compressor.LEVEL_OPTIMAL1 {
+        if optimal.setup==nil || optimal.encode_chunk==nil {return false}
+        e.optimal=optimal
+    }
     e.options=options
     o:=&e.options
     if o.dictionary_size<0 {o.dictionary_size=0}
@@ -116,8 +129,6 @@ setup :: proc(e:^Encoder, level:i32, raw:[]u8, arena:^entropy.Arena,
         entropy.ARRAY_FLAG_ALLOW_RLEHUFF
     e.entropy_flags|=entropy.ARRAY_FLAG_ALLOW_SPLIT|entropy.ARRAY_FLAG_ALLOW_HUFFLENS2|
         entropy.ARRAY_FLAG_ALLOW_RLE_MEMSET
-    if level>=compressor.LEVEL_OPTIMAL3 {e.entropy_flags|=entropy.ARRAY_FLAG_ALLOW_SPLIT_INDEXED}
-    if level>=compressor.LEVEL_OPTIMAL1 {e.bitstream_flags|=BITSTREAM_FLAG_ALT_OFFSETS}
 
     tbo:=match.Table_Bits_Options{seek_chunk_reset=o.seek_chunk_reset,
         seek_chunk_len=o.seek_chunk_len,
@@ -164,14 +175,7 @@ setup :: proc(e:^Encoder, level:i32, raw:[]u8, arena:^entropy.Arena,
         if !explicit_bits {table_bits=min(table_bits,21)}
         e.matcher=Ctmf_Fast{}
         e.entropy_flags&=~(entropy.ARRAY_FLAG_ALLOW_TANS|entropy.ARRAY_FLAG_ALLOW_SPLIT)
-    } else if level>=compressor.LEVEL_OPTIMAL2 {
-        e.finder=.Suffix_Trie
-        e.find_all_matches_num_pairs=match.NEWLZ_MATCH_NUM_PAIRS
-        e.wants_dic_limit_splits=true
-    } else if level==compressor.LEVEL_OPTIMAL1 {
-        e.finder=.Ctmf_Find_All
-        e.find_all_matches_num_pairs=match.NEWLZ_MATCH_NUM_PAIRS
-    } else {
+    } else if level==compressor.LEVEL_NORMAL {
         e.matcher=Ctmf_Normal{}
         e.entropy_flags&=~entropy.ARRAY_FLAG_ALLOW_TANS
         hash_len=0
@@ -193,17 +197,7 @@ setup :: proc(e:^Encoder, level:i32, raw:[]u8, arena:^entropy.Arena,
 
     e.arrays_space=entropy.arena_alloc(arena,u8,arrays_space_size(compressor.CHUNK_LEN))
     if e.arrays_space==nil {destroy(e,arena);return false}
-    if e.finder!=.None {
-        num_tlls:=level>=compressor.LEVEL_OPTIMAL4 ? 2 : 1
-        e.parse_space=entropy.arena_alloc(arena,Parse,compressor.CHUNK_LEN/2+PARSE_CHUNK_LEN_MAX)
-        e.arrivals_space=entropy.arena_alloc(arena,u8,arrivals_size(num_tlls*(compressor.CHUNK_LEN+1)))
-        ok=e.parse_space!=nil && e.arrivals_space!=nil
-        if ok && num_tlls>1 {
-            e.last_tll_len_space=entropy.arena_alloc(arena,i32,compressor.CHUNK_LEN+1)
-            ok=e.last_tll_len_space!=nil
-        }
-        if !ok {destroy(e,arena);return false}
-    }
+    if e.optimal.setup!=nil && !e.optimal.setup(e,arena) {destroy(e,arena);return false}
     return true
 }
 
@@ -225,7 +219,7 @@ destroy :: proc(e:^Encoder, arena:^entropy.Arena) {
 }
 
 // fp_encode_chunk: returns the compressed length; >= chunk_len means expanded or failed.
-// match_pairs holds find_all_matches_num_pairs pairs per position of the chunk (optimal levels).
+// match_pairs holds match.NEWLZ_MATCH_NUM_PAIRS pairs per position of the chunk (optimal levels).
 encode_chunk :: proc(e:^Encoder, arena:^entropy.Arena, dictionary_base:[^]u8,
     chunk_ptr:[^]u8, chunk_len:int, comp:[^]u8, comp_end:[^]u8, chunk_pos:int,
     chunk_type:^i32, J:^f32, deadlines:^entropy.LZ_Chunk_Deadlines,
@@ -254,9 +248,9 @@ encode_chunk :: proc(e:^Encoder, arena:^entropy.Arena, dictionary_base:[^]u8,
         chunk_len=chunk_len,
         comp=comp,comp_end=comp_end,chunk_pos=chunk_pos,deadline=&dl}
     ret:int
-    if e.finder!=.None {
+    if e.optimal.encode_chunk!=nil {
         if match_pairs==nil || e.parse_space==nil || e.arrivals_space==nil {return chunk_len}
-        ret=encode_chunk_optimal_tll(&c,([^]Match_Parse_Record)(match_pairs),pct,pj)
+        ret=e.optimal.encode_chunk(&c,match_pairs,pct,pj)
     } else {
         switch &m in e.matcher {
         case Ctmf_Hyper32:
@@ -278,14 +272,12 @@ encode_chunk :: proc(e:^Encoder, arena:^entropy.Arena, dictionary_base:[^]u8,
 }
 
 // Arguments of one encode_chunk call shared by the parsers and the output.
-@(private)
 Chunk :: struct {
     e:^Encoder, arena:^entropy.Arena, dictionary_base:[^]u8,
     chunk_ptr:[^]u8, chunk_len:int, comp:[^]u8, comp_end:[^]u8, chunk_pos:int,
     deadline:^entropy.LZ_Chunk_Deadlines,
 }
 
-@(private)
 dictionary_size :: #force_inline proc "contextless" (o:^Options) -> u32 {
     if o.dictionary_size<=0 {return compressor.MAX_OFFSET}
     return min(u32(compressor.MAX_OFFSET),u32(o.dictionary_size))

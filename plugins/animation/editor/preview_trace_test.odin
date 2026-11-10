@@ -62,7 +62,7 @@ preview_trace_resolves_external_marker_and_curve_labels_from_their_source_once :
     file:asset.Asset;testing.expect_value(t,host.assets_file(&f.assets,primary,asset.KIND_ANIMATION,&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&f.assets.types);testing.expect_value(t,error,asset.Error.None)
     info,described:=core.test_info(t,Preview_Test_World,Preview_Test_Shared,core.Test_None,anim.test_types);if !described {return};defer core.test_info_destroy(&info)
-    w:Preview_Test_World;defer info.destroy[.World](&w);if !testing.expect(t,info.init[.World](&w,context.allocator)) {return}
+    w:Preview_Test_World;defer core.world_destroy(&info,.World,&w);if !testing.expect(t,core.world_init(&info,.World,&w,context.allocator)) {return}
     entity:=core.create(&w.entities);description:=anim.ANIMATION_DEFAULT;description.asset=primary;core.add(&w.animations,entity,description);core.settle(&info,&w,nil)
     player:=lib.player_make(2);player.time=.5
     append(&w.playback.states,anim.Playing{entity=entity,asset=primary,source_plan=1,generation=shared.sources.sets[0].content.generation,clip=1,time=.5,duration=.5,fader={current=player}})

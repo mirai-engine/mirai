@@ -3,6 +3,9 @@ package serial
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:strings"
+import "core:time"
+import "mirai:std/subprocess"
 
 File_Error :: enum u8 {
     None,
@@ -85,6 +88,40 @@ file_write_atomic :: proc(path:string,data:[]u8,sync:=false) -> File_Error {
         return .Rename
     }
     return .None
+}
+
+// Past this age a staging file is left over even if its pid runs: the system
+// gave the pid of the process that wrote it to another one.
+STAGING_STALE :: time.Hour
+
+// Removes the staging files of file_write_atomic for path that no process is
+// writing: those of a process that ended, and those older than STAGING_STALE.
+// The one of a process that runs, this one included, is kept.
+file_remove_stale :: proc(path:string) {
+    folder,name:=os.split_path(path)
+    if name=="" {return}
+    entries,error:=os.read_all_directory_by_path(folder if folder!="" else ".",context.temp_allocator)
+    if error!=nil {return}
+    now:=time.now()
+    for entry in entries {
+        pid,staging:=staging_pid(entry.name,name)
+        if !staging || entry.type!=.Regular {continue}
+        if time.diff(entry.modification_time,now)<STAGING_STALE && subprocess.process_alive(pid) {continue}
+        _=os.remove(entry.fullpath)
+    }
+}
+
+// The pid in the name of a staging file of file_write_atomic for a file named name.
+@(private)
+staging_pid :: proc(entry,name:string) -> (pid:int,staging:bool) {
+    if len(entry)<len(name)+len(".0.tmp") || entry[:len(name)]!=name || entry[len(name)]!='.' || !strings.has_suffix(entry,".tmp") {return}
+    digits:=entry[len(name)+1:len(entry)-len(".tmp")]
+    if len(digits)>10 {return}
+    for c in transmute([]u8)digits {
+        if c<'0' || c>'9' {return}
+        pid=pid*10+int(c-'0')
+    }
+    return pid,pid>0
 }
 
 @(private)

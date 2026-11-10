@@ -48,9 +48,3 @@ ent_estimate_complen_bits :: #force_inline proc "contextless" (histo:[]u32, tota
 ent_estimate_complen_bytes :: #force_inline proc "contextless" (histo:[]u32, total:u32) -> i32 {
     return i32(entropy.array_estimate_complen_bytes(histo,len(histo),total))
 }
-
-@(private)
-ent_histo_to_codecost :: #force_inline proc "contextless" (histo:[]u32, codecost:[]i32,
-    add_cost:int, threshold:int) {
-    entropy.histo_to_codecost(histo,codecost,len(histo),add_cost,threshold)
-}

@@ -199,8 +199,9 @@ shape_nonzero_run :: #force_inline proc "contextless" (prefix:u32,b:^Bits) -> u3
 // run_prefix needs 8 zeroed bytes past its end. Returns the pair count, or -1.
 @(private)
 decode_alphabet_shape_runlens :: proc "contextless" (
-    run_lens:[^]u16,num_nonzero:u32,num_eg:u32,run_prefix:[^]u8,vb:^Bits,
-) -> int #no_bounds_check {
+    run_lens:^[128*2+8+1]u16,num_nonzero:u32,num_eg:u32,run_prefix:[^]u8,vb:^Bits,
+) -> int {
+    run_lens:=view(run_lens)
     pairs:=int(num_eg>>1)
     b:=vb^
     prefix:=run_prefix

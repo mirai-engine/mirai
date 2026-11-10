@@ -53,8 +53,8 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     if !described {return}
     defer core.test_info_destroy(&info)
     world,running:Inspect_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator) && info.init[.World](&running,context.allocator)) {return}
-    defer {info.destroy[.World](&world);info.destroy[.World](&running)}
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
+    defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
     tables:=info.tables
     state:Api_State
     editor:=Inspect_Editor{api={state=&state}}
@@ -99,7 +99,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     api_fields_write(&out,&state.schema,state.types[2],"",&first,true)
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,"compiled") && strings.contains(text,"diagnostics"))
-    testing.expect(t,info.copy(&running,&world))
+    testing.expect(t,core.world_copy(&info,&running,&world))
     core.get(&running.transforms,entity).position.x=8
     core.get(&running.config,entity).diagnostics=99
     core.get(&running.state,entity).ticks=42
@@ -172,8 +172,8 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     if !described {return}
     defer core.test_info_destroy(&info)
     world,running:Filter_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator) && info.init[.World](&running,context.allocator)) {return}
-    defer {info.destroy[.World](&world);info.destroy[.World](&running)}
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
+    defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
     rig:=filter_entity(&world,1,"Rig")
     core.add(&world.cameras,filter_entity(&world,2,"Main Camera",rig),erender.CAMERA_DEFAULT)
     filter_entity(&world,3,"Crate 1");filter_entity(&world,4,"Crate 2");filter_entity(&world,5,"crate 3")
@@ -276,8 +276,8 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Spawned_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     state:Api_State
     editor:=Inspect_Editor{api={state=&state}}
     document:Document

@@ -67,9 +67,13 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
         }
     }
     under:=parent!=NONE?world_table_of(dst,Parent):nil
+    // Each one that joins is the entity create will give it, in their order.
     joined,rooted:=0,0
+    free:=len(des.free)
     for i in 1..<indices {
         if made[i]!=JOINS {continue}
+        index:=joined<free?int(des.free[free-1-joined]):len(des.generation)+joined-free
+        made[i]=entity_make(index,index<len(des.generation)?des.generation[index]:1)
         joined+=1
         if under!=nil && union_root(made,ses,parents,entity_make(i,ses.generation[i])) {rooted+=1}
     }
@@ -83,22 +87,29 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
         from,to:=world_table_at(src,&info),world_table_at(dst,&info)
         adds,offs:=0,0
         for row in 0..<from.values.len {
-            if union_remap(made,ses,from.entities[row])!=JOINS {continue}
-            if info.type==Parent && union_remap(made,ses,(^Parent)(raw_value(from,info.info,row)).entity)!=JOINS {continue}
+            e:=union_remap(made,ses,from.entities[row])
+            if e==NONE {continue}
+            if info.type==Parent && union_remap(made,ses,(^Parent)(raw_value(from,info.info,row)).entity)==NONE {continue}
+            if !rows_room(to,entity_index(e),capacity) {return false}
             adds+=1
             if from.off[row] || info.single {offs+=1}
         }
-        if under!=nil && to==raw(under) {adds+=rooted}
+        if under!=nil && to==raw(under) {
+            adds+=rooted
+            for e,i in made {
+                if e!=NONE && union_root(made,ses,parents,entity_make(i,ses.generation[i])) && !rows_room(to,entity_index(e),capacity) {return false}
+            }
+        }
         if adds==0 {continue}
         waiting:=0
         for p in to.pending {if p.value>=0 {waiting+=1}}
         size,align:=info.info.size,info.info.align
         if reserve(&to.pending,len(to.pending)+adds+offs)!=nil {return false}
         if size>0 && !runtime.__dynamic_array_reserve(&to.added,size,align,to.added.len+adds) {return false}
-        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1,capacity) {return false}
+        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1) {return false}
     }
 
-    for &e in made {if e==JOINS {e=create(des)}}
+    for &e in made {if e!=NONE {e=create(des)}}
     for &info,index in dst.info.tables {
         if info.place!=dst.place {continue}
         from,to:=world_table_at(src,&info),world_table_at(dst,&info)

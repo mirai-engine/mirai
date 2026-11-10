@@ -24,8 +24,8 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     defer collab_tables_free(st)
     // The other end adds a parent and a child that names it.
     other:Play_Test_World
-    if !testing.expect(t,s.info.init[.World](&other,context.allocator)) {return}
-    defer s.info.destroy[.World](&other)
+    if !testing.expect(t,core.world_init(s.info,.World,&other,context.allocator)) {return}
+    defer core.world_destroy(s.info,.World,&other)
     edits:history.Edits;defer history.edits_free(&edits)
     selection:history.Selection;defer delete(selection.entities)
     end:=Session{info=s.info,edit_world=&other,edits=&edits,selection=&selection}

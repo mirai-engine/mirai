@@ -212,6 +212,6 @@ page_writer_destroy :: proc(w:^Page_Writer) {
 // call; quantize as page_code.
 @(private)
 page_encode :: proc(w:^Page_Writer,values:[]$T,width:int,quantize:bool) -> (block:[]u8,ok:bool) {
-    size,error:=asset.pack(&w.encoder,.Edit,page_code(values,width,quantize,w.coded),w.block)
+    size,error:=asset.pack(&w.encoder,asset.PACK_EDIT,page_code(values,width,quantize,w.coded),w.block)
     return w.block[:size],error==.None
 }

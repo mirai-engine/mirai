@@ -38,6 +38,20 @@ start :: proc(desc:os.Process_Desc,limits:=Limits{}) -> (process:os.Process,erro
     return _start(desc,limits)
 }
 
+// Whether a process with that pid runs, whoever started it.
+process_alive :: proc(pid:int) -> bool {
+    if pid<=0 {return false}
+    process,error:=os.process_open(pid)
+    // Odin workaround (docs/ODIN_WORKAROUNDS.md): on Windows a process that is gone opens without an error and with no handle.
+    if error!=nil || process.handle==0 {return false}
+    // Opened, it exists; the wait tells an ended one that something still holds
+    // apart, and fails with ECHILD for one this process did not start.
+    state,wait_error:=os.process_wait(process,0)
+    // process_wait leaves the process open only when it is still running.
+    if wait_error==os.General_Error.Timeout {process_close(process)}
+    return !state.exited
+}
+
 // Runs the command to its end and returns what it wrote to stdout and to
 // stderr, in allocator, also when error is not nil. The streams of desc are
 // replaced by the captured ones.

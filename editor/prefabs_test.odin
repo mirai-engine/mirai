@@ -53,7 +53,7 @@ Prefab_Fixture :: struct {
 @(private)
 prefab_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,name:string) -> bool {
     f.info=prefab_test_info(t) or_return
-    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {return false}
+    if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {return false}
     f.root=base.test_folder(t,fmt.tprintf("prefabs-%s",name))
     if f.root=="" {return false}
     asset.types_init(&f.assets.types)
@@ -72,7 +72,7 @@ prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     delete(f.app.worlds)
     asset.registry_destroy(&f.assets.registry)
     asset.types_destroy(&f.assets.types)
-    if f.info.destroy[.World]!=nil {f.info.destroy[.World](&f.world)}
+    if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
     core.test_info_destroy(&f.info)
 }
 
@@ -170,8 +170,8 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     root:=base.test_folder(t,"prefabs")
     if root=="" {return}
     assets:host.Assets

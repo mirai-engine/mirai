@@ -35,7 +35,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=73,endpoints=2,packets=1024})) {return}
     defer wire.sim_network_destroy(&network)
@@ -104,7 +104,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         if body {net_test_physics(&world,&shares[index],&apps[index])}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=72,endpoints=2,packets=1024})) {return}
@@ -220,7 +220,7 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=74,endpoints=2,packets=1024})) {return}
@@ -272,7 +272,7 @@ an_object_the_host_has_no_room_for_names_the_capacity_to_raise :: proc(t:^testin
         if !described {return}
         defer core.test_info_destroy(&info)
         world:Net_Test_World
-        net_test_init(&world,&info);defer info.destroy[.World](&world)
+        net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         for index in 0..<entities {
             last=core.create(&world.entities)
             core.add(&world.transforms,last,core.Transform{position={f32(index),0,0},rotation=1,scale={1,1,1}})
@@ -313,7 +313,7 @@ settings_the_host_refuses_name_their_field_and_its_range :: proc(t:^testing.T) {
         if !described {return}
         defer core.test_info_destroy(&info)
         world:Net_Test_World
-        net_test_init(&world,&info);defer info.destroy[.World](&world)
+        net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
         defer {host.app_world_scratch_free(&app);delete(app.worlds)}
         s:Net_Session
@@ -357,7 +357,7 @@ the_port_of_the_game_is_a_setting_that_must_be_a_udp_port :: proc(t:^testing.T) 
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,&info);defer info.destroy[.World](&world)
+    net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     s:Net_Session

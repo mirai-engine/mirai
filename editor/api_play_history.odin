@@ -259,8 +259,8 @@ api_history_verify :: proc(s:^Session,r:^Run,from,to:u64,out:^Api_Play_Verify) -
     copied,error:=mem.alloc(max(s.info.sizes[.World],1),max(s.info.aligns[.World],1),allocator)
     if error!=nil || copied==nil {return "No memory for a copy of the World to compare"}
     defer mem.free(copied,allocator)
-    if !s.info.init[.World](copied,allocator) {s.info.destroy[.World](copied);return "No memory for a copy of the World to compare"}
-    defer s.info.destroy[.World](copied)
+    if !core.world_init(s.info,.World,copied,allocator) {core.world_destroy(s.info,.World,copied);return "No memory for a copy of the World to compare"}
+    defer core.world_destroy(s.info,.World,copied)
     marks,marks_error:=make([]core.Copy_Mark,core.copy_marks_count(s.info),context.temp_allocator)
     if marks_error!=nil {return "No memory for a copy of the World to compare"}
     w:=run_ref(s,r)
@@ -282,7 +282,7 @@ api_history_verify :: proc(s:^Session,r:^Run,from,to:u64,out:^Api_Play_Verify) -
         }
         if next!=nil && !next.edited && h.at==end {
             for &mark in marks {mark={}}
-            same:=s.info.copy_changed!=nil?s.info.copy_changed(copied,r.world,marks):s.info.copy(copied,r.world)
+            same:=core.world_copy_changed(s.info,copied,r.world,marks)
             if !same {return "No memory for a copy of the World to compare"}
             if api_history_differs(s,core.world_ref(next.world,s.info),core.world_ref(copied,s.info),out) {
                 if !out.diverged {out.diverged,out.tick,out.since=true,next.tick,key.tick}
