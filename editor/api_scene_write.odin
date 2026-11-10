@@ -37,6 +37,11 @@ Api_Write_Result :: struct {
     made:int `mirai:"label=Entities the document made"`,
     removed:int `mirai:"label=Entities it took away with what hung from them"`,
     disabled:int `mirai:"label=Members of an instance of a prefab it left out and turned off"`,
+    created:[1]Api_Write_Made `mirai:"list,label=The entities of the document it made in its order; of a prefab it placed the root of the instance, whose members hang from it"`,
+}
+Api_Write_Made :: struct {
+    id:base.Entity_Id,
+    name:[64]u8 `mirai:"text"`,
 }
 
 // An entity of a document, read in pre-order.
@@ -72,7 +77,7 @@ API_WRITE_KEYS :: "id, name, preset, position, rotation_deg, scale, visible, ena
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params_schema=API_WRITE_SCHEMA,summary="Makes an entity and what hangs from it say what a document of nested entities declares, as scene.inspect with root gives it: matched by id, name or place, the others made (one with prefab as a linked instance of it) and what it leaves out taken away, in one step.",result=Api_Write_Result,run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params_schema=API_WRITE_SCHEMA,summary="Makes an entity and what hangs from it say what a document of nested entities declares, as scene.inspect with root gives it: matched by id, name or place, the others made (one with prefab as a linked instance of it) and what it leaves out taken away, in one step; the result names what it made.",result=Api_Write_Result,writes_result=true,run=api_scene_write})
 }
 
 // Prefixes the error of the call with where it happened in the document; false.
@@ -205,8 +210,25 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
         given[d.id]=i
     }
     if !api_edit_begin(s,call,"Write entities") {return}
-    result,applied:=api_write_apply(s,call,edited_world(s),root,decls[:])
-    if api_edit_end(s,call,applied) {api.call_result(call,Api_Write_Result)^=result}
+    w:=edited_world(s)
+    result,applied:=api_write_apply(s,call,w,root,decls[:])
+    if !api_edit_end(s,call,applied) {return}
+    out:=call.out
+    serial.text_write_raw(out,`{"id":`);api.write_id(out,result.id)
+    api.write_int(out,"made",i64(result.made))
+    api.write_int(out,"removed",i64(result.removed))
+    api.write_int(out,"disabled",i64(result.disabled))
+    api.write_key(out,"created");serial.write_u8(out,'[')
+    first:=true
+    for d in decls {
+        if !d.made {continue}
+        if !first {serial.write_u8(out,',')}
+        first=false
+        serial.text_write_raw(out,`{"id":`);api.write_id(out,api_entity_id(w,d.e))
+        api.write_text(out,"name",entity_name(w,d.e))
+        serial.write_u8(out,'}')
+    }
+    serial.text_write_raw(out,"]}")
 }
 
 // Makes the part of root say what the document declares, inside the open
@@ -474,6 +496,7 @@ api_write_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,d:^Api_Write
             path:=fmt.aprintf("%s.components.%s",d.path,given,allocator=call.allocator)
             t,problem:=api_component_named(shown_world(s),given)
             if t==nil || t.place!=.World {return rpc_fail(&a,"%s: %s; component.list lists them",path,problem)}
+            if author.component_links(t.name) {return rpc_fail(&a,author.COMPONENT_LINKS_TEXT,path,given)}
             if !api_component_listed(s,t) {return rpc_fail(&a,"%s: %s is not written as a component: Transform, Name, Parent, Hidden and Disabled have their own keys (position, name, children, visible, enabled)",path,given)}
             if serial.text_keyword(&a.r,"null") {return rpc_fail(&a,"%s: the document declares the components the entity has; leave %s out to take it away",path,given)}
             if !api_write_component(s,&a,w,e,t,parts,path) {return false}
