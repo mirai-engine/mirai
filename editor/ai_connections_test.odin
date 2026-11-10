@@ -62,9 +62,7 @@ ai_connections_keep_runtime_advanced_and_only_offer_bun_when_none_is_available :
 when ODIN_OS!=.Windows {
     @(test)
     ai_connections_check_keeps_its_popup_and_update_starts_without_confirmation :: proc(t:^testing.T) {
-        root,error:=os.make_directory_temp("","mirai-connections-*",context.temp_allocator)
-        testing.expect(t,error==nil);if error!=nil {return}
-        defer os.remove_all(root)
+        root:=base.test_folder(t,"connections");if root=="" {return}
         // The adapters are of the user of the machine: a folder of their own, outside the project.
         home:=project.path(root,"agents",allocator=context.temp_allocator)
         m:=new(Ai);defer free(m);ai_connections_reset(m);m.initialized=true;m.connections[AI_CODEX].configured=true

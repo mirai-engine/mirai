@@ -2,18 +2,14 @@ package editor
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
-import "mirai:project"
 import "mirai:std/base"
 
 @(test)
 ai_session_titles_update_the_matching_project_chat_after_the_turn :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-title-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-title");if root=="" {return}
     m:=new(Ai);defer free(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"")
     defer ai_store.close(&m.store)

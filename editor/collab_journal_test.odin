@@ -6,100 +6,43 @@ import "mirai:editor/history"
 import "mirai:std/base"
 
 @(private="file")
-Journal_Lamp :: struct {power:f32,glow:f32 `mirai:"transient"`}
-
-@(private="file")
-Journal_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    lamps:core.Table(Journal_Lamp),
-}
-
-@(private="file")
 Journal_Fixture :: struct {
-    world:Journal_World,
-    tables:[4]core.Table_Info,
-    info:core.World_Info,
-    edits:history.Edits,
-    selection:history.Selection,
+    using journal:history.Test_Journal,
     document:Document,
     s:Session,
 }
 
 @(private="file")
-journal_settle :: proc(data,shared,editor:rawptr) {
-    w:=(^Journal_World)(data)
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities);core.table_settle(&w.lamps,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
-// A World of count entities with an Id from 1, a Transform at x=Id and a
-// Lamp, and every tenth without an Id: derived.
-@(private="file")
-journal_init :: proc(f:^Journal_Fixture,count:int) {
-    w:=&f.world
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.transforms,"Transform");core.table_init(&w.parents,"Parent");core.table_init(&w.lamps,"Lamp")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Journal_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Journal_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Journal_World,parents)},
-        {name="Lamp",type=Journal_Lamp,info=type_info_of(Journal_Lamp),offset=offset_of(Journal_World,lamps)},
-    }
-    f.info={entities=offset_of(Journal_World,entities),tables=f.tables[:]}
-    for i in 0..<count {
-        e:=core.create(&w.entities)
-        if i%10!=9 {core.add(&w.ids,e,{value=base.Entity_Id(i+1)})}
-        core.add(&w.transforms,e,core.Transform{{f32(i+1),0,0},1,{1,1,1}})
-        core.add(&w.lamps,e,{power=1,glow=f32(i)})
-    }
-    journal_settle(w,nil,nil)
-    f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection,document=&f.document}
-    history.edits_reset(&f.edits,journal_world(f))
-}
-
-@(private="file")
-journal_free :: proc(f:^Journal_Fixture) {
-    history.edits_free(&f.edits)
-    delete(f.selection.entities)
-    w:=&f.world
-    core.table_destroy(&w.ids);core.table_destroy(&w.transforms);core.table_destroy(&w.parents);core.table_destroy(&w.lamps)
-    core.entities_destroy(&w.entities)
-}
-
-@(private="file")
-journal_world :: proc(f:^Journal_Fixture) -> core.World_Ref {return core.world_ref(&f.world,&f.info)}
-
-@(private="file")
-journal_entity :: proc(f:^Journal_Fixture,id:base.Entity_Id) -> core.Entity {
-    for value,row in f.world.ids.values {if value.value==id {return f.world.ids.entities[row]}}
-    return core.NONE
+journal_init :: proc(t:^testing.T,f:^Journal_Fixture,count:int) -> bool {
+    if !history.test_journal_init(t,&f.journal,count) {return false}
+    f.s=Session{info=core.test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,document=&f.document}
+    return true
 }
 
 @(private="file")
 Journal_End :: struct {f:Journal_Fixture,st:^Collab_State}
 
 @(private="file")
-journal_end_open :: proc(end:^Journal_End) {
-    journal_init(&end.f,12)
+journal_end_open :: proc(t:^testing.T,end:^Journal_End) -> bool {
+    if !journal_init(t,&end.f,12) {return false}
     end.st=new(Collab_State)
     end.st.role,end.st.phase=.Guest,.Joined
     collab_tables_build(&end.f.s,end.st)
     collab_journal_reset(&end.f.s,end.st)
+    return true
 }
 
 @(private="file")
 journal_end_close :: proc(end:^Journal_End) {
-    for &peer in end.st.peers {
-        for message in peer.out {delete(message)}
-        delete(peer.out)
+    if end.st!=nil {
+        for &peer in end.st.peers {
+            for message in peer.out {delete(message)}
+            delete(peer.out)
+        }
+        collab_tables_free(end.st)
+        free(end.st)
     }
-    collab_tables_free(end.st)
-    free(end.st)
-    journal_free(&end.f)
+    history.test_journal_free(&end.f.journal)
 }
 
 // What one end sends, applied by the other; how many messages went.
@@ -120,10 +63,12 @@ journal_end_send :: proc(from,to:^Journal_End) -> int {
 collaboration_reads_the_journal_and_does_not_echo_what_it_applies :: proc(t:^testing.T) {
     a,b:=new(Journal_End),new(Journal_End)
     defer {free(a);free(b)}
-    journal_end_open(a);defer journal_end_close(a)
-    journal_end_open(b);defer journal_end_close(b)
-    wa,wb:=journal_world(&a.f),journal_world(&b.f)
-    at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return journal_entity(&end.f,id)}
+    if !journal_end_open(t,a) {return}
+    defer journal_end_close(a)
+    if !journal_end_open(t,b) {return}
+    defer journal_end_close(b)
+    wa,wb:=core.test_world_ref(&a.f.world),core.test_world_ref(&b.f.world)
+    at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return history.test_journal_entity(&end.f.journal,id)}
     // An edit not committed yet travels live; cancelled, its row goes back too.
     testing.expect(t,history.edits_begin(&a.f.edits,&a.f.selection,"Drag"))
     testing.expect_value(t,history.edits_cancel_prepare(&a.f.edits,wa),history.Edit_Error.None)
@@ -142,7 +87,7 @@ collaboration_reads_the_journal_and_does_not_echo_what_it_applies :: proc(t:^tes
     core.disable(&a.f.world.lamps,at(a,2))
     core.add(&a.f.world.parents,at(a,4),{entity=at(a,3)})
     core.destroy(&a.f.world.entities,at(a,5))
-    journal_settle(&a.f.world,nil,nil)
+    core.test_world_settle(&a.f.world)
     history.edits_end(&a.f.edits)
     testing.expect(t,history.edits_commit(&a.f.edits,wa,&a.f.selection))
     testing.expect_value(t,journal_end_send(a,b),1)
@@ -178,14 +123,16 @@ collaboration_reads_the_journal_and_does_not_echo_what_it_applies :: proc(t:^tes
 undo_at_each_end_keeps_what_the_other_end_wrote_since :: proc(t:^testing.T) {
     a,b:=new(Journal_End),new(Journal_End)
     defer {free(a);free(b)}
-    journal_end_open(a);defer journal_end_close(a)
-    journal_end_open(b);defer journal_end_close(b)
-    at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return journal_entity(&end.f,id)}
+    if !journal_end_open(t,a) {return}
+    defer journal_end_close(a)
+    if !journal_end_open(t,b) {return}
+    defer journal_end_close(b)
+    at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return history.test_journal_entity(&end.f.journal,id)}
     position :: proc(end:^Journal_End,id:base.Entity_Id) -> [3]f32 {return core.get(&end.f.world.transforms,at(end,id)).position}
     commit :: proc(t:^testing.T,end:^Journal_End,loc:=#caller_location) {
-        journal_settle(&end.f.world,nil,nil)
+        core.test_world_settle(&end.f.world)
         history.edits_end(&end.f.edits)
-        testing.expect(t,history.edits_commit(&end.f.edits,journal_world(&end.f),&end.f.selection),loc=loc)
+        testing.expect(t,history.edits_commit(&end.f.edits,core.test_world_ref(&end.f.world),&end.f.selection),loc=loc)
     }
     // The same field: A's undo keeps what B wrote after it, and tells nothing.
     testing.expect(t,history.edits_begin(&a.f.edits,&a.f.selection,"A moves"))
@@ -246,21 +193,22 @@ undo_at_each_end_keeps_what_the_other_end_wrote_since :: proc(t:^testing.T) {
     testing.expect(t,history_redo(&a.f.s).done && history_undo(&a.f.s).done)
     testing.expect_value(t,journal_end_send(a,b),1)
     testing.expect(t,at(a,100)==core.NONE && at(b,100)==core.NONE)
-    testing.expect(t,history.journal_settled(&a.f.edits,journal_world(&a.f)) && history.journal_settled(&b.f.edits,journal_world(&b.f)))
+    testing.expect(t,history.journal_settled(&a.f.edits,core.test_world_ref(&a.f.world)) && history.journal_settled(&b.f.edits,core.test_world_ref(&b.f.world)))
 }
 
 // A session of several ends, the host first, each with its document: what a
 // guest edits goes to the host, which applies it and sends it to every
 // guest, the sender included.
 @(private="file")
-journal_session_open :: proc(ends:[]^Journal_End) {
+journal_session_open :: proc(t:^testing.T,ends:[]^Journal_End) -> bool {
     for end,i in ends {
-        journal_end_open(end)
+        if !journal_end_open(t,end) {return false}
         end.st.self=u8(i)
         if i>0 {continue}
         end.st.role=.Host
         for &peer in end.st.peers[:len(ends)] {peer.used,peer.joined=true,true}
     }
+    return true
 }
 
 // What the ends of order edited reaches the host in that order (0: the host
@@ -315,7 +263,7 @@ Journal_Field :: enum u8 {Position,Rotation,Scale}
 // A field of the Transform of an entity, written whole from one number.
 @(private="file")
 journal_field_write :: proc(end:^Journal_End,id:base.Entity_Id,field:Journal_Field,value:f32) {
-    local:=core.get(&end.f.world.transforms,journal_entity(&end.f,id))
+    local:=core.get(&end.f.world.transforms,history.test_journal_entity(&end.f.journal,id))
     switch field {
     case .Position: local.position={value,value,value}
     case .Rotation: local.rotation=quaternion(w=value,x=0,y=0,z=0)
@@ -327,7 +275,7 @@ journal_field_write :: proc(end:^Journal_End,id:base.Entity_Id,field:Journal_Fie
 @(private="file")
 journal_session_expect :: proc(t:^testing.T,ends:[]^Journal_End,id:base.Entity_Id,want:[Journal_Field]f32,what:string,loc:=#caller_location) {
     for end,i in ends {
-        local:=core.get(&end.f.world.transforms,journal_entity(&end.f,id))
+        local:=core.get(&end.f.world.transforms,history.test_journal_entity(&end.f.journal,id))
         got:=[Journal_Field]f32{.Position=local.position.x,.Rotation=real(local.rotation),.Scale=local.scale.x}
         testing.expectf(t,got==want,"%s, end %d: %v, not %v",what,i,got,want,loc=loc)
     }
@@ -341,8 +289,9 @@ journal_session_expect :: proc(t:^testing.T,ends:[]^Journal_End,id:base.Entity_I
 fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: proc(t:^testing.T) {
     ends:=[3]^Journal_End{new(Journal_End),new(Journal_End),new(Journal_End)}
     defer for end in ends {free(end)}
-    journal_session_open(ends[:])
+    opened:=journal_session_open(t,ends[:])
     defer for end in ends {journal_end_close(end)}
+    if !opened {return}
     Change :: struct {end:int,field:Journal_Field,value:f32}
     // Each case edits the entity of its place, whose position starts at its id.
     cases:=[?]struct {
@@ -367,7 +316,7 @@ fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: 
             testing.expect(t,history.edits_begin(&end.f.edits,&end.f.selection,c.name))
             journal_field_write(end,id,change.field,change.value)
             history.edits_end(&end.f.edits)
-            testing.expect(t,history.edits_commit(&end.f.edits,journal_world(&end.f),&end.f.selection),c.name)
+            testing.expect(t,history.edits_commit(&end.f.edits,core.test_world_ref(&end.f.world),&end.f.selection),c.name)
         }
         journal_session_sync(ends[:],..c.order)
         journal_session_expect(t,ends[:],id,c.want,c.name)
@@ -384,14 +333,14 @@ fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: 
         testing.expect(t,history.edits_begin(&guest.f.edits,&guest.f.selection,"Twice"))
         journal_field_write(guest,7,.Scale,value)
         history.edits_end(&guest.f.edits)
-        testing.expect(t,history.edits_commit(&guest.f.edits,journal_world(&guest.f),&guest.f.selection))
+        testing.expect(t,history.edits_commit(&guest.f.edits,core.test_world_ref(&guest.f.world),&guest.f.selection))
         if value==5 {journal_session_up(ends[:],1)}
     }
     journal_session_down(ends[:])
-    testing.expect_value(t,core.get(&guest.f.world.transforms,journal_entity(&guest.f,7)).scale.x,f32(8))
+    testing.expect_value(t,core.get(&guest.f.world.transforms,history.test_journal_entity(&guest.f.journal,7)).scale.x,f32(8))
     journal_session_sync(ends[:],1)
     journal_session_expect(t,ends[:],7,{.Position=7,.Rotation=1,.Scale=8},"two edits in a row")
-    for end in ends {testing.expect(t,history.journal_settled(&end.f.edits,journal_world(&end.f)))}
+    for end in ends {testing.expect(t,history.journal_settled(&end.f.edits,core.test_world_ref(&end.f.world)))}
 }
 
 // A gesture one end leaves open tells its field as it goes; a field of the
@@ -402,17 +351,18 @@ a_gesture_left_open_keeps_what_another_end_writes_to_another_field :: proc(t:^te
     for cancel in ([2]bool{false,true}) {
         ends:=[3]^Journal_End{new(Journal_End),new(Journal_End),new(Journal_End)}
         defer for end in ends {free(end)}
-        journal_session_open(ends[:])
+        opened:=journal_session_open(t,ends[:])
         defer for end in ends {journal_end_close(end)}
+        if !opened {return}
         dragging,other:=ends[1],ends[2]
-        w:=journal_world(&dragging.f)
+        w:=core.test_world_ref(&dragging.f.world)
         testing.expect(t,history.edits_begin(&dragging.f.edits,&dragging.f.selection,"Drag"))
         testing.expect_value(t,history.edits_cancel_prepare(&dragging.f.edits,w),history.Edit_Error.None)
         journal_field_write(dragging,1,.Position,5)
         testing.expect(t,history.edits_begin(&other.f.edits,&other.f.selection,"Scale"))
         journal_field_write(other,1,.Scale,3)
         history.edits_end(&other.f.edits)
-        testing.expect(t,history.edits_commit(&other.f.edits,journal_world(&other.f),&other.f.selection))
+        testing.expect(t,history.edits_commit(&other.f.edits,core.test_world_ref(&other.f.world),&other.f.selection))
         journal_session_sync(ends[:],1,2)
         journal_session_expect(t,ends[:],1,{.Position=5,.Rotation=1,.Scale=3},"both fields")
         // The drag goes on: what arrived of the other field is not its edit.

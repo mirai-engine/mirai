@@ -5,49 +5,27 @@ import "mirai:core"
 import "mirai:editor/history"
 
 Simulation_Test_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-}
-
-simulation_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Simulation_Test_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.entities_settle(&w.entities)
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
 }
 
 @(test)
 simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: proc(t:^testing.T) {
     world:Simulation_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    tables:=[3]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Simulation_Test_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Simulation_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Simulation_Test_World,parents)},
-    }
-    info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:]}
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     parent,child:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,parent,core.Id{1})
     core.add(&world.ids,child,core.Id{2})
     core.add(&world.transforms,parent,core.Transform{{10,0,0},1,{1,1,1}})
     core.add(&world.transforms,child,core.Transform{{2,0,0},1,{1,1,1}})
     core.add(&world.parents,child,core.Parent{parent,0})
-    simulation_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     edits:history.Edits
     selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
-    s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui}
+    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui}
     w:=edited_world(&s)
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)
@@ -84,7 +62,7 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
     core.add(&world.parents,grandchild,core.Parent{child,0})
     core.get(&world.transforms,parent)^={{10,0,0},quaternion(x=0,y=0,z=0.70710677,w=0.70710677),{2,3,4}}
     core.get(&world.transforms,child)^={{2,0,0},quaternion(x=0,y=0.70710677,z=0,w=0.70710677),{1,2,1}}
-    simulation_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     history.edits_reset(&edits,w)
     deep:=[1]Simulation_Pose{{id=3,position={7,8,9},rotation={0,0,0,1},scale={2,3,4}}}
     testing.expect(t,simulation_apply_poses(&s,deep[:]))

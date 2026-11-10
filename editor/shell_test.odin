@@ -9,19 +9,9 @@ import "mirai:platform"
 import "mirai:ui"
 
 Shell_Test_World :: struct {
-    entities:core.Entities,
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     graphics:erender.Graphics_Settings,
-}
-
-shell_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Shell_Test_World)data
-    core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 shell_test_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
@@ -46,25 +36,12 @@ shell_test_click :: proc(t:^testing.T,s:^Session,id:ui.Id) {
 @(test)
 the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.T) {
     world:Shell_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.names,"Name")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.names)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    tables:=[3]core.Table_Info{
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Shell_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Shell_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Shell_Test_World,parents)},
-    }
-    storages:=[1]core.Storage_Info{{type=erender.Graphics_Settings,offset=offset_of(Shell_Test_World,graphics)}}
-    info:=core.World_Info{entities=offset_of(Shell_Test_World,entities),tables=tables[:],storages=storages[:]}
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
     selected:=core.create(&world.entities)
     core.add(&world.names,selected,core.name_make("Object"))
     core.add(&world.transforms,selected,core.TRANSFORM_IDENTITY)
-    shell_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -84,7 +61,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     graphics:Graphics
     materials:Materials
     content:Content
-    session:=Session{info=&info,edit_world=&world,headless=true,app=&app,gui=&g,viewport=&viewport,selection=&selection,inspector=&inspector,edits=&edits,document=&document,build=&build,ai=ai,finder=&finder,graphics=&graphics,materials=&materials,content=&content}
+    session:=Session{info=core.test_world_info(&world),edit_world=&world,headless=true,app=&app,gui=&g,viewport=&viewport,selection=&selection,inspector=&inspector,edits=&edits,document=&document,build=&build,ai=ai,finder=&finder,graphics=&graphics,materials=&materials,content=&content}
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
     defer core.value_free(&content,type_info_of(Content))

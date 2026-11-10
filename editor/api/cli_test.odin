@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 Tool :: struct {
@@ -170,8 +171,8 @@ rpc_command_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
 // a result of the one before it, and the first that fails says its line and
 // ends it.
 rpc_batch_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
-    folder,_:=os.make_directory_temp("","mirai-batch",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"batch")
+    if folder=="" {return}
     file:=strings.concatenate({folder,"/calls.jsonl"},context.temp_allocator)
     write :: proc(file,text:string) {_=os.write_entire_file(file,transmute([]u8)text)}
     write(file,`{"method":"test.add","params":{"a":2,"b":3}}`+"\n"+`{"method":"test.add","params":{"a":"$0.sum","b":10}}`+"\n"+`{"method":"test.shapes","params":{"position":["$0.sum",0,0]}}`+"\n")

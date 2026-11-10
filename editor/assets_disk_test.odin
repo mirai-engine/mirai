@@ -30,7 +30,7 @@ a_call_finds_what_changed_on_disk_and_unsaved_changes_stay :: proc(t:^testing.T)
     if !testing.expect_value(t,error,platform.Error.None) {return}
     defer platform.destroy(p)
     f:=new(Files_Test,context.temp_allocator)
-    files_test_open(f,"mirai-assets-disk")
+    if !files_test_open(t,f,"assets-disk") {return}
     defer files_test_close(f)
     assets:host.Assets
     root:=project.path(f.root,"assets",allocator=context.temp_allocator)
@@ -67,7 +67,7 @@ a_call_finds_what_changed_on_disk_and_unsaved_changes_stay :: proc(t:^testing.T)
 @(test)
 asset_save_without_names_writes_the_unsaved_assets_of_the_caller :: proc(t:^testing.T) {
     f:=new(Files_Test,context.temp_allocator)
-    files_test_open(f,"mirai-assets-caller")
+    if !files_test_open(t,f,"assets-caller") {return}
     defer files_test_close(f)
     assets:host.Assets
     root:=project.path(f.root,"assets",allocator=context.temp_allocator)

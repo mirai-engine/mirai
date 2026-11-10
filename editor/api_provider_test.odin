@@ -24,15 +24,23 @@ api_test_register_v2 :: proc(s:^Session) {
 api_test_run_v1 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=api.call_params(call,Api_Test_Params).value}
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
 
+@(private="file")
+Api_Test_World :: struct {using world:core.Test_World}
+
+@(private="file")
+api_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(Api_Test_Provider,default=proc(dst:^Api_Test_Provider) {api_test_provider_v1(dst)}))
+}
+
 @(test)
 editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: proc(t:^testing.T) {
     world:Api_Test_Editor
     edits:history.Edits
-    storages:=[2]core.Storage_Info{
-        {name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Api_Test_Editor,api)},
-        {name="Api_Test_Provider",type=Api_Test_Provider,info=type_info_of(Api_Test_Provider),place=.Editor,offset=offset_of(Api_Test_Editor,provider),default=api_test_provider_v1,plugin="test_plugin"},
-    }
-    info:=core.World_Info{storages=storages[:]}
+    info,described:=core.test_info(t,Api_Test_World,core.Test_None,Api_Test_Editor,api_test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    provider:=&info.storages[info.storages_by_type[Api_Test_Provider]]
+    provider.plugin="test_plugin"
     session:=Session{info=&info,editor_world=&world,edits=&edits}
     if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
     defer api_close(&session)
@@ -49,7 +57,7 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     error,ok:=api.method_execute(&state.server,method,"{}",&out)
     testing.expectf(t,ok,"%v",error)
     testing.expect_value(t,string(serial.writer_bytes(&out)),`{"value": 7}`)
-    storages[1].default=api_test_provider_v2
+    provider.default=api_test_provider_v2
     session.library_generation+=1
     api_poll(&session)
     testing.expect_value(t,api_port(&session),port)

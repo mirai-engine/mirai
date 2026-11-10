@@ -10,6 +10,7 @@ import "core:strings"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 mcp :: proc(t:^testing.T,f:^Fixture,body:string) -> json.Value {
@@ -35,8 +36,8 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     defer server_destroy(&server)
     payload:=strings.repeat("AQID",230*1024,context.allocator)
     defer delete(payload)
-    folder,_:=os.make_directory_temp("","mirai-image-*",context.allocator)
-    defer {os.remove_all(folder);delete(folder)}
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
     file:=fmt.tprintf("%s/large.png",folder)
     bytes:=make([]u8,230*1024*3,context.temp_allocator)
     for i in 0..<len(bytes) {bytes[i]=u8(i%3+1)}
@@ -118,8 +119,8 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     f:Fixture;if !fixture_start(&f,t,{max_response=MIN_RESPONSE}) {return}
     defer fixture_finish(&f)
     testing.expect_value(t,method_register(&f.server,{name="shot.take",params=Image_Params,result=Add_Result,handler=image_handler}),Register_Error.None)
-    folder,_:=os.make_directory_temp("","mirai-image-*",context.allocator)
-    defer {os.remove_all(folder);delete(folder)}
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
     small:=fmt.tprintf("%s/small.png",folder)
     large:=fmt.tprintf("%s/large.png",folder)
     testing.expect(t,os.write_entire_file(small,[]u8{1,2,3,4})==nil)
@@ -430,8 +431,8 @@ mcp_process_reply :: proc(t:^testing.T,s:^Server,body:string) -> json.Value {
 // engine, the same one mirai mcp answers without an editor.
 @(test)
 mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
-    root:=fmt.tprintf(".mirai/test-mcp-docs-%d",os.get_pid())
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"mcp-docs")
+    if root=="" {return}
     testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s",root,DOCS_FOLDER))==nil)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core.md",root,DOCS_FOLDER),transmute([]u8)string("---\ndescription: Entities and tables.\n---\n# Core\n\nBody.\n"))==nil)
     testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s/core",root,DOCS_FOLDER))==nil)

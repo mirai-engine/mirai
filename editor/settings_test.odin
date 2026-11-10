@@ -13,9 +13,16 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-@(private="file") Layer_Setting :: struct {quality:i32,scale:f32}
-@(private="file") Layer_Rule :: struct {count:i32}
-@(private="file") Layer_World :: struct {entities:core.Entities,setting:Layer_Setting,rule:Layer_Rule}
+@(private="file") @(storage,setting="machine") Layer_Setting :: struct {quality:i32,scale:f32}
+@(private="file") @(storage,setting) Layer_Rule :: struct {count:i32}
+@(private="file") Layer_World :: struct {using world:core.Test_World,setting:Layer_Setting,rule:Layer_Rule}
+@(private="file") Layer_Editor :: struct {api:Api}
+
+@(private="file")
+layer_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    test_types(types)
+    append(types,core.test_type(Layer_Setting,default=proc(dst:^Layer_Setting) {dst^={quality=1,scale=1}}))
+}
 
 @(private="file")
 layer_text :: proc(layer:project.Settings_Layer,root,engine:string) -> string {
@@ -29,25 +36,23 @@ layer_text :: proc(layer:project.Settings_Layer,root,engine:string) -> string {
 // layer holds only the settings of the machine.
 @(test)
 settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-editor-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"editor-settings")
+    if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
+    info,made:=core.test_info(t,Layer_World,core.Test_None,Layer_Editor,layer_test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
     world:Layer_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    storages:=[3]core.Storage_Info{
-        {type=Api,info=type_info_of(Api),place=.Editor},
-        {name="Layer_Setting",type=Layer_Setting,info=type_info_of(Layer_Setting),offset=offset_of(Layer_World,setting),setting=.Machine,default=proc(dst:rawptr) {(^Layer_Setting)(dst)^={quality=1,scale=1}}},
-        {name="Layer_Rule",type=Layer_Rule,info=type_info_of(Layer_Rule),offset=offset_of(Layer_World,rule),setting=.Project},
-    }
-    info:=core.World_Info{entities=offset_of(Layer_World,entities),storages=storages[:]}
-    world.setting={quality=1,scale=1}
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
+    setting_at,rule_at:=info.storages_by_type[Layer_Setting],info.storages_by_type[Layer_Rule]
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
-    api_storage:Api
+    editor:Layer_Editor
     app:host.App
-    session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,project_root=root,engine_root=engine,has_project=true}
+    session:=Session{info=&info,edit_world=&world,editor_world=&editor,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,project_root=root,engine_root=engine,has_project=true}
     defer settings_engine_free(&session)
     history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
@@ -148,16 +153,16 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     settings_engine_load(&session)
     settings_layer_set(&session,.Engine)
     quality,scale:=i32(6),f32(9)
-    setting_write(&session,1,int(offset_of(Layer_Setting,quality)),mem.ptr_to_bytes(&quality))
+    setting_write(&session,setting_at,int(offset_of(Layer_Setting,quality)),mem.ptr_to_bytes(&quality))
     count:=i32(5)
-    setting_write(&session,2,0,mem.ptr_to_bytes(&count))
+    setting_write(&session,rule_at,0,mem.ptr_to_bytes(&count))
     settings_flush(&session)
     testing.expect_value(t,world.rule,Layer_Rule{count=2})
     testing.expect_value(t,world.setting,Layer_Setting{quality=6,scale=5})
     testing.expect(t,strings.contains(layer_text(.Engine,root,engine),`"quality": 6`))
     settings_layer_set(&session,.Project)
     scale=7
-    setting_write(&session,1,int(offset_of(Layer_Setting,scale)),mem.ptr_to_bytes(&scale))
+    setting_write(&session,setting_at,int(offset_of(Layer_Setting,scale)),mem.ptr_to_bytes(&scale))
     settings_flush(&session)
     testing.expect_value(t,world.setting,Layer_Setting{quality=6,scale=7})
     testing.expect(t,!strings.contains(layer_text(.Project,root,engine),`"Layer_Setting"`))
@@ -167,12 +172,12 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 
-@(private="file") Advanced_Setting :: struct {
+@(private="file") @(storage,setting) Advanced_Setting :: struct {
     shown:bool `mirai:"section=Rules"`,
     pool:bool `mirai:"advanced"`,
     budget:bool `mirai:"section=Limits,advanced"`,
 }
-@(private="file") Advanced_World :: struct {entities:core.Entities,setting:Advanced_Setting}
+@(private="file") Advanced_World :: struct {using world:core.Test_World,setting:Advanced_Setting}
 
 // A card draws its fields tagged advanced after the others, under a fold
 // that starts closed and keeps whether it is open; a card of only those has
@@ -183,13 +188,13 @@ advanced_settings_go_last_under_a_fold_the_search_opens :: proc(t:^testing.T) {
     if !testing.expect(t,ui.context_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     world:Advanced_World
-    storages:=[1]core.Storage_Info{{name="Advanced_Setting",type=Advanced_Setting,info=type_info_of(Advanced_Setting),offset=offset_of(Advanced_World,setting),setting=.Project}}
-    info:=core.World_Info{entities=offset_of(Advanced_World,entities),storages=storages[:]}
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     inspector:Inspector
     defer core.value_free(&inspector,type_info_of(Inspector))
     app:host.App
-    s:=Session{gui=&g,info=&info,edit_world=&world,app=&app,inspector=&inspector}
+    s:=Session{gui=&g,info=core.test_world_info(&world),edit_world=&world,app=&app,inspector=&inspector}
     frame :: proc(t:^testing.T,s:^Session,input:ui.Input) {
         ctx:=s.gui.ctx
         categories:=settings_categories(s)

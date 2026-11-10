@@ -16,21 +16,11 @@ Clipboard_Test_Lamp :: struct {
 }
 
 Clipboard_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     lamps:core.Table(Clipboard_Test_Lamp),
-}
-
-@(private="file")
-clipboard_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Clipboard_Test_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.lamps,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 Clipboard_Test_Board :: struct {text:[4096]u8,length:int}
@@ -49,24 +39,10 @@ clipboard_test_set :: proc(user:rawptr,text:string) {
 @(test)
 inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) {
     world:Clipboard_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.lamps,"Clipboard_Test_Lamp")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.table_destroy(&world.lamps)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Clipboard_Test_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Clipboard_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Clipboard_Test_World,parents)},
-        {name="Clipboard_Test_Lamp",type=Clipboard_Test_Lamp,info=type_info_of(Clipboard_Test_Lamp),offset=offset_of(Clipboard_Test_World,lamps)},
-    }
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     LAMP :: 3
-    info:=core.World_Info{entities=offset_of(Clipboard_Test_World,entities),tables=tables[:]}
+    info:=core.test_world_info(&world)
     a,b,c:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&world.ids,e,core.Id{base.Entity_Id(i+1)})
@@ -74,7 +50,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     core.add(&world.lamps,a,Clipboard_Test_Lamp{color={1,0.5,0.25},intensity=3,target=c,mesh={7,9}})
     core.add(&world.lamps,b,Clipboard_Test_Lamp{})
-    clipboard_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
 
     board:Clipboard_Test_Board
     ctx:ui.Context
@@ -85,7 +61,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     selection:history.Selection
     viewport:Viewport
     inspector:Inspector
-    s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
+    s:=Session{info=info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
     w:=edited_world(&s)
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)

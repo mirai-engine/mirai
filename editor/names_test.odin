@@ -6,6 +6,7 @@ import "core:testing"
 import "mirai:core"
 import input "mirai:engine/input"
 import "mirai:project"
+import "mirai:std/base"
 
 // An input action is renamed in code; once built, renaming it follows: the
 // input.mirai of the project takes the new name and the code stays as it is.
@@ -13,9 +14,8 @@ import "mirai:project"
 // one, says to rename it in code first. A new action is declared in code.
 @(test)
 renaming_an_action_follows_the_code_in_input_mirai :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-names-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"names")
+    if folder=="" {return}
     game:=project.path(folder,"game",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(game)==nil)
     code:=project.path(game,"game.odin",allocator=context.temp_allocator)

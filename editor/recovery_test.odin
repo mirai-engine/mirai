@@ -1,35 +1,24 @@
 package editor
 
-import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/jobs"
 
 @(test)
 recovery_copy_is_written_by_a_job_and_read_back :: proc(t:^testing.T) {
+    info,described:=prefab_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    prefab_test_init(&world,context.allocator)
-    defer prefab_test_destroy(&world)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Prefab_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Prefab_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Prefab_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
-    }
-    storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
-        sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
-        init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-recovery-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    os.make_directory_all(root)
-    defer os.remove_all(root)
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
+    root:=base.test_folder(t,"recovery")
+    if root=="" {return}
     assets:host.Assets
     asset.types_init(&assets.types)
     defer asset.types_destroy(&assets.types)
@@ -43,8 +32,8 @@ recovery_copy_is_written_by_a_job_and_read_back :: proc(t:^testing.T) {
     selection:history.Selection
     edits:history.Edits
     document:Document
-    prefabs:Prefabs
-    s:=Session{info=&info,edit_world=&world,editor_world=&prefabs,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
+    editor:Prefab_Fixture_Editor
+    s:=Session{info=&info,edit_world=&world,editor_world=&editor,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
     defer delete(selection.entities)
     defer history.edits_free(&edits)
     defer document_previous_free(&document)

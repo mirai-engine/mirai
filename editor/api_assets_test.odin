@@ -16,7 +16,7 @@ List_Lamp :: struct {
 }
 @(private="file")
 List_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     lamps:core.Table(List_Lamp),
 }
 @(private="file") List_Editor :: struct {api:Api}
@@ -27,12 +27,15 @@ List_World :: struct {
 @(test)
 component_list_fields_say_their_kind_unit_and_description :: proc(t:^testing.T) {
     descriptions:=[1]core.Field_Description{{"cone","from its axis to the edge"}}
-    tables:=[1]core.Table_Info{{name="List_Lamp",type=List_Lamp,info=type_info_of(List_Lamp),offset=offset_of(List_World,lamps),fields=descriptions[:]}}
-    storages:=[1]core.Storage_Info{{name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(List_Editor,api)}}
-    info:=core.World_Info{entities=offset_of(List_World,entities),tables=tables[:],storages=storages[:]}
+    info,described:=core.test_info(t,List_World,core.Test_None,List_Editor)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    info.tables[0].fields=descriptions[:]
     state:Api_State
     editor:=List_Editor{api={state=&state}}
     world:List_World
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
     session:=Session{info=&info,editor_world=&editor,edit_world=&world}
     api_schema_build(&session,&state)
     defer api_schema_free(&state)

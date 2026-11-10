@@ -1,8 +1,6 @@
 package editor
 
 import "core:encoding/json"
-import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -11,7 +9,6 @@ import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -66,9 +63,7 @@ finish_answer :: proc(task:^Ai_Task) -> string {
 
 @(test)
 finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-finish-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-finish");if root=="" {return}
     m:=new(Ai);defer free(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     app:host.App

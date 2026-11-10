@@ -9,7 +9,7 @@ import mm "mirai:std/math"
 
 // A game loop that counts its ticks and adds a layer of UI to the frame, as a game with a HUD does.
 watch_test_tick :: proc(data,shared,editor,app:rawptr) {
-    (cast(^Play_Test_World)data).ticks+=1
+    play_test_ticks(data,app).count+=1
     (cast(^host.App)app).extras.layer_count+=1
 }
 
@@ -36,14 +36,14 @@ an_agent_run_is_watched_without_input_or_edits_while_the_game_of_the_user_goes_o
     testing.expect(t,app.game_input_blocked)
     app.extras.layer_count=0
     game_frame(s)
-    testing.expect(t,u.ticks>0 && .W not_in u.input.keys_down,"the game of the user goes on without the input of the window")
-    testing.expect_value(t,a.ticks,0)
+    testing.expect(t,u.ticks.count>0 && .W not_in u.input.keys_down,"the game of the user goes on without the input of the window")
+    testing.expect_value(t,a.ticks.count,0)
     testing.expect_value(t,app.extras.layer_count,0)
     // The agent steps its run: what it draws is the frame now.
     agent.step=true
     platform.frame_begin(f.p)
     game_frame(s)
-    testing.expect_value(t,a.ticks,1)
+    testing.expect_value(t,a.ticks.count,1)
     testing.expect_value(t,app.extras.layer_count,1)
     // What is watched is not edited.
     before:=core.get(&a.transforms,original)^

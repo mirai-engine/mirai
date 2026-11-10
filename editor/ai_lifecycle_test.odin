@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:encoding/json"
 import "core:os"
 import "core:strings"
@@ -11,7 +10,6 @@ import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 
 @(private="file")
@@ -65,9 +63,7 @@ ai_external_test_read :: proc(s:^Session,call:^api.Call) {s.ai.next_id=-1 if s.e
 // waits and is followed by the next turn of the chat once it was resolved.
 @(test)
 an_agent_outside_the_editor_works_in_a_turn_of_its_own_until_it_ends :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-external-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-external");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     m.initialized=true
@@ -173,9 +169,7 @@ cancelled_turn_rejects_mcp_mutations_and_releases_an_unresponsive_worker :: proc
 
 @(test)
 project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-empty-turns-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-empty-turns");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     document:Document
@@ -209,9 +203,7 @@ project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: pr
 
 @(test)
 retry_preserves_the_original_model_and_effort_when_connection_defaults_changed :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-retry-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-retry");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     m.task_count=1
     task:=&m.tasks[0];task.id=1;task.state=.Done;task.review_finished=true

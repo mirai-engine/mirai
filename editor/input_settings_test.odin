@@ -19,14 +19,18 @@ import "mirai:std/serial"
 @(private="file") HIT :: input.Action(40)
 
 @(private="file") Input_Defaults :: struct {defaults:[Input_Test_Action]input.Action_Default}
-@(private="file") Input_World :: struct {entities:core.Entities,bindings:input.Input_Map,defaults:Input_Defaults}
+@(private="file") Input_World :: struct {using world:core.Test_World,bindings:input.Input_Map,defaults:Input_Defaults}
+@(private="file") Input_Editor :: struct {api:Api}
 
 @(private="file")
-input_defaults :: proc(dst:rawptr) {
-    (^Input_Defaults)(dst)^={defaults={
-        .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
-        .Jump=input.action_default(.Button,input.binding_key(.Space)),
-    }}
+input_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    test_types(types)
+    append(types,core.test_type(Input_Defaults,default=proc(dst:^Input_Defaults) {
+        dst^={defaults={
+            .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
+            .Jump=input.action_default(.Button,input.binding_key(.Space)),
+        }}
+    }))
 }
 
 @(private="file")
@@ -41,14 +45,13 @@ Input_Fixture :: struct {
     folder:string,
     world:Input_World,
     names:[3]core.Name_Info,
-    storages:[3]core.Storage_Info,
     info:core.World_Info,
     selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
     edits:history.Edits,
     inspector:Inspector,
-    api_storage:Api,
+    editor:Input_Editor,
     app:host.App,
     session:Session,
     out:serial.Writer,
@@ -58,22 +61,18 @@ Input_Fixture :: struct {
 // and an editor with input.get and input.set.
 @(private="file")
 input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
-    folder,error:=os.make_directory_temp("","mirai-input-settings-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return false}
-    f.folder=folder
+    f.folder=base.test_folder(t,"input-settings")
+    if f.folder=="" {return false}
+    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,input_test_types) or_return
     f.names={
         {type=input.Action,value=0,name="move",file="engine/input/input.odin",line=1},
         {type=input.Action,value=1,name="jump",file="engine/input/input.odin",line=2},
         {type=input.Action,value=40,name="hit",library="game",file="game/game.odin",line=3,project=true},
     }
-    f.storages={
-        {type=Api,info=type_info_of(Api),place=.Editor},
-        {name="Input_Map",type=input.Input_Map,info=type_info_of(input.Input_Map),offset=offset_of(Input_World,bindings)},
-        {name="Input_Defaults",type=Input_Defaults,info=type_info_of(Input_Defaults),offset=offset_of(Input_World,defaults),default=input_defaults},
-    }
-    f.info={entities=offset_of(Input_World,entities),names=f.names[:],storages=f.storages[:],actions=input_test_actions()}
-    core.entities_init(&f.world.entities)
-    f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.api_storage,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=folder,has_project=true}
+    f.info.names,f.info.actions=f.names[:],input_test_actions()
+    core.test_info_index(&f.info)
+    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {return false}
+    f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=f.folder,has_project=true}
     history.edits_reset(&f.edits,edited_world(&f.session))
     if !testing.expect(t,api_open(&f.session,0,true)==.None) {return false}
     state:=api_state(&f.session)
@@ -89,8 +88,8 @@ input_fixture_destroy :: proc(f:^Input_Fixture) {
     api_close(&f.session)
     history.edits_free(&f.edits)
     delete(f.selection.entities)
-    core.entities_destroy(&f.world.entities)
-    os.remove_all(f.folder)
+    if f.info.destroy[.World]!=nil {f.info.destroy[.World](&f.world)}
+    core.test_info_destroy(&f.info)
 }
 
 @(private="file")
@@ -277,8 +276,11 @@ a_binding_chosen_from_the_menus_is_written :: proc(t:^testing.T) {
 @(test)
 a_listening_binding_takes_what_is_pressed :: proc(t:^testing.T) {
     names:=[]core.Name_Info{{type=input.Action,value=0,name="move"},{type=input.Action,value=1,name="jump"}}
-    storages:=[]core.Storage_Info{{name="Input_Defaults",type=Input_Defaults,info=type_info_of(Input_Defaults),default=input_defaults}}
-    info:=core.World_Info{names=names,storages=storages,actions=input_test_actions()}
+    info,made:=core.test_info(t,struct {using world:core.Test_World,defaults:Input_Defaults},input_test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
+    info.names,info.actions=names,input_test_actions()
+    core.test_info_index(&info)
     st:=new(Input_Settings,context.temp_allocator)
     input.input_map_make(&st.code,&info,"","",nil)
     st.current=st.code

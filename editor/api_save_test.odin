@@ -10,6 +10,8 @@ import "mirai:host"
 import "mirai:std/base"
 
 @(private="file")
+Save_Api_World :: struct {using world:core.Test_World}
+@(private="file")
 Save_Api_Shared :: struct {state:save.Save_State}
 
 @(private="file")
@@ -26,11 +28,11 @@ save_api_call :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,
 // do not load with why; writing and loading ask for Play.
 @(test)
 save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^testing.T) {
-    dir,dir_error:=os.make_directory_temp("","mirai-save-api-*",context.allocator)
-    if !testing.expect(t,dir_error==nil) {return}
-    defer {os.remove_all(dir);delete(dir)}
-    storages:=[1]core.Storage_Info{{type=save.Save_State,info=type_info_of(save.Save_State),offset=offset_of(Save_Api_Shared,state),place=.Shared}}
-    info:=core.World_Info{storages=storages[:]}
+    dir:=base.test_folder(t,"save-api")
+    if dir=="" {return}
+    info,described:=core.test_info(t,Save_Api_World,Save_Api_Shared,core.Test_None)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     shared:Save_Api_Shared
     app:=host.App{info=&info,allocator=context.allocator,shared=&shared}
     save.folder_set(&shared.state,app.allocator,dir)

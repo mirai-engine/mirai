@@ -6,12 +6,8 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:third_party/sqlite"
-
-@(private="file")
-test_root :: proc(name:string) -> string {
-    return project.path_absolute(fmt.tprintf(".mirai/test-ai-store-%s-%d",name,os.get_pid()),context.temp_allocator)
-}
 
 @(private="file")
 test_add :: proc(lines:^[dynamic]Line,text:string,kind:Line_Kind=.Output) {
@@ -32,10 +28,8 @@ test_conversation :: proc(id:u64,document:string) -> Conversation {
 
 @(test)
 reopens_chats_with_metadata_and_changed_stream_text :: proc(t:^testing.T) {
-    root:=test_root("roundtrip")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-roundtrip")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -85,10 +79,8 @@ reopens_chats_with_metadata_and_changed_stream_text :: proc(t:^testing.T) {
 
 @(test)
 filters_documents_and_keeps_projects_isolated :: proc(t:^testing.T) {
-    root:=test_root("isolation")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-isolation")
+    if root=="" {return}
     first,second:Store
     defer close(&first)
     defer close(&second)
@@ -118,10 +110,8 @@ filters_documents_and_keeps_projects_isolated :: proc(t:^testing.T) {
 
 @(test)
 preserves_messages_beyond_what_a_load_holds :: proc(t:^testing.T) {
-    root:=test_root("retention")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-retention")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -168,10 +158,8 @@ test_hits :: proc(t:^testing.T,store:^Store,query:string,conversation:u64=0) -> 
 
 @(test)
 search_finds_words_ids_and_paths_ranked :: proc(t:^testing.T) {
-    root:=test_root("search")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-search")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -230,10 +218,8 @@ search_finds_words_ids_and_paths_ranked :: proc(t:^testing.T) {
 
 @(test)
 search_follows_saves_and_reopening :: proc(t:^testing.T) {
-    root:=test_root("search-saves")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-search-saves")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -254,10 +240,8 @@ search_follows_saves_and_reopening :: proc(t:^testing.T) {
 
 @(test)
 reports_a_corrupt_database_and_keeps_it :: proc(t:^testing.T) {
-    root:=test_root("corrupt")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-corrupt")
+    if root=="" {return}
     path:=project.path(root,".mirai/ai/chat.db",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(project.path(root,".mirai/ai",allocator=context.temp_allocator))==nil)
     garbage:=strings.repeat("not a database ",512,context.temp_allocator)
@@ -274,10 +258,8 @@ reports_a_corrupt_database_and_keeps_it :: proc(t:^testing.T) {
 
 @(test)
 keeps_each_new_table :: proc(t:^testing.T) {
-    root:=test_root("tables")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-tables")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -359,10 +341,8 @@ keeps_each_new_table :: proc(t:^testing.T) {
 
 @(test)
 lists_by_kind_and_parent_and_finds_the_main_chat :: proc(t:^testing.T) {
-    root:=test_root("kinds")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-kinds")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
@@ -392,10 +372,8 @@ lists_by_kind_and_parent_and_finds_the_main_chat :: proc(t:^testing.T) {
 
 @(test)
 shares_the_project_with_another_open_store :: proc(t:^testing.T) {
-    root:=test_root("shared")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-shared")
+    if root=="" {return}
     first,second:Store
     defer close(&first)
     defer close(&second)
@@ -426,10 +404,8 @@ shares_the_project_with_another_open_store :: proc(t:^testing.T) {
 
 @(test)
 a_write_does_not_wait_for_another_editor_and_lands_in_order :: proc(t:^testing.T) {
-    root:=test_root("busy")
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-store-busy")
+    if root=="" {return}
     store:Store
     defer close(&store)
     testing.expect_value(t,open(&store,root),"")
