@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "mirai:rhi"
 import "mirai:std/base"
+import "mirai:render/abi"
 
 // Material textures. Each one takes an entry of the RHI texture table, which
 // shaders index with the number a material stores, so no pass binds a texture
@@ -15,11 +16,10 @@ import "mirai:std/base"
 Texture_Handle :: distinct u32
 
 // The first entries of the table hold the split-sum table of the lobe
-// (DFG_TEXTURE) and the tables of the air (AIR_*_TEXTURE), as
-// TEXTURE_TABLE_RESERVED of include/common.slang says: the texture of a
+// (DFG_TEXTURE) and the tables of the air (AIR_*_TEXTURE): the texture of a
 // handle is in the entry TEXTURE_RESERVED + handle - 1. The table grows with
 // the textures, up to texture_capacity.
-TEXTURE_RESERVED :: 4
+TEXTURE_RESERVED :: abi.TEXTURE_RESERVED
 
 Texture_Desc :: struct {
 	pixels:        []u8, // RGBA8, rows from the top of the image

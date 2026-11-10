@@ -30,9 +30,7 @@
 [[vk::binding(SLOT_PASS8, 0)]] RWStructuredBuffer<uint> page_stamps : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 // The clusters of Surface programs (PROGRAMS_* of cull_common.slang).
 [[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_bins : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
-#define PAGE_REQUEST_FIRST 4u
 #define PAGE_REQUEST_WORDS 4u
-#define PAGE_SLOT_WORDS 65536u
 
 // Asks for the page of the children of a cluster a view draws in their place.
 void page_request(uint mesh, uint page, float pixels) {

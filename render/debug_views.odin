@@ -1,6 +1,7 @@
 package mirai_render
 
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The modes of inspection of a view: a buffer or a part of the light shown
 // instead of the lit image, without exposure or display transform. Composite
@@ -9,10 +10,7 @@ import "mirai:rhi"
 
 // What the shaders of the engine show instead of the lit image, with the
 // values of composite.comp (up to Lighting) and debug_views.comp.
-Debug_View :: enum u32 {
-	None, Albedo, Normal, Direct, Indirect, Probes, Motion, Depth, Roughness, Metallic, Emission, Unlit, Lighting,
-	Shadows, Reflections, Reflections_Raw, Lights,
-}
+Debug_View :: abi.Debug_View
 
 // What a view shows instead of its lit image: a mode of the engine, and over
 // the image of that mode the passes an extension records in the Inspect stage

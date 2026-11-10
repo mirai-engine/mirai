@@ -4,7 +4,7 @@
 // here alone: by the scene, and by the instances of the native TLAS.
 #ifndef MIRAI_BATCH_INSTANCE_SLANG
 #define MIRAI_BATCH_INSTANCE_SLANG
-#define BATCH_WORDS 5u
+#include <shared_constants.slang>
 
 // A rotation of quat_pack (std/math) with 10 bits a component: the index of
 // the largest one, and the other three in order.

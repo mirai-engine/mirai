@@ -10,6 +10,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
+import "mirai:render/abi"
 import "core:thread"
 
 // Programs: Slang sources that declare `//! mirai surface Name`,
@@ -36,13 +37,13 @@ import "core:thread"
 // from its rest, in the space of the mesh, a number or a float parameter.
 
 MAX_PARAMETERS :: 32
-PARAMETER_BYTES :: 256
-ATTRIBUTE_BYTES :: 1024 // render.PARTICLE_ATTRIBUTE_BYTES
+PARAMETER_BYTES :: abi.PROGRAM_PARAMETER_BYTES
+ATTRIBUTE_BYTES :: abi.PARTICLE_ATTRIBUTE_BYTES
 MAX_PARAMETER_RANGE :: 1e30
-MAX_RESOURCES :: 16
+MAX_RESOURCES :: abi.PROGRAM_RESOURCES
 RESOURCE_KINDS :: [?]string{"surface","channel","bones","grid","emitter","data"}
-DATA_WORDS :: 32 // of an entry of a data channel: render.PROGRAM_DATA_WORDS
-MAX_STAGES :: 32
+DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
+MAX_STAGES :: abi.PROGRAM_STAGES
 MAX_ITERATIONS :: 64
 PARAMETER_GROUP_BYTES :: 32
 
@@ -476,6 +477,8 @@ layout_write :: proc(path,layout_fingerprint:string,layout:Layout) {
 // compile; compile_error: that is why it failed (another compilation of the
 // same sources fails the same). plugins: the folders of the shaders of the
 // plugins, where it finds what it includes of theirs as the stages do.
+// copied: the programs as the generation copies them, below the include
+// folder that holds the constants they share with the CPU.
 @(private)
 layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,allocator:=context.allocator,attributes:=false,vfx:=false,prelude:="",said:^[]Diagnostic=nil,plugins:[]string=nil) -> (layouts:[2]Layout,error:string,compile_error:bool) {
     TYPES :: [2]string{"Parameters","Attributes"}
@@ -494,7 +497,7 @@ layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_
     append(&command,slangc,wrapper)
     for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
     append(&command,
-        "-I",path_join(copied,"builtin",allocator=context.temp_allocator),
+        "-I",path_parent(copied),"-I",path_join(copied,"builtin",allocator=context.temp_allocator),
         "-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder,"-entry","reflect_main","-target","spirv","-profile","spirv_1_5",
         "-reflection-json",reflected,"-o",path_join(temporary,fmt.tprintf("%s.spv",name),allocator=context.temp_allocator),SLANG_DIAGNOSTICS_FLAG,
     )
@@ -820,7 +823,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
     for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
-    append(&command,"-I",path_join(copied,"builtin",allocator=context.temp_allocator),"-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder)
+    append(&command,"-I",path_parent(copied),"-I",path_join(copied,"builtin",allocator=context.temp_allocator),"-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder)
     for folder in plugins {append(&command,"-I",folder)}
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
@@ -1025,9 +1028,9 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 }
 
 // Builds the catalog of the built-in programs and those of a project into
-// `output`: catalog.json, the includes of the dispatchers and a copy of
-// every program source under include/programs, so the generation compiles
-// without the project. The reflection of a program is kept in the folder
+// `output`: catalog.json, the includes of the dispatchers, of the schema and
+// of the shared constants, and a copy of every program source under
+// include/programs, so the generation compiles without the project. The reflection of a program is kept in the folder
 // `cache`, named by the digest of what the program is compiled from, and
 // reused wherever that digest comes up again; what the cache lacks is
 // reflected by up to `workers` compilations at once. files: what the
@@ -1059,6 +1062,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         append(&folders,Folder{label,folder,label,folder})
     }
     os.make_directory_all(include)
+    if !schema_write(include) {return {},fmt.aprintf("could not write %s and %s",SCHEMA_INCLUDE,CONSTANTS_INCLUDE,allocator=allocator)}
     if os.exists(copied) {os.remove_all(copied)}
     if failed:=copy_sources(files,materials,path_join(copied,"builtin",allocator=context.temp_allocator));failed!="" {return {},fmt.aprintf("could not copy the programs of the engine: %s",failed,allocator=allocator)}
     paths:=make([dynamic]string,context.temp_allocator)
@@ -1083,7 +1087,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     temporary=path_clean(temporary,context.temp_allocator)
     defer os.remove_all(temporary)
 
-    configuration:=transmute([]u8)strings.concatenate({GENERATOR_CONTRACT,version},context.temp_allocator)
+    configuration:=transmute([]u8)strings.concatenate({GENERATOR_CONTRACT,version,shared_constants()},context.temp_allocator)
     bases:=make([dynamic]Base,context.temp_allocator)
     for entry in folders {append(&bases,Base{entry.base_label,entry.base})}
     append(&bases,Base{"engine",root})

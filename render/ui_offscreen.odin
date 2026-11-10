@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // What the UI of a game asks of the renderer besides the screen and the
 // panels of the scene: world panels drawn into textures that materials show
@@ -13,9 +14,9 @@ import "mirai:rhi"
 // hides a point a ray of a player meets.
 
 UI_TEXTURE_CAPACITY :: 32
-DEPTH_PROBE_CAPACITY :: 8
-DEPTH_PROBE_CELLS :: 32 // along each side of the patch a probe reads around its pixel
-DEPTH_PROBE_CELL :: 2   // pixels of the drawable along each side of a cell
+DEPTH_PROBE_CAPACITY :: abi.DEPTH_PROBE_CAPACITY
+DEPTH_PROBE_CELLS :: abi.DEPTH_PROBE_CELLS // along each side of the patch a probe reads around its pixel
+DEPTH_PROBE_CELL :: abi.DEPTH_PROBE_CELL   // pixels of the drawable along each side of a cell
 // Triangles mesh_ray meets of a pose, or of a mesh without a tree, at most.
 MESH_RAY_TRIANGLES :: 65536
 

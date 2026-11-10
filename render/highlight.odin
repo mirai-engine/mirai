@@ -2,13 +2,14 @@ package mirai_render
 
 import "core:math"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The outline levels of an instance (Instance_Desc.highlight): 1 to
 // HIGHLIGHT_LEVELS are the editor's, styled by Renderer.highlight; the next
 // OUTLINE_STYLES are the styles of the game, styled by Renderer.outlines. Every
 // level of the editor is drawn over those of the game.
-HIGHLIGHT_LEVELS :: 15
-OUTLINE_STYLES :: 15
+HIGHLIGHT_LEVELS :: abi.HIGHLIGHT_LEVELS
+OUTLINE_STYLES :: abi.OUTLINE_STYLES
 
 // The outline level of style (1 to OUTLINE_STYLES) of the game.
 outline_level :: proc "contextless" (style: u8) -> u8 {return style == 0 || style > OUTLINE_STYLES ? 0 : HIGHLIGHT_LEVELS + style}

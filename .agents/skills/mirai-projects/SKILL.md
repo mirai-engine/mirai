@@ -79,9 +79,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - `project` imports only `std/*`: the editor, the player and the tools use it.
 - `tools/mirai` and everything it imports, counting its `_test.odin` files (the compiler reads them
   too), do not reach `render`, `host`, `platform`, `editor` or `engine/*`: the tool writes
-  `render/shaders_gen.odin` and has to compile with those old tables to regenerate them. A `render`
-  value that is fixed from `cook` goes as an `#assert` in the generated table. It is guarded by
-  `the_tool_imports_no_package_of_the_engine`.
+  `render/shaders_gen.odin` and has to compile with those old tables to regenerate them. A value
+  that `render` and `cook` share is declared in `render/abi`, which reads no generated table and
+  the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
   from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.

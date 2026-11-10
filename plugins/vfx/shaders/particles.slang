@@ -143,7 +143,6 @@ struct Particle_Event {
 #define PARTICLE_STAGE_CELLS 2u
 #define PARTICLE_BIRTH_BYTES 80u
 #define PARTICLE_SORT_MAX 2048u
-#define PROGRAM_PARAMETER_BYTES 256u
 
 // render.Glass_Side: the side of glass a Blend pass draws (Stage_Pass.glass).
 #define PARTICLE_PASS_BEHIND_GLASS 1u

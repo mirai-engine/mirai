@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:math"
+import "mirai:render/abi"
 
 // The renderer draws relative to an origin of the world: every place it keeps
 // (instances, batches, lights, the boxes and trees of its rays, the views and
@@ -20,7 +21,7 @@ import "core:math"
 // needs a place of the world (a noise, a texture projected on the world) takes
 // what the origin adds from origin.slang, which has it in whole steps.
 
-ORIGIN_STEP :: f32(1024)  // metres: a whole number the floats hold exactly
+ORIGIN_STEP :: abi.ORIGIN_STEP  // metres: a whole number the floats hold exactly
 ORIGIN_REACH :: f32(1024) // metres from the origin the eye goes before it jumps
 
 // The origin of the world the renderer draws relative to.

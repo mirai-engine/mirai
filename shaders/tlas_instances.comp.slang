@@ -9,10 +9,7 @@
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
-#define TLAS_DISPATCH_X 32768u
-#define TLAS_TABLE_HEADER 8u
-#define TLAS_LAYOUT_ROWS 0u
-#define TLAS_ALPHA_TESTED 256u
+#include <shared_constants.slang>
 
 // Header: count, layout, stride (words of a native instance), first (of the
 // source), ids, the flags of an opaque instance and of a tested one; then

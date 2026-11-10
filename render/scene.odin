@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // GPU scene: one global vertex/index pool for every mesh, per-mesh BLAS (a
 // software BVH always, a native acceleration structure when hardware ray
@@ -156,9 +157,9 @@ LIGHT_CHANGE_SIZES :: f32(10)
 // rays meet of it (occluder_changed of trace.slang) and their histories start
 // again there. Past its room an instance joins the box it grows least, which
 // then stands for several (OCCLUDERS_MANY).
-OCCLUDER_CHANGES_MAX :: 16
-LIGHT_MOVES_MAX :: 16
-OCCLUDERS_MANY :: max(u32)
+OCCLUDER_CHANGES_MAX :: abi.OCCLUDER_CHANGES_MAX
+LIGHT_MOVES_MAX :: abi.LIGHT_MOVES_MAX
+OCCLUDERS_MANY :: abi.OCCLUDERS_MANY
 Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone

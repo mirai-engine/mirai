@@ -3,7 +3,7 @@
 // The contact occlusion of the light the probe volume gives each pixel: the
 // probes are a metre apart and do not see the corner of a table or the floor
 // under a wardrobe. Mode 0 traces
-// CONTACT_SAMPLES short rays of the hemisphere of each pixel in the world, so
+// CONTACT_RAYS short rays of the hemisphere of each pixel in the world, so
 // what shadows it counts also off the screen or behind something nearer the
 // eye; mode 1 blurs that over the surface, on its side of the opening of a
 // nested view, whose pixels it traces from where their surface is in the
@@ -15,7 +15,6 @@
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
-#define CONTACT_SAMPLES 4u
 // Metres: how far from a pixel what shadows it can stand.
 #define CONTACT_RADIUS 0.6
 
@@ -42,8 +41,8 @@ float contact_occlusion(int2 p, float depth) {
     float3 origin = pixel.position + n * 0.01;
     float hidden = 0.0;
     [loop]
-    for (uint i = 0u; i < CONTACT_SAMPLES; i++) {
-        float u = (float(i) + 0.5) / float(CONTACT_SAMPLES);
+    for (uint i = 0u; i < CONTACT_RAYS; i++) {
+        float u = (float(i) + 0.5) / float(CONTACT_RAYS);
         float phi = float(i) * 2.3999632 + turn;
         float r = sqrt(u);
         float3 dir = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(1.0 - u);
@@ -52,7 +51,7 @@ float contact_occlusion(int2 p, float depth) {
         // What stands nearer shadows more, so that the edge of the occlusion fades.
         if (hit.instance != INVALID) hidden += 1.0 - hit.t / CONTACT_RADIUS;
     }
-    return saturate(1.0 - hidden / float(CONTACT_SAMPLES) * 1.5);
+    return saturate(1.0 - hidden / float(CONTACT_RAYS) * 1.5);
 }
 
 float contact_blur(int2 p, float depth) {

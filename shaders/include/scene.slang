@@ -305,7 +305,6 @@ float shadow_ray_state(float state) { return shadow_ray_moved(state) ? state - S
 // are and how they are drawn. An instance is BATCH_WORDS words of the pool:
 // its position, its rotation (quat_pack of std/math, 10 bits) and its scale
 // across (x and z) and along y, two half floats.
-#define BATCH_GROUP 64u
 
 bool instance_batched(uint index) { return index >= frame.instance_count; }
 uint batch_of(uint index) { return indices[frame.batches.y + (index - frame.instance_count) / BATCH_GROUP]; }

@@ -2,13 +2,14 @@ package mirai_render
 
 import "core:math"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The display transform (display.slang) the tonemap and the UI encode with.
 // PBR Neutral is computed in the pass; ACES 2.0 is baked when the renderer
 // starts into a LUT of DISPLAY_LUT_SIZE³ that they read.
 
 // DISPLAY_LUT_SIZE of display.slang.
-DISPLAY_LUT_SIZE :: 65
+DISPLAY_LUT_SIZE :: abi.DISPLAY_LUT_SIZE
 // ACES_HUES of aces.slang.
 DISPLAY_HUES :: 360
 

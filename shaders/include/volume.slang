@@ -2,6 +2,7 @@
 // shaders that combine values by zone (wind, fog) share.
 #ifndef VOLUME_SLANG
 #define VOLUME_SLANG
+#include <shared_constants.slang>
 
 // volume.Gpu_Volume.
 struct Gpu_Volume {
@@ -24,7 +25,6 @@ float4 volume_mix(float4 value, float4 by, float w, Gpu_Volume v) {
     return v.kind.y != 0u ? value + by * w : lerp(value, by, w);
 }
 
-#define WIND_VOLUMES 8
 // volume.Gpu_Wind: every wind of the world in the order they apply.
 struct Gpu_Wind {
     uint4 count;

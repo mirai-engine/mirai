@@ -50,6 +50,16 @@
   `batches`: what follows belongs to the generation.
 - **Material schema.** `include/material_schema.slang` is generated from `mirai:asset`
   (`Material_Map_Kind`, `Alpha_Mode`, `MATERIAL_DEFAULTS`). No shader writes those values.
+- **Shared constants.** A constant the shaders share with the CPU (a binding slot, a flag bit, the
+  words of a layout of a pool, a limit both size arrays with) is declared once in Odin and
+  `include/shared_constants.slang` is generated from it (`shared_constants` of
+  `cook/shaders/schema.odin`, which lists them). Those of the renderer live in `render/abi`, which
+  `render` uses under the same names; those of a format or of the RHI, in `asset` and `rhi`. No
+  `.slang` source defines one (`no_shader_source_defines_a_constant_the_generation_writes`). A
+  plugin's shaders take them from the engine includes; a constant between a plugin's own Odin and
+  its own shaders is not generated.
+- Both includes are part of every fingerprint and of the stamp of a generation: changing one of
+  those constants compiles the stages again.
 - The resources of a stage stay within the `rhi` limits. `//! variant <name> <DEFINE>...` adds
   another compilation of a stage.
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software

@@ -322,7 +322,9 @@ Numbered layers; a package only imports lower layers.
 - **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
   import it, also the GPU tests of `rhi`, in `rhi/tests`.
-- **2** `render`, `platform`: hybrid renderer and SDL3.
+- **2** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
+  renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
+  them for the shaders, since the tool cannot import `render`.
 - **3** `core`: entities, tables, queues, owners, transforms and hierarchy, `Time`, `Input`,
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
