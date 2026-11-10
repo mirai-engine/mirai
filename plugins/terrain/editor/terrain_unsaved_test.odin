@@ -192,15 +192,15 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     // step only the blocks its stroke changed.
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
-    testing.expect(t,terrain.grid_dense(&head.distances)<97*97*97,"the head holds no values for the blocks all air or all solid")
-    block,_:=terrain.grid_page_at(&head.distances,deep)
+    testing.expect(t,terrain.grid_dense(&head.field)<97*97*97,"the head holds no values for the blocks all air or all solid")
+    block,_:=terrain.grid_page_at(&head.field,deep)
     steps,carved_air:=0,false
     for &step in tool.steps {
         if step.source!=id {continue}
         steps+=1
-        testing.expect(t,!step.whole && !step.distances.whole && len(step.distances.pages)<head.distances.counts.x*head.distances.counts.y*head.distances.counts.z,"a step keeps the blocks its stroke changed")
+        testing.expect(t,!step.whole && !step.field.whole && len(step.field.pages)<head.field.counts.x*head.field.counts.y*head.field.counts.z,"a step keeps the blocks its stroke changed")
         // The step to the filling keeps the carved revision, its block all air.
-        if step.to==3 {for entry in step.distances.pages {if entry.index==block {carved_air=entry.page.values==nil}}}
+        if step.to==3 {for entry in step.field.pages {if entry.index==block {carved_air=entry.page.values==nil}}}
     }
     testing.expect_value(t,steps,2)
     testing.expect(t,carved_air,"the carved block is all air in the step that fills it")

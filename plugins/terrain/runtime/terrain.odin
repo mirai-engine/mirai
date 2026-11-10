@@ -766,18 +766,17 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     writer:Page_Writer
     if !page_writer_init(&writer,context.temp_allocator) {return}
     defer page_writer_destroy(&writer)
-    low,high,differ:=grid_take(&next.heights,&s.heights,&writer,true)
+    low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}
     if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
-    if low,high,differ=grid_take(&next.distances,&s.distances,&writer,false);differ {widen(&change,low,high)}
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
-        if next.kind==.Volume {widen(&change,low,high)} else {widen(&change,{low.x,0,low.z},{high.x,last.y,high.z})}
+        widen(&change,low,high)
     }
     return change,true
 }

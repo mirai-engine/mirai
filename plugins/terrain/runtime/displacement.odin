@@ -259,7 +259,7 @@ chunk_view_distance :: proc "contextless" (s:^Source,coord:[3]i32,world:matrix[4
     size:=f32(s.chunk_cells)*s.cell
     low,high,_:=chunk_region(s,coord)
     bottom,top:=source_point(s,low).y,source_point(s,low).y
-    for z in low.z..=high.z {for x in low.x..=high.x {h:=grid_get(&s.heights,x,z);bottom,top=min(bottom,h),max(top,h)}}
+    for z in low.z..=high.z {for x in low.x..=high.x {h:=grid_get(&s.field,x,z);bottom,top=min(bottom,h),max(top,h)}}
     lift:=source_displacement(s)
     nearest:=[3]f32{clamp(local.x,0,size),clamp(local.y,bottom-lift,top+lift),clamp(local.z,0,size)}
     return linalg.length((world*[4]f32{nearest.x,nearest.y,nearest.z,1}).xyz-eye)

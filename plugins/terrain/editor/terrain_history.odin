@@ -43,10 +43,9 @@ Step :: struct {
     whole:bool,           // other is the whole source
     other:terrain.Source,
     info:terrain.Source_Info,
-    heights:Grid_Swap(f32),
+    field:Grid_Swap(f32),
     holes:Grid_Swap(u8),
     weights:Grid_Swap(terrain.Weights),
-    distances:Grid_Swap(f32),
 }
 
 @(private)
@@ -60,10 +59,9 @@ grid_swap_destroy :: proc(g:^Grid_Swap($T),allocator:runtime.Allocator) {
 step_destroy :: proc(step:^Step) {
     allocator:=step.allocator
     terrain.source_destroy(&step.other)
-    grid_swap_destroy(&step.heights,allocator)
+    grid_swap_destroy(&step.field,allocator)
     grid_swap_destroy(&step.holes,allocator)
     grid_swap_destroy(&step.weights,allocator)
-    grid_swap_destroy(&step.distances,allocator)
     step^={}
 }
 
@@ -146,10 +144,9 @@ step_make :: proc(step:^Step,head,edited:^terrain.Source,low,high:[2]int,all:boo
         return true
     }
     from,to:=region(low,high)
-    if !grid_step(&step.heights,&head.heights,&edited.heights,from,to,all,allocator) {step_revert(step,head);return false}
+    if !grid_step(&step.field,&head.field,&edited.field,from,to,all,allocator) {step_revert(step,head);return false}
     if !grid_step(&step.holes,&head.holes,&edited.holes,from-{1,0,1},to,all,allocator) {step_revert(step,head);return false}
     if !grid_step(&step.weights,&head.weights,&edited.weights,from,to,all,allocator) {step_revert(step,head);return false}
-    if !grid_step(&step.distances,&head.distances,&edited.distances,from,to,all,allocator) {step_revert(step,head);return false}
     step.info,head.info=head.info,edited.info
     return true
 }
@@ -172,10 +169,9 @@ grid_apply :: proc(g:^Grid_Swap($T),head:^terrain.Grid(T)) {
 // step, and the step keeps the one the head was at.
 step_apply :: proc(step:^Step,head:^terrain.Source) {
     if step.whole {head^,step.other=step.other,head^;return}
-    grid_apply(&step.heights,&head.heights)
+    grid_apply(&step.field,&head.field)
     grid_apply(&step.holes,&head.holes)
     grid_apply(&step.weights,&head.weights)
-    grid_apply(&step.distances,&head.distances)
     step.info,head.info=head.info,step.info
 }
 
@@ -193,7 +189,7 @@ grid_follow :: proc(g:^Grid_Swap($T),edit,head:^terrain.Grid(T),allocator:runtim
 step_follow :: proc(step:^Step,edit,head:^terrain.Source) -> bool {
     if step.whole || !step_shaped(edit,head) {return terrain.source_clone(edit,head,edit.allocator)}
     allocator:=edit.allocator
-    if !grid_follow(&step.heights,&edit.heights,&head.heights,allocator) || !grid_follow(&step.holes,&edit.holes,&head.holes,allocator) || !grid_follow(&step.weights,&edit.weights,&head.weights,allocator) || !grid_follow(&step.distances,&edit.distances,&head.distances,allocator) {return false}
+    if !grid_follow(&step.field,&edit.field,&head.field,allocator) || !grid_follow(&step.holes,&edit.holes,&head.holes,allocator) || !grid_follow(&step.weights,&edit.weights,&head.weights,allocator) {return false}
     edit.info=head.info
     return true
 }
@@ -215,7 +211,7 @@ source_take_back :: proc(edit,head:^terrain.Source,low,high:[2]int) -> bool {
     }
     allocator:=edit.allocator
     from,to:=region(low,high)
-    if !back(&edit.heights,&head.heights,from,to,allocator) || !back(&edit.holes,&head.holes,from-{1,0,1},to,allocator) || !back(&edit.weights,&head.weights,from,to,allocator) || !back(&edit.distances,&head.distances,from,to,allocator) {return false}
+    if !back(&edit.field,&head.field,from,to,allocator) || !back(&edit.holes,&head.holes,from-{1,0,1},to,allocator) || !back(&edit.weights,&head.weights,from,to,allocator) {return false}
     edit.info=head.info
     return true
 }
@@ -244,7 +240,7 @@ steps_rebase :: proc(steps:^[dynamic]Step,id:base.Asset_Id,revision:u32,head,fre
             step.allocator,step.source,step.from,step.to,step.whole=allocator,id,from,revision,true
             continue
         }
-        if !rebase_grid(&step.heights,&head.heights,&fresh.heights,allocator) || !rebase_grid(&step.holes,&head.holes,&fresh.holes,allocator) || !rebase_grid(&step.weights,&head.weights,&fresh.weights,allocator) || !rebase_grid(&step.distances,&head.distances,&fresh.distances,allocator) {
+        if !rebase_grid(&step.field,&head.field,&fresh.field,allocator) || !rebase_grid(&step.holes,&head.holes,&fresh.holes,allocator) || !rebase_grid(&step.weights,&head.weights,&fresh.weights,allocator) {
             step_destroy(step);ordered_remove(steps,i);continue
         }
     }

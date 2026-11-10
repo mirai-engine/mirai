@@ -147,22 +147,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             if node.cut && (!stream || node.reach<=DEEP_REACH) {source.deep[i]=true}
         }
         by_error:=lod_by_error(entry,settings)
-        for &level,i in source.levels {
-            chunk:=&source.chunks[i]
-            next:=u8(0)
-            joined:=source.join.ground!={} && join_side_chunk(s,i) || join_cut_key(s,source.join.cuts[:],i)!=0
-            if s.kind==.Heightfield && settings.lod_distance>=0 && !chunk_holed(s,i) && !joined {
-                maximum:=chunk_lod_max(s,chunk_coord(s,i))
-                next=lod_level_error(entry.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level)
-                // The distance makes a chunk coarser only as far as its error lets it be.
-                if !by_error {
-                    distant:=lod_level(chunk.distance,base,maximum,level)
-                    next=len(entry.errors)==quad_total(q)?min(distant,next):distant
-                }
-            }
-            level=next
-        }
-        if s.kind==.Heightfield {lod_levels_balance(s,source.levels)}
+        // A Volume has no levels of its own: its nodes show what is far.
+        if s.kind==.Heightfield {heightfield_levels(entry,source,settings,by_error,base)}
         border:=Border_Levels{counts=q.counts[0],levels=source.levels,deep=source.deep}
         for &chunk,i in source.chunks {
             if !chunk.resident {
@@ -173,8 +159,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             key.border=0
             if i<chunks {
                 coord:=chunk_coord(s,i)
-                key.lod={}
-                if s.kind==.Heightfield {key.lod=chunk_lod_border(&border,source.levels[i],{int(coord.x),int(coord.z)})}
+                key.lod=chunk_lod_border(&border,source.levels[i],{int(coord.x),int(coord.z)})
                 key.join=join_cut_key(s,source.join.cuts[:],i)
                 if source.join.ground!={} && join_band_chunk(s,i,key.lod.level) {key.join=source.join.hash}
             } else {
@@ -189,7 +174,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
                 key.collision=false
                 // A node of a joined Volume blends the ground under its chunks of the band as they do.
-                key.join=s.kind==.Volume && source.join.ground!={}?source.join.hash:0
+                key.join=source.join.ground!={}?source.join.hash:0
                 if s.kind==.Heightfield {
                     a,b:=quad_chunks(q,i)
                     key.border=piece_border(&border,a,b)
@@ -214,7 +199,7 @@ resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrain
     for &owner,o in resident.owners {
         marker,known:=core.get(terrains,owner.entity)
         entry:=data_find(data,owner.source)
-        kind:=entry!=nil && entry.source.kind==.Heightfield?0:1
+        kind:=entry!=nil?collider_slot(entry.source.kind):1
         source:=resident_source_find(resident,owner.source,owner.entity)
         chunks:=owner.quad.first[1]
         for &node,i in owner.nodes[:min(chunks,len(owner.nodes))] {
@@ -458,7 +443,7 @@ resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:c
             marker,known:=core.get(terrains,owner.entity)
             entry:=data_find(data,owner.source)
             if !known || !marker.solid || entry==nil {continue}
-            kind:=entry.source.kind==.Heightfield?0:1
+            kind:=collider_slot(entry.source.kind)
             for node in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {counts[kind][bucket(node.distance)]+=1}
         }
         room,shapes:=collider_room(c,physics)
@@ -476,7 +461,7 @@ resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:c
         marker,known:=core.get(terrains,owner.entity)
         entry:=data_find(data,owner.source)
         solid:=known && marker.solid
-        kind:=entry!=nil && entry.source.kind==.Heightfield?0:1
+        kind:=entry!=nil?collider_slot(entry.source.kind):1
         for &node in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {
             switch {
             case stream: node.resident=scene.resident(node.reach,node.resident)
@@ -506,10 +491,7 @@ collider_room :: proc(c:^Chunk_Tables,physics:phys.Physics_Settings) -> (room:[2
     for collider,row in c.colliders.values[:core.count(c.colliders)] {
         if core.has(c.chunks,c.colliders.entities[row]) {continue}
         shapes-=1
-        #partial switch collider.kind {
-        case .Heightfield: room[0]-=1
-        case .Mesh: room[1]-=1
-        }
+        if slot:=collider_room_slot(collider.kind);slot>=0 {room[slot]-=1}
     }
     return
 }

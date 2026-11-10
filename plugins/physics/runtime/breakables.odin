@@ -69,6 +69,10 @@ breakable_body_name :: proc(state:^Physics_State,body:Body_Handle,e:core.Entity)
     sim.body_set_user_data(&state.world,body,u64(e))
     return true
 }
+breakable_surface :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle) -> (density,friction,restitution:f32,filter:Collision_Filter,ok:bool) {
+    if !made(physics.ptr) {return}
+    return sim.breakable_surface(&physics.world,h)
+}
 breakable_set_filter :: proc(state:^Physics_State,h:Breakable_Handle,filter:Collision_Filter) {
     if made(state) {sim.breakable_set_filter(&state.world,h,filter)}
 }
