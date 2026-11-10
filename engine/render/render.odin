@@ -379,8 +379,10 @@ Posed_Meshes :: struct {
     changed:[dynamic]core.Entity, // given, changed or taken since render_sync looked
 }
 
-// Gives an entity its posed mesh; false without memory for it.
+// Gives an entity its posed mesh; false without memory for it. A world the
+// application did not make has none: nothing draws it.
 posed_set :: proc(p:^Posed_Meshes,e:core.Entity,pose:Posed_Mesh) -> bool {
+    if p==nil {return true}
     held:=core.entity_map_get(&p.poses,e)
     if held!=nil && held.mesh==pose.mesh && held.materialed==pose.materialed && (!pose.materialed || held.override==pose.override) {return true}
     if held!=nil {held^=pose} else if _,kept:=core.entity_map_put(&p.poses,e,pose);!kept {return false}
@@ -390,7 +392,7 @@ posed_set :: proc(p:^Posed_Meshes,e:core.Entity,pose:Posed_Mesh) -> bool {
 
 // Its own mesh draws the entity again.
 posed_drop :: proc(p:^Posed_Meshes,e:core.Entity) {
-    if core.entity_map_remove(&p.poses,e) {append(&p.changed,e)}
+    if p!=nil && core.entity_map_remove(&p.poses,e) {append(&p.changed,e)}
 }
 
 posed_free :: proc(p:^Posed_Meshes) {core.value_free(p,type_info_of(Posed_Meshes))}

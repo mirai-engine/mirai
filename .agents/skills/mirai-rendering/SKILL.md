@@ -152,7 +152,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   reads an instance by index only with `scene_instance`.
 - A geometry regeneration registers an immutable version and withdraws the previous one, with free
   ranges and dirty ranges of the common pools, without compacting other geometry.
-- Local descriptor changes go through `scene_update`; `scene_set` is left for structural changes.
+- `render_sync` gives the renderer the world only by what changed: the rows written, added or gone
+  of the tables it reads, through `scene_update`, `scene_move`, `scene_tint` and `scene_set_lights`.
+  Another world, tables replaced whole and assets loaded again are the same changes, of every row:
+  there is no second path that builds the scene. A frame where nothing changed looks at no row.
 - Geometry publication is a common immediate transaction with reused staging, without
   `buffer_upload` or waits per pool; its cost counts in `cpu_prepare_ms`.
 - What is drawn over the finished image enters through `Frame_Desc` and does not change what a
@@ -169,7 +172,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   bounce factor, and the scene changes are marked by `Scene_State.changes`
   ([GI](references/gi.md#temporal-and-denoising)).
 - Another world, or the same one replaced by another scene, is announced with `scene_world` before
-  its `scene_set`; a lone `scene_set` is only an edit.
+  its scene is given; without it, what the scene is given is only an edit.
 - No engine stage evaluates a Surface program except its own (`//! per surface program`): raster
   uses the program's pipeline (`program_graphics`) and rays ask for it through the material points
   (`points.slang`); the traversal evaluates only the alpha of programs with coverage. A frame does

@@ -2059,27 +2059,6 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 @(private)
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
 
-// Restyles highlights without touching transforms, the TLAS, lights or the
-// temporal history: only the instances whose level is another go to the GPU.
-// levels is indexed like the instances of the last scene_set; a length
-// mismatch is rejected.
-scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
-	s := &r.scene
-	if len(levels) != len(s.desc_instance) {return false}
-	s.highlighted = 0
-	for level, i in levels {
-		index := s.desc_instance[i]
-		if index < 0 {continue}
-		inst := &s.instances[index]
-		if level != 0 {s.highlighted += 1}
-		flags := (inst.meta.w & ~INSTANCE_HIGHLIGHT_MASK) | highlight_flags(level)
-		if flags == inst.meta.w {continue}
-		inst.meta.w = flags
-		instance_touch(s, u32(index))
-	}
-	return true
-}
-
 // Ensures GPU capacity for the current instance/light sets (between frames).
 @(private)
 ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
