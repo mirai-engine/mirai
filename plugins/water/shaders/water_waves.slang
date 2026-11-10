@@ -10,17 +10,14 @@ static const uint WATER_WAVES = 8u;
 
 // water.Gpu_Body: a fluid or a dry box of the frame.
 struct Water_Body {
-    float4 to_box[3]; // rows: from the world to its box, whose sides are 1, sheared by its slope
-    float4 surface;   // x the height of its still surface at the origin, y 1 for a plane, z 1 for a dry box, w priority
-    float4 slope;     // xy m its still surface rises for each metre along x and z
+    float4 to_box[3]; // rows: from the world to its box, whose sides are 1
+    float4 surface;   // x the height of its still surface, y 1 for a plane, z 1 for a dry box, w priority
     float4 look;      // x caustics, y 1/m it takes of white light, z the index of refraction of its surface, w its waves
     float4 waves[WATER_WAVES]; // of a plane: physics.Wave_Term k along x and z, amplitude, across
     float4 phases[2];          // of each wave, at the origin and the time of the frame
 };
 
 uint water_wave_count(Water_Body b) { return uint(b.look.w); }
-// The still surface of a body over x and z of the place of the frame.
-float water_still(Water_Body b, float2 xz) { return b.surface.x + dot(b.slope.xy, xz); }
 float water_wave_phase(Water_Body b, uint i) { return b.phases[i >> 2u][i & 3u]; }
 
 // What the waves leave of a wave at a point: weight 1, all of it.
@@ -69,11 +66,11 @@ Water_Point water_wave_point(Water_Body b, float2 p) {
 }
 
 // The height of the surface of a body over x and z of the place of the frame,
-// and its normal: its still surface with its slope, and its waves found back
-// by Newton to where the water rests (wave_surface).
+// and its normal: its still surface, and its waves found back by Newton to
+// where the water rests (wave_surface).
 float water_surface_at(Water_Body b, float2 xz, out float3 normal) {
-    normal = normalize(float3(-b.slope.x, 1.0, -b.slope.y));
-    if (water_wave_count(b) == 0u) return water_still(b, xz);
+    normal = float3(0.0, 1.0, 0.0);
+    if (water_wave_count(b) == 0u) return b.surface.x;
     float2 p = xz;
     for (int k = 0; k < 3; k++) {
         Water_Point w = water_wave_point(b, p);
@@ -83,8 +80,8 @@ float water_surface_at(Water_Body b, float2 xz, out float3 normal) {
         p -= float2(w.j[1][1] * miss.x - w.j[0][1] * miss.y, w.j[0][0] * miss.y - w.j[1][0] * miss.x) / det;
     }
     Water_Point w = water_wave_point(b, p);
-    normal = normalize(float3(w.normal.x - b.slope.x * w.normal.y, w.normal.y, w.normal.z - b.slope.y * w.normal.y));
-    return water_still(b, xz) + w.offset.y;
+    normal = w.normal;
+    return b.surface.x + w.offset.y;
 }
 
 float water_surface_at(Water_Body b, float2 xz) {

@@ -72,11 +72,11 @@ the_bodies_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,got.to_box,render.origin_from_world(state.bodies[0].to_box,origin))
 }
 
-// The waves and the slope of a water go to the shaders measured from the
-// origin of the pass: the surface the shaders find there is the one of the
-// physics; and a dry box crosses a water where its waves can be.
+// The waves of a plane go to the shaders measured from the origin of the
+// pass: the surface the shaders find there is the one of the physics; and a
+// dry box crosses a plane where the waves can be.
 @(test)
-the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_waters_they_cross :: proc(t:^testing.T) {
+the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_planes_they_cross :: proc(t:^testing.T) {
     state:Water_Gpu
     state.waves[0].waves[0]={direction={0.6,0.8},length=14,amplitude=0.5,speed=4.7,phase=1}
     state.waves[0].count,state.waves[0].steepness=1,0.7
@@ -85,9 +85,7 @@ the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_waters_they_cr
     state.bodies[1]={to_box=mm.mat4_rows(linalg.inverse(mm.transform_matrix(room))),surface={3.5,0,1,1}}
     deep:=mm.Transform{{30,-20,0},1,{6,4,6}}
     state.bodies[2]={to_box=mm.mat4_rows(linalg.inverse(mm.transform_matrix(deep))),surface={-18,0,1,1}}
-    // A river 30 m from the room, falling 0.1 m a metre toward -x.
-    state.bodies[3]={surface={5,0,0,0},slope={0.1,0,60,0}}
-    state.count,state.time=4,123.5
+    state.count,state.time=3,123.5
     origin:=[3]f32{-17408,1024,9216}
     got:=bodies_relative(&state,origin)
     terms,count:=phys.wave_terms(&state.waves[0],state.time,{f64(origin.x),f64(origin.z)})
@@ -95,14 +93,9 @@ the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_waters_they_cr
     testing.expect_value(t,got[0].waves[0],[4]f32{terms[0].k.x,terms[0].k.y,terms[0].amplitude,terms[0].across})
     testing.expect_value(t,got[0].phases[0][0],terms[0].phase)
     testing.expect_value(t,got[0].surface.x,f32(2-1024))
-    testing.expect(t,abs(got[3].surface.x-(5+0.1*(origin.x-60)-1024))<1e-2 && got[3].slope=={0.1,0,0,0})
     floor,top:=dry_span(state.bodies[1])
     testing.expect(t,abs(floor+0.5)<1e-4 && abs(top-3.5)<1e-4)
     testing.expect(t,dry_crosses(&state,1,0) && crosses_water(&state,1))
     testing.expect(t,!dry_crosses(&state,2,0),"a dry box deep under the waves")
-    testing.expect(t,!dry_crosses(&state,0,1),"a water is not a dry box")
-    state.bodies[1].slope.zw={30,0}
-    testing.expect(t,dry_crosses(&state,1,3),"the river is at 2 m where the room is")
-    state.bodies[3].surface.x=9
-    testing.expect(t,!dry_crosses(&state,1,3),"and over it at 6 m")
+    testing.expect(t,!dry_crosses(&state,0,1),"a plane is not a dry box")
 }

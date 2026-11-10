@@ -75,39 +75,79 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     testing.expect_value(t,world_stats(&w).fluids,2)
 }
 
-// A box is water that ends at its walls, over a floor: a lake, or a stretch of
-// river whose surface and floor its slope tilts.
+// A river is water along its path: its surface goes through its points, it
+// ends at its banks and its ends, and what floats in it drifts downstream.
 @(test)
-a_box_holds_water_within_its_walls_and_its_slope_tilts_its_surface :: proc(t:^testing.T) {
+a_river_holds_water_along_its_path_between_its_banks_and_carries_what_floats :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
-    river:=fluid_create(&w,{shape=.Box,half_extents={4,1,10},slope={0,-0.1},density=1000,current={0,0,1}})
+    // 40 m toward -z falling 2 m, 4 m wide and 2 m deep, at 1 m/s; then 20 m toward -x, level.
+    desc:=Fluid_Desc{shape=.River,density=1000,river_count=3}
+    desc.river[0]={{0,2,0},4,2,1}
+    desc.river[1]={{0,0,-40},4,2,1}
+    desc.river[2]={{-20,0,-40},4,2,1}
+    river:=fluid_create(&w,desc)
     testing.expect(t,river!={})
-    Case :: struct {p:Vec3,in_column:bool,height,density:f32}
+    back,_:=fluid_desc(&w,river)
+    testing.expect(t,back==desc,"its description comes back as it was given")
+    Case :: struct {p:Vec3,inside:bool,height,density:f32}
     for c in ([]Case{
-        {{0,0,5},true,0.5,1000},    // downstream the surface is lower
-        {{0,1,-5},true,1.5,1000},   // and upstream higher
-        {{0,1,5},true,0.5,0},       // over the surface
-        {{0,-1.6,5},true,-1.5,0},   // under the floor, which follows the slope
-        {{6,0,0},false,0,0},        // past a wall there is no water
+        {{0,1.5,0},true,2,1000},      // at its first point the surface is at that point
+        {{0,0.5,-20},true,1,1000},    // half way down
+        {{1.5,0.5,-20},true,1,1000},  // near a bank
+        {{0,1.5,-20},true,1,0},       // over the surface
+        {{4,0.5,-20},false,0,0},      // past a bank, where the curve bends out before the turn
+        {{0,1,5},false,0,0},          // before its first point
+        {{-25,-0.5,-40},false,0,0},   // past its last point
+        {{-10,-0.5,-42},true,-0.12,1000}, // after the turn, where the curve swings past the points
     }) {
         sample,ok:=fluid_sample(&w,c.p)
-        testing.expectf(t,ok==c.in_column,"at %v",c.p)
+        testing.expectf(t,ok==c.inside,"at %v",c.p)
         if !ok {continue}
-        expect_near(t,sample.height,c.height,1e-4)
+        expect_near(t,sample.height,c.height,0.05)
         expect_near(t,sample.density,c.density,1e-4)
     }
-    sample,_:=fluid_sample(&w,{0,0,0})
-    expect_near3(t,sample.normal,{0,0.995037,0.0995037},1e-4)
+    sample,_:=fluid_sample(&w,{0,0.5,-20})
+    testing.expectf(t,sample.normal.z<0 && sample.normal.y>0.99,"the surface leans down the river: %v",sample.normal)
+    testing.expectf(t,sample.current.z< -0.99 && abs(sample.current.x)<0.1,"it flows down the path: %v",sample.current)
     bounds:=fluid_bounds(&w,river)
-    expect_near(t,bounds.max.y,2,1e-4) // the top upstream
-    expect_near(t,bounds.min.y,-2,1e-4) // the floor downstream
+    testing.expect(t,bounds.max.y>=2 && bounds.min.y<= -2 && bounds.min.x<= -20 && bounds.max.z>=0)
+    box:=solid(&w,Box{{0.4,0.4,0.4}},{0,0.8,-10},500)
+    test_steps(&w,600)
+    at:=body_center(&w,box)
+    drift:=body_linear_velocity(&w,box)
+    testing.expectf(t,at.z< -12 && drift.z< -0.5,"it drifts downstream: at %v at %v m/s",at,drift)
+    height,_,_:=fluid_surface(&w,river,at.x,at.z)
+    testing.expectf(t,abs(at.y-height)<0.4,"and floats on the surface at %v, %v",at,height)
     for refused in ([]Fluid_Desc{
-        {shape=.Box,half_extents={1,1,1},slope={0,FLUID_SLOPE*2},density=1000},
-        {shape=.Box,half_extents={1,1,1},slope={cmath.nan_f32(),0},density=1000},
-        {shape=.Plane,slope={0.1,0},density=1000},
+        {shape=.River,density=1000,river_count=1,river={0={{0,0,0},1,1,1}}},
+        {shape=.River,density=1000,river_count=2,river={0={{0,0,0},1,1,1},1={{0,1,0},1,1,1}}},
+        {shape=.River,density=1000,river_count=2,river={0={{0,0,0},0,1,1},1={{0,0,4},1,1,1}}},
+        {shape=.River,density=1000,river_count=2,river={0={{cmath.nan_f32(),0,0},1,1,1},1={{0,0,4},1,1,1}}},
+        {shape=.River,river_count=2,river={0={{0,0,0},1,1,1},1={{0,0,4},1,1,1}}},
+        {shape=.River,density=1000,river_count=17},
     }) {testing.expect_value(t,fluid_create(&w,refused),Fluid_Handle{})}
+}
+
+// A river longer than FLUID_RIVER_POINTS is two whose ends meet, the second
+// going on the way the first ends: across the join there is water all along.
+@(test)
+two_rivers_whose_ends_meet_hold_water_across_the_join :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    up:=Fluid_Desc{shape=.River,density=1000,river_count=3}
+    up.river[0],up.river[1],up.river[2]={{0,3,0},4,1,1},{{10,2,-10},4,1,1},{{10,1,-30},4,1,1}
+    down:=Fluid_Desc{shape=.River,density=1000,river_count=2}
+    down.river[0],down.river[1]={{10,1,-30},4,1,1},{{10,0,-50},4,1,1}
+    testing.expect(t,fluid_create(&w,up)!={} && fluid_create(&w,down)!={})
+    for x in ([]f32{8.1,9,10,11,11.9}) {
+        for z in ([]f32{-29.9,-30,-30.1}) {
+            sample,ok:=fluid_sample(&w,{x,0.5,z})
+            testing.expectf(t,ok && sample.density==1000 && abs(sample.height-1)<0.01,"at %v, %v: %v",x,z,sample)
+        }
+    }
 }
 
 @(test)

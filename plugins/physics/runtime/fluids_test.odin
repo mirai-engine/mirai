@@ -59,25 +59,38 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     core.remove(&f.fluids,room)
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.world.fluid_count,1)
+    // A River makes its Fluid a river along its points, which its entity places.
+    river:=core.create(&f.entities)
+    core.add(&f.fluids,river,FLUID_DEFAULT)
+    core.add(&f.rivers,river,RIVER_DEFAULT)
+    core.add(&f.transforms,river,core.Transform{{100,5,0},mm.quat_axis_angle({0,1,0},0.5*3.14159265),{1,1,1}})
+    physics_test_step(&f,0)
+    // Its path goes 12 m along the forward of the entity, turned to -x.
+    sample,entity,ok=fluid_at({&f.state},{94,4,0})
+    testing.expect(t,ok && entity==river && abs(sample.height-4.5)<0.05 && sample.density==1000)
+    testing.expectf(t,sample.current.x< -1.4,"it flows down its path: %v",sample.current)
+    _,entity,_=fluid_at({&f.state},{94,4,3})
+    testing.expect(t,entity!=river,"past its banks")
+    core.edit(&f.rivers,river).points[1].width=0
+    physics_test_step(&f,0)
+    testing.expect(t,core.problem_find(&f.problems,river,"physics.river")!=nil && f.state.world.fluid_count==1,"a point without width is a problem")
 }
 
-// A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane, in a box
-// without size or tilted past a fall it is not made, and says why. Two fluids that meet are a problem only at the same priority.
+// A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box
+// without size it is not made, and says why. Two fluids that meet are a problem only at the same priority.
 @(test)
 a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    Case :: struct {fluid:Fluid,region:Maybe(volume.Volume),made:bool,tilt:f32}
+    Case :: struct {fluid:Fluid,region:Maybe(volume.Volume),made:bool}
     cases:=[?]Case{
-        {Fluid{density=1000},nil,false,0},
-        {Fluid{density=1000},volume.sphere(3),false,0},
-        {Fluid{density=1000},volume.world(),false,0},
-        {Fluid{},volume.plane(),false,0},
-        {Fluid{density=1000},volume.box({2,0,2}),false,0},
-        {Fluid{density=1000},volume.box({2,1,2}),true,0},
-        {Fluid{density=1000},volume.box({2,1,2}),true,0.1},  // a stretch of river
-        {Fluid{density=1000},volume.box({2,1,2}),false,1.2}, // a fall
+        {Fluid{density=1000},nil,false},
+        {Fluid{density=1000},volume.sphere(3),false},
+        {Fluid{density=1000},volume.world(),false},
+        {Fluid{},volume.plane(),false},
+        {Fluid{density=1000},volume.box({2,0,2}),false},
+        {Fluid{density=1000},volume.box({2,1,2}),true},
     }
     made:=0
     refused:[len(cases)]core.Entity
@@ -85,7 +98,7 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
         e:=core.create(&f.entities)
         core.add(&f.fluids,e,c.fluid)
         if region,has:=c.region.?;has {core.add(&f.volumes,e,region)}
-        core.add(&f.transforms,e,core.Transform{{f32(i)*100,0,0},mm.quat_axis_angle({1,0,0},c.tilt),{1,1,1}})
+        core.add(&f.transforms,e,core.Transform{{f32(i)*100,0,0},1,{1,1,1}})
         if c.made {made+=1} else {refused[i]=e}
     }
     a,b,over:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)

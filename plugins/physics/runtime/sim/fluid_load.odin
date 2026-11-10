@@ -177,7 +177,7 @@ wet_find :: proc "contextless" (w:^World,body:^Body,reach:Vec3,wet:^Wet) #no_bou
         if contact.flags&{.Touching,.Overlap}=={.Touching} {wet.supported=true;break}
     }
     height,normal:=fluid_surface_at(w,f,body.center.x,body.center.z)
-    wet.fluid,wet.density,wet.current,wet.height=fluid,f.density,fluid_current(f),height
+    wet.fluid,wet.density,wet.current,wet.height=fluid,f.density,fluid_current(f,body.center),height
     wet.surface={normal,dot(normal,Vec3{body.center.x,height,body.center.z})}
     for &d,k in w.fluids[:w.fluid_high] {
         if d.generation&1==0 || d.density>0 || d.priority<=f.priority || wet.dry_count==WET_DRY {continue}
@@ -300,7 +300,12 @@ fluid_terms :: proc "contextless" (w:^World,wet:^Wet,com:Vec3,terms:^[1+WET_DRY]
     fluid.interface=1
     fluid.count=1
     f:=&w.fluids[wet.fluid]
-    if f.shape==.Box {
+    if f.shape==.River {
+        for plane in river_planes(f,com) {
+            fluid.planes[fluid.count]=shift(plane,com)
+            fluid.count+=1
+        }
+    } else if f.shape==.Box {
         planes:=fluid_box_planes(f)
         for plane,k in planes {
             if k==3 {continue} // the top is the surface

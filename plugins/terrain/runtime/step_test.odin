@@ -414,7 +414,7 @@ terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^
 terrain_test_physics :: proc(w:^Terrain_Test_World,app:^host.App,time:core.Time={}) {
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&w.collision_meshes,app,time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
-        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{})
+        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{})
 }
 
 @(test)

@@ -8,7 +8,8 @@ Fluid_Handle :: distinct base.Handle
 
 Fluid_Shape :: enum u32 {
     Plane, // everything under the height of its position: an ocean
-    Box,   // its top face is the surface, level or sloped: a lake, a pool, a stretch of river
+    Box,   // its top face is the surface: a lake in its basin, a pool
+    River, // a path of points with their width, depth and speed (fluid_river.odin)
 }
 
 // A volume of fluid, or of air with density zero: a dry box takes the fluid of lower priority out of where
@@ -19,12 +20,13 @@ Fluid_Desc :: struct {
     position:Vec3,     // a point of the surface of a plane; the center of a box
     yaw:f32,           // radians about +Y: the frame of a box and of its current
     half_extents:Vec3, // m, of a box
-    slope:[2]f32,      // of a box, m its still surface and its floor rise for each metre along x and z of the world
     density:f32,       // kg/m3: 1000 fresh water, 1025 the sea; zero is dry, only for a box
     current:Vec3,      // m/s in the frame of the volume
     priority:i32,
     user_data:u64,
-    waves:Fluid_Waves, // in the world
+    waves:Fluid_Waves, // of a plane, in the world; a box and a river hold still
+    river:[FLUID_RIVER_POINTS]River_Point, // of a river, in the world
+    river_count:u32,
 }
 
 // Slot of a fluid. Plain data, copied by snapshots.
@@ -34,7 +36,6 @@ Fluid :: struct {
     position:Vec3,
     half_extents:Vec3,
     current:Vec3, // in the frame of the volume
-    slope:[2]f32,
     yaw:f32,
     density:f32,
     priority:i32,
@@ -42,9 +43,11 @@ Fluid :: struct {
     generation:u32, // odd while the slot is in use
     next_free:i32,
     reach:f32,      // m the waves reach over and under the still surface
+    river_count:u32, // points of a river
+    river_at:[FLUID_RIVER_POINTS]u8, // the sample of each of its points
     waves:Fluid_Waves,
+    river:[FLUID_RIVER_SAMPLES]River_Point, // of a river, its points with the curve between them (river_samples)
 }
-#assert(size_of(Fluid)==80+size_of(Fluid_Waves))
 
 // The fluid at a point. `height` is the surface over a point in the fluid, under a point above it, or the
 // underside of the fluid over a point below all of it, whose normal then faces down.
@@ -79,14 +82,25 @@ fluid_get :: #force_inline proc "contextless" (w:^World,h:Fluid_Handle) -> (^Flu
 
 @(private)
 fluid_desc_valid :: proc "contextless" (d:Fluid_Desc) -> bool {
-    if !is_finite3(d.position) || !is_finite3(d.current) || !(abs(d.yaw)<=max(f32)) || !(abs(d.slope.x)<=FLUID_SLOPE && abs(d.slope.y)<=FLUID_SLOPE) {return false}
+    if !is_finite3(d.position) || !is_finite3(d.current) || !(abs(d.yaw)<=max(f32)) {return false}
     if !(d.density>=0 && d.density<=max(f32)) {return false}
     if !waves_valid(d.waves) {return false}
     switch d.shape {
-    case .Plane: return d.density>0 && d.slope=={}
-    case .Box:   return d.half_extents.x>0 && d.half_extents.y>0 && d.half_extents.z>0 && is_finite3(d.half_extents)
+    case .Plane: return d.density>0
+    case .Box:   return d.waves.count==0 && d.half_extents.x>0 && d.half_extents.y>0 && d.half_extents.z>0 && is_finite3(d.half_extents)
+    case .River: return d.waves.count==0 && d.density>0 && river_valid(d)
     }
     return false
+}
+
+// The curve of a river (river_samples), which its surface follows; zero for another fluid or a handle that
+// is gone.
+fluid_river :: proc(w:^World,h:Fluid_Handle,out:^[FLUID_RIVER_SAMPLES]River_Point) -> int {
+    f,_:=fluid_read(w,h)
+    if f==nil || f.shape!=.River {return 0}
+    count:=int(f.river_at[f.river_count-1])+1
+    copy(out[:count],f.river[:count])
+    return count
 }
 
 fluid_valid :: proc(w:^World,h:Fluid_Handle) -> bool {
@@ -94,11 +108,9 @@ fluid_valid :: proc(w:^World,h:Fluid_Handle) -> bool {
     return f!=nil
 }
 
-// The steepest slope of a box, m for each metre: a steeper stretch of water is a fall, not a river.
-FLUID_SLOPE :: f32(1)
-
-// Null when the description is not usable (a dry plane, a sloped plane, a box without size, a slope past
-// FLUID_SLOPE, values that are not finite, waves of no length or of no direction) or
+// Null when the description is not usable (a dry plane, a box without size or with waves, a dry river, one
+// with waves or with fewer than two points, a point without width or depth or on the one before it, values
+// that are not finite, waves of no length or of no direction) or
 // World_Desc.fluid_capacity is exhausted.
 fluid_create :: proc(w:^World,desc:Fluid_Desc) -> Fluid_Handle {
     if !fluid_desc_valid(desc) || !fluid_scratch_make(w) {return {}}
@@ -149,7 +161,9 @@ fluid_set :: proc(w:^World,h:Fluid_Handle,desc:Fluid_Desc) -> bool {
 fluid_desc :: proc(w:^World,h:Fluid_Handle) -> (desc:Fluid_Desc,ok:bool) {
     f,_:=fluid_read(w,h)
     if f==nil {return}
-    return {shape=f.shape,position=f.position,yaw=f.yaw,half_extents=f.half_extents,slope=f.slope,density=f.density,current=f.current,priority=f.priority,user_data=f.user_data,waves=f.waves},true
+    desc={shape=f.shape,position=f.position,yaw=f.yaw,half_extents=f.half_extents,density=f.density,current=f.current,priority=f.priority,user_data=f.user_data,waves=f.waves,river_count=f.river_count}
+    for i in 0..<int(f.river_count) {desc.river[i]=f.river[f.river_at[i]]}
+    return desc,true
 }
 
 // The box a fluid fills; a plane reaches without end sideways and down.
@@ -173,7 +187,12 @@ fluids_overlap :: proc(w:^World,box:Aabb,out:[]Fluid_Handle,skip:=0) -> int {
 @(private)
 fluid_of :: proc "contextless" (d:Fluid_Desc) -> Fluid {
     f:=Fluid{user_data=d.user_data,position=d.position,current=d.current,yaw=d.yaw,density=d.density,priority=d.priority,shape=d.shape,waves=waves_of(d.waves)}
-    if d.shape==.Box {f.half_extents,f.slope=d.half_extents,d.slope}
+    if d.shape==.Box {f.half_extents=d.half_extents}
+    if d.shape==.River {
+        points:=d.river
+        f.river_count=d.river_count
+        river_samples(points[:d.river_count],&f.river,&f.river_at)
+    }
     f.reach=waves_reach(&f.waves)
     return f
 }
@@ -183,18 +202,11 @@ fluid_of :: proc "contextless" (d:Fluid_Desc) -> Fluid {
 @(private)
 fluid_aabb :: proc "contextless" (f:^Fluid) -> Aabb {
     if f.shape==.Plane {return {{-FLUID_FAR,-FLUID_FAR,-FLUID_FAR},{FLUID_FAR,f.position.y+f.reach,FLUID_FAR}}}
+    if f.shape==.River {return river_aabb(f)}
     s,c:=cmath.sincos(f.yaw)
     h:=f.half_extents
-    reach:=Vec3{abs(c)*h.x+abs(s)*h.z,0,abs(s)*h.x+abs(c)*h.z}
-    reach.y=h.y+abs(f.slope.x)*reach.x+abs(f.slope.y)*reach.z
-    return {f.position-reach-{0,f.reach,0},f.position+reach+{0,f.reach,0}}
-}
-
-// The still surface of a fluid over (x, z): the top of a box, which its slope tilts, or the height of a plane.
-@(private)
-fluid_level :: #force_inline proc "contextless" (f:^Fluid,x,z:f32) -> f32 {
-    if f.shape==.Plane {return f.position.y}
-    return f.position.y+f.half_extents.y+f.slope.x*(x-f.position.x)+f.slope.y*(z-f.position.z)
+    reach:=Vec3{abs(c)*h.x+abs(s)*h.z,h.y,abs(s)*h.x+abs(c)*h.z}
+    return {f.position-reach,f.position+reach}
 }
 
 // The point in the frame of a box, turned by its yaw.
@@ -208,6 +220,7 @@ fluid_local :: #force_inline proc "contextless" (f:^Fluid,p:Vec3) -> Vec3 {
 @(private)
 fluid_in_column :: #force_inline proc "contextless" (f:^Fluid,p:Vec3) -> bool {
     if f.shape==.Plane {return true}
+    if f.shape==.River {return river_spot(f,p.x,p.z).inside}
     l:=fluid_local(f,p)
     return abs(l.x)<=f.half_extents.x && abs(l.z)<=f.half_extents.z
 }
@@ -216,20 +229,25 @@ fluid_in_column :: #force_inline proc "contextless" (f:^Fluid,p:Vec3) -> bool {
 // still surface. The one place that knows its shape, which every reader follows.
 @(private)
 fluid_surface_at :: proc "contextless" (w:^World,f:^Fluid,x,z:f32) -> (height:f32,normal:Vec3) {
-    still:=fluid_level(f,x,z)
-    normal=UP
-    if f.waves.count>0 {
-        origin:=wave_origin(x,z)
-        terms,count:=wave_terms(&f.waves,w.time,origin)
-        height,normal=wave_surface(terms[:count],f32(f64(x)-origin.x),f32(f64(z)-origin.y))
+    if f.shape==.River {
+        spot:=river_spot(f,x,z)
+        return spot.center.y,river_normal(spot.along)
     }
-    if f.slope!={} {normal=normalize(Vec3{normal.x-f.slope.x*normal.y,normal.y,normal.z-f.slope.y*normal.y})}
+    still:=f.position.y+(f.shape==.Box?f.half_extents.y:0)
+    if f.waves.count==0 {return still,UP}
+    origin:=wave_origin(x,z)
+    terms,count:=wave_terms(&f.waves,w.time,origin)
+    height,normal=wave_surface(terms[:count],f32(f64(x)-origin.x),f32(f64(z)-origin.y))
     return still+height,normal
 }
 
 @(private)
-fluid_bottom :: #force_inline proc "contextless" (f:^Fluid,x,z:f32) -> f32 {
-    return f.shape==.Box?fluid_level(f,x,z)-2*f.half_extents.y:-FLUID_FAR
+fluid_bottom :: #force_inline proc "contextless" (f:^Fluid,p:Vec3) -> f32 {
+    if f.shape==.River {
+        spot:=river_spot(f,p.x,p.z)
+        return spot.center.y-spot.depth
+    }
+    return f.shape==.Box?f.position.y-f.half_extents.y:-FLUID_FAR
 }
 
 // The surface of a fluid or the top of a dry box over (x, z) (fluid_surface_at); false for a handle that is gone.
@@ -246,17 +264,20 @@ fluid_holds :: proc(w:^World,h:Fluid_Handle,p:Vec3) -> bool {
     f,_:=fluid_read(w,h)
     if f==nil || !fluid_in_column(f,p) {return false}
     top,_:=fluid_surface_at(w,f,p.x,p.z)
-    return p.y>=fluid_bottom(f,p.x,p.z) && p.y<=top
+    return p.y>=fluid_bottom(f,p) && p.y<=top
 }
 
 @(private)
-fluid_current :: #force_inline proc "contextless" (f:^Fluid) -> Vec3 {
+fluid_current :: #force_inline proc "contextless" (f:^Fluid,p:Vec3) -> Vec3 {
+    if f.shape==.River {
+        spot:=river_spot(f,p.x,p.z)
+        return spot.along*spot.speed
+    }
     s,c:=cmath.sincos(f.yaw)
     return {c*f.current.x+s*f.current.z,f.current.y,c*f.current.z-s*f.current.x}
 }
 
-// The outward planes of a box turned by its yaw: -X, +X, -Y, +Y, -Z, +Z of its frame. Its floor and its top
-// tilt with its slope.
+// The outward planes of a box turned by its yaw: -X, +X, -Y, +Y, -Z, +Z of its frame.
 @(private)
 fluid_box_planes :: proc "contextless" (f:^Fluid) -> [6]Plane {
     s,c:=cmath.sincos(f.yaw)
@@ -264,8 +285,7 @@ fluid_box_planes :: proc "contextless" (f:^Fluid) -> [6]Plane {
     z:=Vec3{s,0,c}
     h:=f.half_extents
     p:=f.position
-    up:=normalize(Vec3{-f.slope.x,1,-f.slope.y})
-    return {{-x,-dot(x,p)+h.x},{x,dot(x,p)+h.x},{-up,-dot(up,p)+h.y*up.y},{up,dot(up,p)+h.y*up.y},{-z,-dot(z,p)+h.z},{z,dot(z,p)+h.z}}
+    return {{-x,-dot(x,p)+h.x},{x,dot(x,p)+h.x},{-UP,-p.y+h.y},{UP,p.y+h.y},{-z,-dot(z,p)+h.z},{z,dot(z,p)+h.z}}
 }
 
 // Of the fluids whose column holds the point (a pool can stand over the sea), the one that holds it, else
@@ -279,7 +299,7 @@ fluid_find :: proc "contextless" (w:^World,p:Vec3) -> i32 {
     for &f,i in w.fluids[:w.fluid_high] {
         if f.generation&1==0 || f.density<=0 || !fluid_in_column(&f,p) {continue}
         top,_:=fluid_surface_at(w,&f,p.x,p.z)
-        bottom:=fluid_bottom(&f,p.x,p.z)
+        bottom:=fluid_bottom(&f,p)
         rank,distance:=0,f32(0)
         if p.y>top {
             rank,distance=1,p.y-top
@@ -298,13 +318,13 @@ fluid_find :: proc "contextless" (w:^World,p:Vec3) -> i32 {
 fluid_column :: proc "contextless" (w:^World,fluid:i32,p:Vec3,out:^[FLUID_COLUMN_DRY+1]Fluid_Interval) -> int #no_bounds_check {
     f:=&w.fluids[fluid]
     top,_:=fluid_surface_at(w,f,p.x,p.z)
-    bottom:=fluid_bottom(f,p.x,p.z)
+    bottom:=fluid_bottom(f,p)
     if !(top>bottom) {return 0}
     holes:[FLUID_COLUMN_DRY]Fluid_Interval
     hole_count:=0
     for &d in w.fluids[:w.fluid_high] {
         if d.generation&1==0 || d.density>0 || d.priority<=f.priority || !fluid_in_column(&d,p) {continue}
-        hole:=Fluid_Interval{fluid_bottom(&d,p.x,p.z),fluid_level(&d,p.x,p.z)}
+        hole:=Fluid_Interval{d.position.y-d.half_extents.y,d.position.y+d.half_extents.y}
         if hole.top<=bottom || hole.bottom>=top || hole_count==FLUID_COLUMN_DRY {continue}
         at:=hole_count
         for at>0 && holes[at-1].bottom>hole.bottom {
@@ -341,7 +361,7 @@ fluid_sample :: proc(w:^World,p:Vec3) -> (sample:Fluid_Sample,ok:bool) #no_bound
     if count==0 {return}
     f:=&w.fluids[fluid]
     _,normal:=fluid_surface_at(w,f,p.x,p.z)
-    sample={normal=normal,current=fluid_current(f),fluid=fluid_handle(w,fluid)}
+    sample={normal=normal,current=fluid_current(f,p),fluid=fluid_handle(w,fluid)}
     if p.y<column[0].bottom {
         sample.height,sample.normal=column[0].bottom,-UP
         return sample,true

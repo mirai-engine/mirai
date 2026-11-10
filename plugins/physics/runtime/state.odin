@@ -39,6 +39,8 @@ Physics_State :: struct {
     joints:core.Entity_Map(Joint_Link), // by entity with a Joint
     fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid
     fluids_synced:u64, // the versions of the tables the fluids were last made from
+    rivers_seen:core.Seen,
+    rivers_shape:core.Shape,
     world_body:sim.Body_Handle, // the static body joints to the world hold on to
     geometry:[dynamic]Geometry_Mark, // by slot of the hulls, then the meshes, then the heightfields of the world
     sources:[dynamic]Geometry_Source, // by slot as geometry: what it was made from, to share it
@@ -615,7 +617,7 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     dst.own_gravity=src.own_gravity
     dst.gravity.index.made=false
     if _,copied:=sim.world_state_copy(&dst.world,&src.world);!copied {return false}
-    dst.synced,dst.fluids_synced=src.synced,src.fluids_synced
+    dst.synced,dst.fluids_synced,dst.rivers_seen,dst.rivers_shape=src.synced,src.fluids_synced,src.rivers_seen,src.rivers_shape
     dst.sealed_key,dst.transforms_seen,dst.unmade=0,{},src.unmade
     dst.epoch=max(dst.epoch,src.epoch)+1;if dst.epoch==0 {dst.epoch=1}
     return true

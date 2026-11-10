@@ -11,11 +11,10 @@ import geom "mirai:std/geom"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
-// The surface of a water: a grid around the camera, finest at its middle,
-// whose rings double their cells outwards. The cells of a ring next to the
-// finer level take its vertices on that side, so no edge of one level ends in
-// the middle of an edge of the other. That of a box ends at its walls: the
-// vertices past them go onto them.
+// The surface of a plane of water: a grid around the camera, finest at its
+// middle, whose rings double their cells outwards. The cells of a ring next
+// to the finer level take its vertices on that side, so no edge of one level
+// ends in the middle of an edge of the other.
 
 SURFACE_CELL :: f32(0.5) // m, of the finest level
 SURFACE_HALF :: 32       // cells of a level from its middle to its edge
@@ -86,23 +85,23 @@ surface_build :: proc(out:^geom.Mesh_Buffer) {
 @(private)
 Gpu_Sheet :: struct {
     rest,written,count:u32,
-    bodies:u32,     // the water, then the dry boxes
+    bodies:u32,     // the plane, then the dry boxes
     eye:[2]f32,     // x and z of the camera from the middle of the grid
     cell:f32,
     half_cells:f32,
 }
 
-// The grid of a water drawn through a deformable copy of it, which the stage
-// water_sheet writes on its waves and its slope, within the walls of a box
-// and down to the floors of the dry boxes that cross it: in every frame while
-// it has waves, and only when the grid or the boxes move while it has none.
+// The grid of a plane drawn through a deformable copy of it, which the stage
+// water_sheet writes on the waves of the plane and down to the floors of the
+// dry boxes that cross it: in every frame while it has waves, and only when
+// the grid or the boxes move while it has none.
 @(private)
 Sheet :: struct {
     entity:core.Entity,
     source,mesh:render.Mesh_Handle, // the grid, and the copy of it the stage writes
     middle:[3]f32,  // of the grid in the world, on the still surface, when it was last written
     eye:[2]f32,
-    body:int,       // of the water among the bodies of the frame
+    body:int,       // of the plane among the bodies of the frame
     key:u64,        // of what it was last written from, without waves
     made:u64,       // of the vertex buffer it was last written in
     seen:u64,
@@ -121,13 +120,12 @@ dry_span :: proc "contextless" (b:Gpu_Body) -> (floor,top:f32) {
 
 // Whether a dry box of the frame takes out of a water of lower priority some of the surface its waves can be at.
 @(private)
-dry_crosses :: proc "contextless" (state:^Water_Gpu,dry,water:int) -> bool {
-    d,p:=state.bodies[dry],state.bodies[water]
+dry_crosses :: proc "contextless" (state:^Water_Gpu,dry,plane:int) -> bool {
+    d,p:=state.bodies[dry],state.bodies[plane]
     if !(d.surface.z>0.5) || p.surface.z>0.5 || !(d.surface.w>p.surface.w) {return false}
-    reach:=phys.waves_reach(state.waves[water])
+    reach:=phys.waves_reach(state.waves[plane])
     floor,top:=dry_span(d)
-    still:=still_at(p,d.slope.z,d.slope.w)
-    return floor<still+reach && top>still-reach
+    return floor<p.surface.x+reach && top>p.surface.x-reach
 }
 
 // Whether a dry box of the frame crosses the surface of some water.
@@ -137,34 +135,32 @@ crosses_water :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
     return false
 }
 
-// The grid of the water `body` of the frame around the camera: as it is generated while it is a still plane
-// that no dry box crosses, else through its sheet.
+// The grid of the plane `body` of the frame around the camera: as it is generated while the plane is still
+// and no dry box crosses it, else through its sheet. That of a lake, whose walls are `walls`, only through
+// its sheet, which ends at them.
 @(private)
-sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,info:phys.Fluid_Info,material:u32) {
-    e:=info.entity
-    b:=state.bodies[body]
-    middle:=[3]f32{math.round(view.position.x/SURFACE_STEP)*SURFACE_STEP,0,math.round(view.position.z/SURFACE_STEP)*SURFACE_STEP}
-    middle.y=still_at(b,middle.x,middle.z)
+sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32,walls:Maybe(mm.Aabb)=nil) {
+    top:=state.bodies[body].surface.x
+    middle:=[3]f32{math.round(view.position.x/SURFACE_STEP)*SURFACE_STEP,top,math.round(view.position.z/SURFACE_STEP)*SURFACE_STEP}
     instance,usable:=render.mesh_instance(assets,{mesh=state.surface},mm.transform_matrix({middle,1,1}))
     if !usable {return}
     instance.material=render.Material_Handle(material)
     instance.object_id,instance.copy_owner=u64(e),base.name_hash("water")
-    bounded:=b.surface.y<0.5
-    // A box is drawn only through its sheet, which ends at its walls.
+    lake,bounded:=walls.?
     drawn:=!bounded
     defer if drawn {render.instance_add(extras,instance)}
     moving:=state.waves[body].count>0
     lowest:=f32(0)
     cut:=bounded
     key:=base.hash64(mem.ptr_to_bytes(&middle))
+    if bounded {key=base.hash64(mem.ptr_to_bytes(&lake),key)}
     for j in 0..<state.count {
         if !dry_crosses(state,j,body) {continue}
         cut=true
         floor,_:=dry_span(state.bodies[j])
-        lowest=min(lowest,floor-middle.y)
+        lowest=min(lowest,floor-top)
         key=base.hash64(mem.ptr_to_bytes(&state.bodies[j]),key)
     }
-    if bounded {key=base.hash64(mem.ptr_to_bytes(&b),key)}
     if !moving && !cut {return}
     if state.sheet_pipeline==0 {state.sheet_pipeline=render.stage_pipeline(renderer,{stage=.Geometry,shader="water_sheet",name="water sheet"})}
     if state.sheet_pipeline==0 {return}
@@ -193,10 +189,9 @@ sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Render
         bounds_min:=[3]f32{rest_min.x-reach,min(lowest,-reach),rest_min.z-reach}
         bounds_max:=[3]f32{rest_max.x+reach,reach,rest_max.z+reach}
         if bounded {
-            // Within its walls, over what its slope raises and lowers.
-            bounds_min=linalg.max(bounds_min,info.bounds.min-middle)
-            bounds_max=linalg.min(bounds_max,info.bounds.max-middle)
-            bounds_min.y,bounds_max.y=info.bounds.min.y-middle.y,info.bounds.max.y-middle.y
+            // Within its walls.
+            bounds_min.xz=linalg.max(bounds_min.xz,lake.min.xz-middle.xz)
+            bounds_max.xz=linalg.min(bounds_max.xz,lake.max.xz-middle.xz)
             if !(bounds_min.x<=bounds_max.x && bounds_min.z<=bounds_max.z) {return}
         }
         if !render.deformable_update(renderer,sheet.mesh,bounds_min,bounds_max) {return}
@@ -209,7 +204,7 @@ sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Render
     drawn=true
 }
 
-// The sheets no water drew in this frame go; those written in it get the pass that writes them.
+// The sheets no plane drew in this frame go; those written in it get the pass that writes them.
 @(private)
 sheets_release :: proc(state:^Water_Gpu,renderer:^render.Renderer) {
     writing:=false

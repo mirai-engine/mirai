@@ -81,7 +81,10 @@ world_debug_draw :: proc(w:^World,out:^Debug_Draw,flags:Debug_Draw_Flags,region:
             if f.generation&1==0 {continue}
             if f.shape==.Plane {
                 debug_fluid_plane(out,w,&f,region,everywhere)
-            } else if meets(fluid_aabb(&f),region,everywhere) {
+            } else if !meets(fluid_aabb(&f),region,everywhere) {
+            } else if f.shape==.River {
+                debug_fluid_river(out,&f)
+            } else {
                 debug_fluid_box(out,&f,f.density>0?.Fluid:.Dry)
             }
         }
@@ -128,18 +131,34 @@ debug_kind :: proc "contextless" (shape:^Shape,body:^Body) -> Debug_Kind {
 @(private) DEBUG_PLANE_LINES :: 32 // across each axis of the surface of a plane
 @(private) DEBUG_PLANE_PIECES :: 8 // of each line, which follow the height of the surface
 
+// The banks of a river along its path.
+@(private)
+debug_fluid_river :: proc "contextless" (out:^Debug_Draw,f:^Fluid) {
+    count:=int(f.river_at[f.river_count-1])+1
+    bank :: proc "contextless" (f:^Fluid,j,count:int,side:f32) -> Vec3 {
+        a,b:=f.river[max(j-1,0)].position,f.river[min(j+1,count-1)].position
+        across:=normalize(Vec3{a.z-b.z,0,b.x-a.x})
+        return f.river[j].position+across*(side*0.5*f.river[j].width)
+    }
+    for j in 0..<count-1 {
+        debug_line(out,bank(f,j,count,1),bank(f,j+1,count,1),.Fluid)
+        debug_line(out,bank(f,j,count,-1),bank(f,j+1,count,-1),.Fluid)
+    }
+    debug_line(out,bank(f,0,count,1),bank(f,0,count,-1),.Fluid)
+    debug_line(out,bank(f,count-1,count,1),bank(f,count-1,count,-1),.Fluid)
+}
+
 @(private)
 debug_fluid_box :: proc "contextless" (out:^Debug_Draw,f:^Fluid,kind:Debug_Kind) {
     s,c:=cmath.sincos(f.yaw)
     x,z:=Vec3{c,0,-s}*f.half_extents.x,Vec3{s,0,c}*f.half_extents.z
-    corner :: proc "contextless" (f:^Fluid,x,z:Vec3,i:int) -> Vec3 {
-        p:=f.position+(i&1!=0?x:-x)+(i&4!=0?z:-z)
-        p.y=fluid_level(f,p.x,p.z)-(i&2!=0?0:2*f.half_extents.y)
-        return p
+    y:=UP*f.half_extents.y
+    corner :: proc "contextless" (p,x,y,z:Vec3,i:int) -> Vec3 {
+        return p+(i&1!=0?x:-x)+(i&2!=0?y:-y)+(i&4!=0?z:-z)
     }
     for i in 0..<8 {
         for bit in ([3]int{1,2,4}) {
-            if i&bit==0 {debug_line(out,corner(f,x,z,i),corner(f,x,z,i|bit),kind)}
+            if i&bit==0 {debug_line(out,corner(f.position,x,y,z,i),corner(f.position,x,y,z,i|bit),kind)}
         }
     }
 }
