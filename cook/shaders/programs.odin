@@ -11,7 +11,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "mirai:render/abi"
-import "core:thread"
+import "mirai:std/jobs"
 
 // Programs: Slang sources that declare `//! mirai surface Name`,
 // `//! mirai postprocess Name`, `//! mirai vfx Name` or `//! mirai ui Name`,
@@ -976,7 +976,6 @@ Program_Reflection :: struct {
     runner:^Runner,
     slangc,root,copied,temporary:string,
     plugins:[]string,
-    next:int, // atomic, into entries
 }
 
 // Reflects the layouts of the entries the cache lacks, each in a compilation
@@ -986,10 +985,8 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
     pending:=0
     for e in r.entries {if e.metadata_problem=="" && e.problem=="" && !(e.cached && e.probed) {pending+=1}}
     if pending==0 {return}
-    work :: proc(r:^Program_Reflection) {
-        for {
-            at:=sync.atomic_add(&r.next,1)
-            if at>=len(r.entries) {return}
+    work :: proc(r:^Program_Reflection,first,last,worker:int) {
+        for at in first..<last {
             e:=&r.entries[at]
             if e.metadata_problem!="" || e.problem!="" || (e.cached && e.probed) {continue}
             runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -1018,13 +1015,14 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             if e.vfx {layout_write(e.caches[1],e.fingerprint,layouts[1])}
         }
     }
-    threads:=make([dynamic]^thread.Thread,context.temp_allocator)
-    for _ in 0..<clamp(workers,1,pending) {
-        if t:=thread.create_and_start_with_poly_data(r,work);t!=nil {append(&threads,t)}
+    // Each reflection waits on its compilation: up to `workers` at once.
+    js:jobs.Job_System
+    if !jobs.system_init(&js,{threads=clamp(workers,1,pending)-1}) {
+        work(r,0,len(r.entries),jobs.OWNER)
+        return
     }
-    // Without a thread, here.
-    if len(threads)==0 {work(r)}
-    for t in threads {thread.join(t);thread.destroy(t)}
+    jobs.parallel_for(&js,jobs.OWNER,len(r.entries),1,work,r)
+    jobs.system_destroy(&js)
 }
 
 // Builds the catalog of the built-in programs and those of a project into
