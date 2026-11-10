@@ -758,10 +758,23 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 ## `volume`
 
-The values that change per zone: gravity, wind, reverb, how views look and fog (`Fog_Volume` of the
-`fog` plugin). The value is a component of its library; the `Volume` of the same entity says where
-it applies: unbounded, a box or a sphere by the entity's scale, with `blend` meters of edge where
-its weight goes from 1 to 0.
+`Volume` is the only region of the world: unbounded, a box or a sphere by the entity's scale, or a
+plane (everything under the entity, along its up), with `blend` meters of edge where its weight
+goes from 1 to 0. What happens in it is another component of the same entity, of the library that
+does it.
+
+- **No component carries a shape of its own.** A library that needs a region reads the `Volume`
+  of its entity and asks `depth`, `weight`, `holds` (a point) or `overlaps` (a box of the world),
+  the one containment and overlap test; `valid` says whether a volume can hold anything. A size, a
+  pose or a point that is not a number is outside. Who reads it: the per-zone values below,
+  `Fluid`, `Force_Field` and the area requests of
+  [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct,
+  `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
+  [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
+  shapes it takes and reports a problem for another.
+
+The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
+the `fog` plugin):
 
 - **A single algorithm** (`volume.odin`): at a point those that contain it are applied from lowest
   to highest `priority`, and among equals the largest first, over the library's default. Each one
@@ -772,9 +785,10 @@ its weight goes from 1 to 0.
   both for a value that is its row: what is asked at one point per frame (the game's view, once
   per frame in `render_sync`; the listener).
 - What is asked at many points per tick (each body's gravity) keeps an `Index`: the unbounded ones
-  in order and the bounded ones in a tree, redone only when a volume, a value or a place changes. A
-  point asks the tree for the bounded ones that may contain it; without any, it is worth what the
-  library combined of the unbounded ones when redoing it, and without bounded ones nobody asks.
+  in order, the boxes and spheres in a tree and the planes in a list, redone only when a volume, a
+  value or a place changes. A point asks the tree for the bounded ones that may contain it;
+  without any, it is worth what the library combined of the unbounded ones when redoing it, and
+  without bounded ones nobody asks.
 - The value and its `Volume` are replicated; `scope` belongs to each end.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;

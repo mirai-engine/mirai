@@ -204,10 +204,6 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`ragdoll`** (`Runtime`, `Editor`): [ragdolls](ragdoll.md) with bodies bound to bones, free
   simulation, animated kinematics and physical animation motors; `ragdoll.setup` builds them from
   the skeleton's body.
-- **`physics_fields`** (`Runtime`, `Editor`)
-  - [Persistent fields](physics-fields.md) of sphere, box or plane with radial or directional
-    force, curve with range, noise and independent strain.
-  - Editor: volume and direction arrows when selecting a field in Edit or Simulate/pause.
 - **`ui_inspector`** (`Editor`): [document](ui-inspector.md) that shows a `.ui` as the game builds
   it and edits its nodes, layout, bindings and styles.
 - **`prompts_kenney`** (`Assets`): the Kenney prompt pack (CC0) for keyboard and mouse, Xbox and
