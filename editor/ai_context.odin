@@ -191,7 +191,7 @@ ai_entity_id_text :: proc(w:core.World_Ref,e:core.Entity) -> string {
 ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     v:=s.viewport
     if item.body {
-        if low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh);known {
+        if low,high,known:=mesh_bounds(s.app.assets,item.mesh);known {
             return project_box(v,mm.transform_matrix(item.world),low,high)
         }
     }

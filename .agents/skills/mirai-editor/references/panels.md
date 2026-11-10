@@ -254,12 +254,11 @@ the `World` (cancelling a drag leaves no trace):
   top) and then the nearest surface. Without `ghosts` it does not see what is hidden or off, so
   that nothing rests or is painted on a ghost; the selection click, the rectangle and the focus
   pass `ghosts_shown(s)`.
-- The ray first tests each mesh's box (the asset's, without reading the mesh) and enters only those
-  it crosses. `Picker` reads a mesh's triangles the first time something needs them and builds its
-  BVH when a ray reaches its box: a click costs what its ray reaches, not the scene. Rectangle,
-  focus and boxes use only the box.
-- A mesh leaves the cache only when its geometry changes: a generated one on being released (its
-  ids are immutable), a file one when size or date change in the registry.
+- The ray first tests each mesh's box (the asset's) and enters only those it crosses, through the
+  renderer ([`mesh_ray`](../../mirai-rendering/references/ui.md#offscreen-ui)): the mesh as it is
+  drawn, posed included, with the renderer's software tree or the one it makes the first time a
+  ray reaches the box under hardware tracing, kept until the mesh goes. The editor keeps no
+  triangles or trees of its own. Rectangle, focus and boxes use only the box.
 - A derived geometry without `Id` selects its first ancestor with `Id` (`entity_author`), with the
   real hit; likewise in rectangle, Select All and focus. The
   [AI context](ai-tasks.md#project-data) groups them by owner.

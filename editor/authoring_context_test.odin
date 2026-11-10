@@ -53,10 +53,11 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})
     viewport.projection=mm.perspective(50*mm.RAD_PER_DEG,800.0/600,0.1,100)
     viewport.view_projection=viewport.projection*viewport.view_matrix
-    picker:Picker
-    defer picker_clear(&picker);defer delete(picker.meshes)
-    app:host.App
-    session:=Session{info=info,edit_world=&world,app=&app,viewport=&viewport,picker=&picker}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root="assets",capacity=4})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets}
+    session:=Session{info=info,edit_world=&world,app=&app,viewport=&viewport}
     task:=Ai_Task{region={0,0,800,600}}
     entities:=ai_entities_gather(&session,&task)
     if !testing.expect(t,len(entities)==1 && task.entities_total==1,"two visible chunks produce one author") {return}
