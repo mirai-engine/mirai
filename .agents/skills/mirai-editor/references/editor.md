@@ -380,8 +380,12 @@ the same editor replaces the previous.
 **Build** (`Ctrl+B`, File > Build, `build.start`) rereads the project and launches in the
 background the project's shaders and its `editor` library (`cook/build`, `Editor` target), also
 during a Play. The engine binaries are updated by the
-[external build](../../mirai-projects/references/projects.md#engine-binaries). Compiling on
-save does not exist: the build is explicit.
+[external build](../../mirai-projects/references/projects.md#engine-binaries), and what it left
+(`build.start` target `built`) is loaded the same way: first the engine libraries built again,
+taken in place while what they declare stands, so the worlds, histories and Play go on
+([taking a build in place](../../mirai-projects/references/projects.md#engine-binaries)); then the
+library of the project and the shaders it published. Compiling on save does not exist: the build
+is explicit.
 
 - **Play compiles first** when an Odin source of the project's `game/`, `editor/` or `plugins/`,
   or its manifest, changed since the last build that remained (`code_fingerprint` against
@@ -404,8 +408,9 @@ save does not exist: the build is explicit.
   copies continue. Afterwards the history of each tab, the turn records, the sections and their
   pending references pass to the new indices and layout (`editor/relayout.odin`); the saved panel
   changes for Restore are discarded. The ACP workers are not touched: a live turn continues.
-- **Restart** only if a `Shared` or `Editor` storage of the engine would change place or a struct
-  does not fit in its reserve: the new library is unloaded and `Restart` is requested.
+- **Restart** only if an engine library changed what it declares, or a `Shared` or `Editor`
+  storage of the engine would change place or a struct does not fit in its reserve: the new
+  library is unloaded and `Restart` is requested, with the reason in the log.
 
 **Restart** (`restart`):
 

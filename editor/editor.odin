@@ -182,7 +182,8 @@ Session :: struct {
     project_root:string, // absolute, with forward slashes
     engine_root:string,  // empty when unknown: Build cannot run
     program:string,      // the executable it started from, as named then, with forward slashes: a build that moves the running binaries aside (build.engine_unlock) leaves the new ones there
-    engine_stamp:string, // of the binaries it started from (build.engine_stamp_of): a build of the engine afterwards changes the one beside them
+    engine_stamp:string, // of the binaries of the engine it runs (build.engine_stamp_of): a build of the engine afterwards changes the one beside them
+    library_stamp:string, // of the library of the project it loaded last (build.target_stamp_of)
     assets_root:string,
     has_project:bool,    // the folder has a project.mirai
     settings_unsaved:bool, // a setting changed that the file of its layer does not have yet
@@ -366,13 +367,13 @@ capture :: proc(s:^Session,path:string) -> bool {return host.app_capture(s.app,p
 
 // The main of the editor of a project: open, a frame after another until
 // it ends, close.
-run :: proc(info:^core.World_Info,args:[]string) -> int {
+run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) -> int {
     s,code:=open(info,args)
     if s==nil {return code}
     previous:=context.logger
     context.logger=console_logger(s.console,previous)
     gpu_failure_notify(s)
-    for advance(s) {}
+    for frame(s) {}
     context.logger=previous
     next:os.Process
     starts:=s.projects!=nil && s.projects.starts
@@ -442,6 +443,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     program,_:=os.get_executable_path(context.temp_allocator)
     s.program,_=strings.replace_all(program,"\\","/")
     s.engine_stamp=engine_stamp_here(s)
+    s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)
     s.has_project=has_project
     if has_project {s.build.sources=code_fingerprint(root)}
@@ -1163,7 +1165,7 @@ session_destroy :: proc(s:^Session) {
     s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
-    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
+    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
     for arg in s.args {delete(arg)}
     delete(s.args)
     s.project_root,s.engine_root,s.program,s.assets_root,s.capture,s.gpu_lost_before,s.args="","","","","","",{}

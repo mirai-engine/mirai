@@ -1189,11 +1189,9 @@ sun_on :: proc(worlds:core.Read(core.World_Transform),suns:core.Read(Sun),previe
             }
         }
     }
-    for row in 0..<core.count(suns) {
-        e:=core.entity_at(suns,row)
-        world,placed:=core.get(worlds,e)
-        if !placed || is_hidden(hidden,parents,e) {continue}
-        return core.at(suns,row),mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+    placed:=core.join(suns,worlds)
+    for e,sun,world in core.each_joined(&placed) {
+        if !is_hidden(hidden,parents,e) {return sun,mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true}
     }
     return
 }

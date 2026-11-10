@@ -308,6 +308,12 @@ library_file :: proc(name:string,allocator:=context.allocator) -> string {
     return file
 }
 
+// What each package of a library of the engine built to be taken in place
+// exports, after its link name (mirai.core.__slots): the table its exports
+// call through, and the hash of what its slots are.
+LIBRARY_SLOTS :: ".__slots"
+Library_Slots :: #type proc "contextless" () -> (slots:[]rawptr,key:u64)
+
 // A library of the project, in .mirai: editor, which the editor loads, or
 // play, which the player loads.
 project_library :: proc(root,name:string,allocator:=context.allocator) -> string {

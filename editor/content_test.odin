@@ -13,7 +13,7 @@ import "mirai:std/base"
 import "mirai:ui"
 
 @(private)
-CONTENT_TEST_PLUGIN_KIND :: asset.Fourcc(u32('P')|u32('O')<<8|u32('S')<<16|u32('E')<<24)
+CONTENT_TEST_PLUGIN_KIND :: asset.Fourcc(u32('C')|u32('H')<<8|u32('A')<<16|u32('R')<<24)
 @(private)
 CONTENT_TEST_WIDTH :: f32(304)
 
@@ -21,7 +21,7 @@ CONTENT_TEST_WIDTH :: f32(304)
 content_test_registry :: proc() -> asset.Registry {
     files:=make([dynamic]asset.Registry_File)
     append(&files,
-        asset.Registry_File{path="Animations/run.pose",state=.Asset,kind=CONTENT_TEST_PLUGIN_KIND,id={1,9}},
+        asset.Registry_File{path="Animations/run.character",state=.Asset,kind=CONTENT_TEST_PLUGIN_KIND,id={1,9}},
         asset.Registry_File{path="Animations/walk.anim",state=.Asset,kind=asset.KIND_ANIMATION,id={1,1}},
         asset.Registry_File{path="Materials/red.mat",state=.Asset,kind=asset.KIND_MATERIAL,id={1,2}},
         asset.Registry_File{path="Meshes/box.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,3}},

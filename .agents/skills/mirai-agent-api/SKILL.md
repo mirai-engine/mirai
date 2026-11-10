@@ -127,9 +127,10 @@ difference with the catalog, it rules.
    it into the running editor: the scene,
    the Play and the history stay, also with a new or changed component
    ([build](references/methods.md#build)). A large scene is not loaded again for each change.
-   `mirai session restart [project]` is only for engine code: it builds and opens another
-   session with the same arguments, and `mirai build editor` also restarts it if it has to
-   replace the engine binaries it runs ([sessions](references/api.md#sessions)).
+   After engine code or an engine shader, `mirai build editor` hands the build to the session:
+   in place when only bodies or shader code changed, otherwise restarting it with its documents
+   and the reason ([sessions](references/api.md#sessions)). `mirai session restart [project]`
+   opens another session with the same arguments.
 7. Close with `engine.shutdown` (`discard` to discard unsaved changes) or with
    `mirai session stop`.
 

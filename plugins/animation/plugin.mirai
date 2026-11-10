@@ -4,10 +4,6 @@
   "dependencies": [],
   "parts": ["Runtime", "Editor"],
   "asset_kinds": [
-    {"extension": ".match", "kind": "AMTC", "merged": true},
-    {"extension": ".blend", "kind": "BLND", "merged": true},
-    {"extension": ".motion", "kind": "MOTN", "merged": true},
-    {"extension": ".pose", "kind": "POSE", "merged": true},
-    {"extension": ".action", "kind": "ACTN", "merged": true}
+    {"extension": ".character", "kind": "CHAR", "merged": true}
   ]
 }
