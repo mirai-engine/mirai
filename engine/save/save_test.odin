@@ -265,6 +265,7 @@ serve_destroy :: proc(f:^Save_Test,s:^Serve) {
 // One frame: the requests of the tick before and the autosaves that are due.
 @(private="file")
 serve :: proc(f:^Save_Test,s:^Serve) {
+    clear(&s.results.queue.items) // the log of a frame, as its readers are handed it
     saves_serve(
         host.app_world_ref(&f.app,f.w),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,core.ref(&s.settings),&s.profile,{},
         core.ref(&s.network),core.ref(&s.frame),core.ref(&s.clock),core.read(&f.w.references),s.problems,

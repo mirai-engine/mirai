@@ -153,3 +153,98 @@ a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:
     destroy_tree(&f.entities,ref(&f.hierarchy),root)
     testing.expect(t,!alive(&f.entities,deepest) && alive(&f.entities,other))
 }
+
+// On random hierarchies, a pass that computes only what changed leaves every
+// world as a pass that computes all of them: after entities move, gain and
+// lose a Transform, change parent, are made and destroyed, in ticks and in
+// frames. A reader that fell behind the links that moved reads the tree whole.
+@(test)
+propagating_what_changed_equals_propagating_all_on_random_hierarchies :: proc(t:^testing.T) {
+    World :: struct {
+        es:Entities,
+        locals:Table(Transform),parents:Table(Parent),worlds:Table(World_Transform),
+        hierarchy:Hierarchy,propagation:Propagation,jumps:Jumps,
+    }
+    world_free :: proc(w:^World) {
+        table_destroy(&w.locals);table_destroy(&w.parents);table_destroy(&w.worlds)
+        value_free(&w.hierarchy,type_info_of(Hierarchy));value_free(&w.propagation,type_info_of(Propagation));value_free(&w.jumps,type_info_of(Jumps))
+        entities_destroy(&w.es)
+    }
+    pass :: proc(w:^World,tick:bool,whole:bool) {
+        table_settle(&w.parents,&w.es)
+        hierarchy_settle(&w.hierarchy,read(&w.parents),&w.es)
+        table_settle(&w.locals,&w.es);table_settle(&w.worlds,&w.es)
+        entities_settle(&w.es)
+        // The pass of the other World has seen nothing: it computes every row.
+        if whole {w.propagation.seen_locals.gone=max(u64)}
+        transforms_propagate(read(&w.locals),ref(&w.hierarchy),&w.worlds,&w.propagation,&w.jumps,Frame_Time{phase=tick?.Fixed:.Late})
+        table_settle(&w.worlds,&w.es)
+    }
+    for seed in u64(1)..=6 {
+        a,b:World
+        for w in ([2]^World{&a,&b}) {
+            entities_init(&w.es)
+            table_init(&w.locals,"Transform");table_init(&w.parents,"Parent");table_init(&w.worlds,"World_Transform")
+        }
+        defer {world_free(&a);world_free(&b)}
+        rng:=mm.rng_make(seed,1)
+        live:[dynamic]Entity;defer delete(live)
+        for step in 0..<400 {
+            // The same change in both Worlds: their entities are made alike, so they are the same handles.
+            pick:=int(mm.rng_u32(&rng)%10)
+            e:=len(live)>0?live[int(mm.rng_u32(&rng))%len(live)]:NONE
+            local:=Transform{{(f32(mm.rng_u32(&rng)%1024)/1024)*4-2,(f32(mm.rng_u32(&rng)%1024)/1024)*4-2,(f32(mm.rng_u32(&rng)%1024)/1024)},mm.quat_axis_angle({0,1,0},(f32(mm.rng_u32(&rng)%1024)/1024)*6),{1,1,1}}
+            for w in ([2]^World{&a,&b}) {
+                switch {
+                case pick<3 || e==NONE:
+                    made:=create(&w.es)
+                    if w==&a {append(&live,made)}
+                    if pick!=1 {add(&w.locals,made,local)}
+                    if e!=NONE {add(&w.parents,made,Parent{e,i32(step)})}
+                case pick<6:
+                    if row:=edit(&w.locals,e);row!=nil {row^=local}
+                case pick==6:
+                    other:=live[(int(entity_index(e))*7+step)%len(live)]
+                    add(&w.parents,e,Parent{other,i32(step%3)}) // also under itself or its own child: left a root
+                case pick==7:
+                    if has(&w.locals,e) {remove(&w.locals,e)} else {add(&w.locals,e,local)}
+                case pick==8:
+                    remove(&w.parents,e)
+                case:
+                    destroy(&w.es,e)
+                }
+            }
+            if pick==9 && e!=NONE {
+                for at,k in live {if at==e {unordered_remove(&live,k);break}}
+            }
+            if step%3!=0 {continue}
+            tick:=step%2==0
+            pass(&a,tick,false);pass(&b,tick,true)
+            if !testing.expect_value(t,count(&a.worlds),count(&b.worlds)) {return}
+            for row in 0..<count(&a.worlds) {
+                at:=entity_at(&a.worlds,row)
+                other,found:=get(&b.worlds,at)
+                if !testing.expectf(t,found && other==at_row(&a.worlds,row),"seed %d step %d: entity %v is %v, and all of them computed leaves it %v",seed,step,at,at_row(&a.worlds,row),other) {return}
+            }
+        }
+        // A reader that reads after every settle is told each link, however many moved before;
+        // one that read none of more than the log holds is told to read the tree whole.
+        seen,behind:u64
+        _,_=hierarchy_moved(ref(&a.hierarchy),&seen)
+        _,_=hierarchy_moved(ref(&a.hierarchy),&behind)
+        homes:=[2]Entity{create(&a.es),create(&a.es)}
+        child:=create(&a.es)
+        for k in 0..<3*HIERARCHY_MOVED {
+            add(&a.parents,child,Parent{homes[k%2],0})
+            table_settle(&a.parents,&a.es)
+            hierarchy_settle(&a.hierarchy,read(&a.parents),&a.es)
+            moved,whole:=hierarchy_moved(ref(&a.hierarchy),&seen)
+            if !testing.expect(t,!whole && len(moved)==1 && moved[0]==child) {break}
+        }
+        _,whole:=hierarchy_moved(ref(&a.hierarchy),&behind)
+        testing.expect(t,whole)
+    }
+}
+
+@(private="file")
+at_row :: proc(worlds:^Table(World_Transform),row:int) -> World_Transform {return at(worlds,row)}

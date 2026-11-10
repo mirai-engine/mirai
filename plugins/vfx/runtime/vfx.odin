@@ -135,7 +135,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 @(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
     emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
-    worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:^core.Entities,
+    worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
     clocks:^Particle_Clocks,requests:^Particle_Requests,channels:^Particle_Channels,listeners:core.Read(Particle_Channel),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
 ) {
@@ -178,7 +178,7 @@ particles_tick :: proc(
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
-        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities,hierarchy,e)}
+        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
     }
 }
 
