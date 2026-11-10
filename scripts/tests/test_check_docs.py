@@ -66,6 +66,12 @@ class VerificationTest(unittest.TestCase):
         self.assertIn("one_that_is_gone", errors[0])
         self.assertIn("a.md:10:", errors[0])
 
+    def test_a_test_command_that_runs_over_two_lines_is_checked_at_the_line_of_its_name(self):
+        text = "## Verification\n\n- `mirai test editor\n  a_name_gone_from_every_test_file`\n"
+        errors = checker.verification_name_errors("a.md", text, set())
+        self.assertEqual(len(errors), 1)
+        self.assertIn("a.md:4:", errors[0])
+
 
 class RepositoryRulesTest(unittest.TestCase):
     def test_every_skill_must_be_a_row_of_the_readme(self):

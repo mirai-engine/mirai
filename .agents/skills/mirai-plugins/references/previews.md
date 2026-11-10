@@ -129,9 +129,9 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
   influences, normals, buffer reuse and isolation of scene and history.
   Per backend: [rendering verification][render-verif].
 - With the gallery assets generated:
-  `preview_loads_and_samples_the_imported_manny_assets -define:PREVIEW_MANNY=true` loads from the
-  registry, shares the skeleton cache and advances the `walk` clip, without modifying files or
-  scenes.
+  `preview_loads_and_samples_the_imported_mirai_avatar_assets -define:PREVIEW_MIRAI_AVATAR=true`
+  loads from the registry, shares the skeleton cache and advances the `walk` clip, without
+  modifying files or scenes.
 - The rows over a panel's values:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`).
 - The documents in an open editor: `editor.document` with `Open` and the asset path, and

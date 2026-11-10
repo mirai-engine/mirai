@@ -85,6 +85,7 @@ UNTRACKED_NAMES = (
 )
 TEST_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 TEST_WORDS = 5
+MULTILINE_INLINE = re.compile(r"`([^`\n]+(?:\n[^`\n]+)*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -323,24 +324,26 @@ def test_words(root: Path, files: list[str]) -> set[str]:
 
 
 def verification_name_errors(p: str, text: str, tests: set[str]) -> list[str]:
-    """Test-like names in a Verification section that no *_test.odin declares."""
-    spans = [
-        (start, start + size)
-        for _, heading, start, size in sections(text)
-        if heading.lower().startswith("verification")
-    ]
+    """Test-like names in a Verification section that no *_test.odin declares. A code span may
+    run over several lines, as a `mirai test` command with its test names does."""
+    kept = dict(prose(text))
     errors = []
-    for number, line in prose(text):
-        if not any(start <= number < end for start, end in spans):
+    for _, heading, start, size in sections(text):
+        if not heading.lower().startswith("verification"):
             continue
-        for span in INLINE.findall(line):
-            token = span.strip("`")
-            if (
-                TEST_NAME.match(token)
-                and (token.count("_") + 1 >= TEST_WORDS or token.startswith("test_"))
-                and token not in tests
-            ):
-                errors.append(f"{p}:{number}: Verification names {token}, which no *_test.odin declares")
+        numbers = range(start, start + size)
+        body = "\n".join(kept.get(n, "") for n in numbers)
+        for span in MULTILINE_INLINE.finditer(body):
+            for token in span.group(1).split():
+                if (
+                    TEST_NAME.match(token)
+                    and (token.count("_") + 1 >= TEST_WORDS or token.startswith("test_"))
+                    and token not in tests
+                ):
+                    number = start + body.count("\n", 0, span.start(1) + span.group(1).find(token))
+                    errors.append(
+                        f"{p}:{number}: Verification names {token}, which no *_test.odin declares"
+                    )
     return errors
 
 

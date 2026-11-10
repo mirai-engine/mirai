@@ -395,7 +395,7 @@ where the geometry covers the change.
   that acts from the next tick whatever the bindings, its contexts, blocks and capacity, and the
   same holds giving the same ticks; in `remote_test.odin`, the actions another end sent, a
   repeated tick and hostile ones. The rename that rewrites
-  `input.mirai`: `mirai test editor renaming_an_action_renames_it_in_input_mirai`.
+  `input.mirai`: `mirai test editor renaming_an_action_follows_the_code_in_input_mirai`.
   `mirai test plugins/spawn/runtime`: the bodies of a seat that leaves.
 - `mirai test engine/camera`: modes, views that enter and leave an override and a mode, the orbit
   and the dolly zoom of the blend, the dead zone, the lead and a camera that an action brings, and
