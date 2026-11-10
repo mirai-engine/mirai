@@ -51,6 +51,7 @@ header is `name` and the paths of the fields, then `asset.save`.
 
 - State that changes in play (stock, flags, progress) is a component that names rows, never a
   write into a row.
-- A field added to a record starts at its `NAME_DEFAULT` in old rows; a renamed one starts over.
+- A field added to a record starts at its `NAME_DEFAULT` in old rows. A renamed one keeps its
+  values when it says the names it had: `mirai:"was=<earlier name>"`; without it, it starts over.
 - Writing to the copy `core.record` returns changes nothing: rows are shared by all worlds.
 - A record type must be declared once per package; two with the same name are a generator error.

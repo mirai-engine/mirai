@@ -9,6 +9,7 @@ import "mirai:core"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -139,7 +140,7 @@ yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
 }
 
 // The actions the game reads, those of interface_demo.odin too; move and jump are of physics
-// (phys.Walk_Action) and look of the engine (inp.Look_Action).
+// (locomotion.Walk_Action) and look of the engine (inp.Look_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,

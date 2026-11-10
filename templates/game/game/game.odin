@@ -39,7 +39,7 @@ Status :: struct {
     hits:i32,
 }
 
-// The actions of the game; move and jump are of physics (phys.Walk_Action) and look of the engine
+// The actions of the game; move and jump are of the locomotion plugin (Walk_Action) and look of the engine
 // (inp.Look_Action).
 @(actions)
 Action :: enum u8 {Hit,Save,Load}

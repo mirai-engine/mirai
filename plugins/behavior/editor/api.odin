@@ -10,6 +10,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 @(storage)
@@ -53,7 +54,7 @@ Influence_Params :: struct {
 @(private)
 register :: proc(s:^editor.Session) {
     query_defaults:=Query_Params{inner=2,outer=8,rings=3,per_ring=12,spacing=1,keep=5}
-    editor.api_method_register(s,{name="behavior.minds",summary="The minds the game ticks (behavior.minds_tick): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=minds})
+    editor.api_method_register(s,{name="behavior.minds",summary="The minds the game declares (@(mind)): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=minds})
     editor.api_method_register(s,Entity_Params,{name="behavior.inspect",summary="What the mind of a Mind_Agent does and why: the action and the step it runs by name, its stage and since when, its commit, the best proposals of its last decision with their scores, its last exits with their cause and what interrupted them, and what it holds of the claims. Use it in Play to see why an agent decides what it does.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
     editor.api_method_register(s,Entity_Params,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is, and the seconds since it first and last perceived it.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=perception})
     editor.api_method_register(s,Entity_Params,{name="behavior.offers",summary="The offers of a Smart_Object: each use, where its user stands, who may take it, how many at once, how many times and how often, how many times it was used, when it is offered again and who holds it now.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=offers})
@@ -152,7 +153,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(w,"{")
     api.write_text(w,"mind",name_text(agent.mind),true)
     if entry==nil {
-        api.write_text(w,"note","no mind is registered by this name: the game ticks it with behavior.minds_tick, which registers it")
+        api.write_text(w,"note","no mind is registered by this name: the game declares it with @(mind=\"name\") on its think procedure, and it registers when the world plays")
         serial.text_write_raw(w,"}")
         return
     }
@@ -357,18 +358,18 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     defer behavior.places_free(&places)
     result:behavior.Place_Result
     agents:=core.world_table_of(world,nav.Nav_Agent)
-    walks:=core.world_table_of(world,phys.Walk)
+    walks:=core.world_table_of(world,locomotion.Walk)
     empty_agents:core.Table(nav.Nav_Agent)
-    empty_walks:core.Table(phys.Walk)
-    swims:=core.world_table_of(world,phys.Swim)
-    empty_swims:core.Table(phys.Swim)
+    empty_walks:core.Table(locomotion.Walk)
+    swims:=core.world_table_of(world,locomotion.Swim)
+    empty_swims:core.Table(locomotion.Swim)
     paths_read:=core.read(paths if paths!=nil else &empty_paths)
     agents_read:=core.read(agents if agents!=nil else &empty_agents)
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
-    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.world_storage_of(world,behavior.Claims),time=time}
+    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.ref(core.world_storage_of(world,behavior.Claims)),time=time}
     filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,core.read(walks if walks!=nil else &empty_walks),core.read(swims if swims!=nil else &empty_swims),core.ref(physics))
-    if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,&smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
+    if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_text(w,"status",fmt.tprintf("%v",result.status),true)

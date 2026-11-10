@@ -66,29 +66,13 @@ Floor_Button :: struct {
     pressed:bool `mirai:"transient"`,
 }
 
-// The first portal that leads somewhere the way from `from` to `to` goes into, after which share of the
-// way, and what it carries by.
-portal_way :: proc(openings:core.Read(portals.Portal),worlds:core.Read(core.World_Transform),from,to:[3]f32) -> (through:mm.Transform,share:f32,ok:bool) {
-    share=2
-    for row in 0..<core.count(openings) {
-        portal:=core.at(openings,row)
-        entrance,placed:=core.get(worlds,core.entity_at(openings,row))
-        exit,has_exit:=core.get(worlds,portal.exit)
-        if !placed || !has_exit {continue}
-        if at,crossed:=portals.crosses(entrance.transform,portal.ellipse,from,to);crossed && at<share {
-            share,through,ok=at,portals.through_of(entrance.transform,exit.transform),true
-        }
-    }
-    return
-}
-
 // A ray of the gun: it goes through a portal that leads somewhere, once, and on from its exit.
 portal_ray :: proc(physics:core.Ref(phys.Physics_State),openings:core.Read(portals.Portal),worlds:core.Read(core.World_Transform),origin,direction:[3]f32,ignore:core.Entity) -> (hit:phys.Hit,ok:bool) {
     from,ahead:=origin,linalg.normalize(direction)
     for bounce in 0..<2 {
         hit,ok=phys.raycast(physics,from,ahead,PORTAL_RANGE,ignore)
         end:=ok?hit.point:from+ahead*PORTAL_RANGE
-        through,share,crossed:=portal_way(openings,worlds,from,end)
+        _,_,through,share,crossed:=portals.portal_way(openings,worlds,from,end)
         if !crossed || bounce==1 {return}
         from=mm.transform_point(through,from+(end-from)*share)
         ahead=mm.quat_rotate(through.rotation,ahead)
@@ -102,7 +86,7 @@ portal_ray :: proc(physics:core.Ref(phys.Physics_State),openings:core.Read(porta
 // and the cube comes back through it.
 hold_place :: proc(openings:core.Read(portals.Portal),worlds:core.Read(core.World_Transform),eye,aim:[3]f32,yaw:f32,cube:[3]f32) -> (place:[3]f32,turn:mm.Quat,carry:mm.Quat) {
     place,turn,carry=eye+aim*HOLD_DISTANCE,mm.quat_axis_angle({0,1,0},yaw),1
-    if through,_,crossed:=portal_way(openings,worlds,eye,eye+aim*(HOLD_DISTANCE+1));crossed {
+    if _,_,through,_,crossed:=portals.portal_way(openings,worlds,eye,eye+aim*(HOLD_DISTANCE+1));crossed {
         beyond:=mm.transform_point(through,place)
         if linalg.length2(cube-beyond)<linalg.length2(cube-place) {place,turn,carry=beyond,through.rotation*turn,through.rotation}
     }

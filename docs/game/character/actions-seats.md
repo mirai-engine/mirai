@@ -48,7 +48,7 @@ game_fire :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) {
 
 - `pressed`, `down`, `released`, `tapped`, `holding`, `value` (a button or `Axis`), `vector`
   (an `Axis2`). A seat that does not exist or is blocked reads as released.
-- Actions of the engine: `inp.Input_Of(phys.Walk_Action)` (`.Move`, `.Jump`, `.Sprint`,
+- Actions of the engine: `inp.Input_Of(locomotion.Walk_Action)` (`.Move`, `.Jump`, `.Sprint`,
   `.Crouch`) and `inp.Input_Of(inp.Look_Action)`.
 - In `frame`, `late` and `ui` take `inp.Frame_Input_Of(Action)`; the same `inp.pressed` reads
   it, so a press is not missed between ticks.

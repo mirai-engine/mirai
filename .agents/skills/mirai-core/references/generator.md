@@ -8,10 +8,9 @@ attributes and writes the code that joins the libraries. `mirai generate <projec
 `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`, `swap`, `free`,
 `replicated`, `setting`, `scene`, `description`, `queue`, `keep`, `reset`, `net_message`,
 `from`, `reliable`, `params`, `names`, `name_bits`, `name`, `name_requires`, `presentation`,
-`record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs
-it. The
-`mirai` tool is compiled with `-ignore-unknown-attributes`: it does not use them, and one compiled
-before a new attribute does not know it.
+`record`, `actions`, `draw`, `mind` and `act`. The CLI and `cook/build` pass it on their own; a
+hand-compiled program needs it. The `mirai` tool is compiled with `-ignore-unknown-attributes`: it
+does not use them, and one compiled before a new attribute does not know it.
 
 ## Which packages it reads
 
@@ -40,6 +39,7 @@ receives the place of its origin: a type or a function of an editor package neve
 @(storage,copy="state_copy",swap="state_swap") @(storage,copy=false) @(storage,free="state_free")
 @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 @(params) @(record) @(record,description="...")
+@(mind="zombie") @(act="Chase Circle")
 ```
 
 - `component`: one `core.Table(T)` per world; one row per entity.
@@ -169,6 +169,8 @@ receives the place of its origin: a type or a function of an editor package neve
   type whose values they take ([named ids](core.md#named-ids)).
 - `params`: a struct whose fields are function parameters ([groups](#parameter-groups)); it is not
   world data.
+- `mind="name"` and `act="Value ..."`: the think procedure of a mind and the actions of its enum
+  ([minds](#minds)).
 - `record`: a struct that is the row of game data tables ([game data](core.md#game-data)); it
   is not world data. It ends up in `World_Info.records` with its default, its description and that
   of its fields, like a component. It belongs to a library or to `game/`, with no other attribute,
@@ -277,6 +279,24 @@ doors_open :: proc(doors:core.Read(Door),placer:core.Placer,time:core.Time) {...
 - One with a type parameter, `struct($E:typeid)`, is received for an enum `@(actions)`,
   `B(E)` (`inp.Input_Of(Walk_Action)`): its field of the `@(names,actions)` type takes the base of
   `E`, and the others are bound as in any group.
+
+### Minds
+
+A mind of the `behavior` plugin is an enum of actions of a package, a think procedure
+`@(mind="name")` whose first parameter is `^ai.Think(Enum)` and, for each value, one procedure
+`@(act="Value ...")` whose first parameter is `^ai.Act(Enum)` and that returns `ai.Status`.
+
+- The think becomes a step of `fixed`, `server`, in `intent`, with its name: other steps order
+  themselves against it with `after` and `before`.
+- What the think and its actions receive after their first parameter is bound as the parameters
+  of a step, and the step receives the union: `Mind_World` first, then each datum once, so the
+  rules of order, writers and settle see one step. The call builds the context of the mind with
+  them and runs `behavior.minds_tick`; each procedure gets its parameters back from the context
+  through `ai.Mind_Context.user`.
+- Errors: a value with no action or with two, an `act` that names no value, actions without a
+  think, a procedure of another shape, an enum of another package, a name repeated, a part of the
+  application or a `@(step)` on a procedure of a mind, a `@(private)` one, and a world without
+  `behavior`. The compiler checks the name and how many minds fit in `behavior.Minds`.
 
 ## Rules the generator checks
 

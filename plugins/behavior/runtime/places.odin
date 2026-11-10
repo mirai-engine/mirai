@@ -6,6 +6,7 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Queries of places: where to take cover, where to flank, where to flee, whom
@@ -125,9 +126,9 @@ places_free :: proc(p:^Places) {
 places_run :: proc(
     requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
     worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),
-    agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),
+    agents:core.Read(nav.Nav_Agent),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
-    objects:core.Read(Smart_Object),states:core.Read(Smart_State),claims:^Claims,influence:core.Ref(Influence),time:core.Time,problems:^core.Problems,
+    smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
 ) {
     if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
     for query in core.take(&requests.queue) {
@@ -149,8 +150,7 @@ places_run :: proc(
         budget-=1
         result:Place_Result
         filter:=place_filter(navigation,query.querier,paths,agents,walks,swims,physics)
-        smart:=Smart_View{objects=objects,states=states,worlds=worlds,claims=claims,time=time}
-        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,&smart,agents,influence.ptr) {
+        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr) {
             core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
         }
         if row!=nil {row^=result}
@@ -166,7 +166,7 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:core.Read(nav.Nav_Path),agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:core.Read(nav.Nav_Path),agents:core.Read(nav.Nav_Agent),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
     if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
@@ -177,7 +177,7 @@ place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,pat
 }
 
 // Runs one query into a result.
-place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:^Smart_View,agents:core.Read(nav.Nav_Agent),influence:^Influence) -> (memory:bool) {
+place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:core.Read(nav.Nav_Agent),influence:^Influence) -> (memory:bool) {
     query:=query
     memory=true
     result^={request=query.request,status=.Empty,offers=-1}
