@@ -9,7 +9,9 @@ connect again; the player's secret is kept in their profile, so a returning clie
 
 A seat drives a body that carries `inp.Drivable`. With `Spawn_Settings.players` on in
 `settings.mirai`, the `spawn` plugin gives each seat, local or remote, the prefab of a
-`Spawn_Point` and destroys it with the seat. Without it, the server asks:
+`Spawn_Point` with `players` on and destroys it with the seat; a point with `players` off is for
+what the game spawns, such as enemies ([prefabs](../core/prefabs.md#at-spawn-points)). Without it,
+the server asks:
 
 ```odin
 @(step="fixed",server)

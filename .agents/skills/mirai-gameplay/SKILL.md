@@ -138,7 +138,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   its own bodies; an own mode (swimming, climbing) is requested with `locomotion.set_mode`. Player
   bodies
   appear at the `Spawn_Point`s of the `spawn` plugin, not through game code
-  ([control](references/control.md)).
+  ([control](references/control.md)). A spawn point serves any prefab: with `players` off it is
+  only for what the game spawns (enemies) and never gives a seat its body.
 - **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog
   change per zone with a single algorithm: each volume has a priority and says whether it adds to
   or replaces what is below, and the base value is a volume without bounds. An unbounded volume of
