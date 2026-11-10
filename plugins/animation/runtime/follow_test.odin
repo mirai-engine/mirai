@@ -32,18 +32,25 @@ follow_rig :: proc(playback:^Playback,entity:core.Entity,skeleton:u64,names:[]st
     playback.rows[index]=i32(len(playback.states))
 }
 
+@(private="file")
+Follow_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+}
+
 @(test)
 a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without_stable_allocations :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    body,holder,head:=core.create(&entities),core.create(&entities),core.create(&entities)
-    transforms:core.Table(core.Transform);parents:core.Table(core.Parent)
-    defer core.table_destroy(&transforms);defer core.table_destroy(&parents)
+    w:Follow_World
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    body,holder,head:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     body_place:=mm.Transform{{1,0,0},mm.quat_axis_angle({0,1,0},.7),{1,1,1}}
     holder_place:=mm.Transform{{0,2,3},mm.quat_axis_angle({1,0,0},.3),{1,1,1}}
     head_place:=mm.Transform{{5,0,0},mm.quat_axis_angle({0,0,1},-.4),{1,1,1}}
-    core.add(&transforms,body,core.from_math(body_place));core.add(&transforms,holder,core.from_math(holder_place));core.add(&transforms,head,core.from_math(head_place))
-    core.add(&parents,head,{entity=holder})
-    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities)
+    core.add(&w.transforms,body,core.from_math(body_place));core.add(&w.transforms,holder,core.from_math(holder_place));core.add(&w.transforms,head,core.from_math(head_place))
+    core.add(&w.parents,head,{entity=holder})
+    core.test_world_settle(&w)
 
     step:=mm.Transform{{0,.2,0},1,{1,1,1}}
     playback:Playback;defer playback_free(&playback)
@@ -94,7 +101,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
         same &&=animation_curve(playback,head,"jawOpen")==.5 && animation_curve(playback,head,"blink")==1 && animation_curve(playback,head,"jaw_open_pose")==1
         return same
     }
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,check(t,&playback,body,head,body_place,holder_place,open*jaw_own),"the shared bones lie on the body's, the jaw keeps its own turn and opens by the curve of its pose")
     testing.expect_value(t,problems.count,0)
 
@@ -102,7 +109,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<8 {
-        tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+        tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
         stable &&=check(t,&playback,body,head,body_place,holder_place,open*jaw_own)
     }
     context=saved
@@ -110,10 +117,10 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
 
     // Half the drive opens half the jaw; a disabled pose leaves the jaw its own turn.
     modifiers.curve_drives.values[0].scale=.5
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,abs(mm.quat_angle(follower.local[4].rotation,jaw_own)-.15)<1e-3)
     modifiers.curve_poses.values[0].enabled=false
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,mm.quat_angle(follower.local[4].rotation,jaw_own)<1e-5)
     modifiers.curve_poses.values[0].enabled=true
 
@@ -121,22 +128,22 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     // itself through the body and skeletons without a name in common are problems.
     // A new profile is a new geometry of the modifiers, as modifier_prepare publishes it.
     modifiers.curve_poses.values[0].bone=bone_ref("tail");modifiers.geometry+=1
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,follow_problem(&problems,head,"animation.curve_pose_bone"))
     modifiers.curve_poses.values[0].bone=bone_ref("jaw");modifiers.geometry+=1
     nan:=f32(0);nan/=nan
     held:=leader.local[5];leader.local[5].position.x=nan
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,follow_problem(&problems,head,"animation.follow_pose") && lib.pose_world(follower.parents[:],follower.local[:],follower.world[:]))
     leader.local[5]=held
     leader.leader=head
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,follow_problem(&problems,head,"animation.follow_rig") || follow_problem(&problems,body,"animation.follow_rig"),"a loop of rigs that follow each other")
     leader.leader=core.NONE
     for &alias in follower.aliases {alias=alias~1}
     for &target in follower.targets {target=target~1 if target!=0 else 0}
     follower.bound+=10
-    tick(&playback,&cache,&modifiers,&transforms,&parents,&problems,head_sampled[:],head)
+    tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,follow_problem(&problems,head,"animation.follow_bones"))
 }
 

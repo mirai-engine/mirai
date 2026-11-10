@@ -18,13 +18,15 @@ import "mirai:ui"
 
 @(private)
 Create_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     meshes:core.Table(erender.Mesh_Renderer),
     terrains:core.Table(terrain.Terrain),
+    worlds:core.Table(core.World_Transform),
+    overrides:core.Table(erender.Material_Override),
 }
 
 @(test)
@@ -46,43 +48,6 @@ a_canceled_stroke_takes_back_its_head_and_keeps_the_history :: proc(t:^testing.T
     testing.expect(t,tool.stroke.id!={} && !tool.stroke.dirty_any,"the source stays, as its file holds it")
     testing.expect_value(t,len(tool.steps),editor.REVISION_STEPS_CAPACITY)
     for &step,i in tool.steps {testing.expect_value(t,step.source,base.Asset_Id{u64(i+1),0})}
-}
-
-@(private)
-create_test_world_init :: proc(w:^Create_Test_World) {
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name")
-    core.table_init(&w.transforms,"Transform");core.table_init(&w.parents,"Parent")
-    core.table_init(&w.meshes,"Mesh_Renderer");core.table_init(&w.terrains,"Terrain")
-}
-
-@(private)
-create_test_world_destroy :: proc(w:^Create_Test_World) {
-    core.table_destroy(&w.ids);core.table_destroy(&w.names)
-    core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
-    core.table_destroy(&w.meshes);core.table_destroy(&w.terrains)
-    core.entities_destroy(&w.entities)
-}
-
-@(private)
-create_test_tables :: proc() -> [6]core.Table_Info {
-    return {
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Create_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Create_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Create_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Create_Test_World,parents)},
-        {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Create_Test_World,meshes)},
-        {name="Terrain",type=terrain.Terrain,info=type_info_of(terrain.Terrain),offset=offset_of(Create_Test_World,terrains)},
-    }
-}
-
-@(private)
-create_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Create_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.meshes,&w.entities);core.table_settle(&w.terrains,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 @(private)
@@ -120,13 +85,10 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     p,error:=platform.create({headless=true,fixed_dt=1.0/60})
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
-    world:Operand_Test_World
-    create_test_world_init(&world.base);defer create_test_world_destroy(&world.base)
-    core.table_init(&world.worlds,"World_Transform");defer core.table_destroy(&world.worlds)
-    core.table_init(&world.overrides,"Material_Override");defer core.table_destroy(&world.overrides)
-    tables:=operand_test_tables()
-    info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    world:Create_Test_World
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     owner:=core.create(&world.entities)
     core.add(&world.terrains,owner,terrain.Terrain{source={1,1},revision=1})
     core.add(&world.worlds,owner,core.World_Transform{})
@@ -140,7 +102,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     editor.selection_set(&selection,{owner})
     viewport:editor.Viewport
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,headless=true,selection=&selection,viewport=&viewport,gui=&gui}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,headless=true,selection=&selection,viewport=&viewport,gui=&gui}
     editor.tool_set(&s,"terrain",true)
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_source=.Heightmap
@@ -197,11 +159,8 @@ terrain_creation_separates_heightfield_mesh_and_volume_and_keeps_undo :: proc(t:
 
 @(private)
 create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-kinds-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(fmt.tprintf("%s/terrain",root));defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
@@ -209,10 +168,9 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{})) {return}
     defer ui.context_destroy(ctx)
@@ -222,7 +180,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     editor.edits_reset(&edits,ref)
     viewport:editor.Viewport
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Mesh)
     testing.expect_value(t,tool.solid_depth,f32(8))
@@ -275,24 +233,20 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
 // solid down to the bottom of its box: what is dug there has a floor.
 @(test)
 a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-named-%d",directory,os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
     edits:editor.Edits;defer editor.edits_free(&edits)
     editor.edits_reset(&edits,ref)
     viewport:editor.Viewport
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=631}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=631}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind,tool.create_source=.Heightfield,.Heightmap
     missing:=fmt.tprintf("%s/source/none.png",root)
@@ -311,24 +265,20 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
 
 @(test)
 a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-ground-%d",directory,os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
     edits:editor.Edits;defer editor.edits_free(&edits)
     editor.edits_reset(&edits,ref)
     viewport:editor.Viewport
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=523}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=523}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.depth,tool.chunk_cells=17,9,8
     // The ground is a root: where it stands is its Transform.
@@ -349,23 +299,19 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
 
 @(test)
 mesh_terrain_creation_from_selection_preserves_authoring_and_undo :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-selection-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/terrain/3D Terrain.terrain",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(fmt.tprintf("%s/terrain",root));defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
     edits:editor.Edits;defer editor.edits_free(&edits)
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,id_state=971}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,id_state=971}
     owner:=editor.entity_create(&s,{preset=.Cube,name="Rock",transform={position={4,5,6},rotation=1,scale={2,3,4}}})
     core.world_settle(ref)
     static:=core.get(&world.meshes,owner)^
@@ -409,15 +355,9 @@ heightmap_dialog_creates_scaled_terrain_with_one_undo_step :: proc(t:^testing.T)
 
 @(private)
 create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-create-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/height16.png",root)
     saved:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root)
-    defer os.remove(fmt.tprintf("%s/terrain",root))
-    defer os.remove(saved)
-    defer os.remove(path)
     png:=[?]u8{
         0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
         0x00,0x00,0x00,0x03,0x00,0x00,0x00,0x02,0x10,0x00,0x00,0x00,0x00,0xe8,0x8f,0xe5,
@@ -434,10 +374,9 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{})) {return}
     defer ui.context_destroy(ctx)
@@ -448,7 +387,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     viewport:editor.Viewport
     viewport.orbit.target={7,8,9}
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=731}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=731}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=kind;tool.create_source=.Heightmap;tool.solid_depth=depth;tool.height_scale=20;tool.height_offset=-3;tool.cell=0.5;tool.chunk_cells=4
     input:=ui.Input{size={800,600},pointer_absent=true,dt=1.0/60}
@@ -511,35 +450,31 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
 
 @(test)
 failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-save-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     saved:=fmt.tprintf("%s/terrain/Heightfield Terrain.terrain",root)
     relative:="terrain/Heightfield Terrain.terrain"
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
     edits:editor.Edits;defer editor.edits_free(&edits)
     editor.edits_reset(&edits,ref)
     viewport:editor.Viewport
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=419}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=419}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
     terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    create_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
     operand:=editor.entity_create(&s,{preset=.Cube,name="Operand"})
-    create_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     editor.selection_set(&selection,{owner,operand})
     editor.edits_reset(&edits,ref)
     original:=test_held(t,&assets,relative)

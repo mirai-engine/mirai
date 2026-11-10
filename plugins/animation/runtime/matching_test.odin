@@ -73,6 +73,12 @@ Mirai_Metrics :: struct {
     searches,jumps:u32,
 }
 
+@(private="file")
+Match_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+}
+
 // Walks a Mirai of the demo by matching (.match) through the program of the runtime, and
 // measures what its pose does: how far a planted toe slides, the second difference of every bone
 // (a jump of the pose), and the ticks until the speed the pose walks at follows a change of the
@@ -80,9 +86,10 @@ Mirai_Metrics :: struct {
 @(private="file")
 mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,graphs:^Graph_Assets,id,skeleton:base.Asset_Id) -> (metrics:Mirai_Metrics,ok:bool) {
     blends:Blend_Assets;defer blend_assets_free(&blends)
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
-    entity:=core.create(&entities);core.add(&transforms,entity,core.TRANSFORM_IDENTITY);core.table_settle(&transforms,&entities)
+    w:Match_World
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    entity:=core.create(&w.entities);core.add(&w.transforms,entity,core.TRANSFORM_IDENTITY);core.test_world_settle(&w)
     animation:=ANIMATION_DEFAULT;animation.asset=id
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
@@ -90,7 +97,7 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     match:=match_content(graphs,app.assets,app.allocator,id);if match==nil {return}
     content:=host.content_animation(app,match.profile.info.animation)
     definition:=skeleton_content(skeletons,app.assets,app.allocator,skeleton)
-    if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&transforms) || !lib.pose_init(&playback.pose,max(POSE_CAPACITY,content.lib.track_count)) {return}
+    if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&w.transforms) || !lib.pose_init(&playback.pose,max(POSE_CAPACITY,content.lib.track_count)) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
     if toes[0]<0 || toes[1]<0 {return}
     n:=len(state.local)
@@ -196,8 +203,7 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 // leap, leap is another entry of the air that lands at .8 s and travels at 3 m/s.
 @(private="file")
 Match_Fixture :: struct {
-    entities:core.Entities,
-    transforms:core.Table(core.Transform),
+    using w:Match_World,
     bones:[4]asset.Skeleton_Bone,
     definition:Skeleton_Content,
     content:host.Content_Animation,
@@ -215,8 +221,9 @@ Match_Fixture :: struct {
 
 @(private="file")
 match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false) -> bool {
-    core.entities_init(&f.entities);f.rig=core.create(&f.entities)
-    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.table_settle(&f.transforms,&f.entities)
+    if !core.test_world_init(t,&f.w) {return false}
+    f.rig=core.create(&f.entities)
+    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.test_world_settle(&f.w)
     Bone :: struct {name,path:string,at:mm.Vec3}
     for bone,i in ([4]Bone{{"hips","hips",{0,1,0}},{"foot_l","hips/foot_l",{.1,-.95,0}},{"foot_r","hips/foot_r",{-.1,-.95,0}},{"head","hips/head",{0,.7,0}}}) {
         f.bones[i]={parent=-1 if i==0 else 0,translation=bone.at,rotation=1,scale={1,1,1},target=base.name_hash(bone.path)}
@@ -277,7 +284,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
     playback_free(&f.playback);lib.library_destroy(&f.content.lib);delete(f.content.markers)
     graph_assets_free(&f.graphs);delete(f.assets.registry.by_id);delete(f.assets.registry.files)
     delete(f.events.items);delete(f.events.plays.items);delete(f.requests.match_plays.items)
-    core.table_destroy(&f.transforms);core.entities_destroy(&f.entities)
+    core.test_world_destroy(&f.w)
 }
 // A tick of the rig with the body in mode: standing, or going at velocity, asked for desired,
 // against a wall of that normal, landing in time_to_land seconds.

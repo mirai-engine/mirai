@@ -1,0 +1,41 @@
+package terrain
+
+import "mirai:core"
+import render "mirai:engine/render"
+import scene "mirai:engine/scene"
+import "mirai:host"
+import phys "plugins:physics/runtime"
+
+// The tables and the storages of a World that terrain_update runs on, after
+// those of physics, which its chunks collide in. The test world of a library
+// that uses terrain holds them after its header with
+// `using terrain:terrain.Test_Terrain`, gives terrain.test_types to
+// core.test_world_init or core.test_info, and steps with terrain.test_step.
+// The Terrain_Resident of the world is of its application: the test holds it.
+Test_Terrain :: struct {
+    using physics:phys.Test_Physics,
+    ids:core.Table(core.Id),
+    terrains:core.Table(Terrain),
+    chunks:core.Table(Terrain_Chunk),
+    tints:core.Table(render.Tint),
+    overrides:core.Table(render.Material_Override),
+    streaming:scene.Streaming_Sources,
+    data:Terrain_Data,
+    terrain_requests:Terrain_Requests,
+    digs:Terrain_Digs,
+}
+
+// What test_step runs with unless told: every chunk at level 0, so that a
+// count of builds does not follow the levels an edit changes.
+TERRAIN_TEST_SETTINGS :: Terrain_Settings{lod_distance=-1}
+
+// terrain_update alone, on the rows as they are and as the loop calls it: in
+// a fixed tick of a world that plays, unless told. commands are those of the
+// world that holds the tables.
+test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resident,app:^host.App,problems:^core.Problems,settings:=TERRAIN_TEST_SETTINGS,time:=core.Time{playing=true},frame:=core.Frame_Time{phase=.Fixed},view:=core.View{}) {
+    terrain_update(
+        commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
+        &g.statics,&g.tints,&g.overrides,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
+        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},
+    )
+}

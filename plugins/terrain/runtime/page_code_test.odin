@@ -1,5 +1,6 @@
 package terrain
 
+import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:os"
@@ -70,7 +71,7 @@ saved_heights_stay_where_the_file_put_them_through_edits_and_saves :: proc(t:^te
     samples:=[3]int{PAGE+9,1,PAGE+5}
     testing.expect(t,source_make(&s,.Heightfield,samples,0.25,8))
     for z in 0..<samples.z {for x in 0..<samples.x {testing.expect(t,source_set(&s,{x,0,z},12.3456789*math.sin(f32(x*z)*0.013)+f32(x)*0.1))}}
-    path:=source_test_path("quantized.terrain");defer os.remove(path)
+    path:=fmt.tprintf("%s/quantized.terrain",base.test_folder(t,"terrain"))
     id:=base.Asset_Id{91,92}
     testing.expect_value(t,source_save(&s,path,id,&types),asset.Error.None)
     _,ok:=source_load(&loaded,path,&types)
@@ -102,7 +103,7 @@ saved_heights_stay_where_the_file_put_them_through_edits_and_saves :: proc(t:^te
     // Saving what a file holds writes that file again.
     first_load:Source;defer source_destroy(&first_load)
     _,ok=source_load(&first_load,path,&types)
-    second:=source_test_path("quantized_again.terrain");defer os.remove(second)
+    second:=fmt.tprintf("%s/quantized_again.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&first_load,second,id,&types),asset.Error.None)
     a,_:=os.read_entire_file(path,context.temp_allocator)
     b,_:=os.read_entire_file(second,context.temp_allocator)

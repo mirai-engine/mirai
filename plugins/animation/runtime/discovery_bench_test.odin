@@ -8,19 +8,26 @@ import "mirai:core"
 import "mirai:host"
 
 when #config(MIRAI_BENCH,false) {
+@(private="file")
+Discovery_Bench_World :: struct {
+    using world:core.Test_World,
+    descriptions:core.Table(Animation),
+}
+
 @(test)
 bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
     COUNT :: 4096
     REPEATS :: 500
     for feature_count,case_index in ([4]int{0,16,256,16}) {
-        entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-        descriptions:core.Table(Animation);defer core.table_destroy(&descriptions)
+        w:Discovery_Bench_World
+        if !core.test_world_init(t,&w,test_types) {return}
+        defer core.test_world_destroy(&w)
         for i in 0..<COUNT {
-            entity:=core.create(&entities);description:=ANIMATION_DEFAULT
+            entity:=core.create(&w.entities);description:=ANIMATION_DEFAULT
             if i<feature_count {description.actions={3,4};description.motion={5,6}}
-            core.add(&descriptions,entity,description)
+            core.add(&w.descriptions,entity,description)
         }
-        core.table_settle(&descriptions,&entities)
+        core.test_world_settle(&w)
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
         action_assets:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&action_assets)
         append(&action_assets.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true})
@@ -33,16 +40,16 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         playback:Playback;defer playback_free(&playback)
         problems:core.Problems
         for _ in 0..<2 {
-            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
+            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
         }
         best:=max(time.Duration);valid:=true
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
         for _ in 0..<5 {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
-                if case_index==3 {core.at(&descriptions,COUNT-1).weight=f32(tick&1)}
-                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,app.assets,app.allocator,&problems)
-                valid &&=motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
+                if case_index==3 {core.at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
+                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems)
+                valid &&=motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
             }
             best=min(best,time.tick_since(start))
         }

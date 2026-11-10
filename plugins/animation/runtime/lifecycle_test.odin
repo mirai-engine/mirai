@@ -1,7 +1,6 @@
 package anim
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -34,12 +33,20 @@ bone_references_reject_overflow_embedded_zero_and_unterminated_storage_without_t
     testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{bone=invalid,translation=true},1),ROOT_DELTA_DEFAULT)
 }
 
+@(private="file")
+Lifecycle_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+    modifiers:Modifier_Runtime,
+}
+
 @(test)
 recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_bone_indices :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    rig:=core.create(&entities)
-    transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
-    core.add(&transforms,rig,core.TRANSFORM_IDENTITY);core.table_settle(&transforms,&entities)
+    w:Lifecycle_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    rig:=core.create(&w.entities)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.test_world_settle(&w)
     playback:Playback;defer playback_free(&playback)
     bones:=[3]asset.Skeleton_Bone{
         {parent=-1,translation={0,1,0},rotation=1,scale={1,1,1}},
@@ -54,7 +61,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     }
     definition:=Skeleton_Content{id={9,8},revision=1,bones=bones[:]}
     state:=state_get(&playback,rig)
-    testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&transforms))
+    testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&w.transforms))
     first:=state.bound
     config:=FOOT_GROUNDING_DEFAULT;config.count=1;config.adjust_body=false
     config.legs[0]=GROUNDED_LEG_DEFAULT;config.legs[0].hip=bone_ref("hip");config.legs[0].knee=bone_ref("knee");config.legs[0].foot=bone_ref("foot")
@@ -63,12 +70,11 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     record:=&grounding.records[0]
     testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
     testing.expect_value(t,record.bones[0],[3]int{1,2,3})
-    ik:core.Table(IK_Constraint);defer core.table_destroy(&ik)
     leg:=IK_CONSTRAINT_DEFAULT;leg.root=bone_ref("hip");leg.joint=bone_ref("knee");leg.end=bone_ref("foot")
-    core.add(&ik,rig,leg);core.table_settle(&ik,&entities)
+    core.add(&w.modifiers.ik,rig,leg);core.table_settle(&w.modifiers.ik,&w.entities)
     constraints:=Constraint_Rig{entity=rig};defer constraint_rig_free(&constraints)
     append(&constraints.rows[0],0)
-    inputs:=Constraint_Inputs{ik=core.read(&ik)}
+    inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik)}
     testing.expect(t,constraints_bind(state,inputs,&constraints))
     testing.expect_value(t,constraints.bones[0][0],[4]int{1,2,3,0})
     playing_free(state)
@@ -78,7 +84,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     base.text_set(expanded[0].path[:],"other");base.text_set(expanded[0].name[:],"other")
     copy(expanded[1:],bones[:]);expanded[2].parent=1;expanded[3].parent=2
     definition.bones=expanded[:]
-    testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&transforms))
+    testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&w.transforms))
     testing.expect(t,state.bound>first)
     testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
     testing.expect_value(t,record.bones[0],[3]int{2,3,4})
@@ -89,10 +95,9 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
 
 @(test)
 skeleton_and_skin_content_retry_every_allocation_failure_without_publishing_partial_reload :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-animation-content-retry-%d",os.get_pid())
-    os.make_directory_all(directory);defer os.remove(directory)
-    skeleton_path:=fmt.tprintf("%s/rig.skeleton",directory);defer os.remove(skeleton_path)
-    mesh_path:=fmt.tprintf("%s/rig.mesh",directory);defer os.remove(mesh_path)
+    directory:=base.test_folder(t,"animation-content-retry")
+    skeleton_path:=fmt.tprintf("%s/rig.skeleton",directory)
+    mesh_path:=fmt.tprintf("%s/rig.mesh",directory)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     bone:=asset.Skeleton_Bone{parent=-1,rotation=1,scale={1,1,1},target=base.name_hash("root")}
     base.text_set(bone.path[:],"root");base.text_set(bone.name[:],"root")

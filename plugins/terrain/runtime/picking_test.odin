@@ -1,7 +1,6 @@
 package terrain
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -12,7 +11,7 @@ import "mirai:std/geom"
 
 @(test)
 chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_does_not_play :: proc(t:^testing.T) {
-    root:=source_test_path("picking");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     source:Source;defer source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{65,1,65},1,16))
@@ -22,18 +21,19 @@ chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_d
     for playing in ([]bool{true,false}) {
         assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
         app:=host.App{assets=&assets,allocator=context.allocator}
-        w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
         // One slot for a heightfield: one chunk collides, the others do not.
-        w.physics_settings=phys.Physics_Settings{bodies=8,shapes=8,contacts=8,joints=1,characters=1,hulls=1,meshes=1,heightfields=1}
+        w.settings=phys.Physics_Settings{bodies=8,shapes=8,contacts=8,joints=1,characters=1,hulls=1,meshes=1,heightfields=1}
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=core.create(&w.entities)
-        core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+        core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-        terrain_test_world_settle(&w)
+        core.test_world_settle(&w.w)
         for _ in 0..<3 {
-            c:=terrain_test_tables(&w)
-            terrain_update(c.commands,&w.terrains,c.chunks,c.locals,c.parents,c.ids,c.colliders,c.meshes,c.tints,c.overrides,&w.data,&resident,&w.requests,&w.digs,TERRAIN_TEST_SETTINGS,&app,{playing=playing},{phase=.Fixed},core.VIEW_DEFAULT,core.read(&w.poses),core.ref(&w.sources),{},w.physics_settings,{},nil,&w.problems,{})
-            terrain_test_world_settle(&w)
+            test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),&resident,&app,&w.problems,time={playing=playing},view=core.VIEW_DEFAULT)
+            core.test_world_settle(&w.w)
             if work_busy(&w.data,nil) {work_wait(&w.data,nil)}
         }
         held,bare:=0,0

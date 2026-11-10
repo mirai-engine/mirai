@@ -26,8 +26,6 @@ Pair :: struct {
     sessions:[2]Net_Session,
     problems:[2]core.Problems,
     network:wire.Sim_Network,
-    absents:core.Table(Seat_Absent),
-    disabled:core.Table(core.Disabled),
     bindings:input.Input_Map,
     now:f64,
     tick:u64,
@@ -35,11 +33,9 @@ Pair :: struct {
 
 @(private="file")
 pair_init :: proc(t:^testing.T,p:^Pair,server_scene,client_scene:base.Asset_Id,follows:=true) -> bool {
-    p.info=net_test_info(follows=follows)
-    core.world_info_index(&p.info)
-    core.table_init(&p.absents,"Seat_Absent");core.table_init(&p.disabled,"Disabled")
+    p.info=net_test_info(t,follows=follows) or_return
     for &world,index in p.worlds {
-        net_test_init(&world,context.allocator)
+        net_test_init(&world,&p.info)
         p.shares[index].info=&p.info
         p.apps[index]={info=&p.info,allocator=context.allocator,tick_dt=1.0/60,shared=&p.shares[index]}
         net_test_physics(&world,&p.shares[index],&p.apps[index])
@@ -60,13 +56,11 @@ pair_init :: proc(t:^testing.T,p:^Pair,server_scene,client_scene:base.Asset_Id,f
 pair_destroy :: proc(p:^Pair) {
     for &session in p.sessions {session_destroy(&session);delete(session.reason_text)}
     wire.sim_network_destroy(&p.network)
-    for &world in p.worlds {net_test_destroy(&world)}
+    for &world in p.worlds {p.info.destroy[.World](&world)}
     for &app in p.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     for &share in p.shares {phys.collider_meshes_destroy(&share.colliders)}
-    core.table_destroy(&p.absents);core.table_destroy(&p.disabled)
-    core.world_schema_destroy(p.info.schema)
-    delete(p.info.tables_by_type);delete(p.info.storages_by_type)
-    delete(p.info.tables);delete(p.info.storages);delete(p.info.messages)
+    delete(p.info.messages)
+    core.test_info_destroy(&p.info)
 }
 
 // A frame of both ends as the loop runs it: what arrived, the seats of the
@@ -90,9 +84,9 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
-    net_seats(&server.es,&server.seats,&p.absents,&p.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
+    net_seats(&server.entities,&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
         core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
-    net_test_settle(server,nil,nil)
+    core.settle(&p.info,server,nil)
     if ticks {
         p.tick+=1
         server.time.tick=p.tick
@@ -111,12 +105,12 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
 
 // An entity of the scene that replicates to every connection.
 @(private="file")
-pair_thing :: proc(w:^Net_Test_World,id:base.Entity_Id,replicated:bool) -> core.Entity {
-    e:=core.create(&w.es)
+pair_thing :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,replicated:bool) -> core.Entity {
+    e:=core.create(&w.entities)
     core.add(&w.identities,e,core.Id{id})
     core.add(&w.transforms,e,core.Transform{position={f32(id),0,0},rotation=1,scale={1,1,1}})
     if replicated {core.add(&w.objects,e,net_test_replicate(audience=.Always))}
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return e
 }
 
@@ -128,17 +122,17 @@ pair_load :: proc(p:^Pair,index:int,id:base.Asset_Id,thing:base.Entity_Id) {
     w:=&p.worlds[index]
     loaded:=new(Net_Test_World)
     defer free(loaded)
-    net_test_init(loaded,context.allocator)
-    defer net_test_destroy(loaded)
-    pair_thing(loaded,thing,index==0)
+    net_test_init(loaded,&p.info)
+    defer p.info.destroy[.World](loaded)
+    pair_thing(loaded,&p.info,thing,index==0)
     to,from:=core.world_ref(loaded,&p.info),core.world_ref(w,&p.info)
     core.world_run_copy(to,from)
     kept:=make([dynamic]core.Entity,context.temp_allocator)
     if index==0 {append(&kept,..w.seats.entities[:])}
     if len(kept)>0 {core.world_union(to,from,core.NONE,nil,kept[:])}
-    net_test_settle(loaded,nil,nil)
+    core.settle(&p.info,loaded,nil)
     loaded.root={scene=id,changes=w.root.changes+1}
-    net_test_swap(w,loaded)
+    p.info.swap(w,loaded)
 }
 
 // The entities of a world the network links to objects.
@@ -157,8 +151,8 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
     defer pair_destroy(p)
     server,client:=&p.worlds[0],&p.worlds[1]
-    pair_thing(server,1,true)
-    adopted:=pair_thing(client,1,false)
+    pair_thing(server,&p.info,1,true)
+    adopted:=pair_thing(client,&p.info,1,false)
     for _ in 0..<60 {pair_frame(p)}
     if !testing.expect(t,p.sessions[1].client.answered,"a client already in the scene of its server says so") {return}
     connection:Connection
@@ -190,7 +184,7 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     pair_load(p,1,LEVEL_B,2)
     for _ in 0..<60 {pair_frame(p)}
     testing.expect(t,p.sessions[1].client.answered)
-    thing:=core.entity_of(&client.es,2)
+    thing:=core.entity_of(&client.entities,2)
     testing.expect(t,thing!=core.NONE && core.has(&client.links,thing),"the new world reaches the client, on the entities of its scene")
     testing.expect_value(t,linked(client),2)
     testing.expect_value(t,p.problems[0].count,0)
@@ -263,10 +257,12 @@ a_client_follows_the_pause_and_the_time_scale_of_its_server :: proc(t:^testing.T
 // those it had.
 @(test)
 the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     s:Net_Session
     defer delete(s.arrived)
@@ -292,30 +288,30 @@ the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^test
 
 // The reference of a section, loaded or not.
 @(private="file")
-pair_section :: proc(w:^Net_Test_World,id:base.Entity_Id,loaded:bool) -> core.Entity {
-    e:=core.create(&w.es)
+pair_section :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool) -> core.Entity {
+    e:=core.create(&w.entities)
     core.add(&w.identities,e,core.Id{id})
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.references,e,scene.Scene_Reference{scene=LEVEL_A,loaded=loaded?LEVEL_A:{}})
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return e
 }
 
 // An entity of the scene of a section, which hangs from its reference.
 @(private="file")
-pair_member :: proc(w:^Net_Test_World,id:base.Entity_Id,section:core.Entity,replicated:bool) -> core.Entity {
-    e:=pair_thing(w,id,replicated)
+pair_member :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,section:core.Entity,replicated:bool) -> core.Entity {
+    e:=pair_thing(w,info,id,replicated)
     core.add(&w.parents,e,core.Parent{section,0})
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return e
 }
 
 // A section of a client loads, with what it brings, or drops it.
 @(private="file")
-pair_load_section :: proc(w:^Net_Test_World,section:core.Entity,loaded:bool,member:=core.NONE) {
+pair_load_section :: proc(w:^Net_Test_World,info:^core.World_Info,section:core.Entity,loaded:bool,member:=core.NONE) {
     core.get(&w.references,section).loaded=loaded?LEVEL_A:{}
-    if !loaded {core.destroy_tree(&w.es,core.ref(&w.hierarchy),member)}
-    net_test_settle(w,nil,nil)
+    if !loaded {core.destroy_tree(&w.entities,core.ref(&w.hierarchy),member)}
+    core.settle(info,w,nil)
 }
 
 // The replica of a client whose pose has an Id, waiting or not.
@@ -337,21 +333,21 @@ what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded :: proc(t:
     if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
     defer pair_destroy(p)
     server,client:=&p.worlds[0],&p.worlds[1]
-    pair_thing(server,1,true)
-    pair_thing(client,1,false)
-    pair_member(server,101,pair_section(server,100,true),true)
-    mirror:=pair_section(client,100,false)
+    pair_thing(server,&p.info,1,true)
+    pair_thing(client,&p.info,1,false)
+    pair_member(server,&p.info,101,pair_section(server,&p.info,100,true),true)
+    mirror:=pair_section(client,&p.info,100,false)
     for _ in 0..<60 {pair_frame(p)}
     testing.expect(t,replica_with(&p.sessions[1],1)!=nil)
     testing.expect(t,replica_with(&p.sessions[1],101)==nil,"what is in a section the client has not loaded does not reach it")
 
-    member:=pair_member(client,101,mirror,false)
-    pair_load_section(client,mirror,true)
+    member:=pair_member(client,&p.info,101,mirror,false)
+    pair_load_section(client,&p.info,mirror,true)
     for _ in 0..<60 {pair_frame(p)}
     r:=replica_with(&p.sessions[1],101)
     testing.expect(t,r!=nil && !r.waits && r.entity==member && core.has(&client.links,member),"once loaded, its replica takes the entity of the section with its Id")
 
-    pair_load_section(client,mirror,false,member)
+    pair_load_section(client,&p.info,mirror,false,member)
     for _ in 0..<60 {pair_frame(p)}
     testing.expect(t,replica_with(&p.sessions[1],101)==nil,"dropped, it leaves the client")
     testing.expect(t,replica_with(&p.sessions[1],1)!=nil)
@@ -371,26 +367,26 @@ a_replica_of_a_section_that_is_not_loaded_waits_for_it :: proc(t:^testing.T) {
     if !pair_init(t,p,{},{},follows=false) {return}
     defer pair_destroy(p)
     server,client:=&p.worlds[0],&p.worlds[1]
-    pair_member(server,101,pair_section(server,100,true),true)
-    mirror:=pair_section(client,100,false)
+    pair_member(server,&p.info,101,pair_section(server,&p.info,100,true),true)
+    mirror:=pair_section(client,&p.info,100,false)
     for _ in 0..<60 {pair_frame(p)}
     c:=&p.sessions[1].client
     r:=replica_with(&p.sessions[1],101)
     if !testing.expect(t,r!=nil) {return}
     testing.expect(t,r.waits && r.entity==core.NONE && c.waiting==1)
-    testing.expect_value(t,core.entity_of(&client.es,101),core.NONE)
+    testing.expect_value(t,core.entity_of(&client.entities,101),core.NONE)
 
-    member:=pair_member(client,101,mirror,false)
-    pair_load_section(client,mirror,true)
+    member:=pair_member(client,&p.info,101,mirror,false)
+    pair_load_section(client,&p.info,mirror,true)
     for _ in 0..<10 {pair_frame(p)}
     testing.expect(t,!r.waits && r.entity==member && core.has(&client.links,member) && c.waiting==0)
 
-    pair_load_section(client,mirror,false,member)
+    pair_load_section(client,&p.info,mirror,false,member)
     for _ in 0..<10 {pair_frame(p)}
     testing.expect(t,r.object!=0 && r.waits && r.entity==core.NONE && c.waiting==1,"dropped by its section, it waits again")
 
-    again:=pair_member(client,101,mirror,false)
-    pair_load_section(client,mirror,true)
+    again:=pair_member(client,&p.info,101,mirror,false)
+    pair_load_section(client,&p.info,mirror,true)
     for _ in 0..<10 {pair_frame(p)}
     testing.expect(t,!r.waits && r.entity==again && core.has(&client.links,again))
     testing.expect_value(t,p.problems[1].count,0)
@@ -398,23 +394,23 @@ a_replica_of_a_section_that_is_not_loaded_waits_for_it :: proc(t:^testing.T) {
 
 // The reference of a section with a box, where it is in the world.
 @(private="file")
-pair_box :: proc(w:^Net_Test_World,id:base.Entity_Id,loaded:bool,position,extents:[3]f32) -> core.Entity {
-    e:=pair_section(w,id,loaded)
+pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool,position,extents:[3]f32) -> core.Entity {
+    e:=pair_section(w,info,id,loaded)
     core.get(&w.references,e).extents=extents
     core.get(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return e
 }
 
 // An entity of the scene of a section, where it is in the world: the section
 // is at the origin.
 @(private="file")
-pair_placed :: proc(w:^Net_Test_World,id:base.Entity_Id,section:core.Entity,position:[3]f32,replicated:bool) -> core.Entity {
-    e:=pair_member(w,id,section,replicated)
+pair_placed :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,section:core.Entity,position:[3]f32,replicated:bool) -> core.Entity {
+    e:=pair_member(w,info,id,section,replicated)
     core.get(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return e
 }
 
@@ -440,12 +436,12 @@ what_is_in_sections_that_overlap_reaches_a_client_that_has_either :: proc(t:^tes
     if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
     defer pair_destroy(p)
     server,client:=&p.worlds[0],&p.worlds[1]
-    west:=pair_box(server,100,true,{0,0,0},{10,10,10})
-    pair_box(server,200,true,{15,0,0},{10,10,10})
-    pair_placed(server,101,west,{8,0,0},true)
-    pair_placed(server,102,west,{-5,0,0},true)
-    mirror_west:=pair_box(client,100,false,{0,0,0},{10,10,10})
-    pair_box(client,200,true,{15,0,0},{10,10,10})
+    west:=pair_box(server,&p.info,100,true,{0,0,0},{10,10,10})
+    pair_box(server,&p.info,200,true,{15,0,0},{10,10,10})
+    pair_placed(server,&p.info,101,west,{8,0,0},true)
+    pair_placed(server,&p.info,102,west,{-5,0,0},true)
+    mirror_west:=pair_box(client,&p.info,100,false,{0,0,0},{10,10,10})
+    pair_box(client,&p.info,200,true,{15,0,0},{10,10,10})
     for _ in 0..<60 {pair_frame(p)}
     c:=&p.sessions[1]
     r:=replica_with(c,101)
@@ -453,15 +449,15 @@ what_is_in_sections_that_overlap_reaches_a_client_that_has_either :: proc(t:^tes
     testing.expect_value(t,replicas_with(c,101),1)
     testing.expect_value(t,r.pose.sections,[wire.OBJECT_GROUPS]base.Entity_Id{100,200,0,0})
     own:=r.entity
-    testing.expect(t,!r.waits && !r.adopted && core.alive(&client.es,own) && core.has(&client.links,own),"without the section it hangs from, it has an entity of its own")
+    testing.expect(t,!r.waits && !r.adopted && core.alive(&client.entities,own) && core.has(&client.links,own),"without the section it hangs from, it has an entity of its own")
     testing.expect(t,replica_with(c,102)==nil,"what is only in a section the client lacks does not reach it")
 
-    member:=pair_placed(client,101,mirror_west,{8,0,0},false)
-    pair_load_section(client,mirror_west,true)
+    member:=pair_placed(client,&p.info,101,mirror_west,{8,0,0},false)
+    pair_load_section(client,&p.info,mirror_west,true)
     for _ in 0..<60 {pair_frame(p)}
     testing.expect_value(t,replicas_with(c,101),1)
     testing.expect(t,r.object!=0 && r.adopted && r.entity==member && core.has(&client.links,member),"its section loaded, it takes the entity of the section with its Id")
-    testing.expect(t,!core.alive(&client.es,own),"and its own goes")
+    testing.expect(t,!core.alive(&client.entities,own),"and its own goes")
     testing.expect(t,replica_with(c,102)!=nil)
     testing.expect_value(t,p.problems[0].count,0)
     testing.expect_value(t,p.problems[1].count,0)
@@ -480,43 +476,43 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
     defer pair_destroy(p)
     server,client:=&p.worlds[0],&p.worlds[1]
-    room:=pair_section(server,100,true)
-    chest:=pair_member(server,101,room,true)
+    room:=pair_section(server,&p.info,100,true)
+    chest:=pair_member(server,&p.info,101,room,true)
     core.add(&server.values,chest,Net_Test_Value{force=5})
-    hidden:=pair_member(server,103,room,true)
+    hidden:=pair_member(server,&p.info,103,room,true)
     core.get(&server.objects,hidden).audience=.Custom
     // A section the server dropped after a crate in it was destroyed.
-    yard:=pair_section(server,300,false)
-    stone:=core.create(&server.es)
+    yard:=pair_section(server,&p.info,300,false)
+    stone:=core.create(&server.entities)
     core.add(&server.identities,stone,core.Id{900})
     core.add(&server.parents,stone,core.Parent{yard,0})
     core.add(&server.tombstones,stone,scene.Tombstone{302})
-    net_test_settle(server,nil,nil)
-    mirror_room,mirror_yard:=pair_section(client,100,false),pair_section(client,300,false)
+    core.settle(&p.info,server,nil)
+    mirror_room,mirror_yard:=pair_section(client,&p.info,100,false),pair_section(client,&p.info,300,false)
     for _ in 0..<60 {pair_frame(p)}
 
     // The client loads them as it kept them: the chest closed, the crate whole.
-    kept_chest:=pair_member(client,101,mirror_room,false)
+    kept_chest:=pair_member(client,&p.info,101,mirror_room,false)
     core.add(&client.values,kept_chest,Net_Test_Value{force=1})
-    kept_hidden:=pair_member(client,103,mirror_room,false)
-    well:=pair_member(client,301,mirror_yard,false)
-    crate:=pair_member(client,302,mirror_yard,false)
-    pair_load_section(client,mirror_room,true)
-    pair_load_section(client,mirror_yard,true)
+    kept_hidden:=pair_member(client,&p.info,103,mirror_room,false)
+    well:=pair_member(client,&p.info,301,mirror_yard,false)
+    crate:=pair_member(client,&p.info,302,mirror_yard,false)
+    pair_load_section(client,&p.info,mirror_room,true)
+    pair_load_section(client,&p.info,mirror_yard,true)
     for _ in 0..<60 {pair_frame(p)}
     r:=replica_with(&p.sessions[1],101)
     testing.expect(t,r!=nil && r.entity==kept_chest,"the chest takes the entity it kept")
     value,_:=core.get(core.read(&client.values),kept_chest)
     testing.expect_value(t,value.force,5)
-    testing.expect(t,!core.alive(&client.es,crate),"what the server left a tombstone of goes")
-    testing.expect(t,core.alive(&client.es,well))
-    testing.expect(t,replica_with(&p.sessions[1],103)==nil && core.alive(&client.es,kept_hidden))
+    testing.expect(t,!core.alive(&client.entities,crate),"what the server left a tombstone of goes")
+    testing.expect(t,core.alive(&client.entities,well))
+    testing.expect(t,replica_with(&p.sessions[1],103)==nil && core.alive(&client.entities,kept_hidden))
 
-    core.destroy(&server.es,hidden)
-    net_test_settle(server,nil,nil)
+    core.destroy(&server.entities,hidden)
+    core.settle(&p.info,server,nil)
     for _ in 0..<30 {pair_frame(p)}
-    testing.expect(t,!core.alive(&client.es,kept_hidden),"what the server destroys in it goes, seen or not")
-    testing.expect(t,core.alive(&client.es,kept_chest))
+    testing.expect(t,!core.alive(&client.entities,kept_hidden),"what the server destroys in it goes, seen or not")
+    testing.expect(t,core.alive(&client.entities,kept_chest))
     testing.expect_value(t,p.problems[0].count,0)
     testing.expect_value(t,p.problems[1].count,0)
 }

@@ -2,7 +2,6 @@ package effect
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
@@ -25,8 +24,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     parameters[0].kind,parameters[0].components,parameters[0].value=.Float,1,{2.5,0,0,0}
     base.text_set(parameters[1].name[:],"pattern")
     parameters[1].kind,parameters[1].components,parameters[1].texture=.Texture,1,{9,10}
-    path:=effect_test_path("spark.particle")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/spark.particle",base.test_folder(t,"effect"))
     testing.expect_value(t,particle_save(path,&types,{id={7,8},info=info,parameters=parameters[:],hidden=hidden[:]}),asset.Error.None)
 
     a:asset.Asset
@@ -55,8 +53,7 @@ an_effect_of_another_version_asks_to_be_written_again :: proc(t:^testing.T) {
     info:=PARTICLE_DEFAULTS
     testing.expect_value(t,particle_document(&doc,&types,{id={1,2},info=info}),asset.Error.None)
     doc.kind_version=VERSION-1
-    path:=effect_test_path("old.particle")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/old.particle",base.test_folder(t,"effect"))
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
     asset.document_destroy(&doc)
     a:asset.Asset
@@ -73,8 +70,7 @@ an_effect_of_another_version_asks_to_be_written_again :: proc(t:^testing.T) {
 particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     testing.expect(t,!PARTICLE_DEFAULTS.light_shadows)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    path:=effect_test_path("shadows.particle")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/shadows.particle",base.test_folder(t,"effect"))
     Before :: struct {rate:f32,lights:u32,light_intensity:f32,light_range:f32}
     before:=Before{rate=30,lights=4,light_intensity=10,light_range=2}
     doc:asset.Document
@@ -113,8 +109,7 @@ mesh_particles_keep_their_facing_axis_rotation_and_scale :: proc(t:^testing.T) {
     info:=PARTICLE_DEFAULTS
     info.render,info.facing,info.spin_axis=.Mesh,.Camera_Plane,{0,0,2}
     info.mesh_rotation,info.mesh_scale={0,0.70710677,0,0.70710677},{0.5,3,0.25}
-    path:=effect_test_path("blade.particle")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/blade.particle",base.test_folder(t,"effect"))
     testing.expect_value(t,particle_save(path,&types,{id={3,4},info=info}),asset.Error.None)
     a:asset.Asset
     testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
@@ -214,9 +209,4 @@ particle_values_are_named_by_their_paths :: proc(t:^testing.T) {
     _,unknown:=particle_value_at("bursts.9.count")
     testing.expect(t,!unknown)
     for value in particle_fields() {testing.expect(t,value.size<=PARTICLE_VALUE_BYTES)}
-}
-
-effect_test_path :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    return fmt.tprintf("%s/mirai-effect-%d-%s",directory,os.get_pid(),name)
 }

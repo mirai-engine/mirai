@@ -1,7 +1,6 @@
 package terrain
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -15,7 +14,7 @@ Terrain_Chunk_Damage :: enum {Local,Local_Restored,Parent,Wrong_Parent,Owner,Aut
 
 @(test)
 incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors :: proc(t:^testing.T) {
-    root:=source_test_path("chunk-recovery");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{9,1,9},1,4));defer source_destroy(&source)
     source.revision=1
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -24,20 +23,22 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
     for damage in Terrain_Chunk_Damage {
         assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=32}));defer host.assets_destroy(&assets)
         app:=host.App{assets=&assets,allocator=context.allocator}
-        w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=core.create(&w.entities)
         core.add(&w.ids,owner,{value=1})
-        core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+        core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,revision=1,solid=true})
         author:=core.NONE
         if damage==.Wrong_Parent {
             author=core.create(&w.entities)
             core.add(&w.ids,author,{value=2})
-            core.add(&w.locals,author,core.TRANSFORM_IDENTITY)
+            core.add(&w.transforms,author,core.TRANSFORM_IDENTITY)
             core.add(&w.statics,author,render.Mesh_Renderer{})
         }
-        terrain_test_world_settle(&w)
+        core.test_world_settle(&w.w)
         terrain_test_update(&w,&resident,&app)
         terrain_test_update(&w,&resident,&app)
         if !testing.expect(t,len(resident.owners)==1 && len(w.chunks.values)==4) {return}
@@ -45,12 +46,12 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         epoch,built,loads:=w.data.epoch,resident.stats.built,w.data.stats.loads
         switch damage {
         case .Local,.Local_Restored:
-            core.remove(&w.locals,stale)
-            terrain_test_world_settle(&w)
+            core.remove(&w.transforms,stale)
+            core.test_world_settle(&w.w)
             tables:=terrain_test_tables(&w)
             testing.expect(t,!chunk_entity_matches(&tables,stale,owner,{},0))
             // Restored where its mesh is relative to: the place of its chunk.
-            if damage==.Local_Restored {place:=core.TRANSFORM_IDENTITY;place.position=chunk_origin(&w.data.entries[0].source,{});core.add(&w.locals,stale,place)}
+            if damage==.Local_Restored {place:=core.TRANSFORM_IDENTITY;place.position=chunk_origin(&w.data.entries[0].source,{});core.add(&w.transforms,stale,place)}
         case .Parent:
             core.remove(&w.parents,stale)
         case .Wrong_Parent:
@@ -61,15 +62,15 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             author=stale
             core.add(&w.ids,author,{value=2})
             transform:=core.TRANSFORM_IDENTITY;transform.position.x=72
-            core.add(&w.locals,author,transform)
+            core.add(&w.transforms,author,transform)
             core.add(&w.statics,author,render.Mesh_Renderer{})
             core.add(&w.terrains,author,Terrain{source=id,revision=1,solid=true})
             core.remove(&w.parents,author)
             core.add(&w.colliders,author,phys.collider_box({1.25,2.5,3.75}))
         }
-        terrain_test_world_settle(&w)
+        core.test_world_settle(&w.w)
         if damage==.Wrong_Parent {
-            testing.expect_value(t,w.locals.layout,resident.gc_stamps[0])
+            testing.expect_value(t,w.transforms.layout,resident.gc_stamps[0])
             testing.expect_value(t,w.parents.layout,resident.gc_stamps[1])
             testing.expect(t,w.parents.version!=resident.gc_stamps[2])
             testing.expect_value(t,w.chunks.layout,resident.gc_stamps[3])
@@ -96,7 +97,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         }
         if author!=core.NONE {
             static,_:=core.get(core.read(&w.statics),author)
-            transform,_:=core.get(core.read(&w.locals),author)
+            transform,_:=core.get(core.read(&w.transforms),author)
             testing.expect(t,core.alive(&w.entities,author) && core.has(&w.ids,author) && static.mesh=={} && !core.has(&w.chunks,author))
             testing.expect_value(t,transform.position.x,damage==.Author?f32(72):f32(0))
             testing.expect(t,!core.has(&w.parents,author))

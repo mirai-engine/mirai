@@ -80,7 +80,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     for bone,i in bones {state.parents[i+1]=bone.parent+1;state.local[i+1]={position=bone.translation,rotation=1,scale={1,1,1}}}
     append(&f.world.playback.states,state)
     row:=core.entity_index(f.rig);resize(&f.world.playback.rows,row+1);f.world.playback.rows[row]=1
-    core.add(&f.world.transforms,f.rig,core.from_math(mm.Transform{position={10,0,0},rotation=1,scale={1,1,1}}));pose_bake_test_settle(&f.world,nil,nil)
+    core.add(&f.world.transforms,f.rig,core.from_math(mm.Transform{position={10,0,0},rotation=1,scale={1,1,1}}));core.settle(&f.info,&f.world,nil)
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"],"names":["@hand_r","baton","root/pelvis"]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
@@ -100,7 +100,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     // Without its id the rig is as one the game made: only its handle names it.
-    core.remove(&f.world.ids,f.rig);pose_bake_test_settle(&f.world,nil,nil)
+    core.remove(&f.world.ids,f.rig);core.settle(&f.info,&f.world,nil)
     // As play.inspect gives it.
     handle:=fmt.tprintf("0x%016x",u64(f.rig))
     missing:=authoring_test_execute(a,"instance",`{"entity":"Nobody"}`)

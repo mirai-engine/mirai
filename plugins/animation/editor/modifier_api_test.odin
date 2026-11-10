@@ -15,11 +15,11 @@ import anim "plugins:animation/runtime"
 
 @(test)
 grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_cached_residuals :: proc(t:^testing.T) {
-    World :: struct {grounding:anim.Grounding_Runtime,playback:anim.Playback}
+    World :: struct {using world:core.Test_World,grounding:anim.Grounding_Runtime,playback:anim.Playback}
     world:World
-    defer {anim.grounding_free(&world.grounding);anim.playback_free(&world.playback)}
-    storages:=[2]core.Storage_Info{{type=anim.Grounding_Runtime,info=type_info_of(anim.Grounding_Runtime),offset=offset_of(World,grounding)},{type=anim.Playback,info=type_info_of(anim.Playback),offset=offset_of(World,playback)}}
-    info:=core.World_Info{storages=storages[:]};ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,anim.test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     entity:=core.Entity(1)
     local:=make([dynamic]mm.Transform,3);for &value in local {value=mm.TRANSFORM_IDENTITY}
     append(&world.playback.states,anim.Playing{entity=entity,world=local,pose_ready=true})
@@ -60,16 +60,13 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/rig.pose",f.root),&f.assets.types,pose_id,{chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={unused}}),asset.Error.None)
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/transfer.pose",f.root),&f.assets.types,retarget_id,{retarget_chains={retarget}}),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
-    play:Program_Test_World;core.entities_init(&play.entities);defer program_test_destroy(&play)
-    tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
-    storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:]}
+    play:Program_Test_World;if !core.test_world_init(t,&play,anim.test_types) {return};defer core.test_world_destroy(&play)
     first,second:=core.create(&play.entities),core.create(&play.entities)
     core.add(&play.ids,first,{value=17});core.add(&play.ids,second,{value=18})
     core.add(&play.modifiers,first,{profile=pose_id,weight=.8,enabled=true})
     value:=anim.ANIMATION_DEFAULT;value.retarget,value.source=retarget_id,second;core.add(&play.animations,first,value)
-    value.source=first;core.add(&play.animations,second,value);program_test_settle(&play,nil,nil)
-    f.session.info,f.session.mode=&info,.Play;f.session.runs[0]={world=&play}
+    value.source=first;core.add(&play.animations,second,value);core.test_world_settle(&play)
+    f.session.info,f.session.mode=core.test_world_info(&play),.Play;f.session.runs[0]={world=&play}
     inspect:=Modifier_Inspect_Params{limit=256};requested:=request_defaults()
     authoring_test_register(f,t,"request",Request_Params,request,requested)
     authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
@@ -91,9 +88,9 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_
     preview:Preview_Params;copy(preview.entity[:],"0000000000000011");preview.controls[0]={kind=.Chain_Retarget,weight=.3,enabled=true};base.text_set(preview.controls[0].name[:],"transfer")
     preview.goals[0]={kind=.Multi_IK,target={position={0,1,0},rotation=1,scale={1,1,1}}};base.text_set(preview.goals[0].name[:],"body");base.text_set(preview.goals[0].effector[:],"right")
     call:=api.Call{raw=`{"controls":[{"kind":"Chain_Retarget","name":"transfer"}],"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]}}]}`,allocator=context.temp_allocator}
-    testing.expect(t,request_apply(&f.session,&call,core.world_ref(&play,&info),first,&preview,0,nil))
+    testing.expect(t,request_apply(&f.session,&call,core.test_world_ref(&play),first,&preview,0,nil))
     testing.expect_value(t,len(play.modifier_requests.controls.items),2);testing.expect_value(t,len(play.modifier_requests.queue.items),3)
     call.raw=`{"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]},"contact":0.5}]}`
-    testing.expect(t,!request_apply(&f.session,&call,core.world_ref(&play,&info),first,&preview,0,nil))
+    testing.expect(t,!request_apply(&f.session,&call,core.test_world_ref(&play),first,&preview,0,nil))
     testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.modifier_requests.queue.items),3)
 }

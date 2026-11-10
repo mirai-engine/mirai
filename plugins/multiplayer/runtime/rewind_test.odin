@@ -88,9 +88,11 @@ rewind_tick_is_what_the_client_showed_within_the_limit :: proc(t:^testing.T) {
 interpolate_others_shows_bodies_of_others_in_the_past :: proc(t:^testing.T) {
     for case_ in ([3]struct{others:bool,role:Role,mode:Mode}{{false,.Shown,.Predicted},{true,.Shown,.Interpolated},{true,.Predicted,.Predicted}}) {
         f:Correction_Fixture
-        f.info=net_test_info()
-        net_test_init(&f.world,context.allocator)
-        f.e=net_test_body(&f.world,1)
+        described:bool
+        f.info,described=net_test_info(t)
+        if !described {return}
+        net_test_init(&f.world,&f.info)
+        f.e=net_test_body(&f.world,&f.info,1)
         f.shared={info=&f.info}
         f.app={info=&f.info,allocator=context.allocator,tick_dt=1.0/60,shared=&f.shared}
         net_test_physics(&f.world,&f.shared,&f.app)

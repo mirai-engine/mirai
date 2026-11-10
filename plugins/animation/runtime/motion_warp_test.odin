@@ -99,10 +99,19 @@ motion_profiles_roundtrip_windows_distance_keys_and_reject_overlapping_windows :
     profile.keys[1].distance=3;testing.expect(t,!motion_profile_check(profile))
 }
 
+@(private="file")
+Motion_Warp_World :: struct {
+    using world:core.Test_World,
+    animations:core.Table(Animation),
+    worlds:core.Table(core.World_Transform),
+}
+
 @(test)
 root_warp_targets_reach_the_window_endpoint_copy_and_update_without_stable_allocations :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    entity:=core.create(&entities)
+    w:Motion_Warp_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    entity:=core.create(&w.entities)
     content:host.Content_Animation;state:=layer_fixture(t,&content);state.entity=entity;state.clip=0
     defer lib.library_destroy(&content.lib);defer playing_free(&state)
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots)
@@ -260,44 +269,46 @@ root_warp_crosses_multiple_windows_in_time_order_and_includes_prior_window_corre
 @(test)
 motion_runtime_reuses_generational_entity_slots_and_retires_only_the_mapping_it_owns :: proc(t:^testing.T) {
     problems:core.Problems
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    animations:core.Table(Animation);defer core.table_destroy(&animations)
+    w:Motion_Warp_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     playback:Playback;defer playback_free(&playback)
     motion:Motion_Runtime;defer motion_runtime_free(&motion)
     requests:Motion_Requests;defer {delete(requests.targets.items);delete(requests.locomotion.items)}
     cache:=Motion_Assets{allocator=context.allocator};defer motion_assets_free(&cache)
     append(&cache.contents,Motion_Content{id={1,2},checked=1,revision=1,profile=motion_test_profile(),valid=true})
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
-    entity:=core.create(&entities);index:=core.entity_index(entity)
+    entity:=core.create(&w.entities);index:=core.entity_index(entity)
     append(&playback.states,Playing{entity=entity,bound=1});resize(&playback.rows,index+1);playback.rows[index]=1
-    config:=ANIMATION_DEFAULT;config.motion={1,2};core.add(&animations,entity,config);core.table_settle(&animations,&entities)
-    testing.expect(t,motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,&problems))
+    config:=ANIMATION_DEFAULT;config.motion={1,2};core.add(&w.animations,entity,config);core.test_world_settle(&w)
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems))
     motion_target(&requests,entity,"ledge",spatial_world(mm.TRANSFORM_IDENTITY))
     motion_take_requests(&motion,&requests,&problems)
     old:=entity
-    testing.expect(t,core.destroy(&entities,entity));core.table_settle(&animations,&entities);core.entities_settle(&entities)
-    entity=core.create(&entities);testing.expect(t,core.entity_index(entity)==index && entity!=old)
-    core.add(&animations,entity,config);core.table_settle(&animations,&entities);playback.states[0].entity=entity
+    testing.expect(t,core.destroy(&w.entities,entity));core.test_world_settle(&w)
+    entity=core.create(&w.entities);testing.expect(t,core.entity_index(entity)==index && entity!=old)
+    core.add(&w.animations,entity,config);core.test_world_settle(&w);playback.states[0].entity=entity
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    ok:=motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,&problems)
+    ok:=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems)
     target:=mm.TRANSFORM_IDENTITY;target.position.x=7
     motion_target(&requests,entity,"ledge",spatial_world(target))
-    ok &&=motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,&problems)
+    ok &&=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems)
     current:=motion_instance(&motion,entity);old_instance:=motion_instance(&motion,old)
     preserved:=current!=nil && len(current.targets)==1 && current.targets[0].world==target && len(motion.instances)==1 && old_instance==nil
     context=saved
     testing.expect(t,ok && preserved && problems.count==0)
-    core.remove(&animations,entity);core.table_settle(&animations,&entities)
-    testing.expect(t,motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,&problems) && motion_instance(&motion,entity)==nil && motion.rows[index]==0)
+    core.remove(&w.animations,entity);core.test_world_settle(&w)
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems) && motion_instance(&motion,entity)==nil && motion.rows[index]==0)
 }
 
 @(test)
 motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_in_world_copies :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    first,second,plain:=core.create(&entities),core.create(&entities),core.create(&entities)
-    animations:core.Table(Animation);defer core.table_destroy(&animations)
-    for entity in ([3]core.Entity{first,second,plain}) {core.add(&animations,entity,ANIMATION_DEFAULT)}
-    core.table_settle(&animations,&entities)
+    w:Motion_Warp_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    first,second,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    for entity in ([3]core.Entity{first,second,plain}) {core.add(&w.animations,entity,ANIMATION_DEFAULT)}
+    core.test_world_settle(&w)
     playback:Playback;defer playback_free(&playback)
     for entity in ([2]core.Entity{first,second}) {append(&playback.states,Playing{entity=entity,bound=1});index:=core.entity_index(entity);resize(&playback.rows,index+1);playback.rows[index]=i32(len(playback.states))}
     cache:=Motion_Assets{allocator=context.allocator};defer motion_assets_free(&cache)
@@ -306,28 +317,28 @@ motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_i
     motion:Motion_Runtime;defer motion_runtime_free(&motion)
     requests:Motion_Requests;defer {delete(requests.targets.items);delete(requests.locomotion.items)}
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
-    prepared:=motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,nil)
+    prepared:=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator
     testing.expect(t,prepared && len(motion.instances)==0 && cap(motion.rows)==0)
-    core.get(&animations,first).motion={3,4};core.get(&animations,second).motion={3,5}
+    core.get(&w.animations,first).motion={3,4};core.get(&w.animations,second).motion={3,5}
     target:=mm.TRANSFORM_IDENTITY;target.position.x=4;motion_target(&requests,first,"ledge",spatial_world(target))
     observed:=motion.animation_version
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
-    prepared=motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,nil)
+    prepared=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator
     testing.expect(t,!prepared && len(motion.instances)==0 && len(requests.targets.items)==1 && motion.animation_version==observed)
-    testing.expect(t,motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==2 && motion_instance(&motion,first).targets[0].world==target && len(requests.targets.items)==0)
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==2 && motion_instance(&motion,first).targets[0].world==target && len(requests.targets.items)==0)
     copied:Motion_Runtime;core.value_copy(&copied,&motion,type_info_of(Motion_Runtime));defer motion_runtime_free(&copied)
     motion_instance(&copied,first).targets[0].world.position.x=9
     testing.expect(t,motion_instance(&motion,first).targets[0].world.position.x==4)
-    core.get(&animations,first).motion={3,5};core.get(&animations,second).motion={};core.get(&animations,plain).weight=.3
+    core.get(&w.animations,first).motion={3,5};core.get(&w.animations,second).motion={};core.get(&w.animations,plain).weight=.3
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
-    prepared=motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,nil)
+    prepared=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;cache.allocator=saved.allocator
     testing.expect(t,prepared && len(motion.instances)==1 && motion_instance(&motion,second)==nil && motion_instance(&motion,first).profile==base.Asset_Id{3,5} && motion_instance(&motion,first).targets[0].world==target)
     testing.expect(t,len(copied.instances)==2 && motion_instance(&copied,second)!=nil)
-    core.remove(&animations,first);core.table_settle(&animations,&entities)
-    testing.expect(t,motion_prepare(&motion,&requests,core.read(&animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==0 && motion_instance(&motion,first)==nil)
+    core.remove(&w.animations,first);core.test_world_settle(&w)
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==0 && motion_instance(&motion,first)==nil)
 }
 
 @(test)
@@ -341,8 +352,10 @@ root_warp_reaches_a_bone_or_socket_of_another_rig_from_the_pose_it_sampled_in_th
     playback:=Playback{frame=5};defer playback_free(&playback)
     append(&playback.states,rig_test_state(other,3,.5));resize(&playback.rows,4);playback.rows[3]=1
     sampled:=&playback.states[0];sampled.seen=4;sampled.skeleton={4,5}
-    worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
-    testing.expect(t,modifier_append(&worlds,other,core.World_Transform{transform={{10,0,0},1,{1,1,1}}}))
+    w:Motion_Warp_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    testing.expect(t,modifier_append(&w.worlds,other,core.World_Transform{transform={{10,0,0},1,{1,1,1}}}))
     sockets:=make([]asset.Skeleton_Socket,1)
     base.text_set(sockets[0].name[:],"grip");base.text_set(sockets[0].bone[:],"joint3");sockets[0].offset=mm.TRANSFORM_IDENTITY;sockets[0].offset.position={0,.2,0}
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
@@ -350,21 +363,21 @@ root_warp_reaches_a_bone_or_socket_of_another_rig_from_the_pose_it_sampled_in_th
     requests:Motion_Requests;defer delete(requests.targets.items);defer delete(requests.locomotion.items)
     motion_target(&requests,state.entity,"ledge",spatial_bone(other,"joint3"));motion_take_requests(&motion,&requests,nil)
     testing.expect(t,!motion.instances[0].targets[0].resolved,"a bone is found before the rigs sample, not when it is asked")
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
     target:=motion.instances[0].targets[0]
     testing.expect(t,target.resolved && linalg.length(target.world.position-mm.Vec3{10,1,0})<1e-5)
     state.root_enabled,state.was_playing=true,true;state.fader.current=lib.player_make(1);state.fader.current.time=2;state.prev_fader.current=lib.player_make(1)
     state.motion={translation={2,0,0},rotation=1}
     testing.expect(t,motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,mm.TRANSFORM_IDENTITY,2) && linalg.length(state.motion.translation-mm.Vec3{10,1,0})<1e-4 && motion.instances[0].remaining_error<1e-4)
     motion_target(&requests,state.entity,"ledge",spatial_socket(other,"grip"));motion_take_requests(&motion,&requests,nil)
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
     testing.expect(t,len(motion.instances[0].targets)==1 && motion.instances[0].targets[0].resolved && linalg.length(motion.instances[0].targets[0].world.position-mm.Vec3{10,1.2,0})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<8 {motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&worlds));stable &&=motion.instances[0].targets[0].resolved}
+    for _ in 0..<8 {motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds));stable &&=motion.instances[0].targets[0].resolved}
     context=saved
     testing.expect(t,stable)
     sampled.seen=5
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
     testing.expect(t,!motion.instances[0].targets[0].resolved && motion.instances[0].error==.Missing_Target,"a rig not sampled in the previous tick names no place")
 }

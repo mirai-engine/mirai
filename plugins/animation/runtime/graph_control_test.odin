@@ -3,7 +3,6 @@ package anim
 import "core:fmt"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -11,6 +10,16 @@ import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
+
+@(private="file")
+Graph_Control_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    names:core.Table(core.Name),
+    targets:core.Table(Animation_Target),
+    animations:core.Table(Animation),
+}
 
 @(test)
 named_parameters_set_graph_parameters_and_blend_axes_and_report_unknown_names :: proc(t:^testing.T) {
@@ -23,7 +32,7 @@ named_parameters_set_graph_parameters_and_blend_axes_and_report_unknown_names ::
     _,set=animation_parameter_value(animation,"extra");testing.expect(t,!set)
     animation_parameters_clear(&animation);_,set=animation_parameter_value(animation,"p3");testing.expect(t,!set && animation.parameter_names=={})
 
-    directory:=fmt.tprintf(".mirai/test-named-parameters-%d",os.get_pid());os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"named-parameters")
     space:=blend_test_profile();defer blend_profile_free(&space)
     testing.expect_value(t,blend_space_prepare(&space),asset.Error.None)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -54,17 +63,17 @@ named_parameters_set_graph_parameters_and_blend_axes_and_report_unknown_names ::
     testing.expect(t,!ok && state.program.error==.Unknown_Parameter)
 
     // A .blend alone is not locomotion: Animation.asset refuses it and says where it plays.
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    transforms:core.Table(core.Transform);parents:core.Table(core.Parent);names:core.Table(core.Name);targets:core.Table(Animation_Target);animations:core.Table(Animation)
-    defer {core.table_destroy(&transforms);core.table_destroy(&parents);core.table_destroy(&names);core.table_destroy(&targets);core.table_destroy(&animations)}
-    actor:=core.create(&entities);spaced:=ANIMATION_DEFAULT;spaced.asset=id
-    core.add(&transforms,actor,core.TRANSFORM_IDENTITY);core.add(&animations,actor,spaced)
-    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities)
+    w:Graph_Control_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    actor:=core.create(&w.entities);spaced:=ANIMATION_DEFAULT;spaced.asset=id
+    core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.animations,actor,spaced)
+    core.test_world_settle(&w)
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
-    core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
+    core.hierarchy_settle(&hierarchy,core.read(&w.parents),&w.entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets;problems:core.Problems
     defer {delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
-    animation_tick(core.read(&animations),&transforms,core.read(&parents),core.ref(&hierarchy),core.read(&names),&requests,&events,core.read(&targets),{},&playback,&app,{dt=.1,playing=true},{},&skeletons,&problems,&blends,&graphs)
+    animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&hierarchy),core.read(&w.names),&requests,&events,core.read(&w.targets),{},&playback,&app,{dt=.1,playing=true},{},&skeletons,&problems,&blends,&graphs)
     testing.expect(t,core.problem_find(&problems,actor,"animation.additive_space")!=nil && problems.count==1)
     _,programmed,refused:=program_resolve(&state,spaced,&app,&blends,&graphs,0)
     testing.expect(t,programmed && !refused && state.program.error==.Additive_Space)
@@ -72,7 +81,7 @@ named_parameters_set_graph_parameters_and_blend_axes_and_report_unknown_names ::
 
 @(test)
 a_library_replaces_the_clips_of_a_program_and_restarts_it :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-library-%d",os.get_pid());os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"library")
     profile:=graph_test_profile();defer graph_profile_free(&profile)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     graph_id,library_id:=base.Asset_Id{55,56},base.Asset_Id{57,58}
@@ -99,8 +108,7 @@ a_library_replaces_the_clips_of_a_program_and_restarts_it :: proc(t:^testing.T) 
 
 @(private="file")
 Mirror_Fixture :: struct {
-    entities:core.Entities,
-    transforms:core.Table(core.Transform),
+    using w:Graph_Control_World,
     bones:[3]asset.Skeleton_Bone,
     definition:Skeleton_Content,
     content:host.Content_Animation,
@@ -110,9 +118,9 @@ Mirror_Fixture :: struct {
 
 @(private="file")
 mirror_fixture :: proc(t:^testing.T,f:^Mirror_Fixture) -> ^Playing {
-    core.entities_init(&f.entities)
+    if !core.test_world_init(t,&f.w,test_types) {return nil}
     f.rig=core.create(&f.entities)
-    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.table_settle(&f.transforms,&f.entities)
+    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.test_world_settle(&f.w)
     f.bones={{parent=-1,translation={0,1,0},rotation=1,scale={1,1,1}},{parent=0,translation={-.2,-.1,0},rotation=1,scale={1,1,1}},{parent=0,translation={.2,-.1,0},rotation=1,scale={1,1,1}}}
     names:=[3]string{"pelvis","leg_l","leg_r"};paths:=[3]string{"pelvis","pelvis/leg_l","pelvis/leg_r"}
     for &bone,i in f.bones {base.text_set(bone.name[:],names[i]);base.text_set(bone.path[:],paths[i]);bone.target=base.name_hash(paths[i])}
@@ -134,12 +142,13 @@ mirror_fixture :: proc(t:^testing.T,f:^Mirror_Fixture) -> ^Playing {
 @(private="file")
 mirror_fixture_free :: proc(f:^Mirror_Fixture) {
     playback_free(&f.playback);lib.library_destroy(&f.content.lib);delete(f.content.roots);delete(f.definition.mirror)
-    core.table_destroy(&f.transforms);core.entities_destroy(&f.entities)
+    core.test_world_destroy(&f.w)
 }
 
 @(test)
 mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^testing.T) {
     f:Mirror_Fixture;state:=mirror_fixture(t,&f);defer mirror_fixture_free(&f)
+    if state==nil {return}
     testing.expect(t,len(state.mirror_pairs)==4 && state.mirror_pairs[2]==3 && state.mirror_pairs[3]==2 && abs(abs(state.mirror_plane.normal.x)-1)<1e-5)
     events:Animation_Events;defer {delete(events.items);delete(events.plays.items)}
     nodes:=[1]Graph_Node{GRAPH_NODE_DEFAULT};base.text_set(nodes[0].name[:],"kick");base.text_set(nodes[0].clip[:],"kick");nodes[0].loop,nodes[0].sync_mode=false,.Independent

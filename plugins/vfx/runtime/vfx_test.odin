@@ -12,8 +12,8 @@ import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
 @(private="file")
-Emitters_Fixture :: struct {
-    entities:core.Entities,
+Emitters_World :: struct {
+    using world:core.Test_World,
     emitters:core.Table(Particle_Emitter),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(Particle_Override),
@@ -25,41 +25,36 @@ Emitters_Fixture :: struct {
     grids:core.Table(Particle_Grid),
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
-    channels:Particle_Channels,
-    reports:Particle_Reports,
     meshes:core.Table(erender.Mesh_Renderer),
-    drawn:erender.Render_Sync,
+    channels:Particle_Channels,
     hierarchy:core.Hierarchy,
     clocks:Particle_Clocks,
     requests:Particle_Requests,
-    sync:Particle_Sync,
     settings:Particle_Settings,
+}
+
+@(private="file")
+Emitters_Fixture :: struct {
+    using w:Emitters_World,
+    reports:Particle_Reports,
+    drawn:erender.Render_Sync,
+    sync:Particle_Sync,
     app:host.App,
     problems:core.Problems,
 }
 
 @(private="file")
-fixture_init :: proc(f:^Emitters_Fixture) {
-    core.entities_init(&f.entities)
-    f.settings=PARTICLE_SETTINGS_DEFAULT
-}
+fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return core.test_world_init(t,&f.w,test_types)}
 
 @(private="file")
 fixture_destroy :: proc(f:^Emitters_Fixture) {
-    core.table_destroy(&f.emitters);core.table_destroy(&f.worlds);core.table_destroy(&f.overrides)
-    core.table_destroy(&f.parameters);core.table_destroy(&f.hidden);core.table_destroy(&f.parents);core.table_destroy(&f.bindings);core.table_destroy(&f.meshes);core.table_destroy(&f.listeners);core.table_destroy(&f.grids);core.table_destroy(&f.volumes);core.table_destroy(&f.textures);core.value_free(&f.channels,type_info_of(Particle_Channels));particle_reports_free(&f.reports);core.value_free(&f.hierarchy,type_info_of(core.Hierarchy))
-    core.value_free(&f.clocks,type_info_of(Particle_Clocks))
-    core.value_free(&f.requests,type_info_of(Particle_Requests))
+    particle_reports_free(&f.reports)
     particle_sync_free(&f.sync)
-    core.entities_destroy(&f.entities)
+    core.test_world_destroy(&f.w)
 }
 
 @(private="file")
-fixture_settle :: proc(f:^Emitters_Fixture) {
-    core.table_settle(&f.emitters,&f.entities);core.table_settle(&f.worlds,&f.entities)
-    core.table_settle(&f.overrides,&f.entities);core.table_settle(&f.parameters,&f.entities)
-    core.table_settle(&f.parents,&f.entities);core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities);core.entities_settle(&f.entities)
-}
+fixture_settle :: proc(f:^Emitters_Fixture) {core.test_world_settle(&f.w)}
 
 @(private="file")
 fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3]f32={}) -> core.Entity {
@@ -95,7 +90,9 @@ FRAME :: core.Frame_Time{dt=1.0/60,alpha=1}
 
 @(test)
 new_emitters_start_at_the_current_pose_then_interpolate_motion :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{active=true},{8,2,-16})
     current:=mm.TRANSFORM_IDENTITY;current.position={8,2,-16}
     time,frame:=core.Time{playing=true},core.Frame_Time{dt=1.0/60}
@@ -115,7 +112,9 @@ new_emitters_start_at_the_current_pose_then_interpolate_motion :: proc(t:^testin
 // as started, and only what comes after starts.
 @(test)
 a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true})
     // The effect: a burst of 7 at the start of each cycle of half a second, nothing else.
     clock_of(&f.clocks,e)
@@ -164,7 +163,9 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
 
 @(test)
 a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true})
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
@@ -189,8 +190,9 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
 // emitter or its place goes, from what the tables say changed.
 @(test)
 the_clock_and_the_shown_of_an_emitter_that_goes_are_dropped :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
-    core.table_init(&f.emitters,"Particle_Emitter");core.table_init(&f.worlds,"World_Transform")
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     kept:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true})
     gone:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true},{1,0,0})
     unplaced:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true},{2,0,0})
@@ -439,7 +441,9 @@ program_parameters_of_an_instance_keep_their_kind :: proc(t:^testing.T) {
 
 @(test)
 requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{loop=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
@@ -485,7 +489,9 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
 
 @(test)
 a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     cases:=[?]struct{render:effect.Particle_Render,sort:bool,max_particles:u32,problem:bool}{
         {.Ribbon,false,SORT_MAX+1,true},
         {.Billboard,true,SORT_MAX+1,true},
@@ -507,7 +513,9 @@ a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
 
 @(test)
 requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
     testing.expect_value(t,request_override(&f.requests,e,"rate",f32(80)),Error.None)
     testing.expect_value(t,request_override(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
@@ -534,7 +542,9 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
 // Play: the copy of the world starts its clocks over.
 @(test)
 a_play_starts_the_clocks_of_the_preview_over :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
     editor:=core.Time{playing=false,dt=0}
     for _ in 0..<5 {fixture_tick(&f,editor,{dt=0.1,alpha=1})}
@@ -547,7 +557,9 @@ a_play_starts_the_clocks_of_the_preview_over :: proc(t:^testing.T) {
 
 @(test)
 done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{active=true,destroy_when_done=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
@@ -563,12 +575,14 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
 // listens to keeps none.
 @(test)
 channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
-    f:Emitters_Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{})
     IMPACTS,NOBODY :: Particle_Channel_Name(CHANNEL_GAME),Particle_Channel_Name(CHANNEL_GAME+1)
     listener:=Particle_Channel{name=IMPACTS}
     core.add(&f.listeners,e,listener)
-    core.table_settle(&f.listeners,&f.entities)
+    fixture_settle(&f)
     f.app.assets=nil
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,at:int) {
