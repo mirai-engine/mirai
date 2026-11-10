@@ -21,8 +21,8 @@ between the parts and the design rules.
 ## Context and frame
 
 - `context_init` receives in `Context_Desc` the allocator, the capacities of a frame (`max_*`, with
-  their defaults in `context.odin`), the fonts, the theme (it is copied; `THEME_EDITOR` if nil), the
-  navigation and the host callbacks (clipboard and `draw_user`).
+  their defaults in `context.odin`), the fonts, the sheet ([sheet](#sheet)), the navigation and the
+  host callbacks (clipboard and `draw_user`).
 - A frame goes from `frame_begin(ctx, input)` to `frame_end`, which returns the draw list; its
   slices belong to the context and hold until the next `frame_begin`. `pointer_consumed` and
   `keyboard_consumed` tell the host whether the UI took the pointer or the keyboard, and
@@ -74,7 +74,7 @@ each screen that did not change this way.
     submenu and tooltip, of the editor and of the tree, is placed this way and by nothing else**:
     no widget computes where a floating surface goes, so its first frame is already in its place.
   - What floats is not cut by the clip of its ancestors, except inside a box with `clip_floats`.
-- The layers (`LAYER_*` in `theme.odin`) order the floating surfaces. A `Parent` float without
+- The layers (`LAYER_*` in `context.odin`) order the floating surfaces. A `Parent` float without
   `layer` stays in its parent's layer: the layout places each layer after the lower ones, and in
   another it would end up behind and far away.
 
@@ -188,7 +188,7 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   reference, looks sharp.
 - **Faces.** Without `fonts` there are `FONT_DEFAULTS` embedded fonts from `assets/fonts`: Inter 4.1
   Regular, Medium and SemiBold and JetBrains Mono (`FONT_MONO`, the code), with the faces of
-  `FONT_FACES_EDITOR` (the sizes and weights of the Vue prototype and those of the code). Measuring
+  `FONT_FACES_EDITOR` (the sizes and weights of the editor's theme and those of the code). Measuring
   and drawing a text with different fonts misaligns it. `font_add` and `font_replace` keep the face
   and glyph indices that existed: the first font added is `FONT_DEFAULTS`.
 - **Rasterization.** The light auto-hinter aligns heights vertically to the pixel grid and leaves
@@ -221,7 +221,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
-  `prose` gives `PARAGRAPH_LINE`, that of the prototype's chat messages, in whole units. The
+  `prose` gives `PARAGRAPH_LINE`, that of running text such as the messages of the chat, in whole
+  units. The
   baseline lands on a device pixel with the ascent rounded, as in Chrome.
 
 ## Interaction
@@ -232,8 +233,7 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   registered; each widget is clipped by the container with clip that contains it.
 - `ctx.active` holds the pointer from when it was pressed on it; while there is one no other is
   hot. `ctx.focus` is taken by the focusable widget that is pressed; a press that none takes leaves
-  it at 0. `Theme.activate_on_press` decides whether `clicked` happens on press (editor) or on
-  release.
+  it at 0. `clicked` happens on press, or on release over it with `Context.release_activates`.
 - With `Context_Desc.navigation`:
   - Tab traverses the focusable widgets of its group, first those with `order`; the arrows or the
     gamepad go to the nearest in that direction (the facing one first). `Focus_Link` fixes the
@@ -286,15 +286,19 @@ All take the context, an id and their state by parameter.
   - A code block shows, while the pointer is over it, a button that copies its code with
     `clipboard_set`; the button does not change the height. The ids of what it builds derive from
     the given id.
-- **Buttons.** `button` takes a `Button_Style`: `Well` is a value that is chosen, with the well and
-  border of a field; `Toggle` is like `Ghost` off and `toggle_on` on (a tab that is shown, an open
-  menu). `Button.padding` zero is the automatic inset, positive fixes it and negative removes it.
-  - Disabled does not respond. `Ghost` and `Tab` show no fill, not even with the pointer over them;
-    `Field` and `Accent` keep it, and everything is drawn with `color_faded`, like the prototype's
-    `opacity`. `row` and the menu items too.
-- **Structure.** `column_label` is the label of a row: always of the width of `Theme.label_width`,
-  so the controls of all rows start in the same column, as in the prototype; one that does not fit
-  ends in `…` and never pushes its controls.
+- **Buttons.** Without a `look`, `button` is the style `button` of the sheet in `Button.variant`
+  (`ghost` when empty), with `active` as the state `Selected`: `well` is a value that is chosen,
+  with the well and border of a field; `toggle` is like `ghost` off and `toggle_on` on (a tab that
+  is shown, an open menu). `Button.padding` zero is the automatic inset, positive fixes it and
+  negative removes it.
+  - Disabled does not respond. `ghost` and `tab` show no fill, not even with the pointer over them;
+    `field` and `accent` keep it, and everything is drawn at 40 % of its opacity (`color_faded`).
+    `row` and the menu items too.
+- **The editor kit** (`editor/kit`, engine-time: a game does not contain it) has the controls only
+  the editor and its plugins use: sections, property rows, segments and tabs, switches, vector,
+  slider and color fields and the color picker. `kit.column_label` is the label of a row: always of
+  the width of the token `label_width`, so the controls of all rows start in the same column; one
+  that does not fit ends in `…` and never pushes its controls.
 - **Read-only scopes.** `disabled_begin`/`disabled_end` register the widgets as `Disabled`, without
   presses or navigation; the fields cancel an open edit or scrub without confirming their value. The
   editor uses it for Details and the entity inspectors reserved by another participant; the
@@ -307,7 +311,7 @@ All take the context, an id and their state by parameter.
   and draws only the lines in view. The options of `Text_Field` (`live`, `bare`, `inline`,
   `password`…) are commented in `text_edit.odin`; `password` only masks the paint, and its owner
   controls showing it and clearing its buffers.
-- A field is a well (`Theme.well`) with an outline; while editing it takes the accent outline.
+- A field is a well (the token `well`) with an outline; while editing it takes the accent outline.
 - A game field (`style`) takes everything from the style and its first click places the cursor.
 - There is only one field in edit per context (`ctx.edit`, up to `TEXT_EDIT_CAPACITY` bytes, what
   the AI chat message admits). The cursor blinks with `Input.dt` without allocating.
@@ -344,9 +348,9 @@ All take the context, an id and their state by parameter.
   - **Choosing a value is a single component:** `menu_button`, a `Ghost` button with an arrow that
     opens its menu; the chosen option goes with `checked`, the groups with `menu_header` and the
     destructive with `Menu_Item.danger`.
-  - Menus follow the prototype (`Popover.vue`): a bar menu measures at least `MENU_WIDTH`, each item
-    measures `Theme.control` and the icon column (`MENU_ICON`) exists only if some item has an icon
-    (according to the previous frame). A menu without icons starts its text where its titles start.
+  - A bar menu measures at least `MENU_WIDTH`, each item measures the token `control` and the icon
+    column (`MENU_ICON`) exists only if some item has an icon (according to the previous frame). A
+    menu without icons starts its text where its titles start.
   - Every tooltip appears after the pointer rests `TOOLTIP_DELAY` on the same element, under the
     pointer, or over it where it does not fit under.
   - A click outside a popup only closes it; Escape closes the last (the submenu first).
@@ -365,9 +369,16 @@ All take the context, an id and their state by parameter.
   - When the keyboard or the gamepad move the focus, the areas that contain it bring it into view
     from the inside out.
 
-### Theme
+### Sheet
 
-`THEME_EDITOR` is the editor's look and the direction Mirai follows: neutral grays, no boxes inside
+The look of what nothing else styles is the sheet of the context: the records of a style file, a
+`.ui` of tokens and named styles like a game's, read by the same code (`context_sheet_set`,
+`tree_load`). `tone` and `metric` give a token, `sheet_look` a style resolved for a variant and
+states. A context without one (a game's) has none: its controls take their look from their nodes.
+The editor's is `assets/editor/theme.ui`, which `kit.theme_set` gives its context; it is edited as
+any `.ui`, with `mirai ui write` or the visual editor.
+
+The theme is the editor's look and the direction Mirai follows: neutral grays, no boxes inside
 boxes, violet only for what is active and primary. Each layer is one step lighter than the one
 behind it (bar, document canvas, `panel`, `card`, `raised`) and a field (`well`) is darker than its
 card, so that a panel stands out from what is behind it and a card from its panel without depending
@@ -386,7 +397,7 @@ or the controls of the editor panels:
   area and `skin_look` gives a button images or colors per state.
 - **Game controls**: a button, a checkbox, a slider, a number and a dropdown are the editor's with
   a `look`; a radio, a selector and a field are in `game.odin`. Every color and corner comes from
-  the `Node_Style` resolved for its state (`widget_states`): neither the theme nor constants.
+  the `Node_Style` resolved for its state (`widget_states`): neither the sheet nor constants.
   `fill`, `stroke`, corners and text are the box (and the list of a dropdown); `track` the track of
   a slider and the current row of a dropdown; `knob` the knob; `mark` the dot, the tick, the arrows
   and the chosen option.
@@ -520,7 +531,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 ### Styles and variants
 
 - `Style_Patch.fields` chooses the fields it replaces, one by one also in text: a change of the
-  style in what the rule does not fix reaches it. Colors can come from `Theme` tokens.
+  style in what the rule does not fix reaches it.
 - `Style_Variant` selects a style row by variant (zero is a wildcard) and states, which must all be
   active. `Focused` is the navigation focus with its ring, not the one a click gives: it does not
   look like hover.
@@ -533,7 +544,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
   does not lose it.
 - A shadow without blur and with an offset is a solid copy of its shape; without blur or offset, the
-  theme's default shadow.
+  token `shadow` of the sheet.
 - `tree_settle` (`tree_names.odin`) is where the names of a `.ui` resolve: what a token gives, what
   a style with `extends` takes (`Tree_Style_Info.sets` says what it sets itself), what a state with
   `extends` starts from, and the layout a node takes from its style (`Tree_Node.layout_own` says

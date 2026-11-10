@@ -361,6 +361,8 @@ Numbered layers; a package only imports lower layers.
   and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
+  `editor/kit` holds the widgets only the editor and its plugins use and reads its theme, a style
+  file of the kind a game's interfaces use, so `ui` is what a game contains.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
   `plugins:<name>/editor`. What only some games use is a plugin and adds nothing to the core, so
   physics, game networking and player spawning are plugins too. A plugin imports the layers below
