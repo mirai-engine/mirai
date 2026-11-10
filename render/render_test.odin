@@ -1116,7 +1116,7 @@ render_highlight_outlines_silhouette_without_scene_rebuild :: proc(t: ^testing.T
 render_extended_highlights_keep_each_agent_color_and_mirrored_winding :: proc(t:^testing.T) {
     f:Cube_Fixture
     settings:=test_settings()
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     if !cube_fixture_init(t,&f,96,64,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
@@ -1282,7 +1282,6 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
     f: Cube_Fixture
     settings := test_settings()
     settings.gi_enabled = false
-    settings.reflections = false
     settings.taa = true
     settings.resolution = Render_Scale(0.5)
     if !cube_fixture_init(t, &f, 256, 160, settings) {return}
