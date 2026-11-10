@@ -110,6 +110,7 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     materials_api_register(s,st)
     audio_api_register(s,st)
     records_api_register(s,st)
+    texts_api_register(s,st)
     programs_api_register(s,st)
     material_document_register(s,st)
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}

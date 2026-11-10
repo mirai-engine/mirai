@@ -179,8 +179,8 @@ Texts_Written :: struct {
 }
 
 // The files the changes touched: their keys in order, the language texts
-// are written in first. project names the ids of those made now.
-texts_written :: proc(t:^Texts,types:^asset.Types,project:string) -> (written:[]Texts_Written,problem:string) {
+// are written in first. fresh: the id TEXTS_HOME takes when it is made now.
+texts_written :: proc(t:^Texts,types:^asset.Types,fresh:base.Asset_Id) -> (written:[]Texts_Written,problem:string) {
     context.allocator=context.temp_allocator
     out:=make([dynamic]Texts_Written)
     for &file,at in t.files {
@@ -196,7 +196,7 @@ texts_written :: proc(t:^Texts,types:^asset.Types,project:string) -> (written:[]
             if any {append(&rows,&row)}
         }
         slice.sort_by(rows[:],proc(a,b:^Texts_Row) -> bool {return a.key<b.key})
-        desc:=asset.Strings_Desc{id=file.id if file.id!={} else asset.content_id(project,"strings",file.path)}
+        desc:=asset.Strings_Desc{id=file.id if file.id!={} else fresh}
         languages:=make([dynamic]asset.String_Language)
         columns:=make([]u32,len(t.languages)) // of each language: its row in the file
         for code,language in t.languages {

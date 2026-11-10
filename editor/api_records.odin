@@ -863,7 +863,7 @@ records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) 
 records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Context,leaves:[]Records_Api_Leaf) {
     info:=s.app.info
     ws:=info.schema
-    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),text=serial.TYPE_NONE,edit=e,registry=&s.app.assets.registry}
+    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),edit=e,registry=&s.app.assets.registry}
     refs:=make([dynamic]Records_Api_Ref_Type,context.temp_allocator)
     for &r,i in info.records {
         if t,found:=ws.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,i,records.type_name(info,i)})}
@@ -1108,7 +1108,7 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
     c,leaves:=records_api_context(s,&e)
-    if !records_api_row_put(s,call,&c,leaves,row,&p) {return}
+    if !records_api_row_put(call,&c,row,&p) {return}
     if .Name in p.given && p.name!=p.row {
         if message:=records.row_rename(&e,row,p.name);message!="" {
             api.call_fail(call,api.INVALID_PARAMS,message)
@@ -1135,7 +1135,7 @@ api_records_add :: proc(s:^Session,call:^api.Call) {
         return
     }
     c,leaves:=records_api_context(s,&e)
-    if !records_api_row_put(s,call,&c,leaves,row,&p) {return}
+    if !records_api_row_put(call,&c,row,&p) {return}
     if !records_api_publish(s,call,&e,"Add record") {return}
     records_api_table_write(s,call.out,&c,leaves,[]int{row},false)
 }

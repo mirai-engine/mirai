@@ -1726,13 +1726,14 @@ doc_node_key_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,d:^Documen
     node_args.keys,node_args.values=d.keys,d.values
     key,localized,read:=tree_arg_string(&node_args,"key")
     if !read || !localized {return read}
+    if args.texts==nil {reading_broke(args.reading,"key: the document is read without the texts of the game");return false}
     text:=records_text(r,n.text)
     if key=="" {
         if text=="" {return doc_failed(args.reading,"key: \"\" makes the key from the text of the node, and it has none; give text, or the key")}
-        key=texts_key(&args.texts,text)
+        key=texts_key(args.texts,text)
     }
     if text!="" {
-        if problem:=texts_set(&args.texts,key,args.texts.languages[0],text);problem!="" {return doc_failed(args.reading,"key: %s",problem)}
+        if problem:=texts_set(args.texts,key,args.texts.languages[0],text);problem!="" {return doc_failed(args.reading,"key: %s",problem)}
     }
     records_text_set(r,&n.text,key)
     n.flags+={.Localized}

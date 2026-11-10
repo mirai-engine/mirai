@@ -24,7 +24,7 @@ Tree_Args :: struct {
     asset:base.Asset_Id, // the .ui edited
     assets:Assets,
     info:^core.World_Info,  // the types of the game the paths of a document are checked against; nil: none are
-    texts:Texts,            // of the assets: what a node with a key sets; whoever writes the document writes texts_written
+    texts:^Texts,           // of the assets: what a node with a key sets; whoever writes the document writes texts_written
     libs:^[dynamic]Doc_Lib, // the files a document takes names from
 }
 
@@ -55,10 +55,10 @@ tree_object :: proc(reading:^Reading,text:string,what:string) -> (keys,values:[d
     }
 }
 
-// The params of a reading, read against the assets and the types of the
-// game. source: the code of the language the texts of the game are written in.
-tree_args :: proc(reading:^Reading,a:Assets,info:^core.World_Info,source:string) -> (args:Tree_Args,ok:bool) {
-    args.reading,args.info,args.texts=reading,info,texts_read(a,source)
+// The params of a reading, read against the assets, the types of the game
+// and its texts.
+tree_args :: proc(reading:^Reading,a:Assets,info:^core.World_Info,texts:^Texts) -> (args:Tree_Args,ok:bool) {
+    args.reading,args.info,args.texts=reading,info,texts
     if a.registry!=nil {args.types,args.registry,args.assets=a.types,a.registry,a}
     args.keys,args.values,ok=tree_object(reading,reading.raw,"params")
     return

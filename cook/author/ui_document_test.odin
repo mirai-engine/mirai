@@ -8,6 +8,17 @@ import "mirai:asset"
 import "mirai:std/serial"
 import "mirai:ui"
 
+// The texts the sample shows: what its keys say.
+@(private="file")
+sample_texts :: proc() -> Texts {
+    texts:=texts_read({},"en")
+    texts_set(&texts,"hud.trips","en","Trips")
+    texts_set(&texts,"hud.trips","es","Viajes")
+    texts_set(&texts,"fuel","en","Fuel")
+    for &file in texts.files {file.changed=false}
+    return texts
+}
+
 // A hud with a named style and its rule, a localized title with a look of its
 // own, a bar that holds a progress and a localized label without a name, and
 // a button that plays an animation.
@@ -16,10 +27,10 @@ document_sample :: proc(t:^testing.T,r:^Records) -> bool {
     texts:=make([dynamic]u8,context.temp_allocator)
     nodes:=[]ui.Tree_Node{
         ui.tree_node_record(&texts,-1,{kind=.Box,name="hud",float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left}}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="title",text="Trips",bind_text="trips"}),
+        ui.tree_node_record(&texts,0,{kind=.Text,name="title",text="hud.trips",bind_text="trips",flags={.Localized}}),
         ui.tree_node_record(&texts,0,{kind=.Box,name="bar"}),
         ui.tree_node_record(&texts,2,{kind=.Progress,name="fuel",bind_value="fuel"}),
-        ui.tree_node_record(&texts,2,{kind=.Text,text="Fuel"}), // without a name, as generated files have them
+        ui.tree_node_record(&texts,2,{kind=.Text,text="fuel",flags={.Localized}}), // without a name, as generated files have them
         ui.tree_node_record(&texts,-1,{kind=.Button,name="menu",text="Menu"}),
     }
     styles:=[]ui.Node_Style{{},{fill={20,20,30,255},radius={8,8,8,8}},{text={size=18}}}
@@ -29,14 +40,6 @@ document_sample :: proc(t:^testing.T,r:^Records) -> bool {
     if !testing.expect(t,records_load(r,{text=texts[:],nodes=nodes,styles=styles,style_infos=infos},context.allocator)) {return false}
     r.nodes[0].style,r.nodes[1].style=1,2
     append(&r.variants,ui.Tree_Style_Variant{style=1,states={.Hovered},patch={fields={.Fill},values={fill={40,40,60,255}}}})
-    for row in ([2][2]int{{1,77},{4,78}}) {
-        r.nodes[row[0]].flags+={.Localized}
-        r.nodes[row[0]].text_id=u64(row[1])
-        translation:=ui.Tree_Translation{id=u64(row[1])}
-        ui.tree_text_set(translation.language[:],"es")
-        append(&r.translations,translation)
-        records_text_set(r,&r.translations[len(r.translations)-1].text,"Traducido")
-    }
     pop:=records_clip(r,"pop",.Opacity,{0,0,0,0},{1,0,0,0},0.2)
     set:=records_anim_set(r,&r.nodes[5])
     r.anim_sets[set].shown=ui.Anim(pop+1)
@@ -44,11 +47,11 @@ document_sample :: proc(t:^testing.T,r:^Records) -> bool {
 }
 
 @(private="file")
-document_text :: proc(types:^asset.Types,r:^Records,root:int) -> string {
+document_text :: proc(types:^asset.Types,r:^Records,root:int,texts:^Texts=nil) -> string {
     buffer:=make([]u8,1<<16,context.temp_allocator)
     w:serial.Writer
     serial.writer_init_fixed(&w,buffer)
-    document_write(&w,types,r,root)
+    document_write(&w,types,r,root,texts=texts)
     return string(serial.writer_bytes(&w))
 }
 
@@ -58,20 +61,21 @@ a_document_written_back_leaves_the_file_as_it_was :: proc(t:^testing.T) {
     r:Records
     if !document_sample(t,&r) {return}
     defer records_destroy(&r)
+    texts:=sample_texts()
     for root in ([2]int{-1,0}) {
-        before:=document_text(&types,&r,root)
-        translations:=slice.clone(r.translations[:],context.temp_allocator)
+        before:=document_text(&types,&r,root,&texts)
         reading:Reading
         args:=call_args(&reading,&types,"{}")
+        args.texts=&texts
         made,removed,ok:=document_apply(&args,&r,root,before)
         if !testing.expectf(t,ok,"%s",reading.problem) {return}
         testing.expect(t,made==0 && removed==0)
-        testing.expect_value(t,document_text(&types,&r,root),before)
-        testing.expect(t,slice.equal(r.translations[:],translations),"the translations stay row by row")
+        testing.expect_value(t,document_text(&types,&r,root,&texts),before)
+        testing.expect(t,!texts.files[0].changed && len(texts.rows)==2,"the texts stay as they were")
     }
     title:=document_row_of(&r,"title")
-    testing.expect(t,.Localized in r.nodes[title].flags && r.nodes[title].text_id==77 && len(r.translations)==2)
-    testing.expect(t,r.nodes[4].name[0]==0 && r.nodes[4].text_id==78,"a node without a name is matched by place and keeps none")
+    testing.expect(t,.Localized in r.nodes[title].flags && records_text(&r,r.nodes[title].text)=="hud.trips")
+    testing.expect(t,r.nodes[4].name[0]==0 && records_text(&r,r.nodes[4].text)=="fuel","a node without a name is matched by place and keeps none")
     testing.expect(t,records_load_as_tree(&r))
 }
 
@@ -98,7 +102,6 @@ a_document_of_a_node_changes_that_node_alone :: proc(t:^testing.T) {
     testing.expect_value(t,r.nodes[0].float,node_default(.Box).float)
     testing.expect_value(t,records_text(&r,r.nodes[2].text),"Hi")
     testing.expect(t,mem.compare_ptrs(&r.nodes[3],&menu,size_of(ui.Tree_Node))==0)
-    testing.expect_value(t,len(r.translations),0)
     testing.expect(t,records_load_as_tree(&r))
 }
 
@@ -122,55 +125,54 @@ a_document_without_nodes_changes_only_the_styles_and_animations_it_names :: proc
     testing.expect_value(t,r.anim_sets[r.nodes[5].anims-1].shown,ui.Anim(0))
 }
 
+// A node with a key shows what the key says: the document gives that text
+// beside it, and writing it sets the key in the language texts are written
+// in. An empty key is made from the text: equal texts share one, and a name
+// another text took gets a number.
 @(test)
-a_document_declares_the_text_of_a_node_in_each_language :: proc(t:^testing.T) {
+a_node_with_a_key_reads_and_writes_its_text_in_the_texts_of_the_game :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     r:Records
     if !document_sample(t,&r) {return}
     defer records_destroy(&r)
-    write :: proc(t:^testing.T,types:^asset.Types,r:^Records,node,document:string) -> bool {
+    texts:=sample_texts()
+    write :: proc(t:^testing.T,types:^asset.Types,r:^Records,texts:^Texts,node,document:string) -> bool {
         reading:Reading
         args:=call_args(&reading,types,"{}")
+        args.texts=texts
         _,_,ok:=document_apply(&args,r,document_row_of(r,node) if node!="" else -1,document)
         return testing.expectf(t,ok,"%s",reading.problem)
     }
-    in_language :: proc(r:^Records,id:u64,code:string) -> string {
-        at:=records_translation(r,id,code)
-        return records_text(r,r.translations[at].text) if at>=0 else ""
+    key_of :: proc(r:^Records,node:string) -> string {return records_text(r,r.nodes[document_row_of(r,node)].text)}
+    first:=document_text(&types,&r,-1,&texts)
+    testing.expectf(t,strings.contains(first,`"text":"Trips","key":"hud.trips"`),"a localized node says its text and its key: %s",first)
+    if !write(t,&types,&r,&texts,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi","key":"hud.trips"}]}`) {return}
+    testing.expect(t,.Localized in r.nodes[document_row_of(&r,"title")].flags && key_of(&r,"title")=="hud.trips")
+    testing.expect_value(t,texts_text(&texts,"hud.trips","en"),"Hi")
+    testing.expect_value(t,texts_text(&texts,"hud.trips","es"),"Viajes")
+    testing.expect(t,texts.files[0].changed)
+    // A key alone shows what it already says.
+    if !write(t,&types,&r,&texts,"menu",`{"nodes":[{"name":"menu","kind":"Button","key":"hud.trips"}]}`) {return}
+    testing.expect(t,strings.contains(document_text(&types,&r,document_row_of(&r,"menu"),&texts),`"text":"Hi","key":"hud.trips"`))
+    // Without a key it is not localized, and the key keeps its texts.
+    if !write(t,&types,&r,&texts,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi"}]}`) {return}
+    testing.expect(t,.Localized not_in r.nodes[document_row_of(&r,"title")].flags && key_of(&r,"title")=="Hi" && texts_text(&texts,"hud.trips","es")=="Viajes")
+    // A key made from the text: shared by the nodes that say it, numbered where another text has the name.
+    if !write(t,&types,&r,&texts,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Start","key":""}]}`) {return}
+    if !write(t,&types,&r,&texts,"menu",`{"nodes":[{"name":"menu","kind":"Button","text":"Start","key":""}]}`) {return}
+    if !write(t,&types,&r,&texts,"fuel",`{"nodes":[{"name":"fuel","kind":"Progress","text":"Start!","key":""}]}`) {return}
+    testing.expect(t,key_of(&r,"title")=="start" && key_of(&r,"menu")=="start" && key_of(&r,"fuel")=="start_2")
+    testing.expect(t,texts_text(&texts,"start","en")=="Start" && texts_text(&texts,"start_2","en")=="Start!")
+    made:=[]struct{text,key:string}{
+        {"Score: {coins}","score_coins"},
+        {"...","text"},
+        {"Start","start"},
+        {"The quick brown fox jumps over the lazy dog again","the_quick_brown_fox_jumps_over_the_lazy"},
     }
-    first:=document_text(&types,&r,-1)
-    testing.expectf(t,strings.contains(first,`"text":"Trips","translations":{"es":"Traducido"},"text_id":"000000000000004d"`),"a localized node says its translations and their id: %s",first)
-    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi","translations":{"fr":"Salut","es":"Hola","de":""}}]}`) {return}
-    title:=&r.nodes[document_row_of(&r,"title")]
-    testing.expect(t,.Localized in title.flags && title.text_id==77,"a node keeps the id of its text")
-    testing.expect_value(t,in_language(&r,77,"es"),"Hola")
-    testing.expect_value(t,in_language(&r,77,"fr"),"Salut")
-    testing.expect_value(t,in_language(&r,78,"es"),"Traducido")
-    testing.expect_value(t,len(r.translations),3)
-    // Without translations it is not localized; what it had waits under its id.
-    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi"}]}`) {return}
-    title=&r.nodes[document_row_of(&r,"title")]
-    testing.expect(t,.Localized not_in title.flags && in_language(&r,77,"fr")=="Salut")
-    testing.expect(t,!strings.contains(document_text(&types,&r,-1),"Salut"))
-    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi","translations":{}}]}`) {return}
-    title=&r.nodes[document_row_of(&r,"title")]
-    testing.expect(t,.Localized in title.flags && title.text_id==77 && in_language(&r,77,"fr")=="" && len(r.translations)==1)
-    // A new node takes the id its document gives, or one of its own.
-    if !write(t,&types,&r,"menu",`{"nodes":[{"name":"menu","kind":"Button","text":"Menu","translations":{"es":"Menú"},"text_id":"00000000000000aa"}]}`) {return}
-    if !write(t,&types,&r,"fuel",`{"nodes":[{"name":"fuel","kind":"Progress","bind_value":"fuel","translations":{"it":"Benzina"}}]}`) {return}
-    fuel:=r.nodes[document_row_of(&r,"fuel")].text_id
-    testing.expect_value(t,in_language(&r,0xaa,"es"),"Menú")
-    testing.expect(t,fuel!=0 && fuel!=77 && fuel!=78 && fuel!=0xaa && in_language(&r,fuel,"it")=="Benzina")
-    // A localized node the file keeps without an id stays so until it has a translation.
-    bar:=document_row_of(&r,"bar")
-    r.nodes[bar].flags+={.Localized}
-    bare:=document_text(&types,&r,bar)
-    testing.expect(t,strings.contains(bare,`"kind":"Box","translations":{}`) && !strings.contains(bare,`"translations":{},"text_id"`))
-    if !write(t,&types,&r,"bar",bare) {return}
-    testing.expect(t,r.nodes[document_row_of(&r,"bar")].text_id==0 && .Localized in r.nodes[document_row_of(&r,"bar")].flags)
-    again:=document_text(&types,&r,-1)
-    if !write(t,&types,&r,"",again) {return}
-    testing.expect_value(t,document_text(&types,&r,-1),again)
+    for c in made {testing.expect_value(t,texts_key(&texts,c.text),c.key)}
+    again:=document_text(&types,&r,-1,&texts)
+    if !write(t,&types,&r,&texts,"",again) {return}
+    testing.expect_value(t,document_text(&types,&r,-1,&texts),again)
     testing.expect(t,records_load_as_tree(&r))
 }
 
@@ -190,18 +192,19 @@ a_document_says_where_it_cannot_be_written :: proc(t:^testing.T) {
         {"",`{"styles":{"card":{"family":"Box","rules":[{"states":["Hovered"],"colour":1}]}}}`,"styles.card: rules[0]: a state has no 'colour'"},
         {"",`{"styles":{"card":null}}`,"styles.card: nodes still take it"},
         {"",`{"nodes":[{"name":"x","kind":"Text","style":"card","look":{"radius":1}}]}`,"nodes[0]: look: a node has a style or a look"},
-        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{"spanish":"Hola"}}]}`,"nodes[0]: translations: 'spanish' is no language a game can be in; give its code: en,"},
-        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{"es":7}}]}`,"nodes[0]: translations.es must be the text"},
-        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","text_id":"000000000000004d"}]}`,"nodes[0]: text_id: the id of the translations of a node goes with them"},
-        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{},"text_id":"77"}]}`,"nodes[0]: text_id: '77' is no id of a text: 16 hexadecimal digits"},
-        {"",`{"nodes":[{"name":"a","kind":"Text","translations":{},"text_id":"000000000000004d"},{"name":"b","kind":"Text","translations":{},"text_id":"000000000000004d"}]}`,"nodes[0]: text_id: 000000000000004d is also the text of the node b"},
-        {"",`{"nodes":[{"name":"x","kind":"Text","flags":["Localized"]}]}`,"nodes[0]: flags: a node is Localized by its translations"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","key":""}]}`,"nodes[0]: key: \"\" makes the key from the text of the node, and it has none"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","key":7}]}`,"nodes[0]: key must be a string"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","key":"a_key_that_goes_on_and_on_past_the_sixty_three_bytes_a_key_can_have"}]}`,"nodes[0]: key: a key is a name shorter than 64 bytes"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{"es":"Hola"}}]}`,"nodes[0]: the node has no field 'translations'"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","flags":["Localized"]}]}`,"nodes[0]: flags: a node is Localized by its key"},
     }
     for c in cases {
         r:Records
         if !document_sample(t,&r) {return}
         reading:Reading
         args:=call_args(&reading,&types,"{}")
+        texts:=sample_texts()
+        args.texts=&texts
         root:=document_row_of(&r,c.node) if c.node!="" else -1
         _,_,ok:=document_apply(&args,&r,root,c.document)
         testing.expect(t,!ok)

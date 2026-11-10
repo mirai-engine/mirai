@@ -228,7 +228,8 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         path=strings.clone(record.path,context.temp_allocator)
     }
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=texts_read(p.assets,p.languages[0])}
+    texts:=texts_read(p.assets,p.languages[0])
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=&texts}
     applied:bool
     if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
     params:=widget_params(p.assets,id)
@@ -237,7 +238,7 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
-    if problem=texts_put(p,&args.texts);problem!="" {return}
+    if problem=texts_put(p,&texts);problem!="" {return}
     // What the files that use this widget gave follows where its parameters go now.
     written.followed=widget_params_follow(p.assets,id,params_changes(params,data_params(records_data(&r),imports)),proc(user:rawptr,id:base.Asset_Id,records:^Records) -> bool {
         p:=(^Project)(user)
@@ -270,7 +271,7 @@ file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (pr
 @(private)
 texts_put :: proc(p:^Project,t:^Texts) -> (problem:string) {
     written:[]Texts_Written
-    if written,problem=texts_written(t,&p.types,p.name);problem!="" {return}
+    if written,problem=texts_written(t,&p.types,asset.content_id(p.name,"strings",TEXTS_HOME));problem!="" {return}
     for file in written {
         put:Written
         if problem=file_put(p,asset.registry_file_path(&p.registry,file.path,context.temp_allocator),file.path,file.bytes,&put);problem!="" {return}
