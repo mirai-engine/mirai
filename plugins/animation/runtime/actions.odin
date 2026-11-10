@@ -131,7 +131,7 @@ action_content :: proc(cache:^Actions_Assets,app:^host.App,id:base.Asset_Id,hint
     context.allocator=app.allocator;cache.allocator=app.allocator
     row:=int(hint^)-1 if hint!=nil else -1
     if row<0 || row>=len(cache.contents) || cache.contents[row].id!=id {row=-1;for content,i in cache.contents {if content.id==id {row=i;break}}}
-    if row<0 {row=len(cache.contents);if !program_array_reserve(&cache.contents,row+1) {return nil};append(&cache.contents,Action_Content{id=id})}
+    if row<0 {row=len(cache.contents);if !program_array_reserve(&cache.contents,row+1) || append(&cache.contents,Action_Content{id=id})!=1 {return nil}}
     if hint!=nil {hint^=i32(row+1)}
     content:=&cache.contents[row]
     if content.checked==assets_stamp(app) {return content if content.valid else nil}

@@ -206,14 +206,17 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     f.d=ddot(f.n,a)
 }
 
-@(private="file") qh_face_add :: proc(q:^Qh,a,b,c:i32) -> i32 {
-    index:i32
-    if len(q.free)>0 {index=pop(&q.free)} else {index=i32(len(q.faces));append(&q.faces,Qh_Face{})}
+// False without temporary memory.
+@(private="file") qh_face_add :: proc(q:^Qh,a,b,c:i32) -> (index:i32,ok:bool) {
+    if len(q.free)>0 {index=pop(&q.free)} else {
+        index=i32(len(q.faces))
+        if _,err:=append(&q.faces,Qh_Face{});err!=nil {return -1,false}
+    }
     f:=&q.faces[index]
     f^={v={a,b,c},adj={-1,-1,-1},conflict=-1,far=-1,alive=true}
     qh_plane(q,f)
     q.alive+=1
-    return index
+    return index,true
 }
 
 @(private="file") qh_edge_from :: #force_inline proc(f:^Qh_Face,vertex:i32) -> int {
@@ -259,7 +262,8 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
 // the tolerance of a triangle. With `all` the candidates are every face and
 // the answer is final; otherwise they are the new faces, and a point that is
 // not near one of them waits in `deferred` to be tested against every face.
-@(private="file") qh_assign :: proc(q:^Qh,point:i32,candidates:[]i32,all:bool) #no_bounds_check {
+// False without temporary memory.
+@(private="file") qh_assign :: proc(q:^Qh,point:i32,candidates:[]i32,all:bool) -> bool #no_bounds_check {
     best:=i32(-1)
     best_dist:=-max(f64)
     has_flat:=false
@@ -272,21 +276,27 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         if dist>best_dist {best_dist=dist;best=index}
     }
     if best<0 || best_dist<=0 {
-        if has_flat && !all {append(&q.deferred,point)}
-        return
+        if has_flat && !all {return qh_defer(q,point)}
+        return true
     }
-    if best_dist>q.tolerance {qh_link(q,best,point,best_dist);return}
+    if best_dist>q.tolerance {qh_link(q,best,point,best_dist);return true}
     limit:=q.tolerance*q.tolerance
-    if qh_distance2(q,&q.faces[best],p)<=limit {return}
-    if !all {append(&q.deferred,point);return}
+    if qh_distance2(q,&q.faces[best],p)<=limit {return true}
+    if !all {return qh_defer(q,point)}
     nearest:=max(f64)
     for index in candidates {
         f:=&q.faces[index]
         if !f.alive || f.flat || ddot(f.n,p)-f.d<=0 {continue}
         nearest=min(nearest,qh_distance2(q,f,p))
-        if nearest<=limit {return}
+        if nearest<=limit {return true}
     }
     qh_link(q,best,point,math.sqrt(nearest))
+    return true
+}
+
+@(private="file") qh_defer :: proc(q:^Qh,point:i32) -> bool {
+    _,err:=append(&q.deferred,point)
+    return err==nil
 }
 
 @(private="file") qh_push :: proc(q:^Qh,index:i32) {
@@ -361,7 +371,11 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     q.next=make([]i32,n,scratch)
     base.priority_queue_init(&q.heap,2*n+8,scratch)
 
-    first:=[4]i32{qh_face_add(q,i0,i1,i2),qh_face_add(q,i0,i3,i1),qh_face_add(q,i1,i3,i2),qh_face_add(q,i2,i3,i0)}
+    first:[4]i32
+    for corners,k in ([4][3]i32{{i0,i1,i2},{i0,i3,i1},{i1,i3,i2},{i2,i3,i0}}) {
+        added:bool
+        if first[k],added=qh_face_add(q,corners[0],corners[1],corners[2]);!added {return .Out_Of_Memory}
+    }
     for a in first {
         fa:=&q.faces[a]
         for k in 0..<3 {
@@ -376,7 +390,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     }
     for i in 0..<i32(n) {
         if i==i0 || i==i1 || i==i2 || i==i3 {continue}
-        qh_assign(q,i,first[:],true)
+        if !qh_assign(q,i,first[:],true) {return .Out_Of_Memory}
     }
     for index in first {qh_push(q,index)}
 
@@ -398,7 +412,9 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         clear(&pending)
         append(&pending,..q.deferred[:])
         clear(&q.deferred)
-        for point in pending {qh_assign(q,point,everything[:],true)}
+        for point in pending {
+            if !qh_assign(q,point,everything[:],true) {return .Out_Of_Memory}
+        }
         for i in 0..<len(q.faces) {
             f:=&q.faces[i]
             if f.alive && f.far>=0 {qh_push(q,i32(i))}
@@ -407,9 +423,9 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     return .None
 }
 
-// Orders the border of the visible faces into q.horizon. False when the
-// border is not one closed loop.
-@(private="file") qh_horizon :: proc(q:^Qh) -> bool #no_bounds_check {
+// Orders the border of the visible faces into q.horizon. closed: the border
+// is one closed loop.
+@(private="file") qh_horizon :: proc(q:^Qh) -> (closed:bool,error:runtime.Allocator_Error) #no_bounds_check {
     clear(&q.horizon)
     total:=0
     start_face,start_edge:=i32(-1),0
@@ -421,24 +437,24 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
             total+=1
         }
     }
-    if total<3 {return false}
+    if total<3 {return false,nil}
     face,edge:=start_face,start_edge
     for _ in 0..<total {
         f:=&q.faces[face]
         a,b:=f.v[edge],f.v[(edge+1)%3]
-        append(&q.horizon,Qh_Edge{a,b,f.adj[edge]})
+        append(&q.horizon,Qh_Edge{a,b,f.adj[edge]}) or_return
         // Turn around b inside the visible faces until the next border edge.
         edge=(edge+1)%3
         for steps:=0;q.faces[f.adj[edge]].stamp==q.stamp;steps+=1 {
-            if steps>len(q.faces) {return false}
+            if steps>len(q.faces) {return false,nil}
             other:=f.v[(edge+1)%3]
             face=f.adj[edge]
             f=&q.faces[face]
             edge=(qh_edge_from(f,other)+1)%3
         }
-        if f.v[edge]!=b {return false}
+        if f.v[edge]!=b {return false,nil}
     }
-    return face==start_face && edge==start_edge
+    return face==start_face && edge==start_edge,nil
 }
 
 // Faces hidden from the point but enclosed by visible ones would leave a
@@ -451,7 +467,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         if !f.alive || f.stamp==q.stamp || q.labels[index]>=0 {continue}
         size:=0
         clear(&q.stack)
-        append(&q.stack,i32(index))
+        if _,err:=append(&q.stack,i32(index));err!=nil {return false}
         q.labels[index]=regions
         for len(q.stack)>0 {
             g:=&q.faces[pop(&q.stack)]
@@ -460,7 +476,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
                 h:=g.adj[k]
                 if q.faces[h].stamp==q.stamp || q.labels[h]>=0 {continue}
                 q.labels[h]=regions
-                append(&q.stack,h)
+                if _,err:=append(&q.stack,h);err!=nil {return false}
             }
         }
         if size>largest_size {largest_size=size;largest=regions}
@@ -469,7 +485,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     for &f,index in q.faces {
         if !f.alive || f.stamp==q.stamp || q.labels[index]==largest {continue}
         f.stamp=q.stamp
-        append(&q.visible,i32(index))
+        if _,err:=append(&q.visible,i32(index));err!=nil {return false}
     }
     return true
 }
@@ -480,19 +496,26 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     q.stamp+=1
     clear(&q.visible);clear(&q.stack)
     q.faces[seed].stamp=q.stamp
-    append(&q.stack,seed);append(&q.visible,seed)
+    _,no_stack:=append(&q.stack,seed)
+    _,no_visible:=append(&q.visible,seed)
+    if no_stack!=nil || no_visible!=nil {return false}
     for len(q.stack)>0 {
         f:=&q.faces[pop(&q.stack)]
         for k in 0..<3 {
             g:=&q.faces[f.adj[k]]
             if g.stamp==q.stamp || g.flat || !(ddot(g.n,p)-g.d>q.sight) {continue}
             g.stamp=q.stamp
-            append(&q.stack,f.adj[k]);append(&q.visible,f.adj[k])
+            _,no_stack=append(&q.stack,f.adj[k])
+            _,no_visible=append(&q.visible,f.adj[k])
+            if no_stack!=nil || no_visible!=nil {return false}
         }
     }
-    if !qh_horizon(q) {
+    closed,no_horizon:=qh_horizon(q)
+    if no_horizon!=nil {return false}
+    if !closed {
         if !qh_absorb_islands(q) {return false}
-        if !qh_horizon(q) {
+        if closed,no_horizon=qh_horizon(q);no_horizon!=nil {return false}
+        if !closed {
             // The point cannot be added without breaking the surface: forget it.
             f:=&q.faces[seed]
             list:=f.conflict
@@ -512,7 +535,10 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         }
     }
     clear(&q.created)
-    for edge in q.horizon {append(&q.created,qh_face_add(q,edge.a,edge.b,point))}
+    for edge in q.horizon {
+        face:=qh_face_add(q,edge.a,edge.b,point) or_return
+        if _,err:=append(&q.created,face);err!=nil {return false}
+    }
     count:=len(q.created)
     for edge,i in q.horizon {
         f:=&q.faces[q.created[i]]
@@ -523,7 +549,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
     for index in q.visible {
         for i:=q.faces[index].conflict;i>=0; {
             following:=q.next[i]
-            if i!=point {qh_assign(q,i,q.created[:],false)}
+            if i!=point {qh_assign(q,i,q.created[:],false) or_return}
             i=following
         }
     }
@@ -531,7 +557,7 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
         q.faces[index].alive=false
         q.faces[index].conflict=-1
         q.faces[index].far=-1
-        append(&q.free,index)
+        if _,err:=append(&q.free,index);err!=nil {return false}
         q.alive-=1
     }
     for index in q.created {qh_push(q,index)}

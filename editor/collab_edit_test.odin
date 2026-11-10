@@ -3,10 +3,13 @@ package editor
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/api"
 import "mirai:host"
+import wire "mirai:net"
 import "mirai:std/base"
 
 @(test)
@@ -114,4 +117,156 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     local,found:=core.get(core.read(&world.transforms),box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
     document_previous_free(&f.document)
+}
+
+// Selecting holds nothing: what another editor of the session has selected
+// is edited like the rest, by the user and by an agent through the API, and
+// it stays outlined in the color of whoever selected it.
+@(test)
+what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"collab-selected")) {return}
+    defer prefab_fixture_destroy(f)
+    for &storage in f.storages {
+        if storage.info==nil {storage.info=type_info_of(storage.type)}
+    }
+    state:Api_State
+    f.api.state=&state
+    api_schema_build(&f.s,&state)
+    defer api_schema_free(&state)
+    s:=&f.s
+    w:=edited_world(s)
+    e:=entity_create(s,{name="Box",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    id:=api_entity_id(w,e)
+    st:=new(Collab_State)
+    st.role,st.phase=.Host,.Joined
+    st.peers[0]={used=true,joined=true}
+    st.peers[1]={used=true,joined=true,has_pose=true,seen=wire.host_time(&st.host),selection_count=1}
+    st.peers[1].selection[0]=id
+    collab_tables_build(s,st)
+    collab_journal_reset(s,st)
+    f.collab.state=st
+    defer {
+        for message in st.peers[1].out {delete(message)}
+        delete(st.peers[1].out)
+        collab_tables_free(st)
+        journal_reading(&f.edits,false)
+        free(st)
+        f.collab.state=nil
+    }
+    selection_set(&f.selection,{e})
+    Edit :: enum u8 {Move,Scale,Rename,Write,Turn_Off}
+    agent:=Edit_Author(7)
+    cases:=[?]struct{edit:Edit,author:Edit_Author}{{.Move,EDIT_AUTHOR_USER},{.Scale,EDIT_AUTHOR_USER},{.Rename,EDIT_AUTHOR_USER},{.Write,agent},{.Move,agent},{.Turn_Off,EDIT_AUTHOR_USER}}
+    for c,at in cases {
+        steps,told:=len(f.edits.steps),st.sent_ops
+        f.edits.author=c.author
+        done:=true
+        switch c.edit {
+        case .Move: done=transform_set(s,e,{position={f32(at+1),0,0},rotation=1,scale=1})
+        case .Scale:
+            scale:=[3]f32{2,2,2}
+            done=field_write(s,component_table(s,"Transform"),{e},int(offset_of(core.Transform,scale)),mem.ptr_to_bytes(&scale))
+        case .Rename: done=entity_rename(s,e,"Crate")
+        case .Write:
+            method:=api.Method{result_id=Api_Write_Result}
+            result:Api_Write_Result
+            call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
+            api_scene_write(s,&call)
+            done=!call.failed
+            testing.expect(t,done,call.error.message)
+        case .Turn_Off: entity_enabled_set(s,e,false)
+        }
+        edits_commit(&f.edits,w,&f.selection)
+        f.edits.author=EDIT_AUTHOR_USER
+        if !testing.expectf(t,done && len(f.edits.steps)==steps+1,"%v by %d was not done",c.edit,c.author) {continue}
+        testing.expect_value(t,f.edits.steps[steps].author,c.author)
+        collab_edits_send(s,st)
+        testing.expectf(t,st.sent_ops>told,"%v by %d was not told",c.edit,c.author)
+    }
+    testing.expect_value(t,entity_name(w,e),"Crate")
+    testing.expect(t,core.has(&f.world.disabled,e))
+    levels:=make([]u8,len(core.world_entities(w).generation),context.temp_allocator)
+    levels[core.entity_index(e)]=HIGHLIGHT_SELECTED
+    collab_highlights(s,w,levels)
+    testing.expect_value(t,levels[core.entity_index(e)],agent_level(1))
+}
+
+// A file too large to travel stays where it was edited, and every editor of
+// the session is told which, by whom and what makes it the same for all;
+// once it travels, nobody is told of it any more.
+@(test)
+a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
+    host_end,guest_end:=new(Prefab_Fixture),new(Prefab_Fixture)
+    defer {free(host_end);free(guest_end)}
+    if !testing.expect(t,prefab_fixture_init(host_end,"collab-file-host")) {return}
+    defer prefab_fixture_destroy(host_end)
+    if !testing.expect(t,prefab_fixture_init(guest_end,"collab-file-guest")) {return}
+    defer prefab_fixture_destroy(guest_end)
+    for f,i in ([2]^Prefab_Fixture{host_end,guest_end}) {
+        st:=new(Collab_State)
+        st.role,st.phase,st.self=i==0?.Host:.Guest,.Joined,u8(i)
+        st.peers[0]={used=true,joined=true}
+        st.peers[1]={used=true,joined=true}
+        st.peers[2]={used=i==0,joined=i==0} // another guest, for what the host passes on
+        st.peers[1].name_length=copy(st.peers[1].name[:],"Ana")
+        f.collab.state=st
+    }
+    defer for f in ([2]^Prefab_Fixture{host_end,guest_end}) {
+        st:=f.collab.state
+        for &peer in st.peers {
+            for message in peer.out {delete(message)}
+            delete(peer.out);delete(peer.file_bytes)
+        }
+        for path in st.files_out {delete(path)}
+        delete(st.files_out)
+        free(st)
+        f.collab.state=nil
+    }
+    // What the guest changed goes to the host, which passes it on; how many messages the other guest got.
+    send :: proc(guest,host:^Prefab_Fixture) -> (passed:int) {
+        collab_files_send(&guest.s,guest.collab.state)
+        out:=&guest.collab.state.peers[0].out
+        for message in out {
+            collab_receive(&host.s,host.collab.state,1,message,0)
+            delete(message)
+        }
+        clear(out)
+        other:=&host.collab.state.peers[2].out
+        passed=len(other)
+        for message in other {delete(message)}
+        clear(other)
+        return
+    }
+    status :: proc(f:^Prefab_Fixture) -> (result:Api_Collab_Status) {
+        method:=api.Method{result_id=Api_Collab_Status}
+        call:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
+        api_collab_status(&f.s,&call)
+        return
+    }
+    file:=fmt.tprintf("%s/paint.bin",guest_end.root)
+    large:=make([]u8,COLLAB_FILE_BYTES+1);defer delete(large)
+    cases:=[?]struct{bytes:[]u8,travels:bool}{{large[:64],true},{large,false},{large,false},{large[:32],true}}
+    for c,at in cases {
+        guest_end.s.toast_length,host_end.s.toast_length=0,0
+        if !testing.expect(t,file_set(&guest_end.s,file,c.bytes)) {return}
+        passed:=send(guest_end,host_end)
+        held,found:=asset.registry_memory_find(&host_end.assets.registry,"paint.bin")
+        told:=at>0 && cases[at-1].travels!=c.travels && !c.travels
+        for f,i in ([2]^Prefab_Fixture{host_end,guest_end}) {
+            toast:=string(f.s.toast[:f.s.toast_length])
+            testing.expectf(t,told==(strings.contains(toast,"paint.bin") && strings.contains(toast,"repository")),"case %d, end %d: %s",at,i,toast)
+            if i==0 && told {testing.expect(t,strings.contains(toast,"Ana"),toast)}
+            result:=status(f)
+            if !testing.expectf(t,result.unsent_count==(c.travels?0:1),"case %d, end %d: %d files unsent",at,i,result.unsent_count) || c.travels {continue}
+            testing.expect(t,base.text_get(result.unsent[0].path[:])=="paint.bin" && result.unsent[0].peer==1 && result.unsent[0].bytes==u64(len(large)))
+        }
+        if c.travels {
+            testing.expectf(t,found && len(held.data)==len(c.bytes) && passed>0,"case %d: the file reached the host and went on",at)
+        } else {
+            testing.expectf(t,(!found || len(held.data)!=len(c.bytes)) && passed==(told?1:0),"case %d: %d messages passed on",at,passed)
+        }
+    }
 }

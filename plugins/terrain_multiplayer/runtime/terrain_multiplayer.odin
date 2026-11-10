@@ -492,7 +492,11 @@ page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page,problems:^core.Problems
             error:mem.Allocator_Error
             if state.bytes,error=make([]u8,int(chunk.total));error!=nil {state.complete,state.broken=true,true}
         }
-        append(&src.pages,state)
+        if _,err:=append(&src.pages,state);err!=nil {
+            delete(state.bytes)
+            memory_problem(problems)
+            return
+        }
     }
     if len(src.pages)==0 {return}
     a:=&src.pages[len(src.pages)-1]
@@ -518,7 +522,8 @@ page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page,problems:^core.Problems
     a.bytes=values
 }
 
-// Server: what an ask can be told at once: its rate and its tick.
+// Server: what an ask can be told at once: its rate and its tick. Without
+// memory to count the asks of a connection it is refused as Rate.
 @(private)
 ask_admit :: proc(n:^Terrain_Net,connection:multiplayer.Connection,ask:Net_Terrain_Ask,time:core.Time,settings:Terrain_Net_Settings) -> Terrain_Refusal {
     if i32(ask.tick-u32(time.tick))>NET_AHEAD_TICKS {return .Tick}
@@ -526,7 +531,7 @@ ask_admit :: proc(n:^Terrain_Net,connection:multiplayer.Connection,ask:Net_Terra
     rate:^Net_Rate
     for &r in n.rates {if r.connection==connection {rate=&r;break}}
     if rate==nil {
-        append(&n.rates,Net_Rate{connection=connection,tokens=settings.rate,tick=time.tick})
+        if _,err:=append(&n.rates,Net_Rate{connection=connection,tokens=settings.rate,tick=time.tick});err!=nil {return .Rate}
         rate=&n.rates[len(n.rates)-1]
     }
     rate.tokens=min(rate.tokens+f32(time.tick-rate.tick)*time.dt*settings.rate,max(settings.rate,1))

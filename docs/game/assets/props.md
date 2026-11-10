@@ -37,6 +37,8 @@ it belongs to (`assets/island/`), never its kind.
 - `cube_build`, `sphere_build`, `icosphere_build`, `cylinder_build`, `cone_build`, `capsule_build`
   and `plane_build` take the same buffer.
 - `mesh_buffer_paint(m,color)` colors what was built since the last paint.
+- Every `*_build`, `mesh_buffer_paint` and `mesh_buffer_flatten` answers false when there is no
+  memory for it, and leaves the buffer as it was.
 - Parts built at the origin are moved with `mesh_buffer_place(m,first,at,turn,size)`.
 - `asset.content_mesh(c,path,&m,material)` gives the mesh a `.mat`; without one the
   mesh shows its colors on the default material. Its id is the same on every run.

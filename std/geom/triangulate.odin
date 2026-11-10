@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:slice"
+import "mirai:std/base"
 
 Polygon_Rule :: enum {
     // The first loop is the outline and the others are holes in it; a loop may
@@ -39,7 +40,10 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
     for p,i in points {doubles[i]={f64(p.x),f64(p.y)}}
     for size,i in loop_sizes {sizes[i]=i32(size)}
     before:=len(out)
-    if triangulate_loops(&tr,doubles,sizes,out,rule)!=nil {return 0}
+    if triangulate_loops(&tr,doubles,sizes,out,rule)!=nil {
+        base.truncate(out,before)
+        return 0
+    }
     return (len(out)-before)/3
 }
 
@@ -102,14 +106,14 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
 }
 
 // Links the points of a loop as nodes, forwards or backwards.
-@(private="file") loop_link :: proc(tr:^Triangulator,points:[]DVec2,loop:^Tri_Loop,reversed:bool) -> i32 #no_bounds_check {
-    first:=i32(len(tr.point))
+@(private="file") loop_link :: proc(tr:^Triangulator,points:[]DVec2,loop:^Tri_Loop,reversed:bool) -> (first:i32,error:runtime.Allocator_Error) #no_bounds_check {
+    first=i32(len(tr.point))
     count:=loop.count
     for i in 0..<count {
         index:=loop.first+(count-1-i if reversed else i)
-        append(&tr.point,u32(index))
-        append(&tr.prev,first+(i+count-1)%count)
-        append(&tr.next,first+(i+1)%count)
+        append(&tr.point,u32(index)) or_return
+        append(&tr.prev,first+(i+count-1)%count) or_return
+        append(&tr.next,first+(i+1)%count) or_return
     }
     leftmost:=first
     for node in first+1..<first+count {
@@ -117,7 +121,7 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         if a.x<b.x || (a.x==b.x && a.y<b.y) {leftmost=node}
     }
     loop.leftmost=leftmost
-    return first
+    return first,nil
 }
 
 @(private="file") locally_inside :: proc(tr:^Triangulator,points:[]DVec2,a:i32,b:DVec2) -> bool #no_bounds_check {
@@ -178,15 +182,16 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
 }
 
 // Joins the loop of b into the loop of a with a two-way bridge.
-@(private="file") bridge_make :: proc(tr:^Triangulator,a,b:i32) #no_bounds_check {
+@(private="file") bridge_make :: proc(tr:^Triangulator,a,b:i32) -> runtime.Allocator_Error #no_bounds_check {
     a2,b2:=i32(len(tr.point)),i32(len(tr.point))+1
     an,bp:=tr.next[a],tr.prev[b]
-    append(&tr.point,tr.point[a],tr.point[b])
-    append(&tr.prev,b2,bp)
-    append(&tr.next,an,a2)
+    append(&tr.point,tr.point[a],tr.point[b]) or_return
+    append(&tr.prev,b2,bp) or_return
+    append(&tr.next,an,a2) or_return
     tr.next[a]=b;tr.prev[b]=a
     tr.prev[an]=a2
     tr.next[bp]=b2
+    return nil
 }
 
 @(private="file") Ear_Level :: enum {Strict,Loose,Forced}
@@ -220,24 +225,27 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
 // with the largest area that holds no point strictly inside goes, and failing
 // that the corner with the largest area: the loop always ends with every edge
 // used once.
-@(private="file") ears_clip :: proc(tr:^Triangulator,points:[]DVec2,start:i32,flip:bool,out:^[dynamic]u32) #no_bounds_check {
-    emit :: proc(tr:^Triangulator,points:[]DVec2,ear:i32,flip:bool,out:^[dynamic]u32) -> i32 #no_bounds_check {
+@(private="file") ears_clip :: proc(tr:^Triangulator,points:[]DVec2,start:i32,flip:bool,out:^[dynamic]u32) -> runtime.Allocator_Error #no_bounds_check {
+    emit :: proc(tr:^Triangulator,points:[]DVec2,ear:i32,flip:bool,out:^[dynamic]u32) -> (after:i32,error:runtime.Allocator_Error) #no_bounds_check {
         prev,next:=tr.prev[ear],tr.next[ear]
-        if flip {append(out,tr.point[next],tr.point[ear],tr.point[prev])} else {append(out,tr.point[prev],tr.point[ear],tr.point[next])}
+        if flip {append(out,tr.point[next],tr.point[ear],tr.point[prev]) or_return} else {append(out,tr.point[prev],tr.point[ear],tr.point[next]) or_return}
         tr.next[prev]=next;tr.prev[next]=prev
         tr.removed[ear]=true
         // A clip can leave its neighbours reflex only when it was not an ear,
         // but the check is cheap.
         for node in ([2]i32{prev,next}) {
-            if !tr.listed[node] && node_is_reflex(tr,points,node) {tr.listed[node]=true;append(&tr.reflex,node)}
+            if !tr.listed[node] && node_is_reflex(tr,points,node) {
+                append(&tr.reflex,node) or_return
+                tr.listed[node]=true
+            }
         }
-        return next
+        return next,nil
     }
     clear(&tr.reflex)
     for node:=start;true; {
         tr.removed[node]=false
         tr.listed[node]=node_is_reflex(tr,points,node)
-        if tr.listed[node] {append(&tr.reflex,node)}
+        if tr.listed[node] {append(&tr.reflex,node) or_return}
         node=tr.next[node]
         if node==start {break}
     }
@@ -248,12 +256,12 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         // without area: it would pass for a corner of the polygon otherwise.
         a,b,c:=points[tr.point[tr.prev[ear]]],points[tr.point[ear]],points[tr.point[tr.next[ear]]]
         if a==b || b==c || a==c {
-            ear=emit(tr,points,ear,flip,out)
+            ear=emit(tr,points,ear,flip,out) or_return
             stop=ear
             continue
         }
         if _,ok:=ear_test(tr,points,ear,.Strict);ok {
-            next:=emit(tr,points,ear,flip,out)
+            next:=emit(tr,points,ear,flip,out) or_return
             ear=tr.next[next]
             stop=ear
             continue
@@ -271,10 +279,11 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
             }
             if chosen>=0 {break}
         }
-        next:=emit(tr,points,chosen,flip,out)
+        next:=emit(tr,points,chosen,flip,out) or_return
         ear=next
         stop=next
     }
+    return nil
 }
 
 // Takes its memory before it links a node: every point of a loop is a node,
@@ -306,7 +315,7 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
             loop.area+=a.x*b.y-b.x*a.y
             a=b
         }
-        append(&tr.loops,loop)
+        append(&tr.loops,loop) or_return
     }
     for &loop,i in tr.loops {
         hole:=loop.area<0
@@ -329,13 +338,13 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         // An orphan hole is clipped backwards and its triangles flipped, so
         // that its edges keep their direction.
         orphan:=rule==.Orientation && loop.area<0
-        start:=loop_link(tr,points,&loop,orphan || loop.reversed)
+        start:=loop_link(tr,points,&loop,orphan || loop.reversed) or_return
         clear(&tr.order)
         for &hole,j in tr.loops {
             if hole.parent!=i32(i) {continue}
-            loop_link(tr,points,&hole,hole.reversed)
+            loop_link(tr,points,&hole,hole.reversed) or_return
             p:=points[tr.point[hole.leftmost]]
-            append(&tr.order,Tri_Hole{p.x,p.y,i32(j)})
+            append(&tr.order,Tri_Hole{p.x,p.y,i32(j)}) or_return
         }
         slice.sort_by(tr.order[:],proc(a,b:Tri_Hole) -> bool {
             if a.x!=b.x {return a.x<b.x}
@@ -345,16 +354,16 @@ polygon_triangulate :: proc(points:[]Vec2,loop_sizes:[]int,out:^[dynamic]u32,rul
         for entry in tr.order {
             hole:=&tr.loops[entry.loop]
             bridge:=bridge_find(tr,points,hole.leftmost,start)
-            if bridge>=0 {bridge_make(tr,bridge,hole.leftmost);continue}
+            if bridge>=0 {bridge_make(tr,bridge,hole.leftmost) or_return;continue}
             // No way into the outline: the hole is clipped on its own, backwards.
             for node:=hole.leftmost;true; {
                 tr.prev[node],tr.next[node]=tr.next[node],tr.prev[node]
                 node=tr.next[node]
                 if node==hole.leftmost {break}
             }
-            ears_clip(tr,points,hole.leftmost,true,out)
+            ears_clip(tr,points,hole.leftmost,true,out) or_return
         }
-        ears_clip(tr,points,start,orphan,out)
+        ears_clip(tr,points,start,orphan,out) or_return
     }
     return nil
 }

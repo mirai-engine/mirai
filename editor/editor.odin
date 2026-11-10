@@ -45,8 +45,8 @@ TOAST_SECONDS :: f32(2.5)
 TOAST_BYTES :: 160
 HEADLESS_DT :: f32(1.0/60)
 
-// Watch shows the run of another (an agent, the host of the session) without
-// editing it; the game of the user, if any, goes on unseen.
+// Watch shows the run of an agent without editing it; the game of the user,
+// if any, goes on unseen.
 Mode :: enum u8 {Edit,Play,Paused,Simulate,Simulation_Paused,Watch}
 
 Request :: enum u8 {

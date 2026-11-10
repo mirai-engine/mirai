@@ -151,7 +151,7 @@ asset_create_path :: proc(r:^asset.Registry,folder,name,extension:string) -> str
 asset_create_refusal :: proc(s:^Session) -> string {
     switch {
     case files_registry(s)==nil: return "The project has no assets folder"
-    case watching(s):            return "A watcher does not change the files of the host"
+    case watching(s):            return "The run of an agent is being watched; stop watching it first"
     case import_busy(s)!="":     return import_busy(s)
     }
     return ""

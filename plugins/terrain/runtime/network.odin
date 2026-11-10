@@ -506,7 +506,7 @@ replay_head :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay,allocato
         data_entry_free(entry)
         entry^=next
     } else {
-        append(&data.entries,next)
+        if _,err:=append(&data.entries,next);err!=nil {data_entry_free(&next);return result,.Out_Of_Memory}
         result=&data.entries[len(data.entries)-1]
         if at,found:=slice.linear_search(data.unread[:],replay.source);found {unordered_remove(&data.unread,at)}
         data.stats.loads+=1

@@ -3,13 +3,29 @@ package main
 import "core:strings"
 import "core:testing"
 
-// Each source is the body of a file after its package line; flagged, the
+// The source is the body of a file after its package line; flagged, the
 // calls the lint reports, in order.
+@(private="file")
+Case :: struct {name,source:string,flagged:[]string}
+
+@(private="file")
+expect_flagged :: proc(t:^testing.T,cases:[]Case) {
+    for c in cases {
+        findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
+        source:=strings.concatenate({"package sample\n",c.source,"\n"},context.temp_allocator)
+        if !testing.expectf(t,alloc_lint_source("sample.odin",source,&findings),"%s: it parses",c.name) {continue}
+        if !testing.expectf(t,len(findings)==len(c.flagged),"%s: %d flagged, %d expected: %v",c.name,len(findings),len(c.flagged),findings[:]) {continue}
+        for f,i in findings {
+            testing.expectf(t,f.call==c.flagged[i],"%s: flagged %s, expected %s",c.name,f.call,c.flagged[i])
+            testing.expectf(t,f.line>=2 && f.column>=1,"%s: %s has its place",c.name,f.call)
+        }
+    }
+}
+
 @(test)
 the_lint_flags_an_allocation_whose_error_nothing_receives :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    Case :: struct {name,source:string,flagged:[]string}
-    cases:=[]Case{
+    expect_flagged(t,{
         {"one result",
             `f :: proc(n:int,allocator:runtime.Allocator) {x:=make([]int,n,allocator);x[0]=1}`,
             {"make([]int,n,allocator)"}},
@@ -104,17 +120,103 @@ the_lint_flags_an_allocation_whose_error_nothing_receives :: proc(t:^testing.T) 
         {"a comment, a string and a procedure of another package",
             "// x:=make([]int,n)\nf :: proc(n:int,pool:^Pool) -> string {\n    /* y:=new(int) */\n    z:=pool.make(pool,n)\n    w:=other.new(n)\n    return \"x:=make([]int,n)\"\n}",
             {}},
-    }
-    for c in cases {
-        findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
-        source:=strings.concatenate({"package sample\n",c.source,"\n"},context.temp_allocator)
-        if !testing.expectf(t,alloc_lint_source("sample.odin",source,&findings),"%s: it parses",c.name) {continue}
-        if !testing.expectf(t,len(findings)==len(c.flagged),"%s: %d flagged, %d expected: %v",c.name,len(findings),len(c.flagged),findings[:]) {continue}
-        for f,i in findings {
-            testing.expectf(t,f.call==c.flagged[i],"%s: flagged %s, expected %s",c.name,f.call,c.flagged[i])
-            testing.expectf(t,f.line>=2 && f.column>=1,"%s: %s has its place",c.name,f.call)
-        }
-    }
+    })
+}
+
+// An append that finds no memory adds nothing: the lint flags the dropped one
+// whose element is then read without a bounds check or by its index.
+@(test)
+the_lint_flags_a_dropped_append_whose_element_is_read :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    expect_flagged(t,{
+        {"under #no_bounds_check, a procedure, a block or a loop",
+            `f :: proc(x:^[dynamic]int,v:int) #no_bounds_check {append(x,v)}
+             g :: proc(s:^Set,v:int) {#no_bounds_check {append_elem(&s.items,v)};#no_bounds_check for i in 0..<v {inject_at(&s.items,0,i);assign_at(&s.items,i,v)}}`,
+            {"append(x,v)","append_elem(&s.items,v)","inject_at(&s.items,0,i)","assign_at(&s.items,i,v)"}},
+        {"indexed at the last place",
+            `f :: proc(s:^Set,v:Item) -> ^Item {append(&s.items,v);return &s.items[len(s.items)-1]}`,
+            {"append(&s.items,v)"}},
+        {"indexed at the length taken before it",
+            `f :: proc(x:^[dynamic]int,v:int) {at:=u32(len(x));append(x,v);x[at]=2;first:=len(x^);append_elems(x,v,v);x[int(first)]=3}`,
+            {"append(x,v)","append_elems(x,v,v)"}},
+        {"indexed by what it returned",
+            `f :: proc(x:^[dynamic]int,v:int) {n:=append(x,v);x[n]=1}`,
+            {"append(x,v)"}},
+        {"every append the last place may be of",
+            `f :: proc(x:^[dynamic]int,c:bool) {append(x,9);append(x,0);if c {append(x,1)} else {append(x,2)};for v in x {append(x,v)};x[len(x)-1]=3}`,
+            {"append(x,0)","append(x,1)","append(x,2)","append(x,v)"}},
+        {"a room the lint cannot count",
+            `f :: proc(x:^[dynamic]int,vs:[]int,n:int) -> bool #no_bounds_check {
+                 if reserve(x,n)!=nil || reserve(x,len(x)+n)!=nil {return false}
+                 append(x,1)
+                 if n>0 {if reserve(x,len(x)+1)!=nil {return false}}
+                 append(x,n)
+                 if reserve(x,len(x)+2)!=nil {return false}
+                 append(x,1);append(x,2);append(x,3)
+                 if reserve(x,len(x)+4)!=nil {return false}
+                 for v in vs {append(x,v)}
+                 if reserve(x,len(x)+4)!=nil {return false}
+                 append(x,..vs)
+                 return room(x,1)
+             }`,
+            {"append(x,1)","append(x,n)","append(x,3)","append(x,v)","append(x,..vs)"}},
+        {"a room whose error is dropped",
+            `f :: proc(x:^[dynamic]int,a:runtime.Allocator) #no_bounds_check {reserve(x,len(x)+1);append(x,1);y:=make([dynamic]int,0,1,a);append(&y,1)}`,
+            {"reserve(x,len(x)+1)","append(x,1)","make([dynamic]int,0,1,a)","append(&y,1)"}},
+
+        {"an error that is received",
+            `f :: proc(s:^Set,v:Item) -> (item:^Item,err:runtime.Allocator_Error) #no_bounds_check {
+                 if _,no:=append(&s.items,v);no!=nil {return nil,no}
+                 append(&s.items,v) or_return
+                 n:int
+                 n,err=append(&s.items,v)
+                 return &s.items[len(s.items)-1],err
+             }`,
+            {}},
+        {"a count that is compared",
+            `f :: proc(s:^Set,v:Item) -> ^Item #no_bounds_check {
+                 if append(&s.items,v)!=1 {return nil}
+                 if 2>append(&s.items,v,v) || (append(&s.items,v))==0 {return nil}
+                 return &s.items[len(s.items)-1]
+             }`,
+            {}},
+        {"a room that covers the appends after it",
+            `f :: proc(x:^[dynamic]int,vs:[]int,a:runtime.Allocator) -> runtime.Allocator_Error #no_bounds_check {
+                 reserve(x,len(x)+3) or_return
+                 append(x,1);append(x,2,3)
+                 for v in vs {
+                     if reserve(x,1+len(x))!=nil {return .Out_Of_Memory}
+                     append(x,v)
+                     x[len(x)-1]+=1
+                 }
+                 y:=make([dynamic]int,0,2,a) or_return
+                 at:=len(y)
+                 append(&y,1);append(&y,2)
+                 y[at]=3
+                 return nil
+             }`,
+            {}},
+        {"an array of the temporary allocator",
+            `f :: proc(v:int) #no_bounds_check {x:=make([dynamic]int,context.temp_allocator);append(&x,v);x[len(x)-1]=1}`,
+            {}},
+        {"an index of another element, and bounds checks taken back",
+            `f :: proc(x,y:^[dynamic]int,v:int) {
+                 x[len(x)-1]=0
+                 at:=len(x)
+                 append(y,v)
+                 y[at]=1
+                 i:=len(y)
+                 append(y,v)
+                 for i in 0..<3 {y[i]=0}
+                 i=2
+                 y[i]=y[len(y)-2]
+             }
+             g :: proc(x:^[dynamic]int,v:int) #no_bounds_check {
+                 #bounds_check {append(x,v)}
+                 h :: proc(x:^[dynamic]int,v:int) {append(x,v)}
+             }`,
+            {}},
+    })
 }
 
 // A finding names the line and the column of its call, so that two on a line are told apart.

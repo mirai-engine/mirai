@@ -126,8 +126,9 @@ clusterize :: proc(b:^Dag_Builder,indices:[]u32,submesh:u32,own:Cluster_Lod,gene
     for index,i in indices {
         if b.local_of[index]==NONE {
             b.local_of[index]=u32(len(b.globals))
-            append(&b.globals,index)
-            append(&b.local_positions,b.source.positions[index])
+            _,no_global:=append(&b.globals,index)
+            _,no_position:=append(&b.local_positions,b.source.positions[index])
+            if no_global!=nil || no_position!=nil {return .Out_Of_Memory}
         }
         b.local_indices[i]=b.local_of[index]
     }
@@ -141,9 +142,9 @@ clusterize :: proc(b:^Dag_Builder,indices:[]u32,submesh:u32,own:Cluster_Lod,gene
         offset:=u32(len(cluster_indices))
         for k in 0..<meshlet.triangle_count*3 {
             local:=b.meshlet_vertices[meshlet.vertex_offset+u32(b.meshlet_triangles[meshlet.triangle_offset+k])]
-            append(cluster_indices,b.globals[local])
+            if _,err:=append(cluster_indices,b.globals[local]);err!=nil {return .Out_Of_Memory}
         }
-        append(pending,Pending{offset,meshlet.triangle_count*3,own,generator,submesh})
+        if _,err:=append(pending,Pending{offset,meshlet.triangle_count*3,own,generator,submesh});err!=nil {return .Out_Of_Memory}
     }
     return .None
 }
