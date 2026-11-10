@@ -110,8 +110,8 @@ cmd_package :: proc(root:string,args:[]string) -> int {
 
     // The plugin libraries, built by the engine just packaged: their fingerprints are those of its projects.
     if !package_plugins(out) {return 1}
-    _=os.remove_all(join(out,".mirai","tmp"))
-    _=os.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
+    _=base.remove_all(join(out,".mirai","tmp"))
+    _=base.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
 
     total:i64
     files:=0
@@ -294,7 +294,7 @@ package_plugins :: proc(out:string) -> bool {
     }
     for optimization in ([2]project.Optimization{.Minimal,.Speed}) {
         scratch:=join(out,".mirai","tmp",fmt.tprintf("plugins-%v",optimization))
-        _=os.remove_all(scratch)
+        _=base.remove_all(scratch)
         if os.make_directory_all(scratch)!=nil {fmt.eprintfln("mirai package: could not write to %s",scratch);return false}
         m.build.optimization=optimization
         if error:=project.manifest_write(join(scratch,project.PROJECT_FILE),&m);error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}
