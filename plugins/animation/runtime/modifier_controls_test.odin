@@ -5,13 +5,20 @@ import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
 
+@(private="file")
+Modifier_Controls_World :: struct {
+    using world:core.Test_World,
+    configs:core.Table(Pose_Modifiers),
+}
+
 @(test)
 modifier_controls_preserve_targets_contacts_and_fade_independently_through_world_copies :: proc(t:^testing.T) {
     problems:core.Problems
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    rig:=core.create(&entities)
-    configs:core.Table(Pose_Modifiers);defer core.table_destroy(&configs)
-    core.add(&configs,rig,POSE_MODIFIERS_DEFAULT);core.table_settle(&configs,&entities)
+    w:Modifier_Controls_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    rig:=core.create(&w.entities)
+    core.add(&w.configs,rig,POSE_MODIFIERS_DEFAULT);core.test_world_settle(&w)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     for _ in 0..<2 {value:=IK_CONSTRAINT_DEFAULT;value.rig,value.pole=rig,{4,5,6};value.target=spatial_point({1,2,3});testing.expect(t,modifier_append(&modifiers.ik,rig,value))}
     look:=LOOK_CONSTRAINT_DEFAULT;look.rig=rig;look.target=spatial_point({3,2,1});testing.expect(t,modifier_append(&modifiers.look,rig,look))
@@ -21,14 +28,14 @@ modifier_controls_preserve_targets_contacts_and_fade_independently_through_world
     empty:Modifier_Runtime
     testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems)
     modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=.8,enabled=true})
     modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1})
     modifier_control(&requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=1})
     modifier_control(&requests,{rig=rig,kind=.Contact,weight=.3,enabled=true})
     modifier_control(&requests,{rig=rig,kind=.Grounding,weight=.4,enabled=true})
     modifier_control(&requests,{rig=rig,kind=.Limit,weight=.2,enabled=true})
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems,.5)
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,.5)
     testing.expect_value(t,modifiers.look.values[0].weight,f32(.6))
     testing.expect_value(t,modifiers.look.values[0].target.position,mm.Vec3{})
     testing.expect_value(t,modifiers.ik.values[0].weight,f32(1))
@@ -46,9 +53,9 @@ modifier_controls_preserve_targets_contacts_and_fade_independently_through_world
     testing.expect(t,raw_data(modifiers.controls)!=raw_data(copied.controls))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1})
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems,.5)
-    modifier_take(&copied,&copy_requests,core.read(&configs),&problems,.5)
-    for _ in 0..<120 {modifier_take(&modifiers,&requests,core.read(&configs),&problems,1.0/60);modifier_take(&copied,&copy_requests,core.read(&configs),&problems,1.0/60)}
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,.5)
+    modifier_take(&copied,&copy_requests,core.read(&w.configs),&problems,.5)
+    for _ in 0..<120 {modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,1.0/60);modifier_take(&copied,&copy_requests,core.read(&w.configs),&problems,1.0/60)}
     context=saved
     testing.expect_value(t,modifiers.look.values[0].weight,f32(.4))
     testing.expect_value(t,modifiers.ik.values[1].weight,f32(0))

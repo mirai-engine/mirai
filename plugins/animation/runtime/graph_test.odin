@@ -2,7 +2,6 @@ package anim
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:host"
@@ -82,7 +81,7 @@ graph_assets_roundtrip_dependencies_and_reject_cyclic_or_unbounded_compositions 
 
 @(test)
 graph_content_reloads_shared_definitions_and_retries_every_allocation_failure :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-graph-cache-%d",os.get_pid());os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"graph-cache")
     path:=fmt.tprintf("%s/graph.agraph",directory)
     profile:=graph_test_profile();defer graph_profile_free(&profile)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)

@@ -1,7 +1,6 @@
 package anim
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -89,10 +88,9 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
 
 @(test)
 skeleton_and_skin_content_retry_every_allocation_failure_without_publishing_partial_reload :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-animation-content-retry-%d",os.get_pid())
-    os.make_directory_all(directory);defer os.remove(directory)
-    skeleton_path:=fmt.tprintf("%s/rig.skeleton",directory);defer os.remove(skeleton_path)
-    mesh_path:=fmt.tprintf("%s/rig.mesh",directory);defer os.remove(mesh_path)
+    directory:=base.test_folder(t,"animation-content-retry")
+    skeleton_path:=fmt.tprintf("%s/rig.skeleton",directory)
+    mesh_path:=fmt.tprintf("%s/rig.mesh",directory)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     bone:=asset.Skeleton_Bone{parent=-1,rotation=1,scale={1,1,1},target=base.name_hash("root")}
     base.text_set(bone.path[:],"root");base.text_set(bone.name[:],"root")
