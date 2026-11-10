@@ -705,14 +705,15 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	white := [4]u8{255, 255, 255, 255}
 	if !renderer_set_font(r, white[:], 1, 1) {return false}
 	if !extension_counters_init(r) || !ui_offscreen_init(r) {return false}
-	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
-	r.hardware_rt = info.features.ray_query && r.settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	if info.features.ray_query {
 		verified, note := hardware_rt_self_test(r)
 		r.hardware_rt_verified = verified
 		r.hardware_rt_note = string(r.note_buffer[:copy(r.note_buffer[:], note)])
-		if !r.hardware_rt_verified {r.hardware_rt = false}
 	}
+	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	hardware, made := tracer_settle(r, r.settings, retry = false)
+	if !made {return false}
+	r.hardware_rt = hardware
 	r.scene.tlas_off = r.hardware_rt
 	r.window_width = max(width, 1)
 	r.window_height = max(height, 1)
@@ -1056,11 +1057,11 @@ pipeline_rays :: proc(id: Pipeline_Id) -> Pipeline_Rays {
 	return .Any
 }
 
-// The renderer fails without these; without one of rays traced by hardware
-// it traces them by software.
+// The renderer fails without these, or the tracer of their rays does: without
+// one of rays traced by hardware it traces them by software.
 @(private)
 pipeline_required :: proc(id: Pipeline_Id) -> bool {
-	return id != .Blit && id not_in LAZY_PIPELINES && !pipeline_uses_hardware(id) && !pipeline_uses_clip_distance(id)
+	return id != .Blit && id not_in LAZY_PIPELINES && !pipeline_uses_clip_distance(id)
 }
 
 @(private)
@@ -1068,12 +1069,14 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 	return (item.rays != .Hardware || info.features.ray_query) && (!item.clip || info.features.clip_distance)
 }
 
-// Makes the pipelines of r that the device can, the costliest first, on a
-// thread a core (half the logical processors): the driver compiles each one
-// for up to seconds. Once r.reload_stop is set, from any thread, none more is
-// made. False when one the renderer needs is not there.
+// Makes the pipelines of r of the rays in make that it lacks and the device
+// can, the costliest first, on a thread a core (half the logical processors):
+// the driver compiles each one for up to seconds. A transaction that may
+// allocate. Once r.reload_stop is set, from any thread, none more is made.
+// False when one the renderer needs is not there; those of rays traced by
+// hardware are not needed (tracer_missing).
 @(private)
-create_pipelines :: proc(r: ^Renderer) -> bool {
+create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
 	info := rhi.device_info(r.device)
@@ -1086,7 +1089,7 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 	}
 	work := Work{r = r, list = &list}
 	for &item, i in list.items[:list.count] {
-		if !pipeline_possible(info, item) {continue}
+		if item.rays not_in make || item.target^ != 0 || !pipeline_possible(info, item) {continue}
 		for id in item.shaders[:2 if item.graphics else 1] {
 			item.cost += len(rhi.shader_code_bytes(r.shader_codes[id]))
 		}
@@ -1127,11 +1130,57 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 		thread.destroy(t)
 	}
 	for item in list.items[:list.count] {
-		if !item.required || !pipeline_possible(info, item) || item.target^ != 0 {continue}
-		set_error(r, "pipeline %s: %s", item.desc.name if item.graphics else r.shader_codes[item.shaders[0]].name, rhi.device_error(r.device))
+		if item.rays == .Hardware || item.rays not_in make || !item.required || !pipeline_possible(info, item) || item.target^ != 0 {continue}
+		set_error(r, "pipeline %s: %s", pipeline_name(r, item), rhi.device_error(r.device))
 		return false
 	}
 	return true
+}
+
+@(private)
+pipeline_name :: proc(r: ^Renderer, item: Pipeline_Make) -> string {
+	return item.desc.name if item.graphics else r.shader_codes[item.shaders[0]].name
+}
+
+// The name of a pipeline the rays of tracer need that the device can make and
+// r lacks; "" when it has them all.
+@(private)
+tracer_missing :: proc(r: ^Renderer, tracer: Pipeline_Rays) -> string {
+	list: Pipeline_List
+	pipelines_list(r, &list)
+	info := rhi.device_info(r.device)
+	for item in list.items[:list.count] {
+		if item.rays == tracer && item.required && pipeline_possible(info, item) && item.target^ == 0 {return pipeline_name(r, item)}
+	}
+	return ""
+}
+
+// The tracer settings ask for: hardware where the device has ray queries
+// that passed the self-test and they do not ask for software.
+@(private)
+tracer_wanted :: proc(r: ^Renderer, settings: Settings) -> Pipeline_Rays {
+	return .Hardware if rhi.device_info(r.device).features.ray_query && r.hardware_rt_verified && settings.trace_mode != .Software else .Software
+}
+
+// Makes the pipelines of the tracer settings ask for that r lacks: a
+// transaction that may allocate. Rays are traced by hardware when it is wanted and its pipelines
+// are made, and otherwise by software; then r.hardware_rt_note says why.
+// retry: the hardware ones that were refused are asked for again. False, with
+// r.error, when the software ones are not made.
+@(private)
+tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardware: bool, ok: bool) {
+	if tracer_wanted(r, settings) == .Hardware {
+		if retry && tracer_missing(r, .Hardware) != "" {create_pipelines(r, {.Hardware})}
+		missing := tracer_missing(r, .Hardware)
+		if missing == "" {r.hardware_rt_note = ""; return true, true}
+		r.hardware_rt_note = fmt.bprintf(r.note_buffer[:], "the pipeline %s of rays traced by hardware was not made (%s): rays are traced by software. A newer GPU driver may make it", missing, rhi.device_error(r.device))
+	}
+	if tracer_missing(r, .Software) == "" {return false, true}
+	if !create_pipelines(r, {.Software}) || tracer_missing(r, .Software) != "" {
+		set_error(r, "the pipeline %s of rays traced by software was not made (%s). Freeing GPU memory or a newer GPU driver may make it", tracer_missing(r, .Software), rhi.device_error(r.device))
+		return false, false
+	}
+	return false, true
 }
 
 // Threads that make the pipelines of a renderer at most, with the one that asks.
@@ -1169,32 +1218,23 @@ pipeline_uses_hardware :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
     case .Lighting_Traced_Hw,.Ddgi_Trace_Hw,.Contact_Hw,.Reflect_Hw,.Translucent_Hw,.Glass_Hw,.Shadow_Trace_Hw,.Shadow_Trace_Color_Hw,
          .Lighting_Traced_Color_Hw,.Ddgi_Trace_Color_Hw,.Reflect_Color_Hw,.Translucent_Color_Hw,.Glass_Color_Hw,.Gi_Reference_Hw,.Glass_Inside_Hw,.Glass_Inside_Color_Hw,
-         .Reflect_Unlayered_Hw,.Reflect_Unlayered_Color_Hw:
+         .Reflect_Unlayered_Hw,.Reflect_Unlayered_Color_Hw,.Tlas_Batches:
         return true
     }
     return false
 }
 
-// Their frames trace rays by software. Not Contact: its blur runs with either.
+// Only rays traced by software run them: they walk or refit the software BVH.
+// Not Contact: its blur runs with either.
 @(private)
 pipeline_uses_software :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
     case .Lighting_Traced,.Lighting_Traced_Color,.Ddgi_Trace,.Ddgi_Trace_Color,.Reflect,.Reflect_Color,.Reflect_Unlayered,.Reflect_Unlayered_Color,
-         .Translucent,.Translucent_Color,.Glass,.Glass_Color,.Glass_Inside,.Glass_Inside_Color,.Shadow_Trace,.Shadow_Trace_Color,.Gi_Reference:
+         .Translucent,.Translucent_Color,.Glass,.Glass_Color,.Glass_Inside,.Glass_Inside_Color,.Shadow_Trace,.Shadow_Trace_Color,.Gi_Reference,
+         .Skin_Triangles,.Skin_Refit:
         return true
     }
     return false
-}
-
-// Whether every pipeline of ray queries made with the others is there; one of
-// LAZY_PIPELINES that cannot be made fails the frame that asks for it. Rays
-// traced by hardware never fall back to the software BVH: it is not kept.
-@(private)
-hardware_pipelines_ready :: proc(r: ^Renderer) -> bool {
-	for p, id in r.pipelines {
-		if pipeline_uses_hardware(id) && id not_in LAZY_PIPELINES && p == 0 {return false}
-	}
-	return true
 }
 
 // These need a device that clips by a plane a vertex shader writes.
@@ -1315,13 +1355,16 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 }
 
 // Changes settings between frames. Returns false (and keeps the old settings)
-// when the request is invalid.
+// when the request is invalid, or when the device does not make the pipelines
+// of the tracer it switches to: r.error says which.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if settings.render_scale < 0.25 || settings.render_scale > 2 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if !(settings.reflection_detail_roughness >= 0 && settings.reflection_detail_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
+	hardware, made := tracer_settle(r, settings, retry = settings.trace_mode != r.settings.trace_mode)
+	if !made {return false}
 	old := r.settings
 	if old != settings {
 		destroy_view_targets(r)
@@ -1344,9 +1387,8 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		rhi.device_wait_idle(r.device)
 		destroy_glass_targets(r, &r.main.targets)
 	}
-	info := rhi.device_info(r.device)
 	was_hardware := r.hardware_rt
-	r.hardware_rt = info.features.ray_query && r.hardware_rt_verified && settings.trace_mode != .Software && hardware_pipelines_ready(r)
+	r.hardware_rt = hardware
 	// The poses refit only the structures the rays use: those of the others are as old as the switch.
 	// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
 	if r.hardware_rt != was_hardware {

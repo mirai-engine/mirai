@@ -132,8 +132,8 @@
 
 ## Partial scene changes
 
-`scene_set` rebuilds the instance table, their boxes, the software TLAS and the lights, and uploads
-the whole tables: it is used when what is drawn changes. For the rest:
+`scene_set` rebuilds the instance table, their boxes, the software TLAS (tracing in software) and
+the lights, and uploads the whole tables: it is used when what is drawn changes. For the rest:
 
 - **`scene_move(r, descs, transforms, anchors)`** moves instances of the last `scene_set`: `descs`
   are positions in the list it received and `transforms` the current transform of each one.
@@ -141,9 +141,10 @@ the whole tables: it is used when what is drawn changes. For the rest:
     following one uploads them at rest.
   - It updates instance, its box, the scene box and the hardware TLAS instance, which is rebuilt
     on the GPU.
-  - The software tree is refit (`tlas_refit`: each node takes the box of what lies below it) and
-    is built again only when the sum of surfaces of its nodes exceeds `TLAS_REFIT_SLACK` (1.5)
-    times that of when freshly built. The rays find the same surfaces as after a `scene_set`.
+  - Tracing in software, the tree is refit (`tlas_refit`: each node takes the box of what lies
+    below it) and is built again only when the sum of surfaces of its nodes exceeds
+    `TLAS_REFIT_SLACK` (1.5) times that of when freshly built. The rays find the same surfaces
+    as after a `scene_set`.
   - It returns `false`, without changing anything, if the lists differ in length or name an
     instance that the set did not have.
   - One that is where it is told stays as it is: whoever moves gives every candidate and reads
