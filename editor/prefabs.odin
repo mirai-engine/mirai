@@ -391,7 +391,8 @@ prefab_contains :: proc(s:^Session,id,target:base.Asset_Id) -> bool {
     reader:Prefab_Reader
     prefab_reader_begin(s,&reader)
     defer prefab_reader_end(&reader)
-    return asset.prefab_holds(reader.resolver.files,&s.app.assets.types,id,target)
+    holds,error:=asset.prefab_holds(reader.resolver.files,&s.app.assets.types,id,target)
+    return holds || error!=.None
 }
 
 // ---------------------------------------------------------------- the capture an operation works on

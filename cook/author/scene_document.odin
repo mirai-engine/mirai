@@ -768,7 +768,8 @@ scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:stri
     asset.registry_prefabs_init(&files,a.registry,context.temp_allocator)
     defer asset.registry_prefabs_destroy(&files)
     opened:=asset.registry_prefab_files(&files)
-    file:=opened.open(opened.data,given.asset)
+    file,opening:=opened.open(opened.data,given.asset)
+    if opening!=.None {reading_brokef(reading,"%s.prefab: %s could not be read: %v",path,record.path,opening);return false}
     if file==nil || asset.scene_from_asset(prefab,a.types,file,context.temp_allocator)!=.None {
         reading_failf(reading,"%s.prefab: %s does not load; mirai asset verify says what its file has",path,record.path)
         return false
@@ -777,7 +778,9 @@ scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:stri
         reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it",path,record.path)
         return false
     }
-    if asset.prefab_holds(opened,a.types,given.asset,into) {
+    holds,asking:=asset.prefab_holds(opened,a.types,given.asset,into)
+    if asking!=.None {reading_brokef(reading,"%s.prefab: the prefabs %s places could not be read: %v",path,record.path,asking);return false}
+    if holds {
         reading_failf(reading,"%s.prefab: %s holds the file it would be placed in, itself or through the prefabs it places; place another prefab, or take that instance out of it",path,record.path)
         return false
     }

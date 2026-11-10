@@ -727,15 +727,17 @@ PREFAB_DEPTH :: 16
 
 // Whether a prefab holds another: it is that one, or places it, itself or
 // through the prefabs it places. One deeper than PREFAB_DEPTH holds it.
-prefab_holds :: proc(files:Prefab_Files,types:^Types,id,target:base.Asset_Id,depth:=0) -> bool {
-    if id==target || depth>PREFAB_DEPTH {return true}
-    file:=files.open(files.data,id)
-    if file==nil || file.blob.header.kind!=KIND_PREFAB {return false}
+prefab_holds :: proc(files:Prefab_Files,types:^Types,id,target:base.Asset_Id,depth:=0) -> (holds:bool,error:Error) {
+    if id==target || depth>PREFAB_DEPTH {return true,.None}
+    file:=files.open(files.data,id) or_return
+    if file==nil || file.blob.header.kind!=KIND_PREFAB {return false,.None}
     for instance in instances_of(file,types) {
-        if instance.prefab==target {return true}
-        if instance.outer==0 && prefab_holds(files,types,instance.prefab,target,depth+1) {return true}
+        if instance.prefab==target {return true,.None}
+        if instance.outer==0 {
+            if prefab_holds(files,types,instance.prefab,target,depth+1) or_return {return true,.None}
+        }
     }
-    return false
+    return false,.None
 }
 
 // A prefab with its instances up to date, which the resolver keeps; nil when
