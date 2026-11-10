@@ -12,21 +12,15 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file")
 Sections_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    disabled:core.Table(core.Disabled),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     references:core.Table(scene.Scene_Reference),
     links:core.Table(Sections_Link),
-    hierarchy:core.Hierarchy,
     views:scene.Section_Views,
     unresolved:scene.Unresolved_References,
 }
@@ -36,42 +30,23 @@ Sections_World :: struct {
 Sections_Link :: struct {target:core.Entity}
 
 @(private="file")
-sections_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Sections_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.disabled,&w.entities)
-    core.table_settle(&w.references,&w.entities)
-    core.table_settle(&w.links,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.entities_settle(&w.entities)
-}
+Sections_Editor :: struct {prefabs:Prefabs}
 
 // A scene with a root entity A and a section, R, of the scene X whose
 // entity C hangs from it, over an assets folder that holds X.
 @(private="file")
 Sections_Fixture :: struct {
     world:Sections_World,
-    tables:[7]core.Table_Info,
-    storages:[4]core.Storage_Info,
     info:core.World_Info,
     assets:host.Assets,
     app:host.App,
-    viewport:Viewport,
-    selection:history.Selection,
+    using edited:Test_Session,
     inspector:Inspector,
-    edits:history.Edits,
-    document:Document,
-    prefabs:Prefabs,
+    editor:Sections_Editor,
     outliner:Outliner,
-    g:Editor_Ui,
     ai:Ai,
     watch:Sections_Watch,
     root:string,
-    s:Session,
     a,r,c:core.Entity,
     x:base.Asset_Id,
 }
@@ -80,32 +55,12 @@ SECTIONS_TEST_X :: base.Asset_Id{0x5ec7,0x1}
 SECTIONS_TEST_LOCAL :: base.Entity_Id(0xc0)
 
 @(private="file")
-sections_fixture_init :: proc(f:^Sections_Fixture,name:string,state:=scene.Section_State.Active) -> bool {
+sections_fixture_init :: proc(t:^testing.T,f:^Sections_Fixture,name:string,state:=scene.Section_State.Active) -> bool {
     w:=&f.world
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name");core.table_init(&w.transforms,"Transform")
-    core.table_init(&w.parents,"Parent");core.table_init(&w.disabled,"Disabled");core.table_init(&w.references,"Scene_Reference")
-    core.table_init(&w.links,"Sections_Link")
-    w.ids.base,w.names.base,w.transforms.base,w.parents.base,w.disabled.base=true,true,true,true,true
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Sections_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Sections_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Sections_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Sections_World,parents)},
-        {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Sections_World,disabled)},
-        {name="Scene_Reference",type=scene.Scene_Reference,info=type_info_of(scene.Scene_Reference),offset=offset_of(Sections_World,references)},
-        {name="Sections_Link",type=Sections_Link,info=type_info_of(Sections_Link),offset=offset_of(Sections_World,links)},
-    }
-    f.storages={
-        {type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Sections_World,hierarchy)},
-        {type=scene.Section_Views,info=type_info_of(scene.Section_Views),offset=offset_of(Sections_World,views)},
-        {type=scene.Unresolved_References,info=type_info_of(scene.Unresolved_References),offset=offset_of(Sections_World,unresolved)},
-    }
-    f.info=core.World_Info{entities=offset_of(Sections_World,entities),tables=f.tables[:],storages=f.storages[:]}
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    f.root,_=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-sections-%s-%d",name,os.get_pid()),allocator=context.temp_allocator),"\\","/")
-    os.remove_all(f.root)
-    if os.make_directory_all(f.root)!=nil {return false}
+    f.info=core.test_info(t,Sections_World,core.Test_None,Sections_Editor,test_types) or_return
+    if !f.info.init[.World](w,context.allocator) {return false}
+    f.root=base.test_folder(t,fmt.tprintf("sections-%s",name))
+    if f.root=="" {return false}
     // The scene of the section: one entity, as it was saved before.
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     f.x=SECTIONS_TEST_X
@@ -118,14 +73,14 @@ sections_fixture_init :: proc(f:^Sections_Fixture,name:string,state:=scene.Secti
     if !host.assets_init(&f.assets,{root=f.root,capacity=8}) {return false}
     host.assets_scan(&f.assets)
     f.app=host.App{assets=&f.assets,info=&f.info,allocator=context.allocator}
-    f.s=Session{info=&f.info,edit_world=w,editor_world=&f.prefabs,assets_root=f.root,app=&f.app,gui=&f.g,viewport=&f.viewport,selection=&f.selection,inspector=&f.inspector,edits=&f.edits,document=&f.document,outliner=&f.outliner,ai=&f.ai}
     f.viewport.size,f.viewport.window,f.viewport.orbit={1280,720},{1280,720},ORBIT_DEFAULT
     f.a=sections_test_entity(f,1,"A",core.NONE,{0,0,0})
     f.r=sections_test_entity(f,2,"Layer",core.NONE,{100,-40,50})
     core.add(&w.references,f.r,scene.Scene_Reference{scene=f.x,extents={10,5,10},rule=.Manual,state=state,loaded=state==.Unloaded?{}:f.x})
     if state!=.Unloaded {f.c=sections_test_entity(f,SECTIONS_TEST_LOCAL,"Crate",f.r,{1,0,0})}
-    sections_world_settle(w,nil,nil)
-    history.edits_reset(&f.edits,edited_world(&f.s))
+    core.settle(&f.info,w,nil)
+    test_session_open(&f.edited,core.world_ref(w,&f.info))
+    f.s.editor_world,f.s.assets_root,f.s.app,f.s.inspector,f.s.outliner,f.s.ai=&f.editor,f.root,&f.app,&f.inspector,&f.outliner,&f.ai
     f.document.saved=history.edits_scene_state(&f.edits)
     return true
 }
@@ -145,22 +100,13 @@ sections_test_entity :: proc(f:^Sections_Fixture,id:base.Entity_Id,name:string,p
 sections_fixture_destroy :: proc(f:^Sections_Fixture) {
     prefabs_free(&f.s)
     documents_free(&f.s)
-    document_previous_free(&f.document)
-    history.edits_free(&f.edits)
+    test_session_close(&f.edited)
     core.value_free(&f.inspector,type_info_of(Inspector))
     core.value_free(&f.watch,type_info_of(Sections_Watch))
-    delete(f.selection.entities)
     delete(f.app.worlds)
     host.assets_destroy(&f.assets)
-    w:=&f.world
-    core.entities_destroy(&w.entities)
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
-    core.table_destroy(&w.parents);core.table_destroy(&w.disabled);core.table_destroy(&w.references);core.table_destroy(&w.links)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-    core.value_free(&w.views,type_info_of(scene.Section_Views))
-    core.value_free(&w.unresolved,type_info_of(scene.Unresolved_References))
-    os.remove_all(f.root)
-    delete(f.root)
+    f.info.destroy[.World](&f.world)
+    core.test_info_destroy(&f.info)
 }
 
 // Whether a step of the history holds a row or the life of e.
@@ -176,7 +122,7 @@ sections_step_has :: proc(step:^history.Edit_Step,e:core.Entity) -> bool {
 a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_it_asks :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"view",.Unloaded)) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"view",.Unloaded)) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -236,7 +182,7 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
 an_entity_of_a_section_reads_only_on_every_path_with_an_error_that_names_the_section :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"lock")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"lock")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -285,7 +231,7 @@ an_entity_of_a_section_reads_only_on_every_path_with_an_error_that_names_the_sec
 the_camera_travels_to_a_section_and_turns_it_on_in_the_view :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"travel",.Unloaded)) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"travel",.Unloaded)) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -311,7 +257,7 @@ the_camera_travels_to_a_section_and_turns_it_on_in_the_view :: proc(t:^testing.T
 save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when_one_cannot_be :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"save")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"save")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -368,7 +314,7 @@ save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when
 the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_view :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"map")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"map")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -413,7 +359,7 @@ the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_v
 a_reference_a_step_makes_loads_in_that_step_and_what_hangs_from_a_reference_gone_goes_with_it :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"made",.Unloaded)) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"made",.Unloaded)) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -462,7 +408,7 @@ a_reference_a_step_makes_loads_in_that_step_and_what_hangs_from_a_reference_gone
 what_a_library_derives_in_edit_is_no_part_of_the_next_step :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"derived")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"derived")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -489,7 +435,7 @@ what_a_library_derives_in_edit_is_no_part_of_the_next_step :: proc(t:^testing.T)
 what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(f,"resolved")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"resolved")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
