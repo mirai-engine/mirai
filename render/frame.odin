@@ -1479,7 +1479,7 @@ GI_REFERENCE_BOUNCES :: u32(32)
 @(private)
 pass_gi_reference :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	if !ensure_pipelines(r, {.Gi_Reference, .Gi_Reference_Hw}) {return false}
+	if !ensure_pipelines(r, {.Gi_Reference_Hw} if r.hardware_rt else {.Gi_Reference}) {return false}
 	if !target(r, cmd, &t.gi_reference, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "gi reference", true) {return false}
 	restart := !t.gi_reference_valid || r.scene_uploads_change || t.gi_reference_view != p.frame.view_proj_unjittered || t.gi_reference_eye != p.camera.position
 	t.gi_reference_view, t.gi_reference_eye = p.frame.view_proj_unjittered, p.camera.position

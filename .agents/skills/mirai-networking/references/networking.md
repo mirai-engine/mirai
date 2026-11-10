@@ -380,21 +380,17 @@ connection is for a replica.
   place of its own, up to what `HISTORY_MAX_SECONDS` gives at its tick rate; more ends the
   attempt with `Capacity`.
 
-## Prediction (`rollback.odin`)
+## Smoothing and interpolation (`interpolation.odin`)
 
-- **`Rollback`**: history of inputs and states in rings over flat bytes, with callbacks.
-  `rollback_reconcile` compares the authoritative state of a tick with the predicted one:
-  `Confirmed`, `Corrected` (restores and resimulates to the present with the stored inputs),
-  `Snapped` (more ticks than `max_resimulate` or no history: takes the state as the present) or
-  `Stale`. `rollback_correct` restores a tick that the caller decided to correct and resimulates
-  without comparing: the runtime bridge uses it, which compares per replica.
+The client predicts with copies of the world and interpolates with `replica_blend`
+([multiplayer](multiplayer.md)); these are the pieces of `net` it uses for that.
+
 - **`Smoothing`** fades the difference between the displayed pose and the corrected one without
   touching the simulated state; beyond `snap_distance` it does not smooth.
 - **`Interpolation`**: ring of snapshots per tick and object. `interpolation_sample` gives the two
   that surround a tick (`Between`), the oldest (`Before`) or the newest and how much time has
-  passed since it (`After`), and `fragment_interpolate` blends them according to the descriptor.
-  `interpolation_spacing` gives the ticks between snapshots: a longer gap counts at once and a
-  shorter one, gradually.
+  passed since it (`After`). `interpolation_spacing` gives the ticks between snapshots: a longer
+  gap counts at once and a shorter one, gradually.
 
 ## Known limits
 
