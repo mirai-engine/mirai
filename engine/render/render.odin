@@ -335,6 +335,7 @@ Render_Sync :: struct {
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
     assets_structure,assets_appearance:u64,
     derived:int, // the derived rows there were after the last round of them
+    extra_rows:u64, // and what the rows the visual instances showed in it add up to
     environment:gpu.Environment,
     postprocess:[POST_PROCESS_CAPACITY]Post_Process_Layer,
     outline_styles:Outline_Styles, // the last ones applied
@@ -674,8 +675,14 @@ render_sync :: proc(
     // The visual instances of the frame, after those of the world: the renderer leaves as it is each one it has, and what is past them goes.
     host.assets_commit(a)
     if !gpu.scene_update(r,u32(len(sync.drawn.entities)),extras,true) {sync_fail(sync,r);return}
-    // The derived rows in use, when a round of them was opened or some were derived: those of the batches, of the instances that derive theirs and of the visual instances.
-    if a.appearance!=sync.assets_appearance || a.stats.derived!=sync.derived {
+    // The derived rows in use, when a round of them was opened, some were derived or the visual instances show other rows than in the last one: those of the batches, of the instances that derive theirs and of the visual instances.
+    rows:=u64(len(extras))
+    for &instance in extras {
+        rows=rows*31+u64(instance.material)
+        for row in instance.slot_materials {rows=rows*31+u64(row)}
+        for layer in instance.overlays.entries {rows=rows*31+u64(layer.material)}
+    }
+    if a.appearance!=sync.assets_appearance || a.stats.derived!=sync.derived || rows!=sync.extra_rows {
         if a.appearance==sync.assets_appearance {host.assets_appearance_begin(a)}
         batches_retain(a,r)
         #reverse for e,i in sync.deriving {
@@ -689,7 +696,7 @@ render_sync :: proc(
         }
         for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
         host.assets_appearance_end(a);host.assets_commit(a)
-        sync.assets_appearance,sync.derived=a.appearance,a.stats.derived
+        sync.assets_appearance,sync.derived,sync.extra_rows=a.appearance,a.stats.derived,rows
     }
 
     lights_settle(sync,a,r,t,&c,sync.under[:shaded],extras)

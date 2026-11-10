@@ -235,6 +235,15 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     frame(f,&posed)
     testing.expect(t,mesh_of(s,0)==cube && mesh_of(s,1)==sphere && len(s.instances)==2,"the pose is drawn as the instance of its entity")
     testing.expect_value(t,f.sync.stats.instance_updates,updates+1)
+    // And where its entity is: with the offset of what it hangs from, as any mesh.
+    root:=core.create(&f.world.entities)
+    core.add(&f.world.worlds,root,core.World_Transform{transform={rotation=1,scale=1},previous={rotation=1,scale=1}})
+    core.add(&f.world.offsets,root,Draw_Offset{offset={0,2,0}})
+    core.add(&f.world.parents,b,core.Parent{entity=root})
+    core.test_world_settle(&f.world)
+    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
+    frame(f,&posed)
+    testing.expect(t,mesh_of(s,1)==sphere && s.instances[1].world[1][3]==2 && s.instances[0].world[1][3]==0,"a posed mesh is drawn with the offset of what it hangs from")
     // Given again as it is, nothing is made; one the renderer does not have shows the mesh of the entity.
     testing.expect(t,posed_set(&posed,b,{mesh=sphere}) && len(posed.changed)==0)
     testing.expect(t,posed_set(&posed,a,{mesh=gpu.Mesh_Handle(9999)}))
@@ -248,7 +257,8 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     for pass in 0..<4 {
         shown:=pass==1 || pass==2
         if shown {
-            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1)
+            // Faded: it shows a row derived for it, which goes when it stops coming.
+            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Tint{color={0,1,0,0.5}})
             extra.object_id,extra.replace_source=u64(a),true
             // One of a mesh the renderer does not have is not drawn, and takes nothing with it.
             lost:=extra
@@ -260,6 +270,17 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
         testing.expectf(t,len(s.instances)==(shown?3:2) && hidden(s,0)==shown && !hidden(s,1),"pass %d: %d instances, the mesh hidden %v",pass,len(s.instances),hidden(s,0))
         // While it keeps coming, or keeps away, nothing of the world is looked at.
         if pass==2 {testing.expect_value(t,f.sync.stats.rows,rows)}
+        testing.expect_value(t,f.assets.stats.derived,shown?1:0)
+    }
+    // One that replaces nothing leaves the world as it is, and still gives back its row.
+    for pass in 0..<3 {
+        if pass==0 {
+            ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Tint{color={1,0,0,0.25}})
+            testing.expect(t,usable && host.extras_instance_add(&f.app.extras,ghost))
+        }
+        updates=f.sync.stats.instance_updates
+        frame(f,&posed)
+        testing.expect(t,f.assets.stats.derived==(pass==0?1:0) && f.sync.stats.instance_updates==updates && len(s.instances)==(pass==0?3:2))
     }
 }
 

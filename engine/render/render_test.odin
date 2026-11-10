@@ -268,7 +268,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
         delete(pixels)
         testing.expectf(t,pass==2?red==0:red>100,"source patch or empty replacement %d: %d red pixels",pass,red)
         users,known:=sync.mesh_users[source]
-        testing.expect(t,known && len(users)==1 && users[0]==0)
+        testing.expect(t,known && len(users)==1 && users[0]==e)
     }
     testing.expect_value(t,rhi.device_validation_errors(app.device),0)
 }

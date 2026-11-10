@@ -35,16 +35,18 @@ Skin_World :: struct {
 
 // The instances the posed meshes of a world are drawn with, as render_sync
 // makes them, in the visual instances of the application: the mesh of each
-// entity where it is drawn, with its pose.
+// entity where it is drawn (erender.instance_place, with the Draw_Offset of
+// what it hangs from), with its pose.
 @(private)
-skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),frame:core.Frame_Time) {
+skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),offsets:core.Read(erender.Draw_Offset),parents:core.Read(core.Parent),frame:core.Frame_Time) {
     clear(&app.extras.instances)
     for pose,i in posed.poses.values {
         e:=posed.poses.entities[i]
         static,_:=core.get(meshes,e)
         world,_:=core.get(worlds,e)
-        instance,_:=erender.mesh_instance(app.assets,static,mm.transform_matrix(erender.drawn_transform(world,frame)),override=pose.materialed?pose.override:{})
-        instance.mesh,instance.object_id=pose.mesh,u64(e)
+        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,{},{},e)
+        instance,_:=erender.mesh_instance(app.assets,static,transform,override=pose.materialed?pose.override:{})
+        instance.mesh,instance.object_id,instance.anchor=pose.mesh,u64(e),anchor
         host.extras_instance_add(&app.extras,instance)
     }
 }
@@ -118,7 +120,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,posed:^erender.Posed_Meshes,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
         clear(&app.extras.instances)
         animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
-        skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),frame)
+        skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),frame)
     }
     tick(&app,&cache,&state,&w,&problems,&posed)
     if !testing.expect_value(t,len(host.extras_instances(&app.extras)),2) {return}
@@ -257,7 +259,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     pose.local[2].position={0.5,2,0}
     copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
     animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{})
-    skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.FRAME_TIME_DEFAULT)
+    skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     testing.expect_value(t,problems.count,0)
     if !testing.expect_value(t,len(state.instances.values),1) {return}
     instance:=state.instances.values[0]
