@@ -47,7 +47,9 @@ Procedures, with their action and API method:
   step. The action creates `<name of the active entity>` beside the scene and is disabled if one of the roots
   is an internal member of an instance.
 - `prefab_instantiate` (drag to the viewport, placement from Assets, `prefab.instantiate`) places
-  an instance with new ids and returns the root.
+  an instance with new ids and returns the root. `scene.write` places the prefab a new entity
+  names with it too, `joined` to the gesture of the write: the world is replaced inside that
+  gesture, whose step holds the instance, and the records wait for the step as those of a copy.
 - `prefab_apply` (`Prefab_Apply`, `prefab.apply`) writes the entity's overrides into its prefab,
   ends them and updates all instances, also the prefabs that place this one: first the added
   entities (they pass to the prefab with what hangs from them and remain as members), then values

@@ -408,8 +408,14 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     name; without `rotation_deg` or `scale` the entity takes those of the preset. It also holds
     when rewriting an entity; `scene.inspect` gives its components, not the preset.
   - A member of an instance of a prefab that is not its root keeps its parent: declaring it under
-    another fails, and leaving it out turns it off (`disabled` of the result). `prefab` is read
-    only and places no instance: `prefab.instantiate`, then write with its id.
+    another fails, and leaving it out turns it off (`disabled` of the result).
+  - A new entity with `prefab` (the path or the id of a `.prefab`) is placed as a linked instance,
+    in the step of the write, with the rules and the errors of the write with no editor
+    ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)): what it and the entities under it leave
+    out stays as the prefab gives it, also in a later write that names it the same way, and what
+    the document says of its members, by their names, are overrides. With `{asset, root}`, as
+    `scene.inspect` gives it, an instance declares all it has. A write changes no link of an
+    entity that is there.
   - A `core.Entity` field names an entity that already exists. An error says where
     (`entities[0].children[2].components.Light: …`) and changes nothing.
   - Changing a few fields of scattered entities is for `scene.set`.

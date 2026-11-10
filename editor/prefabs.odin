@@ -31,7 +31,6 @@ import "mirai:std/serial"
 // moved by an edit of the scene: turning it off leaves it out of the instance.
 
 PREFAB_EXTENSION :: ".prefab"
-PREFAB_CYCLE_DEPTH :: 16
 
 Prefab_Error :: enum u8 {
     None,
@@ -386,20 +385,13 @@ prefab_stale :: proc(s:^Session,id:base.Asset_Id) -> bool {
     return b.size!=file.size || b.time!=file.time
 }
 
-// Whether the prefab holds, directly or through the prefabs it places, the one given.
+// Whether a prefab holds the one given: it is that one, or places it, itself or through the prefabs it places.
 @(private)
-prefab_contains :: proc(s:^Session,prefab:^asset.Scene,target:base.Asset_Id,depth:=0) -> bool {
-    if depth>PREFAB_CYCLE_DEPTH {return true}
-    for instance in prefab.instances {
-        if instance.prefab==target {return true}
-        if instance.outer!=0 {continue}
-        inner,loaded:=prefab_scene_load(s,instance.prefab)
-        if !loaded {continue}
-        found:=prefab_contains(s,inner,target,depth+1)
-        prefab_scene_free(inner)
-        if found {return true}
-    }
-    return false
+prefab_contains :: proc(s:^Session,id,target:base.Asset_Id) -> bool {
+    reader:Prefab_Reader
+    prefab_reader_begin(s,&reader)
+    defer prefab_reader_end(&reader)
+    return asset.prefab_holds(reader.resolver.files,&s.app.assets.types,id,target)
 }
 
 // ---------------------------------------------------------------- the capture an operation works on
@@ -411,6 +403,7 @@ Prefab_Edit :: struct {
     before:[]u8,
     records:Prefab_Records, // of the document when the operation began
     files:[dynamic]Prefab_File,
+    joined:bool,            // part of the gesture that was open: its step holds the operation
 }
 
 @(private)
@@ -422,8 +415,9 @@ prefab_bytes :: proc(sc:^asset.Scene) -> []u8 {
 }
 
 // Marks the overrides of the edits made so far and captures the World with the records of the document.
+// joined: the gesture that is open goes on, and the operation is part of its step; otherwise it is cancelled.
 @(private)
-prefab_begin :: proc(s:^Session) -> (e:Prefab_Edit,error:Prefab_Error) {
+prefab_begin :: proc(s:^Session,joined:=false) -> (e:Prefab_Edit,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
     if import_busy(s)!="" {return {},.Importing}
@@ -434,9 +428,12 @@ prefab_begin :: proc(s:^Session) -> (e:Prefab_Edit,error:Prefab_Error) {
     p:=prefabs_of(s)
     if p.epoch!=s.edits.epoch {prefabs_follow(s,p)}
     prefabs_sync(s,p)
-    tools_release(s)
     w:=edited_world(s)
-    edits_cancel(s.edits,w)
+    e.joined=joined && s.edits.open && !s.edits.preview
+    if !e.joined {
+        tools_release(s)
+        edits_cancel(s.edits,w)
+    }
     core.world_settle(w)
     prefab_observe(s) or_return
     e.s=s
@@ -512,6 +509,23 @@ prefab_finish :: proc(e:^Prefab_Edit,label:string) -> Prefab_Error {
     after:=prefab_bytes(cap)
     changed:=after==nil || !slice.equal(after,e.before)
     error:=Prefab_Error.None
+    if e.joined {
+        // The World follows inside the open gesture, and the records wait for its step as those of a copy do.
+        if changed {error=prefab_world_replace(s,cap)}
+        if error!=.None {
+            prefab_scene_free(cap)
+            return error
+        }
+        document_previous_free(d)
+        d.previous=cap
+        if !p.has_pending {
+            p.pending,e.records=e.records,{}
+            p.pending_state=edits_scene_state(s.edits)
+            p.has_pending=true
+        }
+        e.cap=nil
+        return .None
+    }
     // A step that only writes prefab files still has its place in the history: its undo takes them back.
     if changed || len(e.files)>0 {
         before_state:=edits_scene_state(s.edits)
@@ -1439,7 +1453,7 @@ prefab_variant_path :: proc(s:^Session,base_id:base.Asset_Id) -> string {
 prefab_variant_chain :: proc(s:^Session,id:base.Asset_Id,allocator:=context.temp_allocator) -> []base.Asset_Id {
     chain:=make([dynamic]base.Asset_Id,allocator)
     at:=id
-    for _ in 0..<PREFAB_CYCLE_DEPTH {
+    for _ in 0..<asset.PREFAB_DEPTH {
         loaded,found:=prefab_scene_load(s,at)
         if !found {break}
         _,next:=asset.prefab_variant_base(loaded)
@@ -1479,7 +1493,9 @@ Prefab_Placement :: struct {
 }
 
 // Places an instance of a prefab: new entities with new ids, the root where the placement says.
-prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement) -> (root:base.Entity_Id,error:Prefab_Error) {
+// joined: inside the gesture that is open, whose step holds it; the World is replaced, so the
+// entities are found again by their ids.
+prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement,joined:=false) -> (root:base.Entity_Id,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return 0,.No_Assets}
     placement:=placement
@@ -1491,11 +1507,11 @@ prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_P
     if placement.parent!=core.NONE {
         parent_id=prefab_entity_id(s,placement.parent) or_return
     }
-    if s.document.id==prefab_id || prefab_contains(s,loaded,s.document.id) && s.document.previous!=nil && s.document.previous.doc.kind==asset.KIND_PREFAB {
+    if s.document.id==prefab_id || document_is_prefab(s) && prefab_contains(s,prefab_id,s.document.id) {
         prefab_scene_free(loaded)
         return 0,.Cycle
     }
-    edit,begin_error:=prefab_begin(s)
+    edit,begin_error:=prefab_begin(s,joined)
     if begin_error!=.None {
         prefab_scene_free(loaded)
         return 0,begin_error
@@ -1910,7 +1926,7 @@ prefab_value_apply :: proc(pair:^Prefab_Pair,cap,prefab:^asset.Scene,entity,sour
 @(private)
 prefab_propagate :: proc(s:^Session,changed_id:base.Asset_Id,changed:^asset.Scene,done:^map[base.Asset_Id]^asset.Scene,files:^[dynamic]Prefab_File,depth:=0) {
     a:=s.app.assets
-    if depth>PREFAB_CYCLE_DEPTH {return}
+    if depth>asset.PREFAB_DEPTH {return}
     for &file in a.registry.files {
         if file.state!=.Asset || file.kind!=asset.KIND_PREFAB || file.id in done^ {continue}
         outer,loaded:=prefab_scene_load(s,file.id)

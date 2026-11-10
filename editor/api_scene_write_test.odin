@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:editor/api"
@@ -191,6 +192,115 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     testing.expect_value(t,len(f.edits.steps),steps+1)
 }
 
+// A new entity with prefab is the instance prefab.instantiate places, in the
+// step of the write, and what the document says of its members is its own.
+@(test)
+a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    state:Api_State
+    if !write_fixture_init(t,f,&state,"write-places") {return}
+    defer prefab_fixture_destroy(f)
+    defer api_schema_free(&state)
+    s:=&f.s
+    w:=edited_world(s)
+    // A prefab Crate with a Lid that holds a Lamp, and a Level to place it under.
+    crate:=write_entity(f,"Crate")
+    lid:=write_entity(f,"Lid",crate)
+    core.add(&f.world.lamps,write_entity(f,"Lamp",lid),Prefab_Test_Lamp{intensity=2,range=3})
+    level:=write_entity(f,"Level")
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    prefabs_follow(s,&f.prefabs)
+    level_id:=api_entity_id(w,level)
+    id,created:=prefab_create(s,crate,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    prefabs_follow(s,&f.prefabs)
+    steps,alive:=len(f.edits.steps),core.world_entities(w).alive
+    // The lamp of the instance under the first child of Level.
+    placed_lamp :: proc(f:^Prefab_Fixture,level:base.Entity_Id) -> (north,lamp:core.Entity) {
+        w:=edited_world(&f.s)
+        under:=entity_children(w,api_entity(w,level))
+        if len(under)==0 {return}
+        north=under[0]
+        for part in entity_children(w,north) {
+            for inner in entity_children(w,part) {lamp=inner}
+        }
+        return
+    }
+
+    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.prefab","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
+    result,failure,ok:=write_scene(f,document)
+    if !testing.expect(t,ok,failure) {return}
+    testing.expect_value(t,result,Api_Write_Result{id=level_id,made=3})
+    testing.expect_value(t,len(f.edits.steps),steps+1)
+    testing.expect_value(t,core.world_entities(w).alive,alive+3)
+    north,lamp:=placed_lamp(f,level_id)
+    north_id,lamp_id:=api_entity_id(w,north),api_entity_id(w,lamp)
+    link,linked:=prefab_link_of(s,north_id)
+    testing.expect(t,linked && link.root && link.asset==id && entity_name(w,north)=="North")
+    testing.expect_value(t,entity_local(w,north).position,[3]f32{4,0,0})
+    member,is_member:=prefab_link_of(s,lamp_id)
+    value,_:=core.get(core.read(&f.world.lamps),lamp)
+    testing.expect(t,is_member && !member.root && member.instance==link.instance && value.intensity==9,"What the document says of a member, by its name, the member holds")
+    testing.expect(t,asset.scene_overridden(f.document.previous,lamp_id,base.name_hash("Prefab_Test_Lamp"),"intensity"),"and the instance holds it on its own")
+    for override in f.document.previous.overrides {testing.expect(t,override.kind!=.Child,"Nothing was made beside the members")}
+
+    // The document that placed it, and the one inspect gives of it, written again change nothing.
+    result,failure,ok=write_scene(f,document)
+    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+    tree,entities:=write_tree(t,f,level_id)
+    placed:=tree["children"].(json.Array)[0].(json.Object)["prefab"].(json.Object)
+    testing.expect(t,placed["root"].(json.Boolean) && len(placed["asset"].(json.String))>0)
+    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(level_id),entities))
+    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+
+    // One step: undone, the instance is gone with its link; done again, it is linked as before.
+    testing.expect(t,undo(&f.edits,w,&f.selection))
+    prefabs_follow(s,&f.prefabs)
+    testing.expect_value(t,core.world_entities(w).alive,alive)
+    testing.expect_value(t,len(f.document.previous.instances),1)
+    testing.expect(t,redo(&f.edits,w,&f.selection))
+    prefabs_follow(s,&f.prefabs)
+    north,lamp=placed_lamp(f,level_id)
+    link,linked=prefab_link_of(s,north_id)
+    testing.expect(t,linked && link.root && api_entity_id(w,north)==north_id && len(f.document.previous.instances)==2)
+
+    // Revert gives the member back what the prefab has.
+    reverted,revert_error:=prefab_revert(s,north,nil,true)
+    prefabs_follow(s,&f.prefabs)
+    _,lamp=placed_lamp(f,level_id)
+    value,_=core.get(core.read(&f.world.lamps),lamp)
+    testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
+
+    // Without root the instance is the new root, with what the document says of it.
+    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.prefab","enabled":false}]}`)
+    alone,placed_alone:=prefab_link_of(s,result.id)
+    testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),failure)
+
+    // What a write refuses after placing an instance takes the instance back; and a prefab is not placed in a file it holds.
+    yard,nested:=prefab_create(s,api_entity(w,level_id),"yard")
+    if !testing.expect_value(t,nested,Prefab_Error.None) {return}
+    testing.expect(t,prefab_contains(s,yard,id) && !prefab_contains(s,id,yard))
+    prefabs_follow(s,&f.prefabs)
+    steps,alive=len(f.edits.steps),core.world_entities(w).alive
+    instances,members:=len(f.document.previous.instances),len(f.document.previous.members)
+    open_id:=f.document.id
+    cases:=[?]struct{document,says:string,inside:bool}{
+        {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.prefab"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
+        {`{"entities":[{"name":"In","prefab":"crate.prefab"}]}`,"holds the file it would be placed in",true},
+        {`{"entities":[{"name":"In","prefab":"yard.prefab"}]}`,"holds the file it would be placed in",true},
+    }
+    for c in cases {
+        if c.inside {f.document.id=id}
+        _,refused,accepted:=write_scene(f,c.document)
+        f.document.id=open_id
+        testing.expectf(t,!accepted && strings.contains(refused,c.says),"%s: %s",c.says,refused)
+        testing.expect_value(t,core.world_entities(w).alive,alive)
+        testing.expect_value(t,len(f.edits.steps),steps)
+        testing.expect(t,len(f.document.previous.instances)==instances && len(f.document.previous.members)==members,"The records of the instances are those from before")
+    }
+}
+
 @(test)
 a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
@@ -218,7 +328,11 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0]: position must be an array of 3 numbers"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"0"}}}}]}}]}}`,at),"entities[0].children[0].prefab: scene.write places no prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.prefab"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.prefab" is no .prefab asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .prefab asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.prefab","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,at,u64(root_id)+1,u64(root_id)+1),"entities[0].children[1].id: 0x"},
         {fmt.tprintf(`{{%s,"entities":[{{"name":"Root"}},{{"name":"Two"}}]}}`,at),"entities declares one entity"},
     }
