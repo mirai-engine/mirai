@@ -162,6 +162,7 @@ command_state :: proc(s:^Session,name:string) -> Command_State {
 }
 
 binding_state :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
+    if st:=api_state(s);st.library_generation!=s.library_generation {return {disabled=true}}
     if s.gui!=nil && s.gui.modal==.Recovery && b.name!="quit" {return {disabled=true}}
     // An asset document in front: what acts on the scene waits for it, but
     // what its plugin takes in its place.
