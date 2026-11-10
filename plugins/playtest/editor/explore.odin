@@ -2,7 +2,6 @@ package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
@@ -31,8 +30,7 @@ API_EXPLORE_TICKS :: 36000
 @(private) EXPLORE_CELLS :: 8192
 @(private) EXPLORE_HOLD_TICKS :: 40
 @(private) EXPLORE_WARM_TICKS :: 60    // for the seat and its body to appear
-@(private) EXPLORE_BLOCKED_TICKS :: 20 // without moving: another way
-@(private) EXPLORE_MOVED :: f32(0.1)
+@(private) EXPLORE_BLOCKED_SECONDS :: f64(1)/3 // stuck, by the measure of the monitors, on the way it took: another way
 @(private) EXPLORE_UI_NODES :: 256
 @(private) EXPLORE_UI_PAGES :: 64
 @(private) EXPLORE_UI_EDGES :: 256
@@ -463,8 +461,8 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     directions:=EXPLORE_DIRECTIONS
     avoid:bit_set[0..<8]
     chosen:=0
-    previous:=editor.entity_world(editor.run_ref(s,x.r),body).position
-    still,next:=0,0
+    tried:=f64(0) // how long it was stuck when it took its way
+    next:=0
     ui_previous,ui_node:=-1,-1
     for x.ran<x.total {
         if editor.api_stop_asked(x.s) {break}
@@ -477,9 +475,9 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
         }
         at:=editor.entity_world(w,body).position
         explore_cell_enter(&x.cells,explore_cell_of(at,p.cell))
-        if linalg.length(at-previous)>=EXPLORE_MOVED {still=0} else {still+=1}
-        previous=at
-        blocked:=still>=EXPLORE_BLOCKED_TICKS
+        still:=explore_still(x,w,body,at)
+        if still<tried {tried=0}
+        blocked:=still-tried>=EXPLORE_BLOCKED_SECONDS
         if x.ran>=next || blocked {
             // A screen that takes the seat is pressed through before moving on.
             if explore_modal_on_top(x) {
@@ -492,7 +490,7 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
             }
             if blocked {
                 avoid+={chosen}
-                still=0
+                tried=still
             } else {avoid={}}
             right,forward:=editor.play_view_axes(w)
             chosen=explore_direction(&x.cells,at,right,forward,p.cell,avoid,&x.rng)
@@ -505,6 +503,14 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     }
     x.stopped=.Ticks
     return
+}
+
+// How long the body has been stuck: what the Stuck monitor measures (stuck_watch).
+@(private)
+explore_still :: proc(x:^Explore_Run,w:core.World_Ref,body:core.Entity,at:[3]f32) -> f64 {
+    slot,t:=playtest_run(x.s,x.r),core.world_storage_of(w,core.Time)
+    if slot==nil || t==nil {return 0}
+    return stuck_watch(&slot.stuck,w,body,at,t.seconds)
 }
 
 // Whether a modal screen takes the input of the focused player.

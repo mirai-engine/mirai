@@ -11,14 +11,19 @@ import mm "mirai:std/math"
 
 // A drive of play.step: its ticks steer the focused player to a target by the
 // move action of the game, re-aimed every tick toward where the target is
-// now, as play.explore steers, or toward the next point of the way a plugin
-// gives (Route_Provider: the navigation). It takes off at the edge of a gap and when
-// blocked, and holds the jump as long as it still rises or until it is over the
-// far side; then tries each side. It stops within a distance across the ground,
-// or standing on a target that is out of reach or a solid raised over its feet,
-// with the conditions of the step, at its ticks, or when it stops getting
-// closer. A platform that moves is not predicted: wait for it with a step with
-// until, then drive onto it.
+// now, or toward the next point of the way a plugin gives (Route_Provider: the
+// navigation). It takes off at the edge of a gap and when it stalls, and holds
+// the jump as long as it still rises or until it is over the far side; then
+// tries each side. It stops within a distance across the ground, or standing
+// on a target that is out of reach or a solid raised over its feet, with the
+// conditions of the step, at its ticks, or when it stops getting closer. A
+// platform that moves is not predicted: wait for it with a step with until,
+// then drive onto it.
+//
+// A drive stalls when it gets no closer to its target for a while. That is not
+// the stuck of the monitors of the playtest plugin, a body that asks to move
+// and stays in place: one that slides along a wall or circles what it cannot
+// reach moves, and gets no closer.
 
 API_DRIVE_DEFAULT_SECONDS :: 30
 API_DRIVE_WITHIN :: f32(1)         // m across the ground
@@ -28,9 +33,9 @@ API_DRIVE_ACTIONS :: 64
 @(private) DRIVE_ON_SLACK :: f32(0.5)       // m between its feet and a surface it stands on
 @(private) DRIVE_WARM_TICKS :: 60           // for the seat and its body to appear
 @(private) DRIVE_PROGRESS :: f32(0.05)      // m closer to the target that count as getting closer
-@(private) DRIVE_BLOCKED_TICKS :: 20        // without getting closer: another way
-@(private) DRIVE_DETOUR_TICKS :: 40         // a blocked round walks to a side this long
-@(private) DRIVE_GIVE_UP :: 6               // blocked rounds in a row before it stops
+@(private) DRIVE_STALL_TICKS :: 20          // without getting closer it stalled: another way
+@(private) DRIVE_DETOUR_TICKS :: 40         // a stalled round walks to a side this long
+@(private) DRIVE_GIVE_UP :: 6               // stalled rounds in a row before it stops
 @(private) DRIVE_JUMP_SECONDS :: f32(0.2)   // a jump is held at least this long: a tap would cut it
 @(private) DRIVE_GAP_EDGE :: f32(0.35)      // m ahead a gap is looked for, at the least: it takes off at the edge
 @(private) DRIVE_GAP_TICKS :: f32(4)        // ticks of its speed ahead it also looks: what it covers before the jump leaves the ground
@@ -90,7 +95,7 @@ Api_Drive :: struct {
     stance:Stance, // of its body at the last measure
     jumping:bool,   // holds the jump
     landing:bool,   // left the ground by a jump of its own and has not stood since
-    held,still,rounds,warm,looks,detour,climbs:int, // held: ticks of the jump held
+    held,stalled,rounds,warm,looks,detour,climbs:int, // held: ticks of the jump held; stalled: ticks without getting closer
     over_gap:bool,  // went over the gap of the jump it holds
     gap_jump:bool,  // it holds a jump taken at a gap
     climbing:bool,  // took off onto a target above it
@@ -370,16 +375,16 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
         return true
     }
     routed:=d.route.state==.Found
-    if routed!=d.routed {d.routed,d.best,d.still=routed,0,0}
+    if routed!=d.routed {d.routed,d.best,d.stalled=routed,0,0}
     left:=routed?d.route.left:d.distance
     if d.best==0 {d.best=left}
     if d.detour>0 || d.clearing {
         // A step away gets no closer on purpose: it counts from where it ends.
-        d.best,d.still=max(d.best,left),0
+        d.best,d.stalled=max(d.best,left),0
     } else if left<d.best-DRIVE_PROGRESS {
-        d.best,d.still,d.rounds=left,0,0
+        d.best,d.stalled,d.rounds=left,0,0
     } else {
-        d.still+=1
+        d.stalled+=1
     }
     direction:=across/max(d.distance,1e-4)
     right,forward:=play_view_axes(w)
@@ -408,8 +413,8 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
         if !d.clearing && standing && !d.jumping && edge<=0 {d.clearing=true}
         if d.clearing && edge>=d.takeoff+DRIVE_RUN_UP {d.clearing=false}
     } else {d.clearing,d.climbing=false,false}
-    if d.still>=DRIVE_BLOCKED_TICKS {
-        d.still=0
+    if d.stalled>=DRIVE_STALL_TICKS {
+        d.stalled=0
         d.rounds+=1
         if d.rounds>=DRIVE_GIVE_UP {
             d.stopped,d.stopping=.Stuck,true
