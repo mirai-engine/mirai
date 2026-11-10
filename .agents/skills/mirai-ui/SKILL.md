@@ -153,8 +153,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   `tree_controls_test.odin`, `game_controls_test.odin`, `tree_names_test.odin` (tokens, extends,
   states, layouts of styles, the first control of a page) and `retain_test.odin`. Paths:
   `tree_kinds_test.odin` and, in `engine/gui`, `gui_test.odin`.
-- Markdown: `markdown_test.odin` (height equal to what was built, each block, whole pills, click on
-  a link, code split by characters, code copy and a stable frame without allocating).
+- Markdown: `markdown_test.odin` (each case of the corpus at each width, each block, whole pills,
+  click on a link, code split by characters, code copy and a stable frame without allocating); the
+  height of a reply in the chat: `editor/ai_chat_test.odin`.
 - Cases with fine behavior: `password_test.odin`, `caret_test.odin` (the caret blinks and restarts
   without allocating), `number_test.odin`, `widgets_test.odin` (the height of running text) and
   `scroll_test.odin` (rows of different heights).
