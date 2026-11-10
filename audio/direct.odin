@@ -68,7 +68,7 @@ direct_gain_eq :: proc "contextless" (attenuation,directivity:f32,air:[BANDS]f32
 }
 
 @(private)
-Biquad_State :: struct {x1,x2,y1,y2:f32}
+Biquad_State :: struct {z1,z2:f32} // transposed direct form II
 
 @(private)
 biquad_shelf :: proc "contextless" (cutoff,gain:f32,sample_rate:int,high:bool) -> Biquad {
@@ -109,20 +109,24 @@ eq_filters :: proc "contextless" (gains:[BANDS]f32,sample_rate:int) -> [BANDS]Bi
     }
 }
 
-// IIR2Filterer::apply over a cascade, in place. The tiny offset keeps the
-// state out of denormals.
+// IIR2Filterer::apply over a cascade, in place, the three stages in one pass
+// over the samples. The tiny offset keeps the state out of denormals.
 @(private)
 eq_run :: proc "contextless" (filters:^[BANDS]Biquad,states:^[BANDS]Biquad_State,samples:[]f32) #no_bounds_check {
-    for i in 0..<BANDS {
-        f:=filters[i]
-        s:=states[i]
-        for &x in samples {
-            input:=x+1e-9
-            y:=f.b0*input+f.b1*s.x1+f.b2*s.x2-f.a1*s.y1-f.a2*s.y2
-            s.x2,s.x1=s.x1,input
-            s.y2,s.y1=s.y1,y
-            x=y
-        }
-        states[i]=s
+    f0,f1,f2:=filters[0],filters[1],filters[2]
+    s0,s1,s2:=states[0],states[1],states[2]
+    for &x in samples {
+        a:=x+1e-9
+        b:=f0.b0*a+s0.z1
+        s0.z1=f0.b1*a-f0.a1*b+s0.z2
+        s0.z2=f0.b2*a-f0.a2*b
+        c:=f1.b0*b+s1.z1
+        s1.z1=f1.b1*b-f1.a1*c+s1.z2
+        s1.z2=f1.b2*b-f1.a2*c
+        y:=f2.b0*c+s2.z1
+        s2.z1=f2.b1*c-f2.a1*y+s2.z2
+        s2.z2=f2.b2*c-f2.a2*y
+        x=y
     }
+    states^={s0,s1,s2}
 }
