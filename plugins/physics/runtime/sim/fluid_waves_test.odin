@@ -19,9 +19,14 @@ swell :: proc() -> Fluid_Waves {
 the_surface_over_a_point_is_where_the_water_of_the_waves_goes :: proc(t:^testing.T) {
     waves:=waves_of(swell())
     terms,count:=wave_terms(&waves,37.25,{-512,256})
+    most,moved:=waves_slope(&waves)
+    testing.expectf(t,moved<1,"the water moves %v of a metre sideways",moved)
+    steepest:=most/(1-moved)
     for i in 0..<64 {
         rest:=[2]f32{f32(i%8)*1.7-6,f32(i/8)*1.3-5}
         offset,normal,_:=wave_point(terms[:count],rest)
+        rise:=cmath.sqrt(normal.x*normal.x+normal.z*normal.z)/normal.y
+        testing.expectf(t,rise<=steepest,"the surface rises %v at %v, over the %v of its waves",rise,rest,steepest)
         reached:=rest+{offset.x,offset.z}
         height,found:=wave_surface(terms[:count],reached.x,reached.y)
         testing.expectf(t,abs(height-offset.y)<1e-3,"over %v: %v, the water there is at %v",reached,height,offset.y)

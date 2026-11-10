@@ -46,6 +46,7 @@ PARTICLE_ATTRIBUTE_BYTES :: gpu.PARTICLE_ATTRIBUTE_BYTES
 Nested_View :: gpu.Nested_View
 NESTED_VIEW_CAPACITY :: gpu.NESTED_VIEW_CAPACITY
 Mesh_Handle :: gpu.Mesh_Handle
+Sheet :: gpu.Sheet
 Texture_Handle :: gpu.Texture_Handle
 Material_Handle :: gpu.Material_Handle
 Instance_Desc :: gpu.Instance_Desc
@@ -396,9 +397,12 @@ deformable_create :: proc(app:^host.App,source:Mesh_Handle,levels:=false) -> (Me
 }
 
 // Says that the next frame writes the vertices of a deformable, and the box
-// they stay in, in the space of the mesh.
-deformable_update :: proc(app:^host.App,mesh:Mesh_Handle,bounds_min,bounds_max:[3]f32) -> bool {
-    return app.renderer!=nil && gpu.deformable_update(app.renderer,mesh,bounds_min,bounds_max)
+// they stay in, in the space of the mesh. sheet: while they stay a sheet, an
+// open surface over the XZ plane of the mesh that faces +Y, how steep it gets:
+// the glass then does not look for where a view that goes down more steeply
+// leaves it.
+deformable_update :: proc(app:^host.App,mesh:Mesh_Handle,bounds_min,bounds_max:[3]f32,sheet:^Sheet=nil) -> bool {
+    return app.renderer!=nil && gpu.deformable_update(app.renderer,mesh,bounds_min,bounds_max,sheet)
 }
 
 Skin_Influence :: gpu.Skin_Influence

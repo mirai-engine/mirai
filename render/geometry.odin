@@ -45,6 +45,7 @@ Mesh_Record :: struct {
 	position_step, uv_step, uv1_step, lod_reach: f32,
 	bounds_min, bounds_max:          Vec3,
 	slab_axes:                       u32,
+	sheet:                           Sheet, // of a deformable that is one (MESH_FLAG_SHEET)
 	uv_density:                      [MESH_UV_ENTRIES][2]f32, // of each of its slots (mesh_uv_density)
 	triangle_count:                  u32, // of level 0
 	rays:                            [asset.MESH_RAY_LEVELS]Mesh_Ray_Record,
@@ -705,7 +706,8 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 		cluster_word = m.cluster_word, cluster_count = m.cluster_count, level_word = m.level_word, level_count = m.level_count,
 		page_word = m.page_word, page_count = m.page_count, vertex_count = m.vertex_count, slot_word = m.slot_word,
 		posed_word = m.posed_word, previous_word = m.previous_word, bounds_word = m.bounds_word,
-		part_word = m.part_word, part_layers = m.skin.part_layers if m.skin != nil else 0, flags = m.flags, slab_axes = m.slab_axes,
+		part_word = m.part_word, part_layers = m.skin.part_layers if m.skin != nil else 0, flags = m.flags, slab_axes = m.slab_axes, sheet_rise = m.sheet.rise,
+		sheet_walls_min = {m.sheet.walls_min.x, m.sheet.walls_min.y, m.sheet.walls_min.z, 0}, sheet_walls_max = {m.sheet.walls_max.x, m.sheet.walls_max.y, m.sheet.walls_max.z, 0},
 		position_step = m.position_step, uv_step = m.uv_step, uv1_step = m.uv1_step, lod_reach = m.lod_reach,
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
 	}

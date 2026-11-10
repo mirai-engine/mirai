@@ -476,7 +476,11 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   that reaches it inside, dimmed by the path from the roof of the solid. Both hold on every path
   through the solid, also from inside and in what is traced.
 - An open mesh (without an exit for the inside ray, like the surface of water) follows the
-  refracted ray to what it finds, and the solid reaches up to there.
+  refracted ray to what it finds, and the solid reaches up to there. No ray looks for the exit of
+  a mesh the view cannot meet again (`walk_leaves`): a flat mesh, and a deformable whose extension
+  says it stays a sheet (`Sheet` of `deformable_update`) while the view goes down more steeply
+  than the sheet rises and misses the box of its walls. A wrong `Sheet` loses the exits a ray
+  would have found.
 - **From inside.** The camera can be inside a solid: the candidate is the blend instance with a
   solid material (`material_solid`; a sheet without thickness, like a skylight, is not a medium)
   below the roof of whose box (or less than `GLASS_MEDIUM_NEAR` above it), and within its sides, is
@@ -500,6 +504,12 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 - **Scene behind.** From the exit point the on-screen scene is looked for over the opaque depth; if
   the ray leaves the screen or comes back toward the camera, it is traced in the world and the hit
   is lit like that of a reflection. A rough glass spreads that read over a disc.
+- **Heights.** While the scene has a solid, the view draws the heights of the scene around the
+  camera (`render/heights.odin`, `heights.slang`): maps of depth straight down from over the
+  scene, drawn with the shadow maps, of what a ray of the view can meet (no blend instances). A
+  ray of a walk is sent from where it first comes down to them, or not at all while it stays over
+  them. They only say where nothing is, so their detail changes what the rays cost and never what
+  they find; the glass a skipped stretch would have crossed does not filter it.
 - **Layers.** `glass_layers` are the nearest blend surfaces of each pixel that are lit this way,
   once per pixel; each layer reads the scene from a copy. Those behind are drawn forward, back to
   front: they filter, absorb and do not refract, and layers are discarded by depth equality between

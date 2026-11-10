@@ -28,7 +28,10 @@ names the Surface program of a water without its own material (empty or unknown:
   grid (`Sheet`) that the `water_sheet` step of `Geometry` writes each frame (without waves, only
   when the grid or the boxes move): each vertex goes where the water that rests on it is, and a
   wave fades where the ring's cells measure more than a quarter of its length. Raster, rays,
-  shadows and glass see the same surface in which bodies float.
+  shadows and glass see the same surface in which bodies float. It tells the renderer how steep
+  its triangles get on the waves (`waves_slope` of physics) and the box where the dry boxes give
+  it walls, so that [the glass](../../mirai-rendering/references/materials.md#glass) does not
+  look for where the view leaves it.
 - **`Water_Surface`** (`shaders/water_surface.slang`): bends the normal with the small-wave trains
   of `water.slang`, the same ones that the caustics follow.
 - **Medium.** The glass solid absorbs and scatters on every path through the water, from above,

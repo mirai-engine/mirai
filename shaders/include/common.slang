@@ -52,9 +52,9 @@
 // The texture table of the RHI (rhi.TEXTURE_TABLE_SLOT): every material
 // texture, picked by the index a material stores. It has no size: it grows
 // with the textures of the scene. Its first TEXTURE_TABLE_RESERVED entries
-// hold the tables of the renderer (DFG_TEXTURE, AIR_*_TEXTURE).
+// hold the tables of the renderer (DFG_TEXTURE, AIR_*_TEXTURE, HEIGHTS_TEXTURE).
 #define MATERIAL_TEXTURE_SLOT     34
-#define TEXTURE_TABLE_RESERVED    4u
+#define TEXTURE_TABLE_RESERVED    5u
 
 #define PI 3.14159265358979
 #define INV_PI 0.31830988618379
@@ -272,6 +272,7 @@ struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; float er
 #define MESH_FLAG_UV1 8u
 #define MESH_FLAG_COLORS 16u
 #define MESH_FLAG_STREAMED 32u
+#define MESH_FLAG_SHEET 64u
 struct Mesh {
     uint cluster_word;   // its first cluster in the index pool
     uint cluster_count;
@@ -292,9 +293,11 @@ struct Mesh {
     float uv1_step;
     float lod_reach;     // how far a sphere of its levels reaches past its box
     uint bounds_word;    // of a pose: the box and the cone of the normals of each cluster it poses, as posed now (geometry.slang, posed_bounds); INVALID: none
-    uint pad0;
+    float sheet_rise;    // of a sheet (MESH_FLAG_SHEET): the most it rises, metres a metre along its XZ plane
     float4 bounds_min;   // object space
     float4 bounds_max;
+    float4 sheet_walls_min; // of a sheet: the box of its space where it may be as steep as a wall; min over max: none
+    float4 sheet_walls_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];
 };
 

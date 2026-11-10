@@ -47,6 +47,17 @@ a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices :: p
 	testing.expect_value(t, row, u32(with))
 	testing.expect(t, known && posed == count && written == mesh.posed_word && rest == written + 2 * count * POSED_WORDS)
 	testing.expect_value(t, gpu_mesh(mesh).previous_word, written + count * POSED_WORDS)
+	// Said to stay a sheet, its row tells the glass how steep it gets and where its walls are; said so no
+	// more, it is any shape again.
+	shape := Sheet{rise = 0.5, walls_min = {4, -3, 4}, walls_max = {8, 1, 8}}
+	testing.expect(t, deformable_update(r, with, {0, -3, 0}, {32, 2, 32}, &shape))
+	told := gpu_mesh(r.scene.meshes[with])
+	testing.expect(t, told.flags & MESH_FLAG_SHEET != 0 && told.sheet_rise == 0.5 && told.sheet_walls_min.xyz == shape.walls_min && told.sheet_walls_max.xyz == shape.walls_max)
+	testing.expect(t, deformable_update(r, with, {0, -3, 0}, {32, 2, 32}))
+	testing.expect(t, gpu_mesh(r.scene.meshes[with]).flags & MESH_FLAG_SHEET == 0)
+	shape.rise = -1
+	testing.expect(t, deformable_update(r, with, {0, -3, 0}, {32, 2, 32}, &shape))
+	testing.expect(t, gpu_mesh(r.scene.meshes[with]).flags & MESH_FLAG_SHEET == 0)
 	without, _ := deformable_create(r, source)
 	plain := r.scene.meshes[without]
 	level0, _ := level0_vertices(&r.scene, original)

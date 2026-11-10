@@ -67,6 +67,15 @@ waves_reach :: proc "contextless" (waves:^Fluid_Waves) -> (reach:f32) {
     return
 }
 
+// The most the height of the waves changes, metres a metre of the still
+// surface the water rests on, and the most of that metre the water moves
+// sideways: under 1, as the surface never folds. The surface itself rises no
+// more than rise / (1 - moved) a metre.
+waves_slope :: proc "contextless" (waves:^Fluid_Waves) -> (rise,moved:f32) {
+    for wave in waves.waves[:waves.count] {rise+=2*cmath.PI/wave.length*wave.amplitude}
+    return rise,waves.steepness*min(rise,WAVE_FOLD)
+}
+
 // The waves at `time` seconds, measured from `origin` (x and z of the world):
 // a point at p relative to it is at origin + p. The phase is reduced in f64,
 // so far from the centre of the world and long after it started, every wave

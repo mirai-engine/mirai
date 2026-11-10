@@ -181,7 +181,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   near and large lights, rays for far ones. The constants of the view carry the cascades of the
   sun it drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of
   the sun from them and traces only where none holds the point (`sun_shadow_seen`; an extension
-  binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
+  binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The atlas
+  also holds the maps of the [heights](materials.md#glass) of a scene with a solid of glass,
+  whatever the setting says.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.

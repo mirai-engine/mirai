@@ -478,14 +478,31 @@ mesh_bounds :: proc(r:^Renderer,handle:Mesh_Handle)->(bounds_min,bounds_max:Vec3
     return s.meshes[handle].bounds_min,s.meshes[handle].bounds_max,true
 }
 
+// What an extension says of the vertices of a deformable that stay a sheet:
+// an open surface over the XZ plane of the mesh that faces +Y. A ray that
+// goes away under it more steeply than it rises never meets it again, so the
+// glass does not look for where the view leaves it.
+Sheet :: struct {
+    rise:f32, // the most it rises, metres a metre along that plane, outside the box of its walls
+    walls_min,walls_max:Vec3, // the box of the space of the mesh where it may be as steep as a wall; min over max: none
+}
+
 // Says that the extension writes the vertices of a deformable in the Geometry
 // stage of the next frame, and the box they stay in, in the space of the mesh.
-deformable_update :: proc(r:^Renderer,handle:Mesh_Handle,bounds_min,bounds_max:Vec3)->bool {
+// sheet: what they are while they stay one; nil: any shape.
+deformable_update :: proc(r:^Renderer,handle:Mesh_Handle,bounds_min,bounds_max:Vec3,sheet:^Sheet=nil)->bool {
     s:=&r.scene
     if int(handle)>=len(s.meshes) {return false}
     m:=&s.meshes[handle]
     if m.skin==nil || !m.skin.external {return false}
     for i in 0..<3 {if !(bounds_min[i]<=bounds_max[i]) || math.is_inf(bounds_min[i]) || math.is_inf(bounds_max[i]) {return false}}
+    said:=sheet!=nil && sheet.rise>=0 && sheet.rise<=max(f32)
+    flags:=m.flags&~MESH_FLAG_SHEET|(MESH_FLAG_SHEET if said else 0)
+    shape:=sheet^ if said else Sheet{}
+    if flags!=m.flags || shape!=m.sheet {
+        m.flags,m.sheet=flags,shape
+        range_add(&s.mesh_dirty,{u32(handle),1})
+    }
     if m.bounds_min!=bounds_min || m.bounds_max!=bounds_max {
         m.bounds_min,m.bounds_max=bounds_min,bounds_max
         m.skin.bounds_dirty=true

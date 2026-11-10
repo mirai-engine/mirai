@@ -539,7 +539,9 @@ their handles in a `by_world` storage and removes them in the `release` of its w
   before the `Geometry` stage and afterwards refits the ray structure; `mesh_remove` frees it.
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
-  equalize current and previous. A box that does not change marks no light.
+  equalize current and previous. A box that does not change marks no light. With a `Sheet` it
+  also says the shape stays an open surface that faces +Y, and how steep
+  ([glass](materials.md#glass)).
 - `pass_deformable` gives where, in vertex pool words, the vertices that the extension writes and
   the rest ones it reads are (one `Posed_Vertex` each, which its shader reads and writes with
   `posed.slang`: `posed_load`, `posed_store`), and its row of the mesh table. Vertex `i` is the `i`

@@ -301,7 +301,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 
 // glass_pass.slang Params_Block.
 @(private)
-Glass_Params :: struct {light_budget, traced: u32, max_distance, firefly_clamp, pixel_spread: f32, snapshot, medium: u32, near_top: f32, resume, pad0, pad1, pad2: u32}
+Glass_Params :: struct {light_budget, traced: u32, max_distance, firefly_clamp, pixel_spread: f32, snapshot, medium: u32, near_top: f32, resume, pad0, pad1, pad2: u32, heights: Gpu_Heights}
 
 // The most rounds the ways of the view through a solid wait for programs
 // (glass_pass.slang): a face at each turn inside, and what they show, for the
@@ -328,7 +328,7 @@ glass_params :: proc(p: ^Pass) -> Glass_Params {
 	return {
 		light_budget = settings.light_budget,
 		max_distance = settings.gi_max_distance, firefly_clamp = settings.firefly_clamp,
-		pixel_spread = p.frame.footprint.y, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR,
+		pixel_spread = p.frame.footprint.y, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR, heights = p.heights,
 	}
 }
 

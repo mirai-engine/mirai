@@ -14,11 +14,12 @@ import "mirai:rhi"
 Texture_Handle :: distinct u32
 
 // The first entries of the table hold the split-sum table of the lobe
-// (DFG_TEXTURE) and the tables of the air (AIR_*_TEXTURE), as
+// (DFG_TEXTURE), the tables of the air (AIR_*_TEXTURE) and the heights of the
+// scene (HEIGHTS_TEXTURE), as
 // TEXTURE_TABLE_RESERVED of include/common.slang says: the texture of a
 // handle is in the entry TEXTURE_RESERVED + handle - 1. The table grows with
 // the textures, up to texture_capacity.
-TEXTURE_RESERVED :: 4
+TEXTURE_RESERVED :: 5
 
 Texture_Desc :: struct {
 	pixels:        []u8, // RGBA8, rows from the top of the image
