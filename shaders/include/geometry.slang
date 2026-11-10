@@ -9,17 +9,10 @@
 #define MIRAI_GEOMETRY_SLANG
 #include "posed.slang"
 
-#define CLUSTER_WORDS 24u
-#define VERTEX_WORDS 4u
-#define LEVEL_WORDS 5u
-#define PAGE_ENTRY_WORDS 4u
-#define CLUSTER_TRIANGLES 128u
-// The vertices a draw gives a cluster: the corners of as many triangles as one has.
-#define CLUSTER_DRAW_VERTICES 384u
-#define CLUSTER_CONE (1u << 21u)
-// A primitive a ray meets: the cluster among those of its mesh, then the
-// triangle of the cluster in the low bits.
-#define PRIMITIVE_TRIANGLE_BITS 7u
+// CLUSTER_DRAW_VERTICES: the vertices a draw gives a cluster, the corners of
+// as many triangles as one has. A primitive a ray meets is the cluster among
+// those of its mesh, then the triangle of the cluster in the low
+// PRIMITIVE_TRIANGLE_BITS bits.
 
 Cluster cluster_at(uint word) {
     Cluster c;

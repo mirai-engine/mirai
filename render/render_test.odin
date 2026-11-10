@@ -1421,7 +1421,7 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	testing.expect(t, scene_move(r, {}, {}))
 	// An instance the set skipped and one that stays where it was move nothing.
 	testing.expect(t, scene_move(r, {1, 3}, {trs({9, 9, 9}, {1, 1, 1}), instances[3].transform}))
-	testing.expect(t, len(r.scene.touched) == 0 && !r.scene.tlas_nodes_dirty)
+	testing.expect(t, r.scene.touched_count == 0 && !r.scene.tlas_nodes_dirty)
 
 	for step in 1 ..= 3 {
 		instances[2].transform = trs({f32(step) * 0.7, 1.5, 0}, {2, 0.2, 2})
@@ -1441,15 +1441,15 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 		testing.expect(t, a.bounds_min == b.bounds_min && a.bounds_max == b.bounds_max && a.has_bounds == b.has_bounds)
 		testing.expect_value(t, len(a.lights), lights_before)
 		testing.expect(t, !a.instances_dirty, "a move does not send the whole table")
-		testing.expect_value(t, len(a.touched), 2)
+		testing.expect_value(t, a.touched_count, 2)
 		// The frame that follows draws the motion; the one after it, the instances at rest.
 		move_frames(t, r, 1)
 		move_frames(t, expected, 1)
-		testing.expect_value(t, len(a.touched), 2)
+		testing.expect_value(t, a.touched_count, 2)
 		testing.expect(t, a.instances[a.desc_instance[2]].prev_world == a.instances[a.desc_instance[2]].world)
 		move_frames(t, r, 1)
 		move_frames(t, expected, 1)
-		testing.expect_value(t, len(a.touched), 0)
+		testing.expect_value(t, a.touched_count, 0)
 		for inst, i in a.instances {testing.expectf(t, inst == b.instances[i], "step %d at rest: instance %d", step, i)}
 	}
 	move_frames(t, r, 4)
@@ -1576,7 +1576,7 @@ scene_tint_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	testing.expect(t, !scene_tint(r, {9}, {{1, 1, 1}}, {{}}))
 	// The same values, and an instance the set skipped, touch nothing.
 	testing.expect(t, scene_tint(r, {0, 1}, {instances[0].tint, {1, 0, 0}}, {instances[0].emission, {}}))
-	testing.expect_value(t, len(r.scene.touched), 0)
+	testing.expect_value(t, r.scene.touched_count, 0)
 
 	instances[3].tint, instances[3].emission = {0.1, 0.9, 0.2}, {0, 3, 0}
 	instances[4].emission = {2, 2, 6}
@@ -1586,10 +1586,10 @@ scene_tint_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	a, b := &r.scene, &expected.scene
 	for inst, i in a.instances {testing.expectf(t, inst == b.instances[i], "instance %d", i)}
 	testing.expect(t, !a.instances_dirty && !a.tlas_nodes_dirty && (!a.tlas_dirty || !r.hardware_rt), "a tint sends its instances alone")
-	testing.expect_value(t, len(a.touched), 2)
+	testing.expect_value(t, a.touched_count, 2)
 	testing.expect_value(t, len(a.tlas_nodes), nodes)
 	move_frames(t, r, 1)
-	testing.expect_value(t, len(a.touched), 0)
+	testing.expect_value(t, a.touched_count, 0)
 	move_frames(t, r, 5)
 	move_frames(t, expected, 6)
 	rhi.device_wait_idle(tinted.device)
@@ -1679,7 +1679,7 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 	testing.expect(t, exact, "the refit tree")
 	testing.expect(t, s.bounds_max.y >= 3 - 1e-4, "the bounds of the scene follow the move")
 	move_frames(t, r, 3)
-	testing.expect(t, !s.tlas_nodes_dirty && len(s.touched) == 0)
+	testing.expect(t, !s.tlas_nodes_dirty && s.touched_count == 0)
 
 	// Far away it would stretch every node above it: the tree is built again.
 	far := trs({5000, 0.5, -4000}, {1, 1, 1})
@@ -1689,8 +1689,8 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 	testing.expect(t, exact, "the tree built again")
 	move_frames(t, r, 3)
 
-	// More at once than go one by one: the whole table is sent and settles.
-	many := make([]u32, SCENE_TOUCHED_MAX + 40)
+	// Many at once go as few do: alone, not with the whole table.
+	many := make([]u32, 296)
 	places := make([]Mat4, len(many))
 	defer {delete(many); delete(places)}
 	for &desc, i in many {
@@ -1699,9 +1699,9 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 		places[i][1, 3] += 0.25
 	}
 	testing.expect(t, scene_move(r, many, places))
-	testing.expect(t, s.instances_dirty && s.motion_pending)
+	testing.expect(t, !s.instances_dirty && s.touched_count == len(many))
 	move_frames(t, r, 3)
-	testing.expect(t, !s.instances_dirty && !s.motion_pending && len(s.touched) == 0)
+	testing.expect(t, !s.instances_dirty && s.touched_count == 0)
 	for inst in s.instances {testing.expect(t, inst.prev_world == inst.world)}
 	_, _, exact = tlas_exact(s, 0)
 	testing.expect(t, exact, "the tree after many moved")

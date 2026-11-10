@@ -24,6 +24,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
+    whole:Render_Sync;defer sync_free(&whole)
     w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
     entities:=[2]core.Entity{core.create(&w.entities),core.create(&w.entities)}
     for e,i in entities {
@@ -76,7 +77,8 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         testing.expectf(t,alpha==0?red==0:red>100,"alpha %f draws the fading entity (%d red pixels)",alpha,red)
         testing.expect(t,green>100,"the unchanged entity remains visible")
         host.app_frame_begin(app)
-        gpu.scene_set(app.renderer,sync.instances[:],sync.lights[:],sync.sun,sync.environment)
+        testing.expect(t,world_instances(&w,&whole,app))
+        gpu.scene_set(app.renderer,whole.shown[:],sync.lights[:],sync.sun,sync.environment)
         host.app_frame_end(app)
         reference,_,_,reference_ok:=host.app_capture_pixels(app)
         testing.expect(t,reference_ok && mem.compare(pixels,reference)==0,"incremental appearance matches a complete scene set")

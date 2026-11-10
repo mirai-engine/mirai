@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:fmt"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // Material points (shaders/include/points.slang): where a pass needs a
 // Surface program evaluated. A pass starts a batch (points_begin); its
@@ -16,14 +17,14 @@ import "mirai:rhi"
 POINTS_START :: 1 << 16 // points the buffer holds at first; it grows to what a frame asked for
 POINTS_MAX :: 1 << 21 // the most points it holds: past them a pass does without the programs
 POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp and cull_programs.comp aggregate (BINS_MAX of bins.slang)
-@(private) POINTS_HEADER :: 20
-@(private) POINT_WORDS :: 9
-@(private) RECORD_WORDS :: 18
-@(private) HEAD_WORDS :: 8
-// Words of the header (points.slang).
-@(private) POINTS_WANTED :: 2
-@(private) POINTS_ARGS :: 13
-@(private) POINTS_HEAD_ARGS :: 16
+@(private) POINTS_HEADER :: abi.POINTS_HEADER
+@(private) POINT_WORDS :: abi.POINT_WORDS
+@(private) RECORD_WORDS :: abi.RECORD_WORDS
+@(private) HEAD_WORDS :: abi.HEAD_WORDS
+// Words of the header.
+@(private) POINTS_WANTED :: abi.POINTS_WANTED
+@(private) POINTS_ARGS :: abi.POINTS_ARGS
+@(private) POINTS_HEAD_ARGS :: abi.POINTS_HEAD_ARGS
 
 Material_Points :: struct {
 	buffer:    rhi.Buffer,

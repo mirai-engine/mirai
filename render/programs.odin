@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:encoding/json"
 import "core:strings"
 import "mirai:asset"
+import "mirai:render/abi"
 
 // The programs of the shaders in use: what catalog.json of their generation
 // lists. A material, a post-process effect or an emitter of particles names a
@@ -11,19 +12,19 @@ import "mirai:asset"
 // the program reflects them; a node of a UI gives its first four floats
 // (UI_MATERIAL_PROGRAM_BIT).
 
-PROGRAM_PARAMETER_BYTES :: 256
-PARTICLE_ATTRIBUTE_BYTES :: 1024 // of the Attributes of a Vfx program, for each particle, at most
+PROGRAM_PARAMETER_BYTES :: abi.PROGRAM_PARAMETER_BYTES
+PARTICLE_ATTRIBUTE_BYTES :: abi.PARTICLE_ATTRIBUTE_BYTES // of the Attributes of a Vfx program, for each particle, at most
 
 Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
-PROGRAM_RESOURCES :: 16 // that a Vfx program reads at most
-PROGRAM_STAGES :: 32    // that a Vfx program has at most
+PROGRAM_RESOURCES :: abi.PROGRAM_RESOURCES // that a Vfx program reads at most
+PROGRAM_STAGES :: abi.PROGRAM_STAGES    // that a Vfx program has at most
 PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
 
 // What a resource of a Vfx program is: the surface of a mesh or of what an
 // entity draws, the births a game gives, the bones of a skin, a grid of the
 // world, or the particles of another emitter.
 Program_Resource_Kind :: enum u8 {Surface,Channel,Bones,Grid,Emitter,Data}
-PROGRAM_DATA_WORDS :: 32 // of an entry of a data channel
+PROGRAM_DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
 
 // A stage of a Vfx program: a pass of its own each step before update, over
 // the particles of its emitter or over the cells of one of its grids.

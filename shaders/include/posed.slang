@@ -5,8 +5,7 @@
 // MIRAI_POSED_STORE when it writes them, with vertex_words writable.
 #ifndef MIRAI_POSED_SLANG
 #define MIRAI_POSED_SLANG
-
-#define POSED_WORDS 5u
+#include <shared_constants.slang>
 
 // The vertex index of the run of posed vertices that starts at word `word`.
 Posed_Vertex posed_load(uint word, uint index) {

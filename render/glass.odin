@@ -84,8 +84,9 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 
 // The mean filter of each instance with blended surfaces (glass_mean.comp,
 // Gpu_Instance.glass), which the rays that average glass take. It runs in the
-// first view of a frame that uploaded instances, materials or geometry, before
-// any pass traces: an upload of an instance brings the value the CPU holds.
+// first view of a frame that uploaded the table of instances, one with blended
+// surfaces, materials or geometry, before any pass traces: an upload of an
+// instance brings the value the CPU holds.
 // Without colored shadows no ray reads it.
 @(private)
 glass_means_record :: proc(p: ^Pass) -> bool {

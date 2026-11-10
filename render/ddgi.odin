@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The probe volume: cascades of probes centered on the focus of the camera of
 // the first view (Camera.focus), each twice as far apart as the one before (Settings.probe_spacing the
@@ -16,13 +17,12 @@ import "mirai:rhi"
 // rays find (the probes around) settles.
 
 IRRADIANCE_TILE :: 8
-DISTANCE_TILE   :: 16
-// Must match VOLUME_CASCADES_MAX of common.slang.
-VOLUME_CASCADES_MAX :: 6
+DISTANCE_TILE   :: abi.DISTANCE_TILE
+VOLUME_CASCADES_MAX :: abi.VOLUME_CASCADES_MAX
 PROBE_GRID_MAX :: 32
 // Buckets of the priority of the probes, and the words of the histogram
 // after them (ddgi_select.comp).
-PROBE_BUCKETS :: 22
+PROBE_BUCKETS :: abi.PROBE_BUCKETS
 PROBE_HISTOGRAM_WORDS :: PROBE_BUCKETS + 4
 // The indirect dispatches of the update passes, in words: the trace, the
 // passes per probe and the passes per 32 probes.

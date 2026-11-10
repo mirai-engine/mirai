@@ -7,8 +7,6 @@
 #define MIRAI_DISPLAY_SLANG
 #include "scene.slang"
 
-// render.DISPLAY_LUT_SIZE.
-#define DISPLAY_LUT_SIZE 65
 // Stops below and above middle gray the axes of the LUT reach: past what the
 // tone scale clamps to for a display of 1000 nits.
 #define DISPLAY_STOPS_BELOW 12.0

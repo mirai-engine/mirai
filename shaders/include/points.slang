@@ -22,32 +22,12 @@
 #include "common.slang"
 #include "mirai_material.slang"
 
-// Points and heads go round the buffer: a round appends past the window the
-// resume reads, in the larger room before or after it; those that do not fit
-// are dropped.
-#define POINTS_CAPACITY 0u     // points a batch holds at once; a head per point at most
-#define POINTS_PROGRAMS 1u     // bins: the largest program id, plus one
-#define POINTS_WANTED 2u       // the most room a round of the frame asked for: the buffer grows to it
-#define POINTS_COUNT 3u        // points appended since the last resolve
-#define POINTS_BASE 4u         // where they go: from the base up to the limit
-#define POINTS_LIMIT 5u
-#define POINTS_HEADS 6u        // and the same of heads
-#define POINTS_HEADS_BASE 7u
-#define POINTS_HEADS_LIMIT 8u
-#define POINTS_FROM 9u         // the window of points the last resolve evaluated
-#define POINTS_TO 10u
-#define POINTS_HEADS_FROM 11u  // and the heads of the round it ended, which the resume reads
-#define POINTS_HEADS_TO 12u
-#define POINTS_ARGS 13u        // three words: a thread per point of the window
-#define POINTS_HEAD_ARGS 16u   // three words: a thread per head of the round, in groups of POINTS_HEAD_GROUP
-#define POINTS_HEADER 20u
+// The words of the header (POINTS_*) and of a point, a record and a head are
+// those of render/abi.
 #define POINTS_GROUP 64u
 // The resume of a pass goes over heads in groups of 32 threads or more: a
 // thread of it takes head group.x * (its threads) + its index in the group.
 #define POINTS_HEAD_GROUP 32u
-#define POINT_WORDS 9u
-#define RECORD_WORDS 18u
-#define HEAD_WORDS 8u
 
 // Material_Point.flags.
 #define POINT_FILTER 1u // a glass crossing of a ray, whose filter its owner multiplies in

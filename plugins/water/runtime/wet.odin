@@ -16,7 +16,7 @@ WET_LEVELS :: f32(64) // steps of wetness: a body drying sends one every WET_SEC
 
 @(private)
 Wet_Given :: struct {
-    index:int,          // in Render_Sync.instances
+    index:int,          // of the renderer (render.instance_object)
     entity:core.Entity, // the body of Water_Wet it takes its wetness from
     hint:int,           // where that body was in Water_Wet.marks
     wet:f32,            // as the renderer was told
@@ -64,15 +64,15 @@ wet_members :: proc "contextless" (wet:^Water_Wet) -> (sum:u64) {
 water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:core.Read(core.Parent),renderer:^render.Renderer) {
     if renderer==nil || wet.ptr==nil || synced.ptr==nil {return}
     sync:=synced.ptr
-    seen:=[6]u64{sync.stats.scene_sets,sync.stats.instance_updates,u64(len(sync.instances)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
+    seen:=[6]u64{sync.stats.scene_sets,sync.stats.instance_updates,u64(render.instance_count(sync)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
     if seen!=state.seen || sync.world!=state.world {
         // What it gave before, or another world the renderer drew, may have left wet instances: all are told.
         held:=state.count>0 || sync.world!=state.world
         state.seen,state.world,state.count=seen,sync.world,0
         if seen[5]==0 && !held {return}
-        for instance,i in sync.instances {
+        for i in 0..<render.instance_count(sync) {
             level:f32
-            if owner,at,ok:=wet_owner(wet.ptr,parents,core.Entity(instance.object_id));ok && state.count<WET_INSTANCES {
+            if owner,at,ok:=wet_owner(wet.ptr,parents,core.Entity(render.instance_object(sync,i)));ok && state.count<WET_INSTANCES {
                 level=wet_level(wet.marks[at].wet)
                 state.given[state.count]={index=i,entity=owner,hint=at,wet=level}
                 state.count+=1

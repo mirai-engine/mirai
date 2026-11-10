@@ -71,7 +71,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/compressor/lz/parse"},{.Base,"std/compressor/lz"},
     {.Base,"audio"},{.Base,"platform"},{.Base,"rhi"},{.Base,"project"},{.Base,"core"},
 
-    {.Engine,"third_party/freetype"},{.Engine,"asset"},{.Engine,"net"},{.Engine,"render"},{.Engine,"ui"},{.Engine,"host"},
+    {.Engine,"third_party/freetype"},{.Engine,"asset"},{.Engine,"net"},{.Engine,"render/abi"},{.Engine,"render"},{.Engine,"ui"},{.Engine,"host"},
     {.Engine,"engine/volume"},{.Engine,"engine/input"},{.Engine,"engine/scene"},{.Engine,"engine/render"},{.Engine,"engine/audio"},
     {.Engine,"engine/gui"},{.Engine,"engine/camera"},{.Engine,"engine/save"},
 

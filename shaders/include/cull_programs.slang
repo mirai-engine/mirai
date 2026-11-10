@@ -7,9 +7,7 @@
 // and program, and the clusters as the cull listed them: the instance, the
 // cluster as a word of the index pool and the program. The G-buffer draws
 // those of each program from their range of a list of their own.
-#define PROGRAMS_COUNT 0u    // a word a phase
-#define PROGRAMS_DISPATCH 2u // three words a phase
-#define PROGRAMS_HEADER 8u
+#include <shared_constants.slang>
 #define PROGRAMS_GROUP 64u
 uint programs_count(uint phase, uint programs) { return PROGRAMS_HEADER + 3u * phase * programs; }
 uint programs_cursor(uint phase, uint programs) { return programs_count(phase, programs) + programs; }

@@ -36,7 +36,6 @@
 #include "probe_update.slang"
 #include "probe_tile.slang"
 #define TILE 8
-#define DISTANCE_TILE 16
 #define MIRAI_GROUP_X TILE
 #define MIRAI_GROUP_Y TILE
 #define MIRAI_GROUP_Z 1

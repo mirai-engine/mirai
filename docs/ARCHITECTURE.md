@@ -7,8 +7,10 @@ code and API/MCP. The general rules are in [AGENTS.md](../AGENTS.md).
 
 A game is an in-memory struct and a list of functions that transform it.
 
-- **A piece of data lives in one place.** There are no synchronized copies or bridges:
-  the pose of a body is in the physics table and the renderer reads it from there.
+- **A piece of data has one owner.** What several functions read is written by one of them, once.
+  The physics solver owns the pose of a body: its step writes the pose to `Transform` and the
+  velocity to `Motion` once per tick, for the bodies that moved, and the renderer reads them there.
+  Nobody else writes them: the game moves a body with a request.
 - **A function receives exactly what it uses.** The compiler prevents touching anything else.
 - **The rules are verified.** What an agent might not know becomes a type error, a build error or
   a runtime failure with a message that says how to fix it.
@@ -325,7 +327,9 @@ Numbered layers; a package only imports lower layers.
 - **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
   import it, also the GPU tests of `rhi`, in `rhi/tests`.
-- **2** `render`, `platform`: hybrid renderer and SDL3.
+- **2** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
+  renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
+  them for the shaders, since the tool cannot import `render`.
 - **3** `core`: entities, tables, queues, owners, transforms and hierarchy, `Time`, `Input`,
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,

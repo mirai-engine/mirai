@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:render/abi"
 
 // The local lights as a binary tree, for a point to add up the far ones by
 // groups and the near ones one by one (lighting.slang). The lights are
@@ -27,18 +28,18 @@ Gpu_Light_Node :: struct {
 	child:         u32,  // a leaf: its light; a group: its second child
 	flags:         u32,  // GPU_LIGHT_NODE_*, and the number of its lights from GPU_LIGHT_NODE_COUNT_SHIFT
 }
-GPU_LIGHT_NODE_LEAF :: 1
-GPU_LIGHT_NODE_SPOT :: 2 // it is a spot or holds one: it opens before the others, and stands for its spots by the cone of their directions
-GPU_LIGHT_NODE_COUNT_SHIFT :: 2
+GPU_LIGHT_NODE_LEAF :: abi.GPU_LIGHT_NODE_LEAF
+GPU_LIGHT_NODE_SPOT :: abi.GPU_LIGHT_NODE_SPOT // it is a spot or holds one: it opens before the others, and stands for its spots by the cone of their directions
+GPU_LIGHT_NODE_COUNT_SHIFT :: abi.GPU_LIGHT_NODE_COUNT_SHIFT
 
 // Below this depth the runs are split where the curve says; deeper, in
 // halves. A traversal never holds more than LIGHT_TREE_DEPTH nodes.
 LIGHT_TREE_CURVE_DEPTH :: 32
-LIGHT_TREE_DEPTH :: 48
+LIGHT_TREE_DEPTH :: abi.LIGHT_TREE_DEPTH
 LIGHTS_MAX :: 1 << (LIGHT_TREE_DEPTH - LIGHT_TREE_CURVE_DEPTH)
 
 // The most lights or groups a point lights through their shadow rays (light_cut of lighting.slang).
-LIGHT_CUT_MAX :: 32
+LIGHT_CUT_MAX :: abi.LIGHT_CUT_MAX
 
 Light_Key :: struct {
 	place: u64,

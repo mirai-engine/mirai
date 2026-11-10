@@ -5,6 +5,7 @@ import "mirai:asset"
 import "core:math/linalg"
 import "mirai:rhi"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // Instance batches: many instances of one mesh with its materials, drawn by
 // the same cull and G-buffer as the instances of the scene and met by the
@@ -22,8 +23,8 @@ import mm "mirai:std/math"
 // software, an item of the software TLAS each, and their instances are
 // instances of a native TLAS.
 
-BATCH_GROUP :: 64
-BATCH_WORDS :: 5
+BATCH_GROUP :: abi.BATCH_GROUP
+BATCH_WORDS :: abi.BATCH_WORDS
 // Instance indices, of the scene and of the slots of batches, that a native
 // TLAS tells apart by its custom index.
 BATCH_INDICES_MAX :: 1 << 24

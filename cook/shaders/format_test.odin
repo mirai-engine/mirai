@@ -23,6 +23,9 @@ float_is_written_as_the_shortest_decimal_that_reads_back :: proc(t:^testing.T) {
         {0.0001,"0.0001"},{0.00001,"1e-05"},{1.5e-7,"1.5e-07"},{2.5e-100,"2.5e-100"},{0,"0.0"},{1234.5678,"1234.5678"},{tenth+fifth,"0.30000000000000004"},
     }
     for c in cases {testing.expect_value(t,float_string(c.value),c.text)}
+    // A literal of a shader is the shortest of its f32.
+    testing.expect_value(t,number(0.18),"0.18")
+    testing.expect_value(t,number(-2),"-2.0")
 }
 
 @(test)
@@ -270,7 +273,6 @@ shared_layouts_must_match_the_probe_and_assert_the_odin_mirrors :: proc(t:^testi
     problem:=layouts_assertions(&b,probe)
     testing.expect(t,strings.contains(problem,"Frame_Data"),problem)
     testing.expect(t,strings.contains(strings.to_string(b),"#assert(offset_of(Gpu_Vertex, uv1) == 32)\n#assert(size_of(Gpu_Vertex) == 40)\n"),strings.to_string(b))
-    testing.expect(t,strings.contains(strings.to_string(b),"#assert(PROGRAM_DATA_WORDS == 32)\n"),"the limits of the catalog are pinned in the table of render")
 }
 
 @(test)
@@ -311,4 +313,32 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
     testing.expect(t,strings.contains(packed,"\tPROGRAM_SHADERS := [1]Embedded_Shader{\n\t\t{size = 30, code = {name = \"triangle.vert\", stage = .Vertex,\n\t\t\tthreadgroup = {0, 0, 0}, bindings = []rhi.Binding_Info{}}},\n\t}\n}\n"),packed)
     testing.expect(t,strings.contains(packed,"SHADERS_PACKED := #load(\"../shaders/build/shaders.metal.lz\")") && strings.contains(packed,"{size = 21, code = {binary = {msl_entry = \"main0\"}, name = \"triangle.vert\""),packed)
     testing.expect(t,!strings.contains(packed,".spv\")") && !strings.contains(packed,".metal\", string)"),"no stage loads its own code")
+}
+
+// The constants shaders share with the CPU are written by the generation
+// alone: a source that defined one could say another value than the CPU has.
+@(test)
+no_shader_source_defines_a_constant_the_generation_writes :: proc(t:^testing.T) {
+    defined :: proc(names:^map[string]string,text,from:string) {
+        rest:=text
+        for line in strings.split_lines_iterator(&rest) {
+            words:=strings.fields(line,context.temp_allocator)
+            if len(words)>=3 && words[0]=="#define" {names[words[1]]=from}
+        }
+    }
+    generated:=make(map[string]string,context.temp_allocator)
+    defined(&generated,material_schema(),SCHEMA_INCLUDE)
+    defined(&generated,shared_constants(),CONSTANTS_INCLUDE)
+    testing.expect(t,generated["SLOT_FRAME"]==CONSTANTS_INCLUDE && generated["CLUSTER_WORDS"]==CONSTANTS_INCLUDE && generated["MATERIAL_MAPS"]==SCHEMA_INCLUDE,"the includes define the constants")
+    files:Sources
+    sources_init(&files,context.temp_allocator)
+    build:=path_join(ENGINE_ROOT,"shaders/build",allocator=context.temp_allocator)
+    for folder in ([]string{"shaders","plugins"}) {
+        for path in sources_below(&files,path_join(ENGINE_ROOT,folder,allocator=context.temp_allocator)) {
+            if !strings.has_suffix(path,".slang") || path_inside(path,build) {continue}
+            written:=make(map[string]string,context.temp_allocator)
+            defined(&written,string(sources_file(&files,path).data),path)
+            for name in written {testing.expectf(t,!(name in generated),"%s defines %s, which %s gives it",path,name,generated[name])}
+        }
+    }
 }

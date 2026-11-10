@@ -77,10 +77,7 @@ destruct_step :: proc(
     waiting:=core.take(&requests.waiting)
     replays:=core.take(&requests.replays)
     states_asked:=core.take(&requests.states)
-    if cache.epoch!=state.epoch {
-        cache_reset(assets,job_system,cache)
-        cache.epoch=state.epoch
-    }
+    if physics.simulation_replaced(state,&cache.epoch) {cache_reset(assets,job_system,cache)}
     cache.pass+=1
     c:=Ctx{
         state=state,w=&state.world,f=&fractures.fracture,cache=cache,events=events,assets=assets,job_system=job_system,time=time,es=commands.entities,commands=commands,

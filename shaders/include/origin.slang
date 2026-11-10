@@ -8,9 +8,7 @@
 // lost it.
 #ifndef MIRAI_ORIGIN_SLANG
 #define MIRAI_ORIGIN_SLANG
-
-// Must match render.ORIGIN_STEP.
-#define ORIGIN_STEP 1024.0
+#include <shared_constants.slang>
 
 // What `steps` steps of the origin add to a wave of `cycles` cycles a metre,
 // in turns of 32 bits: the whole cycles of a step drop out, and what is left

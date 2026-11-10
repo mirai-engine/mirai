@@ -8,7 +8,6 @@ import "mirai:core"
 import scene "mirai:engine/scene"
 import render "mirai:engine/render"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -78,10 +77,8 @@ room_take :: proc(resident:^Terrain_Resident,c:^Chunk_Tables,physics:phys.Physic
     room:=&resident.room
     if room.pass!=resident.pass {room^={pass=resident.pass,starved=room.starved,seen=room.seen}}
     if !room.counted {
-        desc:=sim.world_desc_default()
-        heightfields:=physics.heightfields>0?int(physics.heightfields):desc.heightfield_capacity
-        meshes:=physics.meshes>0?int(physics.meshes):desc.mesh_capacity
-        shapes:=physics.shapes>0?int(physics.shapes):desc.shape_capacity
+        made:=phys.settings_capacities(physics)
+        heightfields,meshes,shapes:=int(made.heightfields),int(made.meshes),int(made.shapes)
         for collider in c.colliders.values[:core.count(c.colliders)] {
             #partial switch collider.kind {
             case .Heightfield: heightfields-=1

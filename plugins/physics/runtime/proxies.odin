@@ -14,13 +14,23 @@ import mm "mirai:std/math"
 // its own, or without memory.
 proxy_set :: proc(state:^Physics_State,e:core.Entity,body:sim.Body_Handle,position:[3]f32,rotation:mm.Quat) -> bool {
     if !state.ready || !sim.body_valid(&state.world,body) {return false}
+    listed:=false
     if held:=core.entity_map_held(&state.links,e);held!=core.NONE {
         l:=core.entity_map_get(&state.links,held)
         if l.kind!=.Proxy && l.kind!=.None {return false}
         if l.kind==.Proxy && held==e && l.body==body {return true}
-        if l.kind==.Proxy {proxy_remove(state,held)}
+        if l.kind==.Proxy {
+            proxy_remove(state,held)
+            listed=held==e
+        }
+    }
+    // The step brings back the rows of every proxy: who owns its body changes it without telling.
+    if !listed {
+        if _,err:=append(&state.proxies,e);err!=nil {return false}
     }
     _,ok:=core.entity_map_put(&state.links,e,Link{kind=.Proxy,body=body,written_position=position,written_rotation=rotation,placed={position,rotation}})
+    // Without room for the links it looks at, the step looks at every one.
+    if ok && cap(state.touched)<2*len(state.links.values) && reserve(&state.touched,4*len(state.links.values))!=nil {state.touched_all=true}
     return ok
 }
 
@@ -38,6 +48,8 @@ proxy_remove :: proc(state:^Physics_State,e:core.Entity) {
         }
     }
     core.entity_map_remove(&state.links,e)
+    // The links moved, and poses_write drops the entity from the proxies.
+    state.touched_all=true
 }
 
 // The Transform a proxy was last left with, by whoever moves it or by its pose target.

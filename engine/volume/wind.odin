@@ -2,6 +2,7 @@ package volume
 
 import "mirai:core"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // Where the air moves, which the foliage and the particles follow. It blows
 // along the forward (-Z) of its entity; without any, the air is still.
@@ -31,7 +32,7 @@ wind_at :: proc(winds:core.Read(Wind),volumes:core.Read(Volume),worlds:core.Read
     return combine(gather(volumes,worlds,winds,point),[4]f32{},Winds{winds,worlds},of,mix_linear)
 }
 
-WIND_VOLUMES :: 8 // the most a shader combines; past it the lowest priorities are left out
+WIND_VOLUMES :: abi.WIND_VOLUMES // the most a shader combines; past it the lowest priorities are left out
 
 // volume.slang Gpu_Wind: every wind of the world in the order they apply.
 Gpu_Wind :: struct {
