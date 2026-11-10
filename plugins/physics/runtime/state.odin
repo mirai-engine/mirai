@@ -284,22 +284,15 @@ Joint_Break :: struct {
 // What happened in the last tick. The simulation clears and fills it at the
 // start of its step; the functions that run after it read items. An entity
 // is NONE for a body that belongs to none (those of a destructible name the destructible).
-@(storage,events)
+@(storage)
 Physics_Events :: struct {
-    contact_begin:core.Queue(Contact_Begin),
-    contact_end:core.Queue(Contact_End),
-    overlap_begin:core.Queue(Overlap_Event),
-    overlap_end:core.Queue(Overlap_Event),
-    sleep:core.Queue(Body_Event),
-    wake:core.Queue(Body_Event),
-    joint_break:core.Queue(Joint_Break),
-}
-
-events_clear :: proc(events:^Physics_Events) {
-    core.queue_clear(&events.contact_begin);core.queue_clear(&events.contact_end)
-    core.queue_clear(&events.overlap_begin);core.queue_clear(&events.overlap_end)
-    core.queue_clear(&events.sleep);core.queue_clear(&events.wake)
-    core.queue_clear(&events.joint_break)
+    contact_begin:core.Events(Contact_Begin),
+    contact_end:core.Events(Contact_End),
+    overlap_begin:core.Events(Overlap_Event),
+    overlap_end:core.Events(Overlap_Event),
+    sleep:core.Events(Body_Event),
+    wake:core.Events(Body_Event),
+    joint_break:core.Events(Joint_Break),
 }
 
 @(private)

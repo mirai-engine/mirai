@@ -144,6 +144,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
     }
 }
 
+@(step="fixed")
 physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.Destruct_View,tints:^core.Table(render.Tint),time:core.Time) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(stations) {

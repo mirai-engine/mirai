@@ -139,9 +139,9 @@ Nav_Event :: struct {
     from,to:[3]f32,
 }
 
-@(storage,events)
+@(storage)
 Nav_Events :: struct {
-    using queue:core.Queue(Nav_Event),
+    using queue:core.Events(Nav_Event),
 }
 
 // How many agents cross a link: navigation_agents counts them and
@@ -270,7 +270,6 @@ navigation_agents :: proc(
     obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
-    core.queue_clear(&events.queue)
     layouts:=[2]u64{core.layout(agents),core.layout(paths)}
     if layouts!=a.layouts {
         a.layouts=layouts

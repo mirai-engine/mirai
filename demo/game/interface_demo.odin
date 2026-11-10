@@ -105,7 +105,7 @@ Interface_Demo :: struct {
 // that goes by.
 @(step="fixed",stage="react")
 interface_demo :: proc(
-    demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:core.Read(render.Hidden),shows:^Show_Requests,
+    demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
     names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
     ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
@@ -127,8 +127,8 @@ interface_demo :: proc(
     styles:=INTERFACE_STYLES
     if inp.pressed(actions,.Hud_Style) {demo.style=(demo.style+1)%%i32(len(styles))}
     menu_was:=!core.has(hidden,menu)
-    if inp.pressed(actions,.Interface_Menu) {ask_hidden(shows,menu,menu_was)}
-    if inp.pressed(actions,.Inventory) {ask_hidden(shows,inventory,!core.has(hidden,inventory))}
+    if inp.pressed(actions,.Interface_Menu) {render.set_hidden(hidden,menu,menu_was)}
+    if inp.pressed(actions,.Inventory) {render.set_hidden(hidden,inventory,!core.has(hidden,inventory))}
 
     // The menu: what its controls wrote, and the buttons that close it.
     if value,ok:=gui.changed_value(events,menu,"quality");ok {demo.quality=i32(value)}
@@ -142,9 +142,9 @@ interface_demo :: proc(
     if on,ok:=gui.changed(events,menu,"subtitles");ok {demo.subtitles=on}
     if text,ok:=gui.submitted(events,menu,"name");ok {base.text_set(demo.player[:],text)}
     // Its buttons are the button of another .ui: their names are under their instances.
-    if gui.clicked(events,menu,"resume/button") || gui.back(events,menu) {ask_hidden(shows,menu,true)}
-    if gui.clicked(events,menu,"inventory/button") {ask_hidden(shows,menu,true);ask_hidden(shows,inventory,false)}
-    if gui.back(events,inventory) || gui.clicked(events,inventory,"close") {ask_hidden(shows,inventory,true)}
+    if gui.clicked(events,menu,"resume/button") || gui.back(events,menu) {render.set_hidden(hidden,menu,true)}
+    if gui.clicked(events,menu,"inventory/button") {render.set_hidden(hidden,menu,true);render.set_hidden(hidden,inventory,false)}
+    if gui.back(events,inventory) || gui.clicked(events,inventory,"close") {render.set_hidden(hidden,inventory,true)}
 
     // The inventory: an item let go over a slot of the same item tops up its
     // stack, up to what its row lets a slot hold; over another slot it swaps
@@ -173,7 +173,7 @@ interface_demo :: proc(
     if inp.pressed(actions,.Talk) && demo.talk!={} && demo.line=={} {
         demo.line,demo.flags=demo.talk,{}
         demo.shown={}
-        ask_hidden(shows,dialogue,false)
+        render.set_hidden(hidden,dialogue,false)
     }
     if demo.line!={} {
         at:=demo.line
@@ -188,7 +188,7 @@ interface_demo :: proc(
         }
         if gui.back(events,dialogue) {demo.line={}}
         if demo.line!=at {demo.shown={}}
-        if demo.line=={} {ask_hidden(shows,dialogue,true)}
+        if demo.line=={} {render.set_hidden(hidden,dialogue,true)}
     }
 
     // The HUD shows the style chosen.
