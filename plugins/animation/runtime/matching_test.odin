@@ -80,12 +80,12 @@ Match_World :: struct {
     animations:core.Table(Animation),
 }
 
-// Walks a Mirai of the demo by matching (.match) through the program of the runtime, and
+// Walks a Mirai of the demo by the locomotion of its .character through the program of the runtime, and
 // measures what its pose does: how far a planted toe slides, the second difference of every bone
 // (a jump of the pose), and the ticks until the speed the pose walks at follows a change of the
 // stick. The jump and the landing are entry clips of their modes.
 @(private="file")
-mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,graphs:^Match_Assets,id,skeleton:base.Asset_Id) -> (metrics:Mirai_Metrics,ok:bool) {
+mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,graphs:^Character_Assets,id,skeleton:base.Asset_Id) -> (metrics:Mirai_Metrics,ok:bool) {
     w:Match_World
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
@@ -94,8 +94,8 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer delete(events.items)
-    match:=match_content(graphs,app.assets,app.allocator,id);if match==nil {return}
-    content:=host.content_animation(app,match.profile.info.animation)
+    match:=character_content(graphs,app.assets,app.allocator,id);if match==nil {return}
+    content:=host.content_animation(app,match.set.info.animation)
     definition:=skeleton_content(skeletons,app.assets,app.allocator,skeleton)
     if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&w.transforms) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
@@ -165,9 +165,9 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    graphs:Match_Assets;defer match_assets_free(&graphs)
+    graphs:Character_Assets;defer character_assets_free(&graphs)
     ids:[3]base.Asset_Id
-    for file,i in ([3]string{"assets/characters/mirai/mirai_matching.match","assets/characters/mirai/mirai_locomotion.anim","assets/characters/mirai/Armature.skeleton"}) {
+    for file,i in ([3]string{"assets/characters/mirai/mirai_matching.character","assets/characters/mirai/mirai_locomotion.anim","assets/characters/mirai/Armature.skeleton"}) {
         record,present:=asset.registry_find_path(&assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id
@@ -195,14 +195,12 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 }
 
 @(private="file") MATCH_TEST_ID :: base.Asset_Id{0x3a7c,1}
-@(private="file") MATCH_TEST_ACTIONS :: base.Asset_Id{0x3a7c,5}
-@(private="file") MATCH_TEST_AIM :: base.Asset_Id{0x3a7c,6}
 @(private="file") GROUND,AIR :: u16(1),u16(0)
 
 // Hips over two feet and a head, as the matching of std/anim: idle and walk on the ground, a fall
 // loop in the air and jump, the entry clip of the air, whose marker 'land' is at .8 s. With leap,
 // leap is another entry of the air that lands at .8 s and travels at 3 m/s. The others are not in
-// the .match; its action set plays them: vault, for two seconds over the whole body, with a
+// the locomotion of the .character; its .character plays them: vault, for two seconds over the whole body, with a
 // marker 'release' at .35 s; lunge, which takes the hips a metre along -Z in a second; kick, a foot
 // forward for a second with a marker 'hit' at .5 s, in the layer Leg over the left foot; and the
 // layer Aim, which adds over the head the offset its axis aim_yaw gives between aim_left and
@@ -215,9 +213,7 @@ Match_Fixture :: struct {
     content:host.Content_Animation,
     assets:host.Assets,
     app:host.App,
-    graphs:Match_Assets,
-    action_sets:Actions_Assets,
-    blends:Blend_Assets,
+    graphs:Character_Assets,
     actions:Action_Runtime,
     playback:Playback,
     events:Animation_Events,
@@ -232,14 +228,16 @@ Match_Fixture :: struct {
 match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false) -> bool {
     if !core.test_world_init(t,&f.w,test_types) {return false}
     f.rig=core.create(&f.entities)
-    f.animation=ANIMATION_DEFAULT;f.animation.asset,f.animation.actions=MATCH_TEST_ID,MATCH_TEST_ACTIONS
+    f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID
     core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.add(&f.animations,f.rig,f.animation);core.test_world_settle(&f.w)
     Bone :: struct {name,path:string,at:mm.Vec3}
     for bone,i in ([4]Bone{{"hips","hips",{0,1,0}},{"foot_l","hips/foot_l",{.1,-.95,0}},{"foot_r","hips/foot_r",{-.1,-.95,0}},{"head","hips/head",{0,.7,0}}}) {
         f.bones[i]={parent=-1 if i==0 else 0,translation=bone.at,rotation=1,scale={1,1,1},target=base.name_hash(bone.path)}
         base.text_set(f.bones[i].name[:],bone.name);base.text_set(f.bones[i].path[:],bone.path)
     }
-    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:]}
+    // Its feet and hips, which matching measures, are those of its body.
+    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:],body=lib.body_map_empty()}
+    f.definition.body.bones[.Pelvis],f.definition.body.bones[.Foot_L],f.definition.body.bones[.Foot_R],f.definition.body.bones[.Head]=0,1,2,3;f.definition.body.up={0,1,0}
     hips,left,right,head:=f.bones[0].target,f.bones[1].target,f.bones[2].target,f.bones[3].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
@@ -283,7 +281,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     // The lunge carries the hips, its root.
     f.content.roots=make([]asset.Animation_Root,len(descs));base.text_set(f.content.roots[6].bone[:],"hips");f.content.roots[6].translation=true
     f.assets.registry.by_id=make(map[base.Asset_Id]u32)
-    append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_ID,kind=MATCH_KIND,state=.Asset});f.assets.registry.by_id[MATCH_TEST_ID]=0
+    append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_ID,kind=CHARACTER_KIND,state=.Asset});f.assets.registry.by_id[MATCH_TEST_ID]=0
     f.app={assets=&f.assets,allocator=context.allocator}
     Source :: struct {name:string,modes:u32,loop:bool}
     clips:=make([]Match_Source,5 if leap else 4)
@@ -292,24 +290,14 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
         base.text_set(clips[i].clip[:],value.name);clips[i].modes,clips[i].loop,clips[i].entry=value.modes,value.loop,!value.loop
     }
     if leap {clips[4].speed=3}
-    info:=MATCH_INFO_DEFAULT;info.animation,info.memory=f.content.id,memory
-    info.left_foot,info.right_foot,info.hips=bone_ref("foot_l"),bone_ref("foot_r"),bone_ref("hips")
-    profile:=Match_Profile{info=info,clips=clips}
-    append(&f.graphs.contents,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=profile})
-    if !testing.expect(t,match_check(profile)) {return false}
+    info:=MATCH_INFO_DEFAULT;info.memory=memory
     // The space of the aim: left at -1 and right at 1 of its axis.
+    spaces:=make([]Blend_Info,1);spaces[0]={dimension=.One,x={min=-1,max=1}};base.text_set(spaces[0].name[:],"aim");base.text_set(spaces[0].x.name[:],"aim_yaw")
     samples:=make([]Blend_Sample,2);samples[0],samples[1]={position={-1,0},speed=1},{position={1,0},speed=1}
     base.text_set(samples[0].clip[:],"aim_left");base.text_set(samples[1].clip[:],"aim_right")
-    aim:=Blend_Profile{info={animation=f.content.id,dimension=.One,x={min=-1,max=1}},samples=samples}
-    base.text_set(aim.info.x.name[:],"aim_yaw")
-    if !testing.expect_value(t,blend_space_prepare(&aim),asset.Error.None) {return false}
-    points:=make([]mm.Vec2,2);names:=make([]u64,2)
-    for &sample,i in aim.samples {points[i]=blend_position(aim.info,sample.position);names[i]=base.name_hash(base.text_get(sample.clip[:]))}
-    f.blends.allocator=context.allocator
-    append(&f.blends.contents,Blend_Content{id=MATCH_TEST_AIM,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=aim,space={dimension=.One,points=points,segments=aim.segments,triangles=aim.triangles},axis_names={0=base.name_hash("aim_yaw")},sample_names=names})
-    // Its action set: the aim and the leg over the search, and what play asks for.
-    set:=Action_Profile{info={animation=f.content.id},layers=make([]Stack_Layer,2),actions=make([]Action_Definition,9)}
-    set.layers[0]=STACK_LAYER_DEFAULT;base.text_set(set.layers[0].name[:],"Aim");set.layers[0].mode,set.layers[0].space,set.layers[0].fade=.Additive,MATCH_TEST_AIM,0
+    // What the aim, the leg and play ask over the search.
+    set:=Action_Profile{layers=make([]Stack_Layer,2),actions=make([]Action_Definition,9)}
+    set.layers[0]=STACK_LAYER_DEFAULT;base.text_set(set.layers[0].name[:],"Aim");base.text_set(set.layers[0].space[:],"aim");set.layers[0].mode,set.layers[0].fade=.Additive,0
     base.text_set(set.layers[0].reference_clip[:],"aim_center")
     set.layers[1]=STACK_LAYER_DEFAULT;base.text_set(set.layers[1].name[:],"Leg");set.layers[1].over=bone_ref("foot_l")
     Action :: struct {name,clip,layer:string,priority:i16,cancel:Action_Cancel_Policy,entry:Action_Entry,exit:f32,marker:string,fade:f32}
@@ -325,16 +313,27 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     }
     set.actions[7].root_motion,set.actions[7].body_move=.In_Place,.Override
     set.actions[8].fade_in,set.actions[8].fade_out=0,0
-    f.action_sets.allocator=context.allocator
-    append(&f.action_sets.contents,Action_Content{id=MATCH_TEST_ACTIONS,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=set})
-    if !testing.expect(t,action_profile_check(set)) {return false}
+    // One .character: the locomotion, the space and the actions.
+    character:=Character_Set{info={animation=f.content.id},match={info=info,clips=clips},actions=set,spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT}}
+    if !testing.expect(t,character_check(character)) {return false}
+    points:=[2]mm.Vec2{blend_position(spaces[0],samples[0].position),blend_position(spaces[0],samples[1].position)}
+    space,prepared:=lib.blend_space_prepare(points[:],.One)
+    ready:=make([]Space_Ready,1);names:=make([]u64,2);names[0],names[1]=base.name_hash("aim_left"),base.name_hash("aim_right")
+    ready[0]={space=space,names=names,axis_names={0=base.name_hash("aim_yaw")}}
+    f.graphs.allocator=context.allocator
+    append(&f.graphs.contents,Character_Content{id=MATCH_TEST_ID,checked=assets_stamp(f.app.assets),revision=1,valid=true,set=character,spaces=ready})
+    if !testing.expect(t,prepared) {return false}
     f.state=state_get(&f.playback,f.rig)
     return f.state!=nil && skeleton_bind(&f.playback,f.state,&f.definition,&f.content,&f.transforms)
 }
 @(private="file")
 match_fixture_free :: proc(f:^Match_Fixture) {
     playback_free(&f.playback);lib.library_destroy(&f.content.lib);delete(f.content.markers);delete(f.content.roots)
-    match_assets_free(&f.graphs);actions_assets_free(&f.action_sets);blend_assets_free(&f.blends);actions_runtime_free(&f.actions)
+    if len(f.graphs.contents)>0 {
+        set:=&f.graphs.contents[0].set
+        delete(set.match.clips);delete(set.match.samples);delete(set.actions.layers);delete(set.actions.actions);delete(set.spaces);delete(set.space_samples)
+    }
+    character_assets_free(&f.graphs);actions_runtime_free(&f.actions)
     delete(f.assets.registry.by_id);delete(f.assets.registry.files)
     delete(f.events.items);delete(f.requests.plays.items);delete(f.requests.values.items)
     core.test_world_destroy(&f.w)
@@ -349,14 +348,14 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,-1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
     copy(f.state.local[:],f.state.rest[:])
     core.edit(&f.animations,f.rig)^=f.animation
-    if !actions_prepare(&f.actions,&f.requests,&f.action_sets,core.read(&f.animations),&f.playback,&f.events,f.app.assets,f.app.allocator,&f.problems) {return false}
+    if !actions_prepare(&f.actions,&f.requests,&f.graphs,core.read(&f.animations),&f.playback,&f.events,&f.app,&f.problems) {return false}
     for value in core.take(&f.requests.values) {stack_parameter_set(f.state,value.name,value.value)}
     stack_asks(&f.actions,f.state,f.animation,content)
     output,programmed,ok:=program_resolve(f.state,f.animation,&f.app,&f.graphs,dt,&f.events,&f.playback,content,&f.problems,goals[:],action_inject(&f.actions,f.state,f.animation,content))
     if !ok || !programmed || !program_buffers(f.state,content) {return false}
     actions_sample(&f.actions,f.state,f.animation,dt,&f.problems,content,&f.playback,&f.events,nil,1,true)
     if !program_players(f.state,output,content,f.animation,&f.events,&f.playback,dt,-1,nil) || !program_pose(&f.playback,f.state,content,f.animation,output) {return false}
-    layers_advance(&f.playback,f.state,content,f.animation,&f.events,dt,&f.problems,&f.blends,&f.app,&f.actions)
+    layers_advance(&f.playback,f.state,content,f.animation,&f.events,dt,&f.problems,&f.graphs,&f.app,&f.actions)
     actions_layer_finish(&f.actions,f.state)
     stack_parameters_check(f.state,&f.problems)
     pose_faults_report(&f.problems,f.rig,pose_layers(&f.playback,f.state,&content.lib,f.animation),&f.actions)
@@ -513,7 +512,7 @@ a_whole_body_action_blends_inertially_from_the_last_pose_and_stable_ticks_do_not
             if tick==30 {play(&f.requests,f.rig,"Vault half")}
             stable &&=match_step(&f,dt,GROUND)
         }
-        context=saved;f.app.allocator,f.graphs.allocator,f.action_sets.allocator,f.actions.allocator=saved.allocator,saved.allocator,saved.allocator,saved.allocator
+        context=saved;f.app.allocator,f.graphs.allocator,f.actions.allocator=saved.allocator,saved.allocator,saved.allocator
         value,_:=animation_match(&f.playback,f.rig)
         testing.expect(t,stable && !value.forced && f.problems.count==0,"actions, their blends and the matching after them do not allocate")
     }
@@ -733,24 +732,24 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
 match_assets_roundtrip_refuse_no_memory_or_looping_entries_and_report_a_database_past_their_memory :: proc(t:^testing.T) {
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f,memory=1)) {return}
-    profile:=f.graphs.contents[0].profile
+    set:=f.graphs.contents[0].set;profile:=set.match
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    doc:asset.Document;if !testing.expect_value(t,match_document(&doc,&types,MATCH_TEST_ID,profile),asset.Error.None) {return};defer asset.document_destroy(&doc)
+    doc:asset.Document;if !testing.expect_value(t,character_document(&doc,&types,MATCH_TEST_ID,set),asset.Error.None) {return};defer asset.document_destroy(&doc)
     // Only the current version reads.
-    for version in ([3]type_of(doc.kind_version){MATCH_VERSION,MATCH_VERSION-1,MATCH_VERSION+1}) {
+    for version in ([2]type_of(doc.kind_version){CHARACTER_VERSION,CHARACTER_VERSION+1}) {
         doc.kind_version=version
         writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
         if !testing.expect_value(t,asset.document_write(&doc,&writer),asset.Error.None) {continue}
         file:asset.Asset
         if !testing.expect_value(t,asset.asset_open(&file,serial.writer_bytes(&writer)),asset.Error.None) {continue};defer asset.asset_close(&file)
-        view,read:=match_view(&file,&types)
-        if version!=MATCH_VERSION {testing.expect_value(t,read,asset.Error.Version);continue}
+        read_set,read:=character_view(&file,&types);view:=read_set.match
+        if version!=CHARACTER_VERSION {testing.expect_value(t,read,asset.Error.Version);continue}
         if !testing.expect_value(t,read,asset.Error.None) {continue}
         testing.expect_value(t,view.info,profile.info);testing.expect_value(t,len(view.clips),len(profile.clips))
         for clip,i in view.clips {testing.expect_value(t,clip,profile.clips[i])}
     }
     changed:=profile;changed.info.memory=0
-    testing.expect(t,!match_check(changed),"a .match keeps some memory")
+    testing.expect(t,!match_check(changed),"locomotion keeps some memory")
     // A blended source keeps its clips and samples; one that blends a clip with no sample, a
     // weight out of 0..1, weights that add to zero or one for a clip it does not blend, a sample
     // of a source that does not blend, or a blend that does not loop, is refused.
@@ -760,13 +759,14 @@ match_assets_roundtrip_refuse_no_memory_or_looping_entries_and_report_a_database
     changed=profile;changed.clips,changed.samples=blended,samples[:]
     if testing.expect(t,match_check(changed)) {
         blend_doc:asset.Document
-        if testing.expect_value(t,match_document(&blend_doc,&types,MATCH_TEST_ID,changed),asset.Error.None) {
+        blended_set:=set;blended_set.match=changed
+        if testing.expect_value(t,character_document(&blend_doc,&types,MATCH_TEST_ID,blended_set),asset.Error.None) {
             defer asset.document_destroy(&blend_doc)
             writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
             file:asset.Asset
             if testing.expect(t,asset.document_write(&blend_doc,&writer)==.None && asset.asset_open(&file,serial.writer_bytes(&writer))==.None) {
                 defer asset.asset_close(&file)
-                view,read:=match_view(&file,&types)
+                read_set,read:=character_view(&file,&types);view:=read_set.match
                 testing.expect(t,read==.None && len(view.samples)==2 && view.samples[1]==samples[1] && view.clips[1].blend==blended[1].blend,"a blend and its samples read back")
             }
         }
@@ -781,10 +781,10 @@ match_assets_roundtrip_refuse_no_memory_or_looping_entries_and_report_a_database
     testing.expect(t,!match_check(changed),"a blend without samples is refused")
     clips:=make([]Match_Source,len(profile.clips));defer delete(clips);copy(clips,profile.clips)
     clips[3].loop=true;changed=profile;changed.clips=clips
-    invalid:asset.Document
-    testing.expect(t,!match_check(changed) && match_document(&invalid,&types,MATCH_TEST_ID,changed)==.Invalid,"an entry clip does not loop")
+    invalid:asset.Document;invalid_set:=set;invalid_set.match=changed
+    testing.expect(t,!match_check(changed) && character_document(&invalid,&types,MATCH_TEST_ID,invalid_set)==.Invalid,"an entry clip does not loop")
     testing.expect(t,match_step(&f,.1,GROUND))
-    testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_memory")!=nil,"a database past the memory of its .match is reported")
+    testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_memory")!=nil,"a database past the memory of its locomotion is reported")
 }
 
 @(test)
@@ -793,10 +793,10 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     if !testing.expect(t,match_fixture(t,&f)) {return}
     // walk blended with idle, half and half: it travels at half the 1.5 m/s of the walk.
     content:=&f.graphs.contents[0]
-    base.text_set(content.profile.clips[1].blend[0][:],"idle")
+    base.text_set(content.set.match.clips[1].blend[0][:],"idle")
     samples:=make([]Match_Sample,1);samples[0]={source=1,weights={0=.25,1=.25}}
-    content.profile.samples=samples
-    if !testing.expect(t,match_check(content.profile)) {return}
+    content.set.match.samples=samples
+    if !testing.expect(t,match_check(content.set.match)) {return}
     dt:=f32(1.0/60)
     for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
     group:=f.state.program.output.groups[0]
@@ -816,31 +816,31 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     // A blend of clips that last different times says which and how to fix it.
     g:Match_Fixture;defer match_fixture_free(&g)
     if !testing.expect(t,match_fixture(t,&g)) {return}
-    base.text_set(g.graphs.contents[0].profile.clips[1].blend[0][:],"vault")
+    base.text_set(g.graphs.contents[0].set.match.clips[1].blend[0][:],"vault")
     long:=make([]Match_Sample,1);long[0]={source=1,weights={0=.5,1=.5}}
-    g.graphs.contents[0].profile.samples=long
+    g.graphs.contents[0].set.match.samples=long
     _=match_step(&g,dt,GROUND)
     problem:=core.problem_find(&g.problems,g.rig,"animation.match_blend")
     testing.expect(t,problem!=nil && strings.contains(core.problem_text(problem),"walk (1.000 s) with vault (2.000 s)"),"a blend of a clip of 1 s and one of 2 s is reported")
 }
 
-// A source with rates of its own follows the body between them, past those of the .match: the walk
-// of 1.5 m/s, let up to 1.5 times its speed, plays at 1.5 for a body at 2.25 m/s where the .match
+// A source with rates of its own follows the body between them, past those of the .character: the walk
+// of 1.5 m/s, let up to 1.5 times its speed, plays at 1.5 for a body at 2.25 m/s where the .character
 // stops the rest at their own speed; rates out of order are refused.
 @(test)
 a_source_with_rates_of_its_own_follows_the_body_between_them :: proc(t:^testing.T) {
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
     content:=&f.graphs.contents[0]
-    content.profile.clips[1].min_rate,content.profile.clips[1].max_rate=.5,1.5
-    if !testing.expect(t,match_check(content.profile)) {return}
+    content.set.match.clips[1].min_rate,content.set.match.clips[1].max_rate=.5,1.5
+    if !testing.expect(t,match_check(content.set.match)) {return}
     dt:=f32(1.0/60)
     for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-2.25},desired={0,0,-2.25}))}
     value,_:=animation_match(&f.playback,f.rig)
     testing.expectf(t,value.clip==base.name_hash("walk") && abs(value.rate-1.5)<.01,"the walk plays at 1.5: %v",value)
     for refused in ([3][2]f32{{1.5,.5},{0,1},{-1,1}}) {
-        content.profile.clips[1].min_rate,content.profile.clips[1].max_rate=refused[0],refused[1]
-        testing.expectf(t,!match_check(content.profile),"rates %v are refused",refused)
+        content.set.match.clips[1].min_rate,content.set.match.clips[1].max_rate=refused[0],refused[1]
+        testing.expectf(t,!match_check(content.set.match),"rates %v are refused",refused)
     }
 }
 
@@ -848,7 +848,7 @@ a_source_with_rates_of_its_own_follows_the_body_between_them :: proc(t:^testing.
 a_jump_nothing_forces_waits_the_hold_after_the_one_before :: proc(t:^testing.T) {
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
-    info:=&f.graphs.contents[0].profile.info;info.lag=0
+    info:=&f.graphs.contents[0].set.match.info;info.lag=0
     dt:=f32(1.0/60)
     // The body walks and stands on alternate ticks: every search would rather jump.
     last,gap,jumps:=-1,max(int),u32(0)
@@ -868,7 +868,7 @@ a_jump_nothing_forces_waits_the_hold_after_the_one_before :: proc(t:^testing.T) 
 a_body_that_turns_around_does_not_stand_midway_and_one_against_a_wall_stands :: proc(t:^testing.T) {
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
-    f.graphs.contents[0].profile.info.stationary_speed=.15
+    f.graphs.contents[0].set.match.info.stationary_speed=.15
     dt:=f32(1.0/60)
     idle:=base.name_hash("idle")
     speed:=f32(1.4)
@@ -892,8 +892,8 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
     for blocked in ([2]bool{false,true}) {
         f:Match_Fixture;defer match_fixture_free(&f)
         if !testing.expect(t,match_fixture(t,&f)) {continue}
-        f.graphs.contents[0].profile.info.lag=.15
-        info:=f.graphs.contents[0].profile.info
+        f.graphs.contents[0].set.match.info.lag=.15
+        info:=f.graphs.contents[0].set.match.info
         hips:=bone_resolve(f.state,bone_ref("hips"))
         dt:=f32(1.0/60)
         for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
@@ -952,7 +952,7 @@ match_step_with :: proc(f:^Match_Fixture,content:^host.Content_Animation,dt:f32,
     return match_step(f,dt,mode,velocity,velocity,content=content)
 }
 
-// A weapon's set: Animation.library swaps the clips of the .match for those of the same names in
+// A weapon's set: Animation.library swaps the clips of the .character for those of the same names in
 // another .anim, here a walk with the feet in the other phase. The rig goes on with the clip of
 // the new library that the search picks, entered through an inertial transition from the pose it
 // had, as a jump of matching does: the feet do not jump to the rest pose or the new walk at once.

@@ -91,6 +91,7 @@ Marker_Set_Params :: struct {
     clip:[64]u8 `mirai:"text"`,
     name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,label=The marker by its name"`,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where it goes; needed unless it is removed"`,
+    duration:f32 `mirai:"optional,min=0,unit=s,label=Makes it a span of that length: a section or a window of an action, a warp window"`,
     at:f32 `mirai:"optional,min=0,unit=s,label=Of a name several markers have: the time of the one to change or remove"`,
     add:bool `mirai:"optional,label=Adds one more of that name at time instead of changing the one it has"`,
     remove:bool `mirai:"optional"`,
@@ -105,7 +106,7 @@ authoring_clip_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,Clip_Set_Params,Authoring_Write_Result,{name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",run=authoring_clip_set,writes_result=true})
     editor.api_method_register(s,Track_Set_Params,Authoring_Write_Result,{name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",run=authoring_track_set,writes_result=true})
     editor.api_method_register(s,Key_Set_Params,Authoring_Write_Result,{name="animation.key.set",summary="Replaces, inserts, moves or removes one key of a track; the clip must stay valid, with finite values and ordered times. One step of undo.",run=authoring_key_set,writes_result=true})
-    editor.api_method_register(s,Marker_Set_Params,Authoring_Write_Result,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization.",run=authoring_marker_set,writes_result=true})
+    editor.api_method_register(s,Marker_Set_Params,Authoring_Write_Result,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization, or a span with a duration that actions and warping name.",run=authoring_marker_set,writes_result=true})
 }
 
 @(private)
@@ -338,7 +339,7 @@ authoring_marker_set :: proc(s:^editor.Session,call:^api.Call) {
         if !given_at && same>1 {authoring_failure(call,"name","Ambiguous_Marker","the time of one of them in at, or add true for one more",strings.to_string(times),fmt.tprintf("%d markers are named %s",same,name));return}
     }
     if p.remove && at==len(rows) {authoring_failure(call,"name","Missing_Marker","the name of a marker of the clip",name,"The clip has no marker of that name",fix="animation.asset.inspect of the clip lists its markers");return}
-    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
+    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name,p.duration},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
     if !replaced {authoring_failure(call,"name","Invalid_Edit","a clip with room for the marker",fmt.tprintf("%d markers; remove=%t",len(rows),p.remove),"The marker edit cannot be prepared within capacity");return}
     clips[index].markers=markers
     authoring_clip_save(s,call,file,p.asset,view,clips)

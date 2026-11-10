@@ -661,7 +661,7 @@ animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,cli
         for marker,i in markers {
             if marker.time>p.marker.time {at=i;break}
         }
-        inject_at(&markers,at,asset.Animation_Marker_Desc{p.marker.time,name})
+        inject_at(&markers,at,asset.Animation_Marker_Desc{time=p.marker.time,name=name})
     }
     edited.markers=markers[:]
     doc:asset.Document

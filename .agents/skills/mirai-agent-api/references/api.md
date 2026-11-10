@@ -415,7 +415,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Concurrency control belongs to the engine**: no method takes or returns revisions. A scene
   edit touches only the fields it names; if two authors write the same field, the last one's
   stays, and the user reverts it with the turn's change review or with undo.
-- **Replacements of a whole file** (the animation `*.set` with `asset`, `pose.profile.set`,
+- **Replacements of a whole file** (the animation `*.set` with `asset`, `animation.modifier.set`,
   `skeleton.*`, `animation.clip.set`, `material.program.edit` with `source`): the last wins, as in
   the scene; each one is an undo step of the caller and, in an AI turn, enters its change review.
 - Before editing, the server cancels the user's tools (a gizmo drag goes back) and records their

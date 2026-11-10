@@ -187,7 +187,7 @@ of a shipped game keeps the stream `anim.library_compress` makes of each clip
   the hierarchy of `animation_parents`; a cooked view already holds its streams.
 - `animation_cooked_document` writes the cooked `.anim` from that library; `animation_descs`
   refuses a cooked view: it is not edited.
-- `.pose`, `.blend`, `.action` and authoring by API (clips, tracks, keys, markers, skeletons) belong
+- `.character` and authoring by API (clips, tracks, keys, markers, skeletons) belong
   to the [animation plugin](../../mirai-animation/references/animation.md). Its edits validate the
   whole document and publish the file atomically keeping its identity; they are distinct from the
   scene's undo.
@@ -239,7 +239,8 @@ table per record (`UI_TABLE_*`); contracts and precedence, in the
   `host.ui_check_refuses_what_tree_load_refuses_case_by_case` compares the two paths field by
   field. The values are covered by the check against the schema.
 - Changing a value: `mirai asset set hud.ui 'nodes[6].layout.gap=8'`; adding or removing nodes or
-  changing texts is `unpack`, edit and `pack`, or the editor's `ui.*` API.
+  changing texts is its document (`mirai ui read`, edit, `mirai ui write`), or the editor's
+  `ui.*` API.
 
 ## Font
 
