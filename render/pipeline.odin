@@ -52,7 +52,7 @@ Render_Resource :: enum u8 {
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
-	Gi,           // the light around each pixel beside the probe volume: its contact occlusion (r), or the indirect reference (rgb) with Settings.reference_gi
+	Gi,           // the light around each pixel beside the probe volume: its contact occlusion (r); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before
 	Probes,       // the irradiance of the probe volume, shared by every view
 	Display,      // the image before temporal resolve
 	Taa,          // the resolved image at output size, kept for the next frame
@@ -168,6 +168,7 @@ Render_Plan :: struct {
 	direct:      Direct_Mode,
 	jitter:      Render_Jitter,
 	generates:   bool, // passes after the Output stage write Generated
+	gi_given:    bool, // a custom pass writes Gi
 	resources:   [CUSTOM_RESOURCE_CAPACITY]Render_Resource_Desc,
 	declared:    bit_set[0 ..< CUSTOM_RESOURCE_CAPACITY],
 	first_use:   [CUSTOM_RESOURCE_CAPACITY]i8, // the place in order of the first and last pass that uses each resource; -1: none
@@ -360,6 +361,13 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 	if .Geometry not_in seen || .Composite not_in seen || .Output not_in seen {
 		return fail(buffer, "render pipeline: it has no %v stage; every pipeline draws its view with Geometry, lights it in Composite and finishes it in Output", .Geometry not_in seen ? Render_Stage.Geometry : .Composite not_in seen ? Render_Stage.Composite : Render_Stage.Output)
 	}
+	for &pass in plan.passes[:len(desc.passes)] {
+		for use in pass.uses[:pass.use_count] {
+			if pass.stage == .Custom && use.resource == .Gi && use.access == .Write && .Indirect in seen {
+				return fail(buffer, "render pipeline: custom pass %s writes Gi and the pipeline has the Indirect stage, which writes it too; leave the Indirect stage out to give Gi", plan_pass_name(&pass))
+			}
+		}
+	}
 	if desc.jitter == .Resolve && .Resolve not_in seen {
 		writes_taa := false
 		for &pass in plan.passes[:len(desc.passes)] {
@@ -412,7 +420,10 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 		plan.order_count += 1
 		plan.stages += {pass.stage}
 		if pass.stage == .Direct {plan.direct = pass.direct}
-		for use in pass.uses[:pass.use_count] {plan.generates ||= use.resource == .Generated && use.access == .Write}
+		for use in pass.uses[:pass.use_count] {
+			plan.generates ||= use.resource == .Generated && use.access == .Write
+			plan.gi_given ||= pass.stage == .Custom && use.resource == .Gi && use.access == .Write
+		}
 		for use in pass.uses[:pass.use_count] {
 			if use.resource < .Custom0 {continue}
 			index := custom_index(use.resource)

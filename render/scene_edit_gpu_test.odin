@@ -11,8 +11,7 @@ edit_fixture :: proc(t: ^testing.T, f: ^Fixture, loc := #caller_location) -> boo
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
 	// Images are compared pixel by pixel: every pixel traces its own rays.
-	settings.reference_lights = true
-	return fixture_init(t, f, 160, 120, settings, hardware_rt = false, loc = loc)
+	return fixture_init(t, f, 160, 120, settings, hardware_rt = false, reference = {.Lights}, loc = loc)
 }
 
 @(private = "file")
@@ -50,7 +49,7 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 		descs[i+4].tint={0,1,0}
 	}
 	scene_set(r,descs[:4],nil,{},Environment{})
-	for _ in 0..<3 {if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}}
+	for _ in 0..<3 {if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}}
 	reference,_,_,captured:=golden_capture(r)
 	defer delete(reference)
 	if !testing.expect(t,captured,r.error) {return}
@@ -92,13 +91,13 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 					copy:=descs[index];copy.mesh=preview;copy.copy_owner=99;copy.copy_variant=1
 					testing.expect(t,scene_update(r,8+index/4,{copy}))
 				}
-				for _ in 0..<3 {if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}}
+				for _ in 0..<3 {if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}}
 			}
 			testing.expect(t,mesh_remove(r,preview))
 			for index in ([2]u32{0,4}) {testing.expect(t,scene_update(r,index,{descs[index]}))}
 			testing.expect(t,scene_update(r,8,nil,true))
 		}
-		for _ in 0..<3 {if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}}
+		for _ in 0..<3 {if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}}
 		actual,_,_,ok:=golden_capture(r)
 		testing.expect(t,ok,r.error)
 		testing.expectf(t,len(actual)==len(reference) && mem.compare(actual,reference)==0,"all quadrants remain after scene rebuild, shared geometry and retirement (pass %d)",pass)
@@ -146,7 +145,7 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 			material.textures[.Base_Color] = textures[0]
 			materials_set(r, {material})
 			scene_set(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 2, mesh = meshes[1], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
-			testing.expect(t, renderer_frame(r,{camera=camera}), r.error)
+			testing.expect(t, fixture_frame(&f, {camera=camera}), r.error)
 			kept:=r.scene.meshes[meshes[2]]
 			testing.expect(t, mesh_remove(r, meshes[1]))
 			vertices,indices:=edit_grid(64,10)
@@ -171,9 +170,9 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 		materials_set(r, {material})
 		if pass==1 {
 			scene_set(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
-			testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
+			testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)
 		}
-		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		for _ in 0 ..< 3 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 		captured: bool
 		images[pass], _, _, captured = golden_capture(r)
 		testing.expect(t, captured, r.error)

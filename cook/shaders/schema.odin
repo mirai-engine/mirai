@@ -116,7 +116,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"MOVED_LIGHTS_ALL",abi.MOVED_LIGHTS_ALL)
     f(&b,"ORIGIN_STEP",abi.ORIGIN_STEP)
     u(&b,"FRAME_FLAG_GI",abi.FRAME_FLAG_GI)
-    u(&b,"FRAME_FLAG_GI_REFERENCE",abi.FRAME_FLAG_GI_REFERENCE)
+    u(&b,"FRAME_FLAG_GI_GIVEN",abi.FRAME_FLAG_GI_GIVEN)
     u(&b,"FRAME_FLAG_HW_RT",abi.FRAME_FLAG_HW_RT)
     u(&b,"FRAME_FLAG_STUDIO",abi.FRAME_FLAG_STUDIO)
     u(&b,"FRAME_FLAG_GRID",abi.FRAME_FLAG_GRID)

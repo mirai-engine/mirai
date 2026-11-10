@@ -56,7 +56,7 @@ test ([player.md](player.md)).
 ## An options menu in the game
 
 A settings screen is data: its `.ui` selectors and checkboxes bind the fields of these storages
-([options](../ui/menus-settings.md#add-an-option)) and the engine keeps them. Quality, render scale
+([options](../ui/menus-settings.md#add-an-option)) and the engine keeps them. Quality, resolution
 and writing them from code: [apply settings](../ui/menus-settings.md#apply-settings). Volume is a
 field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale are
 `gui.UI_Preferences`.

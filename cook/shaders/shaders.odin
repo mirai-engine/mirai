@@ -230,6 +230,7 @@ Job :: struct {
     bases:    []Base,
     out,staging:string,
     reduced:  bool, // compiled with -O1 instead of SLANG_OPTIMIZATION: a SPIRV-Tools bug needs it
+    backends: Backends, // of the generation, without Metal for a stage of the rays traced by software (software_rays)
     prior:    Shader, // the stage as the previous output has it
     has_prior:bool,
     engine:   Shader, // the stage as the build of the engine has it: what first_write shows of a stage the output lacks
@@ -288,6 +289,21 @@ variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
         if len(words)>=2 && words[0]=="variant" {append(&found,Variant{words[1],words[2:]})}
     }
     return found[:]
+}
+
+// Whether a stage serves only the rays traced by software: the source itself
+// of one with the variant hw, or one that says so (`//! software rays`).
+// Metal traces rays by hardware alone, so it gets no code of these.
+@(private)
+software_rays :: proc(text:string,variant:Variant) -> bool {
+    if variant.name!="" {return false}
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if !strings.has_prefix(line,"//!") {continue}
+        words:=strings.fields(line[3:],context.temp_allocator)
+        if len(words)>=2 && (words[0]=="variant" && words[1]=="hw" || words[0]=="software" && words[1]=="rays") {return true}
+    }
+    return false
 }
 
 // A boolean a pipeline of the stage chooses (rhi.Shader_Constants), false
@@ -486,27 +502,28 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     append(&configuration,..transmute([]u8)strings.join(job.defines,"\n",context.temp_allocator))
     if job.reduced {append(&configuration,"-O1")}
     digest:=fingerprint(job.source,job.includes,job.bases,configuration[:],allocator,&g.sources)
-    vulkan,metal:=.Vulkan in g.backends,.Metal in g.backends
+    backends:=job.backends
+    vulkan,metal:=.Vulkan in backends,.Metal in backends
     spv_name:=strings.concatenate({name,".spv"},allocator) if vulkan else ""
     msl_name:=strings.concatenate({name,".metal"},allocator) if metal else ""
     names:=[Backend]string{.Vulkan=spv_name,.Metal=msl_name}
-    if stored,files,found:=cache_stage_read(g.shared,digest,g.backends,allocator);found && artifacts_stage(files,names,job.staging,g.backends) {
+    if stored,files,found:=cache_stage_read(g.shared,digest,backends,allocator);found && artifacts_stage(files,names,job.staging,backends) {
         stored.id,stored.name,stored.spv,stored.msl=identifier(name,allocator),name,spv_name,msl_name
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        job.result=shader_trim(stored,g.backends)
+        job.result=shader_trim(stored,backends)
         job.reused=true
         job.result.staged=true
         job.result.constants=job.constants
         return
     }
     if job.has_prior {
-        if files,found:=artifacts_read(job.prior,digest,job.out,g.backends);found && artifacts_stage(files,names,job.staging,g.backends) {
+        if files,found:=artifacts_read(job.prior,digest,job.out,backends);found && artifacts_stage(files,names,job.staging,backends) {
             // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-            job.result=shader_trim(job.prior,g.backends)
+            job.result=shader_trim(job.prior,backends)
             job.reused=true
             job.result.staged=true
             job.result.constants=job.constants
-            cache_stage_write(g.shared,job.result,files,g.backends)
+            cache_stage_write(g.shared,job.result,files,backends)
             return
         }
     }
@@ -631,7 +648,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         bindings=resources,constants=job.constants,group=group,fingerprint=digest,staged=true,
         spv_hash=sha_of(spv_bytes,allocator) if vulkan else "",msl_hash=sha_of(metal_bytes,allocator) if metal else "",
     }
-    cache_stage_write(g.shared,job.result,{.Vulkan=spv_bytes,.Metal=metal_bytes},g.backends)
+    cache_stage_write(g.shared,job.result,{.Vulkan=spv_bytes,.Metal=metal_bytes},backends)
 }
 
 // A source of the overlay that Slang would read from its file to compile a
@@ -766,7 +783,8 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             defines:=make([dynamic]string,allocator)
             append(&defines,..variant.defines)
             append(&defines,..constant_defines)
-            job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name)}
+            job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
+            if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             for value in engine_entries {
                 object,is_object:=value.(json.Object)
@@ -893,7 +911,7 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
 job_cost :: proc(g:^Generation,job:^Job) -> i64 {
     entry,folder:=job.prior,job.out
     if !job.has_prior {entry,folder=job.engine,g.engine_build}
-    name:=entry.spv if .Vulkan in g.backends else entry.msl
+    name:=entry.spv if .Vulkan in job.backends else entry.msl
     if !job.has_prior && !job.has_engine || folder=="" || name=="" {return max(i64)}
     info,error:=os.stat(path_join(folder,name,allocator=context.temp_allocator),context.temp_allocator)
     if error!=nil {return max(i64)}
@@ -947,13 +965,13 @@ early_write :: proc(g:^Generation,folder:string,written:^bool,active:bool) {
             source:string
             switch {
             case job.first || active && !job.idle: entry,source=job.result,job.staging
-            case job.has_prior:  entry,source=shader_trim(job.prior,g.backends),job.out
-            case job.has_engine: entry,source=shader_trim(job.engine,g.backends),g.engine_build
+            case job.has_prior:  entry,source=shader_trim(job.prior,job.backends),job.out
+            case job.has_engine: entry,source=shader_trim(job.engine,job.backends),g.engine_build
             case i==1: continue
             case: return
             }
-            files,found:=artifacts_read(entry,entry.fingerprint,source,g.backends)
-            if !found || !artifacts_stage(files,{.Vulkan=entry.spv,.Metal=entry.msl},folder,g.backends) {return}
+            files,found:=artifacts_read(entry,entry.fingerprint,source,job.backends)
+            if !found || !artifacts_stage(files,{.Vulkan=entry.spv,.Metal=entry.msl},folder,job.backends) {return}
             entry.staged=false
             append(&entries[i],entry)
         }
@@ -1413,7 +1431,7 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
     code :: proc(b:^strings.Builder,shader:Shader,metal:bool,relative,prefix:string,stages:[Stage]string,packed:bool) {
         switch {
         case packed && metal: fmt.sbprintf(b,"{{binary = {{msl_entry = \"%s\"}}, ",shader.entry)
-        case packed: strings.write_string(b,"{")
+        case packed, metal && shader.msl=="": strings.write_string(b,"{")
         case metal: fmt.sbprintf(b,"{{binary = {{msl = #load(\"%s/%s\", string), msl_entry = \"%s\"}}, ",relative,shader.msl,shader.entry)
         case: fmt.sbprintf(b,"{{binary = {{spirv = #load(\"%s/%s\")}}, ",relative,shader.spv)
         }

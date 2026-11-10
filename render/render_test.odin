@@ -68,8 +68,8 @@ Cube_Fixture :: struct {
 }
 
 @(private = "file")
-cube_fixture_init :: proc(t: ^testing.T, f: ^Cube_Fixture, width, height: u32, settings: Settings, loc := #caller_location) -> bool {
-	if !fixture_init(t, f, width, height, settings, loc = loc) {return false}
+cube_fixture_init :: proc(t: ^testing.T, f: ^Cube_Fixture, width, height: u32, settings: Settings, programs := false, reference := Reference_Set{}, loc := #caller_location) -> bool {
+	if !fixture_init(t, f, width, height, settings, programs = programs, reference = reference, loc = loc) {return false}
 	vertices, indices := cube_mesh()
 	handle, added := mesh_add(f.renderer, vertices[:], indices[:])
 	testing.expect(t, added)
@@ -376,22 +376,22 @@ image_error :: proc(image, reference: []u8) -> (bias, rms: f32) {
 	return f32(sum / f64(count)), f32(math.sqrt(squares / f64(count)))
 }
 
-// What the lighting approximates: the mean of `frames` frames of
-// reference_lights, whose rays go to other points of the lights each frame.
-// The settings of the renderer are those of the image it is compared with,
-// with the reference on and without the temporal filter.
+// What the lighting approximates: the mean of `frames` frames of the
+// reference of the lights, whose rays go to other points of the lights each
+// frame. The settings of the renderer are those of the image it is compared
+// with, without the temporal filter. The fixture has TEST_GENERATION.
 @(private = "file")
 reference_image :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, frames: int, mode := Debug_View.None) -> (image: []u8, ok: bool) {
 	r := f.renderer
 	settings := r.settings
 	reference := settings
-	reference.reference_lights, reference.taa = true, false
+	reference.taa = false
 	testing.expect(t, renderer_apply_settings(r, reference))
 	defer testing.expect(t, renderer_apply_settings(r, settings))
 	sum: []f32
 	defer delete(sum)
 	for _ in 0 ..< frames {
-		testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = mode}}), r.error)
+		testing.expect(t, reference_frame(r, {camera = camera, inspection = {mode = mode}}, {.Lights}, nil), r.error)
 		rhi.device_wait_idle(f.device)
 		pixels, _, _, captured := golden_capture(r)
 		testing.expect(t, captured, r.error)
@@ -414,7 +414,7 @@ render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
+	if !cube_fixture_init(t, &f, 480, 300, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights_field(&f, 1024, 8, radius = 0.1)
@@ -483,7 +483,7 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
+	if !cube_fixture_init(t, &f, 64, 48, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights: [24]Light_Desc
@@ -525,7 +525,7 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
+	if !cube_fixture_init(t, &f, 480, 300, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
@@ -701,13 +701,13 @@ render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 	testing.expect(t, !r.targets.taa_valid && !r.targets.hiz_valid, "histories restart after a resize")
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	settings := r.settings
-	settings.resolution = Render_Scale(0.5)
+	settings.resolution = 30
 	settings.light_budget = 0 // the lights of a cell are sampled from here on
 	testing.expect(t, renderer_apply_settings(r, settings))
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect_value(t, r.targets.width, u32(40))
 	renderer_resize(r, 64, 48)
-	settings.resolution = Render_Scale(1)
+	settings.resolution = 1080
 	testing.expect(t, renderer_apply_settings(r, settings))
 	scene_set(r, nil, nil, {}, {}) // empty scene
 	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
@@ -741,7 +741,7 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({0,0,0},{1,1,1}),tint={1,1,1}}},nil,{},{use_background=true})
     camera:=Camera{position={0,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     target:=proc(t:^testing.T,r:^Renderer,settings:^Settings,lines:u32) {
-        settings.resolution=Render_Lines(lines)
+        settings.resolution=lines
         testing.expect(t,renderer_apply_settings(r,settings^))
     }
     // A target over the lines of the window keeps a pixel per point.
@@ -765,10 +765,8 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     renderer_resize(r,200,100,2,2)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50)
-    for invalid in ([]Resolution{Render_Scale(-1),Render_Scale(0.1),Render_Scale(3),Render_Scale(f32(math.nan_f32())),Render_Lines(0)}) {
-        settings.resolution=invalid
-        testing.expectf(t,!renderer_apply_settings(r,settings),"%v is refused",invalid)
-    }
+    settings.resolution=0
+    testing.expect(t,!renderer_apply_settings(r,settings),"no lines is refused")
 }
 
 // A settings change starts again only what was made with the fields that
@@ -904,11 +902,11 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
     rhi.device_wait_idle(f.device)
     pipelines,probes,irradiance:=r.pipelines,r.ddgi.probes,r.ddgi.irradiance
     testing.expect(t,r.has_previous && r.targets.taa_valid)
-    r.targets.reflect_valid,r.targets.gi_reference_valid=true,true
+    r.targets.reflect_valid=true
     r.targets.shadow.valid,r.targets.glass_valid,r.targets.hiz_valid=true,true,true
     renderer_camera_cut(r)
     testing.expect(t,!r.has_previous && r.prev_jitter=={})
-    testing.expect(t,!r.targets.taa_valid && !r.targets.reflect_valid && !r.targets.gi_reference_valid)
+    testing.expect(t,!r.targets.taa_valid && !r.targets.reflect_valid)
     testing.expect(t,!r.targets.shadow.valid && !r.targets.glass_valid && !r.targets.hiz_valid)
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.ddgi.probes,probes)
@@ -981,7 +979,7 @@ render_occlusion_is_conservative_at_odd_resolutions :: proc(t: ^testing.T) {
 render_taa_is_stable_on_static_scenes :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
-	settings.resolution = Render_Scale(0.5)
+	settings.resolution = 32
 	settings.gi_enabled = false
 	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -1284,7 +1282,7 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
     settings.gi_enabled = false
     settings.reflections = false
     settings.taa = true
-    settings.resolution = Render_Scale(0.5)
+    settings.resolution = 40
     if !cube_fixture_init(t, &f, 256, 160, settings) {return}
     defer fixture_destroy(&f)
     r := f.renderer
@@ -1299,7 +1297,7 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
     reference: []u8
     defer delete(reference)
     for variant in 0 ..< 3 {
-        if variant == 1 {r.settings.resolution = Render_Scale(1); renderer_resize(r, 256, 160, 2, 2)}
+        if variant == 1 {r.settings.resolution = 1080; renderer_resize(r, 256, 160, 2, 2)}
         if variant == 2 {instances[1].hidden = true; scene_set(r, instances, nil, {}, {background = {}, use_background = true})}
         for _ in 0 ..< 8 {
             testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
@@ -1330,7 +1328,7 @@ render_mesh_added_under_software_tracing_gets_its_native_structure_when_hardware
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// Only a device with ray queries has native structures to build.
-	if !r.hardware_rt_verified {return}
+	if !r.hardware_rt_verified || !SOFTWARE_TRACER {return}
 	camera := Camera{position = {0, 4, 6}, forward = {0, -4, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, 0.5, 0}, {1, 1, 1}), tint = {1, 1, 1}}}, nil, sun, {})
@@ -1364,7 +1362,7 @@ render_mesh_added_under_hardware_tracing_gets_its_software_tree_when_software_re
 	if !cube_fixture_init(t, &f, 64, 48, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	if !r.hardware_rt {return}
+	if !r.hardware_rt || !SOFTWARE_TRACER {return}
 	camera := Camera{position = {0, 4, 6}, forward = {0, -4, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	vertices, indices := cube_mesh()
@@ -1450,6 +1448,7 @@ tracer_settings :: proc(mode: Trace_Mode) -> Settings {
 
 @(test)
 a_device_makes_only_the_pipelines_of_the_tracer_it_uses_and_the_other_ones_on_a_switch :: proc(t: ^testing.T) {
+	if !SOFTWARE_TRACER {return}
 	for start in ([]Trace_Mode{.Auto, .Software}) {
 		f: Cube_Fixture
 		if !cube_fixture_init(t, &f, 192, 128, tracer_settings(start)) {return}
@@ -1478,6 +1477,7 @@ a_device_makes_only_the_pipelines_of_the_tracer_it_uses_and_the_other_ones_on_a_
 
 @(test)
 a_device_without_ray_queries_starts_with_the_software_pipelines :: proc(t: ^testing.T) {
+	if !SOFTWARE_TRACER {return}
 	f: Cube_Fixture
 	if !fixture_init(t, &f, 192, 128, tracer_settings(.Auto), hardware_rt = false) {return}
 	defer fixture_destroy(&f)
@@ -1498,8 +1498,6 @@ a_device_without_ray_queries_starts_with_the_software_pipelines :: proc(t: ^test
 move_settings :: proc() -> Settings {
 	s := test_settings()
 	s.probe_grid, s.probe_cascades = 8, 2
-	// An image is compared pixel by pixel with another: every pixel traces its own rays.
-	s.reference_lights = true
 	// The probe volume traces the probes what changed reaches, in an order
 	// two renderers do not share: they do not give it byte for byte.
 	s.gi_enabled = false
@@ -1522,9 +1520,12 @@ move_scene :: proc(cube: Mesh_Handle, instances: ^[5]Instance_Desc) {
 	}
 }
 
+// An image is compared pixel by pixel with another: every pixel traces its
+// own rays, those of the reference of the lights (the fixture has
+// TEST_GENERATION).
 @(private = "file")
 move_frames :: proc(t: ^testing.T, r: ^Renderer, count: int) {
-	for _ in 0 ..< count {testing.expect(t, renderer_frame(r, {camera = MOVE_TEST_CAMERA}), r.error)}
+	for _ in 0 ..< count {testing.expect(t, reference_frame(r, {camera = MOVE_TEST_CAMERA}, {.Lights}, nil), r.error)}
 }
 
 @(test)
@@ -1533,9 +1534,9 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	// The tree of the instances is kept for rays traced by software.
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !cube_fixture_init(t, &moved, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &moved, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&moved)
-	if !cube_fixture_init(t, &set, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &set, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&set)
 	instances: [5]Instance_Desc
 	move_scene(moved.cube, &instances)
@@ -1613,9 +1614,9 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 	zero, hidden: Cube_Fixture
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !cube_fixture_init(t, &zero, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &zero, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&zero)
-	if !cube_fixture_init(t, &hidden, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &hidden, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&hidden)
 	instances: [5]Instance_Desc
 	move_scene(zero.cube, &instances)
@@ -1693,9 +1694,9 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 @(test)
 scene_tint_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	tinted, set: Cube_Fixture
-	if !cube_fixture_init(t, &tinted, 96, 64, move_settings()) {return}
+	if !cube_fixture_init(t, &tinted, 96, 64, move_settings(), programs = true) {return}
 	defer fixture_destroy(&tinted)
-	if !cube_fixture_init(t, &set, 96, 64, move_settings()) {return}
+	if !cube_fixture_init(t, &set, 96, 64, move_settings(), programs = true) {return}
 	defer fixture_destroy(&set)
 	instances: [5]Instance_Desc
 	move_scene(tinted.cube, &instances)
@@ -1779,7 +1780,7 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 	// The tree of the instances is kept for rays traced by software.
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene
@@ -1843,7 +1844,7 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 @(test)
 scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
 	f: Cube_Fixture
-	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
+	if !cube_fixture_init(t, &f, 96, 64, move_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene
@@ -1866,7 +1867,7 @@ scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
 @(test)
 scene_set_lights_sends_only_what_changed_and_the_gpu_holds_the_lights_of_the_scene :: proc(t: ^testing.T) {
 	f: Cube_Fixture
-	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
+	if !cube_fixture_init(t, &f, 96, 64, move_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene

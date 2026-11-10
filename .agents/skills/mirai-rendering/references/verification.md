@@ -9,7 +9,8 @@
   installed, `VK_LAYER_PATH` points to it (on Windows, the SDK `Bin` or
   `.deps/vulkan-sdk-windows`). Metal: `MTL_DEBUG_LAYER=1`.
 - The `_hw` variants need a GPU with ray queries or Mesa lavapipe (`VK_DRIVER_FILES` pointing to
-  its ICD). `MIRAI_RT=software` forces the software BVH.
+  its ICD). On Vulkan, `MIRAI_RT=software` forces the software BVH; Metal has only the hardware
+  tracer.
 - A GPU test takes its device with `shared_device.take_or_skip` (`rhi/shared_device`), and one of
   `render` its renderer with `fixture_init` (`render/fixture_test.odin`): the tests of a
   process share one per variant (with and without hardware ray tracing) and run one at a time

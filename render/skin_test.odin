@@ -32,7 +32,7 @@ gpu_skin_preview_reuses_compute_and_buffers_without_mutating_the_scene :: proc(t
     testing.expect(t,skin_update(r,main_skin,palette[:]))
     scene_set(r,{{object_id=1,mesh=main_skin,transform=Mat4(1),tint={1,1,1}}},nil,{},Environment{})
     camera:=Camera{position={0,3,5},forward={0,-2,-5},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}
-    if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+    if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}
     record:=r.scene.meshes[main_skin]
     before,read_before:=test_posed(device,r,main_skin)
     testing.expect(t,read_before)
@@ -75,10 +75,9 @@ skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.al
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     // Images are compared pixel by pixel: every pixel traces its own rays,
     // to a sun with no size.
-    settings.reference_lights=true
     settings.sun_radius=0
     settings.trace_mode=.Hardware if hardware else .Software
-    return fixture_init(t,f,160,120,settings,desc={allocator=allocator},programs=programs,loc=loc)
+    return fixture_init(t,f,160,120,settings,desc={allocator=allocator},programs=programs,reference={.Lights},loc=loc)
 }
 
 @(private)
@@ -125,7 +124,7 @@ gpu_skin_refits_inner_nodes_after_a_large_deformation :: proc(t:^testing.T) {
     for skin,i in skins {for level,depth in r.scene.meshes[skin].skin.binding.levels {if level.count>0 {depths[i]=depth}}}
     testing.expectf(t,depths[0]>depths[1],"depths %v",depths)
     scene_set(r,descs[:],nil,{},Environment{})
-    testing.expect(t,renderer_frame(r,{camera={position={3,5,6},forward={0,-4,-6},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}}),r.error)
+    testing.expect(t,fixture_frame(&f, {camera={position={3,5,6},forward={0,-4,-6},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}}),r.error)
     for skin,i in skins {
         record:=r.scene.meshes[skin]
         nodes,triangles,read:=test_tree(device,r,skin)
@@ -214,6 +213,7 @@ skin_test_sample :: proc(v:Mesh_Vertex,influence:Skin_Influence,palette:[]Mat4)-
 
 @(test)
 gpu_skin_gets_its_software_tree_when_rays_go_back_to_software :: proc(t:^testing.T) {
+    if !SOFTWARE_TRACER {return}
     f:Fixture
     if !skin_fixture(t,&f,true) {return}
     defer fixture_destroy(&f)
@@ -234,13 +234,13 @@ gpu_skin_gets_its_software_tree_when_rays_go_back_to_software :: proc(t:^testing
     testing.expect(t,skin_update(r,skin,palette[:],true))
     scene_set(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,1,1}}},nil,{},Environment{})
     camera:=Camera{position={3,4,6},forward={-3,-3.2,-6},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
+    testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)
     settings:=r.settings
     settings.trace_mode=.Software
     testing.expect(t,renderer_apply_settings(r,settings),r.error)
     record:=r.scene.meshes[skin]
     testing.expect(t,!r.hardware_rt && record.rays[0].bvh_node_count>0)
-    for _ in 0..<2 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+    for _ in 0..<2 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
     rhi.device_wait_idle(device)
     nodes,triangles,read:=test_tree(device,r,skin)
     testing.expect(t,read)
@@ -257,6 +257,7 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         mem.tracking_allocator_init(&tracker,context.allocator)
         defer mem.tracking_allocator_destroy(&tracker)
         f:Fixture
+        if !hardware && !SOFTWARE_TRACER {continue}
         if !skin_fixture(t,&f,hardware,mem.tracking_allocator(&tracker)) {return}
         defer fixture_destroy(&f)
         r,device:=f.renderer,f.device
@@ -295,11 +296,11 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         r.scene.changes={}
         skins_bounds(r)
         testing.expect(t,r.scene.changes.count>0 || r.scene.changes.all,"deformation must wake indirect lighting")
-        if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+        if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}
         prior:=palette
         palette[0][0,3]=-0.3;palette[1][0,3]=1.4;palette[1][1,3]=0.4
         testing.expect(t,skin_update(r,skin,palette[:]))
-        if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+        if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}
         record:=r.scene.meshes[skin]
         actual,read_actual:=test_posed(device,r,skin)
         previous,read_previous:=test_posed(device,r,skin,true)
@@ -326,7 +327,7 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
             ray,primitive:=bvh_ray_triangles(nodes,triangles,target+Vec3{0,5,0},{0,-1,0},10)
             testing.expectf(t,primitive>=0 && abs(ray-5)<1e-4,"GPU refitted BLAS hit: %d %f",primitive,ray)
         }
-        for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         actual,read_actual=test_posed(device,r,skin)
         previous,read_previous=test_posed(device,r,skin,true)
         testing.expect(t,read_actual && read_previous)
@@ -336,18 +337,18 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         ref_mesh,_:=mesh_add(r,reference[:],indices[:])
         descs[1].mesh=ref_mesh
         scene_set(r,descs[:],nil,sun,environment)
-        for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         expected_image,_,_,captured_reference:=golden_capture(r);defer delete(expected_image)
         if !testing.expect(t,captured_reference,r.error) {return}
         difference:=0
         for value,i in image {if abs(int(value)-int(expected_image[i]))>2 {difference+=1}}
         testing.expectf(t,difference<12,"skinned raster and shadow image differs from deformed geometry (%d channels; hardware %v)",difference,hardware)
         descs[1].mesh=skin;scene_set(r,descs[:],nil,sun,environment)
-        for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         if r.hardware_rt {
             r.scene.meshes[skin].skin.refits=SKIN_REBUILD_INTERVAL
             testing.expect(t,skin_update(r,skin,palette[:],true))
-            for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+            for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
             testing.expect_value(t,r.scene.meshes[skin].skin.refits,0)
             rebuilt,_,_,captured_rebuilt:=golden_capture(r);defer delete(rebuilt)
             if !testing.expect(t,captured_rebuilt,r.error) {return}
@@ -359,7 +360,7 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         allocations:=tracker.total_allocation_count
         {
             context.allocator=mem.tracking_allocator(&tracker)
-            for i in 0..<8 {palette[1][0,3]+=0.01;testing.expect(t,skin_update(r,skin,palette[:]));testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+            for i in 0..<8 {palette[1][0,3]+=0.01;testing.expect(t,skin_update(r,skin,palette[:]));testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         }
         testing.expect_value(t,tracker.total_allocation_count,allocations)
         after:=rhi.device_stats(device)
@@ -414,7 +415,7 @@ a_view_that_leaves_out_the_layers_of_a_skinned_part_draws_it_collapsed :: proc(t
     pixels:=make([]u8,width*height*4,context.temp_allocator)
     for c in cases {
         camera:=Camera{position={0,2,0},forward={0,-2,0},up={0,0,-1},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE,own=c.own,own_hidden=c.own_hidden,layers=c.layers}
-        for _ in 0..<2 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        for _ in 0..<2 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         rhi.device_wait_idle(device)
         testing.expect(t,golden_read_texture(device,r.targets.albedo,pixels),rhi.device_error(device))
         left,right:=0,0
@@ -479,10 +480,10 @@ gpu_a_program_moves_a_skin_after_its_skin_now_and_before :: proc(t:^testing.T) {
     lifted:=[1]Mat4{Mat4(1)}
     lifted[0][1,3]=1
     testing.expect(t,skin_update(r,skin,lifted[:],true))
-    if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+    if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}
     lifted[0][1,3]=2
     testing.expect(t,skin_update(r,skin,lifted[:]))
-    if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+    if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}
     s:=&r.scene
     testing.expect(t,s.instances[0].meta.x&INSTANCE_MESH_MASK==u32(skin) && s.meshes[skin].skin.moves,"a skin is moved in place")
     testing.expect(t,s.instances[0].bounds_max.x>=s.meshes[skin].bounds_max.x+3-1e-4,"its box grows by the reach")
@@ -493,7 +494,7 @@ gpu_a_program_moves_a_skin_after_its_skin_now_and_before :: proc(t:^testing.T) {
         testing.expectf(t,linalg.length(now[i].position-(v.position+{3,2,0}))<1e-4,"vertex %d moved after its skin: %v",i,now[i].position)
         testing.expectf(t,linalg.length(before[i].position-(v.position+{3,1,0}))<1e-4,"vertex %d where it was the frame before: %v",i,before[i].position)
     }
-    for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+    for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
     now,_=test_posed(device,r,skin)
     before,_=test_posed(device,r,skin,true)
     for v,i in rest {

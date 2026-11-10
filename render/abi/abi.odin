@@ -70,7 +70,7 @@ ORIGIN_STEP          :: f32(1024)
 
 // Gpu_Frame.flags.
 FRAME_FLAG_GI           :: 1
-FRAME_FLAG_GI_REFERENCE :: 2   // Settings.reference_gi: the composite takes the reference of the indirect light
+FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the composite takes it as the diffuse indirect light
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16

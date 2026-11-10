@@ -20,7 +20,7 @@ Area_Fixture :: struct {
 area_init :: proc(t: ^testing.T, f: ^Area_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	if !fixture_init(t, f, 96, 96, settings, loc = loc) {return false}
+	if !fixture_init(t, f, 96, 96, settings, programs = true, loc = loc) {return false}
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
 	normals := [6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}
@@ -49,18 +49,16 @@ area_scene :: proc(f: ^Area_Fixture, lights: []Light_Desc, extra: []Instance_Des
 	scene_set(f.renderer, instances[:], lights, {}, {sky = {0, 0, 0}})
 }
 
-// The direct light of every pixel, as a mean over `frames` frames.
+// The direct light of every pixel, as a mean over `frames` frames, of the
+// pipeline or of the reference of the lights.
 @(private)
 area_direct :: proc(t: ^testing.T, f: ^Area_Fixture, frames: int, reference: bool, pipeline: Render_Pipeline_Handle = 0) -> []Vec3 {
 	r := f.renderer
-	settings := r.settings
-	settings.reference_lights = reference
-	testing.expect(t, renderer_apply_settings(r, settings))
 	size := int(r.main.targets.width * r.main.targets.height)
 	sum := make([]Vec3, size, context.temp_allocator)
 	texels := make([]f16, size * 4, context.temp_allocator)
 	for _ in 0 ..< frames {
-		r.main_pipeline = pipeline
+		r.main_pipeline = reference_pipeline(r, {.Lights}, nil) if reference else pipeline
 		testing.expect(t, renderer_frame(r, {camera = f.camera}), r.error)
 		if !testing.expect(t, rhi.texture_read(f.device, r.main.targets.direct, ([^]u8)(raw_data(texels))[:len(texels) * 2])) {return sum}
 		for &value, i in sum {value += {f32(texels[i * 4]), f32(texels[i * 4 + 1]), f32(texels[i * 4 + 2])} / f32(frames)}

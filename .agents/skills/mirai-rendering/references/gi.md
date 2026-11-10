@@ -54,7 +54,7 @@ Each technique states its status; what is listed as prepared is not implemented.
     software BVH.
 - **Hardware ray tracing** (implemented). Inline ray queries in the `_hw` variants of direct
   light, probes, contact occlusion and reflections; SPIRV-Cross translates them to Metal. The
-  self-test and the fallback to software protect it ([RHI](rhi.md#hardware-ray-tracing)).
+  self-test protects it, with the fallback to software on Vulkan ([RHI](rhi.md#hardware-ray-tracing)).
 - **Hybrid rendering** (implemented). G-buffer by rasterization; shadows, bounces and probes by
   tracing in compute.
 - **SDF tracing** (prepared). `trace.slang` is the only provider interface: an SDF or surface

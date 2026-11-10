@@ -585,7 +585,7 @@ DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, 
 Device_Desc :: struct {
 	app_name:                   cstring,
 	validation:                 bool,     // also enabled with MIRAI_VALIDATION=1
-	allow_hardware_ray_tracing: bool,     // MIRAI_RT=software forces it off
+	allow_hardware_ray_tracing: bool,     // Vulkan: false, or MIRAI_RT=software, has the device report no ray queries, so rays are traced by software; Metal always traces them by hardware
 	vulkan_instance_extensions: []cstring, // window system extensions from the platform layer
 	upload_bytes_per_frame:     u64,      // transient ring capacity per frame in flight
 	preferred_device:           string,   // substring of the adapter name; MIRAI_GPU overrides

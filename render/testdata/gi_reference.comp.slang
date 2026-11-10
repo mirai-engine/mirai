@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// What the diffuse indirect light of each pixel approximates
-// (render.Settings.reference_gi): the mean, weighted by the cosine, of the
+// What the diffuse indirect light of each pixel approximates, which the
+// tests compare it with (reference_test.odin): the mean, weighted by the cosine, of the
 // light that arrives at it from everything but the sun and the local lights,
 // by paths. Every frame each pixel sends params.paths rays distributed by the
 // cosine; at each surface they meet, the sun and every local light give their
@@ -11,8 +11,9 @@
 // that meets nothing sees the sky.
 //
 // `accumulated` holds the mean of every frame since the reference last
-// started (params.reset), the count of frames in a: the composite and the
-// debug views show it in place of the probe volume. A frame first scales the
+// started (params.reset), the count of frames in a: it is the Gi of the
+// pipeline, which the composite and the debug views show in place of the
+// probe volume. A frame first scales the
 // mean of the frames before by their share, then each path adds its light by
 // its own share as it finds it.
 //

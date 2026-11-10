@@ -8,7 +8,7 @@ import "mirai:rhi"
 @(test)
 render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testing.T) {
     settings:=DEFAULT_SETTINGS
-    settings.trace_mode=.Software
+    settings.trace_mode=.Software if SOFTWARE_TRACER else .Auto
     settings.probe_budget,settings.probe_rays,settings.probe_grid,settings.probe_cascades=64,32,4,2
     // Six frames of one triangle under the sun, from a renderer just made.
     capture :: proc(t:^testing.T,r:^Renderer) -> []u8 {

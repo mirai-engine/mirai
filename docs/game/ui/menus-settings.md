@@ -66,7 +66,7 @@ fields; the engine brings the window and the renderer to them at once:
 
 ```odin
 render.graphics_preset_apply(graphics,.Medium) // ^render.Graphics_Settings: the fields of a preset
-graphics.render_scale=0.75      // the fraction of the window drawn; 0: the target of the preset
+graphics.resolution=720         // the lines the window aims for, never above a pixel per point
 graphics.sun_shadows=false      // no ray goes to the sun
 graphics.frame_limit,graphics.vsync=60,true // 0: no limit
 display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
@@ -77,9 +77,8 @@ the preset: `render.graphics_preset_apply` writes its fields, the fields written
 top, and `render.graphics_quality_of(graphics^)` gives the preset the fields are at, `Custom` when
 a field was changed by hand. A preset selector is a `Selector` of its own name (inside a
 `select_row` every control is named `control`), bound to a field the game fills with that value;
-on `Changed` the game calls `render.graphics_preset_apply`. Naming a preset resets `render_scale`
-to 0, which follows the target of the preset: a height of lines over the window, never above a
-pixel per point.
+on `Changed` the game calls `render.graphics_preset_apply`. A preset writes `resolution` too: a
+height of lines over the window, never above a pixel per point.
 
 ## Persist
 

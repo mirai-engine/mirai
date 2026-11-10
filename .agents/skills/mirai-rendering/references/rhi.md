@@ -185,10 +185,13 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 - Vulkan: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`; Metal: `MTLAccelerationStructure`
   instanced with user IDs.
-- It is enabled if the device supports it, the self-test at start (`render/selftest.odin`)
+- Vulkan: it is enabled if the device supports it, the self-test at start (`render/selftest.odin`)
   gives the expected hits and its pipelines are made; otherwise, the software BVH, whose pipelines
   are made only then ([tracer in use](gi.md#bvh-and-acceleration-structures)).
-  `MIRAI_RT=software` forces it.
+  `MIRAI_RT=software` forces the software BVH.
+- Metal traces rays by hardware alone: its shaders have no software tracer, `MIRAI_RT` is not read,
+  and a device without ray tracing, a failed self-test or a missing `_hw` pipeline is an error of
+  `renderer_create` that says which, never a switch of tracer.
 - **TLAS instances.** `cmd_build_tlas` reads the instances from a GPU buffer in a neutral layout
   (`Tlas_Instance`: row-wise transform, the BLAS `accel_id`, mask and flags, own index), which the
   caller writes with the CPU or with a compute. An RHI compute (`tlas_instances.comp.slang`, a

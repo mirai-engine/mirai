@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:rhi"
@@ -7,25 +8,32 @@ import "mirai:rhi/shared_device"
 
 // The shared device of the GPU tests and a renderer on it.
 Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
+	device:    ^rhi.Device,
+	renderer:  ^Renderer, // on the heap: a Renderer is too big for the stack
+	reference: Reference_Set, // what fixture_frame draws with the references (reference_test.odin)
+	gi:        Reference_Gi,
 }
 
 // The generation with the Surface programs of testdata/ (Grid, Ocean and
-// Pieces), which `mirai test` makes before the tests run: the engine has no
-// Surface program of its own.
+// Pieces) and the stages of the references, which `mirai test` makes before
+// the tests run: the engine has neither.
 TEST_GENERATION :: #directory + "/../.mirai/tmp/render-test-shaders"
 
 // False with the test told why: there is no device (shared_device.take_or_skip)
 // or the renderer does not start. desc gives what a test sets besides the size
 // and the settings. programs: the renderer starts with TEST_GENERATION.
-fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: Maybe(Settings) = nil, hardware_rt := true, desc: Renderer_Desc = {}, programs := false, loc := #caller_location) -> bool {
+fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: Maybe(Settings) = nil, hardware_rt := true, desc: Renderer_Desc = {}, programs := false, reference := Reference_Set{}, loc := #caller_location) -> bool {
+	if s, given := settings.?; given && s.trace_mode == .Software && !SOFTWARE_TRACER {
+		fmt.println("skipped: rays are traced by software only on Vulkan")
+		return false
+	}
 	device := shared_device.take_or_skip(t, hardware_rt, loc)
 	if device == nil {return false}
 	desc := desc
 	desc.device, desc.width, desc.height, desc.settings = device, width, height, settings
 	assets: Shader_Assets
-	if programs {
+	f.reference = reference
+	if programs || reference != {} {
 		problem: string
 		assets, problem = shader_assets_load(TEST_GENERATION)
 		if !testing.expectf(t, problem == "", "%s in %s: `mirai test render` generates it", problem, TEST_GENERATION, loc = loc) {return false}
@@ -40,6 +48,12 @@ fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: M
 	}
 	f.device, f.renderer = device, r
 	return true
+}
+
+// A frame of the renderer of f, with the references f asks for.
+fixture_frame :: proc(f: ^Fixture, frame: Frame_Desc) -> bool {
+	if f.reference == {} {return renderer_frame(f.renderer, frame)}
+	return reference_frame(f.renderer, frame, f.reference, &f.gi)
 }
 
 // The catalog of TEST_GENERATION for a renderer without a device, which the

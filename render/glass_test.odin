@@ -5,13 +5,13 @@ import "core:mem"
 import "core:testing"
 import "mirai:rhi"
 
-// No jitter and no probes: a pixel shows one surface point, lit by the sun alone.
+// No jitter and no probes: a pixel shows one surface point, lit by the sun
+// alone. Shadows are checked ray by ray, at single pixels of small images:
+// the fixtures draw with the reference of the lights, whose every pixel
+// traces its own rays.
 @(private = "file")
 glass_settings :: proc() -> Settings {
 	s := DEFAULT_SETTINGS
-	// Shadows are checked ray by ray, at single pixels of small images:
-	// every pixel traces its own rays.
-	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
 	s.reflections = false
@@ -120,7 +120,7 @@ read_halves :: proc(t: ^testing.T, f: ^Fixture, target: rhi.Texture, p: [2]int) 
 @(private = "file")
 shown :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3, count := 3) -> Vec3 {
 	r := f.renderer
-	for _ in 0 ..< count {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< count {testing.expect(t, fixture_frame(f, {camera = camera}), r.error)}
 	return read_halves(t, f, r.targets.display, glass_pixel(r, camera, world))
 }
 
@@ -141,7 +141,7 @@ SUN :: Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math
 @(test)
 glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, glass_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	coat := glass_material({1, 0, 0}, 0.6)
@@ -187,7 +187,7 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 @(test)
 glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, glass_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	pane := glass_material({1, 1, 1}, 1, 0.5)
@@ -246,7 +246,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 @(test)
 glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, glass_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	green := glass_material({0.2, 1, 0.2}, 1, 0.05)
@@ -282,7 +282,7 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	under := glass_pixel(r, side, {0, 0, 0.5})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		settings.colored_shadows = false
@@ -290,21 +290,21 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 		// What the floor receives with nothing above it: the surface keeps for
 		// its own reflection a part of the light, so the reference is measured.
 		scene_set(r, {floor}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
+		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
 		lit := read_halves(t, &f, r.targets.direct, under)
 		block.material = 1
 		scene_set(r, {floor, block}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
+		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
 		plain := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, lit.r > 0.9 && abs(plain.r - lit.r) < 0.02 && abs(plain.g - lit.g) < 0.02, "%v: glass casts no shadow: %v of %v", provider, plain, lit)
 		settings.colored_shadows = true
 		testing.expect(t, renderer_apply_settings(r, settings))
-		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
+		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
 		colored := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, abs(colored.g - 0.92 * lit.g) < 0.03 && abs(colored.r - 0.2 * 0.92 * lit.r) < 0.03, "%v: the shadow of a solid has its color once: %v of %v", provider, colored, lit)
 		block.material = 2
 		scene_set(r, {floor, block}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
+		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
 		smoked := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, abs(smoked.r - 0.92 * lit.r) < 0.03 && abs(smoked.b - 0.25 * 0.92 * lit.b) < 0.03, "%v: the shadow of a solid has what it absorbs: %v of %v", provider, smoked, lit)
 	}
@@ -316,7 +316,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	settings := glass_settings()
 	settings.gi_enabled = true
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, settings, programs = true) {return}
+	if !fixture_init(t, &f, 96, 64, settings, programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
@@ -342,14 +342,14 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	floor := glass_pixel(r, camera, {0, 0.001, 0})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		for colored in ([]bool{false, true}) {
 			settings := r.settings
 			settings.trace_mode = provider
 			settings.colored_shadows = colored
 			testing.expect(t, renderer_apply_settings(r, settings))
 			scene_set(r, room, nil, {}, {sky = {1, 1, 1}})
-			for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+			for _ in 0 ..< 48 {testing.expect(t, fixture_frame(&f, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 			light := read_halves(t, &f, r.targets.display, floor)
 			if !colored {
 				testing.expectf(t, light.r > 0.05 && abs(light.g - light.r) < 0.1 * light.r, "%v: without colored shadows the glass leaves the light of the sky white: %v", provider, light)
@@ -361,7 +361,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 		// The same color given by a program over a blue row: the mean is what the program gives.
 		materials_set(r, {painted})
 		scene_set(r, room, nil, {}, {sky = {1, 1, 1}})
-		for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+		for _ in 0 ..< 48 {testing.expect(t, fixture_frame(&f, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 		light := read_halves(t, &f, r.targets.display, floor)
 		testing.expectf(t, light.r > 0.05 && abs(light.g / light.r - 0.2) < 0.05 && abs(light.b - light.g) < 0.05 * light.r, "%v: the light through glass with a program has the color it gives: %v", provider, light)
 		materials_set(r, {plain})
@@ -372,7 +372,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 @(test)
 glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 128, 96, glass_settings()) {return}
+	if !fixture_init(t, &f, 128, 96, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	clear := glass_material({1, 1, 1}, 0, 0.05)
@@ -385,7 +385,7 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 	lens := Instance_Desc{object_id = 3, mesh = ball, transform = placed({0, 1, 0}, {2, 2, 2}), material = 1, tint = {1, 1, 1}}
 	camera := Camera{position = {0, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
@@ -406,7 +406,7 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 @(test)
 glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 256, 192, glass_settings()) {return}
+	if !fixture_init(t, &f, 256, 192, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	clear := glass_material({1, 1, 1}, 0, 0.05)
@@ -441,7 +441,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !fixture_init(t, &f, 128, 96, settings) {return}
+	if !fixture_init(t, &f, 128, 96, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05)})
@@ -452,7 +452,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	// The image of the lamp in the pane lies on the line from the eye to the lamp mirrored behind it.
 	image := Vec3{0.5, 1, 0}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		applied.reflections = true
@@ -472,7 +472,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 @(test)
 glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 128, 96, glass_settings()) {return}
+	if !fixture_init(t, &f, 128, 96, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05), glass_material({1, 1, 1}, 0, 0.7)})
@@ -500,7 +500,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !fixture_init(t, &f, 128, 96, settings) {return}
+	if !fixture_init(t, &f, 128, 96, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	mirror, plate := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -515,7 +515,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	light := Light_Desc{position = {4, 2, -8}, color = {1, 1, 1}, intensity = 40 * math.PI, range = 12}
 	camera := Camera{position = {0, 2, 5}, forward = {0, -2, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		applied.reflection_detail_roughness = REFLECTION_SHARED_ROUGHNESS
@@ -547,7 +547,7 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !fixture_init(t, &f, 128, 96, settings) {return}
+	if !fixture_init(t, &f, 128, 96, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	polished := DEFAULT_MATERIAL
@@ -560,11 +560,11 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 		{object_id = 3, mesh = sheet, transform = standing({6, 1, 12}, 12, 12), tint = {0, 0, 0}, emission = {0, 0, 1}},
 	}, nil, {}, {})
 	camera := Camera{position = {-0.6, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	for _ in 0 ..< 20 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 20 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	for _ in 0 ..< 40 {
 		camera.position.x += 0.03
 		camera.forward.x += 0.03
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
 	}
 	read :: proc(t: ^testing.T, f: ^Fixture) -> []f16 {
 		r := f.renderer
@@ -574,7 +574,7 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 		return pixels
 	}
 	moving := read(t, &f)
-	for _ in 0 ..< 30 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 30 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	settled := read(t, &f)
 	center := glass_pixel(r, camera, {0, 1, 0})
 	difference: f32
@@ -595,7 +595,7 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 0, 0}, 0.6)})
@@ -621,7 +621,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	settings.gi_enabled = true
 	settings.reflections = true
 	settings.glass_layers = 2
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	solid := glass_material({0.8, 0.9, 1}, 0.2, 0.05)
@@ -636,7 +636,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	}
 	scene_set(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}}, SUN, {})
 	camera := Camera{position = {0, 5, 0.5}, forward = {0, -5, -0.5}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 4 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	targets := [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_history[0]}
 	testing.expect(t, targets[0] != 0 && targets[1] != 0 && targets[2] != 0, "both layers have their targets")
 	tracking: mem.Tracking_Allocator
@@ -644,7 +644,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	defer mem.tracking_allocator_destroy(&tracking)
 	{
 		context.allocator = mem.tracking_allocator(&tracking)
-		for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		for _ in 0 ..< 8 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	}
 	testing.expect_value(t, tracking.total_allocation_count, 0)
 	testing.expect_value(t, [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_history[0]}, targets)
@@ -657,7 +657,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 @(test)
 glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_scatters :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, glass_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	water := glass_material({1, 1, 1}, 1, 0.02)
@@ -678,7 +678,7 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 		return {position = from, forward = {math.sin(angle), math.cos(angle), 0}, up = {0, 0, 1}, fov_y = 20, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
