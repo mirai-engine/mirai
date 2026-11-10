@@ -30,7 +30,7 @@ night_lamp :: proc(s: ^asset.Scene_Builder, name: string, position, color: [3]f3
 // material of the engine and a tint.
 write_night_scene :: proc(o: ^Out) {
     s: asset.Scene_Builder
-    asset.builder_init(&s, &o.content, asset.KIND_SCENE, asset.content_id(PROJECT,"scene","night"))
+    asset.builder_init(&s, &o.content, asset.content_id(PROJECT,"scene","night"))
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = nits(LAMPLIT, {0.02, 0.025, 0.04}), nits(LAMPLIT, {0.004, 0.006, 0.012})
     environment.atmosphere = false

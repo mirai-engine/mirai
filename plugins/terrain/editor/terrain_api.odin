@@ -196,10 +196,10 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
     if tool.stroke.active {api.call_fail(call,api.INVALID_PARAMS,"A stroke of the terrain tool is held in the viewport: let it go first");return}
     e,named_found:=editor.api_call_entity(call,world,named)
     if !named_found {return}
-    if !core.has(core.read(terrains),e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain: scene.inspect lists them",given);return}
+    if !core.has(terrains,e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain: scene.inspect lists them",given);return}
     if s.app==nil || s.app.assets==nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no assets loaded");return}
-    if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a Transform with scene.set",given);return}
-    marker,_:=core.get(core.read(terrains),e)
+    if !core.has(worlds,e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a Transform with scene.set",given);return}
+    marker,_:=core.get(terrains,e)
     if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
     if !stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
     if !stroke_baseline(tool) {api.call_fail(call,api.INTERNAL_ERROR,"The terrain history could not be stored: there is not enough memory");return}
@@ -212,7 +212,7 @@ api_terrain_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
     world:=editor.edited_world(s)
     terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
     e,_:=editor.api_entity_find(world,(^string)(user)^)
-    return terrains!=nil && worlds!=nil && e!=core.NONE && core.has(core.read(terrains),e) && !core.has(core.read(worlds),e)
+    return terrains!=nil && worlds!=nil && e!=core.NONE && core.has(terrains,e) && !core.has(worlds,e)
 }
 
 @(private)
@@ -517,9 +517,9 @@ api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.
     named_found:bool
     if e,named_found=editor.api_call_entity(call,w,named,game=true);!named_found {return}
     given:=base.text_get(named)
-    marker,found:=core.get(core.read(terrains),e)
+    marker,found:=core.get(terrains,e)
     if !found {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain in the game: play.inspect lists them",given);return}
-    placed,has:=core.get(core.read(worlds),e)
+    placed,has:=core.get(worlds,e)
     source=terrain.terrain_source(core.ref(data),marker.source)
     if !has || source==nil {api.call_failf(call,api.INVALID_PARAMS,"The source of terrain %s is not loaded in the game yet: step it and call again",given);return}
     to_local=linalg.inverse(mm.transform_matrix(placed.transform))
@@ -663,7 +663,7 @@ api_sample :: proc(s:^editor.Session,call:^api.Call) {
         data:=core.world_storage_of(w,terrain.Terrain_Data)
         terrains:=core.world_table_of(w,terrain.Terrain)
         found_e,_:=editor.api_entity_find(w,base.text_get(p.entity[:]))
-        marker,_:=core.get(core.read(terrains),found_e)
+        marker,_:=core.get(terrains,found_e)
         check,_=terrain.terrain_source_check(core.ref(data),marker.source)
     } else {
         tool,_,ok:=api_terrain(s,call,p.entity[:])

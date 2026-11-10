@@ -140,7 +140,7 @@ play_view_json :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=co
     v.blend.progress,v.blend.weight=1,1
     follows:=core.world_table_of(w,ecamera.Camera_Follow)
     if follows!=nil && camera!=core.NONE {
-        if follow,found:=core.get(core.read(follows),camera);found {
+        if follow,found:=core.get(follows,camera);found {
             v.mode=fmt.aprint(follow.mode,allocator=allocator)
             if lenses:=core.world_table_of(w,erender.Camera);lenses!=nil {
                 if preset,is:=ecamera.camera_preset_of(core.read(follows),core.read(lenses),camera);is {v.preset=fmt.aprint(preset,allocator=allocator)}

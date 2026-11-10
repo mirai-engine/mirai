@@ -2,7 +2,6 @@ package destruct
 
 import "mirai:core"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
 @(step="fixed",stage="simulate",before="physics_prepare")
@@ -16,14 +15,14 @@ destruct_parent_motion :: proc(
         if !config.follow_parent {continue}
         e:=core.entity_at(destructibles,row)
         state,has:=core.get(states,e)
-        if !has || !sim.body_valid(&physics.ptr.world,state.body) {continue}
+        held,valid:=phys.body_pose(physics,state.body)
+        if !has || !valid {continue}
         desired:=mm.Transform{state.initial.position,state.initial.rotation,state.initial.scale}
         if parent,attached:=core.get(parents,e);attached {
             above,ok:=core.world_of(transforms,parents,parent.entity)
             if !ok {continue}
             desired=mm.transform_compose(above,desired)
         }
-        held:=sim.body_transform(&physics.ptr.world,state.body)
         if held.p!=desired.position || held.q!=desired.rotation {phys.move_kinematic(requests,e,desired.position,desired.rotation)}
     }
 }

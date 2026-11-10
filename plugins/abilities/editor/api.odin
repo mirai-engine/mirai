@@ -82,11 +82,11 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     e,named:=editor.api_call_entity(call,world,p.entity[:],game=s.mode!=.Edit)
     if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if users==nil || !core.has(core.read(users),e) {
+    if users==nil || !core.has(users,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the shown world: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }
-    u,_:=core.get(core.read(users),e)
+    u,_:=core.get(users,e)
     abilities,kits:=sets(s)
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
@@ -280,7 +280,7 @@ use :: proc(s:^editor.Session,call:^api.Call) {
     e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
     if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if users==nil || !core.has(core.read(users),e) {
+    if users==nil || !core.has(users,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the running game: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }

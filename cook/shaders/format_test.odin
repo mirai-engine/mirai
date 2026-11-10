@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:rhi"
 
 @(private="file")
 float_string :: proc(value:f64) -> string {
@@ -57,7 +58,7 @@ json_is_written_one_member_per_line_with_two_spaces :: proc(t:^testing.T) {
 @(test)
 shader_entry_survives_the_manifest :: proc(t:^testing.T) {
     bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{34,"Texture_Table"}}
-    shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
+    shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,constants={"nested","other"},fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
     writer:=json_writer(context.temp_allocator)
     shader_to_json(&writer,shader)
     parsed,_:=json.parse(json_finish(&writer),parse_integers=true,allocator=context.temp_allocator)
@@ -69,11 +70,17 @@ shader_entry_survives_the_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,read.msl,shader.msl)
     testing.expect_value(t,len(read.bindings),3)
     testing.expect_value(t,read.bindings[2],bindings[2])
+    testing.expect(t,len(read.constants)==2 && read.constants[0]=="nested" && read.constants[1]=="other","its constants keep their ids")
     testing.expect(t,!read.staged)
     // An entry that is not a shader is no entry.
     broken,_:=json.parse_string("{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Geometry\",\"bindings\":[],\"group\":[0,0,0]}",parse_integers=true,allocator=context.temp_allocator)
     _,valid:=shader_from_json(broken.(json.Object),context.temp_allocator)
     testing.expect(t,!valid)
+    for constants in ([]string{"[7]","[\"\"]","[\"a\",null]"}) {
+        unnamed,_:=json.parse_string(fmt.tprintf("{{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Compute\",\"bindings\":[],\"constants\":%s,\"group\":[0,0,0]}}",constants),parse_integers=true,allocator=context.temp_allocator)
+        _,named:=shader_from_json(unnamed.(json.Object),context.temp_allocator)
+        testing.expectf(t,!named,"constants %s",constants)
+    }
 }
 
 @(test)
@@ -101,6 +108,35 @@ variants_are_the_source_and_its_variant_lines :: proc(t:^testing.T) {
     testing.expect(t,found[1].name=="hw" && len(found[1].defines)==1 && found[1].defines[0]=="MIRAI_HARDWARE_RT=1")
     testing.expect(t,found[2].name=="color_hw" && len(found[2].defines)==2 && found[2].defines[1]=="MIRAI_COLORED=1")
     testing.expect(t,found[3].name=="tight" && found[3].defines[0]=="B")
+}
+
+@(test)
+constants_are_the_constant_lines_of_the_source_by_id :: proc(t:^testing.T) {
+    found:=constants("//! constant color MIRAI_COLORED\n#include \"x.slang\"\n//! constant unlayered MIRAI_NO_LAYERS\r\n//! constant\n//! constant alone\n//! constant too many words\n// ! constant no A\n//!constant tight B\n//! variant hw MIRAI_HW=1\n",context.temp_allocator)
+    testing.expect_value(t,len(found),3)
+    if len(found)!=3 {return}
+    testing.expect(t,found[0]==Constant{"color","MIRAI_COLORED"} && found[1]==Constant{"unlayered","MIRAI_NO_LAYERS"} && found[2]==Constant{"tight","B"},"in the order of their lines, which is their id")
+    testing.expect_value(t,len(constants("",context.temp_allocator)),0)
+    testing.expect_value(t,constants_problem(found,context.temp_allocator),"")
+    Case :: struct {name:string,declared:[]Constant,says:string}
+    crowded:=make([]Constant,rhi.MAX_SHADER_CONSTANTS+1,context.temp_allocator)
+    for &constant,i in crowded {constant={fmt.tprintf("c%d",i),fmt.tprintf("C%d",i)}}
+    for c in ([]Case{
+        {"as many as a pipeline sets",crowded[:rhi.MAX_SHADER_CONSTANTS],""},
+        {"one more",crowded,"at most"},
+        {"a name twice",{{"color","A"},{"color","B"}},"twice"},
+        {"a define twice",{{"color","A"},{"glass","A"}},"twice"},
+    }) {
+        problem:=constants_problem(c.declared,context.temp_allocator)
+        testing.expectf(t,(problem=="")==(c.says=="") && strings.contains(problem,c.says),"%s: %s",c.name,problem)
+    }
+    // native.slang declares the constant of each id a pipeline sets, and no other.
+    native,_:=os.read_entire_file(path_join(path_clean(ENGINE_ROOT,context.temp_allocator),"shaders/include/native.slang",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,strings.count(string(native),"[vk::constant_id("),rhi.MAX_SHADER_CONSTANTS)
+    for id in 0..<rhi.MAX_SHADER_CONSTANTS {
+        declared:=fmt.tprintf("[vk::constant_id(%d)] const bool "+CONSTANT_SYMBOL+" = false;",id,id)
+        testing.expectf(t,strings.contains(string(native),declared),"native.slang declares %s",declared)
+    }
 }
 
 @(test)
@@ -295,6 +331,14 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
         "\t\t.Triangle_Vert = {binary = {spirv = #load(\"../shaders/build/triangle.vert.spv\")}, name = \"triangle.vert\", stage = .Vertex,\n"+
         "\t\t\tthreadgroup = {0, 0, 0}, bindings = []rhi.Binding_Info{}},\n\t}\n}\n"
     testing.expect_value(t,table,expected)
+    // The constants of a source: each stage of it names them, and their ids are written once.
+    constant:=[]Job{
+        {source="C:/e/shaders/reflect.comp.slang",constants={"color","unlayered"},result={id="Reflect_Comp",name="reflect.comp",stage=.Compute,spv="reflect.comp.spv",constants={"color","unlayered"}}},
+        {source="C:/e/shaders/reflect.comp.slang",constants={"color","unlayered"},result={id="Reflect_Hw_Comp",name="reflect_hw.comp",stage=.Compute,spv="reflect_hw.comp.spv",constants={"color","unlayered"}}},
+    }
+    with_constants:=string(odin_table(constant,{.Vulkan},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator))
+    testing.expect_value(t,strings.count(with_constants,"REFLECT_COMP_COLOR :: 0\nREFLECT_COMP_UNLAYERED :: 1\n"),1)
+    testing.expect_value(t,strings.count(with_constants,"bindings = []rhi.Binding_Info{}, constants = []string{\"color\", \"unlayered\"}},\n"),2)
     // One backend: the system of the other cannot build without it, and says how to have it.
     vulkan:=string(odin_table(jobs,{.Vulkan},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator))
     testing.expect(t,strings.contains(vulkan,"when rhi.SHADER_FORMAT == .Msl {\n\t#panic(\"the shaders were generated without Metal code: run `mirai shaders --backends all`\")\n} else {\n\t@(rodata)\n"),vulkan)

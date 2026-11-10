@@ -41,10 +41,10 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
 
     // A write of the order moves it among its siblings; one that changes nothing keeps the tree.
     seen:=w.hierarchy.version
-    get(&w.parents,c)^=Parent{root,1}
+    edit(&w.parents,c)^=Parent{root,1}
     tree_settle(t,&w)
     testing.expect_value(t,w.hierarchy.version,seen)
-    get(&w.parents,a).order=-1
+    edit(&w.parents,a).order=-1
     tree_settle(t,&w)
     testing.expect(t,same(children(h,root),{a,b,c}))
     testing.expect(t,w.hierarchy.version>seen)
@@ -171,16 +171,16 @@ a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
     add(&w.parents,held,Parent{holder,0})
     tree_settle(t,&w)
     rotation:=mm.quat_axis_angle({1,0,0},0.5)
-    testing.expect(t,world_set(get(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
+    testing.expect(t,world_set(edit(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
     world,placed:=world_of(read(&w.locals),read(&w.parents),held)
     testing.expect(t,placed && linalg.length(world.position-[3]f32{1,2,3})<1e-4)
     testing.expect(t,linalg.length(mm.quat_rotate(world.rotation,{1,0,0})-mm.quat_rotate(rotation,{1,0,0}))<1e-4)
-    local,_:=get(read(&w.locals),held)
+    local,_:=get(&w.locals,held)
     testing.expect_value(t,local.scale,[3]f32{1,3,1})
 
     // A parent without size cannot hold it anywhere.
-    get(&w.locals,holder).scale={0,1,1}
-    testing.expect(t,!world_set(get(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
+    edit(&w.locals,holder).scale={0,1,1}
+    testing.expect(t,!world_set(edit(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
     under_root,ok:=local_under(read(&w.locals),read(&w.parents),NONE,mm.Transform{{1,2,3},rotation,{1,1,1}})
     testing.expect(t,ok && under_root.position==[3]f32{1,2,3})
 }

@@ -25,21 +25,21 @@ preview_trace_matches_its_typed_schema_names_curves_events_and_enforces_paging :
     file:asset.Asset;testing.expect_value(t,authoring_test_load(f,"source.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&f.assets.types);testing.expect_value(t,error,asset.Error.None)
     w:Preview_Test_World;if !core.test_world_init(t,&w,anim.test_types) {return};defer core.test_world_destroy(&w)
-    entity:=core.create(&w.entities);description:=anim.ANIMATION_DEFAULT;description.asset=id;description.layers[0].sync=true;core.add(&w.animations,entity,description);core.test_world_settle(&w)
+    entity:=core.create(&w.entities);description:=anim.ANIMATION_DEFAULT;description.asset=id;core.add(&w.animations,entity,description);core.test_world_settle(&w)
     content:=host.content_animation(&f.app,id);if !testing.expect(t,content!=nil) {return}
     player:=lib.player_make(1);player.time=.5
     append(&w.playback.states,anim.Playing{entity=entity,asset=id,clip=0,time=.5,duration=1,fader={current=player},motion={translation={1,0,0},rotation=1},root_enabled=true})
-    w.playback.states[0].layers[0]={clip=base.name_hash("walk"),weight=.5,fader={current=player}}
-    action:=anim.Action_State{entity=entity};action.layers[0].active=true;append(&w.actions.states,action)
+    w.playback.states[0].layers[1]={clip=base.name_hash("walk"),weight=.5,fader={current=player}}
+    w.playback.states[0].asked[1]={clip=base.name_hash("walk"),weight=.5,sync=true};w.playback.states[0].stack=2
     append(&w.playback.states[0].curves,anim.Curve_Output{target=base.name_hash("pulse"),property=.Float,value={3,0,0,0},weight=.4});append(&w.playback.states[0].curves,anim.Curve_Output{target=base.name_hash("look"),property=.Vector,value={1,2,3,4},weight=.7})
-    core.push(&w.events.queue,anim.Animation_Marker{entity=entity,clip=base.name_hash("walk"),marker=base.name_hash("step"),time=.5,weight=.4})
+    core.push(&w.events.queue,anim.Animation_Event{entity=entity,kind=.Marker,clip=base.name_hash("walk"),name=base.name_hash("step"),time=.5,weight=.4})
     trace:=Preview_Trace{view=view};serial.writer_init(&trace.writer,4096);defer serial.writer_destroy(&trace.writer)
     p:=Preview_Params{trace=true,trace_offset=1,trace_limit=1,ticks=3,dt=.1};call:=api.Call{server=&f.server,out=&f.out,allocator=context.temp_allocator}
     world:=core.test_world_ref(&w);preview_trace_frame(&call,&trace,world,entity,&p,0,&f.app);testing.expect_value(t,trace.shown,u32(0));preview_trace_frame(&call,&trace,world,entity,&p,1,&f.app);testing.expect_value(t,trace.shown,u32(1))
     text:=string(serial.writer_bytes(&trace.writer));testing.expect(t,strings.contains(text,`"clip": "walk"`) && strings.contains(text,`"marker": "step"`) && strings.contains(text,`"property": "Float"`) && strings.contains(text,`"property": "Vector"`) && strings.contains(text,`"translation": [1, 0, 0]`))
-    independent:=false
-    testing.expect_value(t,api.method_register(&f.server,{name="validate_frame",params=Preview_Trace_Result,params_info=type_info_of(Preview_Trace_Result),result=serial.Json,writes_result=true,user=&independent,handler=proc(call:^api.Call) {frame:=api.call_params(call,Preview_Trace_Result);for leaf in frame.leaves {if leaf.layer==1 {(^bool)(call.user)^=leaf.sync_mode==.Independent}};serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
-    result:=authoring_test_execute(f,"validate_frame",text);testing.expect(t,result.code==0 && independent,result.message)
+    synced:=false
+    testing.expect_value(t,api.method_register(&f.server,{name="validate_frame",params=Preview_Trace_Result,params_info=type_info_of(Preview_Trace_Result),result=serial.Json,writes_result=true,user=&synced,handler=proc(call:^api.Call) {frame:=api.call_params(call,Preview_Trace_Result);for leaf in frame.leaves {if leaf.layer==1 {(^bool)(call.user)^=leaf.sync_mode==.Markers && leaf.source==.Layer}};serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
+    result:=authoring_test_execute(f,"validate_frame",text);testing.expect(t,result.code==0 && synced,result.message)
     count:=trace.writer.count;preview_trace_frame(&call,&trace,world,entity,&p,2,&f.app);testing.expect_value(t,trace.writer.count,count)
     serial.writer_reset(&f.out);preview_trace_result(&call,&trace,&p);testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"trace_truncated":true`))
 }
@@ -67,7 +67,7 @@ preview_trace_resolves_external_marker_and_curve_labels_from_their_source_once :
     player:=lib.player_make(2);player.time=.5
     append(&w.playback.states,anim.Playing{entity=entity,asset=primary,source_plan=1,generation=shared.sources.sets[0].content.generation,clip=1,time=.5,duration=.5,fader={current=player}})
     append(&w.playback.states[0].curves,anim.Curve_Output{target=base.name_hash("SmileOnly"),property=.Float,slot=2,value={.75,0,0,0},weight=1})
-    core.push(&w.events.queue,anim.Animation_Marker{entity=entity,animation=other,clip=base.name_hash("walk"),marker=base.name_hash("external_contact"),time=.5,weight=1})
+    core.push(&w.events.queue,anim.Animation_Event{entity=entity,kind=.Marker,animation=other,clip=base.name_hash("walk"),name=base.name_hash("external_contact"),time=.5,weight=1})
     trace:=Preview_Trace{view=view,primary=primary};defer preview_trace_sources_close(&trace)
     serial.writer_init(&trace.writer,16384);defer serial.writer_destroy(&trace.writer)
     p:=Preview_Params{trace=true,trace_limit=2,ticks=1,dt=.1};call:=api.Call{server=&f.server,out=&f.out,allocator=context.temp_allocator}

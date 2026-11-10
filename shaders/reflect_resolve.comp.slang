@@ -1,5 +1,5 @@
 #include "native.slang"
-//! variant glass MIRAI_GLASS_RESOLVE=1
+//! constant glass MIRAI_GLASS_RESOLVE
 // Filters the traced reflections into the history, which composite (or, for
 // the variant of a layer of glass, the pass that lights the layer) takes for
 // the share of each specular lobe that was traced.
@@ -42,23 +42,18 @@ struct Params_Block { float history_valid; float max_radius; float blend; float 
 #include "gbuffer.slang"
 #include "pixel.slang"
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
-#ifdef MIRAI_GLASS_RESOLVE
 // Whether the glass passes ran in the previous frame: with no glass in sight
-// they do not, and the history is older than that.
+// they do not, and the history is older than that. Read for a layer of glass.
 struct Seen_Block { uint glass_seen; };
 [[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<Seen_Block> seen_block : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-#endif
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> history : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);     // rgb radiance, a depth of the surface it belongs to
 [[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> g_motion : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 
 // The roughness the trace pass decided a pixel by: a layer of glass has only
 // the one specular antialiasing widened, the opaque G-buffer the material's.
 float decided_roughness(int2 p, float4 normal) {
-#ifdef MIRAI_GLASS_RESOLVE
-    return normal.a + ROUGHNESS_ROUNDING;
-#else
+    if (MIRAI_GLASS_RESOLVE) return normal.a + ROUGHNESS_ROUNDING;
     return g_motion.Load(int3(p, 0)).b + ROUGHNESS_ROUNDING;
-#endif
 }
 [[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_history : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 [[vk::binding(SLOT_PASS9, 0)]] Texture2D<float4> traced_shared : register(MIRAI_REGISTER(t, SLOT_PASS9), space0); // the same, one ray per block of 2x2 pixels
@@ -135,11 +130,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float4 normal = gbuffer_normal_roughness(p);
     float depth = g_depth.Load(int3(p, 0)).r;
     float roughness = decided_roughness(p, normal);
-#ifdef MIRAI_GLASS_RESOLVE
-    bool history_valid = params.history_valid > 0.5 && seen_block[0].glass_seen != 0u;
-#else
     bool history_valid = params.history_valid > 0.5;
-#endif
+    if (MIRAI_GLASS_RESOLVE) history_valid = history_valid && seen_block[0].glass_seen != 0u;
     if (depth_empty(depth) || reflection_weight(roughness) <= 0.0) {
         out_history[p] = float4(0.0);
         return;

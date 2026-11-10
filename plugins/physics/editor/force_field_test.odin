@@ -58,13 +58,13 @@ selected_force_fields_show_where_they_push_in_their_volume :: proc(t:^testing.T)
     direction:=mm.quat_rotate(pose.rotation,mm.Vec3{-1,0,0})
     testing.expect(t,linalg.length(lines.vertices[1].position-pose.position-direction*2)<1e-4)
     app.extras.debug_count=0
-    core.get(&w.transforms,parent).position.x+=10
+    core.edit(&w.transforms,parent).position.x+=10
     preview_run(&w,&session,preview,&app)
     testing.expect_value(t,app.extras.debug[0].vertices[0].position,pose.position+mm.Vec3{10,0,0})
     // Away from the center of a sphere: six arrows, toward it by its negative force.
     app.extras.debug_count=0
-    core.get(&w.fields,entity).along={}
-    core.get(&w.volumes,entity)^=volume.sphere(2)
+    core.edit(&w.fields,entity).along={}
+    core.edit(&w.volumes,entity)^=volume.sphere(2)
     preview_run(&w,&session,preview,&app)
     lines=app.extras.debug[0]
     testing.expect_value(t,lines.count,60)

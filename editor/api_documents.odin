@@ -88,9 +88,9 @@ api_document :: proc(s:^Session,call:^api.Call) {
         }
         if path=="" {api.call_fail(call,api.INVALID_PARAMS,"An asset path is required");return}
         // An asset that is not a scene opens as an asset document.
-        if !strings.has_suffix(path,".scene") && !strings.has_suffix(path,".prefab") {
+        if !strings.has_suffix(path,".scene") {
             if file,found:=asset_document_file(s,path);found {
-                if !asset_document_opens(s,file.kind) {api.call_failf(call,api.INVALID_PARAMS,"%s opens no document: scenes, prefabs, materials and the kinds of the plugins do",path);return}
+                if !asset_document_opens(s,file.kind) {api.call_failf(call,api.INVALID_PARAMS,"%s opens no document: scenes, materials and the kinds of the plugins do",path);return}
                 asset_document_show(s,file.id)
                 api_documents(s,call)
                 return
@@ -112,7 +112,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
         document_close_active(s)
     case .Preview_Sun:
         d:=index==s.active_document?s.document:&s.documents[index].document
-        if d.previous==nil || d.previous.doc.kind!=asset.KIND_PREFAB {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab");return}
+        if d.previous==nil || .One_Root not_in d.previous.doc.flags {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab");return}
         document_activate(s,index)
         s.viewport.preview_sun=p.enabled
         s.view_cut=true

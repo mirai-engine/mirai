@@ -5,8 +5,7 @@ import "core:math/linalg"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
+import physics "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -24,7 +23,7 @@ Destruct_Cache :: struct {
     pass:u32,
     entries:core.Entity_Map(Entry), // by destructible
     seen:core.Seen,           // of the destructibles: the entries of those that went end
-    infos:[]fr.Piece_Info,   // the pieces of the destructible being looked at
+    infos:[]physics.Piece_Info,   // the pieces of the destructible being looked at
     marks:[]u32,              // by body slot: equal to mark for the bodies already taken in the pass under way
     group_of:[]i32,           // by body slot: index of its group in this pass
     firsts:[]i32,             // one piece of each body of a destructible
@@ -47,7 +46,7 @@ Destruct_Stats :: struct {
 @(private)
 Scratch_Group :: struct {
     group:u32,
-    body:sim.Body_Handle,
+    body:physics.Body_Handle,
     debris:bool,
     first,count:int, // in flat
 }
@@ -64,7 +63,7 @@ Prepared :: struct {
     error:geom.Fracture_Error,
     interior:u32,
     anchors:[dynamic]bool,
-    clusters:[dynamic]fr.Cluster_Desc,
+    clusters:[dynamic]physics.Cluster_Desc,
     cluster_points:[dynamic][3]f32, // of the hulls of the clusters, at the size of the entity
     piece_clusters:[dynamic]i32,
     connection_strength:[dynamic]f32,
@@ -87,7 +86,7 @@ Prepared_Key :: struct {
 // The geometry of a piece: a view of the cut it came from, or its own after a slice.
 @(private)
 Visual :: struct {
-    piece:i32,            // fr.Piece_Info.id
+    piece:i32,            // physics.Piece_Info.id
     center:[3]f32,        // of the piece it was made for: a slot that holds another piece is made again
     volume:f32,
     source:i32,           // piece of the fracture; -1 for a half of a slice
@@ -101,7 +100,7 @@ Group_Record :: struct {
     entity:core.Entity,
     mesh:base.Asset_Id,
     members:[dynamic]i32, // the pieces the mesh was made of
-    body:sim.Body_Handle,
+    body:physics.Body_Handle,
 }
 
 @(private)
@@ -112,7 +111,7 @@ Entry :: struct {
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // of the Mesh_Renderer of the groups
     generated:[asset.MESH_MAX_SLOTS]base.Asset_Id,  // of the meshes generated for them
     slots:u32,                                      // material slots of those meshes; the last is the interior
-    event:fr.Fracture_Event,                       // the strongest applied in event_tick: what Fracture tells
+    event:physics.Break_Event,                       // the strongest applied in event_tick: what Fracture tells
     event_tick:u64,
     pass:u32,                                       // the last tick that wrote its state
 }
@@ -123,10 +122,16 @@ cache_destroy :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Des
     cache_free(cache)
 }
 
+@(private)
+scratch_free :: proc(cache:^Destruct_Cache) {
+    delete(cache.infos);delete(cache.marks);delete(cache.group_of);delete(cache.firsts);delete(cache.flat)
+    cache.infos,cache.marks,cache.group_of,cache.firsts,cache.flat=nil,nil,nil,nil,nil
+}
+
 // Frees the memory of the cache when the application ends: its meshes go with the assets.
 cache_free :: proc(cache:^Destruct_Cache) {
     core.entity_map_destroy(&cache.entries);delete(cache.groups)
-    delete(cache.infos);delete(cache.marks);delete(cache.group_of);delete(cache.firsts);delete(cache.flat)
+    scratch_free(cache)
     if cache.ready {
         geom.slicer_destroy(&cache.slicer)
         for &half in cache.halves {geom.mesh_buffer_destroy(&half)}
@@ -148,12 +153,13 @@ cache_reset :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destr
     core.entity_map_clear(&cache.entries)
 }
 
-// Scratch for the worlds of the simulation, reserved once.
+// Scratch for the pieces and the bodies a simulation holds, reserved once for each size of it.
 @(private)
-cache_make :: proc(cache:^Destruct_Cache,f:^fr.Fracture) -> bool {
-    if cache.ready {return true}
-    pieces,bodies:=max(f.desc.pieces,1),max(f.desc.bodies,1)
-    infos,infos_error:=make([]fr.Piece_Info,pieces)
+cache_make :: proc(cache:^Destruct_Cache,room:physics.Breakable_Room) -> bool {
+    pieces,bodies:=max(room.pieces,1),max(room.bodies,1)
+    if cache.ready && len(cache.infos)==pieces && len(cache.marks)==bodies {return true}
+    scratch_free(cache)
+    infos,infos_error:=make([]physics.Piece_Info,pieces)
     marks,marks_error:=make([]u32,bodies)
     group_of,group_error:=make([]i32,bodies)
     firsts,firsts_error:=make([]i32,pieces)
@@ -163,10 +169,13 @@ cache_make :: proc(cache:^Destruct_Cache,f:^fr.Fracture) -> bool {
         return false
     }
     cache.infos,cache.marks,cache.group_of,cache.firsts,cache.flat=infos,marks,group_of,firsts,flat
-    geom.slicer_init(&cache.slicer)
-    for &half in cache.halves {geom.mesh_buffer_init(&half)}
-    geom.mesh_buffer_init(&cache.merged)
-    cache.ready=true
+    cache.mark=0
+    if !cache.ready {
+        geom.slicer_init(&cache.slicer)
+        for &half in cache.halves {geom.mesh_buffer_init(&half)}
+        geom.mesh_buffer_init(&cache.merged)
+        cache.ready=true
+    }
     return true
 }
 
@@ -254,7 +263,7 @@ prepare_start :: proc(assets:^host.Assets,job_system:^jobs.Job_System,entry:^Ent
         p.sites=make([dynamic][3]f32)
         geom.fracture_init(&p.fracture)
         p.anchors=make([dynamic]bool)
-        p.clusters=make([dynamic]fr.Cluster_Desc)
+        p.clusters=make([dynamic]physics.Cluster_Desc)
         p.cluster_points=make([dynamic][3]f32)
         p.piece_clusters=make([dynamic]i32)
         p.connection_strength=make([dynamic]f32)
@@ -314,7 +323,7 @@ visual_mesh :: proc(entry:^Entry,visual:^Visual) -> geom.Mesh {
 // Notes the geometry of a piece of the cut: kept when the slot still holds the piece it was made for.
 // False without memory to note it.
 @(private)
-visual_source :: proc(entry:^Entry,piece:fr.Piece_Info) -> bool {
+visual_source :: proc(entry:^Entry,piece:physics.Piece_Info) -> bool {
     visual:=visual_find(entry,piece.id)
     if visual!=nil && visual.center==piece.center && visual.volume==piece.volume {return true}
     if visual==nil {
@@ -328,7 +337,7 @@ visual_source :: proc(entry:^Entry,piece:fr.Piece_Info) -> bool {
 
 // visual_source for the pieces of the cut of an entity, which is told when one found no memory.
 @(private)
-visuals_source :: proc(problems:^core.Problems,e:core.Entity,entry:^Entry,pieces:[]fr.Piece_Info) {
+visuals_source :: proc(problems:^core.Problems,e:core.Entity,entry:^Entry,pieces:[]physics.Piece_Info) {
     noted:=true
     for piece in pieces {
         if piece.source>=0 && !visual_source(entry,piece) {noted=false}
@@ -338,7 +347,7 @@ visuals_source :: proc(problems:^core.Problems,e:core.Entity,entry:^Entry,pieces
 
 // The geometry of a half: the geometry of the piece it was cut from, cut by the same plane.
 @(private)
-visual_cut :: proc(cache:^Destruct_Cache,entry:^Entry,piece:fr.Piece_Info) -> bool {
+visual_cut :: proc(cache:^Destruct_Cache,entry:^Entry,piece:physics.Piece_Info) -> bool {
     if visual:=visual_find(entry,piece.id);visual!=nil && visual.center==piece.center && visual.volume==piece.volume {return true}
     parent:=visual_find(entry,piece.parent)
     if parent==nil {return false}

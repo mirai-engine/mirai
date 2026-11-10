@@ -73,7 +73,7 @@ net_seats :: proc(
         connection:=Connection(value.peer)
         if serving && connected(connections,connection) {
             sent,_:=remote_input(connections,connection)
-            input.seat_receive(value,bindings.ptr,sent)
+            input.seat_receive(value,bindings.ptr,sent,time.dt)
             continue
         }
         // A connection that left: its seat waits for its player, or goes.
@@ -129,10 +129,10 @@ connected :: proc(connections:core.Ref(Remote_Inputs),connection:Connection) -> 
 owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
     drivables,seats:=core.world_table_of(w,input.Drivable),core.world_table_of(w,input.Seat)
     if seats==nil {return 0}
-    if seat,is:=core.get(core.read(seats),e);is {return Connection(seat.peer)}
+    if seat,is:=core.get(seats,e);is {return Connection(seat.peer)}
     if drivables==nil {return 0}
-    driven,_:=core.get(core.read(drivables),e)
-    seat,_:=core.get(core.read(seats),driven.seat)
+    driven,_:=core.get(drivables,e)
+    seat,_:=core.get(seats,driven.seat)
     return Connection(seat.peer)
 }
 

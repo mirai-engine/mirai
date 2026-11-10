@@ -1,4 +1,4 @@
-# Waiting: deadlines, cooldowns and requests for later
+# Waiting: deadlines and cooldowns
 
 A wait is the tick it ends at, kept in your component. `core.deadline(time,seconds)` gives that
 tick and `core.due(time,at)` says whether it came; a deadline nobody set (0) has, and `core.NEVER`
@@ -31,8 +31,6 @@ game_mines :: proc(mines:core.Read(Mine),es:^core.Entities,time:core.Time) {
 - **How long ago:** `core.elapsed(time,door.opened_at)` gives the seconds since a tick, for a
   blend; `core.seconds_of` and `core.ticks_of` convert between ticks and seconds.
 - **Every so often:** `if core.due(time,next) {next=core.deadline(time,2.5)}`.
-- **A request for later:** `core.later(&requests.queue,time,2,Hit{target,5})`; the owner takes
-  with `core.take_due(&requests.queue,time)` what was pushed and what is due.
 - **Bullet time:** an entity with `core.Own_Pace` waits on `core.own_time(time,clock,paces,e)`
   instead of `time`.
 - **Steps in a row** (open, hold, close): an enum of the step it is in and the tick it entered it;
@@ -45,7 +43,7 @@ game_mines :: proc(mines:core.Read(Mine),es:^core.Entities,time:core.Time) {
 - Counting ticks (`ticks-=1`, `time.tick%60`) lasts half as long at 120 Hz: give seconds to
   `core.deadline` or `core.ticks_of`.
 - `left-=time.dt` writes the row every tick, so it is copied and sent every tick: keep a deadline.
-- A queue is not saved: a wait a save must keep is a deadline in a component, not `core.later`.
-- An owner that takes with `core.take` refuses what was pushed with `core.later`.
+- A request is taken in the tick it was pushed in: "do this in 2 s" is a deadline in a component,
+  and the request is pushed when it is due.
 - A deadline of 0 is due: test `at!=0` when 0 means "not started".
 - While the clock does not advance (`time.dt` 0) a wait ends on the next tick.

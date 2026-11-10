@@ -26,7 +26,7 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Skin_Instances,free=skin_instances_free),
         core.test_type(Actions_Assets,free=actions_assets_free),
         core.test_type(Blend_Assets,free=blend_assets_free),
-        core.test_type(Graph_Assets,free=graph_assets_free),
+        core.test_type(Match_Assets,free=match_assets_free),
         core.test_type(Motion_Assets,free=motion_assets_free),
         core.test_type(Pose_Assets,free=pose_assets_free),
         core.test_type(Skeleton_Assets,free=skeleton_assets_free),

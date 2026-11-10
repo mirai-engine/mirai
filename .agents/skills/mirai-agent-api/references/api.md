@@ -158,7 +158,7 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
 [text sources](../../../../docs/game/assets/text-sources.md).
 
 - **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
-  `.scene.json` and `.prefab.json`. `read <asset>` prints the document or writes it to `--out`;
+  `.scene.json` and `.scene.json`. `read <asset>` prints the document or writes it to `--out`;
   `read --sources` writes one per asset of the project (not of its plugins); `write` takes those
   files or a folder of them, or `<asset> <file>` for a file kept elsewhere, and tries again what
   failed while a round writes something, so a file may use one the same run makes.

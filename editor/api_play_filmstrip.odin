@@ -304,7 +304,7 @@ api_view_project :: proc(view:core.View,rect:[4]f32,point:[3]f32) -> (at:[2]f32,
 api_entity_middle :: proc(w:core.World_Ref,e:core.Entity) -> [3]f32 {
     placed:=entity_world(w,e)
     if motions:=core.world_table_of(w,core.Motion);motions!=nil {
-        if motion,moves:=core.get(core.read(motions),e);moves {return placed.position+mm.quat_rotate(placed.rotation,motion.center)}
+        if motion,moves:=core.get(motions,e);moves {return placed.position+mm.quat_rotate(placed.rotation,motion.center)}
     }
     low,high:=placed.position,placed.position
     transforms,worlds:=core.world_table_of(w,core.Transform),core.world_table_of(w,core.World_Transform)

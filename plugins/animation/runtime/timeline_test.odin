@@ -137,7 +137,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Not playing, it writes where its clip starts once, and then leaves what it drives alone.
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
-    core.get(&w.transforms,leaf).position={9,9,9}
+    core.edit(&w.transforms,leaf).position={9,9,9}
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{9,9,9})
     testing.expect(t,len(w.events.items)==0)
@@ -158,8 +158,8 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Paused it holds nothing; resumed it goes on from where it was, and reports the marker it crosses.
     animation_command(&w.requests,door,.Pause)
     timeline_tick(&w,&app,&problems)
-    core.get(&w.transforms,leaf).position={9,9,9}
-    core.get(&w.lamps,actor).intensity=40
+    core.edit(&w.transforms,leaf).position={9,9,9}
+    core.edit(&w.lamps,actor).intensity=40
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{9,9,9})
     lamp,_=core.get(core.read(&w.lamps),actor)
@@ -169,7 +169,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,at(&w,leaf),[3]f32{4,0,0})
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
-    testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].marker==base.name_hash("half"))
+    testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].kind==.Marker && w.events.items[0].name==base.name_hash("half"))
     lamp,_=core.get(core.read(&w.lamps),actor)
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
 
@@ -193,7 +193,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect(t,!animation_playing(&w.playback,door))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
     // The Animation is the game's: when the game writes playing, that is what the clip does.
-    core.get(&w.animations,door).playing=true
+    core.edit(&w.animations,door).playing=true
     timeline_tick(&w,&app,&problems)
     testing.expect(t,animation_playing(&w.playback,door))
     testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})

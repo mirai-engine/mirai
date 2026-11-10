@@ -280,7 +280,7 @@ navigation_agents :: proc(
         }
     }
     for asked in core.take(&requests.queue) {
-        p:=core.get(paths,asked.entity)
+        p:=core.edit(paths,asked.entity)
         if p==nil && core.has(agents,asked.entity) {p=core.added(paths,asked.entity)}
         if p==nil && far_request(paths,fars,asked,worlds) {continue}
         if p==nil {
@@ -299,7 +299,7 @@ navigation_agents :: proc(
             agent_stop_crossing(p,asked.entity,loco)
             p.state=.Idle
             p.velocity={}
-            if mi:=core.get(inputs,asked.entity);mi!=nil {mi.move={}}
+            if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move={}}
         case .Look_At:
             p.look,p.looking=asked.point,true
         case .Look_Along:
@@ -320,7 +320,7 @@ navigation_agents :: proc(
         clear(&a.waiting)
         a.head=0
         for row in 0..<core.count(paths) {
-            if paths.values[row].queued {core.at(paths,row).queued=false}
+            if paths.values[row].queued {core.edit_at(paths,row).queued=false}
         }
     }
     if len(a.query.points)==0 && !ai.nav_query_init(&a.query,8192) {
@@ -342,7 +342,7 @@ navigation_agents :: proc(
     clear(&a.near)
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
-        p:=core.at(paths,row)
+        p:=core.edit_at(paths,row)
         agent,is_agent:=core.get(agents,e)
         if !is_agent {continue}
         character,has_character:=core.get(characters,e)
@@ -637,7 +637,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 base.truncate(&a.waiting,len(a.waiting)-a.head)
                 a.head=0
             }
-            p:=core.get(paths,e)
+            p:=core.edit(paths,e)
             if p!=nil {p.queued=false}
             agent,ok:=core.get(agents,e)
             pose,placed:=core.get(worlds,e)
@@ -732,7 +732,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
             a.searching,a.searching_air,a.searching_medium=e,false,false
         }
         e:=a.searching
-        p:=core.get(paths,e)
+        p:=core.edit(paths,e)
         if a.searching_tree!=0 {
             tree:=&a.trees[a.searching_tree-1]
             if p==nil || p.state!=.Waiting || !tree.built || p.class!=tree.class || p.target!=tree.target || int(p.class)>=n.count {
@@ -999,7 +999,7 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
     sorted:=a.sorted[:]
     for near,i in a.near {
         if !near.avoids {continue}
-        p:=core.get(paths,near.entity)
+        p:=core.edit(paths,near.entity)
         if p==nil || p.state!=.Moving {continue}
         clear(&a.neighbors)
         clear(&a.neighbors_air)
@@ -1091,7 +1091,7 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
 agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
-        p:=core.at(paths,row)
+        p:=core.edit_at(paths,row)
         if p.state==.Crossing {crossing+=1}
         driven:=false
         if d,ok:=core.get(drivables,e);ok && d.seat!=core.NONE {
@@ -1099,7 +1099,7 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
             if !agent.seated {continue}
             driven=true
         }
-        mi:=core.get(inputs,e)
+        mi:=core.edit(inputs,e)
         if mi==nil {continue}
         if p.state!=.Moving && p.state!=.Crossing {
             // Once, when it stops: whatever writes it next is not navigation.
@@ -1168,7 +1168,7 @@ navigation_crossing :: proc(
         p:=paths.table.values[row]
         if p.state!=.Crossing || p.manual || p.medium {continue}
         e:=core.entity_at(paths,row)
-        move:=core.get(moves,e)
+        move:=core.edit(moves,e)
         character,ok:=core.get(characters,e)
         if move==nil || !ok {continue}
         pose,_:=core.get(worlds,e)

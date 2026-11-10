@@ -312,7 +312,7 @@ a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells
     defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     // Without colliders no chunk is needed: the error and the spacing alone open the nodes.
-    core.get(&w.terrains,quad_owner(&w,id)).solid=false
+    core.edit(&w.terrains,quad_owner(&w,id)).solid=false
     view:=core.VIEW_DEFAULT
     view.size={1440,900}
     opened,closed:=false,false

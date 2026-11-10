@@ -554,13 +554,13 @@ float4 material_base_color(Material m, float2 uv0, float2 uv1, float2 lod, float
 }
 
 // The layers a pass shades of those a material holds: all of them, or the
-// unlit bit alone in a pass that only sees surfaces without layers.
+// unlit bit alone in a pass that only sees surfaces without layers
+// (MIRAI_MATERIAL_NO_LAYERS: true, or a constant of the stage).
 uint material_layers_allowed(uint layers) {
 #ifdef MIRAI_MATERIAL_NO_LAYERS
-    return layers & MATERIAL_LAYER_UNLIT;
-#else
-    return layers;
+    if (MIRAI_MATERIAL_NO_LAYERS) return layers & MATERIAL_LAYER_UNLIT;
 #endif
+    return layers;
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
 // blocks of the row, by their maps. The coat follows the surface under the

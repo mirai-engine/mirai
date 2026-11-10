@@ -2147,7 +2147,7 @@ asset_field_thumbnail :: proc(s:^Session,id:ui.Id,kind:asset.Fourcc,value:base.A
         case asset_document_opens(s,file.kind):
             content_used(s,file.id)
             asset_document_open(s,file.id)
-        case file.kind==asset.KIND_PREFAB && s.mode==.Edit:
+        case asset.registry_prefab(file) && s.mode==.Edit:
             content_used(s,file.id)
             file_open_path(s,file.path)
         }
@@ -2324,7 +2324,7 @@ prefabs_with :: proc(s:^Session,name:string,into:^[dynamic]base.Asset_Id) {
     prefab_reader_begin(s,&reader)
     defer prefab_reader_end(&reader)
     for &file in s.app.assets.registry.files {
-        if file.state!=.Asset || file.kind!=asset.KIND_PREFAB {continue}
+        if !asset.registry_prefab(&file) {continue}
         if scene,error:=asset.resolver_take(&reader.resolver,file.id);error==.None && scene!=nil {
             if _,found:=asset.scene_component(scene,name);found {append(into,file.id)}
         }
@@ -2345,24 +2345,25 @@ FIELD_KINDS :: 4 // of asset one Asset_Id field takes
 // The kinds of asset a field takes, the first for its look while empty; none: every kind.
 Asset_Kinds :: [FIELD_KINDS]asset.Fourcc
 
-// Whether a field takes an asset of a kind: any when it names none, and a
-// .sound_set where a .sound goes, since it plays as one.
+// Whether a field takes an asset shown as a kind: any when it names none, a .sound_set where
+// a .sound goes, since it plays as one, and a prefab where a scene goes, since it is one.
 asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> bool {
     if field[0]==0 {return true}
     for each in field {
-        if each!=0 && (kind==each || each==asset.KIND_SOUND && kind==asset.KIND_SOUND_SET) {return true}
+        if each!=0 && (kind==each || each==asset.KIND_SOUND && kind==asset.KIND_SOUND_SET || each==asset.KIND_SCENE && kind==SHOWN_PREFAB) {return true}
     }
     return false
 }
 
 // The kinds of asset a field takes: the extensions its tag names, apart by
 // spaces (`kind=.anim .match`), each of the engine or one a plugin declares
-// (Asset_Kind_Provider); without one known, what its name suggests.
+// (Asset_Kind_Provider), or prefab; without one known, what its name suggests.
 field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
     if extensions:=field_tagged(string(tag)).asset_kinds;extensions!="" {
         count:=0
         for extension in strings.fields_iterator(&extensions) {
             kind,known:=asset.kind_of_extension(extension)
+            if extension=="prefab" {kind,known=SHOWN_PREFAB,true}
             if !known {
                 if declared:=asset_plugin_kind_of_extension(s,extension);declared!=nil {kind,known=declared.kind,true}
             }
@@ -2386,7 +2387,7 @@ asset_kind_of_field :: proc(s:^Session,name:string) -> asset.Fourcc {
     case strings.contains(lower,"mesh"):     return asset.KIND_MESH
     case strings.contains(lower,"material"): return asset.KIND_MATERIAL
     case strings.contains(lower,"texture"),strings.contains(lower,"image"): return asset.KIND_TEXTURE
-    case strings.contains(lower,"prefab"):   return asset.KIND_PREFAB
+    case strings.contains(lower,"prefab"):   return SHOWN_PREFAB
     case strings.contains(lower,"scene"):    return asset.KIND_SCENE
     case strings.contains(lower,"sound"),strings.contains(lower,"audio"),strings.contains(lower,"clip"): return asset.KIND_SOUND
     case strings.contains(lower,"anim"):     return asset.KIND_ANIMATION
@@ -2455,7 +2456,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             // The parts of imports, which the browser hides, after the rest.
             parts:=make([dynamic]^asset.Registry_File,context.temp_allocator)
             for &file in a.registry.files {
-                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
+                if file.state!=.Asset || !asset_kind_takes(l.kinds,shown_kind(&file)) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
                 if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {
@@ -2489,7 +2490,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
                 if ids[index]!={} {
                     found:bool
                     file,found=asset.registry_find(&s.app.assets.registry,ids[index])
-                    if found {kind=file.kind;r.detail=file.path} else {file=nil}
+                    if found {kind=shown_kind(file);r.detail=file.path} else {file=nil}
                 }
                 r.icon,r.icon_color=asset_icon(s,kind)
                 if file!=nil {

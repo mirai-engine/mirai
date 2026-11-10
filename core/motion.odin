@@ -61,8 +61,7 @@ Pose_Target_Places :: struct {seen:Seen}
 @(step="fixed",loops="game",stage="begin")
 pose_targets_place :: proc(targets:Read(Pose_Target),transforms:^Table(Transform),places:^Pose_Target_Places) {
     c:=changes(targets,&places.seen)
-    for row in 0..<count(targets) {
-        if !changed(targets,c,row) {continue}
+    for row in each_changed(targets,&c) {
         local:=free(transforms,entity_at(targets,row))
         if local==nil {continue}
         target:=at(targets,row)

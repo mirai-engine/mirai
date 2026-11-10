@@ -146,7 +146,7 @@ qa_api_register :: proc(s:^editor.Session) {
 play_moving :: proc(w:core.World_Ref,body:core.Entity) -> bool {
     moves:=core.world_table_of(w,input.Move_Input)
     if moves==nil {return false}
-    move,found:=core.get(core.read(moves),body)
+    move,found:=core.get(moves,body)
     return found && linalg.length(move.move)>=QA_MOVE_HELD
 }
 
@@ -256,7 +256,7 @@ qa_log_tick :: proc(s:^editor.Session,r:^editor.Run,step:^editor.Api_Step_Input,
             if e==nil {return}
             e.kind,e.hold=.Hold,requests.queue.items[i]
             if seats!=nil {
-                if seat,found:=core.get(core.read(seats),e.hold.seat);found {e.slot=int(seat.slot)}
+                if seat,found:=core.get(seats,e.hold.seat);found {e.slot=int(seat.slot)}
             }
         }
     }

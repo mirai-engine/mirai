@@ -155,7 +155,7 @@ observe_targets_find :: proc(s:^editor.Session,w:core.World_Ref,names:[]string,b
 @(private)
 observe_facing :: proc(w:core.World_Ref,body:core.Entity) -> [3]f32 {
     if moves:=core.world_table_of(w,input.Move_Input);moves!=nil {
-        if move,found:=core.get(core.read(moves),body);found {
+        if move,found:=core.get(moves,body);found {
             yaw:=f64(move.look_yaw)
             return {f32(-math.sin(yaw)),0,f32(-math.cos(yaw))}
         }
@@ -186,7 +186,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
     if body!=core.NONE {
         velocity:[3]f32
         if motions:=core.world_table_of(w,core.Motion);motions!=nil {
-            if motion,moves:=core.get(core.read(motions),body);moves {velocity=motion.linear}
+            if motion,moves:=core.get(motions,body);moves {velocity=motion.linear}
         }
         facing:=observe_facing(w,body)
         api.write_key(out,"player");serial.write_u8(out,'{')

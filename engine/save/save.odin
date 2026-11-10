@@ -47,7 +47,7 @@ SLOT_CAPACITY :: 48
 LABEL_CAPACITY :: 64
 EXTENSION :: ".save"
 FOLDER :: "saves"
-VERSION :: u32(6)
+VERSION :: u32(7)
 CHECKPOINT :: "checkpoint" // the slot of the last checkpoint
 
 @(private) MAGIC :: [4]u8{'M','S','A','V'}
@@ -469,7 +469,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
         if !yes {continue}
         e:=core.entity_make(index,es.generation[index])
         if !core.alive(es,e) {continue}
-        if value,_:=core.get(core.read(ids),e);value.value!=0 {continue}
+        if value,_:=core.get(ids,e);value.value!=0 {continue}
         id:=core.id_new(es,&state)
         core.add(ids,e,core.Id{id})
         append(&lent,e)
@@ -488,7 +488,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
     // What a network session keeps on entities is of the session, not of the game.
     // A saved game holds no instances: nothing brings it up to date with a prefab.
     excluded:=[]typeid{core.Remote,core.Pose_Target,scene.Prefab_Instance,scene.Prefab_Member}
-    report,error:=scene.capture(w,&document,types,{kind=asset.KIND_SCENE,id=DOCUMENT,sections=true,excluded=excluded},allocator)
+    report,error:=scene.capture(w,&document,types,{id=DOCUMENT,sections=true,excluded=excluded},allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)
     body:serial.Writer

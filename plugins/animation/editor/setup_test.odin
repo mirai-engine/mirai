@@ -84,8 +84,8 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     f:=new(Pose_Bake_Test);defer free(f);if !pose_bake_test_init(f,t,"setup") {return};defer pose_bake_test_destroy(f)
     library:=setup_test_character(f,t)
     a:=&f.authoring
-    // What it played before: a clip, its rate and a parameter of another graph.
-    stale:=anim.ANIMATION_DEFAULT;stale.speed=.65;base.text_set(stale.clip[:],"Walk");anim.animation_parameter(&stale,"Grounded",1)
+    // What it played before: a clip and its rate.
+    stale:=anim.ANIMATION_DEFAULT;stale.speed=.65;base.text_set(stale.clip[:],"Walk")
     core.add(&f.world.animations,f.rig,stale);core.settle(&f.info,&f.world,nil)
     defaults:=Setup_Params{want=SETUP_ALL}
     authoring_test_register(a,t,"setup",Setup_Params,setup,&defaults)
@@ -106,11 +106,11 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     for want in ([]string{"Locomotion","Look","Foot_Ik","Hand_Ik","Gestures"}) {testing.expectf(t,strings.contains(text,fmt.tprintf(`"want":"%s","status":"Ready"`,want)),"%s in %s",want,text)}
     testing.expectf(t,strings.contains(text,`"detail":"walking: Idle, Walk"`),"detail in %s",text)
     for extension in ([]string{"pose","match","motion","action"}) {testing.expectf(t,authoring_test_exists(a,fmt.tprintf("characters/figure.%s",extension)),"figure.%s",extension)}
-    testing.expect(t,!authoring_test_exists(a,"characters/figure.agraph") && !authoring_test_exists(a,"characters/figure.blend"))
+    testing.expect(t,!authoring_test_exists(a,"characters/figure.blend"))
     animation,found:=core.get(core.read(&f.world.animations),f.rig)
     if !testing.expect(t,found) {return}
     testing.expect(t,animation.asset==authoring_test_id(a,"characters/figure.match") && animation.motion==authoring_test_id(a,"characters/figure.motion") && animation.actions==authoring_test_id(a,"characters/figure.action") && animation.root_motion==.In_Place)
-    testing.expect(t,base.text_get(animation.clip[:])=="" && animation.speed==1 && animation.parameter_names==[anim.GRAPH_PARAMETERS]u64{})
+    testing.expect(t,base.text_get(animation.clip[:])=="" && animation.speed==1)
     modifiers,has:=core.get(core.read(&f.world.modifiers),f.rig)
     testing.expect(t,has && modifiers.profile==authoring_test_id(a,"characters/figure.pose"))
 
@@ -126,9 +126,10 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     actions:asset.Asset
     if testing.expect_value(t,authoring_test_load(a,"characters/figure.action",&actions),asset.Error.None) {
         profile,error:=anim.action_profile_view(&actions,&a.assets.types)
-        testing.expect(t,error==.None && len(profile.actions)==3)
-        if len(profile.actions)==3 {
-            testing.expect(t,base.text_get(profile.actions[0].over.path[:])=="@upper_body" && base.text_get(profile.actions[1].over.path[:])=="@arm_l" && base.text_get(profile.actions[2].over.path[:])=="@arm_r")
+        testing.expect(t,error==.None && len(profile.actions)==3 && len(profile.layers)==3)
+        if len(profile.actions)==3 && len(profile.layers)==3 {
+            testing.expect(t,base.text_get(profile.layers[0].over.path[:])=="@upper_body" && base.text_get(profile.layers[1].over.path[:])=="@arm_l" && base.text_get(profile.layers[2].over.path[:])=="@arm_r")
+            for action,i in profile.actions {testing.expect(t,action.layer==profile.layers[i].name,"each gesture plays in the layer of its part of the body")}
         }
         asset.asset_close(&actions)
     }
@@ -252,13 +253,13 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     testing.expectf(t,result.code==0 && strings.contains(string(serial_bytes(a)),`"gestures":["Wave_3"]`),"%s %s",result.message,result.data)
 
     // With the skeleton alone it writes the assets and changes no entity.
-    before,_:=core.get(core.read(&f.world.animations),f.rig)
+    before,_:=core.get(&f.world.animations,f.rig)
     solo:=fmt.tprintf(`"skeleton":"%s","library":"%s","folder":"solo"`,authoring_test_id_text(base.Asset_Id{840,2}),authoring_test_id_text(library))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s}}`,solo))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
     testing.expectf(t,strings.has_prefix(text,`{"skeleton":`) && authoring_test_exists(a,"solo/figure.match") && authoring_test_exists(a,"solo/figure.action"),"%s",text)
-    after,_:=core.get(core.read(&f.world.animations),f.rig)
+    after,_:=core.get(&f.world.animations,f.rig)
     testing.expect(t,after==before && after.asset!=authoring_test_id(a,"solo/figure.match"))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"entity":"0000000000000011"}}`,solo))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Exclusive_Reference"))

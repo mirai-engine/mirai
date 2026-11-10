@@ -13,12 +13,12 @@ import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
 // A character set up as character.setup leaves it: a skinned mesh with a body,
-// a look and hand IK in its pose profile, a wave gesture, a graph with a speed
+// a look and hand IK in its pose profile, a wave gesture, a layer Speed whose weight is a
 // parameter and a locomote warp window. Returns the entity it looks at.
 request_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> core.Entity {
     a:=&f.authoring
     source_id,skeleton_id,mesh_id,pose_id,action_id:=base.Asset_Id{830,1},base.Asset_Id{830,2},base.Asset_Id{830,3},base.Asset_Id{830,4},base.Asset_Id{830,5}
-    graph_id,motion_id:base.Asset_Id
+    motion_id:base.Asset_Id
     bones:=body_test_figure()
     map_,_:=asset.skeleton_body_detect(bones,lib.body_map_empty())
     body:asset.Skeleton_Body
@@ -41,16 +41,14 @@ request_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> core.Entity {
     }
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/figure.pose",a.root),&a.assets.types,pose_id,{look={look},ik=hands[:]}),asset.Error.None)
     wave:=anim.ACTION_DEFINITION_DEFAULT;base.text_set(wave.name[:],"wave");base.text_set(wave.clip[:],"wave")
-    testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/figure.action",a.root),&a.assets.types,action_id,{info={animation=source_id},actions={wave}}),asset.Error.None)
+    speed:=anim.STACK_LAYER_DEFAULT;base.text_set(speed.name[:],"Speed");base.text_set(speed.clip[:],"walk");speed.weight=0
+    testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/figure.action",a.root),&a.assets.types,action_id,{info={animation=source_id},layers={speed},actions={wave}}),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
-    authoring_test_register(a,t,"graph",Graph_Write_Params,program_graph_set,program_graph_defaults())
     motion:=motion_write_defaults();authoring_test_register(a,t,"motion",Motion_Write_Params,authoring_motion_set,motion)
-    result:=authoring_test_execute(a,"graph",fmt.tprintf(`{{"path":"figure.agraph","animation":"%s","output":"idle","nodes":[{{"name":"idle","kind":"Clip","clip":"idle"}}],"parameters":[{{"name":"Speed","value":0,"min":0,"max":3}}]}}`,authoring_test_id_text(source_id)))
-    testing.expectf(t,result.code==0,"graph: %s %s",result.message,result.data)
-    result=authoring_test_execute(a,"motion",`{"path":"figure.motion","windows":[{"clip":"walk","name":"locomote","start":0,"end":1}]}`)
+    result:=authoring_test_execute(a,"motion",`{"path":"figure.motion","windows":[{"clip":"walk","name":"locomote","start":0,"end":1}]}`)
     testing.expectf(t,result.code==0,"motion: %s %s",result.message,result.data)
-    graph_id,motion_id=authoring_test_id(a,"figure.agraph"),authoring_test_id(a,"figure.motion")
-    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions,description.motion=graph_id,action_id,motion_id
+    motion_id=authoring_test_id(a,"figure.motion")
+    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions,description.motion=source_id,action_id,motion_id;base.text_set(description.clip[:],"idle")
     core.add(&f.world.animations,f.rig,description)
     core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true})
     core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh_id})
@@ -75,8 +73,8 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     testing.expect(t,goals[0].kind==.Look && goals[0].enabled && goals[0].target.kind==.Entity && goals[0].target.entity==friend)
     testing.expect(t,controls[0].kind==.Look && controls[0].enabled && controls[0].weight==1 && abs(controls[0].fade-.3)<1e-6)
     testing.expect(t,goals[1].kind==.IK && goals[1].slot==1 && goals[1].target.position=={.4,1.3,-.3} && controls[1].kind==.IK && controls[1].slot==1 && controls[1].enabled)
-    actions:=f.world.action_requests.queue.items
-    testing.expect(t,len(actions)==1 && actions[0].kind==.Fire)
+    actions:=f.world.requests.plays.items
+    testing.expect(t,len(actions)==1 && !actions[0].stop && base.text_get(actions[0].action[:])=="wave")
     locomotion,targets:=f.world.motion_requests.locomotion.items,f.world.motion_requests.targets.items
     testing.expectf(t,len(locomotion)==1 && abs(locomotion[0].velocity.z+1.2)<1e-5 && abs(locomotion[0].velocity.x)<1e-5 && abs(locomotion[0].source_velocity.z+1.2)<1e-5,"locomotion %v",locomotion)
     testing.expect(t,len(targets)==1 && targets[0].target.target.kind==.World && targets[0].target.target.position=={0,0,-5})

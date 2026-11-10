@@ -120,7 +120,7 @@ editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T)
     core.add(&world.names,hero,name)
     core.test_world_settle(&world)
     problems:core.Problems
-    core.report(&problems,core.NONE,"scene.spawn","The prefab 'props/crate.prefab' did not spawn: the file is missing. Import it again.")
+    core.report(&problems,core.NONE,"scene.spawn","The prefab 'props/crate.scene' did not spawn: the file is missing. Import it again.")
     core.report(&problems,hero,"animation.clip","Animation.clip is '%s', which the skeleton does not have; name one of its clips.","run")
     core.report(&problems,hero,"animation.clip","Animation.clip is '%s', which the skeleton does not have; name one of its clips.","walk")
     listed:=api_problems_of(core.test_world_ref(&world),&problems,"edit",context.temp_allocator)

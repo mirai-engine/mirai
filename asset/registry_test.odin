@@ -37,7 +37,7 @@ registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.
     write_material(t,&types,fmt.tprintf("%s/materials/copy.mat",root),{3,3},wood)
     write_material(t,&types,fmt.tprintf("%s/.mirai/hidden.mat",root),{6,6},wood)
     write_material(t,&types,fmt.tprintf("%s/materials/staging.mat.123.tmp",root),{7,7},wood)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{8,8})
+    scene:Scene;scene_init(&scene,&types,{8,8})
     scene_entity_add(&scene,1,0,"wall")
     mesh:=Test_Mesh{material={4,4}}
     scene_set(&scene,1,"Mesh",&mesh)
@@ -538,6 +538,8 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
         testing.expect_value(t,registry_refresh(&r,{"user/levels/late.tex","user/levels/fake.tex"}),Error.None)
         _,seen:=registry_find(&r,late)
         testing.expect(t,seen && len(r.refused)==1)
+        testing.expect_value(t,registry_refresh(&r,r.refused[:]),Error.None)
+        testing.expectf(t,len(r.refused)==1 && r.refused[0]=="user/levels/fake.tex","%v: the refused paths themselves are refused again, not %q",mode,r.refused[:])
         if mode==.Scanned {
             testing.expect_value(t,registry_scan(&r),Error.None)
             _,kept:=registry_find(&r,own)

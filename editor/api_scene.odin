@@ -767,7 +767,6 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 
 @(private)
 api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> bool {
-    if e==document_root(s,w) {api.call_fail(call,api.SERVER_ERROR,"The root of the prefab document cannot be deleted");return false}
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.delete: %s",text)
         return false

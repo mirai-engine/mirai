@@ -39,7 +39,7 @@ horror_lamp :: proc(s: ^asset.Scene_Builder, name: string, position: [3]f32, lig
 // exposure keeps the dark dark: the eye does not open up when the lights go.
 write_horror_scene :: proc(o: ^Out) {
     s: asset.Scene_Builder
-    asset.builder_init(&s, &o.content, asset.KIND_SCENE, asset.content_id(PROJECT,"scene","horror"))
+    asset.builder_init(&s, &o.content, asset.content_id(PROJECT,"scene","horror"))
     defer asset.builder_destroy(&s)
     environment := render.SKY_DEFAULT
     environment.luminance, environment.background = {0.1, 0.12, 0.25}, {0.01, 0.015, 0.04}

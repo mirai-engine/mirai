@@ -1,0 +1,7 @@
+{
+  "name": "physics_cache_destruct",
+  "version": "0.1.0",
+  "dependencies": ["physics_cache", "destruct"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

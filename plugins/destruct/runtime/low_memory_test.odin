@@ -3,8 +3,8 @@ package destruct
 import "base:runtime"
 import "core:testing"
 import "mirai:core"
+import phys "plugins:physics/runtime"
 import "mirai:std/geom"
-import fr "plugins:destruct/runtime/fracture"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private="file")
@@ -20,7 +20,7 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
     return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-// The scratch of the cache for the capacities of a fracture, with the memory
+// The scratch of the cache for the capacities of a simulation, with the memory
 // ending at each request in turn: it is refused and holds nothing, so the
 // step leaves the tick, and with memory enough it is made.
 @(test)
@@ -29,14 +29,12 @@ the_scratch_of_the_cache_without_memory_is_refused_and_holds_nothing :: proc(t:^
     limit:=Memory_Limit{owner=owner}
     capacities:=[][2]int{{64,32},{1,1}}
     for capacity in capacities {
-        f:fr.Fracture
-        f.desc.pieces,f.desc.bodies=capacity[0],capacity[1]
         cache:Destruct_Cache
         made,refused:=false,false
         for served in 0..<16 {
             limit.remaining=served
             context.allocator={memory_limit_proc,&limit}
-            made=cache_make(&cache,&f)
+            made=cache_make(&cache,{pieces=capacity[0],bodies=capacity[1]})
             context.allocator=owner
             limit.remaining=max(int)
             if made {break}
@@ -57,10 +55,8 @@ the_geometry_of_a_piece_without_memory_is_not_noted :: proc(t:^testing.T) {
     owner:=context.allocator
     limit:=Memory_Limit{owner=owner,remaining=max(int)}
     limited:=runtime.Allocator{memory_limit_proc,&limit}
-    f:fr.Fracture
-    f.desc.pieces,f.desc.bodies=4,4
     cache:Destruct_Cache
-    if !testing.expect(t,cache_make(&cache,&f)) {return}
+    if !testing.expect(t,cache_make(&cache,{pieces=4,bodies=4})) {return}
     defer cache_free(&cache)
     entry:Entry
     entry.slots=2
@@ -83,7 +79,7 @@ the_geometry_of_a_piece_without_memory_is_not_noted :: proc(t:^testing.T) {
     }
     if !testing.expect(t,noted && told,"refused without memory, and noted with it") {return}
     if !testing.expect(t,geom.cube_build(&visual_find(&entry,1).geometry)) {return}
-    half:=fr.Piece_Info{id=2,source=-1,parent=1,volume=0.5,cut_normal={0,1,0},front=true}
+    half:=phys.Piece_Info{id=2,source=-1,parent=1,volume=0.5,cut_normal={0,1,0},front=true}
     cut,refused:=false,false
     for served:=0;!cut && served<64;served+=1 {
         limit.remaining=served

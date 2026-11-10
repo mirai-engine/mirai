@@ -87,87 +87,6 @@ two_dimensional_blend_authoring_bakes_triangles_and_rejects_collinear_replacemen
     testing.expect_value(t,authoring_test_revision(f,"locomotion.blend"),revision)
 }
 
-@(test)
-graph_authoring_resolves_named_dependencies_and_preserves_files_on_invalid_edits :: proc(t:^testing.T) {
-    f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-graph") {return};defer authoring_test_destroy(f)
-    source:=authoring_test_id_text(program_test_source(f,t))
-    defaults:=program_graph_defaults();inspect:=Authoring_Inspect_Params{limit=16}
-    authoring_test_register(f,t,"set",Graph_Write_Params,program_graph_set,defaults)
-    authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,program_graph_inspect,&inspect)
-    definition:=fmt.tprintf(`"animation":"%s","output":"locomotion","nodes":[{{"name":"locomotion","kind":"Blend","left":"idle","right":"walk","weight_parameter":"speed"}},{{"name":"walk","kind":"Clip","clip":"walk"}},{{"name":"idle","kind":"Clip","clip":"idle"}}],"parameters":[{{"name":"speed","value":0,"min":0,"max":1}}]`,source)
-    created:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"movement.agraph",%s}}`,definition))
-    if !testing.expect(t,created.code==0,created.message) {return}
-    id:=authoring_test_id(f,"movement.agraph");identity:=authoring_test_id_text(id)
-    revision:=authoring_test_revision(f,"movement.agraph")
-    file:asset.Asset
-    testing.expect_value(t,authoring_test_load(f,"movement.agraph",&file),asset.Error.None)
-    profile,error:=anim.graph_view(&file,&f.assets.types)
-    testing.expect_value(t,error,asset.Error.None)
-    testing.expect_value(t,profile.nodes[0].speed,f32(1));testing.expect_value(t,profile.nodes[0].x_param,i16(-1));testing.expect(t,profile.nodes[0].loop)
-    testing.expect(t,profile.nodes[2].left<2 && profile.nodes[2].right<2 && profile.info.output==2);asset.asset_close(&file)
-    testing.expect_value(t,authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,identity)).code,0)
-    schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
-    result_type,result_registered:=serial.schema_add_type_info(&schema,type_info_of(Graph_Inspect_Result));if !testing.expect(t,result_registered) {return}
-    result:=new(Graph_Inspect_Result,context.temp_allocator)
-    reader:serial.Text_Reader;serial.text_reader_init(&reader,string(serial.writer_bytes(&f.out)),context.temp_allocator);defer serial.text_reader_destroy(&reader)
-    parsed:=serial.text_read(&reader,&schema,result_type,mem.ptr_to_bytes(result)) && serial.text_end(&reader)
-    testing.expect(t,parsed && result.nodes_total==3 && base.text_get(result.nodes[2].value.left[:])=="idle" && base.text_get(result.nodes[2].value.weight_parameter[:])=="speed")
-    for replacement in ([3][2]string{{`"left":"idle"`,`"left":"locomotion"`},{`"output":"locomotion"`,`"output":"missing"`},{`"weight_parameter":"speed"`,`"weight_parameter":"missing"`}}) {
-        bad,_:=strings.replace_all(definition,replacement[0],replacement[1],context.temp_allocator)
-        result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"movement.agraph",%s}}`,bad))
-        testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect(t,strings.contains(result.data,`"path"`) && strings.contains(result.data,`"code"`))
-        testing.expect_value(t,authoring_test_revision(f,"movement.agraph"),revision)
-    }
-    updated,_:=strings.replace_all(definition,`"value":0`,`"value":0.5`,context.temp_allocator)
-    testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"movement.agraph",%s}}`,updated)).code,0)
-    testing.expect_value(t,authoring_test_id(f,"movement.agraph"),id)
-}
-
-@(test)
-graph_dry_run_checks_named_references_without_writing :: proc(t:^testing.T) {
-    f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-dry-run") {return};defer authoring_test_destroy(f)
-    identity:=authoring_test_id_text(program_test_source(f,t))
-    defaults:=program_graph_defaults()
-    authoring_test_register(f,t,"set",Graph_Write_Params,program_graph_set,defaults)
-    request:=fmt.tprintf(`{{"path":"checked.agraph","dry_run":true,"animation":"%s","output":"blend","nodes":[{{"name":"blend","kind":"Blend","left":"idle","right":"walk"}},{{"name":"walk","kind":"Clip","clip":"walk"}},{{"name":"idle","kind":"Clip","clip":"idle"}}]}}`,identity)
-    result:=authoring_test_execute(f,"set",request)
-    testing.expect_value(t,result.code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"dry_run":true`) && strings.contains(text,`"asset"`))
-    testing.expect(t,!authoring_test_exists(f,"checked.agraph"))
-    schema:=authoring_result_schema(Graph_Inspect_Result,type_info_of(Graph_Inspect_Result),context.temp_allocator)
-    testing.expect(t,strings.contains(schema,`"weight_parameter"`) && strings.contains(schema,`"sync_mode"`) && !strings.contains(schema,`"x_param"`))
-    bad,_:=strings.replace_all(request,`"left":"idle"`,`"left":"absent"`,context.temp_allocator)
-    result=authoring_test_execute(f,"set",bad)
-    testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect(t,strings.contains(result.data,`"path":"nodes[0].left"`) && strings.contains(result.data,`"expected":"a declared name"`) && strings.contains(result.data,`"fix":`))
-    testing.expect(t,!authoring_test_exists(f,"checked.agraph"))
-}
-@(test)
-graph_sync_fields_belong_to_sources_and_inspection_matches_the_typed_result :: proc(t:^testing.T) {
-    f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-source-sync") {return};defer authoring_test_destroy(f)
-    identity:=authoring_test_id_text(program_test_source(f,t));defaults:=program_graph_defaults();inspect:=Authoring_Inspect_Params{limit=16}
-    authoring_test_register(f,t,"set",Graph_Write_Params,program_graph_set,defaults)
-    authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,program_graph_inspect,&inspect)
-    request:=fmt.tprintf(`{{"path":"sync.agraph","animation":"%s","output":"mix","nodes":[{{"name":"mix","kind":"Blend","left":"idle","right":"walk"}},{{"name":"idle","kind":"Clip","clip":"idle","sync_mode":"Independent"}},{{"name":"walk","kind":"Clip","clip":"walk","sync_mode":"Independent"}}]}}`,identity)
-    result:=authoring_test_execute(f,"set",request);if !testing.expect(t,result.code==0,result.message) {return}
-    asset_id:=authoring_test_id(f,"sync.agraph");revision:=authoring_test_revision(f,"sync.agraph")
-    result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,authoring_test_id_text(asset_id)));if !testing.expect(t,result.code==0,result.message) {return}
-    text:=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
-    nodes:=api.json_member(text,"nodes");row,_:=authoring_json_element(nodes,2,context.temp_allocator);value:=api.json_member(row,"value")
-    testing.expect(t,!strings.contains(value,"sync_mode") && !strings.contains(value,"sync_duration") && !strings.contains(value,"sync_group"))
-    schema:=authoring_result_schema(Graph_Inspect_Result,type_info_of(Graph_Inspect_Result),context.temp_allocator)
-    testing.expect(t,strings.contains(schema,`"required":["name","kind"]`))
-    testing.expect_value(t,api.method_register(&f.server,{name="shape",params=Graph_Inspect_Result,params_info=type_info_of(Graph_Inspect_Result),result=serial.Json,writes_result=true,handler=proc(call:^api.Call) {serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
-    result=authoring_test_execute(f,"shape",text);testing.expect(t,result.code==0,result.message)
-    replace,_:=strings.replace_all(request,`"path":"sync.agraph"`,`"path":"sync.agraph"`,context.temp_allocator)
-    bad,_:=strings.replace_all(replace,`"left":"idle"`,`"sync_mode":"Independent","left":"idle"`,context.temp_allocator)
-    result=authoring_test_execute(f,"set",bad)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"nodes[0].sync_mode"`) && strings.contains(result.data,`"code":"Source_Only"`))
-    testing.expect_value(t,authoring_test_revision(f,"sync.agraph"),revision)
-    bad,_=strings.replace_all(replace,`"clip":"walk"`,`"clip":"walk","curves":"Additive"`,context.temp_allocator)
-    result=authoring_test_execute(f,"set",bad)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"nodes[2].curves"`) && strings.contains(result.data,`"code":"Unsupported_Policy"`))
-}
-
 Program_Test_World :: struct {
     using world:core.Test_World,
     ids:core.Table(core.Id),
@@ -195,13 +114,16 @@ program_test_register_result :: proc(f:^Authoring_Test,t:^testing.T,name:string,
 }
 
 @(test)
-program_runtime_api_sets_named_parameters_and_keeps_plays_and_modifier_controls_out_of_edit :: proc(t:^testing.T) {
+program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_controls_out_of_edit :: proc(t:^testing.T) {
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-runtime") {return};defer authoring_test_destroy(f)
     source:=program_test_source(f,t)
-    graph_id,pose_id,match_id:=base.Asset_Id{17,33},base.Asset_Id{18,34},base.Asset_Id{19,36}
-    nodes:=[1]anim.Graph_Node{anim.GRAPH_NODE_DEFAULT};base.text_set(nodes[0].name[:],"idle");base.text_set(nodes[0].clip[:],"idle")
-    parameters:=[1]anim.Graph_Parameter{{min=0,max=1}};base.text_set(parameters[0].name[:],"speed")
-    testing.expect_value(t,anim.graph_save(fmt.tprintf("%s/runtime.agraph",f.root),&f.assets.types,graph_id,{info={animation=source},nodes=nodes[:],parameters=parameters[:]}),asset.Error.None)
+    set_id,pose_id,match_id:=base.Asset_Id{17,33},base.Asset_Id{18,34},base.Asset_Id{19,36}
+    // Its action set: a layer Arm whose weight is a parameter, a wave in it and a vault over the whole body.
+    layer:=anim.STACK_LAYER_DEFAULT;base.text_set(layer.name[:],"Arm");base.text_set(layer.clip[:],"walk");layer.weight=0
+    definitions:=[2]anim.Action_Definition{anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT}
+    base.text_set(definitions[0].name[:],"Wave");base.text_set(definitions[0].clip[:],"walk");base.text_set(definitions[0].layer[:],"Arm")
+    base.text_set(definitions[1].name[:],"Vault");base.text_set(definitions[1].clip[:],"walk")
+    testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/runtime.action",f.root),&f.assets.types,set_id,{info={animation=source},layers={layer},actions=definitions[:]}),asset.Error.None)
     clips:=[1]anim.Match_Source{{modes=1<<1,loop=true}};base.text_set(clips[0].clip[:],"idle")
     info:=anim.MATCH_INFO_DEFAULT;info.animation=source
     testing.expect_value(t,anim.match_save(fmt.tprintf("%s/runtime.match",f.root),&f.assets.types,match_id,{info=info,clips=clips[:]}),asset.Error.None)
@@ -213,55 +135,61 @@ program_runtime_api_sets_named_parameters_and_keeps_plays_and_modifier_controls_
     test_locomotion_modes(&world_info)
     for world in ([2]^Program_Test_World{&document,&play}) {
         entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})
-        value:=anim.ANIMATION_DEFAULT;value.asset=graph_id;core.add(&world.animations,entity,value)
+        value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=match_id,set_id;core.add(&world.animations,entity,value)
         modifier:=anim.POSE_MODIFIERS_DEFAULT;modifier.profile=pose_id;core.add(&world.modifiers,entity,modifier)
         core.settle(&world_info,world,nil)
     }
     f.session.info,f.session.edit_world,f.session.mode=&world_info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
     inspect:=Modifier_Inspect_Params{limit=128};authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"speed","value":0.6}]}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Parameter","name":"speed"`))
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"index":0,"value":0.8}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"","value":0.8}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,play.animations.values[0].parameters[0],f32(.6));testing.expect_value(t,document.animations.values[0].parameter_names,[anim.GRAPH_PARAMETERS]u64{})
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"speed","value":2}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,play.animations.values[0].parameters[0],f32(.6))
-    // A play asks the .match, not a graph; it plays a clip of its library with the options of match_play.
-    not_matching:=authoring_test_execute(f,"request",`{"entity":"0000000000000011","plays":[{"clip":"walk"}]}`)
-    testing.expect(t,not_matching.code==api.INVALID_PARAMS && strings.contains(not_matching.data,"Not_Matching"))
-    play.animations.values[0].asset=match_id
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","plays":[{"clip":"walk","mode":"Falling","fade":0.1,"entry":"Keep_Time","phase":0.5,"priority":2,"wait":true}]}`).code,0)
-    if testing.expect_value(t,len(play.animation_requests.match_plays.items),1) {
-        queued:=play.animation_requests.match_plays.items[0]
-        testing.expect(t,queued.clip==base.name_hash("walk") && queued.mode==0 && queued.fade==.1 && queued.entry==.Keep_Time && queued.phase==.5 && queued.priority==2 && queued.wait)
+    // A parameter is the weight of a layer of its set, asked of the running world.
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"Arm","value":0.6}]}`).code,0)
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Parameter","name":"Arm"`))
+    if testing.expect_value(t,len(play.animation_requests.values.items),1) {
+        queued:=play.animation_requests.values.items[0]
+        testing.expect(t,queued.name==base.name_hash("Arm") && queued.value==.6)
     }
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","plays":[{"clip":"walk"}]}`).code,0)
-    testing.expect(t,len(play.animation_requests.match_plays.items)==2 && play.animation_requests.match_plays.items[1].fade==anim.MATCH_PLAY_OPTIONS_DEFAULT.fade && play.animation_requests.match_plays.items[1].phase==1)
-    for bad in ([4]string{`{"entity":"0000000000000011","plays":[{"clip":"run"}]}`,`{"entity":"0000000000000011","plays":[{"clip":"walk","mode":"Climbing"}]}`,`{"entity":"0000000000000011","plays":[{"clip":"walk","marker":"step"}]}`,`{"entity":"0000000000000011","plays":[{"clip":"walk","tick":1}]}`}) {
-        result:=authoring_test_execute(f,"request",bad)
-        testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"plays[0].`) && strings.contains(result.data,`"fix":`),"%s: %s",bad,result.data)
+    for bad in ([4]string{`{"index":0,"value":0.8}`,`{"name":"","value":0.8}`,`{"name":"Arm","value":2}`,`{"name":"speed","value":0.5}`}) {
+        result:=authoring_test_execute(f,"request",fmt.tprintf(`{{"entity":"0000000000000011","parameters":[%s]}}`,bad))
+        testing.expectf(t,result.code==api.INVALID_PARAMS,"%s: %s",bad,result.data)
     }
-    testing.expect_value(t,len(play.animation_requests.match_plays.items),2)
-    play.animations.values[0].asset=graph_id
+    unknown:=authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"speed","value":0.5}]}`)
+    testing.expect(t,strings.contains(unknown.data,"Unknown_Reference") && strings.contains(unknown.data,"Parameters: Arm"),unknown.data)
+    testing.expect_value(t,len(play.animation_requests.values.items),1);testing.expect_value(t,len(document.animation_requests.values.items),0)
+    // An action is played and stopped by its name, in its layer or over the whole body.
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault"},{"name":"Wave"}]}`).code,0)
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Play","name":"Vault"`))
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault","stop":true}]}`).code,0)
+    if testing.expect_value(t,len(play.animation_requests.plays.items),3) {
+        plays:=play.animation_requests.plays.items
+        testing.expect(t,base.text_get(plays[0].action[:])=="Vault" && !plays[0].stop && base.text_get(plays[1].action[:])=="Wave" && plays[2].stop && base.text_get(plays[2].action[:])=="Vault")
+    }
+    for bad in ([3]string{`{"name":"Jump"}`,`{"name":"Vault","section":"missing"}`,`{"name":"Vault","tick":1}`}) {
+        result:=authoring_test_execute(f,"request",fmt.tprintf(`{{"entity":"0000000000000011","actions":[%s]}}`,bad))
+        testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"actions[0].`) && strings.contains(result.data,`"fix":`),"%s: %s",bad,result.data)
+    }
+    testing.expect_value(t,len(play.animation_requests.plays.items),3)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Look","slot":1,"weight":0.3}]}`).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Look","name":"head","weight":0.3,"fade":0.2}]}`).code,0)
     testing.expect_value(t,len(play.modifier_requests.controls.items),1);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
     testing.expect_value(t,play.modifier_requests.controls.items[0].fade,f32(.2))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
     text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
+    // Edit changes the document: what only a running world takes is refused there.
     f.session.mode=.Edit
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","plays":[{"clip":"walk"}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Look","name":"head"}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,len(document.animation_requests.match_plays.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
+    for runtime in ([3]string{`"actions":[{"name":"Vault"}]`,`"parameters":[{"name":"Arm","value":0.5}]`,`"controls":[{"kind":"Look","name":"head"}]`}) {
+        result:=authoring_test_execute(f,"request",fmt.tprintf(`{{"entity":"0000000000000011",%s}}`,runtime))
+        testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Runtime_Required"),"%s: %s",runtime,result.data)
+    }
+    testing.expect_value(t,len(document.animation_requests.plays.items),0);testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
     temporary:Preview_Params;copy(temporary.entity[:],"0000000000000011")
-    base.text_set(temporary.parameters[0].name[:],"speed");temporary.parameters[0].value=.4
+    base.text_set(temporary.parameters[0].name[:],"Arm");temporary.parameters[0].value=.4
     temporary.controls[0]={kind=.Look,weight=.2,enabled=false};base.text_set(temporary.controls[0].name[:],"head")
-    preview_call:=api.Call{raw=`{"parameters":[{"name":"speed","value":0.4}],"controls":[{"kind":"Look","name":"head","weight":0.2,"enabled":false}]}`,allocator=context.temp_allocator}
+    preview_call:=api.Call{raw=`{"parameters":[{"name":"Arm","value":0.4}],"controls":[{"kind":"Look","name":"head","weight":0.2,"enabled":false}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&preview_call,core.world_ref(&play,&world_info),play.ids.entities[0],&temporary,0,nil))
-    testing.expect_value(t,play.animations.values[0].parameters[0],f32(.4))
+    if testing.expect_value(t,len(play.animation_requests.values.items),2) {testing.expect_value(t,play.animation_requests.values.items[1].value,f32(.4))}
     testing.expect_value(t,len(play.modifier_requests.controls.items),2)
-    testing.expect_value(t,document.animations.values[0].parameter_names,[anim.GRAPH_PARAMETERS]u64{});testing.expect_value(t,len(document.modifier_requests.controls.items),0)
+    testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
 }
 
 @(test)

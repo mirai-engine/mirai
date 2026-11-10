@@ -165,7 +165,7 @@ api_prefab_list :: proc(s:^Session,call:^api.Call) {
     if a:=s.app.assets;a!=nil {
         assets_rescan(s)
         for &file in a.registry.files {
-            if file.state!=.Asset || file.kind!=asset.KIND_PREFAB || !asset.registry_listed(&file) {continue}
+            if !asset.registry_prefab(&file) || !asset.registry_listed(&file) {continue}
             append(&prefabs,Api_Prefab_File{file.path,file.id})
         }
     }
@@ -205,7 +205,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         r.stale=is_instance && (!known || prefab_stale(s,placed))
         return
     }
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     loaded,ok:=prefab_scene_load(s,id)
     if !ok {
@@ -259,7 +259,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
 api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Instantiate_Params)
     if !api_guard(s,call) {return}
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     placement:=Prefab_Placement{position=params.position,scale_multiplier=params.scale_multiplier}
     if params.parent[0]!=0 {
@@ -312,7 +312,7 @@ api_prefab_apply :: proc(s:^Session,call:^api.Call) {
 api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Variant_Params)
     if !api_guard(s,call) {return}
-    base_id,located:=asset_named(s,call,base.text_get(params.prefab[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    base_id,located:=asset_named(s,call,base.text_get(params.prefab[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     path:=base.text_get(params.path[:])
     if path=="" {
@@ -351,7 +351,7 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
     if !api_guard(s,call) {return}
     id:base.Asset_Id
     if named:=base.text_get(params.asset[:]);named!="" {
-        located,found:=asset_named(s,call,named,asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+        located,found:=asset_named(s,call,named,asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
         if !found {return}
         id=located
     }

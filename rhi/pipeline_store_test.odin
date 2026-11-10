@@ -172,3 +172,64 @@ pipeline_store_removes_what_ended_writes_left :: proc(t: ^testing.T) {
 	testing.expect(t, os.exists(running), "the write of a process that runs is kept")
 	testing.expect_value(t, len(test_run(path, {1})), 1)
 }
+
+// The key of a pipeline follows what the driver compiles of it: its code, its
+// state and the constants of each stage, never its name.
+@(test)
+pipeline_keys_follow_the_code_the_state_and_the_constants :: proc(t: ^testing.T) {
+	spirv := [2][8]u8{{1, 2, 3, 4, 5, 6, 7, 8}, {8, 7, 6, 5, 4, 3, 2, 1}}
+	codes: [2]Shader_Code
+	for &code, i in codes {
+		shader_code_set(&code, spirv[i][:], "main0")
+		code.constants = {"first", "second"}
+	}
+	compute := Compute_Pipeline_Desc{shader = &codes[0], name = "a"}
+	key := pipeline_key_compute(compute)
+	Compute_Case :: struct {name: string, desc: Compute_Pipeline_Desc, same: bool}
+	for c in ([]Compute_Case{
+		{"another name", {shader = &codes[0], name = "b"}, true},
+		{"another code", {shader = &codes[1], name = "a"}, false},
+		{"a constant", {shader = &codes[0], constants = {0}, name = "a"}, false},
+		{"another constant", {shader = &codes[0], constants = {1}, name = "a"}, false},
+	}) {
+		testing.expectf(t, (pipeline_key_compute(c.desc) == key) == c.same, "%s", c.name)
+	}
+	testing.expect(t, pipeline_key_compute({shader = &codes[0], constants = {0}}) != pipeline_key_compute({shader = &codes[0], constants = {1}}), "each constant is a pipeline of its own")
+	graphics := Graphics_Pipeline_Desc{vertex = &codes[0], fragment = &codes[1], color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "a"}
+	graphics_key := pipeline_key_graphics(graphics)
+	Graphics_Case :: struct {name: string, vertex, fragment: Shader_Constants, cull: Cull_Mode, same: bool}
+	for c in ([]Graphics_Case{
+		{"the same", {}, {}, .None, true},
+		{"a constant of the vertex stage", {0}, {}, .None, false},
+		{"a constant of the fragment stage", {}, {0}, .None, false},
+		{"another state", {}, {}, .Back, false},
+	}) {
+		desc := graphics
+		desc.vertex_constants, desc.fragment_constants, desc.cull, desc.name = c.vertex, c.fragment, c.cull, "b"
+		testing.expectf(t, (pipeline_key_graphics(desc) == graphics_key) == c.same, "%s", c.name)
+	}
+	vertex, fragment := graphics, graphics
+	vertex.vertex_constants, fragment.fragment_constants = {0}, {0}
+	testing.expect(t, pipeline_key_graphics(vertex) != pipeline_key_graphics(fragment), "a constant belongs to its stage")
+}
+
+// A shader names its constants by id, as far as a pipeline can set them.
+@(test)
+shader_constant_is_found_by_its_name :: proc(t: ^testing.T) {
+	code := Shader_Code{constants = {"color", "unlayered"}}
+	Case :: struct {name: string, found: bool, constants: Shader_Constants}
+	for c in ([]Case{{"color", true, {0}}, {"unlayered", true, {1}}, {"", false, {}}, {"Color", false, {}}, {"colo", false, {}}}) {
+		constants, found := shader_constant(&code, c.name)
+		testing.expectf(t, found == c.found && constants == c.constants, "%q", c.name)
+	}
+	_, of_none := shader_constant(nil, "color")
+	testing.expect(t, !of_none, "no shader has no constants")
+	// More names than a pipeline sets: those past the limit are not found.
+	many: [MAX_SHADER_CONSTANTS + 2]string
+	for &name, i in many {name = fmt.tprintf("c%d", i)}
+	crowded := Shader_Code{constants = many[:]}
+	last, last_found := shader_constant(&crowded, fmt.tprintf("c%d", MAX_SHADER_CONSTANTS - 1))
+	testing.expect(t, last_found && last == Shader_Constants{MAX_SHADER_CONSTANTS - 1})
+	_, past := shader_constant(&crowded, fmt.tprintf("c%d", MAX_SHADER_CONSTANTS))
+	testing.expect(t, !past, "a constant past the limit is not one a pipeline sets")
+}

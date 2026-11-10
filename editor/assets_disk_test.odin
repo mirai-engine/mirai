@@ -15,10 +15,9 @@ import "mirai:std/base"
 @(private="file")
 disk_test_prefab :: proc(t:^testing.T,types:^asset.Types,path:string,names:..string) {
     sc:asset.Scene
-    if !testing.expect_value(t,asset.scene_init(&sc,types,asset.KIND_PREFAB,DISK_TEST_PREFAB),asset.Error.None) {return}
+    if !testing.expect_value(t,asset.scene_init(&sc,types,DISK_TEST_PREFAB),asset.Error.None) {return}
     defer asset.scene_destroy(&sc)
     for name,i in names {asset.scene_entity_add(&sc,base.Entity_Id(i+1),0,name)}
-    sc.info.root=1
     testing.expect_value(t,asset.scene_save(&sc,path),asset.Error.None)
 }
 
@@ -40,7 +39,7 @@ a_call_finds_what_changed_on_disk_and_unsaved_changes_stay :: proc(t:^testing.T)
     f.s.app=&app
     host.app_assets_watch_reset(&app)
     defer {app.assets_watch={}}
-    blade:=project.path(root,"blade.prefab",allocator=context.temp_allocator)
+    blade:=project.path(root,"blade.scene",allocator=context.temp_allocator)
     disk_test_prefab(t,&assets.types,blade,"Blade")
     host.assets_scan(&assets)
     loaded:=host.assets_scene(&assets,DISK_TEST_PREFAB)
@@ -54,10 +53,10 @@ a_call_finds_what_changed_on_disk_and_unsaved_changes_stay :: proc(t:^testing.T)
     testing.expect(t,now!=nil && now.blob.header.content_hash!=first,"the editor holds what the file holds now")
 
     held,_:=os.read_entire_file(blade,context.temp_allocator)
-    testing.expect_value(t,asset.registry_memory_set(&assets.registry,"blade.prefab",held),asset.Error.None)
+    testing.expect_value(t,asset.registry_memory_set(&assets.registry,"blade.scene",held),asset.Error.None)
     disk_test_prefab(t,&assets.types,blade,"Blade","Hand_Attach","Sheath")
     host.app_assets_watch_now(&app)
-    if memory,found:=asset.registry_memory_find(&assets.registry,"blade.prefab");testing.expect(t,found) {
+    if memory,found:=asset.registry_memory_find(&assets.registry,"blade.scene");testing.expect(t,found) {
         testing.expect(t,slice.equal(memory.data,held),"the unsaved bytes stay")
     }
 }
@@ -76,7 +75,7 @@ asset_save_without_names_writes_the_unsaved_assets_of_the_caller :: proc(t:^test
     app:=host.App{assets=&assets}
     f.s.app=&app
     s:=&f.s
-    for name in ([]string{"mine.prefab","theirs.prefab"}) {
+    for name in ([]string{"mine.scene","theirs.scene"}) {
         testing.expect_value(t,asset.registry_memory_set(&assets.registry,name,transmute([]u8)string("x")),asset.Error.None)
     }
     m:=new(Ai,context.temp_allocator)
@@ -86,12 +85,12 @@ asset_save_without_names_writes_the_unsaved_assets_of_the_caller :: proc(t:^test
     task.id=1
     base.text_set(task.name[:],"turn-1")
     defer delete(task.review.changed_files)
-    append(&task.review.changed_files,project.path(root,"mine.prefab",allocator=context.temp_allocator))
+    append(&task.review.changed_files,project.path(root,"mine.scene",allocator=context.temp_allocator))
 
     turn:=api.Call{raw="{}",client_tag="turn-1",allocator=context.temp_allocator}
     params:Api_Asset_Save_Params
     paths,ok:=api_unsaved_paths(s,&turn,&params,of_caller=true)
-    testing.expect(t,ok && len(paths)==1 && paths[0]=="mine.prefab")
+    testing.expect(t,ok && len(paths)==1 && paths[0]=="mine.scene")
 
     outside:=api.Call{raw="{}",allocator=context.temp_allocator}
     params={}

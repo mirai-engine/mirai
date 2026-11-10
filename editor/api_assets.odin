@@ -67,6 +67,7 @@ Api_Asset_Entry :: struct {
     path:string `mirai:"label=Under the asset folder"`,
     asset:base.Asset_Id,
     kind:string `mirai:"label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
+    prefab:bool `mirai:"optional,label=Of a scene: whether it has exactly one root, which makes it a prefab that prefab.instantiate and scene.spawn place"`,
     size:int `mirai:"label=Bytes of the file"`,
     dependencies:int `mirai:"label=Assets it uses"`,
     used_by:int `mirai:"label=Files that use it"`,
@@ -95,7 +96,6 @@ api_assets_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
     api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,run=api_asset_detach})
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=Api_Asset_Create_Params,result=Api_Asset_Create_Result,run=api_asset_create})
-    api_register(s,st,{name="asset.convert",summary="Turns a scene into a prefab or a prefab into a scene, keeping its id; a scene needs one root and no Scene_Reference to become a prefab. At once, not an edit.",params=Api_Asset_Convert_Params,result=Api_Asset_Convert_Result,run=api_asset_convert})
     api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,flags={.Read_Only},run=api_asset_users})
     api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,flags={.Destructive},run=api_asset_delete})
     api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
@@ -273,7 +273,7 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
         if folder!="" && !strings.has_prefix(file.path,folder) {continue}
         r.total+=1
         if r.total<=params.offset || len(entries)>=params.limit {continue}
-        append(&entries,Api_Asset_Entry{file.path,file.id,api_asset_kind_name(s,file.kind),int(file.size),int(file.dependency_count),len(asset.registry_dependents(registry,file.id)),file.owner})
+        append(&entries,Api_Asset_Entry{file.path,file.id,api_asset_kind_name(s,file.kind),asset.registry_prefab(&file),int(file.size),int(file.dependency_count),len(asset.registry_dependents(registry,file.id)),file.owner})
     }
     missing:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
     asset.registry_missing(registry,&missing)
