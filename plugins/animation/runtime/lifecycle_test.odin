@@ -76,7 +76,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     append(&constraints.rows[0],0)
     inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik)}
     testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[4]int{1,2,3,0})
+    testing.expect_value(t,constraints.bones[0][0],[3]int{1,2,3})
     playing_free(state)
     state.entity=rig
     expanded:[4]asset.Skeleton_Bone
@@ -89,7 +89,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
     testing.expect_value(t,record.bones[0],[3]int{2,3,4})
     testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[4]int{2,3,4,0})
+    testing.expect_value(t,constraints.bones[0][0],[3]int{2,3,4})
     testing.expect_value(t,len(state.previous),len(state.local))
 }
 

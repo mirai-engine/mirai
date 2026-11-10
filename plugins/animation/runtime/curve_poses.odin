@@ -8,7 +8,7 @@ import "mirai:std/base"
 import erender "mirai:engine/render"
 import mm "mirai:std/math"
 
-POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_drives, of a .pose
+POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_drives, of a .character
 
 // A pose that a Float curve brings to a bone, as the poses of a face (a blink,
 // an open jaw, a phoneme): with the value of curve, from 0 to 1, the bone
@@ -227,7 +227,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
            pose_first<pose_end && len(runtime.curve_pose_states)!=len(runtime.curve_poses.values) && resize(&runtime.curve_pose_states,len(runtime.curve_poses.values))!=nil ||
            material_first<material_end && len(runtime.curve_material_states)!=len(runtime.curve_materials.values) && resize(&runtime.curve_material_states,len(runtime.curve_materials.values))!=nil ||
            pose_first<pose_end && len(runtime.curve_full)<len(state.local) && resize(&runtime.curve_full,len(state.local))!=nil {
-            memory_problem(problems,state.entity,"the curve poses and drives of its pose profile");state.driven_ready=false;return false
+            memory_problem(problems,state.entity,"the curve poses and drives of its .character");state.driven_ready=false;return false
         }
     }
     leader:=constraint_playing(playback,state.leader) if followed else nil
@@ -293,7 +293,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
             binding.rig,binding.bound,binding.generation,binding.geometry,binding.ready=state.entity,state.bound,state.generation,runtime.geometry,true
         }
         if binding.bone<=0 || int(binding.bone)>=len(state.local) {
-            core.report(problems,state.entity,"animation.curve_pose_bone","a curve pose of the pose profile of this rig, of curve '%s', names bone '%s', which its skeleton does not have, so it does not move; %s",base.text_get(config.curve[:]),base.text_get(config.bone.path[:]),bone_fix(config.bone))
+            core.report(problems,state.entity,"animation.curve_pose_bone","a curve pose of the .character of this rig, of curve '%s', names bone '%s', which its skeleton does not have, so it does not move; %s",base.text_get(config.curve[:]),base.text_get(config.bone.path[:]),bone_fix(config.bone))
             valid=false
             continue
         }

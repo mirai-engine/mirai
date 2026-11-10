@@ -165,7 +165,7 @@ Follow_Binding :: struct {
 follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),root_transform:mm.Transform,playback:^Playback) -> bool {
     first,end:=rig_rows(&runtime.follow,state.entity)
     if first==end {return true}
-    if len(runtime.follow_states)!=len(runtime.follow.values) && resize(&runtime.follow_states,len(runtime.follow.values))!=nil {memory_problem(inputs.problems,state.entity,"the Follow operations of its pose profile");return false}
+    if len(runtime.follow_states)!=len(runtime.follow.values) && resize(&runtime.follow_states,len(runtime.follow.values))!=nil {memory_problem(inputs.problems,state.entity,"the Follow operations of its .character");return false}
     if !lib.pose_world(state.parents[:],state.local[:],state.world[:],root_transform) {pose_problem(inputs.problems,state.entity);return false}
     valid:=true
     for &config,slot in runtime.follow.values[first:end] {
