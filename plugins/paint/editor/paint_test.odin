@@ -13,7 +13,7 @@ import "mirai:std/base"
 
 @(private)
 Paint_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     meshes:core.Table(erender.Mesh_Renderer),
     painted:core.Table(paint.Painted),
@@ -25,8 +25,6 @@ Paint_Test :: struct {
     root:string,
     assets:host.Assets,
     world:Paint_Test_World,
-    tables:[3]core.Table_Info,
-    info:core.World_Info,
     ref:core.World_Ref,
     cube:core.Entity,
     app:host.App,
@@ -39,29 +37,21 @@ Paint_Test :: struct {
 
 @(private)
 paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.tprintf("%s/mirai-%s-%d",directory,name,os.get_pid())
-    testing.expect_value(t,os.make_directory_all(f.root),nil)
-    if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=16})) {
-        os.remove_all(f.root)
+    f.root=base.test_folder(t,name)
+    if f.root=="" || !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=16})) {return false}
+    w:=&f.world
+    if !core.test_world_init(t,w) {
+        host.assets_destroy(&f.assets)
         return false
     }
-    w:=&f.world
-    core.entities_init(&w.entities);core.table_init(&w.ids,"Id");core.table_init(&w.meshes,"Mesh_Renderer");core.table_init(&w.painted,"Painted")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Paint_Test_World,ids)},
-        {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Paint_Test_World,meshes)},
-        {name="Painted",type=paint.Painted,info=type_info_of(paint.Painted),offset=offset_of(Paint_Test_World,painted)},
-    }
-    f.info=core.World_Info{entities=offset_of(Paint_Test_World,entities),tables=f.tables[:]}
-    f.ref=core.world_ref(&f.world,&f.info)
+    f.ref=core.test_world_ref(w)
     f.cube=core.create(&w.entities)
     core.add(&w.ids,f.cube,core.Id{value=7})
     core.add(&w.meshes,f.cube,erender.Mesh_Renderer{shape=.Cube})
     core.world_settle(f.ref)
     f.app={allocator=context.allocator,assets=&f.assets}
     editor.edits_reset(&f.edits,f.ref)
-    f.session={app=&f.app,info=&f.info,edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
+    f.session={app=&f.app,info=core.test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
     return true
 }
 
@@ -69,9 +59,8 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
 paint_test_close :: proc(f:^Paint_Test) {
     editor.edits_free(&f.edits)
     delete(f.selection.entities)
-    core.table_destroy(&f.world.painted);core.table_destroy(&f.world.meshes);core.table_destroy(&f.world.ids);core.entities_destroy(&f.world.entities)
+    core.test_world_destroy(&f.world)
     host.assets_destroy(&f.assets)
-    os.remove_all(f.root)
 }
 
 // Begins a stroke on the cube as stroke_begin does after its pick, with every
