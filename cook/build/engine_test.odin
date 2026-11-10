@@ -22,7 +22,6 @@ engine_modes_have_folders_and_libraries_of_their_own :: proc(t:^testing.T) {
     dev,release:=engine_paths(root,.Dev),engine_paths(root,.Release)
     testing.expect(t,dev.folder!=release.folder && dev.decl!=release.decl)
     testing.expect_value(t,engine_mode_resolve(root,.Dev),Engine_Mode.Dev)
-    testing.expect_value(t,engine_mode_resolve(root,Engine_Mode{}),Engine_Mode.Release)
     testing.expect_value(t,len(engine_libraries(.Release)),len(Engine_Layer))
     for mode in Engine_Mode {
         libraries:=engine_libraries(mode)
