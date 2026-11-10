@@ -49,12 +49,12 @@ additive_layer_curves_subtract_their_reference_clip :: proc(t:^testing.T) {
     playback:Playback;defer playback_free(&playback)
     state:=state_get(&playback,core.Entity(1));state.seen=1;playback.frame=1
     lib.fader_play(&state.fader,stand,1,0)
-    lib.fader_play(&state.layers[0].fader,happy,1,0);state.layers[0].fader.current.time=1
-    state.layers[0].clip,state.layers[0].weight=base.name_hash("happy"),1
+    lib.fader_play(&state.layers[1].fader,happy,1,0);state.layers[1].fader.current.time=1
+    state.layers[1].clip,state.layers[1].weight=base.name_hash("happy"),1
     cases:=[?]struct {reference:string,want:f32}{{"stand",0.2+0.8-0.2},{"",0.2+0.8-1}}
     for c in cases {
         animation:=ANIMATION_DEFAULT
-        testing.expect(t,animation_play(&animation,"happy",fade=0,layer=1,mode=.Additive,reference_clip=c.reference))
+        testing.expect(t,test_layer(state,1,"happy",mode=.Additive,reference_clip=c.reference))
         sample_curves(state,&content,1,animation)
         got:=animation_curve(&playback,state.entity,"smile")
         testing.expectf(t,abs(got-c.want)<1e-5,"over reference %q the smile is %v, not %v",c.reference,got,c.want)
@@ -179,49 +179,48 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
     animation:=ANIMATION_DEFAULT
-    testing.expect(t,animation_play(&animation,"walk",fade=0))
+    testing.expect(t,animation_clip(&animation,"walk",fade=0))
     layer_step(&playback,&state,&content,animation,&events,1)
     testing.expect(t,abs(state.local[1].position.x-1)<0.0001 && abs(state.local[3].position.z-1)<0.0001 && state.local[2].position==0)
     // Over the branch of hip: arm rises, leg keeps walking, hip keeps what wave does not move.
-    testing.expect(t,animation_play(&animation,"wave",fade=0,layer=1,over="hip"))
+    testing.expect(t,test_layer(&state,1,"wave",over="hip"))
     layer_step(&playback,&state,&content,animation,&events,0)
     testing.expect(t,state.local[2].position==mm.Vec3{0,1,0} && state.local[3].position.y==0 && abs(state.local[1].position.x-1)<0.0001)
-    testing.expect(t,animation_play(&animation,"wave",fade=0,layer=1))
+    testing.expect(t,test_layer(&state,1,"wave"))
     layer_step(&playback,&state,&content,animation,&events,0)
     testing.expect_value(t,state.local[3].position,mm.Vec3{0,5,0})
-    testing.expect(t,animation_weight(&animation,1,0.5))
+    testing.expect(t,test_layer_weight(&state,1,0.5))
     layer_step(&playback,&state,&content,animation,&events,0)
     testing.expect(t,abs(state.local[3].position.y-2.5)<0.0001 && abs(state.local[3].position.z-0.5)<0.0001)
-    testing.expect(t,animation_stop(&animation,1,0.5))
+    testing.expect(t,test_layer_stop(&state,1,0.5))
     layer_step(&playback,&state,&content,animation,&events,0.1)
-    testing.expect(t,abs(state.layers[0].weight-0.3)<0.0001 && abs(state.local[3].position.y-1.5)<0.0001)
+    testing.expect(t,abs(state.layers[1].weight-0.3)<0.0001 && abs(state.local[3].position.y-1.5)<0.0001)
     layer_step(&playback,&state,&content,animation,&events,1)
-    testing.expect(t,state.layers[0]==Layer_Playing{} && state.local[3].position.y==0)
+    testing.expect(t,state.layers[1]==Layer_Playing{} && state.local[3].position.y==0)
     // A synchronized layer is where the clip below it is in its cycle: walk lasts 2 s and run 1 s.
-    testing.expect(t,animation_play(&animation,"run",fade=0,layer=2,sync=true))
+    testing.expect(t,test_layer(&state,2,"run",sync=true))
     layer_step(&playback,&state,&content,animation,&events,0.5)
-    run_time:=lib.player_time(&content.lib,state.layers[1].fader.current)
+    run_time:=lib.player_time(&content.lib,state.layers[2].fader.current)
     testing.expect(t,abs(run_time-state.time/2)<0.0001 && abs(state.local[1].position.x-run_time*4)<0.0001)
-    testing.expect(t,animation_play(&animation,"missing",fade=0,layer=2))
-    layer_step(&playback,&state,&content,animation,&events,0.1)
-    testing.expect_value(t,state.layers[1].clip,u64(0))
+    problems:core.Problems
+    testing.expect(t,test_layer(&state,2,"missing"))
+    copy(state.local[:],state.rest[:]);advance(&playback,&state,&content,animation,&events,0.1,nil);layers_advance(&playback,&state,&content,animation,&events,0.1,&problems)
+    testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_clip")!=nil,"a layer whose clip the animation lacks is a problem of its entity")
     before:=animation
     long:="a clip whose name is longer than the sixty four bytes that the component can hold"
-    testing.expect(t,!animation_play(&animation,"wave",layer=ANIMATION_LAYERS+1) && !animation_play(&animation,"wave",layer=-1) && !animation_play(&animation,long))
     zero:f32
-    testing.expect(t,!animation_play(&animation,"wave",layer=1,weight=zero/zero) && !animation_play(&animation,"",layer=1) && !animation_weight(&animation,4,1) && !animation_stop(&animation,-1) && !animation_play(&animation,"wave",layer=1,reference_clip=long))
+    testing.expect(t,!animation_clip(&animation,long) && !animation_clip(&animation,"wave",fade=zero/zero) && !animation_clip(nil,"wave"))
     testing.expect_value(t,animation,before)
     // An additive layer over a reference clip adds what its clip changes from the pose of that
     // clip at reference: wave over walk at 1 s lifts the leg 5 and takes it back the 1 walk has
     // there; the arm, which walk does not move, changes from wave's own pose, by nothing.
-    animation.layers={}
+    state.asked,state.layers={},{}
     layer_step(&playback,&state,&content,animation,&events,0)
     leg,arm:=state.local[3].position,state.local[2].position
-    testing.expect(t,animation_play(&animation,"wave",fade=0,layer=1,mode=.Additive,reference=1,reference_clip="walk"))
+    testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference=1,reference_clip="walk"))
     layer_step(&playback,&state,&content,animation,&events,0)
     testing.expectf(t,linalg.length(state.local[3].position-(leg+mm.Vec3{0,5,-1}))<1e-4 && state.local[2].position==arm,"leg %v from %v",state.local[3].position,leg)
-    problems:core.Problems
-    testing.expect(t,animation_play(&animation,"wave",fade=0,layer=1,mode=.Additive,reference_clip="missing"))
+    testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference_clip="missing"))
     copy(state.local[:],state.rest[:])
     pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content.lib,animation))
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && state.local[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
@@ -257,7 +256,7 @@ a_layer_in_the_space_of_the_rig_keeps_the_turn_of_its_clip_whatever_the_base_tur
     turns:[2]f32
     for mesh,i in ([2]bool{false,true}) {
         animation:=ANIMATION_DEFAULT
-        testing.expect(t,animation_play(&animation,"turn",fade=0) && animation_play(&animation,"pose",fade=0,layer=1,over="arm",mesh_space=mesh))
+        testing.expect(t,animation_clip(&animation,"turn",fade=0) && test_layer(&state,1,"pose",over="arm",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
         turns[i]=mm.quat_angle(state.local[1].rotation*state.local[2].rotation,1)
     }
@@ -265,17 +264,13 @@ a_layer_in_the_space_of_the_rig_keeps_the_turn_of_its_clip_whatever_the_base_tur
 }
 
 @(test)
-animation_play_sets_the_clip_of_the_component_on_layer_zero :: proc(t:^testing.T) {
+animation_clip_sets_the_clip_of_the_component :: proc(t:^testing.T) {
     animation:=ANIMATION_DEFAULT
     animation.playing=false
-    testing.expect(t,animation_play(&animation,"jump",fade=0.08,loop=false,speed=0.5))
+    testing.expect(t,animation_clip(&animation,"jump",fade=0.08,loop=false,speed=0.5))
     testing.expect(t,base.text_get(animation.clip[:])=="jump" && animation.playing && !animation.loop && animation.fade==0.08 && animation.speed==0.5)
-    testing.expect(t,animation_play(&animation,"walk"))
+    testing.expect(t,animation_clip(&animation,"walk"))
     testing.expect(t,base.text_get(animation.clip[:])=="walk" && !animation.loop && animation.fade==0.08 && animation.speed==1)
-    testing.expect(t,animation_weight(&animation,0,2) && animation.weight==1)
-    testing.expect(t,animation_stop(&animation,0) && !animation.playing)
-    testing.expect(t,animation_play(&animation,"wave",fade=-1,layer=3,over="hand"))
-    testing.expect(t,animation.layers[2]==Animation_Layer{clip=base.name_hash("wave"),over=base.name_hash("hand"),weight=1,speed=1,fade=0.08,loop=true})
 }
 
 @(private)

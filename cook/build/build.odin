@@ -71,7 +71,7 @@ Desc :: struct {
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
     incremental:bool,           // Game: the engine and its plugins come from one library compiled once per version (shipped.odin), next to the executable; the game alone compiles. Not for what ships: unset, they compile whole with the game
-    engine:Engine_Mode,          // the binaries of the engine a library is built against. Keep: ENGINE_MODE_HERE
+    engine:Engine_Mode,          // the binaries of the engine a library is built against
     action:Action,               // Check and Test: of the Editor or Play target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
@@ -219,7 +219,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     if p.engine_root=="" || desc.action!=.Build && desc.target==.Game {return job_fail(job,.Engine_Missing)}
     // What the imports of the project keep outside version control, from its sources: every build starts from it.
     if desc.action==.Build {
-        if ok,message:=imports_sync(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,imports_roots(p));!ok {
+        if ok,message:=imports_sync(p.engine_root,desc.engine,imports_roots(p));!ok {
             job.result.text=strings.clone(message,a)
             return job_fail(job,.Import_Failed)
         } else if message!="" {
@@ -272,7 +272,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
-    if desc.action==.Test {job.engine_folder=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,a).folder}
+    if desc.action==.Test {job.engine_folder=engine_paths(p.engine_root,desc.engine,a).folder}
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
@@ -304,16 +304,20 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     if len(job.plugins)==0 {return .None}
     job.plugin_flags=plugin_flags(p,desc.dev,a)
     job.plugin_cache=!p.manifest.build.debug
-    engine:=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,context.temp_allocator)
+    engine:=engine_paths(p.engine_root,desc.engine,context.temp_allocator)
     job.engine_decl=strings.clone(engine.decl,a)
+    declared:=declared_read(engine.declared,context.temp_allocator)
     for &lib,i in job.plugins {
-        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine)
+        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine,declared)
         plugin_library_name(p.root,&lib,job.plugin_hashes[i],a)
         saved,_,stamped:=stamp_read(lib.stamp)
         if !desc.force && stamped && saved==job.plugin_hashes[i] && os.is_file(lib.library) {
             job.plugin_published[i]=true
             continue
         }
+        // Its declarations are about to name the library of these sources: until
+        // that one is published, no stamp says the part stands.
+        _=os.remove(lib.stamp)
         if errors:=plugin_library_prepare(p,&lib);len(errors)>0 {
             job.result.text=strings.join(errors,"\n",a)
             return .Generate
@@ -327,7 +331,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // are the ones just written, and the library is copied.
         if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
         // The declarations of what it links against are written by now.
-        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine)
+        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine,declared)
         if !desc.force {
             record,recorded:=link_record_read(plugin_link_file(&lib),context.temp_allocator)
             job.plugin_relink[i]=recorded && link_record_stands(record,job.plugin_compile_hashes[i])
@@ -804,12 +808,12 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep,incremental:=false) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Release,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
     shipped:=shipped_engine_paths(p.root,context.temp_allocator)
     // A library sees the engine through its declarations; the game, whole, or through those of its library.
-    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
+    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_stage(p.root,context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
@@ -848,7 +852,7 @@ Target_State :: enum u8 {
 
 // What job_start would find of a target, without writing anything: the game
 // is the one of the default folder. dev and engine as in Desc.
-target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Keep) -> Target_State {
+target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Release) -> Target_State {
     temp:=context.temp_allocator
     published:=target_output(p,target,"",temp)
     if !os.is_file(published) {return .Missing}

@@ -1103,6 +1103,8 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                 }
                 arg:=0
                 for field in literal.type.params.list {
+                    // A default alone gives it no type to bind: the error above says to take it out.
+                    if field.type==nil {continue}
                     if b:=bundle_of(g,file,pkg,field.type);b!=nil {
                         if _,is_pointer:=field.type.derived.(^ast.Pointer_Type);is_pointer {
                             append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) struct, by pointer: receive it by value, %s; its fields already point at what they write",where_,name,expr_text(file,field.type),expr_text(file,field.type)[1:]))

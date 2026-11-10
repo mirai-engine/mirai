@@ -65,8 +65,8 @@ last takes pose requests, root motion and warping.
 
 - `rig_poses_do_not_depend_on_how_their_jobs_are_split` (`skeleton_test.odin`): the same poses on
   the owner thread and in jobs of two grains, without allocations in a stable tick;
-  `poses_by_track_match_the_pose_found_by_name` (`pose_tracks_test.odin`): the blend by bone against
-  a `Pose` by name under cross-fades, masks and additive layers.
+  `poses_by_track_match_the_pose_each_track_gives_by_name` (`pose_tracks_test.odin`): the blend
+  by bone against each track found by name, under cross-fades, masks and additive layers.
 - `budget_test.odin` (`plugins/animation/runtime`): period, priority, limit, forced update, frame
   going backwards, sparse slots, copies without allocations, identical poses and palettes with zero
   and two workers, rejection of aliases and invalid inputs, and workspace intact on a growth

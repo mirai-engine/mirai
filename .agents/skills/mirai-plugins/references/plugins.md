@@ -192,8 +192,8 @@ demo enables. How an `editor/` adds steps, panels and tools:
   - GPU skinning isolated from the world and its histories; what they edit is a step of the
     document.
 - **`animation`** (`Runtime`, `Editor`)
-  - Game: clips, blend spaces, composition graphs without states, layers, dense poses, GPU skinning,
-    root motion and constraints. Contract in
+  - Game: clips, motion matching, the layers and actions of an action set, dense poses, GPU
+    skinning, root motion and constraints. Contract in
     [animation](../../mirai-animation/references/animation.md).
   - Editor: per-instance inspector and
     [authoring by API](../../mirai-animation/references/animation-authoring.md) of clips, curves,

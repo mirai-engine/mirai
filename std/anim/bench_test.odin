@@ -64,7 +64,7 @@ bench_skeletal_two_clips_layer :: proc(t:^testing.T) {
             player_advance(&library,&player_a,1.0/60,nil);player_advance(&library,&player_b,1.0/60,nil)
             skeleton_sample(&library,bindings_a[:],rest[:],player_time(&library,player_a),pose_a[:])
             skeleton_sample(&library,bindings_b[:],rest[:],player_time(&library,player_b),pose_b[:])
-            pose_layer(pose_a[:],pose_b[:],nil,0.3,mixed[:])
+            for value,i in pose_a {mixed[i]=math.transform_interpolate(value,pose_b[i],0.3)}
             skeleton_world(skeleton,mixed[:],world[:])
             sink+=world[BONES-1].position.x
         }
@@ -73,10 +73,10 @@ bench_skeletal_two_clips_layer :: proc(t:^testing.T) {
     log.infof("skeletal 2 clips + layer + world, 64 bones: %.2f ns/pose, %.2f ns/bone (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,f64(time.duration_nanoseconds(best))/(REPEATS*BONES),sink)
 }
 
-// Two clips cross-fading on 64 bones, position and rotation: a Pose found by name and read back
-// by pose_bone, against bones_blend through the table of the bone of each track.
+// Two clips cross-fading on 64 bones, position and rotation, through the table of the bone of
+// each track.
 @(test)
-bench_bones_blend_against_pose :: proc(t:^testing.T) {
+bench_bones_blend :: proc(t:^testing.T) {
     BONES :: 64
     REPEATS :: 10000
     names:[BONES]u64;rest:[BONES]math.Transform
@@ -94,36 +94,24 @@ bench_bones_blend_against_pose :: proc(t:^testing.T) {
     a,_:=clip_add(&library,{loop=.Loop,tracks=tracks[:]})
     b,_:=clip_add(&library,{loop=.Loop,tracks=tracks[:]})
     track_bones:[BONES*4]i32
-    for &bone,i in track_bones {bone=i32(i%(BONES*2)/2)}
-    pose:Pose
-    testing.expect(t,pose_init(&pose,BONES*2));defer pose_destroy(&pose)
+    testing.expect(t,library_track_bones(&library,names[:],track_bones[:]))
     bones:[BONES]Bone_Blend
     out:[BONES]math.Transform
-    results:[2]f64;sinks:[2]f32
-    for dense in 0..<2 {
-        player_a,player_b:=player_make(a,1,.7),player_make(b,1,.3)
-        best:=max(time.Duration)
-        for _ in 0..<5 {
-            start:=time.tick_now()
-            for _ in 0..<REPEATS {
-                player_advance(&library,&player_a,1.0/60,nil);player_advance(&library,&player_b,1.0/90,nil)
-                if dense==1 {
-                    bones={}
-                    bones_blend(bones[:],track_bones[:],&library,player_a);bones_blend(bones[:],track_bones[:],&library,player_b)
-                    for bone,i in bones {out[i],_,_=bone_transform(bone,rest[i])}
-                } else {
-                    pose_clear(&pose)
-                    pose_blend(&pose,&library,player_a);pose_blend(&pose,&library,player_b)
-                    for name,i in names {out[i],_,_=pose_bone(&pose,name,rest[i])}
-                }
-                sinks[dense]+=out[BONES-1].position.x+out[BONES-1].rotation.z
-            }
-            best=min(best,time.tick_since(start))
+    sink:f32
+    player_a,player_b:=player_make(a,1,.7),player_make(b,1,.3)
+    best:=max(time.Duration)
+    for _ in 0..<5 {
+        start:=time.tick_now()
+        for _ in 0..<REPEATS {
+            player_advance(&library,&player_a,1.0/60,nil);player_advance(&library,&player_b,1.0/90,nil)
+            bones={}
+            bones_blend(bones[:],track_bones[:],&library,player_a);bones_blend(bones[:],track_bones[:],&library,player_b)
+            for bone,i in bones {out[i],_,_=bone_transform(bone,rest[i])}
+            sink+=out[BONES-1].position.x+out[BONES-1].rotation.z
         }
-        results[dense]=f64(time.duration_nanoseconds(best))/REPEATS
+        best=min(best,time.tick_since(start))
     }
-    testing.expect(t,sinks[0]==sinks[1])
-    log.infof("blend of 2 clips, 64 bones / position+rotation: by name %.2f ns/pose, by track %.2f ns/pose, %.2fx (check %v)",results[0],results[1],results[0]/results[1],sinks[1])
+    log.infof("blend of 2 clips, 64 bones / position+rotation: %.2f ns/pose (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
 }
 
 @(test)

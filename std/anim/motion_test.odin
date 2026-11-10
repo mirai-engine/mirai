@@ -95,35 +95,33 @@ an_additive_clip_adds_what_it_changes_from_its_rest_on_top_of_the_others :: proc
         {target=HIP,property=.Position,keys={key(0,0),key(1,1)}},
         {target=HIP,property=.Rotation,keys={rot_key(0,1),rot_key(1,math.quat_axis_angle({1,0,0},cmath.PI/2))}},
     }})
-    pose:Pose
-    testing.expect(t,pose_init(&pose,8))
-    defer pose_destroy(&pose)
+    track_bones:[16]i32
+    testing.expect(t,library_track_bones(&lib,{HIP},track_bones[:]))
+    references:[3]i32
+    // The pose of HIP: what base_clip blends, with what the additive player puts on top.
+    posed :: proc(lib:^Library,track_bones:[]i32,references:[]i32,under:Clip,over:Player,scale:f32=1,from:Clip=0) -> (position:math.Vec3,rotation:math.Quat) {
+        blended,added:[1]Bone_Blend
+        bones_blend(blended[:],track_bones,lib,player_make(under))
+        bones_blend_additive(added[:],track_bones,lib,over,0,scale,from,references)
+        position,_,_=bone_position(blended[0])
+        rotation=1
+        if change,ok:=bone_added_position(added[0]);ok {position+=change}
+        if change,ok:=bone_added_rotation(added[0]);ok {rotation*=change}
+        return
+    }
     playing:=player_make(nod)
     player_advance(&lib,&playing,0.5,nil)
-    pose_blend(&pose,&lib,player_make(base_clip))
-    pose_blend_additive(&pose,&lib,playing)
-    position,_,_:=pose_position(&pose,HIP)
+    position,rotation:=posed(&lib,track_bones[:],references[:],base_clip,playing)
     testing.expect(t,near(position.x,2.5))
-    rotation,_,_:=pose_rotation(&pose,HIP)
     testing.expect(t,abs(linalg.dot(quat_vec4(rotation),quat_vec4(math.quat_axis_angle({1,0,0},cmath.PI/4))))>0.9999)
     // Half its weight, half its change; its rest pose changes nothing.
-    pose_clear(&pose)
-    pose_blend(&pose,&lib,player_make(base_clip))
-    pose_blend_additive(&pose,&lib,playing,0,0.5)
-    position,_,_=pose_position(&pose,HIP)
+    position,_=posed(&lib,track_bones[:],references[:],base_clip,playing,0.5)
     testing.expect(t,near(position.x,2.25))
-    pose_clear(&pose)
-    pose_blend(&pose,&lib,player_make(base_clip))
-    pose_blend_additive(&pose,&lib,player_make(nod))
-    position,_,_=pose_position(&pose,HIP)
+    position,_=posed(&lib,track_bones[:],references[:],base_clip,player_make(nod))
     testing.expect(t,near(position.x,2))
     // Over a reference clip it adds what it changes from that clip's pose (an emote over a
     // stand): nod at .5 over base_clip at 0 adds .5-2; the rotation base_clip lacks is measured
     // from nod's own.
-    pose_clear(&pose)
-    pose_blend(&pose,&lib,player_make(base_clip))
-    pose_blend_additive(&pose,&lib,playing,0,1,base_clip)
-    position,_,_=pose_position(&pose,HIP)
-    rotation,_,_=pose_rotation(&pose,HIP)
+    position,rotation=posed(&lib,track_bones[:],references[:],base_clip,playing,1,base_clip)
     testing.expect(t,near(position.x,.5) && abs(linalg.dot(quat_vec4(rotation),quat_vec4(math.quat_axis_angle({1,0,0},cmath.PI/4))))>0.9999)
 }

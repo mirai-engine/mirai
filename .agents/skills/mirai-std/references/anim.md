@@ -48,23 +48,19 @@ depends on `core:`, `std/base` and `std/math`.
 
 ## Blending (`pose.odin`)
 
-- `Pose` accumulates per (target, property, slot) the weighted sum of the samples and their total
-  weight; the value is the weighted average, and a total weight below 1 allows blending toward a
-  base pose with `saturate(weight)`. A new entry without room is counted in `pose.failed` and the
-  function returns `false` so that the caller reports it.
+- **By bone.** Whoever plays clips on a fixed list of bones says once, by track of the library,
+  which bone each track moves (−1: none; `library_track_bones` fills it from the names of the
+  bones). `bones_blend`, `bones_fader_blend` and `bones_blend_additive` accumulate through that
+  table one `Bone_Blend` per bone: per channel, the weighted sum of the samples and their total
+  weight. The value is the weighted average, and a total weight below 1 blends toward the rest
+  with `saturate(weight)` (`bone_transform`, each channel by its own weight). Nothing is searched
+  by name and there is no capacity to run out of.
 - `Fader` does the cross-fades (rules in the comment of `fader_play`): a fade started during
   another does not change the pose at that instant.
-- **Additives.** `pose_blend_additive` adds what the clip changes with respect to the pose at a
-  reference time of a reference clip (by default its own; a target the reference clip lacks is
+- **Additives.** `bones_blend_additive` adds what the clip changes with respect to the pose at a
+  reference time of a reference clip (by default its own; a bone the reference clip lacks is
   measured from its own), over what the others blend: a value is added and a rotation is composed
-  afterwards. `pose_bone` turns what a pose blends for a target into the local transform of its
-  bone, each channel from the rest by its weight.
-- **By bone.** Whoever plays clips on a fixed list of bones says once, by track of the library,
-  which bone each track moves (−1: none): `bones_blend`, `bones_fader_blend` and
-  `bones_blend_additive` accumulate one `Bone_Blend` per bone through that table, with the values
-  of `pose_blend`, `fader_blend` and `pose_blend_additive`, without a search by name or a capacity
-  to run out of; `bone_transform` is the `pose_bone` of a bone. `Pose` stays for targets that are
-  not such a list (any entity, property or slot).
+  afterwards.
 - **Root motion** (`root.odin`). `clip_root_motion` gives how much the root target moved and turned
   between two positions of the timeline, in clip space; a `Loop` adds a whole pass for each lap.
 
@@ -72,7 +68,7 @@ depends on `core:`, `std/base` and `std/math`.
 
 - `Blend_Space` (1D or 2D) is a shared definition, immutable in use: points of the parameter space,
   without clips or engine dependencies. The [plugin's `.blend`
-  format](../../mirai-animation/references/animation.md#composition-graphs-and-additive-spaces)
+  format](../../mirai-animation/references/animation.md#additive-spaces)
   associates each point with a clip and normalizes the units of its axes; the plugin uses it only
   for aim offsets and additives, not for locomotion.
 - `blend_space_prepare` is a transaction: it copies the points, orders segments in 1D and
@@ -109,8 +105,7 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   are interleaved with other branches, without recursion; it requires the world outside the branch
   to be up to date and the other local poses not to have changed. It does not replace full
   synchronization when other branches change.
-- `pose_layer` blends two poses with per-bone weights (`pose_mask_branch` creates the mask of a
-  branch); `pose_additive` applies deltas with respect to an explicit pose.
+- `pose_mask_branch` writes the per-bone weights of a branch.
 - The output buffers may coincide exactly with an input, never partially overlap. A short buffer, an
   invalid index, a non-unit quaternion or a non-finite number return `false`, and the output of a
   failed call is discarded: it may have been left partly written.
@@ -222,8 +217,8 @@ section: [rigs](anim-rigs.md#verification), [motion](anim-motion.md#verification
 - Hostile cases: `ANIM_HOSTILE_ROUNDS` (skeletons and solvers), `ANIM_BLEND_HOSTILE_ROUNDS` (blend
   spaces) and `ANIM_PROCEDURAL_HOSTILE_ROUNDS`; when changing validation or memory, `--release` and
   20000.
-- The blend by bone against a `Pose`, with tracks in other orders, missing or of another slot:
-  `bones_blend_what_a_pose_blends_for_their_targets`.
+- The blend by bone against each track found by name, with tracks in other orders, missing or of
+  another slot: `bones_blend_what_each_track_gives_their_bones`.
 - Benchmarks, optional with `-define:MIRAI_BENCH=true`: `bench_skeletal_two_clips_layer`,
-  `bench_bones_blend_against_pose`, `bench_blend_space_sampling`,
+  `bench_bones_blend`, `bench_blend_space_sampling`,
   `bench_procedural_gait_and_chain`.

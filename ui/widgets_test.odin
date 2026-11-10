@@ -21,10 +21,10 @@ test_text_pieces :: proc(ctx:^Context) -> []Paint {
             for &piece in t.pieces[line.pieces_first:][:line.pieces_len] {
                 s:=&t.spans[piece.span]
                 if s.box {continue}
-                style,decoration,run:=text_piece_style(ctx,own,s)
+                style,decoration:=text_piece_style(own,s)
                 p:=own^
                 p.kind,p.text,p.style,p.size,p.text_color,p.decoration=.Box if s.pad>0 else .None,s.text[piece.start:][:piece.length],style,style.size,style.color,decoration
-                if run!=nil {p.fill=run.back}
+                p.fill=s.back
                 append(&out,p)
             }
         }
