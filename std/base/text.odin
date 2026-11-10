@@ -1,5 +1,6 @@
 package base
 
+import "core:strings"
 import "core:fmt"
 
 // Text stored inline in a fixed byte array, the form the schema flag .Text
@@ -72,4 +73,13 @@ text_valid_prefix :: proc "contextless" (bytes:[]u8) -> int {
     case lead>=0xc0: needed=2
     }
     return end if end-(start-1)==needed else start-1
+}
+
+// True when text holds part, without minding upper and lower case.
+contains_fold :: proc(text,part:string) -> bool {
+    if len(part)>len(text) {return false}
+    for i in 0..=len(text)-len(part) {
+        if strings.equal_fold(text[i:][:len(part)],part) {return true}
+    }
+    return false
 }

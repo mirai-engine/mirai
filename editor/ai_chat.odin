@@ -250,7 +250,7 @@ ai_models_items :: proc(s:^Session,needle:string,current:Ai_Provider,chosen:stri
         }
         shown:=0
         for value in values[:count] {
-            if contains_fold(group,needle) || contains_fold(ai_model_name(m,provider,value),needle) || contains_fold(value,needle) {shown+=1}
+            if base.contains_fold(group,needle) || base.contains_fold(ai_model_name(m,provider,value),needle) || base.contains_fold(value,needle) {shown+=1}
         }
         if shown==0 {continue}
         any_model=true
@@ -259,7 +259,7 @@ ai_models_items :: proc(s:^Session,needle:string,current:Ai_Provider,chosen:stri
         ai_chat_models_header(ctx,connection.agent,group)
         for value,at in values[:count] {
             name:=ai_model_name(m,provider,value)
-            if !contains_fold(group,needle) && !contains_fold(name,needle) && !contains_fold(value,needle) {continue}
+            if !base.contains_fold(group,needle) && !base.contains_fold(name,needle) && !base.contains_fold(value,needle) {continue}
             if ui.menu_item(ctx,ui.id(ctx,"model",at+1),name,{checked=current==provider && chosen==value}) {taken,model,picked=provider,value,true}
         }
     }
@@ -475,7 +475,7 @@ ai_chat_history_build :: proc(s:^Session,width:f32) {
             ui.menu_header(ctx,"Finished agents")
             // Finished turns not saved yet, then the saved ones.
             #reverse for &task in m.tasks[:m.task_count] {
-                if !ai_finished_agent(m,&task) || !contains_fold(base.text_get(task.title[:]),needle) {continue}
+                if !ai_finished_agent(m,&task) || !base.contains_fold(base.text_get(task.title[:]),needle) {continue}
                 saved:=false
                 for conversation in m.history[:m.history_count] {if int(conversation.id)==task.id {saved=true;break}}
                 if saved {continue}

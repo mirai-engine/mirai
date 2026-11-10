@@ -116,7 +116,7 @@ ai_history_refresh :: proc(m:^Ai,offset:int=0,needle:string="") -> string {
     m.history_count,m.history_offset=count,offset
     for &c in m.history[:count] {
         if needle=="" {ai_history_outcome(m,&c)}
-        if contains_fold(string(c.title[:c.title_len]),needle) {continue}
+        if base.contains_fold(string(c.title[:c.title_len]),needle) {continue}
         if at,ok:=slice.linear_search(found[:found_count],c.id);ok {
             plain:[ai_store.LAST_BYTES*2]u8
             c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(hits[at].snippet,plain[:]),ai_store.LAST_BYTES))

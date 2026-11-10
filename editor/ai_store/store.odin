@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:third_party/sqlite"
 
 // The chats of a project live in one SQLite database, .mirai/ai/chat.db, in
@@ -381,16 +382,6 @@ line_kind :: proc(value:i64) -> (kind:Line_Kind,ok:bool) {
     return Line_Kind(value),true
 }
 
-// True when text holds part, without minding upper and lower case.
-@(private="file")
-contains_fold :: proc(text,part:string) -> bool {
-    if len(part)>len(text) {return false}
-    for i in 0..=len(text)-len(part) {
-        if strings.equal_fold(text[i:][:len(part)],part) {return true}
-    }
-    return false
-}
-
 @(private="file")
 now :: proc() -> i64 {
     return time.to_unix_nanoseconds(time.now())/1_000_000
@@ -574,7 +565,7 @@ list :: proc(s:^Store,out:[]Conversation,document_path:string="",offset:int=0,ne
         if kinds!={} && c.kind not_in kinds {continue}
         if parent!=0 && c.parent!=parent {continue}
         if document_path!="" && string(c.document[:c.document_len])!=document_path {continue}
-        if !contains_fold(string(c.title[:c.title_len]),needle) && !slice.contains(found,c.id) {continue}
+        if !base.contains_fold(string(c.title[:c.title_len]),needle) && !slice.contains(found,c.id) {continue}
         if skipped<offset {skipped+=1;continue}
         out[count]=c;count+=1
     }

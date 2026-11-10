@@ -326,7 +326,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                 for &e,i in entries {
                     if e.game!=game && scope.kind!=.Struct {continue}
                     if scope.kind==.Struct && !game {break}
-                    if needle!="" && !(e.navigable && editor.contains_fold(e.name,needle)) {continue}
+                    if needle!="" && !(e.navigable && base.contains_fold(e.name,needle)) {continue}
                     if !entry_offers(info,&e,kind,PICK_DEPTH) {continue}
                     if !header && scope.kind!=.Struct {
                         if any {ui.menu_separator(ctx)}
@@ -376,7 +376,7 @@ path_leaves :: proc(info:^core.World_Info,scope:author.Path_Scope,kind:author.Bi
         if len(list)>=PICK_RESULTS {return}
         if scope.kind==.Entity && e.storage {continue}
         path:=author.path_join(prefix,e.name)
-        if e.fits && editor.contains_fold(path,needle) {append(list,path)}
+        if e.fits && base.contains_fold(path,needle) {append(list,path)}
         if e.navigable && depth>0 && (e.next.kind==.Struct || scope.kind==.Sources) {
             path_leaves(info,e.next,kind,path,needle,list,depth-1)
         }
@@ -426,7 +426,7 @@ records_sources :: proc(r:^author.Records,info:^core.World_Info) -> []string {
 @(private)
 shown_either :: proc(p:^Pane,label,path:string) -> bool {
     if p.needle=="" || p.whole {return true}
-    if path!="" && editor.contains_fold(path,p.needle) {return shown(p,p.needle)}
+    if path!="" && base.contains_fold(path,p.needle) {return shown(p,p.needle)}
     return shown(p,label)
 }
 // ---------------------------------------------------------------- the API

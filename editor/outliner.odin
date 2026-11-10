@@ -187,7 +187,7 @@ outliner_rows :: proc(o:^Outliner,w:core.World_Ref) {
     clear(&o.rows)
     if filter!="" {
         for at in o.children {
-            if contains_fold(entity_label(w,o.nodes[at].entity),filter) {append(&o.rows,Outliner_Row{at,0})}
+            if base.contains_fold(entity_label(w,o.nodes[at].entity),filter) {append(&o.rows,Outliner_Row{at,0})}
         }
         return
     }
@@ -559,12 +559,3 @@ create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View
     return
 }
 
-// True when text holds part, without minding upper and lower case.
-contains_fold :: proc(text,part:string) -> bool {
-    if len(part)==0 {return true}
-    if len(part)>len(text) {return false}
-    for i in 0..=len(text)-len(part) {
-        if strings.equal_fold(text[i:][:len(part)],part) {return true}
-    }
-    return false
-}
