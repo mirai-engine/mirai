@@ -529,8 +529,8 @@ other; authority, prediction and rollback for the rest belong to the
   and each layer change with its region and its check. A client's request waits for the tick at
   which the client made it. What is not allowed is refused with the cause (rate, connection
   without a seat, reach from what its seat drives, radius, brush, tick, unloaded source or the
-  edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it. `Terrain_Net_Settings` (project setting) sets the rate, the reach and
-  the radius.
+  edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it.
+  `Terrain_Net_Settings` (project setting) sets the rate, the reach and the radius.
 - **What the game asks of a client is a prediction:** an edit is applied at its tick, stored with
   its check and asked of the server. When the server's edit comes back, a prediction that left the
   same check stays as that edit, without repeating the brush. A layer change is not predicted
