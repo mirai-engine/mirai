@@ -105,7 +105,7 @@ input_init :: proc(in_:^Input,desc:Input_Desc) -> bool {
     in_^={allocator=allocator,tap_ticks=desc.tap_ticks if desc.tap_ticks>0 else TAP_TICKS,hold_ticks=desc.hold_ticks if desc.hold_ticks>0 else HOLD_TICKS}
     in_.code_count=desc.code_count if desc.code_count>0 else 512
     in_.axis_count=desc.axis_count if desc.axis_count>0 else 64
-    if desc.max_actions<=0 || desc.max_actions>int(max(u16)) || desc.max_bindings<=0 || desc.max_bindings>max(int)/size_of(Binding) || in_.code_count>int(max(u16))+1 || in_.axis_count>int(max(u16))+1 {return false}
+    if desc.max_actions<=0 || desc.max_actions>int(max(u16)) || desc.max_bindings<=0 || desc.max_bindings>max(int)/size_of(Binding) || in_.code_count>int(max(u16))+1 || in_.axis_count>int(max(u16))+1 {in_^={};return false}
     words:=base.bits_words(in_.code_count)
     e:[11]runtime.Allocator_Error
     in_.down,e[0]=make([]u64,words,allocator)
