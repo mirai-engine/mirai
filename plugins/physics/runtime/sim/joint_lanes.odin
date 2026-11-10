@@ -3,16 +3,16 @@ package mirai_physics
 import cmath "core:math"
 import "core:simd"
 
-// Joints of every type but SixDOF are solved four at a time, like contacts: a block holds joints of one type
-// and one graph color. The joints without color share bodies and run in order on blocks of one lane. SixDOF
-// joints and the angular drives of spherical joints go through joint_solve, one at a time.
-@(private) LANE_JOINT_TYPES :: int(Joint_Type.SixDOF)
+// Joints of every kernel but General are solved four at a time, like contacts: a block holds joints of one
+// kernel and one graph color. The joints without color share bodies and run in order on blocks of one lane.
+// General joints go through joint_solve, one at a time.
+@(private) LANE_JOINT_KERNELS :: int(Joint_Kernel.General)
 
 @(private) Joint_Block :: struct($N:int) {
     a,b:[N]i32,             // solver bodies, -1 when static or asleep
     write_a,write_b:[N]i32, // the same for the bodies the joint moves, else -1
     joint:[N]i32,           // slot of the joint, -1 in an empty lane
-    type:Joint_Type,
+    kernel:Joint_Kernel,
     flags:Joint_Flags,      // of all the lanes
     _:[2]u32,
     ma,mb:#simd[N]f32,
@@ -21,11 +21,12 @@ import "core:simd"
     ra,rb:[3]#simd[N]f32,   // anchors from the centers of mass at the start of the step, world axes
     qa,qb:[4]#simd[N]f32,   // world rotation of the frames at the start of the step: x, y, z, w
     dc:[3]#simd[N]f32,      // center of B less center of A at the start of the step
-    lower,upper,cone,length,target,motor_speed,max_motor_impulse:#simd[N]f32,
-    spring_bias,spring_mass,spring_decay:#simd[N]f32,
-    limit,motor,spring,coned:#simd[N]u32, // lanes that have each option
+    lower,upper,cone,length:#simd[N]f32,
+    target,drive_speed,max_drive_impulse:#simd[N]f32, // of the drive: position, velocity and force times the substep
+    drive_bias,drive_mass,drive_decay:#simd[N]f32,    // softness of the drive: rigid without a position
+    limit,drive,coned:#simd[N]u32, // lanes that have each option
     linear,angular:[3]#simd[N]f32,
-    lower_impulse,upper_impulse,motor_impulse,spring_impulse,cone_impulse:#simd[N]f32,
+    lower_impulse,upper_impulse,drive_impulse,cone_impulse:#simd[N]f32,
 }
 #assert(offset_of(Joint_Block(WIDE),ma)==96)
 
@@ -174,25 +175,19 @@ row_limits4 :: proc "contextless" (jb:^Joint_Block($N),row:^Joint_Row(N),a,b:^Bo
     }
 }
 
-// Spring, motor and limits along one row; `position` is the angle or translation along it, `target` where the
-// spring pulls.
+// Drive and limits along one row, as axis_solve does them; `position` is the angle, translation or length along
+// it.
 @(private)
-row_solve4 :: proc "contextless" (jb:^Joint_Block($N),row:^Joint_Row(N),a,b:^Body_Wide(N),pass:^Joint_Pass(N),position,target:#simd[N]f32,flags:Joint_Flags) {
+row_solve4 :: proc "contextless" (jb:^Joint_Block($N),row:^Joint_Row(N),a,b:^Body_Wide(N),pass:^Joint_Pass(N),position:#simd[N]f32,flags:Joint_Flags) {
     if pass.warm {
-        row_apply4(jb,row,a,b,jb.spring_impulse+jb.motor_impulse+jb.lower_impulse-jb.upper_impulse)
+        row_apply4(jb,row,a,b,jb.drive_impulse+jb.lower_impulse-jb.upper_impulse)
         return
     }
-    if .Spring in flags {
-        impulse:=-row.mass*jb.spring_mass*(row_speed4(row,a,b)+(position-target)*jb.spring_bias)-jb.spring_decay*jb.spring_impulse
-        impulse=simd.select(jb.spring,impulse,pass.zero)
-        jb.spring_impulse+=impulse
-        row_apply4(jb,row,a,b,impulse)
-    }
-    if .Motor in flags {
-        impulse:=-row.mass*(row_speed4(row,a,b)-jb.motor_speed)
-        next:=simd.clamp(jb.motor_impulse+impulse,-jb.max_motor_impulse,jb.max_motor_impulse)
-        impulse=simd.select(jb.motor,next-jb.motor_impulse,pass.zero)
-        jb.motor_impulse+=impulse
+    if .Drive in flags {
+        impulse:=-row.mass*jb.drive_mass*(row_speed4(row,a,b)-jb.drive_speed+(position-jb.target)*jb.drive_bias)-jb.drive_decay*jb.drive_impulse
+        next:=simd.clamp(jb.drive_impulse+impulse,-jb.max_drive_impulse,jb.max_drive_impulse)
+        impulse=simd.select(jb.drive,next-jb.drive_impulse,pass.zero)
+        jb.drive_impulse+=impulse
         row_apply4(jb,row,a,b,impulse)
     }
     if .Limit in flags {row_limits4(jb,row,a,b,pass,position,jb.limit)}
@@ -263,16 +258,16 @@ joint_block_solve :: #force_inline proc "contextless" (st:^Step,jb:^Joint_Block(
     qb:=quat_mul4(b.dq,jb.qb)
     d:=b.dp-a.dp+jb.dc+rb-ra
     ax:=quat_axis4(qa,0)
-    switch jb.type {
+    switch jb.kernel {
     case .Fixed:
         joint_lock4(jb,&a,&b,&pass,qa,qb)
         joint_point4(jb,&a,&b,&pass,ra,rb,d)
     case .Revolute:
-        if jb.flags&{.Spring,.Motor,.Limit}!={} {
+        if jb.flags&{.Drive,.Limit}!={} {
             row:=joint_row4(jb,{},ax,ax)
             position:=pass.zero
             if !warm {position=twist_angle4(qa,qb)}
-            row_solve4(jb,&row,&a,&b,&pass,position,jb.target,jb.flags&{.Spring,.Motor,.Limit})
+            row_solve4(jb,&row,&a,&b,&pass,position,jb.flags&{.Drive,.Limit})
         }
         // The X axes stay aligned: no rotation about the Y and Z axes of frame A.
         ay,az:=quat_axis4(qa,1),quat_axis4(qa,2)
@@ -284,9 +279,9 @@ joint_block_solve :: #force_inline proc "contextless" (st:^Step,jb:^Joint_Block(
         jb.angular.y,jb.angular.z=impulse[0],impulse[1]
         joint_point4(jb,&a,&b,&pass,ra,rb,d)
     case .Prismatic:
-        if jb.flags&{.Spring,.Motor,.Limit}!={} {
+        if jb.flags&{.Drive,.Limit}!={} {
             row:=joint_row4(jb,ax,cross4(d+ra,ax),cross4(rb,ax))
-            row_solve4(jb,&row,&a,&b,&pass,dot4(d,ax),jb.target,jb.flags&{.Spring,.Motor,.Limit})
+            row_solve4(jb,&row,&a,&b,&pass,dot4(d,ax),jb.flags&{.Drive,.Limit})
         }
         joint_lock4(jb,&a,&b,&pass,qa,qb)
         // No translation across the axis.
@@ -324,7 +319,7 @@ joint_block_solve :: #force_inline proc "contextless" (st:^Step,jb:^Joint_Block(
             row:=joint_row4(jb,{},twist,twist)
             position:=pass.zero
             if !warm {position=twist_angle4(qa,qb)}
-            row_solve4(jb,&row,&a,&b,&pass,position,jb.target,{.Limit})
+            row_solve4(jb,&row,&a,&b,&pass,position,{.Limit})
         }
         joint_point4(jb,&a,&b,&pass,ra,rb,d)
     case .Distance:
@@ -332,18 +327,18 @@ joint_block_solve :: #force_inline proc "contextless" (st:^Step,jb:^Joint_Block(
         near:=simd.lanes_lt(distance,1e-6)
         axis={simd.select(near,ax.x,axis.x),simd.select(near,ax.y,axis.y),simd.select(near,ax.z,axis.z)}
         row:=joint_row4(jb,axis,cross4(ra,axis),cross4(rb,axis))
-        // Springy between the limits, or rigid at its length.
-        springy:=simd.bit_or(jb.spring,jb.limit)
+        // Driven or free between the limits, or rigid at its length.
+        springy:=simd.bit_or(jb.drive,jb.limit)
         if warm {
-            row_apply4(jb,&row,&a,&b,simd.select(springy,jb.spring_impulse+jb.lower_impulse-jb.upper_impulse,jb.linear.x))
+            row_apply4(jb,&row,&a,&b,simd.select(springy,jb.drive_impulse+jb.lower_impulse-jb.upper_impulse,jb.linear.x))
         } else {
-            if jb.flags&{.Spring,.Limit}!={} {row_solve4(jb,&row,&a,&b,&pass,distance,jb.length,jb.flags&{.Spring,.Limit})}
+            if jb.flags&{.Drive,.Limit}!={} {row_solve4(jb,&row,&a,&b,&pass,distance,jb.flags&{.Drive,.Limit})}
             impulse:=-row.mass*pass.mass_scale*(row_speed4(&row,&a,&b)+pass.bias_rate*(distance-jb.length))-pass.impulse_scale*jb.linear.x
             impulse=simd.select(springy,pass.zero,impulse)
             jb.linear.x+=impulse
             row_apply4(jb,&row,&a,&b,impulse)
         }
-    case .SixDOF:
+    case .General:
     }
     bodies_scatter(st.bodies,jb.write_a,&a)
     bodies_scatter(st.bodies,jb.write_b,&b)
@@ -359,13 +354,14 @@ joint_block_prepare :: proc(w:^World,jb:^Joint_Block($N),slots:[]i32) #no_bounds
         index:=slots[lane]
         if index<0 {continue}
         joint:=&w.joints[index]
+        axes:=&w.joint_axes[index]
         body_a,body_b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
         a,b:=body_a.solver_index,body_b.solver_index
         ma,mb:f32
         ia,ib:Mat3
         if a>=0 {ma,ia=st.params[a].inv_mass,st.params[a].inv_inertia}
         if b>=0 {mb,ib=st.params[b].inv_mass,st.params[b].inv_inertia}
-        jb.type=joint.type
+        jb.kernel=joint.kernel
         jb.flags+=joint.flags
         jb.a[lane],jb.b[lane]=a,b
         jb.write_a[lane],jb.write_b[lane]=ma>0?a:-1,mb>0?b:-1
@@ -373,34 +369,33 @@ joint_block_prepare :: proc(w:^World,jb:^Joint_Block($N),slots:[]i32) #no_bounds
         lane_set(&jb.mb,lane,mb)
         lane_set_sym(&jb.ia,lane,ia)
         lane_set_sym(&jb.ib,lane,ib)
-        if joint.type==.Fixed || joint.type==.Prismatic {lane_set_sym(&jb.angular_mass,lane,mat3_inverse(ia+ib))}
+        if joint.kernel==.Fixed || joint.kernel==.Prismatic {lane_set_sym(&jb.angular_mass,lane,mat3_inverse(ia+ib))}
         lane_set3(&jb.ra,lane,q_rotate(body_a.rotation,joint.frame_a.p-body_a.local_center))
         lane_set3(&jb.rb,lane,q_rotate(body_b.rotation,joint.frame_b.p-body_b.local_center))
         qa,qb:=body_a.rotation*joint.frame_a.q,body_b.rotation*joint.frame_b.q
         lane_set(&jb.qa[0],lane,qa.x);lane_set(&jb.qa[1],lane,qa.y);lane_set(&jb.qa[2],lane,qa.z);lane_set(&jb.qa[3],lane,qa.w)
         lane_set(&jb.qb[0],lane,qb.x);lane_set(&jb.qb[1],lane,qb.y);lane_set(&jb.qb[2],lane,qb.z);lane_set(&jb.qb[3],lane,qb.w)
         lane_set3(&jb.dc,lane,body_b.center-body_a.center)
-        lane_set(&jb.lower,lane,joint.lower)
-        lane_set(&jb.upper,lane,joint.upper)
-        lane_set(&jb.cone,lane,joint.cone)
-        lane_set(&jb.length,lane,joint.length)
-        lane_set(&jb.target,lane,joint.target)
-        lane_set(&jb.motor_speed,lane,joint.motor_speed)
-        lane_set(&jb.max_motor_impulse,lane,joint.max_motor*st.h)
-        spring:=soft_make(joint.hertz,joint.damping_ratio,st.h)
-        lane_set(&jb.spring_bias,lane,spring.bias_rate)
-        lane_set(&jb.spring_mass,lane,spring.mass_scale)
-        lane_set(&jb.spring_decay,lane,spring.impulse_scale)
+        axis:=joint_kernel_axis(joint.kernel,axes.linear_axes,axes.angular_axes)
+        lane_set(&jb.lower,lane,axis.lower)
+        lane_set(&jb.upper,lane,axis.upper)
+        lane_set(&jb.cone,lane,axes.angular_axes[1].upper)
+        lane_set(&jb.length,lane,axis.lower)
+        lane_set(&jb.target,lane,axis.position)
+        lane_set(&jb.drive_speed,lane,.Velocity in axis.drive?axis.velocity:0)
+        lane_set(&jb.max_drive_impulse,lane,axis.max_force*st.h)
+        drive:=.Position in axis.drive?soft_make(min(axis.hertz,0.25*st.inv_h),axis.damping_ratio,st.h):Softness{0,1,0}
+        lane_set(&jb.drive_bias,lane,drive.bias_rate)
+        lane_set(&jb.drive_mass,lane,drive.mass_scale)
+        lane_set(&jb.drive_decay,lane,drive.impulse_scale)
         lane_mask_set(&jb.limit,lane,.Limit in joint.flags)
-        lane_mask_set(&jb.motor,lane,.Motor in joint.flags)
-        lane_mask_set(&jb.spring,lane,.Spring in joint.flags)
+        lane_mask_set(&jb.drive,lane,.Drive in joint.flags)
         lane_mask_set(&jb.coned,lane,.Cone in joint.flags)
         lane_set3(&jb.linear,lane,joint.linear_impulse)
         lane_set3(&jb.angular,lane,joint.angular_impulse)
         lane_set(&jb.lower_impulse,lane,joint.lower_impulse)
         lane_set(&jb.upper_impulse,lane,joint.upper_impulse)
-        lane_set(&jb.motor_impulse,lane,joint.motor_impulse)
-        lane_set(&jb.spring_impulse,lane,joint.spring_impulse)
+        lane_set(&jb.drive_impulse,lane,joint.drive_impulse)
         lane_set(&jb.cone_impulse,lane,joint.cone_impulse)
     }
 }
@@ -413,8 +408,7 @@ joint_block_store :: proc(w:^World,jb:^Joint_Block($N)) #no_bounds_check {
         joint:=&w.joints[index]
         joint.linear_impulse,joint.angular_impulse=lane_get3(&jb.linear,lane),lane_get3(&jb.angular,lane)
         joint.lower_impulse,joint.upper_impulse=lane_get(&jb.lower_impulse,lane),lane_get(&jb.upper_impulse,lane)
-        joint.motor_impulse,joint.spring_impulse=lane_get(&jb.motor_impulse,lane),lane_get(&jb.spring_impulse,lane)
-        joint.cone_impulse=lane_get(&jb.cone_impulse,lane)
+        joint.drive_impulse,joint.cone_impulse=lane_get(&jb.drive_impulse,lane),lane_get(&jb.cone_impulse,lane)
     }
 }
 
