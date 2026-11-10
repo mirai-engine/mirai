@@ -43,6 +43,21 @@ root_motion_leaves_out_the_transform_the_entity_was_bound_with :: proc(t:^testin
     testing.expectf(t,mm.quat_angle(turned,turn)<1e-5,"its turn is its own: %v",turned)
 }
 
+@(private="file")
+Root_Metadata_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    names:core.Table(core.Name),
+    targets:core.Table(Animation_Target),
+    animations:core.Table(Animation),
+    hierarchy:core.Hierarchy,
+    requests:Animation_Requests,
+    events:Animation_Events,
+    playback:Playback,
+    constraints:Animation_Constraints,
+}
+
 @(test)
 selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_table :: proc(t:^testing.T) {
     problems:core.Problems
@@ -52,28 +67,26 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
     source.id,source.generation={0xa10,0xa11},1
     source.roots[2].translation,source.roots[2].rotation=false,true
     append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    transforms:core.Table(core.Transform);parents:core.Table(core.Parent);names:core.Table(core.Name);targets:core.Table(Animation_Target);animations:core.Table(Animation)
-    defer {core.table_destroy(&transforms);core.table_destroy(&parents);core.table_destroy(&names);core.table_destroy(&targets);core.table_destroy(&animations)}
-    actor,hip:=core.create(&entities),core.create(&entities)
-    core.add(&transforms,actor,core.TRANSFORM_IDENTITY);core.add(&transforms,hip,core.TRANSFORM_IDENTITY);core.add(&parents,hip,{entity=actor})
-    name:core.Name;base.text_set(name.text[:],"hip");core.add(&names,hip,name)
+    w:Root_Metadata_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    actor,hip:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&w.parents,hip,{entity=actor})
+    name:core.Name;base.text_set(name.text[:],"hip");core.add(&w.names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=source.id;animation.loop=false;animation.fade=0;animation.root_motion=.Extract;base.text_set(animation.clip[:],"walk")
-    core.add(&animations,actor,animation)
-    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities)
-    hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
-    core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
-    requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets;constraints:Animation_Constraints
-    defer {delete(requests.seeks.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons);constraints_free(&constraints)}
+    core.add(&w.animations,actor,animation)
+    core.test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     for stage in 0..<5 {
         switch stage {
-        case 1: animation_play(core.get(&animations,actor),"run",fade=0,loop=false)
-        case 2: core.get(&animations,actor).root_motion=.None
-        case 3: value:=core.get(&animations,actor);value.root_motion=.In_Place;animation_play(value,"walk",fade=0,loop=false)
-        case 4: animation_play(core.get(&animations,actor),"wave",fade=1,loop=false)
+        case 1: animation_play(core.get(&w.animations,actor),"run",fade=0,loop=false)
+        case 2: core.get(&w.animations,actor).root_motion=.None
+        case 3: value:=core.get(&w.animations,actor);value.root_motion=.In_Place;animation_play(value,"walk",fade=0,loop=false)
+        case 4: animation_play(core.get(&w.animations,actor),"wave",fade=1,loop=false)
         }
-        animation_tick(core.read(&animations),&transforms,core.read(&parents),core.ref(&hierarchy),core.read(&names),&requests,&events,core.read(&targets),{},&playback,&app,{dt=.25,playing=true},{},&skeletons,&problems)
-        state:=&playback.states[0]
+        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems)
+        state:=&w.playback.states[0]
         switch stage {
         case 0: testing.expect(t,state.has_base_root && state.base_root.translation && abs(state.motion.translation.x-.25)<1e-5)
         case 1: testing.expect(t,state.clip==2 && state.has_base_root && !state.base_root.translation && state.base_root.rotation && state.motion.translation=={})
@@ -81,7 +94,7 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
         case 3: testing.expect(t,state.base_root.in_place && state.local[1].position==state.rest[1].position,"an in-place clip blends its root at rest")
         case 4: testing.expect(t,!state.has_base_root && lib.fader_fading(state.fader) && state.local[1].position==state.rest[1].position,"a clip fading out under one without root motion keeps its root in place")
         }
-        animation_finish(&playback,{problems=&problems},&constraints,&transforms,core.read(&parents),.25,nil,{})
+        animation_finish(&w.playback,{problems=&problems},&w.constraints,&w.transforms,core.read(&w.parents),.25,nil,{})
         if stage>=3 {testing.expect(t,state.local[1].position==state.rest[1].position)}
     }
     testing.expect(t,problems.count==0)
