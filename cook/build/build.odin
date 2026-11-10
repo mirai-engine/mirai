@@ -19,8 +19,8 @@ import "mirai:std/subprocess"
 // the output of the target in one rename. Everything lives under
 // <project>/.mirai:
 //
-//   gen/                 the generated packages: game_world, editor_world, editor, play, game
-//   editor, play         the libraries of the project the editor and the player load (.dll, .so, .dylib)
+//   gen/                 the generated packages: editor_world, shipped_world, editor, game
+//   editor               the library of the project the editor and the player load (.dll, .so, .dylib)
 //   game/                the shipped game, unless another folder is asked for
 //   build/               files of the jobs, and of each target the sources
 //                        and the fingerprint of its last build
@@ -70,9 +70,8 @@ Desc :: struct {
     server:bool,                 // Game: a dedicated server, the same executable without what is only shown or heard: no icon or shaders, and its cook leaves those kinds behind
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
-    incremental:bool,           // Game: the engine and its plugins come from one library compiled once per version (shipped.odin), next to the executable; the game alone compiles. Not for what ships: unset, they compile whole with the game
     engine:Engine_Mode,          // the binaries of the engine a library is built against
-    action:Action,               // Check and Test: of the Editor or Play target
+    action:Action,               // Check and Test: of the Editor target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
@@ -91,7 +90,6 @@ Result :: struct {
     plugins_restored:int,     // of those, the ones copied from the cache
     plugins_relinked:int,     // of those, the ones whose objects were linked again (relink.odin)
     relinked:bool,            // the output was linked again from the objects of its last compile
-    shipped_engine:Shipped_Engine_State, // Game with Desc.incremental: what became of its engine library
     tests:Test_Report,        // Test
     seconds:f64,
 }
@@ -134,7 +132,6 @@ Job :: struct {
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
     plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
-    shipped:Shipped_Engine,      // Game with Desc.incremental (shipped.odin)
     masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
     link_file:string,            // the record of the last compile of the target
     compiled:bool,               // linking the target again failed, and it compiles
@@ -253,10 +250,6 @@ job_start :: proc(desc:Desc) -> ^Job {
             return job_fail(job,.Settings_Invalid)
         }
         job.copies=game_copies(p,folder,job.compiler,a,desc.server)
-        if desc.incremental {
-            job.shipped=shipped_engine_paths(p.root,a)
-            job.copies=shipped_engine_copies(&job.shipped,folder,job.copies,a)
-        }
         job.development=make([dynamic]string,a)
         for index in p.active {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
@@ -271,14 +264,12 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
     }
 
-    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
+    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine)
     if desc.action==.Test {job.engine_folder=engine_paths(p.engine_root,desc.engine,a).folder}
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
         if failure:=job_plugins_plan(job,p,desc);failure!=.None {return job_fail(job,failure)}
-    } else if desc.incremental {
-        if failure:=job_shipped_start(job,p,desc.force);failure!=.None {return job_fail(job,failure)}
     }
     return job_schedule(job)
 }
@@ -289,7 +280,7 @@ job_start :: proc(desc:Desc) -> ^Job {
 @(private)
 job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     a:=virtual.arena_allocator(&job.arena)
-    job.plugins=plugin_libraries(p,desc.target,desc.dev,a)
+    job.plugins=plugin_libraries(p,desc.dev,a)
     job.plugin_queue=make([dynamic]int,a)
     job.plugin_hashes=make([]u64,len(job.plugins),a)
     job.plugin_compile_hashes=make([]u64,len(job.plugins),a)
@@ -783,8 +774,7 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
         }
         compile:=job.compiles[i]
         ordered_remove(&job.compiles,i)
-        if compile.library==SHIPPED_ENGINE_COMPILE {job_shipped_finish(job,compile,state.exit_code)}
-        else if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
+        if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
         else if compile.library<0 {job_finish(job,compile,state.exit_code)}
         else {job_plugin_finish(job,compile,state.exit_code)}
     }
@@ -808,26 +798,19 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Dev,incremental:=false) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Dev) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
-    shipped:=shipped_engine_paths(p.root,context.temp_allocator)
-    // A library sees the engine through its declarations; the game, whole, or through those of its library.
-    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine,context.temp_allocator).decl
+    // A library sees the engine through its declarations; the game, whole.
+    mirai:=target==.Game?p.engine_root:engine_paths(p.engine_root,engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_stage(p.root,context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
-    plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
+    plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
     append(&flags,fmt.aprintf("-collection:plugins=%s",plugins,allocator=a))
     generated:=generated_flags(p.root,a)
     append(&flags,..generated[:])
     if target==.Game {
         append(&flags,dev?"-o:minimal":"-o:speed")
-        if incremental {
-            // What -o:minimal would split only costs the inlining of what the declarations copied.
-            if dev {append(&flags,"-use-single-module")}
-            when ODIN_OS==.Linux {linker_flags_append(&flags,`-Wl,-rpath,"\$ORIGIN"`,a)}
-            else when ODIN_OS==.Darwin {linker_flags_append(&flags,"-Wl,-rpath,@executable_path",a)}
-        }
     } else {
         append(&flags,"-build-mode:dll")
         // The libraries of the engine's plugins.
@@ -857,7 +840,7 @@ target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,en
     published:=target_output(p,target,"",temp)
     if !os.is_file(published) {return .Missing}
     names:=TARGET_NAMES
-    world_names:=[Target]string{.Editor="editor_world",.Play="game_world",.Game="shipped_world"}
+    world_names:=[Target]string{.Editor="editor_world",.Game="shipped_world"}
     gen:=generated_root(p.root,temp)
     world_text,_:=os.read_entire_file(project.path(gen,world_names[target],"world.odin",allocator=temp),temp)
     main_text,_:=os.read_entire_file(project.path(gen,names[target],"main.odin",allocator=temp),temp)
@@ -872,7 +855,7 @@ target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,en
     sources,listed:=dependencies_read(project.path(work,fmt.tprintf("%s.sources.json",names[target]),allocator=temp),temp)
     if !stamped || !listed {return .Stale}
     hash,_:=fingerprint(p.engine_root,slashes(found,temp),target_flags(p,target,nil,temp,dev,engine),sources)
-    if hash!=saved || !plugins_current(p,target,slashes(found,temp),dev,engine) {return .Stale}
+    if hash!=saved || target==.Editor && !plugins_current(p,slashes(found,temp),dev,engine) {return .Stale}
     return .Current
 }
 

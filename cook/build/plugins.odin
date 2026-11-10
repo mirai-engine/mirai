@@ -70,11 +70,11 @@ plugins_decl :: proc(root,mode:string,allocator:=context.allocator) -> string {
 	return project.path(plugins_folder(root,mode,context.temp_allocator),"decl",allocator=allocator)
 }
 
-// The libraries of the active engine plugins a target links, in the order
-// they build: the runtime parts as the plugins are ordered (dependencies
-// first), then, for the editor, the editor parts.
-plugin_libraries :: proc(p:^project.Project,target:Target,dev:bool,allocator:=context.allocator) -> []Plugin_Library {
-	if target==.Game || p.engine_root=="" {return nil}
+// The libraries of the active engine plugins the library of the project
+// links, in the order they build: the runtime parts as the plugins are
+// ordered (dependencies first), then the editor parts.
+plugin_libraries :: proc(p:^project.Project,dev:bool,allocator:=context.allocator) -> []Plugin_Library {
+	if p.engine_root=="" {return nil}
 	list:=make([dynamic]Plugin_Library,allocator)
 	parts:=project.PART_NAMES
 	mode:=plugins_mode(p,dev)
@@ -82,7 +82,6 @@ plugin_libraries :: proc(p:^project.Project,target:Target,dev:bool,allocator:=co
 	libraries:=plugins_libraries_folder(p.root,context.temp_allocator)
 	sources:=project.path(p.engine_root,"plugins",allocator=context.temp_allocator)
 	for part in ([2]project.Plugin_Part{.Runtime,.Editor}) {
-		if part==.Editor && target!=.Editor {break}
 		for index in p.active {
 			plugin:=&p.plugins[index]
 			if plugin.origin!=.Engine || part not_in plugin.manifest.parts {continue}
@@ -312,11 +311,11 @@ plugin_command :: proc(lib:^Plugin_Library,compiler,engine_decl,staged:string,fl
 	return command[:]
 }
 
-// Whether every plugin library of a target stands as its stamp says, without
-// writing anything: a library whose declarations would change after one it
-// depends on is built again counts as standing until then.
-plugins_current :: proc(p:^project.Project,target:Target,compiler:string,dev:bool,engine:Engine_Mode) -> bool {
-	libraries:=plugin_libraries(p,target,dev,context.temp_allocator)
+// Whether every plugin library of the project stands as its stamp says,
+// without writing anything: a library whose declarations would change after
+// one it depends on is built again counts as standing until then.
+plugins_current :: proc(p:^project.Project,compiler:string,dev:bool,engine:Engine_Mode) -> bool {
+	libraries:=plugin_libraries(p,dev,context.temp_allocator)
 	if len(libraries)==0 {return true}
 	flags:=plugin_flags(p,dev,context.temp_allocator)
 	paths:=engine_paths(p.engine_root,engine,context.temp_allocator)

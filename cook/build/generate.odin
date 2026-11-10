@@ -4,19 +4,18 @@ import "core:fmt"
 import "core:strings"
 import "mirai:project"
 
-// What a project is built into. The editor and play are libraries with the
-// world, the game and the plugins of the project, built against the
-// declarations of the engine's binaries, which the editor and the player
-// load; the game is the program that ships, built whole from the sources with
-// the engine, which never sees an engine-time package.
+// What a project is built into. The editor is the library with the world of
+// the editor, built against the declarations of the engine's binaries, which
+// the editor and the player load (the player runs only its game); the game is
+// the program that ships, built whole from the sources with the engine, which
+// never sees an engine-time package.
 Target :: enum u8 {
     Editor,
-    Play,
     Game,
 }
 
 @(private)
-TARGET_NAMES :: [Target]string{.Editor="editor",.Play="play",.Game="game"}
+TARGET_NAMES :: [Target]string{.Editor="editor",.Game="game"}
 
 // <project>/.mirai/gen: the generated packages, the collection "generated".
 generated_root :: proc(root:string,allocator:=context.allocator) -> string {
@@ -36,7 +35,6 @@ generate :: proc(p:^project.Project,target:Target,allocator:=context.allocator) 
     if len(out.errors)>0 {return strings.join(out.errors,"\n",allocator)}
     switch target {
     case .Editor: return strings.concatenate({out.editor_world,out.editor_main},allocator)
-    case .Play:   return strings.concatenate({out.game_world,out.play_main},allocator)
     case .Game:   return strings.concatenate({out.shipped_world,out.game_main},allocator)
     }
     return ""
