@@ -184,7 +184,7 @@ net_receive :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App,even
     session.now=host.app_seconds(app)
     commands:=wire.host_poll(&session.host)
     if session.mode==.Server {
-        server_commands(session,world,app,commands,events,inputs)
+        server_commands(session,world,app.assets,commands,events,inputs)
         return true
     }
     client_commands(session,world,app.assets,app.allocator,commands,events)

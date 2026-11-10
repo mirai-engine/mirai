@@ -230,7 +230,7 @@ terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
 }
 
 @(private)
-terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || stroke.source.kind!=.Mesh {return}
     if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain and a closed mesh operand");return}
@@ -247,8 +247,8 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
         for parent in parents.values {if parent.entity==operand {editor.notify(s,"The mesh operand must have no children");return}}
     }
     geometry:geom.Mesh_Buffer
-    geom.mesh_buffer_init(&geometry,app.allocator);defer geom.mesh_buffer_destroy(&geometry)
-    if !host.assets_geometry(app.assets,static.mesh,static.shape,&geometry,true) {editor.notify(s,"The selected mesh could not be read");return}
+    geom.mesh_buffer_init(&geometry,allocator);defer geom.mesh_buffer_destroy(&geometry)
+    if !host.assets_geometry(assets,static.mesh,static.shape,&geometry,true) {editor.notify(s,"The selected mesh could not be read");return}
     transform:=stroke.to_local*mm.transform_matrix(placed.transform)
     normals:=linalg.transpose(linalg.inverse(transform))
     for &p in geometry.positions {p=(transform*[4]f32{p.x,p.y,p.z,1}).xyz}
@@ -259,7 +259,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     slots[0]=stroke.source.layers[0].material
     count:=1+copy(slots[1:],stroke.source.slots)
     if tool.brush==.Union {
-        held:=static.mesh!={}?host.assets_mesh(app.assets,static.mesh):host.assets_shape(app.assets,static.shape)
+        held:=static.mesh!={}?host.assets_mesh(assets,static.mesh):host.assets_shape(assets,static.shape)
         remap:[asset.MESH_MAX_SLOTS]u32
         mapped:[asset.MESH_MAX_SLOTS]bool
         for &slot in geometry.materials {
@@ -278,10 +278,10 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
             remap[i]=u32(existing);mapped[i]=true;slot=remap[i]
         }
     } else {for &slot in geometry.materials {slot=0}}
-    allocator:=stroke.source.allocator
-    materials,error:=make([]base.Asset_Id,count-1,allocator)
+    source_allocator:=stroke.source.allocator
+    materials,error:=make([]base.Asset_Id,count-1,source_allocator)
     if error!=nil {editor.notify(s,"The terrain materials could not be stored");return}
-    defer delete(materials,allocator)
+    defer delete(materials,source_allocator)
     copy(materials,slots[1:count])
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return}
     stroke.source.slots,materials=materials,stroke.source.slots
@@ -289,7 +289,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     if change.error!=.None || !change.changed {stroke.source.slots,materials=materials,stroke.source.slots}
     if change.error!=.None {edit_error(s,change.error);return}
     stroke.changed,stroke.dirty_all=change.changed,true
-    stroke_end(s,tool,world,app.assets,consume=operand,label="Boolean terrain")
+    stroke_end(s,tool,world,assets,consume=operand,label="Boolean terrain")
 }
 
 // The outline of the terrain Create makes, where it makes it: around the

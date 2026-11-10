@@ -207,7 +207,7 @@ server_requests :: proc(s:^Net_Session) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-server_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
     h:=&s.host
     es:=core.world_entities(w)
     for &command in commands {
@@ -265,14 +265,14 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
         }
     }
     server_world_update(s)
-    server_gone(s,w,app)
+    server_gone(s,w,assets)
 }
 
 // Server: what of the sections the connections loaded is gone, as each one
 // hears it, and what went from a section, as every one does; what the host
 // has no room for is sent at the next step.
 @(private)
-server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
+server_gone :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     server:=&s.server
     h:=&s.host
     kept:=0
@@ -292,7 +292,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
         if peer.connection!=due.connection || !peer.ready {continue}
         ids:=make([dynamic]base.Entity_Id,context.temp_allocator)
         documents:scene.Documents
-        if app!=nil {documents=scene.assets_documents(app.assets)}
+        if assets!=nil {documents=scene.assets_documents(assets)}
         scene.section_gone(w,documents,core.entity_of(es,due.section),&ids)
         for due.sent<len(ids) {
             message:=Net_Gone{section=due.section,changes=server.changes}

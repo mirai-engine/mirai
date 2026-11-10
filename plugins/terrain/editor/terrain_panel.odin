@@ -8,6 +8,7 @@ import "mirai:host"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/geom"
 import "mirai:ui"
+import "base:runtime"
 
 FIELD_WIDTH :: f32(84) // of the number fields of the panel: a value and its unit
 @(rodata) KEY_NAMES := [9]string{"1","2","3","4","5","6","7","8","9"}
@@ -55,7 +56,7 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
             switch {
             case tool_painting(tool): terrain_paint_panel(s,tool,world,app.assets)
             case tool_holing(tool):   terrain_holes_panel(s,tool)
-            case tool_shaping(tool):  terrain_shapes_panel(s,tool,world,app)
+            case tool_shaping(tool):  terrain_shapes_panel(s,tool,world,app.assets,app.allocator)
             case:                     terrain_sculpt_panel(s,tool,world,app)
             }
             // The entity of the terrain, as Details shows it, which the panel covers.
@@ -262,7 +263,7 @@ slope_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 }
 
 @(private)
-terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
     count:=stroke.source.kind==.Mesh?len(Shape_Kind):len(Shape_Kind)-1
@@ -271,7 +272,7 @@ terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
     mode:=tool.brush==.Subtract?1:0
     if ui.property(ctx,"Mode") {if ui.tabs(ctx,ui.id(ctx,"shape_mode"),{"Add","Carve"},&mode) {tool.brush=mode==1?.Subtract:.Union}}
     if tool.shape==.Selected {
-        if ui.button(ctx,ui.id(ctx,"operand"),{label="Apply and consume selected mesh",style=.Field,width=-1,center=true}).clicked {terrain_operand(s,tool,world,app)}
+        if ui.button(ctx,ui.id(ctx,"operand"),{label="Apply and consume selected mesh",style=.Field,width=-1,center=true}).clicked {terrain_operand(s,tool,world,assets,allocator)}
         return
     }
     brush_fields(s,tool,false,false)
@@ -279,7 +280,7 @@ terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         blend:=f64(tool.blend)
         if ui.property(ctx,"Blend") {if ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.02,unit="m"}).changed {tool.blend=f32(blend)}}
     }
-    if stroke.active && stroke.pending.kind==.Shape && !stroke.pending.placing {pending_buttons(s,tool,world,app.assets)}
+    if stroke.active && stroke.pending.kind==.Shape && !stroke.pending.placing {pending_buttons(s,tool,world,assets)}
 }
 
 @(private)

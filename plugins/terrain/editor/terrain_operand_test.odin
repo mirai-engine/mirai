@@ -182,7 +182,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
         editor.selection_set(&selection,{operand})
-        terrain_operand(&session,&tool,ref,&app)
+        terrain_operand(&session,&tool,ref,app.assets,app.allocator)
         testing.expect(t,core.alive(&world.entities,operand))
         testing.expect(t,!edits.open && !edits.commit)
         testing.expect_value(t,edits.cursor,0)
@@ -197,7 +197,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         testing.expect_value(t,len(untouched),len(before))
         if len(untouched)==len(before) {for value,i in untouched {testing.expect_value(t,value,before[i])}}
         editor.selection_set(&selection,{owner,operand})
-        terrain_operand(&session,&tool,ref,&app)
+        terrain_operand(&session,&tool,ref,app.assets,app.allocator)
         if !testing.expectf(t,edits.commit,"%v rejected: %s",brush,string(session.toast[:session.toast_length])) {continue}
         testing.expect(t,editor.edits_commit(&edits,ref,&selection))
         testing.expect_value(t,edits.cursor,1)

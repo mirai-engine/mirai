@@ -516,24 +516,24 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 // with a Pose_Source shares the pose of its rig when both have one skeleton,
 // and is a rig that follows it when they have two.
 @(private)
-rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),app:^host.App) -> bool {
+rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets) -> bool {
     if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_inputs={};return true}
-    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(app.assets)}
+    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(assets)}
     if inputs==playback.rigs_inputs {return true}
-    skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),app:^host.App,e:core.Entity) -> base.Asset_Id {
+    skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
         static,has:=core.get(meshes,e)
         if !has || static.mesh=={} {return {}}
-        mesh:=host.assets_mesh(app.assets,static.mesh)
+        mesh:=host.assets_mesh(assets,static.mesh)
         return mesh.skeleton if mesh!=nil && !mesh.failed else {}
     }
-    rig_of :: proc(meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),app:^host.App,row:int) -> (rig:Rig,ok:bool) {
+    rig_of :: proc(meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets,row:int) -> (rig:Rig,ok:bool) {
         e:=core.entity_at(meshes,row)
-        skeleton:=skeleton_of(meshes,app,e)
+        skeleton:=skeleton_of(meshes,assets,e)
         if skeleton=={} {return}
         rig={entity=e,skeleton=skeleton}
         if skins.table!=nil {
             if source,has:=core.get(skins,e);has {
-                leader:=skeleton_of(meshes,app,source.rig)
+                leader:=skeleton_of(meshes,assets,source.rig)
                 if leader=={} || leader==skeleton || source.rig==e {return}
                 rig.leader=source.rig
             }
@@ -542,7 +542,7 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
     }
     changed:=false;count:=0
     for row in 0..<core.count(meshes) {
-        rig,ok:=rig_of(meshes,skins,app,row)
+        rig,ok:=rig_of(meshes,skins,assets,row)
         if !ok {continue}
         count+=1
         known:=rig_find(playback,rig.entity)
@@ -552,7 +552,7 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
         next,error:=make([dynamic]Rig,0,count)
         if error!=nil {return false}
         for row in 0..<core.count(meshes) {
-            if rig,ok:=rig_of(meshes,skins,app,row);ok {append(&next,rig)}
+            if rig,ok:=rig_of(meshes,skins,assets,row);ok {append(&next,rig)}
         }
         slice.sort_by(next[:],proc(a,b:Rig) -> bool {return a.entity<b.entity})
         delete(playback.rigs);playback.rigs=next;playback.rigs_stamp+=1

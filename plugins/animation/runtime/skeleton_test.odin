@@ -64,7 +64,7 @@ rig_world_settle :: proc(w:^Rig_World) {
 
 @(private="file")
 rig_world_advance :: proc(w:^Rig_World,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
-    if app.assets!=nil {rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app)}
+    if app.assets!=nil {rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets)}
     animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),&w.requests,&w.events,core.read(&w.targets),core.read(&w.roots),&w.playback,app,time,frame,&w.cache,&w.problems)
     inputs:=Constraint_Inputs{core.read(&w.ik),core.read(&w.look),core.read(&w.limits),core.read(&w.feet),core.read(&w.sockets),core.read(&w.retargets),core.read(&w.roots),core.read(&w.worlds),0,&w.cache,&w.problems}
     ground_inputs:=Grounding_Inputs{core.read(&w.grounded),{},core.read(&w.transforms),core.read(&w.parents),0,&w.problems,{}}
@@ -141,21 +141,21 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     w:Rig_World;core.entities_init(&w.entities);defer rig_world_destroy(&w)
     first,second,third:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.meshes,second,{mesh=mesh_id});core.add(&w.meshes,first,{mesh=mesh_id});rig_world_settle(&w)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     stamp:=w.playback.rigs_stamp;pointer:=raw_data(w.playback.rigs)
     testing.expect(t,rig_find(&w.playback,first)>=0 && rig_find(&w.playback,second)>=0 && rig_find(&w.playback,third)<0)
     assets.revision+=1;core.get(&w.meshes,first).materials[0]={0xab,0xcd}
     saved_context:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer)
     core.add(&w.meshes,third,{mesh=mesh_id});rig_world_settle(&w)
     inputs:=w.playback.rigs_inputs
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_inputs==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     testing.expect(t,w.playback.rigs_stamp==stamp+1 && len(w.playback.rigs)==3 && rig_find(&w.playback,third)>=0)
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
 }

@@ -67,20 +67,20 @@ Gpu_Resource :: struct {
 @(private)
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,sources:[]effect.Particle_Resource,bindings:^Particle_Bindings,
-    e:core.Entity,transform:mm.Mat4,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,
+    e:core.Entity,transform:mm.Mat4,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
-    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,e:core.Entity) -> Resource_Desc {
-        return entity_bones(sync,drawn,meshes,worlds,id,app.assets,app.renderer,e) if kind==.Bones else entity_surface(drawn,meshes,worlds,id,app.assets,app.renderer,e)
+    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+        return entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,e) if kind==.Bones else entity_surface(drawn,meshes,worlds,id,assets,renderer,e)
     }
-    of_asset :: proc(sync:^Particle_Sync,kind:Resource_Kind,app:^host.App,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-        return asset_bones(sync,app.assets,app.renderer,mesh,transform) if kind==.Bones else asset_surface(app.assets,app.renderer,mesh,transform)
+    of_asset :: proc(sync:^Particle_Sync,kind:Resource_Kind,assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
+        return asset_bones(sync,assets,renderer,mesh,transform) if kind==.Bones else asset_surface(assets,renderer,mesh,transform)
     }
     if info.shape==.Surface || info.shape==.Bones {
         kind:=Resource_Kind.Bones if info.shape==.Bones else .Surface
         switch {
-        case bindings.surface!=core.NONE: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,app,bindings.surface)
-        case info.surface_mesh!={}: resources[0]=of_asset(sync,kind,app,info.surface_mesh,transform)
-        case: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,app,e)
+        case bindings.surface!=core.NONE: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,assets,renderer,bindings.surface)
+        case info.surface_mesh!={}: resources[0]=of_asset(sync,kind,assets,renderer,info.surface_mesh,transform)
+        case: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,assets,renderer,e)
         }
     }
     for need,at in shown.needs.resources {
@@ -127,11 +127,11 @@ emitter_resources :: proc(
         }
         if need.kind!=.Surface && need.kind!=.Bones {continue}
         if source!=core.NONE {
-            resources[1+at]=of_entity(sync,need.kind,drawn,meshes,worlds,id,app,source)
+            resources[1+at]=of_entity(sync,need.kind,drawn,meshes,worlds,id,assets,renderer,source)
             continue
         }
         for &given in sources {
-            if base.name_hash(base.text_get(given.name[:]))==need.name && given.mesh!={} {resources[1+at]=of_asset(sync,need.kind,app,given.mesh,transform)}
+            if base.name_hash(base.text_get(given.name[:]))==need.name && given.mesh!={} {resources[1+at]=of_asset(sync,need.kind,assets,renderer,given.mesh,transform)}
         }
     }
     // Where each was the frame before: the first frame, where it is.
