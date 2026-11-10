@@ -321,7 +321,7 @@ not change the world or the history and Play does not see it. On turning it off,
 recovers its sun and sky from `Render_Sync`. It is per tab, starts off and is not saved. The
 scene's local lights remain and the exposure is the one chosen below.
 
-- API: `editor.action` with `studio_light` toggles it; `editor.inspect` gives its `checked`.
+- API: `editor.view` with `Studio_Light` turns it on and off; `editor.inspect` gives its `checked`.
 
 ### Viewport exposure
 
@@ -688,7 +688,7 @@ browser cards and asset fields):
 - **Scenes** (`preview_scene`): the first thing the editor showed of the scene the first time it
   opened it (`scene_open`: menu, tab, API or initial scene; not a prefab), while it has no stored
   view; afterwards, what the viewport shows when **View > Update scene thumbnail** is chosen
-  (action `Scene_Thumbnail`, `editor.action` `scene_thumbnail`; disabled outside Edit, with an
+  (`scene.thumbnail`; off outside Edit, with an
   asset document in front or with a scene that is not a saved asset) or **Update thumbnail** in its
   card's menu while it is open in a tab (`scene_thumbnail_update`: if it is not in front, it
   brings its tab and takes the view that tab kept). On saving it, a notice says "Scene thumbnail

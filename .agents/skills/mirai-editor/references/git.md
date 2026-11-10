@@ -76,4 +76,4 @@ nothing of the session), what the operations need of the session (`editor/git.od
   not collide already joined).
 - Merge mode: `git.conflicts`, `scene.inspect` with theirs by default, `git.choose` with ours,
   `git.accept` (with and without `reject`) and `git.finish`; with a row removed by one side and
-  changed by the other. The UI: `editor.action source_control` and `capture` with `ui`.
+  changed by the other. The UI: `editor.view` with `Git` and `capture` with `ui`.

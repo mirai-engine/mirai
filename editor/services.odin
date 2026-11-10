@@ -9,12 +9,16 @@ import "mirai:editor/api"
 // the arguments it was given, serves them once per frame between frames and
 // closes them with itself.
 
-// False when the API was asked for and did not open.
+// False when the API was asked for and did not open. Without it the registry
+// of the methods opens all the same, listening on no port: the menus, the
+// shortcuts and the buttons of the editor run its methods.
 @(private)
 services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
     api_ok=true
     manual:=options.headless && options.frames==0
-    if !options.no_api {
+    if options.no_api {
+        if api_open(s,0,false,listen=false)!=.None {fmt.eprintln("mirai: the methods of the editor could not be registered: its menus and shortcuts run nothing")}
+    } else {
         port:=options.api_port>0?options.api_port:api.DEFAULT_PORT
         if options.api_port_any {port=0}
         opened:=api_open(s,port,manual)
@@ -25,7 +29,10 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
         switch opened {
         case .None:      fmt.eprintfln("mirai: API at 127.0.0.1:%d",api_port(s))
         case .Methods:   // api_open already said which
-        case .No_Storage, .Server: fmt.eprintln("mirai: the agent API could not open")
+        case .No_Storage: fmt.eprintln("mirai: the agent API could not open")
+        case .Server:
+            fmt.eprintln("mirai: the agent API could not open")
+            api_open(s,0,false,listen=false)
         }
         api_ok=opened==.None
     }
@@ -44,6 +51,8 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
 @(private)
 services_poll :: proc(s:^Session) {
     collab_update(s)
+    // What the person asked for in the frame, then what the agents ask: one call at a time.
+    commands_run(s)
     api_poll(s)
 }
 

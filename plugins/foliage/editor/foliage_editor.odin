@@ -256,7 +256,7 @@ target :: proc(s:^editor.Session,foliages:core.Read(foliage.Foliage)) -> core.En
     return core.NONE
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 foliage_tool :: proc(
     s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),
     grounds:core.Ref(foliage.Foliage_Ground),requests:^foliage.Foliage_Ground_Requests,resident:core.Ref(foliage.Foliage_Resident),
@@ -293,9 +293,6 @@ foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool);ctx:=g.ctx
-    if core.key_pressed(input,.G) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,TOOL,!tool.active)}
-    tool.active=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),.Edit,"Foliage","G",tool.active) {editor.tool_set(s,TOOL,!tool.active)}
     tool.active=editor.tool_on(s,TOOL)
     if !tool.active || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")

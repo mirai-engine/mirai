@@ -74,8 +74,24 @@ source_bind :: proc(
     }
     s.ctx.game={
         user=&s.source,family=s.family,prompts=source_prompts,action=source_action,language=ui_language(&settings,&preferences),
-        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,
+        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,draw=source_draw,
     }
+}
+
+// The procedure @(draw) of the game a Draw node names; nil: the game declares none of that name.
+@(private)
+draw_named :: proc(info:^core.World_Info,name:u64) -> proc(ctx:^ui.Context,node:ui.Draw_Node) {
+    if info==nil || name==0 {return nil}
+    for &declared in info.draws {
+        if declared.call!=nil && base.name_hash(declared.name)==name {return cast(proc(ctx:^ui.Context,node:ui.Draw_Node))declared.call}
+    }
+    return nil
+}
+
+@(private)
+source_draw :: proc(user:rawptr,ctx:^ui.Context,node:ui.Draw_Node) {
+    src:=(^Source)(user)
+    if draw:=draw_named(src.app.info,node.name);draw!=nil {draw(ctx,node)}
 }
 
 // The input action whose name has this name_hash, from the names of Action.

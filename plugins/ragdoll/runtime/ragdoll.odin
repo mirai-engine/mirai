@@ -82,7 +82,7 @@ ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Bod
     state.active=false
 }
 
-@(step="fixed",loops="game editor",stage="simulate",after="animation_sample",before="physics_prepare")
+@(step="fixed",loops="game editor",stage="simulate",before="physics_prepare")
 ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:^core.Table(Ragdoll_State),rigids:core.Read(phys.Rigid_Body),joint_rows:core.Read(phys.Joint),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),playback:core.Ref(anim.Playback),runtime:^Ragdoll_Runtime,settings:core.Ref(Ragdoll_Settings),bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,time:core.Time,poses:^anim.Animation_Requests,problems:^core.Problems) {
     for row in 0..<core.count(core.read(states)) {
         entity:=core.entity_at(core.read(states),row)
@@ -188,7 +188,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
     }
 }
 
-@(step="fixed",loops="game editor",stage="react",before="animation_advance")
+@(step="fixed",loops="game editor",stage="react")
 ragdoll_pose :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:core.Read(Ragdoll_State),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),requests:^anim.Animation_Requests,time:core.Time,problems:^core.Problems) {
     if time.dt<=0 || !time.playing {return}
     for row in 0..<core.count(bones) {

@@ -242,13 +242,15 @@ file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (pr
 }
 
 // Checks the .ui of the project, or those of ids, against the types of the
-// game: what does not load, the names that resolve to nothing and the paths
-// they bind that it lacks.
+// game: what does not load, the names that resolve to nothing, the paths
+// they bind that it lacks and the procedures their Draw nodes name; checking
+// all of them, also the node names the code of the game asks them for.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
     defer bind_types_free(&types)
     if len(ids)==0 {
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
+        code_names_check(problems,p.assets,{project.folder_path(p.root,.Game,context.temp_allocator)})
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
     }

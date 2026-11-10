@@ -405,7 +405,7 @@ View_Bodies :: struct {
 }
 
 // The camera of the game becomes its view.
-@(step="late",loops="game",stage="end",after="transforms_propagate")
+@(step="late",loops="game",stage="end")
 camera_view :: proc(
     cameras:core.Read(Camera),exposures:core.Read(Exposure),worlds:core.Read(core.World_Transform),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,
 ) {

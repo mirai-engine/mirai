@@ -14,7 +14,7 @@ what it needs by name ([terrain-foliage](../world/terrain-foliage.md)):
 {"method":"foliage.create","params":{"name":"Plants"}}
 {"method":"foliage.type_add","params":{"entity":"Plants","mesh":"island/palm.mesh","name":"palm","density":0.007,"scale":[0.8,1.25],"align":0.15,"rule":true,"slope":[0,28],"ground_height":[0.9,6.5]}}
 {"method":"foliage.paint","params":{"entity":"Plants","mode":"generate","at":[0,0,0],"radius":82}}
-{"method":"scene.add","params":{"name":"Sea","components":{"Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}}
+{"method":"scene.add","params":{"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}}
 {"method":"scene.write","params":{"entities":[{"name":"Hut","prefab":"island/hut.scene","position":[4,3,-2]}]}}
 {"method":"asset.save","params":{"all":true}}
 {"method":"scene.save","params":{}}

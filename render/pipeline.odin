@@ -52,9 +52,8 @@ Render_Resource :: enum u8 {
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
-	Gi,           // the indirect irradiance, half resolution
+	Gi,           // the light around each pixel beside the probe volume: its contact occlusion (r), or the indirect reference (rgb) with Settings.reference_gi
 	Probes,       // the irradiance of the probe volume, shared by every view
-	Hdr,          // the light of the opaque scene, kept for the next frame: without a relative emission
 	Display,      // the image before temporal resolve
 	Taa,          // the resolved image at output size, kept for the next frame
 	Ldr,          // the final image; for the passes after the Output stage, without what is drawn over it
@@ -186,7 +185,7 @@ custom_index :: proc "contextless" (id: Render_Resource) -> int {return int(id) 
 
 // The resources with a copy of the previous frame.
 @(private)
-builtin_history :: proc "contextless" (id: Render_Resource) -> bool {return id == .Hdr || id == .Taa || id == .Hiz}
+builtin_history :: proc "contextless" (id: Render_Resource) -> bool {return id == .Taa || id == .Hiz}
 
 // What the stages of the renderer read and write.
 @(private)
@@ -220,14 +219,12 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 	case .World:
 		writes(pass, .Probes)
 	case .Indirect:
-		reads(pass, .Normal, .Linear_Depth, .Motion, .Emission)
-		use(pass, .Hdr, .Read, previous = true, optional = true)
-		use(pass, .Probes, .Read, optional = true)
+		reads(pass, .Normal, .Linear_Depth, .Motion)
 		writes(pass, .Gi)
 	case .Composite:
 		reads(pass, .Albedo, .Normal, .Emission, .Linear_Depth, .Motion, .Direct)
 		for resource in ([]Render_Resource{.Reflectance, .Reflections, .Gi, .Probes}) {use(pass, resource, .Read, optional = true)}
-		writes(pass, .Hdr, .Display)
+		writes(pass, .Display)
 	case .Lit:
 		reads(pass, .Linear_Depth, .Display)
 		writes(pass, .Display)
@@ -253,7 +250,7 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 @(private)
 custom_writable :: proc "contextless" (id: Render_Resource) -> bool {
 	#partial switch id {
-	case .Direct, .Reflections, .Gi, .Hdr, .Display, .Taa, .Generated: return true
+	case .Direct, .Reflections, .Gi, .Display, .Taa, .Generated: return true
 	}
 	return id >= .Custom0
 }
@@ -340,7 +337,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			if use.resource == .Depth && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Depth, which only stages write; read it, or write Linear_Depth in a resource of its own", pass.name)}
 			if use.resource == .Exposure && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Exposure, which the Output stage measures; read it", pass.name)}
 			if use.access == .Write && !custom_writable(use.resource) {
-				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Reflections, Gi, Hdr, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
+				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Reflections, Gi, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
 			}
 			after := output_at >= 0
 			if use.access == .Write && after && use.resource < .Custom0 && use.resource != .Generated {
@@ -352,7 +349,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			if use.previous {
 				history := builtin_history(use.resource) if use.resource < .Custom0 else plan.resources[custom_index(use.resource)].history
 				if !history || use.access == .Write {
-					return fail(buffer, "render pipeline: custom pass %s reads the previous %v; only Hdr, Taa, Hiz and resources declared with history have one, and it is read only", pass.name, use.resource)
+					return fail(buffer, "render pipeline: custom pass %s reads the previous %v; only Taa, Hiz and resources declared with history have one, and it is read only", pass.name, use.resource)
 				}
 			}
 		}
@@ -683,7 +680,6 @@ pass_resource_of :: proc(p: ^Pass, resource: Render_Resource, previous: bool) ->
 	case .Reflections:  return texture_or_dummy(p.r, p.reflections), 0
 	case .Gi:           return p.gi, 0
 	case .Probes:       return texture_or_dummy(p.r, p.r.ddgi.irradiance if p.r.ddgi.valid else 0), 0
-	case .Hdr:          return t.hdr[at], 0
 	case .Display:      return t.display, 0
 	case .Taa:          return t.taa[at], 0
 	case .Ldr:          return t.ldr, 0

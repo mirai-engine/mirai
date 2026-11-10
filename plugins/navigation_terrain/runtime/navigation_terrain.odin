@@ -20,7 +20,7 @@ import terrain "plugins:terrain/runtime"
 @(storage,host,by_world)
 Navigation_Terrain :: struct {stamps:[5]u64}
 
-@(step="fixed",loops="game editor",stage="react",before="navigation_build",server)
+@(step="fixed",loops="game editor",stage="react",server)
 navigation_terrain_unloaded :: proc(
     state:^Navigation_Terrain,unloaded:^nav.Nav_Unloaded,resident:core.Ref(terrain.Terrain_Resident),data:core.Ref(terrain.Terrain_Data),
     terrains:core.Read(terrain.Terrain),colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),

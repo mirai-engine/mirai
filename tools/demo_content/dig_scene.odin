@@ -62,7 +62,7 @@ write_dig_scene :: proc(o:^Out) {
     os.make_directory_all(path(o,"assets/dig"))
     grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
     soil:=dig_material(o,"Dig soil",{0.34,0.23,0.14},0.95)
-    rock:=game.material_asset("Cobblestone")
+    rock:=material_id("Cobblestone")
     ore:=dig_material(o,"Dig ore",{0.85,0.5,0.22},0.35,0.85)
 
     // 32 by 16 by 32 m: solid from 7.5 m under the surface, at 0, up to it.

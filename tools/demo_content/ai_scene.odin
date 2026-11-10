@@ -7,6 +7,7 @@ import "mirai:core"
 import game "mirai:demo/game"
 import gui "mirai:engine/gui"
 import render "mirai:engine/render"
+import volume "mirai:engine/volume"
 import phys "plugins:physics/runtime"
 import nav "plugins:navigation/runtime"
 import behavior "plugins:behavior/runtime"
@@ -109,12 +110,14 @@ ai_piece :: proc(s:^asset.Scene_Builder,piece:game.Arena_Piece) {
         if piece.kind==.Cart {
             rigid:=phys.RIGID_BODY_KINEMATIC
             asset.builder_set(s,e,rigid)
-            asset.builder_set(s,e,nav.Nav_Obstacle{half={0.5,0.5,0.5},settle=1})
+            asset.builder_set(s,e,nav.Nav_Obstacle{settle=1})
+            asset.builder_set(s,e,volume.box({0.5,0.5,0.5}))
             asset.builder_set(s,e,game.Arena_Cart{from=piece.position,to=piece.to})
         }
     case .Area:
         e:=asset.builder_entity(s,piece.name,{position=piece.position})
-        asset.builder_set(s,e,nav.Nav_Area{half=piece.half+{0,1,0},area=piece.area})
+        asset.builder_set(s,e,nav.Nav_Area{area=piece.area})
+        asset.builder_set(s,e,volume.box(piece.half+{0,1,0}))
         slab:=asset.builder_entity(s,"Slab",{position={0,0.01,0},scale=piece.half*2},e)
         asset.builder_set(s,slab,render.Mesh_Renderer{shape=.Cube})
         asset.builder_set(s,slab,render.Tint{color=piece.color})
@@ -127,6 +130,7 @@ ai_piece :: proc(s:^asset.Scene_Builder,piece:game.Arena_Piece) {
         asset.builder_set(s,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})
     case .Air:
         e:=asset.builder_entity(s,piece.name,{position=piece.position})
-        asset.builder_set(s,e,nav.Nav_Bounds{half=piece.half,air=true})
+        asset.builder_set(s,e,nav.Nav_Bounds{air=true})
+        asset.builder_set(s,e,volume.box(piece.half))
     }
 }

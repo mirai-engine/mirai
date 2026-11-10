@@ -61,7 +61,7 @@ Unsaved_Use :: struct {
     uses:bool,
 }
 
-// The dot of unsaved changes, as the prototype draws it.
+// The dot of unsaved changes.
 UNSAVED_COLOR :: ui.Color{201,181,239,255}
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -91,8 +91,9 @@ DOCK_MIN :: f32(220) // the narrowest a docked panel is dragged
 
 Run_Kind :: enum u8 {Play,Simulate,Play_From_Camera}
 
+// The entry each one runs.
 @(rodata)
-RUN_ACTIONS := [Run_Kind]Action{.Play=.Play,.Simulate=.Simulate,.Play_From_Camera=.Play_From_Camera}
+RUN_COMMANDS := [Run_Kind]string{.Play="play",.Simulate="simulate",.Play_From_Camera="play_from_camera"}
 
 // Rectangles of the last frame, in window points; no size: not shown.
 Shell_Rects :: struct {bar,left,right,bottom:ui.Rect}
@@ -121,17 +122,6 @@ Placement :: struct {active:bool,using subject:Drag}
 @(private)
 Named :: struct {id:ui.Id,kind:platform.Window_Region_Kind,clip:ui.Id}
 
-@(private)
-Shell_Item :: struct {
-    id:ui.Id,
-    kind:enum u8 {Tool,View},
-    icon:ui.Icon,
-    label:[64]u8,
-    label_length:int,
-    shortcut:[8]u8,
-    shortcut_length:int,
-    active,clicked:bool,
-}
 
 // The UI of the editor. A plugin builds into ctx from the ui phase, between
 // editor_panels and editor_end.
@@ -167,8 +157,6 @@ Editor_Ui :: struct {
     title:[256]u8,
     title_length:int,
     create_scroll:[2]f32,
-    items,next_items:[16]Shell_Item,
-    item_count,next_item_count:int,
     drawings:[DRAWING_CAPACITY]Drawing, // of the frame being built
     drawing_count:int,
     tool_top,tool_width:f32,          // where the panel of a tool goes, in place of Details
@@ -260,25 +248,6 @@ gui_destroy :: proc(g:^Editor_Ui) {
 // The id of a widget of the shell, whatever scope is open.
 shell_id :: proc(g:^Editor_Ui,name:string,index:int=0) -> ui.Id {return ui.id_derive(g.ctx,SHELL_SCOPE,name,index)}
 
-@(private)
-shell_item :: proc(g:^Editor_Ui,item:Shell_Item) -> bool {
-    if !g.begun {return false}
-    if g.next_item_count>=len(g.next_items) {g.dropped+=1;return false}
-    g.next_items[g.next_item_count]=item
-    g.next_item_count+=1
-    for previous in g.items[:g.item_count] {
-        if previous.id==item.id {return previous.clicked}
-    }
-    return false
-}
-
-tool_button :: proc(g:^Editor_Ui,id:ui.Id,icon:ui.Icon,label,shortcut:string,active:bool) -> bool {
-    item:=Shell_Item{id=id,kind=.Tool,icon=icon,active=active}
-    item.label_length=copy(item.label[:],label)
-    item.shortcut_length=copy(item.shortcut[:],shortcut)
-    return shell_item(g,item)
-}
-
 // An area of a plugin's panel that draw paints with the ui.draw_ procedures,
 // in the rectangle the layout gives it and under the clip of its container.
 // The pointer on it is its interaction. Past DRAWING_CAPACITY in a frame the
@@ -293,12 +262,6 @@ drawing :: proc(g:^Editor_Ui,id:ui.Id,width,height:ui.Size,draw:Drawing_Proc,use
         g.dropped+=1
     }
     return ui.canvas(g.ctx,id,width,height,u32(User_Icon.Drawing),data,flags)
-}
-
-view_toggle :: proc(g:^Editor_Ui,id:ui.Id,label:string,active:bool) -> bool {
-    item:=Shell_Item{id=id,kind=.View,active=active}
-    item.label_length=copy(item.label[:],label)
-    return shell_item(g,item)
 }
 
 // The layout of the panel of the active tool of a plugin, or of the shown
@@ -480,7 +443,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
         ui.draw_polyline(ctx,p[:],1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,-6*s},1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,2*s},1.5,color)
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Icons drawn on a 24 unit grid, at two thirds.
     case .Scene:
         for y in ([2]f32{-2,2}) {ui.draw_line(ctx,c+{-5.33*s,y*s},c+{5.33*s,y*s},1.3*s,color)}
         ui.draw_line(ctx,c+{-1.33*s,-6*s},c+{-2.67*s,6*s},1.3*s,color)
@@ -662,14 +625,12 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     ctx:=g.ctx
     th:=&ctx.theme
     g.cursor=.Default
-    g.items,g.item_count=g.next_items,g.next_item_count
-    g.next_item_count=0
     g.drawing_count=0
     if s.projects!=nil && s.projects.launcher {
         projects_build(s)
         return
     }
-    // Behind a document in front, where the scene would be, the canvas of the prototype.
+    // Behind a document in front, where the scene would be, its canvas.
     if scene_covered(s) {
         if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=th.well,float={to=.Surface}}) {}
     }
@@ -1011,14 +972,6 @@ dock_edge :: proc(s:^Session,width,top,height:f32) {
     }
 }
 
-bottom_toggle :: proc(g:^Editor_Ui,tab:Bottom_Tab) {
-    if g.layout.bottom_open && g.layout.bottom_tab==tab {
-        g.layout.bottom_open=false
-        return
-    }
-    g.layout.bottom_open,g.layout.bottom_tab=true,tab
-}
-
 // The edge of a panel that resizes it. sign: whether the size grows with the pointer (1) or against it (-1).
 @(private)
 splitter :: proc(s:^Session,which:Splitter,rect:ui.Rect,size,sign:f32) -> (value:f32,changed:bool) {
@@ -1055,18 +1008,29 @@ divider_vertical :: proc(ctx:^ui.Context) {
     }
 }
 
-@(private)
-action_button :: proc(s:^Session,action:Action,b:ui.Button,index:int) -> bool {
+// The button of an entry: off and checked as the entry is, and it runs it.
+// index tells apart two buttons of one entry.
+command_button :: proc(s:^Session,name:string,b:ui.Button,index:int=0) -> bool {
     g:=s.gui
-    state:=action_state(s,action)
-    id:=shell_id(g,"action",int(action)+1+index*64)
+    state:=command_state(s,name)
+    id:=command_widget(g,name,index)
     named_add(g,id)
     button:=b
     button.disabled=button.disabled || state.disabled
-    if button.tip=="" && button.label=="" {labels:=ACTION_LABELS;button.tip=labels[action]}
+    if button.tip=="" && button.label=="" {button.tip=command_label(s,name)}
     if button.label!="" && state.label!="" {button.label=state.label}
     if button.style==.Tab || button.style==.Ghost {button.active=button.active || state.checked}
-    if ui.button(g.ctx,id,button).clicked {return action_run(s,action)}
+    if ui.button(g.ctx,id,button).clicked {return command_run(s,name)}
+    return false
+}
+
+// The entry of a menu for an entry of the commands: it runs it. label: in place of its own.
+command_menu_item :: proc(s:^Session,id:ui.Id,name:string,label:="") -> bool {
+    b:=command_binding(s,name)
+    if b==nil {return false}
+    state:=binding_state(s,b)
+    text:=label!=""?label:binding_label(b,state)
+    if ui.menu_item(s.gui.ctx,id,text,{icon=b.icon,shortcut=shortcut_text(b.shortcut),checked=state.checked,disabled=state.disabled}) {return command_run(s,name)}
     return false
 }
 
@@ -1094,32 +1058,32 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
         if document!=nil {
             // An asset document: its save, undo and redo, and what it plays after them.
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                action_button(s,.Save,{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-                action_button(s,.Undo,{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-                action_button(s,.Redo,{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
+                command_button(s,"save",{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"undo",{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"redo",{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
             }
             if ui.box(ctx,{id=shell_id(g,"asset_toolbar"),width=ui.GROW,height=ui.GROW,gap=8,padding={10,0,0,0},align_y=.Center,track=true}) {
                 if material_document_shown(s) {ui.label(ctx,material_document_kind(s),th.font,th.text_muted)}
             }
         } else if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-            action_button(s,.Save,{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)},0)
-            action_button(s,.Undo,{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-            action_button(s,.Redo,{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
+            command_button(s,"save",{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)})
+            command_button(s,"undo",{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+            command_button(s,"redo",{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
         }
         // The tools go at the left, after the document: Move, Rotate and Scale,
         // the snaps and the axes, the camera, and the tools of the plugins.
         if s.mode!=.Play && s.mode!=.Watch && !scene_covered(s) {
             divider_vertical(ctx)
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                tools:=[3]Action{.Tool_Move,.Tool_Rotate,.Tool_Scale}
+                tools:=[3]string{"tool_move","tool_rotate","tool_scale"}
                 icons:=[3]ui.Icon{.Move,.Rotate,.Scale}
-                // Up to 1050 points the prototype narrows them.
-                for action,i in tools {
-                    action_button(s,action,{icon=icons[i],style=.Tab,width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16},0)
+                // Up to 1050 points they are narrower.
+                for tool,i in tools {
+                    command_button(s,tool,{icon=icons[i],style=.Tab,width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16})
                 }
                 divider_vertical(ctx)
                 snap_menu_build(s)
-                action_button(s,.Space,{icon=v.space==.Local?.Relative:.Absolute,style=.Ghost,icon_color=th.text_muted,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=v.space==.Local},0)
+                command_button(s,"space",{icon=v.space==.Local?.Relative:.Absolute,style=.Ghost,icon_color=th.text_muted,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=v.space==.Local})
                 camera_speed_build(s)
                 divider_vertical(ctx)
                 // A prefab document: its variants and its light, just before the tools.
@@ -1143,7 +1107,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
             if (ctx.size.x>=900 || s.mode==.Watch) && !scene_covered(s) {watch_bar_build(s)}
             // The finder looks for entities of the scene, which an asset document hides.
             if s.mode!=.Play && !scene_covered(s) {
-                action_button(s,.Find,{icon=ui.icon_user(u8(User_Icon.Search)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14},0)
+                command_button(s,"find",{icon=ui.icon_user(u8(User_Icon.Search)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14})
             }
             if !document_is_prefab(s) && (document==nil || !asset_document_flat(s,document.kind)) {
                 if document==nil && s.mode!=.Play {view_mode_build(s)}
@@ -1152,7 +1116,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
                     if ui.box(ctx,{id=shell_id(g,"fps"),width=ui.fixed(54),height=ui.fixed(th.control),align_x=.End,align_y=.Center,track=true}) {ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),th.font_small,th.text_muted)}
                 }
                 graphics:=shell_id(g,"graphics")
-                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {action_run(s,.Graphics)}
+                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {command_run(s,"graphics")}
             }
             if s.mode!=.Play && ctx.size.x>=900 {share_button(s,BAR_BUTTON_HEIGHT)}
             if document==nil {play_controls(s)}
@@ -1167,11 +1131,11 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
 }
 
 // One menu for the tools of the plugins and the panels of the project: the
-// one chosen takes the place of Details. As in the prototype: icon, name and
-// arrow, the name as wide as "Tools" so the button never grows and a longer
-// one is cut; below 900 points, the icon and the arrow.
+// one chosen takes the place of Details. Icon, name and arrow, the name as
+// wide as "Tools" so the button never grows and a longer one is cut; below
+// 900 points, the icon and the arrow.
 TOOLS_MENU_POPUP_WIDTH :: 240
-TOOLS_LABEL_WIDTH :: 28 // the width of "Tools" in the prototype
+TOOLS_LABEL_WIDTH :: 28 // the least width of "Tools"
 TOOLS_MENU_PARTS :: 58  // the width of the button besides its name: paddings, icon, gaps and arrow
 @(private)
 tools_menu_build :: proc(s:^Session) {
@@ -1182,10 +1146,12 @@ tools_menu_build :: proc(s:^Session) {
     shown:=panel_shown(panels)
     count:=panels!=nil?len(panels.list):0
     label,icon:="Tools",ui.icon_user(u8(User_Icon.Hammer))
-    for &item in g.items[:g.item_count] {
-        if item.kind!=.Tool {continue}
+    // The tools work on the scene of the document: a game shows none.
+    tools:=!playing(s)
+    for &b in command_bindings(s) {
+        if b.menu!=.Tools || !tools {continue}
         count+=1
-        if item.active {label,icon=string(item.label[:item.label_length]),item.icon}
+        if binding_state(s,&b).checked {label,icon=b.label,b.icon}
     }
     if count==0 {return}
     if shown!=nil {label,icon=base.text_get(shown.title[:]),.Layers}
@@ -1200,7 +1166,7 @@ tools_menu_build :: proc(s:^Session) {
         ui.icon(ctx,icon,color,16)
         if wide {
             room:=max(ui.text_width(&ctx.font,"Tools",th.font),TOOLS_LABEL_WIDTH)
-            // A fifth wider than the prototype, all of it for the name.
+            // A fifth wider than its parts, all of it for the name.
             room+=(room+TOOLS_MENU_PARTS)*0.2
             ui.label(ctx,ai_chat_menu_label(ctx,label,room,th.font),th.font,color,room)
         }
@@ -1220,10 +1186,10 @@ tools_menu_build :: proc(s:^Session) {
             panel_show(s,panels,-1,false)
         }
         header:=false
-        for &item in g.items[:g.item_count] {
-            if item.kind!=.Tool {continue}
+        for &b in command_bindings(s) {
+            if b.menu!=.Tools || !tools {continue}
             if !header {ui.menu_header(ctx,"Plugin tools");header=true}
-            item.clicked=ui.menu_item(ctx,item.id,string(item.label[:item.label_length]),{icon=item.icon,shortcut=string(item.shortcut[:item.shortcut_length]),checked=item.active})
+            command_menu_item(s,command_widget(g,b.name),b.name)
         }
         if panels!=nil && len(panels.list)>0 {
             ui.menu_header(ctx,"Panels")
@@ -1365,13 +1331,13 @@ play_controls :: proc(s:^Session) {
     th:=&ctx.theme
     stop:=ui.Button{icon=.Stop,style=.Tab,icon_color=th.accent,width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT}
     if s.mode==.Watch {
-        if ui.segments(ctx,ui.FIT,30) {action_button(s,.Stop,stop,0)}
+        if ui.segments(ctx,ui.FIT,30) {command_button(s,"stop",stop)}
         return
     }
     // Who has the keyboard and the mouse says how to get them back.
     eject :: proc(s:^Session) {
         if player_processes_captured(s) || s.mode==.Play && !s.play_input_released {
-            action_button(s,.Release_Input,{label="Eject (F1)",style=.Field,height=BAR_BUTTON_HEIGHT,size=s.gui.ctx.theme.font_small},0)
+            command_button(s,"release_input",{label="Eject (F1)",style=.Field,height=BAR_BUTTON_HEIGHT,size=s.gui.ctx.theme.font_small})
         }
     }
     providers_:=providers(s)
@@ -1380,17 +1346,17 @@ play_controls :: proc(s:^Session) {
     if s.mode==.Edit && play_plugin_active(s) {
         if label:=plugin_label(s,plugin);ctx.size.x>=900 && label!="" {ui.label(ctx,label,th.font,th.accent)}
         eject(s)
-        if ui.segments(ctx,ui.FIT,30) {action_button(s,.Stop,stop,0)}
+        if ui.segments(ctx,ui.FIT,30) {command_button(s,"stop",stop)}
         return
     }
     if s.mode==.Edit {
         kind:=&g.layout.run_kind
         players:=s.play_players
-        run:=RUN_ACTIONS[kind^]
+        run:=RUN_COMMANDS[kind^]
         // The mode keeps its icon whoever plays it: online players are said in the menu.
-        icon:=action_icon(run)
+        icon:=command_icon(s,run)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.control),gap=0,align_y=.Center,fill=th.accent,radius=th.radius_control}) {
-            action_button(s,run,{icon=icon,style=.Accent,width=28,height=ctx.theme.control,icon_size=14},0)
+            command_button(s,run,{icon=icon,style=.Accent,width=28,height=ctx.theme.control,icon_size=14})
             id:=shell_id(g,"run_menu")
             if ui.button(ctx,id,{icon=.Chevron_Down,style=.Accent,width=18,height=ctx.theme.control,icon_size=10,tip="Execution mode"}).clicked {
                 anchor,_:=ui.widget_rect(ctx,id)
@@ -1399,12 +1365,11 @@ play_controls :: proc(s:^Session) {
         }
         if ui.popup(ctx,shell_id(g,"run_popup"),{align_right=true}) {
             // Choosing a mode also runs it.
-            labels:=ACTION_LABELS
             for k in Run_Kind {
-                action:=RUN_ACTIONS[k]
-                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),labels[action],{icon=action_icon(action),shortcut=k==.Play?"F5":"",checked=kind^==k}) {
+                run:=RUN_COMMANDS[k]
+                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),command_label(s,run),{icon=command_icon(s,run),shortcut=k==.Play?"F5":"",checked=kind^==k}) {
                     kind^=k
-                    action_run(s,action)
+                    command_run(s,run)
                 }
             }
             if players!=nil {
@@ -1418,17 +1383,18 @@ play_controls :: proc(s:^Session) {
         }
         return
     }
-    if simulating(s) && !camera_previewing(s) {action_button(s,.Apply_Simulation,{label="Apply transforms",style=.Field,height=BAR_BUTTON_HEIGHT},0)}
+    if simulating(s) && !camera_previewing(s) {command_button(s,"apply_simulation",{label="Apply transforms",style=.Field,height=BAR_BUTTON_HEIGHT})}
     if camera_previewing(s) {
-        action_button(s,.Camera_Discard,{label="Discard",style=.Field,height=BAR_BUTTON_HEIGHT},0)
-        action_button(s,.Camera_Keep,{label="Keep",style=.Accent,height=BAR_BUTTON_HEIGHT},0)
+        command_button(s,"camera_discard",{label="Discard",style=.Field,height=BAR_BUTTON_HEIGHT})
+        command_button(s,"camera_keep",{label="Keep",style=.Accent,height=BAR_BUTTON_HEIGHT})
     }
     if label:=plugin_label(s,plugin);play_plugin_active(s) && ctx.size.x>=900 && label!="" {ui.label(ctx,label,th.font,th.accent)}
     eject(s)
     if ui.segments(ctx,ui.FIT,30) {
-        pause:=play_paused(s)?ui.Icon.Play:ui.icon_user(u8(User_Icon.Pause))
-        action_button(s,.Pause,{icon=pause,style=.Tab,icon_color=th.text,width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT},0)
-        action_button(s,.Stop,stop,0)
+        // One button: Pause while it plays, Resume while it is paused.
+        pause:=play_paused(s)?"resume":"pause"
+        command_button(s,pause,{icon=command_icon(s,pause),style=.Tab,icon_color=th.text,width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT})
+        command_button(s,"stop",stop)
     }
 }
 
@@ -1460,47 +1426,40 @@ window_controls :: proc(s:^Session) {
 }
 
 @(private)
-Menu_Entry :: struct {action:Action,group:int}
-
-@(private)
 menus_build :: proc(s:^Session,w:core.World_Ref) {
-    g:=s.gui
-    ctx:=g.ctx
-    file:=[?]Menu_Entry{{.New,0},{.Open,0},{.Projects,0},{.Save,1},{.Save_All,1},{.Save_As,1},{.Import,2},{.Build,3},{.Settings,3},{.Quit,4}}
-    view:=[?]Menu_Entry{{.Focus,0},{.Reset_Camera,0},{.Scene_Thumbnail,0},{.Grid,1},{.Indicators,1},{.Output_Frame,1},{.Game_Detail,1},{.Studio_Light,1},{.Graphics,1},{.Inspector_Panel,2},{.Console_Panel,2},{.Build_Panel,2}}
-    menu_entries(s,"Mirai",1,file[:],{icon=ui.icon_user(u8(User_Icon.Mirai)),icon_color=MARK_ARM,icon_size=30,padding=4})
-    menu_entries(s,"View",4,view[:])
+    menu_entries(s,"Mirai",1,.File,{icon=ui.icon_user(u8(User_Icon.Mirai)),icon_color=MARK_ARM,icon_size=30,padding=4})
+    menu_entries(s,"View",4,.View)
 }
 
+// A menu of the bar: the entries given to it, of the editor and of the
+// plugins, by group. View shows Stats, a popup of its own and not a command,
+// after the panels of the plugins.
 @(private)
-menu_entries :: proc(s:^Session,title:string,index:int,entries:[]Menu_Entry,look:ui.Button={}) {
+menu_entries :: proc(s:^Session,title:string,index:int,menu:Menu,look:ui.Button={}) {
     g:=s.gui
     ctx:=g.ctx
     id:=shell_id(g,"menu",index)
     named_add(g,id)
     if ui.menu(ctx,id,title,look.icon!=.None?BAR_MARK_HEIGHT:26,look) {
-        labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
-        group:=entries[0].group
-        for entry,at in entries {
-            if entry.group!=group {ui.menu_separator(ctx)}
-            group=entry.group
-            state:=action_state(s,entry.action)
-            label:=state.label!=""?state.label:labels[entry.action]
-            shortcut:=entry.action==.Deselect?"Esc":shortcut_text(shortcuts[entry.action])
-            if ui.menu_item(ctx,shell_id(g,"menu_item",index*100+at+1),label,{icon=action_icon(entry.action),shortcut=shortcut,checked=state.checked,disabled=state.disabled}) {action_run(s,entry.action)}
-        }
-        if title=="View" {
-            ui.menu_separator(ctx)
-            for &item in g.items[:g.item_count] {
-                if item.kind!=.View {continue}
-                item.clicked=ui.menu_item(ctx,item.id,string(item.label[:item.label_length]),{checked=item.active})
+        shown:=false
+        for group in 0..<u8(MENU_GROUPS) {
+            parted:=false
+            part :: proc(ctx:^ui.Context,shown,parted:^bool) {
+                if shown^ && !parted^ {ui.menu_separator(ctx)}
+                shown^,parted^=true,true
             }
-            if ui.menu_item(ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
-                anchor,_:=ui.widget_rect(ctx,id)
-                ui.popup_open(ctx,stats_popup(g),anchor)
+            for &b,at in command_bindings(s) {
+                if b.menu!=menu || b.group!=group {continue}
+                part(ctx,&shown,&parted)
+                command_menu_item(s,shell_id(g,"menu_item",index*1000+at+1),b.name)
             }
-            ui.menu_separator(ctx)
-            if ui.menu_item(ctx,shell_id(g,"shortcuts"),labels[.Shortcuts],{icon=action_icon(.Shortcuts),shortcut=shortcut_text(shortcuts[.Shortcuts])}) {action_run(s,.Shortcuts)}
+            if menu==.View && group==MENU_GROUP_PLUGINS {
+                part(ctx,&shown,&parted)
+                if ui.menu_item(ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
+                    anchor,_:=ui.widget_rect(ctx,id)
+                    ui.popup_open(ctx,stats_popup(g),anchor)
+                }
+            }
         }
     }
 }
@@ -1583,7 +1542,7 @@ modal_build :: proc(s:^Session) {
             agents:=working==1?"An agent is working":fmt.tprintf("%d agents are working",working)
             others:=scene_switch_others(s,g.pending)
             ui.label(ctx,unsaved?"Unsaved changes":others!=""?"Change the scene?":agents,th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            if others!="" {ui.paragraph(ctx,others,th.font_small,th.text_muted)}
+            if others!="" {ui.text(ctx,others,ui.prose(ctx,th.font_small,th.text_muted))}
             if pending_plugin(g.pending) {
                 ui.label(ctx,"The players read the saved files",th.font_small,th.text_muted)
             } else if unsaved {
@@ -1628,7 +1587,6 @@ modal_build :: proc(s:^Session) {
         defer if closed {g.modal=.None}
         if ui.modal(ctx,shell_id(g,"shortcuts"),{width=440,scroll=&g.modal_scroll,close=&closed}) {
             ui.label(ctx,"Keyboard shortcuts",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
             row :: proc(ctx:^ui.Context,name,keys:string) {
                 th:=&ctx.theme
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),align_y=.Center}) {
@@ -1637,9 +1595,12 @@ modal_build :: proc(s:^Session) {
                     ui.label(ctx,keys,th.font_small,th.text_muted)
                 }
             }
-            for action in Action {
-                if !shortcuts[action].set {continue}
-                row(ctx,labels[action],shortcut_text(shortcuts[action]))
+            // An entry by its key: two entries of one key are what it does by turns (Pause and Resume).
+            for &b,at in command_bindings(s) {
+                if !b.shortcut.set {continue}
+                repeated:=false
+                for &other in command_bindings(s)[:at] {repeated||=other.shortcut==b.shortcut}
+                if !repeated {row(ctx,b.label,shortcut_text(b.shortcut))}
             }
         }
     case .Settings: settings_modal(s)

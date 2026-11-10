@@ -125,7 +125,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     // What the document binds that the game does not have, or why it does not load, until it is fixed.
     for &problem,i in u.problem[:u.problem_count] {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(th.danger,36),stroke=ui.color_alpha(th.danger,120),radius=4}) {
-            ui.paragraph(ctx,author.bind_problem_text(author.assets_of(a),&problem),th.font_small,th.text)
+            ui.text(ctx,author.bind_problem_text(author.assets_of(a),&problem),ui.prose(ctx,th.font_small,th.text))
             if problem.row>=0 && problem.row!=u.selected {
                 if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",style=.Ghost,height=th.row,size=th.font_small}).clicked {choose_rows(u,{problem.row})}
             }
@@ -379,7 +379,11 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     #partial switch n.kind {
     case .Button,.Prompt:
         edit(u,"Action",action_row(p,"Action",n.action[:]))
-        if n.kind==.Button {edit(u,"Hold",value_row(p,"Hold",Seconds_Value,&n.hold,d.hold,"How long the action is held before it clicks; 0 clicks at once"))}
+        if n.kind==.Button {
+            edit(u,"Hold",value_row(p,"Hold",Seconds_Value,&n.hold,d.hold,"How long the action is held before it clicks; 0 clicks at once"))
+            bind_only(p,"Value",n.bind_value[:],.Number,"Where a click writes what Writes says: the page of a menu")
+            if serial.text_field(n.bind_value[:])!="" {edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What a click writes in its value"))}
+        }
     case .Progress:
         bind_only(p,"Value",n.bind_value[:],.Number,"A number from 0 to 1: how full it is")
     case .Checkbox,.Slider,.Selector,.Dropdown,.Number:
@@ -387,6 +391,9 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     case .Radio:
         bind_only(p,"Value",n.bind_value[:],.Number,"It is selected while this value is what it writes, and choosing it writes it there")
         edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What choosing it writes in its value"))
+    case .Draw:
+        edit(u,"Draw",value_row(p,"Procedure",Name_Value,&n.draw,d.draw,"The name a procedure of the game draws it by: @(draw=\"name\")"))
+        bind_only(p,"Value",n.bind_value[:],.Any,"The field of the game whose bytes its procedure reads")
     case .Switcher:
         if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds; bound to an enum or a text, the node of that name") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
     case .Tabs:

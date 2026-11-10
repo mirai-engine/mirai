@@ -218,7 +218,9 @@ same function:
   `Mask` stage relative to the origin of each view) and a phase per instance, from the world
   place. No ray sees it move.
 - **Bending by bodies.** A `Foliage_Bender` tilts what moves in the hook (types without shadow:
-  grass) away from its entity, `lean` radians at its center and nothing at its `radius`, rotated
+  grass) away from its entity, `lean` radians at its center and nothing at the radius of the
+  sphere [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity (without
+  one, the `foliage.bender_volume` problem), rotated
   around the plant's place and by the red of its vertex color, like the wind. The `BENDERS` nearest
   to the first streaming source go in the constants of each view with where they were the previous
   frame, for the motion vectors. Radius and lean have a cap (`BEND_RADIUS_MAX`, `BEND_LEAN_MAX`):

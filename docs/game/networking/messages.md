@@ -21,7 +21,7 @@ round_end :: proc(outbox:^multiplayer.Net_Outbox,time:core.Time) {
     multiplayer.send(outbox,time,Round_Over{winner=2})
 }
 
-@(step="input",stage="begin",after="net_begin")
+@(step="input",stage="begin")
 messages :: proc(events:core.Ref(multiplayer.Net_Events),network:core.Ref(core.Network)) {
     for item in events.received.items {
         if over,ok:=multiplayer.event_read(item,Round_Over);ok {}   // on clients

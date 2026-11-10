@@ -54,7 +54,7 @@ height ([water-fog.md](world/water-fog.md)):
 ```sh
 $P scene.open '{"path":"arena/main.scene"}'
 $P scene.add '{"name":"Sea","position":[0,-1,0],"components":{
-  "Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}'
+  "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}'
 $P scene.save '{}'
 ```
 

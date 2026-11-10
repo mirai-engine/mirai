@@ -40,6 +40,9 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
 - Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
   `align_y`. A node takes it and states only what differs; a change of the style reaches every node
   that uses it.
+- A `Text` or a `Rich_Text` with `"wrap": "words"` breaks at whatever width it ends with (`"grow"`,
+  `"50%"`, a number, or `"fit"` inside something narrower) and is as high as its lines.
+  `"align_y": "baseline"` on a row puts texts of different sizes on one baseline.
 - `variants`: `"variants": {"gold": {"fill": "#ffd700"}}` is a look a node picks with `variant` or
   `bind_variant`.
 

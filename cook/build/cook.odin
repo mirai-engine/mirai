@@ -425,7 +425,7 @@ work_destroy :: proc(work:^Cook_Work) {
         delete(result.probe.named,work.allocator)
     }
     for imported in work.finals {delete(imported.problem,work.allocator)}
-    if work.folder!="" {os.remove_all(work.folder)}
+    if work.folder!="" {base.remove_all(work.folder)}
 }
 
 @(private="file")

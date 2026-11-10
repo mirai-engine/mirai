@@ -237,7 +237,7 @@ share_build :: proc(s:^Session) {
                     ui.label(ctx,i==0?"Host":"Guest",th.font_label,th.text_muted)
                 }
             }
-            for &unsent in st.unsent[:st.unsent_count] {ui.paragraph(ctx,collab_unsent_text(st,&unsent),th.font_label,th.danger_soft)}
+            for &unsent in st.unsent[:st.unsent_count] {ui.text(ctx,collab_unsent_text(st,&unsent),ui.prose(ctx,th.font_label,th.danger_soft))}
             label:=st.role==.Host?"Stop":"Leave"
             if st.phase==.Ended {label="Close"}
             if ui.button(ctx,shell_id(g,"share_leave"),{label=label,style=.Accent,width=-1,height=ctx.theme.control,size=11,center=true}).clicked {collab_leave(s)}

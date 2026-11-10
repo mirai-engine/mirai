@@ -23,14 +23,16 @@ import "mirai:std/serial"
 //   @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 //   @(net_message) @(net_message,from="client",reliable) @(net_message,from="owner")
 //   @(params) @(names) @(name_bits="T") @(name="...") @(actions)
+//   @(draw="minimap")
 //
 // The engine's libraries (core, engine/*), the runtime/ of the active plugins
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
+UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
 PHASE_TITLES :: [len(PHASES)]string{"Input","Fixed","Frame","Late","Ui","Render","Release"}
 FIXED_PHASE :: 1
 RELEASE_PHASE :: 6 // runs when a World is freed: from the game loop, never in a frame
@@ -207,6 +209,15 @@ Step :: struct {
     line:int,
 }
 
+// A procedure of the game that draws the Draw nodes of the interfaces that
+// name it, @(draw="name").
+@(private="file")
+Draw_Proc :: struct {
+    name,ident:string,
+    pkg:^Package,
+    where_:string,
+}
+
 @(private="file")
 Generator :: struct {
     packages:[dynamic]^Package,
@@ -224,6 +235,7 @@ Generator :: struct {
     records:[dynamic]^Record_Type,
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
+    draws:[dynamic]Draw_Proc,
     errors:[dynamic]string,
     engine_root,root:string,
 }
@@ -256,7 +268,9 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     names_settle(&g)
     bundles_settle(&g)
     for pkg in g.packages {steps_read(&g,pkg)}
+    for pkg in g.packages {draws_read(&g,pkg)}
     rules_check(&g)
+    defaults_check(&g)
     out.errors=g.errors[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
@@ -966,6 +980,58 @@ types_settle :: proc(g:^Generator) {
     }
 }
 
+// The procedures @(draw="name"): each receives the context it draws in and the
+// node, proc(ctx:^ui.Context,node:ui.Draw_Node), and is in the game binary.
+@(private="file")
+draws_read :: proc(g:^Generator,pkg:^Package) {
+    for file in pkg.files {
+        for stmt in file.decls {
+            decl,is_value:=stmt.derived.(^ast.Value_Decl)
+            if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+            options:=attributes_read(decl.attributes[:])
+            name,is_draw:=options["draw"]
+            if !is_draw {continue}
+            ident:=ident_name(decl.names[0])
+            where_:=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
+            literal,is_proc:=decl.values[0].derived.(^ast.Proc_Lit)
+            FORM :: "proc(ctx:^ui.Context,node:ui.Draw_Node)"
+            switch {
+            case !is_proc:
+                append(&g.errors,fmt.aprintf("%s: @(draw) on %s, which is not a procedure; it goes on a %s",where_,ident,FORM))
+                continue
+            case name=="":
+                append(&g.errors,fmt.aprintf("%s: %s has @(draw) without a name: write @(draw=\"name\"), the name the Draw nodes of the interfaces say in draw",where_,ident))
+                continue
+            case pkg.editor:
+                append(&g.errors,fmt.aprintf("%s: %s is a @(draw) of an editor package: the game has no editor code, and its interfaces draw in the game; declare it in a library or in game/",where_,ident))
+                continue
+            }
+            types:=make([dynamic]^ast.Expr,context.temp_allocator)
+            if literal.type.params!=nil {
+                for field in literal.type.params.list {for _ in field.names {append(&types,field.type)}}
+            }
+            fits:=len(types)==2 && (literal.type.results==nil || len(literal.type.results.list)==0)
+            if fits {
+                pointer,is_pointer:=types[0].derived.(^ast.Pointer_Type)
+                fits=is_pointer && type_key(g,file,pkg,pointer.elem)=="mirai:ui.Context" && type_key(g,file,pkg,types[1])=="mirai:ui.Draw_Node"
+            }
+            if !fits {
+                append(&g.errors,fmt.aprintf("%s: %s is a @(draw) and is not a %s: it draws from the node alone, whose data is the bytes of the field the node binds as its value (ui.draw_value); write what it shows into a component or a storage in a frame step and bind it",where_,ident,FORM))
+                continue
+            }
+            taken:=false
+            for other in g.draws {
+                if other.name!=name {continue}
+                append(&g.errors,fmt.aprintf("%s: %s draws %q, which %s already draws in %s; a name has one procedure",where_,ident,name,other.ident,other.where_))
+                taken=true
+            }
+            if taken {continue}
+            pkg.used=true
+            append(&g.draws,Draw_Proc{name=name,ident=ident,pkg=pkg,where_=where_})
+        }
+    }
+}
+
 @(private="file")
 steps_read :: proc(g:^Generator,pkg:^Package) {
     phases:=PHASES
@@ -996,6 +1062,9 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                     if phase==part {s.phases[i],found=true,true}
                 }
                 if !found {append(&g.errors,fmt.aprintf("%s: %s has the phase %q; the phases are input fixed frame late ui render release",where_,name,part))}
+            }
+            if s.phases[UI_PHASE] && !pkg.editor && !strings.has_prefix(pkg.path,"mirai:") {
+                append(&g.errors,fmt.aprintf("%s: %s is a step of the ui phase in a game: a game shows its interfaces as .ui documents on a UI_Screen or a World_Widget, which bind the components and storages it writes in a frame step; what only code can draw is a Draw node of the .ui and a procedure @(draw=\"name\")",where_,name))
             }
             if loop_text,has_loops:=options["loops"];has_loops {
                 for part in strings.fields(loop_text) {
@@ -1323,20 +1392,41 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s runs in fixed and reads %s, which only %s fills, and which is emptied every frame: a frame runs any number of ticks, so a tick would see it twice or never; read it in a frame step",s.where_,s.name,param.type.name,writer.name))
         }
     }
-    // A cycle of after and before is reported once, also when its steps share several phases.
+    // A cycle is reported once, also when its steps share several phases.
     reported:=make(map[string]bool,context.temp_allocator)
     phases:=PHASES
     for loop in 0..<2 {
         for phase in 0..<len(PHASES) {
-            _,cycle:=phase_order(g,loop,phase)
-            if len(cycle)==0 {continue}
-            path:=strings.builder_make(context.temp_allocator)
-            for s in cycle {fmt.sbprintf(&path,"%s -> ",s.name)}
-            strings.write_string(&path,cycle[0].name)
-            text:=strings.to_string(path)
+            o:=phase_order(g,loop,phase)
+            if len(o.cycle)==0 {continue}
+            // Each step of the cycle waits for the next one, and the last for the first.
+            links:=strings.builder_make(context.temp_allocator)
+            fix:=""
+            fix_kind:=Wait_Kind.Named
+            for s,i in o.cycle {
+                first:=o.cycle[(i+1)%len(o.cycle)]
+                wait:Wait
+                for known in o.waits[s] {
+                    if known.first==first {wait=known}
+                }
+                if i>0 {strings.write_string(&links,"; ")}
+                switch wait.kind {
+                case .Named:
+                    fmt.sbprintf(&links,"%s runs after %s by after or before",s.name,first.name)
+                case .Request:
+                    fmt.sbprintf(&links,"%s runs after %s, which pushes to %s, a queue %s takes",s.name,first.name,wait.datum.name,s.name)
+                    if fix_kind==.Named {fix_kind=.Request;fix=fmt.tprintf("write after=\"%s\" on %s, or before=\"%s\" on %s, and what %s pushes to %s waits for the next tick",s.name,first.name,first.name,s.name,first.name,wait.datum.name)}
+                case .Data:
+                    fmt.sbprintf(&links,"%s runs after %s, which writes %s, which %s reads",s.name,first.name,wait.datum.name,s.name)
+                    if fix_kind!=.Data {fix_kind=.Data;fix=fmt.tprintf("write before=\"%s\" on %s, or after=\"%s\" on %s, and %s reads %s as the last tick left it",first.name,s.name,s.name,first.name,s.name,wait.datum.name)}
+                }
+            }
+            text:=strings.to_string(links)
             if reported[text] {continue}
             reported[text]=true
-            append(&g.errors,fmt.aprintf("%s: the steps %s of %s in the %s loop wait for each other through after and before: take one of those names out",cycle[0].where_,text,phases[phase],loops[loop]))
+            if fix_kind==.Named {fix="take one of those names out of after or before"}
+            else {fix=fmt.tprintf("a name wins over what the data says, so one name settles it: %s; or name another pair of the cycle",fix)}
+            append(&g.errors,fmt.aprintf("%s: steps of the stage %s of %s in the %s loop wait for each other: %s. %s",o.cycle[0].where_,stages[o.cycle[0].stage],phases[phase],loops[loop],text,fix))
         }
     }
 }
@@ -1394,13 +1484,47 @@ param_text :: proc(p:Param) -> string {
     return fmt.tprintf("its parameter %s",p.name)
 }
 
-// The steps of a loop and phase in the order they run: stage by stage, and
-// inside a stage in the order of the libraries, where a step runs first the
-// ones it waits for (its after, and the before that name it), in that same
-// order. cycle has the steps that wait for each other, if some do.
+// Why a step runs after another of its stage, strongest first: one names the
+// other (after, before); it takes the requests the other pushes; it reads
+// what the other writes.
 @(private="file")
-phase_order :: proc(g:^Generator,loop,phase:int) -> (ordered,cycle:[]^Step) {
-    o:Ordering
+Wait_Kind :: enum u8 {Named,Request,Data}
+
+@(private="file")
+Wait :: struct {
+    first:^Step,
+    kind:Wait_Kind,
+    datum:^Type, // Request and Data: the queue, the table or the storage
+}
+
+@(private="file")
+Ordering :: struct {
+    chosen,ordered,path:[dynamic]^Step,
+    waits:map[^Step][dynamic]Wait, // what each step runs after, in its stage
+    direct:map[^Step][dynamic]Wait, // of those, the ones no other of its waits brings
+    state:map[^Step]u8,            // 1 while its waits are visited, 2 once visited, 3 once ordered
+    seen:map[^Step]bool,           // of the walk of waits_for
+    cycle:[]^Step,                 // steps that wait for each other, each for the next and the last for the first
+}
+
+// The steps of a stage that reach a datum no library shares.
+@(private="file")
+Datum_Use :: struct {
+    type:^Type,
+    writers,readers:[dynamic]^Step, // a queue: writers are the ones that take it and the ones that push to it
+}
+
+// The steps of a loop and phase in the order they run: stage by stage, and
+// inside a stage in the order of the libraries, where what a step waits for
+// runs before it. A step waits for the ones it names (its after, and the
+// before that name it), for the ones that push to a queue of its library that
+// it receives, and for the ones that write a table or a storage it reads. A
+// wait the stronger ones answer the other way round is not one: a step that
+// names the writer of what it reads to run before it, or pushes a request to
+// it, reads what the last tick left. Steps that still wait for each other are
+// a cycle, which only a name settles.
+@(private="file")
+phase_order :: proc(g:^Generator,loop,phase:int) -> (o:Ordering) {
     o.chosen=make([dynamic]^Step,context.temp_allocator)
     for s in g.steps {
         if s.loops[loop] && s.phases[phase] {append(&o.chosen,s)}
@@ -1409,64 +1533,148 @@ phase_order :: proc(g:^Generator,loop,phase:int) -> (ordered,cycle:[]^Step) {
         if a.stage!=b.stage {return a.stage<b.stage}
         return a.rank<b.rank
     })
-    o.waits=make(map[^Step][dynamic]^Step,context.temp_allocator)
+    o.waits=make(map[^Step][dynamic]Wait,context.temp_allocator)
+    o.direct=make(map[^Step][dynamic]Wait,context.temp_allocator)
     o.state=make(map[^Step]u8,context.temp_allocator)
+    o.seen=make(map[^Step]bool,context.temp_allocator)
     o.ordered=make([dynamic]^Step,context.temp_allocator)
     o.path=make([dynamic]^Step,context.temp_allocator)
     for s in o.chosen {
         for name in s.after {
             for other in o.chosen {
-                if other.name==name && other.stage==s.stage {wait_add(&o,s,other)}
+                if other.name==name && other.stage==s.stage {wait_add(&o,s,{other,.Named,nil})}
             }
         }
         for name in s.before {
             for other in o.chosen {
-                if other.name==name && other.stage==s.stage {wait_add(&o,other,s)}
+                if other.name==name && other.stage==s.stage {wait_add(&o,other,{s,.Named,nil})}
             }
         }
     }
-    for _,waited in o.waits {
-        slice.sort_by(waited[:],proc(a,b:^Step) -> bool {return a.rank<b.rank})
+    for from:=0;from<len(o.chosen); {
+        to:=from
+        for to<len(o.chosen) && o.chosen[to].stage==o.chosen[from].stage {to+=1}
+        stage_waits(&o,o.chosen[from:to])
+        from=to
     }
     for s in o.chosen {
-        if !order_visit(&o,s) {return o.ordered[:],o.cycle}
+        if !order_visit(&o,s) {return}
     }
-    return o.ordered[:],nil
+    // A wait another wait of the step already brings orders nothing by itself:
+    // without them the order is the same however many waits say the same.
+    for s in o.chosen {
+        waited:=o.waits[s]
+        direct:=make([dynamic]Wait,context.temp_allocator)
+        for wait,i in waited {
+            brought:=false
+            for other,k in waited {
+                if k!=i && waits_for(&o,other.first,wait.first) {brought=true}
+            }
+            if !brought {append(&direct,wait)}
+        }
+        slice.sort_by(direct[:],proc(a,b:Wait) -> bool {return a.first.rank<b.first.rank})
+        o.direct[s]=direct
+    }
+    for s in o.chosen {order_run(&o,s)}
+    return
+}
+
+// What a step waits for runs right before it, in the order of the libraries.
+@(private="file")
+order_run :: proc(o:^Ordering,s:^Step) {
+    if o.state[s]==3 {return}
+    o.state[s]=3
+    for wait in o.direct[s] {order_run(o,wait.first)}
+    append(&o.ordered,s)
+}
+
+// The waits the data of a stage gives: the requests, then what is read.
+@(private="file")
+stage_waits :: proc(o:^Ordering,stage:[]^Step) {
+    uses:=make([dynamic]Datum_Use,context.temp_allocator)
+    index:=make(map[^Type]int,context.temp_allocator)
+    for s in stage {
+        for p in s.params {
+            if p.type==nil || p.type.shared {continue}
+            at,known:=index[p.type]
+            if !known {
+                at=len(uses)
+                index[p.type]=at
+                append(&uses,Datum_Use{p.type,make([dynamic]^Step,context.temp_allocator),make([dynamic]^Step,context.temp_allocator)})
+            }
+            list:=p.kind==.Table_Write || p.kind==.Storage_Write?&uses[at].writers:&uses[at].readers
+            if !slice.contains(list[:],s) {append(list,s)}
+        }
+    }
+    found:=make([dynamic]struct{step:^Step,wait:Wait},context.temp_allocator)
+    for use in uses {
+        if !use.type.queue {continue}
+        for taker in use.writers {
+            if taker.pkg!=use.type.pkg {continue}
+            for pusher in use.writers {
+                if pusher.pkg!=use.type.pkg && !waits_for(o,pusher,taker) {append(&found,struct{step:^Step,wait:Wait}{taker,{pusher,.Request,use.type}})}
+            }
+        }
+    }
+    for f in found {wait_add(o,f.step,f.wait)}
+    clear(&found)
+    for use in uses {
+        if use.type.queue {continue}
+        for reader in use.readers {
+            if slice.contains(use.writers[:],reader) {continue}
+            for writer in use.writers {
+                if !waits_for(o,writer,reader) {append(&found,struct{step:^Step,wait:Wait}{reader,{writer,.Data,use.type}})}
+            }
+        }
+    }
+    for f in found {wait_add(o,f.step,f.wait)}
 }
 
 @(private="file")
-Ordering :: struct {
-    chosen,ordered,path:[dynamic]^Step,
-    waits:map[^Step][dynamic]^Step, // what each step runs after, in its stage
-    state:map[^Step]u8,             // 1 while its waits are visited, 2 once ordered
-    cycle:[]^Step,
-}
-
-@(private="file")
-wait_add :: proc(o:^Ordering,s,first:^Step) {
+wait_add :: proc(o:^Ordering,s:^Step,wait:Wait) {
     waited:=o.waits[s]
-    if waited==nil {waited=make([dynamic]^Step,context.temp_allocator)}
-    append(&waited,first)
+    if waited==nil {waited=make([dynamic]Wait,context.temp_allocator)}
+    for known in waited {
+        if known.first==wait.first {return}
+    }
+    append(&waited,wait)
     o.waits[s]=waited
 }
 
+// Whether s runs after first by the waits found so far, directly or through others.
+@(private="file")
+waits_for :: proc(o:^Ordering,s,first:^Step) -> bool {
+    visit :: proc(o:^Ordering,seen:^map[^Step]bool,s,first:^Step) -> bool {
+        if s==first {return true}
+        if seen[s] {return false}
+        seen[s]=true
+        for wait in o.waits[s] {
+            if visit(o,seen,wait.first,first) {return true}
+        }
+        return false
+    }
+    if len(o.waits[s])==0 {return false}
+    clear(&o.seen)
+    return visit(o,&o.seen,s,first)
+}
+
+// Finds a cycle of waits, if there is one.
 @(private="file")
 order_visit :: proc(o:^Ordering,s:^Step) -> bool {
     switch o.state[s] {
     case 2: return true
     case 1:
         at,_:=slice.linear_search(o.path[:],s)
-        o.cycle=o.path[at:]
+        o.cycle=slice.clone(o.path[at:],context.temp_allocator)
         return false
     }
     o.state[s]=1
     append(&o.path,s)
-    for first in o.waits[s] {
-        if !order_visit(o,first) {return false}
+    for wait in o.waits[s] {
+        if !order_visit(o,wait.first) {return false}
     }
     pop(&o.path)
     o.state[s]=2
-    append(&o.ordered,s)
     return true
 }
 
@@ -1650,7 +1858,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     defined:[2][len(PHASES)]bool
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
-            steps,_:=phase_order(g,loop,phase)
+            steps:=phase_order(g,loop,phase).ordered
             if len(steps)==0 {continue}
             defined[loop][phase]=true
             fmt.sbprintf(w,"%s_%s :: proc(world,shared,editor:rawptr,app_data:rawptr) {{\n",loops[loop],phases[phase])
@@ -1710,6 +1918,12 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprint(w,"}\n")
     }
     fmt.sbprint(w,"\n")
+
+    // The default bindings of each enum @(actions); the compiler asks for every member.
+    for a,ai in g.action_enums {
+        value:=actions_defaults_value(a) or_continue
+        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Default)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
+    }
 
     // What a new row of each record type starts as, and the descriptions of their fields.
     for r in g.records {
@@ -1804,7 +2018,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprintf(w,"    actions:=make([]%s.Actions_Info,%d)\n",core_alias,len(g.action_enums))
     for a,ai in g.action_enums {
-        fmt.sbprintf(w,"    actions[%d]={{typeid_of(%s.%s),type_info_of(%s.%s),%d,\"%s\"}}\n",ai,a.pkg.alias,a.name,a.pkg.alias,a.name,a.base,a.pkg.name)
+        _,has_defaults:=actions_defaults_value(a)
+        fmt.sbprintf(w,"    actions[%d]={{typeid_of(%s.%s),type_info_of(%s.%s),%d,\"%s\",%s}}\n",ai,a.pkg.alias,a.name,a.pkg.alias,a.name,a.base,a.pkg.name,has_defaults?fmt.tprintf("action_defaults_%d",ai):"nil")
     }
     fmt.sbprintf(w,"    records:=make([]%s.Record_Info,%d)\n",core_alias,len(g.records))
     for r,ri in g.records {
@@ -1824,6 +2039,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         if s.loops[1] {strings.write_string(&loop_set,".Editor,")}
         fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name)
     }
+    fmt.sbprintf(w,"    draws:=make([]%s.Draw_Info,%d)\n",core_alias,len(g.draws))
+    for d,di in g.draws {fmt.sbprintf(w,"    draws[%d]={{%q,rawptr(%s.%s)}}\n",di,d.name,d.pkg.alias,d.ident)}
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")
     fmt.sbprint(w,"    info.aligns={.World=align_of(World),.Shared=align_of(Shared),.Editor=align_of(Editor)}\n")
@@ -1831,6 +2048,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.tables,info.storages,info.messages,info.steps=tables,storages,messages,steps\n")
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")
+    fmt.sbprint(w,"    info.draws=draws\n")
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}
@@ -1882,6 +2100,20 @@ default_value :: proc(t:^Type) -> (value:string,found:bool) {
 @(private="file")
 record_default :: proc(r:^Record_Type) -> (value:string,found:bool) {
     return default_value(&Type{name=r.name,pkg=r.pkg})
+}
+
+// The default bindings of the members of an enum @(actions): <ENUM>_DEFAULTS or
+// <enum>_defaults() of its package, a [E]Action_Default.
+@(private="file")
+actions_defaults_value :: proc(a:^Action_Enum) -> (value:string,found:bool) {
+    buffer:[512]u8
+    constant,maker,_:=core.default_names(a.name,buffer[:])
+    constant,maker=fmt.tprintf("%sS",constant),fmt.tprintf("%ss",maker)
+    switch {
+    case a.pkg.names[constant]: return fmt.aprintf("%s.%s",a.pkg.alias,constant),true
+    case a.pkg.names[maker]:    return fmt.aprintf("%s.%s()",a.pkg.alias,maker),true
+    }
+    return "",false
 }
 
 // The default of a storage on a GPU: <name>_for_device(device:rhi.Device_Info) of its package; "" without one.
@@ -2016,4 +2248,183 @@ expr_text :: proc(file:^ast.File,expr:^ast.Expr) -> string {
 snake :: proc(name:string) -> string {
     buffer:[256]u8
     return strings.clone(core.snake_name(name,buffer[:]))
+}
+
+// A type whose new rows start from a default: the fields its default sets,
+// which a literal of it may not leave out.
+@(private="file")
+Defaulted :: struct {
+    name,path:string,
+    pkg:^Package,
+    default:string,   // NAME_DEFAULT, or name_default()
+    decl:string,      // the declaration that builds it, where its own literal goes
+    order:[]string,   // its fields in order, for a literal without names
+    set:[]string,     // what its default sets; every field for a procedure
+}
+
+// What the defaults of the world ask of the code: the defaults of the
+// actions of an enum @(actions) are <ENUM>_DEFAULTS or <enum>_defaults()
+// beside it, never a field of a component or storage; and a literal of a type
+// whose default sets a field (NAME_DEFAULT or name_default()) names that
+// field or starts from the default, since a field it leaves out is zero.
+@(private="file")
+defaults_check :: proc(g:^Generator) {
+    defaulted:=make(map[string]^Defaulted,context.temp_allocator)
+    add :: proc(g:^Generator,defaulted:^map[string]^Defaulted,name:string,pkg:^Package,file:^ast.File,value:^ast.Expr) {
+        record,is_struct:=value.derived.(^ast.Struct_Type)
+        if !is_struct || record.fields==nil {return}
+        order:=make([dynamic]string,context.temp_allocator)
+        for f in record.fields.list {
+            for n in f.names {append(&order,ident_name(n))}
+            array,is_array:=f.type.derived.(^ast.Array_Type)
+            if !is_array || array.len==nil {continue}
+            elem:=ident_name(array.elem)
+            if selector,is_selector:=array.elem.derived.(^ast.Selector_Expr);is_selector {elem=selector.field.name}
+            if elem!="Action_Default" {continue}
+            enum_name:=ident_name(array.len)
+            if selector,is_selector:=array.len.derived.(^ast.Selector_Expr);is_selector {enum_name=selector.field.name}
+            buffer:[512]u8
+            constant,maker,_:=core.default_names(enum_name,buffer[:])
+            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Default (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
+        }
+        d:=new(Defaulted,context.temp_allocator)
+        d.name,d.path,d.pkg,d.order=name,pkg.path,pkg,order[:]
+        buffer:[512]u8
+        constant,maker,_:=core.default_names(name,buffer[:])
+        switch {
+        case pkg.names[constant]:
+            d.default,d.decl=strings.clone(constant,context.temp_allocator),strings.clone(constant,context.temp_allocator)
+            d.set=order[:]
+            // TRANSFORM_DEFAULT :: TRANSFORM_IDENTITY is built where that one is.
+            for _ in 0..<8 {
+                _,built,found:=type_decl(pkg,d.decl)
+                if !found {break}
+                if other:=ident_name(built);other!="" {
+                    d.decl=strings.clone(other,context.temp_allocator)
+                    continue
+                }
+                if lit,is_lit:=built.derived.(^ast.Comp_Lit);is_lit {d.set=literal_fields(lit,order[:],zero=false)}
+                break
+            }
+        case pkg.names[maker]:
+            // A maker takes nothing: inspect_default(s,...) of a type Inspect is something else.
+            _,built,found:=type_decl(pkg,maker)
+            if !found {return}
+            made,is_proc:=built.derived.(^ast.Proc_Lit)
+            if !is_proc || made.type.params!=nil && len(made.type.params.list)>0 {return}
+            d.default,d.decl=fmt.aprintf("%s()",maker,allocator=context.temp_allocator),strings.clone(maker,context.temp_allocator)
+            d.set=order[:]
+        case:
+            return
+        }
+        if len(d.set)>0 {defaulted[fmt.aprintf("%s.%s",pkg.path,name,allocator=context.temp_allocator)]=d}
+    }
+    for pkg in g.packages {
+        for file in pkg.files {
+            for stmt in file.decls {
+                decl,is_value:=stmt.derived.(^ast.Value_Decl)
+                if !is_value || decl.is_mutable || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+                add(g,&defaulted,ident_name(decl.names[0]),pkg,file,decl.values[0])
+            }
+        }
+    }
+    if len(defaulted)==0 {return}
+    Walk :: struct {
+        g:^Generator,
+        defaulted:^map[string]^Defaulted,
+        pkg:^Package,
+        file:^ast.File,
+        decl:string,          // the top-level declaration walked
+        compared:map[^ast.Node]bool, // literals compared or read a field of, which make no value
+    }
+    unwrapped :: proc(expr:^ast.Expr) -> ^ast.Node {
+        e:=expr
+        for e!=nil {
+            paren,is_paren:=e.derived.(^ast.Paren_Expr)
+            if !is_paren {break}
+            e=paren.expr
+        }
+        return e
+    }
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        w:=(^Walk)(v.data)
+        #partial switch n in node.derived {
+        case ^ast.Binary_Expr:
+            if n.op.kind==.Cmp_Eq || n.op.kind==.Not_Eq {w.compared[unwrapped(n.left)],w.compared[unwrapped(n.right)]=true,true}
+        case ^ast.Selector_Expr:
+            w.compared[unwrapped(n.expr)]=true
+        }
+        lit,is_lit:=node.derived.(^ast.Comp_Lit)
+        if !is_lit || lit.type==nil || w.compared[node] {return v}
+        key,alias:string
+        #partial switch type in lit.type.derived {
+        case ^ast.Ident:
+            key=fmt.tprintf("%s.%s",w.pkg.path,type.name)
+        case ^ast.Selector_Expr:
+            alias=ident_name(type.expr)
+            path,found:=import_path(w.g,w.file,alias)
+            if !found {return v}
+            key=fmt.tprintf("%s.%s",path,type.field.name)
+        case:
+            return v
+        }
+        d,found:=w.defaulted[key]
+        if !found || w.pkg==d.pkg && w.decl==d.decl {return v}
+        given:=literal_fields(lit,d.order)
+        left:=make([dynamic]string,context.temp_allocator)
+        for field in d.set {
+            if !slice.contains(given,field) {append(&left,field)}
+        }
+        if len(left)==0 {return v}
+        list:=strings.join(left[:],", ",context.temp_allocator)
+        default:=alias!=""?fmt.tprintf("%s.%s",alias,d.default):d.default
+        append(&w.g.errors,fmt.aprintf("%s(%d:%d): %s{{...}} leaves out %s, which %s sets, and a literal leaves a field out as zero: start from the default (value:=%s, then change fields), or name %s in the literal",w.file.fullpath,lit.pos.line,lit.pos.column,expr_text(w.file,lit.type),list,default,default,len(left)==1?"it":"them"))
+        return v
+    }
+    for pkg in g.packages {
+        for file in pkg.files {
+            w:=Walk{g=g,defaulted=&defaulted,pkg=pkg,file=file,compared=make(map[^ast.Node]bool,context.temp_allocator)}
+            visitor:=ast.Visitor{visit=visit,data=&w}
+            for stmt in file.decls {
+                w.decl=""
+                if decl,is_value:=stmt.derived.(^ast.Value_Decl);is_value && len(decl.names)==1 {w.decl=ident_name(decl.names[0])}
+                ast.walk(&visitor,stmt)
+            }
+        }
+    }
+}
+
+// The fields a literal of a struct whose fields are order names: those it
+// names, or the first ones when it gives values without names; without zero,
+// only those it gives a value other than zero.
+@(private="file")
+literal_fields :: proc(lit:^ast.Comp_Lit,order:[]string,zero:=true) -> []string {
+    given:=make([dynamic]string,context.temp_allocator)
+    for elem,i in lit.elems {
+        name,value:=i<len(order)?order[i]:"",elem
+        if field,named:=elem.derived.(^ast.Field_Value);named {name,value=ident_name(field.field),field.value}
+        if name!="" && (zero || !zero_literal(value)) {append(&given,name)}
+    }
+    return given[:]
+}
+
+// 0, false, nil, {} or a literal of only those.
+@(private="file")
+zero_literal :: proc(expr:^ast.Expr) -> bool {
+    #partial switch v in expr.derived {
+    case ^ast.Basic_Lit:
+        value,ok:=strconv.parse_f64(v.tok.text)
+        return ok && value==0
+    case ^ast.Ident:
+        return v.name=="false" || v.name=="nil"
+    case ^ast.Comp_Lit:
+        for elem in v.elems {
+            inner:=elem
+            if field,named:=elem.derived.(^ast.Field_Value);named {inner=field.value}
+            if !zero_literal(inner) {return false}
+        }
+        return true
+    }
+    return false
 }

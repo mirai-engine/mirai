@@ -8,7 +8,7 @@ description: Import models, textures, fonts, sounds and texts into a Mirai game 
 # Game assets
 
 Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every asset
-has an id in its header: components and scenes name it by id; a scene spawned from code, by path.
+has an id in its header: components and scenes name it by id; code, by its path.
 
 ## Map
 
@@ -57,11 +57,12 @@ mirai import source/sounds/step.wav --out assets/player --root .
 
 - A `base.Asset_Id` field of a component holds an id; tag it `mirai:"kind=.tex"` (several:
   `kind=.anim .match`) so the inspector lists only those; fill it in the scene.
-- The API takes an asset by its path under `assets/`, with or without its extension, or its id. A
-  constant in code is only for assets your own tool writes with `asset.content_id`.
+- The API takes an asset by its path under `assets/`, with or without its extension, or its id;
+  code, by its path as the file is spelled, and a field it fills by `host.assets_id(assets,path)`.
+  A constant id in code is only for assets your own tool writes with `asset.content_id`.
 - Scenes and `.records` ship. Other assets only code names need a root in `cook.mirai`:
   `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with `/`, or id).
-- Texts: `host.strings_text(host.content_strings(app,id),base.name_hash("en"),
+- Texts: `host.strings_text(host.content_strings(app,"menu/texts.strings"),base.name_hash("en"),
   base.name_hash(key))` gives `(text,found)`. `mirai texts export|import <file.csv>` moves the
   translations of `.ui` files through the open editor.
 - Game data: a struct tagged `@(record)` is a catalog (items, dialogue, waves) whose rows live in

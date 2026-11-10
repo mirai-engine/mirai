@@ -36,7 +36,7 @@ mirror_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 Mirror_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The face of each selected mirror and its front.
-@(step="frame",after="editor_tools")
+@(step="frame")
 mirror_gizmo :: proc(s:^editor.Session,gizmo:^Mirror_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,face:mirror.Mirror) {
         editor.gizmo_face(lines,editor.entity_world(w,e),face.ellipse,GIZMO_COLOR)

@@ -939,10 +939,10 @@ prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (i
     w:=edited_world(s)
     root:=roots[0]
     if len(roots)>1 {
-        history.selection_set(s.selection,roots)
-        selection_group(s,w)
+        root=entities_group(s,w,roots)
+        if root==core.NONE {return {},.Rejected}
         core.world_settle(w)
-        root=history.selection_active(s.selection)
+        history.selection_set(s.selection,{root})
         for e in roots {
             if entity_parent(w,e)!=root {return {},.Rejected}
         }
@@ -1327,12 +1327,13 @@ prefab_target :: proc(s:^Session) -> core.Entity {
     return history.selection_active(s.selection)
 }
 
-// Whether a prefab action cannot run now.
+// Whether an entry of the prefabs (prefab_create, prefab_apply,
+// prefab_apply_base, prefab_revert, prefab_unlink) cannot run on what is selected now.
 @(private)
-prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
-    if s.mode!=.Edit || s.app.assets==nil {return true}
+prefab_entry_disabled :: proc(s:^Session,entry:string) -> bool {
+    if s.mode!=.Edit || s.app==nil || s.app.assets==nil {return true}
     w:=edited_world(s)
-    if action==.Prefab_Create {
+    if entry=="prefab_create" {
         roots:=history.selection_roots(s.selection,w)
         if len(roots)==0 {return true}
         for e in roots {
@@ -1346,10 +1347,10 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
     id:=api_entity_id(w,e)
     if id==0 {return true}
     link,linked:=prefab_link_of(w,e)
-    #partial switch action {
-    case .Prefab_Apply,.Prefab_Revert,.Prefab_Apply_Base:
+    switch entry {
+    case "prefab_apply","prefab_revert","prefab_apply_base":
         // A member with overrides, or an entity an instance added; to a base, the root of an instance of a variant.
-        if action==.Prefab_Apply_Base && prefab_variant_of(s,w,link)=={} {return true}
+        if entry=="prefab_apply_base" && prefab_variant_of(s,w,link)=={} {return true}
         root:=prefab_instance_for(w,e)
         if root==core.NONE {return true}
         overrides,_:=prefab_overrides_of(s,root)
@@ -1357,7 +1358,7 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
             if linked && link.root || override.entity==id {return false}
         }
         return true
-    case .Prefab_Unlink: return !linked
+    case "prefab_unlink": return !linked
     }
     return true
 }
@@ -1387,34 +1388,3 @@ prefab_name_free :: proc(s:^Session,folder,name:string) -> string {
     return fmt.tprintf("%sPrefab",prefix)
 }
 
-@(private)
-prefab_action_run :: proc(s:^Session,action:Action) {
-    e:=prefab_target(s)
-    w:=edited_world(s)
-    error:=Prefab_Error.None
-    message:string
-    link,_:=prefab_link_of(w,e)
-    #partial switch action {
-    case .Prefab_Create:
-        path:=prefab_name_free(s,prefab_folder(s),entity_name(w,e))
-        _,error=prefab_create_entities(s,s.selection.entities[:],path)
-        message=fmt.tprintf("Prefab %s created",path)
-    case .Prefab_Apply:
-        count:int
-        count,error=prefab_apply(s,e,nil,link.root)
-        message=fmt.tprintf("%d overrides applied",count)
-    case .Prefab_Apply_Base:
-        count:int
-        count,error=prefab_apply(s,e,nil,true,.Base)
-        message=fmt.tprintf("%d overrides applied to the base",count)
-    case .Prefab_Revert:
-        count:int
-        count,error=prefab_revert(s,e,nil,link.root)
-        message=fmt.tprintf("%d overrides reverted",count)
-    case .Prefab_Unlink:
-        error=prefab_unlink(s,e,false)
-        message="Prefab unlinked"
-    }
-    if error!=.None {message=fmt.tprintf("%s",prefab_error_text(error))}
-    notify(s,message)
-}

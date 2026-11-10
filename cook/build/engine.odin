@@ -479,7 +479,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
     // No stamp says what the stages, the declarations and the programs there were written from.
     if desc.force || !plan.stamped {
         engine_stages_remove(paths.folder)
-        for folder in ([2]string{paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=os.remove_all(folder)}
+        for folder in ([2]string{paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=base.remove_all(folder)}
     }
     cache:=engine_cache_entry(root,plan.key,mode)
     if !desc.force && cache_entry_complete(cache) {
@@ -585,7 +585,7 @@ engine_installed_present :: proc(root:string) -> bool {
 engine_stages_remove :: proc(folder:string) {
     entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
     for entry in entries {
-        if entry.type==.Directory && strings.has_prefix(entry.name,ENGINE_STAGE_PREFIX) {_=os.remove_all(entry.fullpath)}
+        if entry.type==.Directory && strings.has_prefix(entry.name,ENGINE_STAGE_PREFIX) {_=base.remove_all(entry.fullpath)}
     }
 }
 
@@ -656,7 +656,7 @@ CACHE_COMPLETE :: "complete"
 engine_cache_restore :: proc(entry:string,paths:Engine_Paths) -> bool {
     if !cache_entry_complete(entry) {return false}
     _=os.remove(paths.stamp)
-    _=os.remove_all(paths.decl)
+    _=base.remove_all(paths.decl)
     engine_stages_remove(paths.folder)
     if os.make_directory_all(paths.folder)!=nil && !os.is_dir(paths.folder) {return false}
     for name in engine_cache_files(entry) {
@@ -675,9 +675,9 @@ engine_cache_store :: proc(paths:Engine_Paths,entry:string) {
     staging,fresh:=cache_entry_begin(entry)
     if !fresh {return}
     for name in engine_cache_files(paths.folder) {
-        if os.copy_file(project.path(staging,name,allocator=context.temp_allocator),project.path(paths.folder,name,allocator=context.temp_allocator))!=nil {_=os.remove_all(staging);return}
+        if os.copy_file(project.path(staging,name,allocator=context.temp_allocator),project.path(paths.folder,name,allocator=context.temp_allocator))!=nil {_=base.remove_all(staging);return}
     }
-    if os.copy_directory_all(project.path(staging,"decl",allocator=context.temp_allocator),paths.decl)!=nil {_=os.remove_all(staging);return}
+    if os.copy_directory_all(project.path(staging,"decl",allocator=context.temp_allocator),paths.decl)!=nil {_=base.remove_all(staging);return}
     cache_entry_commit(entry,staging,ENGINE_CACHE_ENTRIES)
 }
 
@@ -699,7 +699,7 @@ cache_entry_used :: proc(entry:string) {
 cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
     if cache_entry_complete(entry) {return "",false}
     staging=fmt.tprintf("%s.part-%d",entry,os.get_pid())
-    _=os.remove_all(staging)
+    _=base.remove_all(staging)
     if os.make_directory_all(staging)!=nil {return "",false}
     return staging,true
 }
@@ -711,7 +711,7 @@ cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
 @(private)
 cache_entry_commit :: proc(entry,staging:string,keep:=0) {
     if os.write_entire_file(project.path(staging,CACHE_COMPLETE,allocator=context.temp_allocator),"")!=nil || os.rename(staging,entry)!=nil {
-        _=os.remove_all(staging)
+        _=base.remove_all(staging)
         return
     }
     if keep>0 {cache_trim(entry[:strings.last_index_byte(entry,'/')],keep)}

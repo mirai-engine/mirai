@@ -145,7 +145,7 @@ placed :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Qu
 @(private)
 shape :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,kind:render.Shape,material:string) {
     mesh:=render.Mesh_Renderer{shape=kind}
-    mesh.materials[0]=game.material_asset(material)
+    mesh.materials[0]=material_id(material)
     asset.builder_set(s,id,mesh)
 }
 
