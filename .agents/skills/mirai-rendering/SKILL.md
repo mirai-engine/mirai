@@ -194,8 +194,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   `rhi_a_lost_immediate_list_reports_the_loss` (`rhi/tests`),
   `a_lost_gpu_leaves_the_frames_running_without_drawing` (`host`); in a session, `engine.gpu_lose`.
   Metal, on a Mac: the same ones of `rhi/tests` with `MTL_DEBUG_LAYER=1`.
-- Device memory: `arena_*` and `vk_memory_*` (`rhi`, without a device) and
-  `rhi_holds_more_resources_than_a_driver_gives_memory_allocations` (`rhi/tests`).
+- Device memory: `arena_*` and `vk_memory_*` (`rhi`, without a device),
+  `rhi_holds_more_resources_than_a_driver_gives_memory_allocations` and
+  `rhi_a_new_buffer_reads_zero_where_another_was` (`rhi/tests`).
 - Extensions: scenes of the render plugins. Benchmarks: only when touching a hot path.
 - Frame generation: `a_window_that_generates_frames_presents_two_images_a_frame` (`host`, with a
   window), `present_interval_follows_the_frames_and_not_the_thread` (`rhi`) and the tests of

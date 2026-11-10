@@ -131,6 +131,41 @@ rhi_holds_more_resources_than_a_driver_gives_memory_allocations :: proc(t:^testi
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// A new buffer reads zero where it was not written, also in the memory a
+// buffer that was written left.
+@(test)
+rhi_a_new_buffer_reads_zero_where_another_was :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    WRITTEN :: 16
+    written:[4096]u8
+    for &b in written {b=0xA5}
+    for memory in ([?]rhi.Memory{.GPU,.Upload}) {
+        for round in 0..<3 {
+            buffer:=rhi.buffer_create(d,{size=len(written),usage={.Storage},memory=memory,name="reused"})
+            read:[4096]u8
+            for &b in read {b=1}
+            made:=buffer!=0 && rhi.buffer_upload(d,buffer,0,written[:WRITTEN]) && rhi.buffer_read(d,buffer,0,read[:])
+            if !testing.expect(t,made,rhi.device_error(d)) {return}
+            kept,zero:=true,true
+            for b in read[:WRITTEN] {kept&&=b==0xA5}
+            for b in read[WRITTEN:] {zero&&=b==0}
+            testing.expectf(t,kept && zero,"round %d: a new buffer of %v memory keeps what was written (%v) and reads zero past it (%v)",round,memory,kept,zero)
+            testing.expect(t,rhi.buffer_upload(d,buffer,0,written[:]),rhi.device_error(d))
+            rhi.buffer_destroy(d,buffer)
+            // The frames after which the device lets the memory of the buffer go.
+            for _ in 0..=rhi.MAX_FRAMES_IN_FLIGHT {
+                cmd,ok:=rhi.frame_begin(d)
+                if !testing.expect(t,ok,rhi.device_error(d)) {return}
+                testing.expect(t,rhi.frame_end(d,cmd),rhi.device_error(d))
+            }
+        }
+    }
+    rhi.device_wait_idle(d)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
 @(test)
 rhi_destroying_more_than_a_frame_slot_holds_between_frames_releases_them :: proc(t:^testing.T) {
     d:=small_device(t,{deletions=4})

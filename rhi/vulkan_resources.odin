@@ -85,7 +85,8 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	if d.info.features.ray_query && .Accel_Input in desc.usage {usage += {.ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR}}
 	if device_address {usage += {.SHADER_DEVICE_ADDRESS}}
 	size := max(desc.size, 16)
-	info := vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = vk.DeviceSize(size), usage = usage, sharingMode = .EXCLUSIVE}
+	// Whole words: the fill that zeroes a buffer writes no less.
+	info := vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = vk.DeviceSize(align_up(size, 4)), usage = usage, sharingMode = .EXCLUSIVE}
 	b: Vk_Buffer
 	if !vk_check(d, d.dvk.CreateBuffer(d.handle, &info, nil, &b.handle), "vkCreateBuffer") {return 0}
 	bound: bool
@@ -100,7 +101,61 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	b.usage = desc.usage
 	b.kind = desc.memory
 	vk_set_name(d, .BUFFER, u64(b.handle), desc.name)
-	return Buffer(pool_add(&d.buffers, b))
+	made := Buffer(pool_add(&d.buffers, b))
+	if desc.memory == .GPU && zero && !vk_zero_new(d, made) {
+		vk_release_buffer_now(d, made)
+		return 0
+	}
+	return made
+}
+
+// A new buffer reads zero (Buffer_Desc). Memory the CPU sees is zeroed as it
+// is made; GPU memory, which is a range others held before, by a fill in the
+// list being recorded or, between lists, at the start of the next one.
+@(private)
+vk_zero_new :: proc(d: ^Device, buffer: Buffer) -> bool {
+	list: ^Command_List
+	switch {
+	case d.in_frame:       list = &d.frames[d.slot].list
+	case d.immediate_open: list = &d.immediate
+	}
+	if list == nil {
+		if _, err := append(&d.fresh, buffer); err != nil {
+			set_error(d, "out of memory for the buffers the next list zeroes")
+			return false
+		}
+		pool_get(&d.buffers, base.Handle(buffer)).fresh = true
+		return true
+	}
+	if list.in_render_pass {
+		set_error(d, "a buffer of GPU memory is made outside render passes: a pass cannot hold the fill that zeroes it")
+		return false
+	}
+	vk_zero_buffer(list, buffer)
+	return true
+}
+
+@(private)
+vk_zero_buffer :: proc(c: ^Command_List, buffer: Buffer) {
+	cmd_barrier_buffer(c, buffer, .Transfer_Write)
+	vk_flush_barriers(c)
+	b := pool_get(&c.device.buffers, base.Handle(buffer))
+	b.fresh = false
+	c.device.dvk.CmdFillBuffer(c.cmd, b.handle, 0, vk.DeviceSize(vk.WHOLE_SIZE), VK_FRESH_WORD)
+}
+
+// What fills a new buffer of GPU memory. Tests built with another word
+// (-define:MIRAI_FRESH_WORD=0xCDCDCDCD) show who reads counts nothing wrote.
+@(private)
+VK_FRESH_WORD :: u32(#config(MIRAI_FRESH_WORD, 0))
+
+@(private)
+vk_zero_fresh :: proc(c: ^Command_List) {
+	d := c.device
+	for buffer in d.fresh {
+		if b := pool_get(&d.buffers, base.Handle(buffer)); b != nil && b.fresh {vk_zero_buffer(c, buffer)}
+	}
+	clear(&d.fresh)
 }
 
 buffer_create :: proc(d: ^Device, desc: Buffer_Desc) -> Buffer {return vk_create_buffer(d, desc)}
@@ -626,12 +681,15 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 		mem.copy(rawptr(uintptr(b.mapped) + uintptr(offset)), raw_data(data), len(data))
 		return true
 	}
+	// An upload that writes all of it leaves nothing to zero.
+	whole := b.fresh && offset == 0 && u64(len(data)) == b.size
+	b.fresh &&= !whole
 	staging, bytes := vk_staging_take(d, u64(len(data)))
-	if staging == 0 {return false}
+	if staging == 0 {b.fresh ||= whole; return false}
 	defer vk_staging_give(d, staging)
 	mem.copy(bytes, raw_data(data), len(data))
 	cmd := immediate_begin(d)
-	if cmd == nil {return false}
+	if cmd == nil {b.fresh ||= whole; return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, offset, u64(len(data)))
 	return immediate_end(d, cmd)
 }

@@ -20,8 +20,11 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   type (`rhi/vulkan_memory.odin`), with the range allocator of the acceleration structures
   (`rhi/arena.odin`). Only a resource too large for a block, or one the driver prefers alone,
   takes an allocation of the driver, and their count never passes `maxMemoryAllocationCount`; a
-  refusal says in `device_error` whether the memory or that count ran out. A new texture or
-  buffer of `GPU` memory holds what its range held before: it is written before it is read.
+  refusal says in `device_error` whether the memory or that count ran out.
+- **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
+  undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
+  another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next
+  command list, which an upload of the whole buffer spares.
 - Each frame slot keeps up to `deletions` destroyed objects. Between frames, a full slot waits
   for the GPU and frees them; within a frame the list grows and is counted in
   `deletion_overflows`.

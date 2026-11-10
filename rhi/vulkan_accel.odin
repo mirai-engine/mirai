@@ -168,7 +168,7 @@ vk_scratch_address :: proc(d: ^Device, size: u64) -> u64 {
 	needed := size + d.scratch_alignment
 	if d.scratch == 0 || d.scratch_size < needed {
 		if d.scratch != 0 {buffer_destroy(d, d.scratch)}
-		d.scratch = vk_create_buffer(d, {size = needed, memory = .GPU, name = "acceleration scratch"}, {.STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS})
+		d.scratch = vk_create_buffer(d, {size = needed, memory = .GPU, name = "acceleration scratch"}, {.STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, zero = false)
 		d.scratch_size = needed if d.scratch != 0 else 0
 	}
 	b := pool_get(&d.buffers, base.Handle(d.scratch))

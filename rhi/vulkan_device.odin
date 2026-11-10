@@ -23,6 +23,7 @@ Vk_Buffer :: struct {
 	kind:     Memory,
 	write:    Access,          // last write not yet superseded (None = clean)
 	reads:    bit_set[Access], // reads made visible since that write
+	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 }
 
 Vk_Texture :: struct {
@@ -183,6 +184,8 @@ Device :: struct {
 	memory:            Vk_Memory_Pools,  // where buffers and textures live
 	staging:           Buffer,           // what uploads copy from (vk_staging_take)
 	staging_size:      u64,
+	fresh:             [dynamic]Buffer,  // of GPU memory, made between lists: the next list zeroes them (vk_zero_new)
+	immediate_open:    bool,             // between immediate_begin and immediate_end
 	accel_arena:       Arena,            // where acceleration structures live
 	accel_blocks:      [dynamic]Buffer,  // the buffer of each block of the arena
 	accel_empty:       [dynamic]int,     // blocks a deletion left empty, which go at the next creation
@@ -380,6 +383,7 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 	images_error, present_error: runtime.Allocator_Error
 	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
 	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	d.fresh = make([dynamic]Buffer, d.allocator)
 	ok &&= images_error == nil && present_error == nil
 	if !ok {set_error(d, "out of memory for the resource tables")}
 	return ok
@@ -849,6 +853,7 @@ device_destroy :: proc(d: ^Device) {
 	if d.library != nil {dynlib.unload_library(d.library)}
 	vk_loader_unlock(d)
 	vk_memory_shutdown(d, false)
+	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions)}
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
@@ -1097,6 +1102,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 		// Without passes the frame is one interval, from here to frame_end.
 		if !f.passes {vk_timestamp_write(f, "frame")}
 	}
+	vk_zero_fresh(&f.list)
 	d.in_frame = true
 	return &f.list, true
 }
@@ -1195,6 +1201,8 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(d.immediate.cmd, &begin)
 	vk_list_reset(&d.immediate)
+	vk_zero_fresh(&d.immediate)
+	d.immediate_open = true
 	return &d.immediate
 }
 
@@ -1203,6 +1211,7 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
 		return false
 	}
+	d.immediate_open = false
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	vk_flush_barriers(cmd)
 	d.dvk.EndCommandBuffer(cmd.cmd)
