@@ -92,6 +92,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   what `declare` copies as text and what it looks for names in are the same set.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
+- Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
+  (`cook/build/tests.odin`) and is current by the content fingerprint of what its build read.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
   `host` chooses what to load with `project.shader_generation_find`; do not duplicate that path.
 - Manifests are flat structs read and written by their schema; an unknown field is a read error.
@@ -121,9 +123,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Verification
 
 - `mirai test project` (manifests, order, paths), `mirai test cook/build` (cooking, shaders, copy,
-  fingerprint, engine modes, `declare` and the IR without stores of aggregates of more than 64
-  bytes) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare the
-  sources, output of `mirai test`, known failures); `mirai check cook/build` and `mirai check
+  fingerprint, engine modes, `declare`, the IR without stores of aggregates of more than 64 bytes,
+  and the test runner: currency of an executable and what it reads from the output of
+  `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
+  the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
   lock) and `mirai test std/subprocess` (low priority of a child).
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the

@@ -725,7 +725,9 @@ when the viewport draws with them, which `mirai shaders` asks for.
 - `build.check` checks the types of the project code (game, editor and plugins, with the generated
   world) without compiling or loading anything, and `build.test` compiles and runs the `@(test)`s
   of a project package (`package_folder`, `game` if missing; `tests` by name) against the engine it
-  uses, without loading it. Both reply when done, with each error and its file and line, or each
+  uses, without loading it, with the runner and the executable of `mirai test` of that package
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). Both reply
+  when done, with each error and its file and line, or each
   test that failed with what it logged; the editor keeps drawing meanwhile and they do not run
   during a build.
 

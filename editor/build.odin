@@ -349,7 +349,7 @@ code_probe :: proc(s:^Session,action:build.Action,test_package:string,test_names
     defer project.close(&opened)
     b.probing=true
     defer b.probing=false
-    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test_names=test_names})
+    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test={names=test_names,quiet=true}})
     started:=time.tick_now()
     for !build.job_poll(job) {
         if time.duration_seconds(time.tick_since(started))>seconds || api_stop_asked(s) || api_frames(s,1,0)==0 {
