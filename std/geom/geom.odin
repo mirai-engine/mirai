@@ -74,7 +74,11 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
 }
 @(private) fnormalize :: #force_inline proc "contextless" (a:Vec3,fallback:Vec3) -> Vec3 {
     l:=linalg.length(a)
-    return a/l if l>1e-20 else fallback
+    if l>1e-20 && l<=max(f32) {return a/l}
+    // The length of a vector of large floats does not fit in one; a vector that is not finite has no direction.
+    d:=dvec(a)
+    wide:=dlength(d)
+    return fvec(d/wide) if wide>1e-20 && wide<=max(f64) else fallback
 }
 
 // Unit plane in f64. ok is false for a normal without length.

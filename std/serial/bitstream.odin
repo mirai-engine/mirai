@@ -49,8 +49,9 @@ bit_writer_flush :: proc "contextless" (w:^Bit_Writer) -> []u8 {
 
 bit_write :: proc "contextless" (w:^Bit_Writer,value:u64,count:int) {
     if count<=0 {return}
+    // A measuring writer refuses what a writer with room would: more bits than a word.
+    if w.overflow || count>64 || (!w.measure && w.bits+count>w.capacity) {w.overflow=true;return}
     if w.measure {w.bits+=count;return}
-    if w.overflow || count>64 || w.bits+count>w.capacity {w.overflow=true;return}
     value:=count==64?value:value&(u64(1)<<uint(count)-1)
     w.scratch|=value<<w.scratch_bits
     total:=w.scratch_bits+u32(count)
@@ -109,8 +110,8 @@ bit_write_quaternion :: proc "contextless" (w:^Bit_Writer,value:quaternion128,bi
 bit_write_align :: proc "contextless" (w:^Bit_Writer) {bit_write(w,0,(8-w.bits&7)&7)}
 
 bit_write_bytes :: proc "contextless" (w:^Bit_Writer,bytes:[]u8) {
+    if w.overflow || (!w.measure && w.bits+len(bytes)*8>w.capacity) {w.overflow=true;return}
     if w.measure {w.bits+=len(bytes)*8;return}
-    if w.overflow || w.bits+len(bytes)*8>w.capacity {w.overflow=true;return}
     i:=0
     for ;i+8<=len(bytes);i+=8 {bit_write(w,u64(intrinsics.unaligned_load((^u64le)(&bytes[i]))),64)}
     for ;i<len(bytes);i+=1 {bit_write(w,u64(bytes[i]),8)}
@@ -220,7 +221,9 @@ quantize_range :: proc "contextless" (value,lo,hi:f32,bits:int) -> u32 {
 }
 dequantize_range :: proc "contextless" (value:u32,lo,hi:f32,bits:int) -> f32 {
     top:=u64(1)<<uint(clamp(bits,1,32))-1
-    return f32(f64(lo)+(f64(hi)-f64(lo))*f64(min(u64(value),top))/f64(top))
+    // Weighted, not lo plus a share of the range: the ends stay exact when the range is far wider than one of them.
+    share:=f64(min(u64(value),top))/f64(top)
+    return f32(f64(lo)*(1-share)+f64(hi)*share)
 }
 
 // Bits needed to cover lo..=hi in steps of precision.
@@ -304,5 +307,7 @@ dequantize_quaternion :: proc "contextless" (value:u64,bits:int) -> quaternion12
         shift+=bits
     }
     c[largest]=math.sqrt(max(1-sum,0))
+    // Only bits that no rotation is written as add up to more than 1.
+    if sum>1 {c/=math.sqrt(sum)}
     return quaternion(w=f32(c[3]),x=f32(c[0]),y=f32(c[1]),z=f32(c[2]))
 }

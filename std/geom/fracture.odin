@@ -143,8 +143,9 @@ fracture_destroy :: proc(f:^Fracture) {
     f^={}
 }
 
-// The mesh of a piece, as views into Fracture.mesh.
+// The mesh of a piece, as views into Fracture.mesh; an empty one for a piece that does not exist.
 fracture_piece_mesh :: proc(f:^Fracture,piece:int) -> Mesh {
+    if piece<0 || piece>=len(f.pieces) {return {}}
     p:=f.pieces[piece]
     whole:=mesh_buffer_view(&f.mesh)
     out:=Mesh{positions=whole.positions[p.first_vertex:][:p.vertex_count],indices=whole.indices[p.first_index:][:p.index_count]}

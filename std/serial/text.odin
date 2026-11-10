@@ -734,10 +734,11 @@ text_skip :: proc(r:^Text_Reader,depth:=0) -> bool {
     return ok
 }
 
-// The bits of a float of size bytes: a number, or one of the spellings
-// text_write_float gives what a number cannot say.
+// The bits of a float of size bytes, 2, 4 or 8: a number, or one of the
+// spellings text_write_float gives what a number cannot say.
 text_read_float :: proc(r:^Text_Reader,size:int) -> (bits:u64,ok:bool) {
     if r.error.code!=.None {return 0,false}
+    if size!=2 && size!=4 && size!=8 {return 0,text_fail(r,.Invalid_Type)}
     text_space(r)
     start:=r.offset
     exponent:=size==8?u64(0x7ff0000000000000):(size==4?u64(0x7f800000):u64(0x7c00))

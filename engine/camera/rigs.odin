@@ -160,13 +160,22 @@ Shake :: struct {
     max_angle:math.Vec3, // radians: pitch, yaw, roll
 }
 
+SHAKE_POWER_MAX :: 1024
+
 shake_make :: proc "contextless" (seed:u32=0) -> Shake {
     return {seed=seed,decay=1,power=2,frequency=18,max_offset={0.25,0.25,0.1},max_angle={0.04,0.06,0.08}}
 }
 shake_add :: proc "contextless" (s:^Shake,amount:f32) {s.trauma=clamp(s.trauma+amount,0,1)}
 shake_intensity :: proc "contextless" (s:Shake) -> f32 {
-    intensity:f32=1
-    for _ in 0..<max(int(s.power),1) {intensity*=s.trauma}
+    // The whole part of the power, from 1 to SHAKE_POWER_MAX: what a huge power
+    // or a NaN turns into as an integer differs between processors, and the
+    // number of products must not.
+    power:=int(min(s.power,SHAKE_POWER_MAX)) if s.power>=1 else 1
+    intensity,factor:f32=1,s.trauma
+    for ;power>0;power>>=1 {
+        if power&1==1 {intensity*=factor}
+        factor*=factor
+    }
     return intensity
 }
 // Advances the shake and returns the offset to add to the camera position and the angles to add to its rotation.
