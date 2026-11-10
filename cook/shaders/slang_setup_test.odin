@@ -11,7 +11,7 @@ import "mirai:project"
 @(private="file")
 archive_make :: proc(t:^testing.T,root,compiler_text:string,with_compiler:=true) -> (archive,sha256:string,ok:bool) {
     content:=path_join(root,"content",allocator=context.temp_allocator)
-    os.remove_all(content)
+    base.remove_all(content)
     if with_compiler {fixture_write(t,content,strings.concatenate({"bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),compiler_text)}
     fixture_write(t,content,"lib/slang.txt","library")
     archive=path_join(root,"slang-test.tar.gz",allocator=context.temp_allocator)

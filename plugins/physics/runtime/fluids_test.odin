@@ -2,19 +2,22 @@ package physics
 
 import "core:testing"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import "core:math/linalg"
 import mm "mirai:std/math"
 
 @(test)
-fluid_volumes_follow_their_rows_and_entities :: proc(t:^testing.T) {
+fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     sea:=core.create(&f.entities)
-    core.add(&f.volumes,sea,fluid_volume_sea(1025,{1,0,0}))
+    core.add(&f.fluids,sea,Fluid{density=1025,current={1,0,0}})
+    core.add(&f.volumes,sea,volume.plane())
     core.add(&f.transforms,sea,core.Transform{{0,2,0},mm.quat_axis_angle({0,1,0},0.5*mm.PI),{1,1,1}})
     room:=core.create(&f.entities)
-    core.add(&f.volumes,room,fluid_volume_dry({1,1,1}))
+    core.add(&f.fluids,room,Fluid{})
+    core.add(&f.volumes,room,volume.box({1,1,1},priority=1))
     core.add(&f.transforms,room,core.Transform{{10,0,0},1,{2,3,4}})
     physics_test_step(&f,0)
     testing.expect_value(t,f.problems.count,0)
@@ -46,38 +49,67 @@ fluid_volumes_follow_their_rows_and_entities :: proc(t:^testing.T) {
     testing.expect(t,state_copy(&copy,&f.state))
     sample,entity,ok=fluid_at({&copy},{10,-1.5,0})
     testing.expect(t,ok && entity==sea && abs(sample.height-(-1))<1e-5)
-    core.remove(&f.volumes,room)
+    // The priority of its Volume is what puts the air over the sea: at that of the sea, the sea is there.
+    sample,_,_=fluid_at({&f.state},{10,0,0})
+    testing.expect_value(t,sample.density,f32(0))
+    core.edit(&f.volumes,room).priority=0
+    physics_test_step(&f,0)
+    sample,_,_=fluid_at({&f.state},{10,0,0})
+    testing.expect(t,sample.density==1025 && f.state.world.fluid_count==2)
+    core.remove(&f.fluids,room)
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.world.fluid_count,1)
 }
 
+// A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box
+// without size it is not made, and says why. Two fluids that meet are a problem only at the same priority.
 @(test)
-a_fluid_volume_that_cannot_be_made_or_overlaps_another_is_a_problem :: proc(t:^testing.T) {
+a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    dry:=core.create(&f.entities)
-    core.add(&f.volumes,dry,Fluid_Volume{shape=.Plane})
-    core.add(&f.transforms,dry,core.Transform{{},1,{1,1,1}})
-    a,b:=core.create(&f.entities),core.create(&f.entities)
-    core.add(&f.volumes,a,fluid_volume_box({2,1,2}))
-    core.add(&f.transforms,a,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.volumes,b,fluid_volume_box({2,1,2}))
-    core.add(&f.transforms,b,core.Transform{{3,0,0},1,{1,1,1}})
+    Case :: struct {fluid:Fluid,region:Maybe(volume.Volume),made:bool}
+    cases:=[?]Case{
+        {Fluid{density=1000},nil,false},
+        {Fluid{density=1000},volume.sphere(3),false},
+        {Fluid{density=1000},volume.world(),false},
+        {Fluid{},volume.plane(),false},
+        {Fluid{density=1000},volume.box({2,0,2}),false},
+        {Fluid{density=1000},volume.box({2,1,2}),true},
+    }
+    made:=0
+    refused:[len(cases)]core.Entity
+    for c,i in cases {
+        e:=core.create(&f.entities)
+        core.add(&f.fluids,e,c.fluid)
+        if region,has:=c.region.?;has {core.add(&f.volumes,e,region)}
+        core.add(&f.transforms,e,core.Transform{{f32(i)*100,0,0},1,{1,1,1}})
+        if c.made {made+=1} else {refused[i]=e}
+    }
+    a,b,over:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
+    for e,i in ([3]core.Entity{a,b,over}) {
+        core.add(&f.fluids,e,FLUID_DEFAULT)
+        core.add(&f.volumes,e,volume.box({2,1,2},priority=i==2?1:0))
+        core.add(&f.transforms,e,core.Transform{{-100+f32(i)*3,0,0},1,{1,1,1}})
+    }
     physics_test_step(&f,0)
-    testing.expect(t,core.problem_find(&f.problems,dry,"physics.fluid")!=nil)
+    for e,i in refused {
+        if !cases[i].made {testing.expectf(t,core.problem_find(&f.problems,e,"physics.fluid")!=nil,"case %d says nothing",i)}
+    }
     testing.expect(t,core.problem_find(&f.problems,b,"physics.fluid_overlap")!=nil)
-    testing.expect_value(t,f.state.world.fluid_count,2)
+    testing.expect(t,core.problem_find(&f.problems,over,"physics.fluid_overlap")==nil,"a higher priority decides where they meet")
+    testing.expect_value(t,f.state.world.fluid_count,i32(made+3))
 }
 
 @(test)
-a_body_floats_on_a_fluid_volume_of_the_world :: proc(t:^testing.T) {
+a_body_floats_on_a_fluid_of_the_world :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     sea:=core.create(&f.entities)
-    core.add(&f.volumes,sea,fluid_volume_sea(1000))
+    core.add(&f.fluids,sea,FLUID_DEFAULT)
+    core.add(&f.volumes,sea,volume.plane())
     core.add(&f.transforms,sea,core.Transform{{},1,{1,1,1}})
     raft:=core.create(&f.entities)
     collider:=collider_box({1,0.1,1})
@@ -99,7 +131,8 @@ fluids_in_lists_more_fluids_than_one_batch :: proc(t:^testing.T) {
     f.settings.fluids=100
     for i in 0..<80 {
         pool:=core.create(&f.entities)
-        core.add(&f.volumes,pool,fluid_volume_box({0.4,0.4,0.4}))
+        core.add(&f.fluids,pool,FLUID_DEFAULT)
+        core.add(&f.volumes,pool,volume.box({0.4,0.4,0.4}))
         core.add(&f.transforms,pool,core.Transform{{f32(i),0,0},1,{1,1,1}})
     }
     physics_test_step(&f,0)

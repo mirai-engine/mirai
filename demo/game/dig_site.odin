@@ -1,15 +1,12 @@
 package game
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
-import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:ui"
 import terrain "plugins:terrain/runtime"
 
 // The dig of the scene dig. The Volume under it digs a pit by itself at the
@@ -106,24 +103,38 @@ inventory_slot :: proc(inventory:^Dig_Inventory,material:base.Asset_Id) -> int {
     return inventory.count-1
 }
 
-// What the player took, by material, while the scene has a site.
-@(step="ui")
-dig_hud :: proc(g:^gui.Gui,sites:core.Read(Dig_Site),inventories:core.Read(Dig_Inventory),assets:^host.Assets) {
-    ctx:=gui.gui_context(g)
-    if ctx==nil || core.count(sites)==0 || core.count(inventories)==0 {return}
-    inventory:=core.at(inventories,0)
-    panel:=hud_box(ctx,"dig.inventory",.Top_Left,.Top_Left,{12,12},ui.fixed(300),ui.fit(),{0,0,0,160},ui.padding_xy(12,8))
-    panel.layout.direction=.Column
-    panel.layout.gap=4
-    if ui.box(ctx,panel) {
-        ui.label(ctx,"Dug",size=18)
-        for i in 0..<inventory.count {
-            name:[base.ASSET_ID_TEXT]u8
-            label:=assets!=nil?host.assets_name(assets,inventory.materials[i],&name):"Material"
-            line:=fmt.tprintf("%s  %.2f m3",label,inventory.cubic_metres[i])
-            if inventory.drops[i]>0 {line=fmt.tprintf("%s   %d picked up",line,inventory.drops[i])}
-            ui.label(ctx,line,size=13,color={225,225,230,255})
-        }
-        ui.text(ctx,"Use: dig where you look    walk over the ore to pick it up",{size=12,color={255,210,116,255},wrap=.Words},width=ui.fixed(276))
+// A material of the inventory, as dig_hud.ui lists it.
+Dig_Hud_Row :: struct {
+    name:[48]u8 `mirai:"text"`,
+    cubic_metres:f32,
+    drops:i32,
+    picked:bool, // some of its drops were picked up
+}
+
+// What dig_hud.ui shows: what the player took, by material.
+@(component,description="The HUD of a dig: what was dug and picked up, by material.")
+Dig_Hud :: struct {
+    rows:[DIG_MATERIALS]Dig_Hud_Row,
+    count:i32,
+}
+
+@(step="frame")
+dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),assets:^host.Assets) {
+    shown:=core.read(huds)
+    if core.count(shown)==0 {return}
+    // The inventory is on the Keep root the first tick of a dig makes: none before it.
+    inventory:Dig_Inventory
+    if core.count(inventories)>0 {inventory=core.at(inventories,0)}
+    next:=Dig_Hud{count=i32(inventory.count)}
+    for i in 0..<inventory.count {
+        row:=&next.rows[i]
+        name:[base.ASSET_ID_TEXT]u8
+        base.text_set(row.name[:],assets!=nil?host.assets_name(assets,inventory.materials[i],&name):"Material")
+        // Hundredths of a cubic metre, as the HUD writes them.
+        row.cubic_metres=math.round(inventory.cubic_metres[i]*100)/100
+        row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
+    }
+    for row in 0..<core.count(shown) {
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

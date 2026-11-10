@@ -84,7 +84,7 @@ a_plugin_from_git_is_added_updated_synced_and_removed :: proc(t:^testing.T) {
     testing.expect(t,!os.exists(project.path(root,"plugins/hello/runtime/more.odin",allocator=context.temp_allocator)))
 
     // A clone of the project has the manifest and not the checkout.
-    testing.expect(t,os.remove_all(project.path(root,"plugins/hello",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(project.path(root,"plugins/hello",allocator=context.temp_allocator))==nil)
     testing.expect(t,sync_needed(root))
     changed,message:=sync(root,context.temp_allocator)
     testing.expect_value(t,changed,1)
@@ -178,7 +178,7 @@ a_plugin_of_the_catalog_updates_only_to_what_the_catalog_lists :: proc(t:^testin
     testing.expect_value(t,commit_of(t,root),third)
 
     // Without the catalog it does not update.
-    testing.expect(t,os.remove_all(catalog_folder(engine,context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(catalog_folder(engine,context.temp_allocator))==nil)
     unread:=update(root,engine,"hello","",context.temp_allocator)
     testing.expect(t,!unread.ok,unread.message)
     testing.expect_value(t,commit_of(t,root),third)

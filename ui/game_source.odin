@@ -24,4 +24,32 @@ Game_Source :: struct {
     particles:proc(user:rawptr,id:Id,effect:base.Asset_Id,size:[2]f32) -> Quad,
     // Plays a sound a style names.
     sound:proc(user:rawptr,id:base.Asset_Id),
+    // Draws a Draw node with the draw_* procedures of the package, as the
+    // frame ends and the layout has placed it.
+    draw:proc(user:rawptr,ctx:^Context,node:Draw_Node),
+}
+
+// What a Draw node hands the procedure of the game that draws it: where the
+// layout put it, the colors and the text of its style and the bytes of the
+// value it binds, as the interface copied them last. What it draws outside
+// the container that clips the node is cut. A screen that did not change is
+// shown again from what it drew: the procedure runs when the node is built,
+// so it draws from node alone, and what it reads of the game is what the
+// node binds.
+Draw_Node :: struct {
+    name:u64,          // name_hash of the name the node draws by
+    rect:Rect,         // in layout units
+    fill,stroke,track,knob,mark:Color,
+    text:Text_Style,
+    radius:[4]f32,
+    stroke_width:f32,
+    data:[]u8,         // of the field the node binds as its value; nil: it binds none
+    item:i32,          // the element of the List the node is in; -1: in none
+}
+
+// The value a Draw node binds, as the type the game declares it with; false
+// when the node binds none, or a field of another size.
+draw_value :: proc "contextless" (node:Draw_Node,$T:typeid) -> (value:^T,ok:bool) {
+    if len(node.data)!=size_of(T) || uintptr(raw_data(node.data))%align_of(T)!=0 {return nil,false}
+    return (^T)(raw_data(node.data)),true
 }

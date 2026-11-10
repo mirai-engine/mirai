@@ -483,24 +483,14 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
         sound(p,n,st,&d,.Hide,"What its style plays when it goes")
     }
     if event(p,"Hover",3) {
-        list_row(p,"Animation",&set.hovered,names)
-        list_row(p,"On leave",&set.unhovered,names)
         sound(p,n,st,&d,.Hover,"What its style plays when the pointer comes over it")
     }
     if event(p,"Press",4) {
-        list_row(p,"Animation",&set.pressed,names)
-        list_row(p,"On release",&set.released,names)
         list_row(p,"On click",&set.clicked,names)
         sound(p,n,st,&d,.Press,"What its style plays when it is clicked")
     }
     if (focusable(n.kind) || ui.node_kind_holds(n.kind)) && event(p,"Focus",5) {
-        list_row(p,"Animation",&set.focused,names)
-        list_row(p,"On blur",&set.unfocused,names)
         sound(p,n,st,&d,.Focus,"What its style plays when navigation comes to it")
-    }
-    if event(p,"Selected",7) {
-        list_row(p,"Animation",&set.selected,names)
-        list_row(p,"On unselect",&set.unselected,names)
     }
     if focusable(n.kind) && event(p,"Change",6) {
         sound(p,n,st,&d,.Change,"What its style plays when its value changes")

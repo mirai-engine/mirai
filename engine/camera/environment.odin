@@ -6,27 +6,27 @@ import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 
 // The sky and the sun a player sees change as its body crosses an
-// Environment_Trigger: entering the box turns on the ones it names, the sky
-// over its seconds. It goes by the body and not by the camera, which would
-// cross first; and it is of each end of a session, as what the sky shows.
-// A body has to go TRIGGER_MARGIN into the box to turn it on and as far out
-// of it to leave it, so standing on its edge does not alternate.
+// Environment_Trigger: entering the Volume of its entity turns on the ones it
+// names, the sky over its seconds. It goes by the body and not by the camera,
+// which would cross first; and it is of each end of a session, as what the
+// sky shows. A body has to go TRIGGER_MARGIN into the volume to turn it on
+// and as far out of it to leave it, so standing on its edge does not
+// alternate.
 
 TRIGGER_MARGIN :: f32(0.25) // m
 
-@(component,description="Turns on the sky and the sun it names when the body of the player of this machine goes into its box; the sky blends over its seconds. Put it in a narrow passage, where the geometry hides the change.")
+@(component,description="Turns on the sky and the sun it names when the body of the player of this machine goes into the Volume of its entity; the sky blends over its seconds. Put it in a narrow passage, where the geometry hides the change.")
 Environment_Trigger :: struct {
     sky,sun:core.Entity,
-    extents:[3]f32 `mirai:"min=0,unit=m"`, // half the size of its box, times the scale of the entity
     seconds:f32 `mirai:"min=0,unit=s"`,    // of the blend of the sky; 0: at once
     inside:bool `mirai:"local,transient,hidden"`, // the body is in it, since it went past the margin
 }
 
-ENVIRONMENT_TRIGGER_DEFAULT :: Environment_Trigger{extents={1,1,1},seconds=1}
+ENVIRONMENT_TRIGGER_DEFAULT :: Environment_Trigger{seconds=1}
 
 @(step="frame")
 environment_triggers :: proc(
-    triggers:^core.Table(Environment_Trigger),worlds:core.Read(core.World_Transform),
+    triggers:^core.Table(Environment_Trigger),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
     seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
     requests:^render.Environment_Requests,
 ) {
@@ -36,10 +36,10 @@ environment_triggers :: proc(
     for row in 0..<core.count(triggers) {
         e:=core.entity_at(triggers,row)
         trigger:=core.at(triggers,row)
-        box,boxed:=core.get(worlds,e)
+        zone,pose,rules:=volume.placed(volumes,worlds,e)
         inside:=trigger.inside
-        if placed && boxed {
-            depth:=volume.depth({shape=.Box,extents=trigger.extents},box.transform,at.position)
+        if placed && rules {
+            depth:=volume.depth(zone,pose,at.position)
             if !inside && depth>=TRIGGER_MARGIN {inside=true} else if inside && depth< -TRIGGER_MARGIN {inside=false}
         } else {
             inside=false

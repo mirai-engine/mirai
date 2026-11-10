@@ -4,7 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import cam "mirai:engine/camera"
-import cine "plugins:cinematics/runtime"
+import anim "plugins:animation/runtime"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
@@ -163,10 +163,10 @@ game_follow :: proc(
 // A bark counts when its seat presses bark or the intro asks for it, and flashes the nose for a moment.
 @(step="fixed",stage="react")
 game_barker :: proc(
-    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(cine.Cinematic_Events),time:core.Time,
+    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(anim.Animation_Events),time:core.Time,
 ) {
     intro_bark:=false
-    for event in events.items {intro_bark ||= event.id==base.name_hash("intro.bark")}
+    for event in events.items {intro_bark ||= event.marker==base.name_hash("intro.bark")}
     for row in 0..<core.count(barkers) {
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
             barker:=core.edit_at(barkers,row)

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "mirai:core"
 import input "mirai:engine/input"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -266,7 +267,7 @@ navigation_agents :: proc(
     requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),
     characters:core.Read(phys.Character),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),
     grounds:core.Read(phys.Character_State),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
-    obstacles:core.Read(Nav_Obstacle),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
+    obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
     core.queue_clear(&events.queue)
@@ -454,8 +455,9 @@ navigation_agents :: proc(
     for row in 0..<core.count(obstacles) {
         e:=core.entity_at(obstacles,row)
         pose,placed:=core.get(worlds,e)
-        if !placed {continue}
-        half:=obstacles.table.values[row].half*pose.scale
+        size,boxed:=box_half(volumes,e)
+        if !placed || !boxed {continue}
+        half:=size*pose.scale
         motion,_:=core.get(motions,e)
         append(&a.near,Near{entity=e,position=pose.position,velocity=motion.linear,radius=linalg.length(mm.Vec2{half.x,half.z}),height=half.y*2})
     }

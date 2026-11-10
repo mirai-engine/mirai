@@ -84,7 +84,6 @@ Control_Result :: struct {id:base.Entity_Id,playing:bool,time:f32}
 
 @(private)
 register :: proc(s:^editor.Session) {
-    sequence_register(s)
     authoring_register(s)
     program_register(s)
     morph_register(s)

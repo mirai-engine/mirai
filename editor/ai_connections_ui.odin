@@ -260,7 +260,7 @@ ai_connections_wait :: proc(s:^Session) {
     if state.screen==.Login {ai_connections_brand(s,state.provider)}
     status:=base.text_get(state.status[:])
     ui.label(ctx,status!=""?status:(state.screen==.Login?"Waiting for browser sign-in":"Preparing installation"),th.font_small,th.text)
-    if state.screen==.Login && s.ai.connections[state.provider].agent==.Command && base.text_get(state.log[:])!="" {ui.paragraph(ctx,base.text_get(state.log[:]),th.font_small,th.text_muted)}
+    if state.screen==.Login && s.ai.connections[state.provider].agent==.Command && base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,th.font_small,th.text_muted))}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(38),align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,state.busy?"Cancel":"Done") {
             if state.busy {ai_install_cancel(s)}
@@ -368,10 +368,10 @@ ai_connections_build :: proc(s:^Session) {
         case .Remove:ai_connections_remove(s)
         case .Closed:
         }
-        if base.text_get(state.notice[:])!="" {ui.paragraph(ctx,base.text_get(state.notice[:]),th.font_small,th.text_muted)}
+        if base.text_get(state.notice[:])!="" {ui.text(ctx,base.text_get(state.notice[:]),ui.prose(ctx,th.font_small,th.text_muted))}
         if base.text_get(state.error[:])!="" {
-            ui.paragraph(ctx,base.text_get(state.error[:]),th.font_small,th.danger)
-            if base.text_get(state.log[:])!="" {ui.paragraph(ctx,base.text_get(state.log[:]),th.font_small,th.text_muted)}
+            ui.text(ctx,base.text_get(state.error[:]),ui.prose(ctx,th.font_small,th.danger))
+            if base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,th.font_small,th.text_muted))}
         }
         ui.id_pop(ctx)
     }

@@ -47,6 +47,10 @@ Scenes:
   refracts, masked materials, imported models, a door and a sample that changes material.
 - **`showcase`**: HUD (`UI_Screen`) and sign over the elevator (`World_Widget`) that show the
   `Showcase` component; elevator moved by an `.anim` and a speaker with spatial sound.
+- **HUDs of the other scenes**: each is a component a `frame` step writes only when what it shows
+  changed, and a `.ui` with the styles of `assets/interface/hud_kit.ui`, on the body it is of
+  (`Player_Hud` on `Player.prefab`, `Person.prefab` and `Dog.prefab`, `Portal_Hud`, `Raft_Hud`) or
+  on an entity of its scene (`Dig_Hud`, `Vfx_Gallery_Hud`, `Physics_Gallery_Hud`, `Gallery_Hud`).
 - **`interface`**: the interfaces of `assets/interface/` over the `Interface_Demo` component
   (`game/interface_demo.odin`). H changes the HUD variant (`minimal`, `neon`), M opens the options
   menu (controls, tooltip, two buttons from another `.ui` with overrides, language), I the
@@ -73,9 +77,10 @@ Scenes:
   splashes.
 - **`ocean`**: a water material program.
 - **`animation`**: the only animation scene, a hall that the player walks with Mirai, with a
-  numbered station per feature: clips, events, root motion, sequences, layers, additives, graphs,
-  actions, motion matching, physical locomotion with foot IK, warping, constraints, retargeting,
-  rigs ([rigs](../../mirai-animation/references/animation-rigs.md)), procedural gait, morphs
+  numbered station per feature: clips, events, root motion, a prop moved by a clip, layers,
+  additives, graphs, actions, motion matching, physical locomotion with foot IK, warping,
+  constraints, retargeting, rigs ([rigs](../../mirai-animation/references/animation-rigs.md)),
+  procedural gait, morphs
   ([morphs](../../mirai-animation/references/animation-morphs.md)) and budget. Each plays in a
   loop; E adjusts the ones with a 3D panel ([Animation gallery](animation-gallery.md)).
 - **`lights`** and **`night`**: many point lights without a sun, for the cost and noise of direct
@@ -335,8 +340,8 @@ The `control` scene walks through the contract of [control](control.md) and of
 - `camera_mode` passes the body's camera through the presets, each time with a transition.
 - `aim` brings the prefab's `Person aim camera`, a camera with the `Aim` preset and a
   `Camera_Activation`; the person walks sideways looking toward it.
-- The intro is a `Cinematic` with shots, tracks and markers; its viewer (without a seat: the focused
-  player) blocks its input.
+- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots; its
+  viewer (without a seat: the focused player) blocks its input.
 
 ## Networking
 

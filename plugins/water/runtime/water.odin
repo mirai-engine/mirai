@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import phys "plugins:physics/runtime"
 
-// Water: the Fluid_Volume rows of the physics drawn as water, from the same
+// Water: the Fluid rows of the physics drawn as water, from the same
 // fluids the physics floats bodies in. Each surface is a solid of the glass
 // of the renderer: a plane, an open grid around the camera on its waves; a
 // box, its cube. Under it, a medium of the fog plugin that takes the light of
@@ -27,7 +27,7 @@ WATER_IOR :: f32(1.333)
 CAUSTIC_TEXELS :: 256 // across the caustic pattern
 LENS_WIDTH :: f32(0.01) // m of the surface over and under the near plane where its line shows on the lens
 
-@(component,description="How the water of the Fluid_Volume of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid_Volume without it looks as the default.")
+@(component,description="How the water of the Fluid of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid without it looks as the default.")
 Water :: struct {
     material:base.Asset_Id,                          // of its surface and its solid; zero: a glass of water with the program of Water_Settings and the values below
     attenuation_color:[3]f32 `mirai:"color"`,        // what the water leaves of white light that crosses attenuation_distance of it

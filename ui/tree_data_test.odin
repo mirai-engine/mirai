@@ -3,6 +3,7 @@ package ui
 import "core:math"
 import "core:mem"
 import "core:testing"
+import std_anim "mirai:std/anim"
 
 // The HUD of test_hud_fill with its animated menu, as records.
 Test_Hud_Records :: struct {
@@ -11,7 +12,7 @@ Test_Hud_Records :: struct {
     images:[1]Tree_Image,
     anims:[2]Tree_Anim,
     tracks:[2]Tree_Track,
-    keys:[4]Keyframe,
+    keys:[4]std_anim.Keyframe,
     anim_sets:[1]Anim_Set,
     variants:[2]Tree_Style_Variant,
     text:[dynamic]u8,
@@ -126,7 +127,7 @@ records_that_contradict_themselves_load_no_tree :: proc(t:^testing.T) {
     r.anims[0].count=3
     refused(t,&tree,data,"tracks outside the table")
     data=test_hud_records(&r)
-    r.anim_sets[0].pressed=3
+    r.anim_sets[0].clicked=3
     refused(t,&tree,data,"an animation outside the table")
     // A group plays only animations of earlier rows: no cycles.
     data=test_hud_records(&r)
@@ -156,7 +157,7 @@ an_enum_without_a_name_loads_no_tree :: proc(t:^testing.T) {
         {cast(^u8)&node.layout.width.kind,"width.kind"},{cast(^u8)&node.layout.height.kind,"height.kind"},{cast(^u8)&node.layout.direction,"direction"},
         {cast(^u8)&node.layout.align_x,"align_x"},{cast(^u8)&node.layout.align_y,"align_y"},
         {cast(^u8)&r.styles[0].text.align_x,"text.align_x"},{cast(^u8)&r.styles[0].text.align_y,"text.align_y"},{cast(^u8)&r.styles[0].text.wrap,"text.wrap"},
-        {cast(^u8)&r.anims[0].kind,"anim kind"},{cast(^u8)&r.anims[0].loop,"anim loop"},{cast(^u8)&r.tracks[0].property,"track property"},{cast(^u8)&r.keys[1].ease,"key ease"},
+        {cast(^u8)&r.anims[0].kind,"anim kind"},{cast(^u8)&r.anims[0].loop,"anim loop"},{cast(^u8)&r.tracks[0].property,"track property"},{cast(^u8)&r.keys[1].ease,"key ease"},{cast(^u8)&r.keys[1].interpolation,"key interpolation"},
     }
     for entry in cases {
         kept:=entry.field^
@@ -169,7 +170,7 @@ an_enum_without_a_name_loads_no_tree :: proc(t:^testing.T) {
     tree_destroy(&tree)
     // The last value of each enum is one of them.
     node.float={to=.Parent,anchor=.Bottom_Right,pivot=.Bottom_Right}
-    r.keys[1].ease=.Out_Bounce
+    r.keys[1].ease=.Bounce_In_Out;r.keys[1].interpolation=.Cubic_Spline
     testing.expect(t,tree_load(&tree,data,{textures={7}}))
     tree_destroy(&tree)
 }

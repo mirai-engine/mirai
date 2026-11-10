@@ -2,6 +2,7 @@ package physics
 
 import "core:testing"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
 import "core:math/linalg"
 import mm "mirai:std/math"
@@ -31,7 +32,7 @@ force_and_torque_requests_use_si_units_and_clear_after_one_tick :: proc(t:^testi
 }
 
 @(test)
-radial_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.T) {
+area_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -45,14 +46,14 @@ radial_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.
         core.add(&f.parents,child,core.Parent{entity=e})
     }
     physics_test_step(&f,0)
-    apply_radial_impulse(&f.requests,{},1000,2,.Constant)
+    apply_area(&f.requests,volume.sphere(1000),{},2,impulse=true)
     physics_test_step(&f)
     for e in objects {
         body:=body_of(core.ref(&f.state),e)
         velocity:=sim.body_linear_velocity(&f.state.world,body)
         testing.expectf(t,abs(linalg.length(velocity)-1)<0.001,"radial missed or doubled %v: %v",e,velocity)
     }
-    apply_radial_impulse(&f.requests,{},1000,1,.Constant,true)
+    apply_area(&f.requests,volume.sphere(1000),{},1,impulse=true,velocity_change=true)
     physics_test_step(&f)
     for e in objects {
         testing.expect(t,abs(linalg.length(sim.body_linear_velocity(&f.state.world,body_of(core.ref(&f.state),e)))-2)<0.01)
@@ -62,8 +63,10 @@ radial_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.
     testing.expect(t,count>0)
 }
 
+// An area request pushes the bodies in its volume, where the volume is: by the weight of the volume through
+// the falloff, its range and its noise, away from it or along a direction.
 @(test)
-plane_requests_and_the_range_and_noise_of_volume_requests_reach_the_simulation :: proc(t:^testing.T) {
+area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -74,31 +77,110 @@ plane_requests_and_the_range_and_noise_of_volume_requests_reach_the_simulation :
     physics_test_step(&f,0)
     w:=&f.state.world
     bodies:=[2]sim.Body_Handle{body_of(core.ref(&f.state),deep),body_of(core.ref(&f.state),shallow)}
-    speeds :: proc(w:^sim.World,bodies:[2]sim.Body_Handle) -> [2]f32 {
-        return {sim.body_linear_velocity(w,bodies[0]).x,sim.body_linear_velocity(w,bodies[1]).x}
+    speeds :: proc(w:^sim.World,bodies:[2]sim.Body_Handle,axis:=0) -> [2]f32 {
+        return {sim.body_linear_velocity(w,bodies[0])[axis],sim.body_linear_velocity(w,bodies[1])[axis]}
     }
-    // The plane is the +Y face at y=1 and the box is 1 m deep: Linear weighs 0.5 and 0.9 at those depths.
-    apply_plane_force(&f.requests,{1,0.5,0},{2,0.5,1},1,{120,0,0},.Linear)
-    physics_test_step(&f)
-    after:=speeds(w,bodies)
-    testing.expectf(t,abs(after[0]-0.5)<1e-3 && abs(after[1]-0.9)<1e-3,"plane %v",after)
-    before:=after
-    apply_sphere_force(&f.requests,{1,0.5,0},5,{120,0,0},.Linear,QUERY_FILTER_DEFAULT,{0.25,0.25})
-    physics_test_step(&f)
-    after=speeds(w,bodies)
-    testing.expectf(t,abs(after[0]-before[0]-0.25)<1e-3 && abs(after[1]-before[1]-0.25)<1e-3,"range %v",after-before)
+    Case :: struct {
+        name:string,
+        area:volume.Volume,
+        pose:mm.Transform,
+        strength:f32,
+        along:[3]f32,
+        falloff:Radial_Falloff,
+        range:Weight_Range,
+        axis:int,
+        gained:[2]f32, // m/s in the tick, on axis
+    }
+    cases:=[?]Case{
+        // Under a plane at y=1 whose weight rises over 1 m: 0.5 and 0.1 of 120 N on 2 kg.
+        {"a plane along a direction",volume.plane(blend=1),{position={0,1,0}},120,{1,0,0},.Linear,{},0,{0.5,0.1}},
+        // Away from a plane is along its up; the same weights squared.
+        {"a plane away",volume.plane(blend=1),{position={0,1,0}},120,{},.Squared,{},1,{0.25,0.01}},
+        // A plane turned on its side holds only what is under it: +X of x=1.
+        {"a turned plane",volume.plane(),{position={1,0,0},rotation=mm.quat_axis_angle({0,0,1},0.5*mm.PI)},120,{0,0,1},.Linear,{},2,{0,1}},
+        // The whole of a range of one weight, wherever in the sphere.
+        {"a range",volume.sphere(5,blend=5),{position={1,0.5,0}},120,{1,0,0},.Linear,{0.25,0.25},0,{0.25,0.25}},
+        // A box of half 1 scaled by 2 in x, without blend: whole inside, nothing outside.
+        {"a scaled box",volume.box({0.5,1,1}),{position={-0.5,0.5,0},rotation=1,scale={2,1,1}},120,{1,0,0},.Linear,{},0,{1,0}},
+        // Away from the center of a sphere, pulled in by a negative strength.
+        {"a pull",volume.sphere(1),{position={0,1.2,0}},-120,{},.Linear,{},1,{1,0}},
+    }
+    for c in cases {
+        before:=speeds(w,bodies,c.axis)
+        apply_area(&f.requests,c.area,c.pose,c.strength,c.along,falloff=c.falloff,range=c.range)
+        physics_test_step(&f)
+        gained:=speeds(w,bodies,c.axis)-before
+        testing.expectf(t,abs(gained[0]-c.gained[0])<2e-3 && abs(gained[1]-c.gained[1])<2e-3,"%s: gained %v, not %v",c.name,gained,c.gained)
+        for body in bodies {sim.body_set_velocity(w,body,{},{})}
+        sim.body_set_transform(w,bodies[0],{0,0.5,0},1)
+        sim.body_set_transform(w,bodies[1],{2,0.9,0},1)
+    }
     noise:=Field_Noise{scale=0.5,seed=11,range={0,2}}
     expected:[2]f32
     for body,i in bodies {expected[i]=0.5*sim.noise_weight(sim.body_position(w,body),{1,0.5,0},mm.QUAT_IDENTITY,noise)}
-    before=after
-    apply_box_force(&f.requests,{1,0.5,0},{2,1,1},1,{60,0,0},.Constant,QUERY_FILTER_DEFAULT,{},noise)
+    apply_area(&f.requests,volume.box({2,1,1}),{position={1,0.5,0}},60,{1,0,0},noise=noise)
     physics_test_step(&f)
-    after=speeds(w,bodies)
-    testing.expectf(t,abs(after[0]-before[0]-expected[0])<1e-3 && abs(after[1]-before[1]-expected[1])<1e-3,"noise %v against %v",after-before,expected)
-    problems:=f.problems.count
-    apply_radial_force(&f.requests,{},5,10,.Linear,QUERY_FILTER_DEFAULT,{},{scale=-1})
+    after:=speeds(w,bodies)
+    testing.expectf(t,abs(after[0]-expected[0])<1e-3 && abs(after[1]-expected[1])<1e-3,"noise %v against %v",after,expected)
+    testing.expect(t,core.problem_find(&f.problems,core.NONE,"physics.request_area")==nil)
+    // What cannot push says so once per request, and pushes nothing.
+    nan:=f32(0)
+    nan/=nan
+    for body in bodies {sim.body_set_velocity(w,body,{},{})}
+    apply_area(&f.requests,volume.sphere(5),{},10,noise={scale=-1})
+    apply_area(&f.requests,volume.sphere(0),{},10)
+    apply_area(&f.requests,volume.box({1,-1,1}),{},10)
+    apply_area(&f.requests,volume.sphere(5),{position={nan,0,0}},10)
+    apply_area(&f.requests,volume.sphere(5),{},nan)
+    apply_area(&f.requests,volume.sphere(5),{},10,{nan,0,0})
+    apply_area(&f.requests,volume.Volume{shape=volume.Volume_Shape(9)},{},10)
+    apply_area(&f.requests,volume.sphere(5),{},10,velocity_change=true)
     physics_test_step(&f)
-    testing.expect_value(t,f.problems.count,problems+1)
+    testing.expect(t,core.problem_find(&f.problems,core.NONE,"physics.request_area")!=nil)
+    testing.expect_value(t,speeds(w,bodies),[2]f32{})
+}
+
+// A Force_Field asks, each tick, for the area of the Volume of its entity where the entity is: its
+// direction turns with the entity, and one that is off or without force asks for nothing.
+@(test)
+a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
+    Field_World :: struct {
+        using world:core.Test_World,
+        fields:core.Table(Force_Field),
+        volumes:core.Table(volume.Volume),
+        worlds:core.Table(core.World_Transform),
+        requests:Body_Requests,
+    }
+    w:Field_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    turn:=mm.quat_axis_angle({0,1,0},0.5*mm.PI)
+    lift,idle:=core.create(&w.entities),core.create(&w.entities)
+    config:=FORCE_FIELD_DEFAULT
+    config.force,config.along,config.falloff_range,config.filter.objects=10,{0,0,-2},{0.5,1},4
+    core.add(&w.fields,lift,config)
+    core.add(&w.volumes,lift,volume.box({1,2,3},blend=1))
+    core.add(&w.worlds,lift,core.World_Transform{transform={{3,4,5},turn,{2,1,0.5}}})
+    core.add(&w.fields,idle,FORCE_FIELD_DEFAULT)
+    core.test_world_settle(&w)
+    step :: proc(w:^Field_World,time:core.Time) {
+        force_fields_step(core.read(&w.fields),core.read(&w.volumes),core.read(&w.worlds),&w.requests,time)
+    }
+    step(&w,{playing=true,dt=0.25})
+    if !testing.expect_value(t,len(w.requests.queue.items),1) {return}
+    request:=w.requests.queue.items[0]
+    testing.expect_value(t,request.kind,Body_Request_Kind.Area_Force)
+    testing.expect_value(t,request.area,volume.box({1,2,3},blend=1))
+    testing.expect(t,request.position==[3]f32{3,4,5} && request.rotation==turn && request.scale==[3]f32{2,1,0.5})
+    testing.expectf(t,linalg.length(request.linear-[3]f32{-1,0,0})<1e-5,"its forward, a quarter turn to the left: %v",request.linear)
+    testing.expect(t,request.strength==10 && request.falloff_range==Weight_Range{0.5,1} && request.filter.objects==4)
+    core.queue_clear(&w.requests.queue)
+    step(&w,{playing=false,dt=0.25})
+    testing.expect_value(t,len(w.requests.queue.items),0)
+    core.disable(&w.fields,lift)
+    core.test_world_settle(&w)
+    step(&w,{playing=true,dt=0.25})
+    testing.expect_value(t,len(w.requests.queue.items),0)
 }
 
 @(test)

@@ -8,7 +8,7 @@ import "mirai:std/base"
 import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 
-Gallery_Command_Kind :: enum u8 {Automatic,Playing,Restart,Seek,Rate,Weight,Parameter,Speed,Clip,Layer,Action,Modifier,Match_Play,Value,Warp,Keyframe_Path}
+Gallery_Command_Kind :: enum u8 {Automatic,Playing,Restart,Seek,Rate,Weight,Parameter,Speed,Clip,Layer,Action,Modifier,Match_Play,Value,Warp}
 Gallery_Command :: struct {
     kind:Gallery_Command_Kind,
     entity:core.Entity,
@@ -38,7 +38,7 @@ gallery_manual :: proc(manual:bool,entity:core.Entity,commands:[]Gallery_Command
     for command in commands {
         if command.entity!=entity {continue}
         #partial switch command.kind {
-        case .Modifier,.Keyframe_Path:
+        case .Modifier:
         case .Automatic: result=!command.enabled
         case: result=true
         }
@@ -54,7 +54,7 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
             continue
         case .Action: anim.action_fire(actions,command.entity,base.text_get(command.name[:]));continue
         case .Match_Play: anim.match_play(requests,command.entity,base.text_get(command.name[:]),u16(phys.MODE_WALKING));continue
-        case .Speed,.Value,.Warp,.Keyframe_Path: continue
+        case .Speed,.Value,.Warp: continue
         }
         animation:=core.edit(animations,command.entity);if animation==nil {continue}
         #partial switch command.kind {
@@ -125,8 +125,8 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
         buttons[0]=automatic
         return rows,4,buttons,1
     case .Sequence:
-        rows[0]={label="Play rate",command=.Keyframe_Path,min=-2,max=2,slot=u16(anim.Keyframe_Path_Command_Kind.Speed)}
-        buttons[0],buttons[1]={label="Play / pause",command=.Keyframe_Path},{label="Restart",command=.Keyframe_Path,slot=u16(anim.Keyframe_Path_Command_Kind.Restart)}
+        rows[0]={label="Play rate",command=.Rate,min=-2,max=2}
+        buttons[0],buttons[1]={label="Play / pause",command=.Playing},{label="Restart",command=.Restart}
         return rows,1,buttons,2
     case: return
     }
@@ -134,10 +134,10 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
     return rows,1,buttons,1
 }
 
-// What a slider or a button of a panel asked becomes a command of its station; the sequence is
-// asked directly of its path.
+// What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
+// for the other of what its clip does.
 @(step="fixed")
-gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),paths:core.Read(anim.Keyframe_Path),path_requests:^anim.Keyframe_Path_Requests,panel:^Gallery_UI) {
+gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -149,24 +149,17 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
             high:=row.max
             if row.command==.Seek {_,duration,_,valid:=anim.animation_progress(playback.ptr,value.station);if !valid {continue};high=duration}
             amount:=row.min+f32(clamp(event.value,0,1))*(high-row.min)
-            if row.command==.Keyframe_Path {anim.keyframe_path_request(path_requests,value.station,anim.Keyframe_Path_Command_Kind(row.slot),amount);continue}
             gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
         } else if event.kind==.Clicked && event.name==base.name_hash("button") && int(event.item)<button_count {
             button:=buttons[event.item]
-            if button.command==.Keyframe_Path {
-                kind:=anim.Keyframe_Path_Command_Kind(button.slot)
-                if button.slot==0 {path,_:=core.get(paths,value.station);kind=.Pause if path.playing else .Play}
-                anim.keyframe_path_request(path_requests,value.station,kind)
-                continue
-            }
-            gallery_request(panel,button.command,value.station,name=button.name,enabled=true)
+            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback.ptr,value.station))
         }
     }
 }
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
 @(step="fixed",stage="react")
-gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),paths:core.Read(anim.Keyframe_Path)) {
+gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
     for row in 0..<core.count(panels) {
         current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
@@ -187,7 +180,6 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
             case .Modifier:
                 value=1
                 for state in modifiers.controls {if state.rig==current.station && state.kind==control.modifier {value=state.target if state.enabled else 0}}
-            case .Keyframe_Path: path,_:=core.get(paths,current.station);value=path.speed
             }
             line:=&next.rows[i]
             base.text_set(line.label[:],control.label)
@@ -196,7 +188,7 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
         }
         for button,i in buttons[:button_count] {base.text_set(next.buttons[i].label[:],button.label)}
         hint:="manual    E: back" if item.manual else "automatic    E: back"
-        if item.kind==.Sequence {path,_:=core.get(paths,current.station);hint="playing    E: back" if path.playing else "paused    E: back"}
+        if item.kind==.Sequence {hint="playing    E: back" if animation.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
         if next!=current {core.edit_at(panels,row)^=next}
     }

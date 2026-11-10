@@ -111,45 +111,13 @@ surface_size :: proc(ctx:^Context) -> [2]f32 {
     return ctx.size
 }
 
-// Which side of its anchor a popup opens on. Auto: under it when it fits.
+// Which side of its anchor a popup opens on: under it or over it, and on the
+// other one when it does not fit there. Auto: under it.
 Popup_Side :: enum u8 {Auto,Below,Above}
-
-// Where a popup of w by h goes so it stays inside the surface: on the side of
-// its anchor it asks for, or the other one when it does not fit there. Inside
-// a panel (within) it lines up with the panel instead of with the anchor.
-popup_origin :: proc(ctx:^Context,anchor:Rect,w,h:f32,align_right:bool,side:Popup_Side=.Auto,within:Rect={}) -> [2]f32 {
-    th:=&ctx.theme
-    size:=surface_size(ctx)
-    top:=th.bar_height+2 if ctx.surface==0 else 0
-    left,right:=anchor.x,anchor.x+anchor.w
-    if within.w>0 {left,right=within.x,within.x+within.w}
-    x:=right-w if align_right else left
-    below,above:=anchor.y+anchor.h+4,anchor.y-h-4
-    y:=below
-    switch side {
-    case .Auto,.Below: if below+h>size.y-th.margin && above>=top {y=above}
-    case .Above:       y=above if above>=top || below+h>size.y-th.margin else below
-    }
-    return {clamp(x,th.margin,max(size.x-w-th.margin,th.margin)),clamp(y,top,max(size.y-h-th.margin,top))}
-}
-
-// Where a submenu of w by h goes: right of the item it hangs from, with its
-// first item level with it, or left of the menu when it does not fit there.
-@(private)
-popup_side_origin :: proc(ctx:^Context,anchor:Rect,w,h,padding:f32) -> [2]f32 {
-    th:=&ctx.theme
-    size:=surface_size(ctx)
-    top:=th.bar_height+2 if ctx.surface==0 else 0
-    x:=anchor.x+anchor.w+padding
-    if x+w>size.x-th.margin {x=anchor.x-w-padding}
-    y:=anchor.y-padding
-    return {clamp(x,th.margin,max(size.x-w-th.margin,th.margin)),clamp(y,top,max(size.y-h-th.margin,top))}
-}
 
 Popup :: struct {
     width:f32,        // 0: as wide as its content, at least min_width
     min_width:f32,
-    height:f32,       // when known beforehand; otherwise the one it had last frame
     align_right:bool, // its right edge under the right edge of the anchor
     padding:f32,      // 4 when 0
     flush:bool,       // no padding: what it holds reaches its edges, as the bands of its sections
@@ -186,18 +154,26 @@ popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
     entry:=popup_find(ctx,id)
     if entry==nil || ctx.popup.depth>=POPUP_DEPTH {return false}
     th:=&ctx.theme
-    previous,_:=widget_rect(ctx,id)
-    w:=desc.width if desc.width>0 else max(previous.w,desc.min_width)
-    h:=desc.height if desc.height>0 else previous.h
     padding:=desc.padding if desc.padding>0 || desc.flush else 4
-    origin:=popup_origin(ctx,entry.anchor,w,h,desc.align_right,desc.side,desc.within)
-    if entry.side {origin=popup_side_origin(ctx,entry.anchor,w,h,padding)}
     popup_enter(ctx,entry)
-    // Until its height is known it would land under its anchor and jump over
-    // it a frame later: its first frame only lays it out, unseen.
-    unknown:=h<=0
+    // It hangs from what opened it, and the layout keeps it inside its
+    // surface: on the other side of that when it does not fit on its own. A
+    // submenu hangs beside its item, its first item level with it; inside a
+    // panel (within) a popup lines up with the panel instead.
+    from:=entry.anchor
+    float:=Float{to=.Surface,anchor=.Top_Right,pivot=.Top_Left,offset={padding,-padding},layer=entry.layer}
+    if !entry.side {
+        if desc.within.w>0 {from.x,from.w=desc.within.x,desc.within.w}
+        right:=desc.align_right
+        if desc.side==.Above {
+            float.anchor,float.pivot,float.offset=.Top_Right if right else .Top_Left,.Bottom_Right if right else .Bottom_Left,{0,-4}
+        } else {
+            float.anchor,float.pivot,float.offset=.Bottom_Right if right else .Bottom_Left,.Top_Right if right else .Top_Left,{0,4}
+        }
+    }
+    top:=th.bar_height+2 if ctx.surface==0 else 0
     b:=Box{id=id,width=fixed(desc.width) if desc.width>0 else fit(desc.min_width),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
-        float={to=.Surface,offset=origin,layer=entry.layer},fill=th.popup,stroke=th.border,radius=th.radius_popup,shadow=true,block=true,layer={enabled=unknown,opacity=0}}
+        float=float,from=from,contain=true,inset={th.margin,top,th.margin,th.margin},fill=th.popup,stroke=th.border,radius=th.radius_popup,shadow=true,block=true}
     if s:=desc.style;s!=nil {
         b.fill,b.stroke,b.stroke_width,b.radius,b.corners=s.fill,s.stroke,s.stroke_width,0,s.radius
         b.shadow,b.shadow_color,b.shadow_blur,b.shadow_offset=s.shadow,s.shadow_color,s.shadow_blur,s.shadow_offset
@@ -555,9 +531,8 @@ dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},
             if at>=0 {choice=entry.cursor}
         }
     }
-    creating:=created!=nil && d.searchable && entry.filter_length>0 ? row_height : 0
     width:=max(entry.anchor.w,180) if look==nil else entry.anchor.w
-    if popup(ctx,list,{width=width,height=height+search_height+creating+2*padding,padding=padding,search="Search" if d.searchable else "",own_keys=true,style=look}) {
+    if popup(ctx,list,{width=width,padding=padding,search="Search" if d.searchable else "",own_keys=true,style=look}) {
         id_push(ctx,list)
         if d.searchable {
             filter,_=popup_search(ctx,list)
@@ -621,7 +596,7 @@ dropdown_button :: proc(ctx:^Context,id:Id,shown:string,d:Dropdown) -> (clicked:
     style:=look.text
     style.align_y=.Center
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center,padding={em*GAME_PAD,0,0,0}},custom=paint_add(ctx,game_background(look))}) {
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=style})})
+        text(ctx,shown,style,GROW,GROW)
         element_leaf(ctx,{layout={width=fixed(line),height=GROW},custom=paint_add(ctx,{kind=.Arrow,fill=look.mark,size=em*GAME_ARROW,value=3})})
     }
     element_close(ctx)
@@ -638,7 +613,10 @@ dropdown_row :: proc(ctx:^Context,id:Id,text:string,current,chosen,check_room:bo
     style.align_y=.Center
     if chosen && look.mark[3]>0 {style.color=look.mark}
     if element_open(ctx,{id=id,layout={width=GROW,height=fixed(height),padding={pad,0,pad,0}},custom=paint_add(ctx,{kind=.Rect,fill=look.track if current else {},corners=look.radius})}) {
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=text,style=style})})
+        text_leaf:=text
+        text_begin(ctx,style)
+        text_span(ctx,text_leaf)
+        text_end(ctx,{width=GROW,height=GROW})
     }
     element_close(ctx)
     return it.clicked
