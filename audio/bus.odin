@@ -3,7 +3,8 @@ package mirai_audio
 import "core:math"
 
 // Buses: every voice plays into one, every bus but the master plays into
-// the master, and the master is what mixer_render writes out. A bus has a
+// the one it sends to (the master unless bus_set_send says another), and the
+// master, through its limiter, is what mixer_render writes out. A bus has a
 // reverb, a low-pass filter, a volume and a mute, in that order, and can be
 // ducked by another bus.
 
@@ -22,7 +23,7 @@ Duck :: struct {
 }
 
 @(private)
-Bus_Shadow :: struct {volume:f32,muted:bool,lowpass:f32,duck:Duck,reverb:Reverb}
+Bus_Shadow :: struct {volume:f32,muted:bool,lowpass:f32,duck:Duck,reverb:Reverb,send:Bus}
 @(private)
 Biquad :: struct {b0,b1,b2,a1,a2:f32}
 @(private)
@@ -34,6 +35,21 @@ Mix_Bus :: struct {
     duck:Duck,
     duck_gain,duck_gain_now:f32,
     peak:f32, // of the last chunk, before ducking
+    send:Bus,
+}
+
+// The master is held under LIMITER_CEILING (Godot's AudioEffectHardLimiter
+// without its lookahead, so the mix keeps no latency): a sample that would
+// pass it brings the gain down to it at once, the gain holds for LIMITER_HOLD
+// and comes back to 1 over LIMITER_RELEASE.
+LIMITER_CEILING :: f32(1)     // full scale
+LIMITER_HOLD :: f32(0.02)    // s
+LIMITER_RELEASE :: f32(0.1)  // s
+
+@(private)
+Limiter :: struct {
+    gain,floor:f32, // now, and where its release started
+    hold:int,       // frames left before it releases
 }
 
 // Reserves a bus. Buses are never destroyed.
@@ -57,6 +73,14 @@ bus_muted :: proc(m:^Mixer,bus:Bus) -> bool {return bus_valid(m,bus) && m.bus_sh
 bus_set_mute :: proc(m:^Mixer,bus:Bus,muted:bool) -> bool {
     if !bus_valid(m,bus) || !command_push(m,{kind=.Bus_Mute,index=u32(bus),flag=muted}) {return false}
     m.bus_shadows[bus].muted=muted
+    return true
+}
+// The bus a bus plays into: the master, or a bus created before it, so what
+// sends never loops back.
+bus_send :: proc(m:^Mixer,bus:Bus) -> Bus {return m.bus_shadows[bus].send if bus_valid(m,bus) else BUS_MASTER}
+bus_set_send :: proc(m:^Mixer,bus,to:Bus) -> bool {
+    if !bus_valid(m,bus) || bus==BUS_MASTER || to>=bus || !command_push(m,{kind=.Bus_Send,index=u32(bus),frames=u32(to)}) {return false}
+    m.bus_shadows[bus].send=to
     return true
 }
 // Cutoff of the low-pass filter of the bus in Hz (12 dB per octave); 0 turns the filter off.
@@ -130,18 +154,19 @@ bus_process :: proc "contextless" (bus:^Mix_Bus,buffer:[^]f32,n:int) {
     }
 }
 
-// Sums the buses into the master and writes the master to out.
+// Sums each bus into the one it sends to, the last created first, and writes
+// the master to out. A bus ducked by one created before it hears the peak of
+// that one in the last chunk.
 @(private)
 buses_mix :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
     master:=raw_data(m.bus_buffers)
     #no_bounds_check {
-        for &bus,i in m.buses[1:] {
-            buffer:=master[(i+1)*CHUNK_FRAMES*2:]
-            reverb_run(&m.bus_reverbs[i+1],buffer,buffer,n)
-            bus_process(&bus,buffer,n)
-        }
-        for &bus,i in m.buses[1:] {
-            buffer:=master[(i+1)*CHUNK_FRAMES*2:]
+        for i:=len(m.buses)-1;i>=1;i-=1 {
+            bus:=&m.buses[i]
+            buffer:=master[i*CHUNK_FRAMES*2:]
+            reverb_run(&m.bus_reverbs[i],buffer,buffer,n)
+            bus_process(bus,buffer,n)
+            to:=master[int(bus.send)*CHUNK_FRAMES*2:]
             target:=f32(1)
             if bus.duck.amount>0 {
                 wanted:=1-bus.duck.amount if m.buses[bus.duck.source].peak>bus.duck.threshold else 1
@@ -155,8 +180,8 @@ buses_mix :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
             gain,step:=bus.duck_gain_now,(target-bus.duck_gain_now)/f32(n)
             for k in 0..<n {
                 g:=gain+step*f32(k)
-                master[k*2]+=buffer[k*2]*g
-                master[k*2+1]+=buffer[k*2+1]*g
+                to[k*2]+=buffer[k*2]*g
+                to[k*2+1]+=buffer[k*2+1]*g
             }
             bus.duck_gain_now=target
         }
@@ -168,5 +193,26 @@ buses_mix :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
             // Constant power: a centered mono sound comes out of the one speaker as loud as it was played.
             for k in 0..<n {out[k]=(master[k*2]+master[k*2+1])*(math.SQRT_TWO/2)}
         }
+    }
+    limiter_run(&m.limiter,out,m.channels,m.sample_rate)
+}
+
+@(private)
+limiter_run :: proc "contextless" (l:^Limiter,out:[]f32,channels,sample_rate:int) {
+    hold,release:=int(LIMITER_HOLD*f32(sample_rate)),LIMITER_RELEASE*f32(sample_rate)
+    #no_bounds_check for k in 0..<len(out)/channels {
+        frame:=out[k*channels:][:channels]
+        peak:=f32(0)
+        for x in frame {peak=max(peak,abs(x))}
+        if l.hold>0 {
+            l.hold-=1
+        } else if l.gain<1 {
+            l.gain=min(l.gain+(1-l.floor)/release,1)
+        }
+        if peak*l.gain>LIMITER_CEILING {
+            l.gain=LIMITER_CEILING/peak
+            l.floor,l.hold=l.gain,hold
+        }
+        for &x in frame {x*=l.gain}
     }
 }
