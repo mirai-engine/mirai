@@ -379,7 +379,8 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
   resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
   writes it; they show what was asked until the game has had a tick to write it. A control bound to
-  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A `Selector` or a
+  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A
+  `Selector` or a
   `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
   enum, a text for a text field), not its index. A `Selector` or a
   `Dropdown` with `bind_items` takes its options from a game array.
@@ -486,7 +487,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
-### Widgets
+### Widget files
 
 - A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
   `Tree_Component.widget` names the file and its name is the name of the file. A file that no node

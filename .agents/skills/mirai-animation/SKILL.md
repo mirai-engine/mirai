@@ -219,7 +219,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   `-collection:plugins=plugins`), `plugins/animation_physics/runtime` and `std/anim` according to
   what was touched.
 - Tests: the cases of the Verification section of each reference in the Map, with `mirai test`;
-  `--release` only if a failure may depend on optimization. Matching: `matching_test.odin` of the runtime (the
+  `--release` only if a failure may depend on optimization. Matching: `matching_test.odin` of the
+  runtime (the
   demo's Mirai: skating, pose jumps, response and cost) and `std/anim/matching_test.odin`.
 - API methods: generate and compile the demo editor and check them with `mirai rpc describe` and a
   real call.

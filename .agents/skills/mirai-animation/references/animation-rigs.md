@@ -1,7 +1,7 @@
 # Rigs and chain modifiers
 
-The tables `chain_ik`, `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`, `correctives`,
-`follow`, `curve_poses`, `curve_drives` and `curve_materials` extend the
+The tables `chain_ik`, `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`,
+`correctives`, `follow`, `curve_poses`, `curve_drives` and `curve_materials` extend the
 [`.pose` profile](animation.md#components-and-shared-data): they are rows of a shared definition,
 without components per operation. A `.pose` of another `POSE_VERSION` is
 rejected and written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
@@ -96,7 +96,8 @@ its body animation; no solver evaluates it.
 - Each distinct material value is a derived material of the renderer, freed when no drawing uses
   it: a stepped curve costs a few; one that changes in every frame makes one per frame and mesh,
   which suits a few characters, not crowds (there are no per-instance parameters in the shader).
-- A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the plugin has
+- A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
+  plugin has
   no rig evaluator. Poses driven by bone rotations are correctives (inverse distance), not an RBF
   solver.
 
@@ -106,7 +107,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 ## Order and state
 
 - Order: retarget of bones and chains (from `Playing.sampled`, before their constraints), removal of
-  root motion, the follow of a leader, curve drives and curve poses, grounding, contacts and IK/look-at, Chain IK, Multi IK, twist, springs, Spline IK,
+  root motion, the follow of a leader, curve drives and curve poses, grounding, contacts and
+  IK/look-at, Chain IK, Multi IK, twist, springs, Spline IK,
   correctives, Follow and, at the end, limits and attachments.
 - `Modifier_Runtime` stores tables, bindings and spring state; `core.value_copy` copies it for Play
   and rollback and the assets stay shared. The rows are not components nor another owner of

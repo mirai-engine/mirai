@@ -12,7 +12,6 @@ import "mirai:editor/history"
 import eanim "plugins:animation/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -51,11 +50,11 @@ Subject :: struct {
     parts:[PART_CAPACITY]Part,
     part_count:int,
     worlds:[PART_CAPACITY]mm.Transform, // of the parts in the pose last sampled, in the space of the parent of the root
-    locals:[dynamic]gpu.Thumbnail_Vertex, // in the space of their part
-    posed:[dynamic]gpu.Thumbnail_Vertex,
-    materials:[dynamic]gpu.Material_Desc,
+    locals:[dynamic]editor.Thumbnail_Vertex, // in the space of their part
+    posed:[dynamic]editor.Thumbnail_Vertex,
+    materials:[dynamic]erender.Material_Desc,
     skins:[dynamic]Subject_Skin,
-    renderer:^gpu.Renderer,
+    renderer:^erender.Renderer,
     short:bool, // parts or triangles were left out
     fit:[2][3]f32,
     fit_key:u64,

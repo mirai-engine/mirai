@@ -9,24 +9,20 @@ mirai play . --frames 180 --input .mirai/run.txt --capture .mirai/shot.png
 
 ## Options
 
-- `--scene <path>`: the start scene, relative to `assets/`, instead of `start_scene`.
-- `--headless`: no window; it draws offscreen in steps of 1/60 s, so `--frames 120` is two
-  seconds of game, the same every run. Needs a GPU. `--frames`, `--input` and `--capture` imply
-  it; `--show-window` keeps a window for them.
-- `--no-gpu`: no window and no renderer, only the simulation: fast logic checks, no picture.
-- `--frames <n>`: exit after n frames. Without it the run goes on until the game quits.
-- `--capture <png>`: write the last frame as a PNG on exit. The folder must exist; it fails
-  with `--no-gpu` or `--dedicated`.
-- `--input <script>`: press keys, move the mouse and click, as below.
-- `--validation`: graphics API validation; the run ends with code 6 if it reports errors.
-- `--players <n>`: 1 to 4 local split-screen players; without it, what the scene says.
-- `--window <x>,<y>,<width>,<height>`: place the window, frame included, in screen coordinates.
+`mirai play . --help` prints the options and exits 2, as any option the player does not know does;
+the built game prints the same. What the list does not say:
+
+- `--frames`, `--input` and `--capture` imply `--headless`: no window, drawn offscreen in steps of
+  1/60 s, so `--frames 120` is two seconds of game, the same every run. It needs a GPU;
+  `--show-window` keeps a window for them.
+- `--no-gpu` simulates without a window or a renderer: fast logic checks, no picture, so it cannot
+  capture.
+- `--capture` needs an existing folder to write to.
 - Network options (`--server`, `--connect`) belong to the `multiplayer` plugin
   ([networking](../networking.md)).
 
-Exit code 0 is a normal run; 1 the application could not be created; 2 an option or a script line
-it does not understand; 3 the start scene did not load; 4 the capture could not be written; 6
-validation errors; 7 the GPU stopped working. An option nobody reads prints the usage and exits 2.
+Exit code 0 is a normal run. Any other code comes with a `mirai:` message on stderr; 2 means an
+option or a script line was not understood and 6 that `--validation` found errors.
 
 ## Input script
 

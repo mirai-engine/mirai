@@ -24,7 +24,8 @@ libraries.
 - `dry_run` (in every `create`, `set`, `patch`, bake and edit) validates and answers without
   writing.
 - `path` is relative to the assets folder. `create` does not overwrite; `set` on a path that has one
-  replaces it keeping its id (`replaced:true`) and validates the whole definition before publishing. The files use the [asset
+  replaces it keeping its id (`replaced:true`) and validates the whole definition before publishing.
+  The files use the [asset
   container](../../mirai-assets/references/formats.md), without opaque JSON.
 - A `set` over an existing asset replaces the whole file and the last one wins
   ([concurrency](../../mirai-agent-api/references/api.md#concurrency-transactions-and-undo)). The
@@ -109,7 +110,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 - Capabilities (`want`): locomotion (a `.match` with those clips and a warping `.motion`; the
   `Animation` stays `In_Place` when a clip of its library has a root and `animation_physics` moves
   it; its loops keep their phase and a
-  body that does not move, also against a wall, plays the loops that do not travel), look-at and hands (off until
+  body that does not move, also against a wall, plays the loops that do not travel), look-at and
+  hands (off until
   requested), feet (grounding: needs physics) and gestures (`.action` on the upper body and per arm,
   in layers 1 to 3). The IK pole of each arm is a fixed point of the world: with the character
   turned the elbows do not follow it. Idle and walk are enough: the locomotion is `Ready`, and
@@ -130,7 +132,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 
 ## Clips and timeline
 
-- `animation.clip.create` adds a clip to the `.anim` at `path`, new or not. Its result gives the id that the following calls use; duplicate names are rejected.
+- `animation.clip.create` adds a clip to the `.anim` at `path`, new or not. Its result gives the id
+  that the following calls use; duplicate names are rejected.
   `clip.set` changes name and root without touching tracks or markers.
 - `animation.track.set` creates, replaces or removes a whole track by `(target,property,slot)`, with
   the clip by name and the destination by canonical path or curve name. `key.set` replaces

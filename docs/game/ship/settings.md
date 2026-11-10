@@ -30,8 +30,8 @@ sections of the engine file with the project's: the shipped game reads no engine
 
 ## Edit them
 
-- In an editor session: `settings.get` shows `machine` (the names of the machine settings),
-  `settings` (effective values), `engine` and `project` (what each file sets).
+- In an editor session: `settings.get` shows the effective values and what each file sets
+  (`mirai rpc --project . describe settings.get` gives its shape).
   `settings.set {"layer":"project","settings":{"Graphics_Settings":{"vsync":true}}}` writes the
   project's file; `"layer":"engine"` takes machine sections only and writes this machine's file.
   A field the project overrides does not change under `engine`.

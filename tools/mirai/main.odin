@@ -249,6 +249,7 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     append(&command,..args[1:])
     code:=run(root,command[:])
     if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
+    if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
     return code
 }
 
@@ -258,12 +259,13 @@ cmd_check :: proc(root:string,args:[]string) -> int {
 check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
+    clean:=plugin_api_lint_project(&opened)
     job:=build.job_run({project=&opened,target=.Editor,action=.Check})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) else 0
+        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
     return 1

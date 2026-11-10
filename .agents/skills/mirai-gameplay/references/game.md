@@ -31,14 +31,14 @@ of its owner and is taken by the function in parentheses:
   (`spawn_step`, plugin `spawn`).
 - **Play a cinematic**: `cinematics.cinematic_play` and its companions in
   `^cinematics.Cinematic_Requests` (`cinematic_advance`, plugin `cinematics`).
-- **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in `^scene.Scene_Requests`
-  (`scene_requests`); the result arrives in `scene.Scene_Results`.
+- **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in
+  `^scene.Scene_Requests` (`scene_requests`); the result arrives in `scene.Scene_Results`.
 - **Instantiate a prefab**: `scene.spawn(spawner, path_or_id, at)`, which gives the root.
 - **Save or load**: `save.request_save(&r, "slot")`, `request_load`, `request_delete` in
   `^save.Save_Requests` (`saves_serve`).
 - **Send a network message**: `multiplayer.send(&outbox, time, value)` with a struct
-  `@(net_message)` in `^multiplayer.Net_Outbox` (`net_tick_tail`); it does not queue while a rollback
-  replays the tick.
+  `@(net_message)` in `^multiplayer.Net_Outbox` (`net_tick_tail`); it does not queue while a
+  rollback replays the tick.
 
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,
 `joint_break`...), `destruct.Destruct_Events`, `gui.UI_Events`, `anim.Animation_Events`,

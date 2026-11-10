@@ -66,7 +66,7 @@ Engine_Package :: struct {
 // library, with the package that binds it.
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base"},{.Base,"std/subprocess"},{.Base,"std/math"},{.Base,"std/geom"},{.Base,"std/serial"},{.Base,"std/spatial"},
-    {.Base,"std/jobs"},{.Base,"std/anim"},{.Base,"std/ai"},{.Base,"std/input"},
+    {.Base,"std/jobs"},{.Base,"std/anim"},{.Base,"std/ai"},{.Base,"std/input"},{.Base,"std/ui_format"},
     {.Base,"std/compressor"},{.Base,"std/compressor/bc7split"},{.Base,"std/compressor/lz/entropy"},{.Base,"std/compressor/lz/match"},
     {.Base,"std/compressor/lz/parse"},{.Base,"std/compressor/lz"},
     {.Base,"audio"},{.Base,"platform"},{.Base,"rhi"},{.Base,"project"},{.Base,"core"},
@@ -142,7 +142,7 @@ engine_library_entry :: proc(library:Engine_Library,allocator:=context.allocator
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 8
+DECLARE_VERSION :: 9
 
 Engine_Paths :: struct {
     folder:string,

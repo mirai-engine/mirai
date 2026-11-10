@@ -134,9 +134,7 @@ Layout_Tree :: struct {
     open:[LAYOUT_DEPTH+1]i32,open_len:int,
     lines:[]Layout_Line,line_count:int,
     commands:[]Layout_Command,command_count:int,
-    // Where an element is by its id. A slot of an earlier generation is free,
-    // so a frame costs nothing to start.
-    ids:[]Id,places:[]i32,generations:[]u32,id_mask,generation:u32,
+    ids:Id_Table, // where an element is by its id
     duplicates:int,
     // The runs of this frame are measured in the first and what earlier
     // frames measured is found in the second: they change places between frames.
@@ -168,14 +166,9 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     t.lines=alloc(Layout_Line,max_elements*4,a,&ok)
     t.commands=alloc(Layout_Command,max_elements*4,a,&ok)
     t.tracks=alloc(Grid_Tracks,max_tracks,a,&ok)
-    slots:=16
-    for slots<max_elements*2 {slots<<=1}
-    t.ids=alloc(Id,slots,a,&ok)
-    t.places=alloc(i32,slots,a,&ok)
-    t.generations=alloc(u32,slots,a,&ok)
-    t.id_mask=u32(slots-1)
+    if !id_table_init(&t.ids,max_elements,a) {ok=false}
     // A frame has fewer runs than elements.
-    slots=16
+    slots:=16
     for slots<max_elements {slots<<=1}
     for &g in t.measures {
         g.keys=alloc(u64,slots,a,&ok)
@@ -188,7 +181,6 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     if !ok {layout_destroy(t);return false}
     // Allocated memory is not promised to be zeroed, and a slot is free by
     // the generation it holds.
-    mem.zero_slice(t.generations)
     for &g in t.measures {
         mem.zero_slice(g.generations)
         g.generation=1
@@ -201,7 +193,7 @@ layout_destroy :: proc(t:^Layout_Tree) {
     a:=t.allocator
     delete(t.nodes,a);delete(t.runs,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
     delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a)
-    delete(t.ids,a);delete(t.places,a);delete(t.generations,a)
+    id_table_destroy(&t.ids,a)
     for g in t.measures {
         delete(g.keys,a);delete(g.entries,a);delete(g.generations,a);delete(g.words,a);delete(g.chars,a)
     }
@@ -214,8 +206,7 @@ layout_destroy :: proc(t:^Layout_Tree) {
 layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
     t.run_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
     t.duplicates=0;t.overflow=false;t.aspects=false
-    t.generation+=1
-    if t.generation==0 {mem.zero_slice(t.generations);t.generation=1}
+    id_table_clear(&t.ids)
     // The generations change places only between frames, because the runs of
     // a frame point at the words of the first. Half full leaves room for a
     // frame of new runs; what the second held and no frame since asked for is
@@ -329,32 +320,15 @@ layout_attach :: proc(t:^Layout_Tree,index:i32) {
 // ---------------------------------------------------------------- by id
 
 @(private)
-layout_slot :: #force_inline proc "contextless" (t:^Layout_Tree,id:Id) -> u32 {
-    // Ids are hashes already: one multiplication spreads them over the slots.
-    return (u32(id)*2654435761)>>8 & t.id_mask
-}
-@(private)
 layout_id_put :: proc(t:^Layout_Tree,id:Id,index:i32) {
-    if id==0 {return}
-    slot:=layout_slot(t,id)
-    for t.generations[slot]==t.generation {
-        if t.ids[slot]==id {t.duplicates+=1;return}
-        slot=(slot+1)&t.id_mask
-    }
-    t.generations[slot]=t.generation
-    t.ids[slot]=id
-    t.places[slot]=index
+    if id!=0 && !id_table_put(&t.ids,id,index) {t.duplicates+=1}
 }
 // The node of an id in this frame; the surface when no element has it.
 @(private)
 layout_index :: proc(t:^Layout_Tree,id:Id) -> i32 {
     if id==0 {return 0}
-    slot:=layout_slot(t,id)
-    for t.generations[slot]==t.generation {
-        if t.ids[slot]==id {return t.places[slot]}
-        slot=(slot+1)&t.id_mask
-    }
-    return 0
+    place,_:=id_table_find(&t.ids,id)
+    return place
 }
 // Where the element of an id was placed by the last layout_finish.
 @(private)

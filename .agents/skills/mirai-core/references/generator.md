@@ -8,7 +8,8 @@ attributes and writes the code that joins the libraries. `mirai generate <projec
 `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`, `swap`, `free`,
 `replicated`, `setting`, `scene`, `description`, `queue`, `events`, `keep`, `reset`, `net_message`,
 `from`, `reliable`, `params`, `names`, `name_bits`, `name`, `name_requires`, `presentation`,
-`record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs it. The
+`record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs
+it. The
 `mirai` tool is compiled with `-ignore-unknown-attributes`: it does not use them, and one compiled
 before a new attribute does not know it.
 
@@ -288,7 +289,8 @@ all. The ones most often stumbled on:
   `fixed` that receives a `presentation` storage.
 - A type declared twice; a `locks` on something that is not a `shared` component.
 - A `@(params)` that is not a struct without type parameters or with one `$E:typeid` (then with a
-  field of the actions type, and received for an enum `@(actions)`), that has no fields, that is also a
+  field of the actions type, and received for an enum `@(actions)`), that has no fields, that is
+  also a
   component, storage or message, with a field that is not a valid parameter or that is another
   `@(params)` (they do not nest); a function that receives it by pointer, or a library one that
   receives one from an editor package.

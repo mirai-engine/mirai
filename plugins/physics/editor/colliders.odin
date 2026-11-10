@@ -5,12 +5,12 @@ import "mirai:core"
 import phys "plugins:physics/runtime"
 import "mirai:host"
 import sim "plugins:physics/runtime/sim"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 
 @(storage)
 Collider_Preview :: struct {
-    vertices:[editor.LINE_CAPACITY]gpu.Debug_Vertex,
-    faint:[editor.LINE_CAPACITY]gpu.Debug_Vertex, // the same lines at a quarter of their opacity, seen through what hides them
+    vertices:[editor.LINE_CAPACITY]erender.Debug_Vertex,
+    faint:[editor.LINE_CAPACITY]erender.Debug_Vertex, // the same lines at a quarter of their opacity, seen through what hides them
     scratch:[editor.LINE_CAPACITY/2]sim.Debug_Line,
     selection_serial,physics_synced,teleports,authors_layout:u64,
     epoch:u32,
@@ -30,7 +30,7 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
     if state==nil || preview==nil {return}
     ids:=core.world_table_of(w,core.Id)
     authors_layout:=ids!=nil?ids.layout:0
-    lines:=gpu.debug_lines_make(preview.vertices[:])
+    lines:=erender.debug_lines_make(preview.vertices[:])
     if !preview.ready || preview.selection_serial!=s.selection.serial || preview.physics_synced!=state.synced || preview.epoch!=state.epoch || preview.teleports!=state.stats.teleports || preview.authors_layout!=authors_layout {
         out:=sim.Debug_Draw{lines=preview.scratch[:]}
         color:=[4]f32{0.35,1,0.55,0.9}
@@ -48,10 +48,10 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
             if out.lines_dropped>0 {
                 lines.dropped+=out.line_count+out.lines_dropped
                 if len(lines.vertices)-lines.count<24 {continue}
-                if bounds,ok:=phys.collider_bounds({state},e);ok {gpu.debug_box(&lines,bounds.min,bounds.max,color)}
+                if bounds,ok:=phys.collider_bounds({state},e);ok {erender.debug_box(&lines,bounds.min,bounds.max,color)}
                 continue
             }
-            for line in out.lines[:out.line_count] {gpu.debug_line(&lines,line.a,line.b,color)}
+            for line in out.lines[:out.line_count] {erender.debug_line(&lines,line.a,line.b,color)}
         }
         preview.selection_serial,preview.physics_synced,preview.epoch,preview.teleports=s.selection.serial,state.synced,state.epoch,state.stats.teleports
         preview.authors_layout=authors_layout
@@ -65,7 +65,7 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
     if lines.count==0 {return}
     // What is in sight, firm; what is behind something, faint.
     host.extras_debug_lines_add(&s.app.extras,lines)
-    faint:=gpu.debug_lines_make(preview.faint[:],depth_test=false)
+    faint:=erender.debug_lines_make(preview.faint[:],depth_test=false)
     faint.count=preview.count
     host.extras_debug_lines_add(&s.app.extras,faint)
 }
