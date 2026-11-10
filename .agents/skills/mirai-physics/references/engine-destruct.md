@@ -47,9 +47,9 @@ simulation starts.
 - `destruct_step` runs `fixed` after `physics_step`: first `fracture_update` with the hits of the
   step. `Fracture_State` (`@(storage,shared)`, copied, swapped and reset like `Physics_State`) holds
   the model, with the capacities of `Destruct_Settings`. It creates its destructibles and the
-  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Tint` of the group entities
-  and gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with
-  its Id, in `Destruct_Events.grouped`.
+  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the
+  group entities and gives them `Parent` with `core.Commands`. It publishes each new group that is
+  not debris, with its Id, in `Destruct_Events.grouped`.
 - A failure is a `destruct.*` problem of the destructible
   ([problems](../../mirai-core/references/core.md#problems)), with the cause and the fix, and it is
   not retried until the configuration changes. What fracture or the simulation did not give it in a
@@ -113,8 +113,8 @@ Proxies and movement:
 - `Group_Info.remaining_ticks` reads the physical removal date
   ([removal](destruction.md#removal)); a reached date stays so on a passive client until `Remove`
   arrives.
-- Physics decides when a fragment ceases to exist; its fade belongs to the game or to a
-  presentation plugin (`render.Tint.color.a`). For a fade before a removal by time, the game reads
+- Physics decides when a fragment ceases to exist; its fade belongs to the game or to a presentation
+  plugin (`render.Material_Values.color.a`). For a fade before a removal by time, the game reads
   `remaining_ticks` without duplicating age or timer; for a life that gameplay decides,
   `removal_lifetime=0`, `remove_on_sleep=false` and `remove` at the end. Group zero never takes
   part.

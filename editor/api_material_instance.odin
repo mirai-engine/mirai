@@ -68,7 +68,7 @@ material_instance_entity :: proc(s:^Session,w:core.World_Ref,call:^api.Call,text
 // The name of a value, a parameter or a texture of an override, as the API names it.
 @(private)
 override_label :: proc(program:^gpu.Program,name:u64) -> string {
-    for standard in erender.MATERIAL_VALUE_NAMES {if base.name_hash(standard)==name {return standard}}
+    for standard in erender.MATERIAL_VALUE_FIELDS {if base.name_hash(standard.name)==name {return standard.name}}
     for map_name in erender.MATERIAL_MAP_NAMES {if base.name_hash(map_name)==name {return map_name}}
     if program!=nil {
         for &parameter in program.parameters {if base.name_hash(parameter.name)==name {return parameter.name}}
@@ -131,10 +131,17 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
         serial.write_u8(out,'}')
     }
     layers,count,_,_:=overlays_of(s,e)
+    api_overlays_write(out,layers[:count])
+    serial.write_u8(out,'}')
+}
+
+// The layers drawn over a material, as the key overlays of a result.
+@(private)
+api_overlays_write :: proc(out:^serial.Writer,layers:[]asset.Material_Overlay) {
     api.write_key(out,"overlays")
     serial.write_u8(out,'[')
     names:=OVERLAY_BLEND_NAMES
-    for layer,i in layers[:count] {
+    for layer,i in layers {
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')
         api.write_key(out,"material",first=true);api_asset_write(out,layer.material)
@@ -143,7 +150,6 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
         serial.write_u8(out,'}')
     }
     serial.write_u8(out,']')
-    serial.write_u8(out,'}')
 }
 
 @(private)
@@ -207,7 +213,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         for value in Material_Value {
             name:=material_value_name(value)
             now:=material_parameter_value(&given,nil,name)
-            erender.material_standard_apply(&kept,name,now)
+            erender.material_standard_value(&kept,name,&now,true)
             if now==material_parameter_value(&material,nil,name) {
                 erender.material_value_drop(&next,name,slot)
             } else if !erender.material_value(&next,name,now,slot) {
@@ -297,7 +303,7 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
                 break
             }
             if serial.text_keyword(&r.r,"null") {
-                override_texture_put(next,slot,name,{},false)
+                erender.material_texture_drop(next,name,slot)
                 continue
             }
             buffer:[API_PATH_BYTES]u8
@@ -307,7 +313,7 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
                 named:bool
                 if texture,named=asset_named(s,call,text,asset.KIND_TEXTURE,".tex","a texture");!named {return false}
             }
-            if !override_texture_put(next,slot,name,texture,true) {
+            if !erender.material_texture(next,name,slot,texture) {
                 rpc_fail(&r,"%s up to %d textures of a material",who,erender.MATERIAL_VALUES_TEXTURES)
                 break
             }

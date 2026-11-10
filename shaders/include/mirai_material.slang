@@ -53,6 +53,8 @@ struct Mirai_Surface_Context {
     // without them. The engine reads it: a program receives those values in
     // its parameters.
     uint material_values;
+    // The material the point shows, for mirai_surface_standard. The engine sets it.
+    uint material;
     // What the particle that draws the point gives its material, as its
     // program says (Mirai_Vfx_Visual.data), and which of them it gives: bit
     // i for particle_data[i]. None where no particle draws.
@@ -142,6 +144,12 @@ struct Mirai_Surface {
 };
 // The values of the default material (asset.MATERIAL_DEFAULTS) at the point.
 Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx);
+// The standard model of the material that shows the program, at the point:
+// its values with its maps (and what its entity gives over them), as it would
+// be drawn without a program. A program that starts from it changes only what
+// it is about (a dissolve, a wet rim, a pulse) and keeps the material's own
+// colors, maps and layers; a material whose program names it loads its maps.
+Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx);
 // A coating mixes ordinary PBR attributes, including ray-hit evaluation.
 Mirai_Surface mirai_surface_mix(Mirai_Surface a, Mirai_Surface b, float mask) {
     float w=saturate(mask);
@@ -189,6 +197,7 @@ struct Mirai_Outline {
 };
 #ifdef MIRAI_MATERIAL_REFLECTION
 Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {Mirai_Surface s=(Mirai_Surface)0;s.normal=ctx.normal;return s;}
+Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {return mirai_surface_default(ctx);}
 float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, float2 uv, float lod) {return float4(1);}
 float4 mirai_sample_texture(Mirai_PostProcess_Context ctx, uint index, float2 uv, float lod) {return float4(1);}
 float4 mirai_sample_texture_level(uint index, float2 uv, float level) {return float4(1);}
@@ -218,4 +227,55 @@ float mirai_scene_depth(Mirai_PostProcess_Context ctx, float2 uv);
 float3 mirai_scene_normal(Mirai_PostProcess_Context ctx, float2 uv);
 Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx, float2 uv);
 #endif
+// What programs make of the place itself, so a look is a few lines of intent.
+// A value from 0 to 1 of a cell of a lattice.
+float mirai_cell_value(int3 cell) {
+    uint h = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u ^ uint(cell.z) * 0xcb1ab31fu;
+    h ^= h >> 15u; h *= 0x2c1b3c6du; h ^= h >> 12u; h *= 0x297a2d39u; h ^= h >> 15u;
+    return float(h >> 8u) * (1.0 / 16777216.0);
+}
+// Value noise of the world, 0 to 1, with a feature every `metres`: the same
+// at a place of the world wherever the origin of the render is, on the
+// lattice of the origin (origin.slang). position: relative to that origin.
+float mirai_noise_at(int3 origin, float3 position, float metres) {
+    float scale = 1.0 / max(metres, 1e-6);
+    int3 whole;
+    float3 part;
+    origin_lattice(origin, float3(scale), whole, part);
+    float3 at = part + position * scale;
+    float3 low = floor(at);
+    float3 f = at - low;
+    f = f * f * (3.0 - 2.0 * f);
+    int3 c = whole + int3(low);
+    float x00 = lerp(mirai_cell_value(c), mirai_cell_value(c + int3(1, 0, 0)), f.x);
+    float x10 = lerp(mirai_cell_value(c + int3(0, 1, 0)), mirai_cell_value(c + int3(1, 1, 0)), f.x);
+    float x01 = lerp(mirai_cell_value(c + int3(0, 0, 1)), mirai_cell_value(c + int3(1, 0, 1)), f.x);
+    float x11 = lerp(mirai_cell_value(c + int3(0, 1, 1)), mirai_cell_value(c + int3(1, 1, 1)), f.x);
+    return lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z);
+}
+float mirai_noise(Mirai_Surface_Context ctx, float metres) { return mirai_noise_at(ctx.origin, ctx.world_position, metres); }
+float mirai_noise(Mirai_Vertex_Context ctx, float metres) { return mirai_noise_at(ctx.origin, ctx.world_position, metres); }
+// A texture laid over the world along its three axes, `metres` a repeat, each
+// by how much the surface faces it: what has no UVs worth reading (a rock, a
+// terrain, a brush) takes it without seams. sharpness, 1 and above, narrows
+// the blend between the three.
+float4 mirai_sample_triplanar(Mirai_Surface_Context ctx, uint index, float metres, float sharpness) {
+    float3 weights = pow(abs(ctx.vertex_normal), float3(max(sharpness, 1.0)));
+    weights /= max(weights.x + weights.y + weights.z, 1e-6);
+    float4 x = mirai_sample_texture_projected(ctx, index, float3(0.0, 0.0, 1.0), float3(0.0, 1.0, 0.0), metres);
+    float4 y = mirai_sample_texture_projected(ctx, index, float3(1.0, 0.0, 0.0), float3(0.0, 0.0, 1.0), metres);
+    float4 z = mirai_sample_texture_projected(ctx, index, float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), metres);
+    return x * weights.x + y * weights.y + z * weights.z;
+}
+// How much of a second layer shows over a first where they meet, from the
+// height of each there (0 to 1) and `mask`, the share of the second (0 to 1):
+// the higher one wins, within `contrast` (above 0; small is a hard edge), so
+// sand fills the gaps between stones before it covers them. For
+// mirai_surface_mix.
+float mirai_height_blend(float first, float second, float mask, float contrast) {
+    float a = first + 1.0 - saturate(mask), b = second + saturate(mask);
+    float top = max(a, b) - max(contrast, 1e-4);
+    float wa = max(a - top, 0.0), wb = max(b - top, 0.0);
+    return wb / max(wa + wb, 1e-6);
+}
 #endif

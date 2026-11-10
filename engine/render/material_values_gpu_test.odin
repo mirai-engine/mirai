@@ -35,7 +35,7 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         values:=MATERIAL_VALUES_DEFAULT
         color:=i==0?[3]f32{1,0,0}:i==1?[3]f32{0,1,0}:[3]f32{f32(i)/COUNT,0.5,0.5}
-        testing.expect(t,material_value(&values,"base_color",color) && material_value(&values,"emission",color*3) && material_value(&values,"roughness",f32(i+1)/COUNT))
+        testing.expect(t,material_value(&values,"base_color",{color.r,color.g,color.b,0}) && material_value(&values,"emission",{color.r*3,color.g*3,color.b*3,0}) && material_value(&values,"roughness",f32(i+1)/COUNT))
         core.add(&w.values,e,values)
     }
     core.test_world_settle(&w)
@@ -67,10 +67,10 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
     testing.expectf(t,shown.r>100 && shown.g>100 && shown.b==0,"each cube shows the color and the light its instance holds: %v",shown)
 
     // Another value: given in place, the instance is not made again and no row is.
-    sets,updates,given:=sync.stats.scene_sets,sync.stats.instance_updates,sync.stats.values
-    testing.expect(t,material_value(core.get(&w.values,entities[0]),"base_color",[3]f32{0,0,1}) && material_value(core.get(&w.values,entities[0]),"emission",[3]f32{0,0,3}))
+    sets,updates,given:=sync.stats.scene_sets,sync.stats.instance_updates,sync.stats.tints
+    testing.expect(t,material_value(core.get(&w.values,entities[0]),"base_color",{0,0,1,0}) && material_value(core.get(&w.values,entities[0]),"emission",{0,0,3,0}))
     draw(&sync,app,&w)
-    testing.expect(t,sync.stats.scene_sets==sets && sync.stats.instance_updates==updates && sync.stats.values==given+1)
+    testing.expect(t,sync.stats.scene_sets==sets && sync.stats.instance_updates==updates && sync.stats.tints==given+1)
     testing.expect(t,len(app.assets.material_descs)==rows && app.assets.stats.derived==0)
     shown=count(t,app)
     testing.expectf(t,shown.r==0 && shown.g>100 && shown.b>100,"the value given in place shows: %v",shown)

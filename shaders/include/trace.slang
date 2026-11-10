@@ -153,6 +153,7 @@ float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, fl
     float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
     float4 vertex_color = tri.a.color * weights.x + tri.b.color * weights.y + tri.c.color * weights.z;
     Mirai_Surface_Context ctx = material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), t * 0.004);
+    ctx.material = m.row;
     float alpha;
     float4 parameters[16];
     material_parameters(m.row, inst.material_values, parameters);

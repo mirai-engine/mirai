@@ -96,12 +96,12 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     info:core.World_Info
     s:=Session{app=&app,materials=&materials,info=&info}
 
-    names:=erender.MATERIAL_VALUE_NAMES
+    names:=erender.MATERIAL_VALUE_FIELDS
     maps:=erender.MATERIAL_MAP_NAMES
-    roughness:=base.name_hash(names[3])
+    roughness:=base.name_hash(names[3].name)
     override:=erender.Material_Values{own_overlays=true,overlay_count=1}
     testing.expect(t,erender.material_value(&override,roughness,{0.7,0,0,0},1) && erender.material_value(&override,roughness,{0.2,0,0,0},0))
-    testing.expect(t,override_texture_put(&override,0,base.name_hash(maps[.Base_Color]),{7,7},true))
+    testing.expect(t,erender.material_texture(&override,base.name_hash(maps[.Base_Color]),0,{7,7}))
     override.overlays[0]={id=1,material={9,9},blend=.Multiply,enabled=true}
     testing.expect(t,override.count==2 && erender.material_value_find(&override,0,roughness)!=erender.material_value_find(&override,1,roughness),"each slot keeps a value of its own")
     testing.expect(t,erender.material_values_slot(&override,1) && !erender.material_values_slot(&override,2))

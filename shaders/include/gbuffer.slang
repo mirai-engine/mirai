@@ -159,7 +159,7 @@ struct Gbuffer_Pixel {
     float3 normal;
     float roughness;  // widened by specular antialiasing
     float3 f0;
-    float f90;        // encoded: see specular_grazing
+    float f90;        // the grazing reflectance of its specular lobe
     float3 emission;  // render units
     float occlusion;
     uint bits;        // MATERIAL_LAYER_*, GBUFFER_TRACE_COAT and GBUFFER_EMISSION_RELATIVE

@@ -138,6 +138,11 @@
   a texture laid over the world (uv = position over `u` and `v`, meters per repetition) with the
   gradients of that footprint: it filters the same in raster and in rays and works inside a
   branch, where implicit derivatives do not.
+- The library of a program (`mirai_material.slang`) makes a look a few lines:
+  `mirai_surface_standard(ctx)` (the standard model of its own material, to change only what the
+  program is about), `mirai_surface_mix`, `mirai_noise(ctx,metres)` (value noise of the world on
+  the lattice of the origin), `mirai_sample_triplanar(ctx,index,metres,sharpness)` and
+  `mirai_height_blend(first,second,mask,contrast)`.
 - `ctx.world_position` is relative to the render origin and `ctx.origin` is that origin in whole
   steps of `ORIGIN_STEP`. What a program does with the world place (a wave, a pattern, a noise
   lattice) takes what the origin adds from `origin.slang`: `origin_phase`, `origin_wrap` and

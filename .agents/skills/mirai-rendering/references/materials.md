@@ -21,12 +21,26 @@ mode.
   light nor on exposure.
 - An instance can replace the materials of its mesh with a single one; it also tints the base
   color and adds emission. An object without a material uses the default tinted with its color.
+- **Values of an instance** (`Instance_Material_Values`, given with `scene_tint`). What an
+  instance gives over the rows of its materials lives with the instance, in words of the index
+  pool that `Gpu_Instance.material_values` names: each value is for the points of the instance
+  that show one row, and is a word of the parameters of the program of that row or a value of
+  `Instance_Material_Value_Target`. The shaders read them where they evaluate a row at a point of
+  an instance (`material_instanced`, `material_parameters`, from `ctx.material_values`), so raster,
+  ray hits, coverage and the vertex functions see the same. Another value touches the words of its
+  instance alone: no row, no texture residency, no other instance. A stage that draws no instance
+  of a scene (the previews: `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. What
+  changes how a surface is drawn (alpha mode, layers, transmission, textures) is of the row.
 
 ## Evaluation
 
-- The evaluation chooses between common PBR and the Surface program. A Surface replaces the PBR
-  values: its standard maps are neither sampled nor loaded; it keeps the normal map
-  (`ctx.normal`), its parameter textures and the context of position, UV0/UV1, time and LOD.
+- The evaluation chooses between common PBR and the Surface program. The standard model of a row
+  at a point is `material_standard`, one function for both: common PBR makes its sample from it,
+  and a program builds on it with `mirai_surface_standard(ctx)`, which gives the material's own
+  values, maps and layers there (with what its instance gives over them). A program that does
+  not name it replaces the PBR values: its standard maps are neither sampled nor loaded
+  (`Program.standard`, which the catalog reads from its source). Every program keeps the normal
+  map (`ctx.normal`), its parameter textures and the context of position, UV0/UV1, time and LOD.
 - **Vertex color.** Common PBR multiplies its base color by the mesh's; a program does not: it
   reads it as data in `ctx.vertex_color` (white where the mesh has none) and decides
   (`material_vertex_tint`). The instance tint multiplies both, and `uniform_color` replaces only
@@ -57,9 +71,8 @@ mode.
   distribution computes `1 − (n·h)²` as `|n × h|²`: with the minimum roughness, the rounding of
   `(n·h)²` near 1 leaves the brightness of an area light banded.
 - Dielectric `F0` comes from the IOR (or from `specular_ior` in Surface) with its specular color
-  and factor; in metals, from the base color. `F90` keeps the specular factor, including zero. IOR
-  zero keeps a constant dielectric Fresnel; in the reflectance target, a negative F90 indicates it
-  and it is rebuilt with base color and metallic, also in the glass layers.
+  and factor; in metals, from the base color. `F90` keeps the specular factor, including zero. The
+  IOR is 1 or above: a source that asks for a constant reflector is converted when it is imported.
 - The diffuse and the diffuse transmission receive what the base's specular lobe leaves: `1 − max`
   of its directional albedo at the view (`base_diffuse_share`, the albedo scaling of OpenPBR), the
   same for each light and for the environment.
@@ -338,17 +351,18 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   before the Geometry stage, so raster, shadows, reflections and GI (the pose's tree and BLAS,
   refit like a [skin](scene.md#gpu-skinning)), outlines and motion vectors read the same
   vertices. No other pass moves vertices.
-- **Only what changed runs.** A pose is written again when the transform of its instance, the
-  rows of its materials (parameters, those of a `Material_Override` too) or, if `animated`, the
-  time change; otherwise its stage does not run. Its previous vertices are those the frame before
-  showed, so the motion of a parameter that moves it is exact. Without `animated`, `ctx.time` is
+- **Only what changed runs.** A pose is written again when the transform of its instance, the rows
+  of its materials (their parameters), the values the instance gives over them or, if `animated`,
+  the time change; otherwise its stage does not run. Its previous vertices are those the frame
+  before showed, so the motion of a parameter that moves it is exact. Without `animated`, `ctx.time`
+  is
   0. Instances without such a program pay nothing.
-- **Per instance values** come from the parameters of the material of the instance: a game sets
-  them on an entity with `Material_Override` (`material_override_value_set`), each entity then
-  with rows of its own.
+- **Per instance values** are the values of the instance: a game gives a parameter to an entity
+  with `Material_Values` (`material_value`), and the entities share the row.
 - **Reach.** The box of the instance (culling, the tree of instances, the light it changes) grows
   by `reach`, in the space of the mesh, in each axis: the function keeps every vertex within it
-  of its rest. A parameter reach is read from the row of each material.
+  of its rest. A parameter reach is read from the row of each material, under what the instance
+  gives it.
 - **Skins** are moved in place after their skin, the current vertices at the time and transform
   of the frame and the previous ones at those of the frame before, with the parameters of now;
   the skin poses again each frame the program moves it. A deformable an extension writes and the

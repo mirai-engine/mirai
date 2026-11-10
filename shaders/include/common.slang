@@ -246,7 +246,7 @@ struct Material {
     float3 specular_color;      // multiplies the dielectric F0 of its IOR
     float specular_factor;
     float transmission;         // share of the light that goes through instead of being diffused
-    float ior;                  // 0: a constant Fresnel
+    float ior;                  // 1 and above
     float thickness;            // 0: a sheet
     float attenuation_distance; // 0: the solid absorbs nothing
     float3 attenuation_color;   // what a solid leaves of white light that crosses attenuation_distance of it

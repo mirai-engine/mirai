@@ -297,8 +297,9 @@ tile_of :: proc(o:^Out,material:string) -> [2]f32 {
     }
     if asset.asset_load(&file,path(o,fmt.tprintf("assets/%s/%s.mat",folder,material)),context.temp_allocator)!=.None {return {metres,metres}}
     view,error:=asset.material_view(&file,&o.content.types)
-    if error!=.None || view.info.uv_scale.x<=0 || view.info.uv_scale.y<=0 {return {metres,metres}}
-    return metres*view.info.uv_scale
+    tiling:=view.info.maps.base_color.scale
+    if error!=.None || tiling.x<=0 || tiling.y<=0 {return {metres,metres}}
+    return metres*tiling
 }
 
 // A box that shows its material at its true size on every face, that the

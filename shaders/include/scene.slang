@@ -458,12 +458,13 @@ Material material_instanced(Material m, uint block) {
         uint target, count;
         uint4 words;
         if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
+        // In the order of render.Instance_Material_Value_Target.
         float4 value = asfloat(words);
-        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
-        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
-        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
-        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
-        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
+        if (target == INSTANCE_VALUE_STANDARD) m.base_color = value.xyz;
+        else if (target == INSTANCE_VALUE_STANDARD + 1u) m.opacity = saturate(value.x);
+        else if (target == INSTANCE_VALUE_STANDARD + 2u) m.metallic = saturate(value.x);
+        else if (target == INSTANCE_VALUE_STANDARD + 3u) m.roughness = saturate(value.x);
+        else if (target == INSTANCE_VALUE_STANDARD + 4u) m.emission = value.xyz;
     }
     return m;
 }
@@ -682,22 +683,24 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
 // The specular reflectance of a sample (OpenPBR): the dielectric F0 of its
 // IOR, specular color and factor, and the base color of a metal. Under a
 // coat the base meets the coat instead of the air, so its IOR is relative to
-// the coat where the coat covers it, and the coat roughens it. An IOR of zero
-// keeps a constant Fresnel.
+// the coat where the coat covers it, and the coat roughens it.
 void material_specular(inout Material_Sample s, float3 color, float ior, float factor) {
     float eta = ior;
     if (s.layers.coat > 0.0) {
-        if (ior > 0.0) eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
+        eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
         float base = s.roughness * s.roughness, coat = s.layers.coat_roughness * s.layers.coat_roughness;
         s.roughness = lerp(s.roughness, min(1.0, sqrt(sqrt(base * base + 2.0 * coat * coat))), saturate(s.layers.coat));
     }
-    float ratio = (max(eta, 0.0) - 1.0) / (max(eta, 0.0) + 1.0);
+    float ratio = (max(eta, 1.0) - 1.0) / (max(eta, 1.0) + 1.0);
     float3 f0 = saturate(color * (ratio * ratio)) * saturate(factor);
     s.f0 = lerp(f0, saturate(s.base_color), s.metallic);
-    s.f90 = ior == 0.0 ? -1.0 : lerp(saturate(factor), 1.0, s.metallic);
+    s.f90 = lerp(saturate(factor), 1.0, s.metallic);
 }
-Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
-    Material_Sample s;
+// The standard model of a row at a point, its maps read: what the engine
+// makes a sample from (material_evaluate), and what a program builds on
+// (mirai_surface_standard). layers: those of the row there.
+Mirai_Surface material_standard(Material m, Mirai_Surface_Context ctx, float3 tint, out Material_Layers layers) {
+    Mirai_Surface s = mirai_surface_default(ctx);
     float2 uv0 = ctx.uv0, uv1 = ctx.uv1, lod = float2(ctx.lod, ctx.lod1);
     bool ray = ctx.ray;
     float4 base = material_base_color(m, uv0, uv1, lod, tint, ray);
@@ -722,14 +725,46 @@ Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 
     s.metallic = saturate(s.metallic);
     s.emission = m.emission;
     if (material_has(m.textures[MATERIAL_MAP_EMISSION])) s.emission *= material_map_texel(m, MATERIAL_MAP_EMISSION, m.textures[MATERIAL_MAP_EMISSION], uv0, uv1, lod, ray).rgb;
-    s.emission += added_emission;
-    s.layers = material_layers(m, ctx);
-    float3 specular_color = m.specular_color;
-    float specular_factor = m.specular_factor;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
-    material_specular(s, specular_color, m.ior, specular_factor);
+    layers = material_layers(m, ctx);
+    s.specular_color = m.specular_color;
+    s.specular_factor = m.specular_factor;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) s.specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) s.specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
+    s.specular_ior = m.ior;
+    // The layers the row holds there, as a program gives them.
+    s.unlit = (layers.bits & MATERIAL_LAYER_UNLIT) != 0u;
+    if ((layers.bits & MATERIAL_LAYER_COAT) != 0u) {
+        s.coat_weight = layers.coat; s.coat_roughness = layers.coat_roughness; s.coat_color = layers.coat_color; s.coat_ior = layers.coat_ior; s.coat_normal = layers.coat_normal;
+    }
+    if ((layers.bits & MATERIAL_LAYER_FUZZ) != 0u) {
+        s.fuzz_weight = layers.fuzz; s.fuzz_color = layers.fuzz_color; s.fuzz_roughness = layers.fuzz_roughness;
+    }
+    if ((layers.bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
+        s.specular_anisotropy = layers.anisotropy; s.specular_tangent = layers.tangent;
+    }
+    if ((layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
+        s.diffuse_transmission_weight = layers.diffuse_transmission; s.diffuse_transmission_color = layers.diffuse_transmission_color;
+    }
     return s;
+}
+Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
+    Material_Sample s;
+    Material_Layers layers;
+    Mirai_Surface standard = material_standard(m, ctx, tint, layers);
+    s.base_color = standard.base_color;
+    s.alpha = standard.alpha;
+    s.roughness = standard.roughness;
+    s.metallic = standard.metallic;
+    s.occlusion = standard.occlusion;
+    s.emission = standard.emission + added_emission;
+    s.layers = layers;
+    material_specular(s, standard.specular_color, m.ior, standard.specular_factor);
+    return s;
+}
+Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {
+    if (ctx.material == INVALID) return mirai_surface_default(ctx);
+    Material_Layers layers;
+    return material_standard(material_instanced(material_row(ctx.material), ctx.material_values), ctx, float3(1.0), layers);
 }
 // The context of a point for its material. vertex_normal: the interpolated
 // normal of the surface, facing like `normal`; tangent: its MikkTSpace
@@ -742,7 +777,7 @@ Mirai_Surface_Context material_context(float3 position, float3 normal, float3 ve
     ctx.vertex_color = float4(1.0);
     ctx.object_position = float3(0.0); ctx.object_x = float3(1.0, 0.0, 0.0); ctx.object_y = float3(0.0, 1.0, 0.0); ctx.object_z = float3(0.0, 0.0, 1.0);
     ctx.object_center = float3(0.0); ctx.object_radius = 0.0; ctx.object_low = float3(0.0); ctx.object_high = float3(0.0); ctx.wet = 0.0;
-    ctx.material_values = 0u;
+    ctx.material_values = 0u; ctx.material = INVALID;
     ctx.particle_data[0] = float4(0.0); ctx.particle_data[1] = float4(0.0); ctx.particle_data[2] = float4(0.0); ctx.particle_data[3] = float4(0.0); ctx.particle_given = 0u; ctx.particle_random = 0.0; ctx.particle_radius = 0.0;
     float4 clip = view_clip(position);
     float2 ndc = clip.xy / max(clip.w, 1e-6);
@@ -814,13 +849,14 @@ void material_program_apply(Material m, Mirai_Surface result, float3 tint, float
     if ((l.bits & MATERIAL_LAYER_ANISOTROPY) == 0u) l.anisotropy = 0.0;
     if ((l.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u) l.diffuse_transmission = 0.0;
     values.layers = l;
-    material_specular(values, result.specular_color, max(result.specular_ior, 0.0), result.specular_factor);
+    material_specular(values, result.specular_color, max(result.specular_ior, 1.0), result.specular_factor);
 }
 // The program of a material at a point; false without one, or in a stage that
 // runs none (it includes the empty surface_programs.slang).
 bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, out Material_Sample values, inout float3 normal) {
     values = (Material_Sample)0;
     if (m.program_id == 0u) return false;
+    ctx.material = m.row;
     Mirai_Surface result = mirai_surface_default(ctx);
     float4 parameters[16];
     material_parameters(m.row, ctx.material_values, parameters);
@@ -922,7 +958,6 @@ bool material_covers(Material m, float alpha) {
 
 // A blended material with transmission and thickness is the boundary of a
 // solid: its front faces are where light enters it.
-float material_ior(Material m) { return m.ior == 0.0 ? 1e10 : m.ior; }
 
 bool material_solid(Material m) { return m.transmission > 0.0 && m.thickness > 0.0; }
 
@@ -1133,10 +1168,12 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
 // What the program of the material at a hit gives there: only a stage of that
 // program runs it (surface_points.comp).
 Mirai_Surface hit_program(Hit_Point h) {
-    Mirai_Surface result = mirai_surface_default(h.ctx);
+    Mirai_Surface_Context ctx = h.ctx;
+    ctx.material = h.m.row;
+    Mirai_Surface result = mirai_surface_default(ctx);
     float4 parameters[16];
-    material_parameters(h.m.row, h.ctx.material_values, parameters);
-    mirai_evaluate_program(h.m.program_id, parameters, h.ctx, result);
+    material_parameters(h.m.row, ctx.material_values, parameters);
+    mirai_evaluate_program(h.m.program_id, parameters, ctx, result);
     return result;
 }
 

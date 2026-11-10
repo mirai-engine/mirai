@@ -108,8 +108,8 @@ presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,yaw:f32,color:u
     if !loaded {return false}
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
     accent:=erender.MATERIAL_VALUES_DEFAULT
-    for slot in PRESENCE_COLOR_SLOTS {erender.material_value(&accent,"base_color",linear,int(slot))}
-    erender.material_value(&accent,"emission",linear,int(PRESENCE_STARS_SLOT))
+    for slot in PRESENCE_COLOR_SLOTS {erender.material_value(&accent,"base_color",{linear.x,linear.y,linear.z,1},int(slot))}
+    erender.material_value(&accent,"emission",{linear.x,linear.y,linear.z,1},int(PRESENCE_STARS_SLOT))
     place:=mm.Transform{position=eyes,rotation=mm.quat_axis_angle({0,1,0},yaw),scale=1}
     instance,ok:=erender.mesh_instance(a,{mesh=id},mm.transform_matrix(place),accent)
     if !ok {return false}

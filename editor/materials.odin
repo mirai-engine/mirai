@@ -37,13 +37,13 @@ ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blen
 EMISSION_MODE_NAMES :: [asset.Emission_Mode]string{.Physical="Nits",.Relative="Exposure"}
 MATERIAL_LIST_ROWS :: 8
 
-// The values of the standard model an entity gives its material, in the order of erender.MATERIAL_VALUE_NAMES.
+// The values of the standard model an entity gives its material, in the order of erender.MATERIAL_VALUE_FIELDS.
 Material_Value :: enum u8 {
     Base_Color,Opacity,Metallic,Roughness,Emission,Specular,Ior,Transmission,Alpha_Mode,
     Coat,Coat_Roughness,Coat_Color,Coat_Ior,Fuzz,Fuzz_Color,Fuzz_Roughness,Anisotropy,Anisotropy_Rotation,Unlit,
     Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,
 }
-#assert(len(Material_Value)==len(erender.MATERIAL_VALUE_NAMES))
+#assert(len(Material_Value)==len(erender.MATERIAL_VALUE_FIELDS))
 
 Material_List_Kind :: enum u8 {None,Material,Overlay,Texture,Asset}
 
@@ -137,29 +137,8 @@ Appearance :: struct {
 
 @(private)
 material_value_name :: proc(value:Material_Value) -> u64 {
-    names:=erender.MATERIAL_VALUE_NAMES
-    return base.name_hash(names[int(value)])
-}
-
-@(private)
-override_texture_put :: proc(o:^erender.Material_Values,slot:int,name:u64,texture:base.Asset_Id,put:bool) -> bool {
-    count:=min(int(o.texture_count),len(o.texture_names))
-    for i in 0..<count {
-        if o.texture_names[i]!=name || int(o.texture_slots[i])!=slot {continue}
-        if put {
-            o.textures[i]=texture
-        } else {
-            o.texture_slots[i],o.texture_names[i],o.textures[i]=o.texture_slots[count-1],o.texture_names[count-1],o.textures[count-1]
-            o.texture_slots[count-1],o.texture_names[count-1],o.textures[count-1]=0,0,{}
-            o.texture_count-=1
-        }
-        return true
-    }
-    if !put {return true}
-    if count>=len(o.texture_names) {return false}
-    o.texture_slots[count],o.texture_names[count],o.textures[count]=u8(slot),name,texture
-    o.texture_count+=1
-    return true
+    fields:=erender.MATERIAL_VALUE_FIELDS
+    return base.name_hash(fields[int(value)].name)
 }
 
 // What an entity changes of the material of one slot, its values and
@@ -251,7 +230,9 @@ override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Values,label
 @(private)
 texture_override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,texture:base.Asset_Id,put:=true) -> bool {
     next:=entity_material_values(editing_world(s),e)
-    if !override_texture_put(&next,slot,name,texture,put) {
+    if !put {
+        erender.material_texture_drop(&next,name,slot)
+    } else if !erender.material_texture(&next,name,slot,texture) {
         notify(s,fmt.tprintf("An entity changes up to %d textures of its material",erender.MATERIAL_VALUES_TEXTURES))
         return false
     }
@@ -310,7 +291,7 @@ material_apply :: proc(s:^Session,e:core.Entity,slot:int) -> (material:base.Asse
     mesh,meshed:=entity_get(w,e,erender.Mesh_Renderer)
     if !meshed || s.app.assets==nil {return {},"The entity shows no mesh"}
     given,rest:=override_split(&override,slot)
-    if erender.material_values_unnamed(&given) {return {},"The entity changes nothing of the material of that slot"}
+    if erender.material_values_plain(&given) {return {},"The entity changes nothing of the material of that slot"}
     material=slot<erender.MATERIAL_SLOTS?mesh.materials[slot]:{}
     if material=={} && mesh.mesh!={} {
         if loaded:=host.assets_mesh(s.app.assets,mesh.mesh);loaded!=nil && slot<int(loaded.slot_count) {material=loaded.slot_materials[slot]}
@@ -729,7 +710,7 @@ material_rows :: proc(c:^Inspect) {
         if fold_band(s) {
             shown_slot:=slot==0?a:appearance_read(s,c.w,active,value,slot)
             material_parameters(c,&shown_slot)
-            if given,_:=override_split(&shown_slot.override,slot);!erender.material_values_unnamed(&given) {
+            if given,_:=override_split(&shown_slot.override,slot);!erender.material_values_plain(&given) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=4,align_y=.Center}) {
                     if ui.button(ctx,ui.id(ctx,"material_apply"),{label="Apply to material",icon=.Check,icon_size=13,style=.Ghost,width=-1,height=24,size=th.font_small}).clicked {
                         if _,message:=material_apply(s,active,slot);message!="" {notify(s,message)}
@@ -848,7 +829,7 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
                     continue values
                 }
             }
-            erender.material_standard_apply(&info,name,o.values[i])
+            erender.material_standard_value(&info,name,&o.values[i],true)
         }
         maps:=erender.MATERIAL_MAP_NAMES
         textures: for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {

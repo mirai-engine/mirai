@@ -432,7 +432,15 @@ gltf_lit :: proc(g:^Gltf,info:^asset.Material_Info,images:^[asset.Material_Map_K
     if mat.has_transmission {info.transmission=clamp(mat.transmission.transmission_factor,0,1)}
     if mat.has_ior {
         info.ior=mat.ior.ior
-        if !importer.ior_valid(info.ior) {return importer.fail(r,.Malformed,"glTF material %s: the index of refraction must be 0 or at least 1",name)}
+        if info.ior==0 {
+            // The compatibility mode of KHR_materials_ior is no mode of the engine: it becomes metallic-roughness here.
+            textured:=images[.Specular]>=0 || images[.Specular_Color]>=0
+            importer.ior_zero_convert(info,textured)
+            if textured {
+                images[.Specular],images[.Specular_Color]=-1,-1
+                importer.warn(r,"glTF material %s: with an index of refraction of 0 its specular textures are not imported; it is a dielectric with its base color",name)
+            }
+        } else if !importer.ior_valid(info.ior) {return importer.fail(r,.Malformed,"glTF material %s: the index of refraction must be at least 1, or 0 for a specular-glossiness surface, which is converted",name)}
     }
     if mat.has_volume {
         info.thickness=max(mat.volume.thickness_factor,0)

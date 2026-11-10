@@ -141,7 +141,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             float ratio = (g.layers.coat_ior - 1.0) / (g.layers.coat_ior + 1.0);
             fresnel = float3(g.layers.coat * fresnel_schlick(float3(ratio * ratio), 1.0, saturate(dot(n, -view))).r);
         } else {
-            fresnel = fresnel_schlick(g.f0, specular_grazing(g.f0, g.f90, g.base_color, g.metallic), saturate(dot(n, -view)));
+            fresnel = fresnel_schlick(g.f0, g.f90, saturate(dot(n, -view)));
         }
         float reflectance = max(fresnel.r, max(fresnel.g, fresnel.b));
         // A reflection this faint shows little and changes little: its block

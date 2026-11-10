@@ -27,7 +27,7 @@
 #define LEG_OUT 0u
 #define LEG_IN 1u
 float3 leaving_reflectance(Material m, Glass g, out bool out_way) {
-    float ior = material_ior(m);
+    float ior = m.ior;
     float cos_inside = saturate(dot(g.view, g.normal));
     float sin2_outside = ior * ior * (1.0 - cos_inside * cos_inside);
     out_way = sin2_outside < 1.0;
@@ -123,7 +123,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             w = walk_resumed(head, m, ids.y, bias, shade, shown, t);
         } else {
             out_color[p] = float4(finite_or_zero(g.emission * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top)), 1.0);
-            float3 out_direction = refract(-g.view, g.normal, material_ior(m));
+            float3 out_direction = refract(-g.view, g.normal, m.ior);
             w = out_way ? walk_start(LEG_OUT, WALK_SEEN, g.position + out_direction * bias, out_direction, 0u) : walk_start(LEG_IN, WALK_INSIDE, g.position + back * bias, back, 0u);
         }
         for (;;) {

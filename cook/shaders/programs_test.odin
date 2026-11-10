@@ -364,6 +364,7 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         {"Mapped","s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;",true},
         {"Mixed","Mirai_Surface hole=s;hole.alpha=0.0;s=mirai_surface_mix(s,hole,p.tint.y);",true},
         {"Constant","s.alpha=0.25;",true},
+        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",true}, // the alpha of its material
     }
     for c in cases {
         fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
@@ -377,11 +378,13 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         testing.expectf(t,found && program.coverage==c.coverage,"%s: coverage %v",c.name,program.coverage)
         listed:=strings.contains(coverage,fmt.tprintf("alpha=%s::evaluate(",c.name))
         testing.expectf(t,listed==c.coverage,"%s is in the coverage include: %v",c.name,listed)
+        testing.expectf(t,program.standard==(c.name=="Built"),"%s: only a program that names the standard model of its material builds on it",c.name)
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
         testing.expectf(t,strings.contains(string(own),fmt.tprintf("#ifndef MIRAI_PROGRAM_%s",c.name)),"%s: one source for both includes of a stage",c.name)
     }
     stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(stored),"\"coverage\": true"))
+    testing.expect(t,strings.contains(string(stored),"\"standard\": true"))
     // The cache keeps what the probe found.
     f.runner.runs=0
     warm,_:=programs_of(&f)

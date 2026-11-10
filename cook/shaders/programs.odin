@@ -77,6 +77,7 @@ Program :: struct {
     births:    bool,        // of a Vfx program: it gives how many particles its emitter starts
     prepare:   bool,        // of a Vfx program: it prepares each frame what its emitter keeps
     coverage:  bool,        // of a Surface program: its alpha is not that of the default material (SURFACE_COVERAGE_INCLUDE)
+    standard:  bool,        // of a Surface program: its source names mirai_surface_standard, so its materials load their maps
     vertex:    Vertex_Function, // of a Surface program that moves vertices (`//! vertex`)
 }
 
@@ -301,18 +302,19 @@ program_vertex :: proc(program:string,words:[]string,parameters:Layout,allocator
 }
 
 // What a new program of a domain starts as: the least that compiles and
-// shows its parameters, with $Name where its name goes.
+// shows its parameters, with $Name where its name goes. A Surface one builds
+// on the standard model of its material, so the material keeps its look.
 @(private)
 PROGRAM_TEMPLATES :: [Program_Domain]string{
     .Surface=`//! mirai surface $Name
-//! parameter color {"default":[0.8,0.8,0.8],"min":0,"max":1,"color":true}
-//! parameter roughness {"default":0.5,"min":0.045,"max":1}
+//! parameter tint {"default":[1,1,1],"min":0,"max":1,"color":true}
+//! parameter glow {"default":0,"min":0}
 namespace $Name {
-struct Parameters {float3 color;float roughness;};
+struct Parameters {float3 tint;float glow;};
 Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
-    Mirai_Surface s=mirai_surface_default(ctx);
-    s.base_color=p.color;
-    s.roughness=p.roughness;
+    Mirai_Surface s=mirai_surface_standard(ctx);
+    s.base_color*=p.tint;
+    s.emission+=p.tint*p.glow;
     return s;
 }
 }
@@ -806,6 +808,8 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     // A read of a texture depends on all it is given and on how it reads.
     strings.write_string(&text,"float4 mirai_probe_value(uint kind,uint index,float2 uv,float4 more=float4(0.0)) {return mirai_probe_values[(kind*977u+index+asuint(uv.x)*3u+asuint(uv.y)*5u+asuint(more.x)*7u+asuint(more.y)*11u+asuint(more.z)*13u+asuint(more.w)*17u)&63u];}\n")
     fmt.sbprintf(&text,"Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {{Mirai_Surface s=(Mirai_Surface)0;s.normal=ctx.normal;s.alpha=%.10f;return s;}}\n",PROBE_ALPHA)
+    // The standard model of a material reads its opacity and the alpha of its base color map.
+    strings.write_string(&text,"Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {Mirai_Surface s=mirai_surface_default(ctx);s.alpha=mirai_probe_value(8u,ctx.material,ctx.uv0).a;return s;}\n")
     strings.write_string(&text,"float4 mirai_sample_texture(Mirai_Surface_Context ctx,uint index,float2 uv,float lod) {return mirai_probe_value(1u,index,uv,float4(lod,0.0,0.0,0.0));}\n")
     strings.write_string(&text,"float4 mirai_sample_texture(Mirai_PostProcess_Context ctx,uint index,float2 uv,float lod) {return mirai_probe_value(2u,index,uv,float4(lod,0.0,0.0,0.0));}\n")
     strings.write_string(&text,"float4 mirai_sample_texture_level(uint index,float2 uv,float level) {return mirai_probe_value(3u,index,uv,float4(level,0.0,0.0,0.0));}\n")
@@ -1257,7 +1261,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,Program{id=id,name=strings.clone(name,allocator),domain=strings.clone(e.domain,allocator),source=relative,size=layout.size,parameters=parameters,layers=layers[:],attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,vertex=vertex})
+        append(&programs,Program{id=id,name=strings.clone(name,allocator),domain=strings.clone(e.domain,allocator),source=relative,size=layout.size,parameters=parameters,layers=layers[:],attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
@@ -1298,6 +1302,7 @@ catalog_json :: proc(catalog:Catalog,allocator:=context.allocator) -> []u8 {
         }
         if program.domain=="vfx" {json_key(&writer,"attributes");json_integer(&writer,i64(program.attributes))}
         if program.coverage {json_key(&writer,"coverage");json_bool(&writer,true)}
+        if program.standard {json_key(&writer,"standard");json_bool(&writer,true)}
         if program.moves {json_key(&writer,"moves");json_bool(&writer,true)}
         if program.births {json_key(&writer,"births");json_bool(&writer,true)}
         if program.prepare {json_key(&writer,"prepare");json_bool(&writer,true)}

@@ -665,7 +665,7 @@ browser cards and asset fields):
   shown.
 - A subject that changed keeps its old image until it has the new one, and waits for an open edit
   to finish. The cell that has gone longest without being requested is reused.
-- The signature is `Thumbnail_Subject`: mesh, `Tint`, `Material_Override`, rotation, scale, the
+- The signature is `Thumbnail_Subject`: mesh, `Material_Values`, rotation, scale, the
   revision of the loaded assets and that of the registry (every file that changes, loaded or not,
   makes the subject be looked at again) and, for what is not a mesh alone, the type whose provider
   draws it, what poses it and its clip, the document and its root.
@@ -677,9 +677,9 @@ browser cards and asset fields):
   whole. Its materials and textures are loaded.
 - **Prefabs** (`preview_document`, `thumbnail_subjects.odin`): the entities of the saved document
   that show a `Mesh_Renderer`, where their `Transform` and their hierarchy put them, with their
-  `Tint` and their `Material_Override`; `Hidden` leaves out the entity and what hangs from it. A
+  `Material_Values`; `Hidden` leaves out the entity and what hangs from it. A
   skin is seen as it stores its vertices. Everything is framed from the studio's direction. A mesh
-  with the same `Tint` and values is read once for all the entities that show it.
+  with the same `Material_Values` is read once for all the entities that show it.
 - **Scenes** (`preview_scene`): the first thing the editor showed of the scene the first time it
   opened it (`scene_open`: menu, tab, API or initial scene; not a prefab), while it has no stored
   view; afterwards, what the viewport shows when **View > Update scene thumbnail** is chosen

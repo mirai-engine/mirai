@@ -241,10 +241,10 @@ monitors_render :: proc(
         if value,exists:=core.get(looks,e);exists {look=value}
         // The slot of the screen gives the image as its light, and reflects none.
         slot:=int(min(screen.slot,erender.MATERIAL_SLOTS-1))
-        erender.material_texture_shown(&look,"maps.emission",fed.textures[fed.shown],slot)
-        erender.material_texture_shown(&look,"maps.base_color",0,slot)
-        erender.material_value(&look,"emission",[3]f32{screen.brightness,screen.brightness,screen.brightness},slot)
-        erender.material_value(&look,"base_color",[3]f32{0,0,0},slot)
+        erender.material_texture(&look,base.name_hash("maps.emission"),slot,{},fed.textures[fed.shown])
+        erender.material_texture(&look,base.name_hash("maps.base_color"),slot,{})
+        erender.material_value(&look,"emission",screen.brightness,slot)
+        erender.material_value(&look,"base_color",0,slot)
         anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
         shown,usable:=erender.mesh_instance(app.assets,static,transform,look)
         shown.anchor=anchor

@@ -759,7 +759,7 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     descs:=make([]Instance_Desc,COUNT,context.temp_allocator)
     for &desc,i in descs {
         desc={object_id=u64(i+1),mesh=handle,transform=Mat4(1),tint={1,1,1}}
-        testing.expect(t,instance_material_values_put(&desc.material_values,instance_material_value_standard(1,.Roughness,{f32(i)/COUNT,0,0,0})))
+        desc.material_values={count=1,entries={0=instance_material_value(1,Instance_Material_Value_Target.Roughness,{f32(i)/COUNT,0,0,0})}}
     }
     rows,words:=len(s.materials),len(s.indices)
     if !testing.expect(t,scene_set(r,descs,nil,{},{})) {return}
@@ -780,9 +780,9 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     s.changes={}
     version:=s.material_versions[1] if len(s.material_versions)>1 else 0
     next:=descs[7].material_values
-    next.entries[0]=instance_material_value_standard(1,.Roughness,{0.5,0,0,0})
+    next.entries[0]=instance_material_value(1,Instance_Material_Value_Target.Roughness,{0.5,0,0,0})
     changed:int
-    testing.expect(t,scene_material_values(r,{7,8},{next,descs[8].material_values},&changed))
+    testing.expect(t,scene_tint(r,{7,8},{{1,1,1},{1,1,1}},{{},{}},&changed,{next,descs[8].material_values}))
     testing.expect_value(t,changed,1)
     testing.expect(t,len(s.pool_dirty[.Index])==1 && s.pool_dirty[.Index][0].count==INSTANCE_VALUE_WORDS,"the words of that value alone")
     testing.expect_value(t,s.touched_count,1)
@@ -791,25 +791,19 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     testing.expect_value(t,transmute(f32)instance_material_values_words(s,s.instances[s.desc_instance[7]].material_values)[2],f32(0.5))
     // An emission is light: it changes around the instance that gives it.
     glow:=next
-    testing.expect(t,instance_material_values_put(&glow,instance_material_value_standard(1,.Emission,{4,4,4,0})))
-    testing.expect(t,scene_material_values(r,{7},{glow}) && (s.changes.all || s.changes.count>0))
-    testing.expect(t,!scene_material_values(r,{COUNT},{next}) && !scene_material_values(r,{1},{}),"a descriptor the scene does not have, lists that differ")
+    glow.entries[1],glow.count=instance_material_value(1,Instance_Material_Value_Target.Emission,{4,4,4,0}),2
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},nil,{glow}) && (s.changes.all || s.changes.count>0))
+    testing.expect(t,!scene_tint(r,{COUNT},{{1,1,1}},{{}},nil,{next}) && !scene_tint(r,{1},{{1,1,1}},{{}},nil,{next,next}),"a descriptor the scene does not have, lists that differ")
 
-    // The scene set again keeps the words of what stays, and what goes gives its own back.
-    testing.expect(t,scene_material_values(r,{7},{descs[7].material_values}))
-    for &ranges in s.pool_dirty {clear(&ranges)}
-    kept:=s.instances[s.desc_instance[3]].material_values
+    // What goes gives its words back.
     testing.expect(t,scene_set(r,descs[:COUNT/2],nil,{},{}))
-    testing.expect_value(t,s.instances[s.desc_instance[3]].material_values,kept)
-    testing.expect_value(t,len(s.pool_dirty[.Index]),0)
+    testing.expect_value(t,len(s.indices)-words,COUNT/2*(1+INSTANCE_VALUE_WORDS))
     testing.expect(t,scene_update(r,0,nil,true))
     testing.expect(t,scene_set(r,nil,nil,{},{}))
     testing.expect_value(t,len(s.indices),words)
     // Values an instance cannot hold are not there: no words past its own.
     full:=Instance_Material_Values{}
-    for i in 0..<INSTANCE_VALUES_MAX {testing.expect(t,instance_material_values_put(&full,{row=1,target=u32(i)|1<<8}))}
-    testing.expect(t,!instance_material_values_put(&full,{row=1,target=60|1<<8}) && instance_material_values_put(&full,{row=1,target=3|1<<8,words={9,0,0,0}}))
-    testing.expect_value(t,full.entries[3].words[0],u32(9))
+    for &entry,i in full.entries {entry={row=1,target=u32(i)|1<<8}}
     full.count=max(u32)
     only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
     testing.expect(t,scene_set(r,{only},nil,{},{}))

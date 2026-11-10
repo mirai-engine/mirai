@@ -447,7 +447,7 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 			roughness = clamp(m.roughness, 0, 1), metallic = clamp(m.metallic, 0, 1),
 			occlusion_strength = clamp(m.occlusion_strength, 0, 1), alpha_cutoff = clamp(m.alpha_cutoff, 0, 1),
 			specular_color = linalg.clamp(m.specular_color, 0, 1), specular_factor = m.specular_factor,
-			transmission = transmission, ior = max(m.ior, 0), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
+			transmission = transmission, ior = max(m.ior, 1), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
 			attenuation_color = {clamp(m.attenuation_color.x, 0, 1), clamp(m.attenuation_color.y, 0, 1), clamp(m.attenuation_color.z, 0, 1)},
 			alpha_mode = u32(mode), emission_mode = u32(m.emission_mode), program_id = m.program_id,
 		},
@@ -483,13 +483,12 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	placed := asset.material_maps(&maps)
 	for transform, kind in placed {
 		result.textures[kind] = texture_index(r, m.textures[kind])
-		// rotation * (scale_map * (scale * uv + offset)) + offset_map, as one matrix and one offset.
+		// rotation * (scale * uv) + offset, as one matrix and one offset.
 		sine, cosine := math.sin(transform.rotation), math.cos(transform.rotation)
-		scale := m.uv_scale * transform.scale
-		shift := m.uv_offset * transform.scale
+		scale := transform.scale
 		result.map_transforms[kind] = {
 			linear = {cosine * scale.x, -sine * scale.y, sine * scale.x, cosine * scale.y},
-			offset = {cosine * shift.x - sine * shift.y + transform.offset.x, sine * shift.x + cosine * shift.y + transform.offset.y},
+			offset = transform.offset,
 			uv_set = transform.uv_set,
 			ray_lod = 0.5 * math.log2(max(abs(scale.x * scale.y), 1e-12)),
 		}
@@ -1392,14 +1391,16 @@ tlas_settle :: proc(s: ^Scene_State) {
 	}
 }
 
-// Gives instances of the last scene_set another tint and emission, and
-// nothing else: descs are positions in the list it was given. count takes how
-// many had another. False, with nothing changed, when the lists differ in
-// length or name an instance that the set did not have.
-scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: ^int = nil) -> bool {
+// Gives instances of the last scene_set another tint and emission and, with
+// values, other values over the rows of their materials, and nothing else:
+// descs are positions in the list it was given. It touches each instance
+// alone: no row of the material table, no texture, no other instance. count
+// takes how many had another. False, with nothing changed, when the lists
+// differ in length or name an instance that the set did not have.
+scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: ^int = nil, values: []Instance_Material_Values = nil) -> bool {
 	s := &r.scene
 	if count != nil {count^ = 0}
-	if len(descs) != len(tints) || len(descs) != len(emissions) {return false}
+	if len(descs) != len(tints) || len(descs) != len(emissions) || values != nil && len(descs) != len(values) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
 	}
@@ -1409,38 +1410,14 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: 
 		inst := &s.instances[index]
 		tint := Vec4{tints[at].x, tints[at].y, tints[at].z, inst.tint.w}
 		emission := Vec4{emissions[at].x, emissions[at].y, emissions[at].z, inst.emission.w}
-		if inst.tint == tint && inst.emission == emission {continue}
-		glowed := inst.emission != emission
+		glowed := inst.emission != emission || instance_material_values_glow(s, inst.material_values)
+		changed := inst.tint != tint || inst.emission != emission
 		inst.tint, inst.emission = tint, emission
-		instance_changed_near(s, inst, glowed)
-		instance_touch(s, u32(index))
-		if count != nil {count^ += 1}
-	}
-	return true
-}
-
-// Gives instances of the last scene_set other values over the rows of their
-// materials (Instance_Material_Values), and nothing else: descs are positions in the
-// list it was given. A value changed touches its instance alone: no row of
-// the material table, no texture and no other instance. count takes how many
-// had other values. False, with nothing changed, when the lists differ in
-// length or name an instance that the set did not have; an instance whose
-// values find no room in the index pool keeps those it had
-// (stats.problem says what is missing).
-scene_material_values :: proc(r: ^Renderer, descs: []u32, values: []Instance_Material_Values, count: ^int = nil) -> bool {
-	s := &r.scene
-	if count != nil {count^ = 0}
-	if len(descs) != len(values) {return false}
-	for desc in descs {
-		if int(desc) >= len(s.desc_instance) {return false}
-	}
-	for desc, at in descs {
-		index := s.desc_instance[desc]
-		if index < 0 {continue}
-		inst := &s.instances[index]
-		given := values[at]
-		glowed := instance_material_values_glow(s, inst.material_values)
-		if !instance_material_values_give(r, inst, &given) {continue}
+		if values != nil {
+			given := values[at]
+			changed ||= instance_material_values_give(r, inst, &given)
+		}
+		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
 		instance_touch(s, u32(index))
 		if count != nil {count^ += 1}
@@ -1457,14 +1434,6 @@ instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u
 	return s.indices[values:][:count * INSTANCE_VALUE_WORDS]
 }
 
-@(private = "file")
-instance_material_values_same :: proc(s: ^Scene_State, held: u32, given: ^Instance_Material_Values) -> bool {
-	words := instance_material_values_words(s, held)
-	count := min(int(given.count), len(given.entries))
-	if len(words) != count * INSTANCE_VALUE_WORDS {return false}
-	return count == 0 || slice.equal(words, slice.reinterpret([]u32, given.entries[:count]))
-}
-
 // Whether the values of an instance give it an emission: its glow reaches as far as that of a tint.
 @(private = "file")
 instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u32) -> bool {
@@ -1477,25 +1446,26 @@ instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u3
 
 // Puts the values of an instance in the index pool in place of those it had:
 // over them when they are as many, else in room of their own. False when
-// they are those it had, or without room for them: the instance keeps what
-// it had.
+// they are those it had, or without room for them (stats.problem says what
+// is missing): the instance keeps what it had.
 @(private)
 instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: ^Instance_Material_Values) -> (changed: bool) {
 	s := &r.scene
-	if instance_material_values_same(s, inst.material_values, given) {return false}
 	count := min(int(given.count), len(given.entries))
 	entries := slice.reinterpret([]u32, given.entries[:count])
-	if held := instance_material_values_words(s, inst.material_values); len(held) == len(entries) && count > 0 {
+	held := instance_material_values_words(s, inst.material_values)
+	if slice.equal(held, entries) {return false}
+	if len(held) == len(entries) {
 		copy(held, entries)
 		range_add(&s.pool_dirty[.Index], {inst.material_values, u32(len(held))})
 		return true
 	}
 	stored: u32
 	if count > 0 {
-		if !pool_room(r, .Index, len(entries) + 1) {return false}
+		if !pool_room(r, .Index, len(entries) + 1) || reserve(&s.indices, len(s.indices) + len(entries) + 1) != nil {return false}
 		first := u32(len(s.indices))
-		if _, error := append(&s.indices, u32(count)); error != nil {return false}
-		if _, error := append(&s.indices, ..entries); error != nil {base.truncate(&s.indices, int(first)); return false}
+		append(&s.indices, u32(count))
+		append(&s.indices, ..entries)
 		stored = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first) + 1
 	}
 	instance_material_values_release(s, inst)
@@ -1595,14 +1565,12 @@ scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
     return true
 }
 
-// What extensions gave an instance, which it keeps with its identity. held:
-// the values it had in the index pool (Gpu_Instance.values), which whatever
-// is written in its place takes or gives back.
+// What extensions gave an instance, which it keeps with its identity.
 @(private)
-Instance_Given :: struct {values:Vec4,wet:f32,held:u32}
+Instance_Given :: struct {values:Vec4,wet:f32}
 
 @(private)
-instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {instance_values(inst),inst.wet,inst.material_values}}
+instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {instance_values(inst),inst.wet}}
 
 // Room for count instances in every table that holds one of each, and in
 // those of what rays and glass need of them. False without memory.
@@ -1618,7 +1586,7 @@ instances_reserve :: proc(s:^Scene_State,count:int) -> bool {
 // False when the instance is past the tables and they have no room for it
 // (instances_reserve makes it): nothing is written.
 @(private)
-instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,given:Instance_Given) -> (written,revalued:bool) {
+instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,given:Instance_Given) -> bool {
     s:=&r.scene
     desc:=desc
     // An instance whose material programs move its vertices shows its own pose of its mesh.
@@ -1631,9 +1599,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
            resize(&s.instance_keys,count)!=nil || resize(&s.tlas_items,count)!=nil || resize(&s.hw_instances,count)!=nil || resize(&s.touched,(count+63)/64)!=nil {
             base.truncate(&s.instances,before);base.truncate(&s.instance_next,before);base.truncate(&s.instance_prev,before);base.truncate(&s.overlays,before)
             base.truncate(&s.instance_keys,before);base.truncate(&s.tlas_items,before);base.truncate(&s.hw_instances,before);base.truncate(&s.touched,(before+63)/64)
-            held:=Gpu_Instance{material_values=given.held}
-            instance_material_values_release(s,&held)
-            return false,false
+            return false
         }
     }
 		mesh := s.meshes[desc.mesh]
@@ -1677,13 +1643,10 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			tint = {desc.tint.x, desc.tint.y, desc.tint.z, values.x},
 			emission = {desc.emission.x, desc.emission.y, desc.emission.z, values.y},
 			wet = given.wet,
-			material_values = given.held,
 		}
-		// Without room for them it keeps those it had (stats.problem says what is missing).
-		given_values := desc.material_values
-		glowed := instance_material_values_glow(s, given.held)
-		revalued = instance_material_values_give(r, &s.instances[index], &given_values)
-		if revalued && (glowed || instance_material_values_glow(s, s.instances[index].material_values)) {instance_changed_near(s, &s.instances[index], true)}
+		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
+		values_given := desc.material_values
+		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}
@@ -1703,7 +1666,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			s.bounds_max = linalg.max(s.bounds_max, bmax)
 			s.has_bounds = true
 		}
-    return true,revalued
+    return true
 }
 
 @(private)
@@ -1720,6 +1683,7 @@ instance_unlink :: proc(s:^Scene_State,index:u32) {
     }
     for i:=len(s.translucent)-1;i>=0;i-=1 {if s.translucent[i].instance==index {unordered_remove(&s.translucent,i)}}
     for i:=len(s.reflective)-1;i>=0;i-=1 {if s.reflective[i].instance==index {unordered_remove(&s.reflective,i)}}
+    instance_material_values_release(s,&s.instances[index])
 }
 
 // Replaces a descriptor range, optionally appending or truncating its suffix.
@@ -1757,11 +1721,10 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
                 for row in 0..<3 {for col in 0..<4 {previous[row,col]=s.instances[index].world[row][col]}}
                 given=instance_given(inst)
             }
-            given.held=inst.material_values
             instance_unlink(s,index)
         } else {append(&s.desc_instance,i32(index))}
         // Only an instance past the old ones takes room, and it was reserved.
-        if made,_:=instance_write(r,index,desc,previous,given);!made {pop(&s.desc_instance);written=false;break}
+        if !instance_write(r,index,desc,previous,given) {pop(&s.desc_instance);written=false;break}
         instance_changed_near(s,&s.instances[index])
         if int(index)<old {
             mesh:=s.instances[index].meta.x&INSTANCE_MESH_MASK
@@ -1786,7 +1749,6 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             instance_changed_near(s,&s.instances[index])
             if mesh_displaced(s,s.instances[index].meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
             instance_unlink(s,u32(index))
-            instance_material_values_release(s,&s.instances[index])
         }
         base.truncate(&s.instances,end);base.truncate(&s.instance_next,end);base.truncate(&s.instance_prev,end);base.truncate(&s.overlays,end)
         base.truncate(&s.instance_keys,end);base.truncate(&s.tlas_items,end);base.truncate(&s.hw_instances,end);base.truncate(&s.desc_instance,end)
@@ -1841,6 +1803,7 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	// The instances take other indices: what changed before stays as boxes.
 	for &box in s.occluders.boxes[:s.occluders.count] {box.instance=OCCLUDERS_MANY}
 	clear(&s.previous)
+	for &inst in s.instances {instance_material_values_release(s, &inst)}
 	for key, i in s.instance_keys {s.previous[key] = s.instances[i]}
 	clear(&s.instances)
 	clear(&s.instance_next)
@@ -1875,12 +1838,12 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
             delete_key(&s.previous,key)
         }
         // Its room was reserved; without it the instance is left out as one of a mesh that is not there.
-        written,revalued:=instance_write(r,index,desc,previous,given)
+        written:=instance_write(r,index,desc,previous,given)
         append(&s.desc_instance,i32(index) if written else -1)
         if !written {continue}
         // What moved since the set before is drawn in motion and goes once more, at rest.
         if s.instances[index].prev_world!=s.instances[index].world {instance_touch(s,index)}
-        if !found || revalued || !instance_lit_same(before,s.instances[index]) {
+        if !found || s.instances[index].material_values!=0 || !instance_lit_same(before,s.instances[index]) {
             instance_changed_near(s,&s.instances[index])
             if found {instance_changed_near(s,&before)}
         }
@@ -1888,9 +1851,8 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
     }
     for _,&gone in s.previous {
-        instance_changed_near(s,&gone,instance_material_values_glow(s,gone.material_values))
+        instance_changed_near(s,&gone)
         occluder_moved(s,OCCLUDERS_MANY,gone,INSTANCE_ABSENT)
-        instance_material_values_release(s,&gone)
     }
 	tlas_build(s)
 	s.instances_dirty = true

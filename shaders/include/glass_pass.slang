@@ -164,7 +164,7 @@ void walk_turn(inout Glass_Walk w, Material m, float3 normal, bool blended, floa
     w.origin += w.direction * t;
     w.path += t;
     if (!blended) { w.flags |= WALK_STOPPED; w.stage = WALK_SEEN; return; }
-    float3 outside = refract(w.direction, normal, material_ior(m));
+    float3 outside = refract(w.direction, normal, m.ior);
     if (dot(outside, outside) > 0.0) {
         w.direction = outside;
         w.origin += outside * bias;

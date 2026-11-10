@@ -100,8 +100,8 @@ meters and in the engine's axes, with no added nodes or negative scales:
   to -Z of its node in the engine: `space_bake` gives the node of a light `light_frame` of the basis
   on the right and its children its transpose on the left, and a format whose lights look at
   another axis than -Z of their node orients them in its reader.
-- **In materials**, with `Bottom`, the mapping of each map and `uv_scale`/`uv_offset` are
-  conjugated by the inversion of v; the identity stays the same, with no negative zeros.
+- **In materials**, with `Bottom`, the mapping of each map is conjugated by the inversion of v; the
+  identity stays the same, with no negative zeros.
 - A space equal to the engine's touches nothing: the bytes are those of the source.
 
 ### Front
@@ -616,7 +616,9 @@ slots of the `.mesh`, one per primitive, reference them.
   without metallic-roughness is a rough metal; a map that asks for a missing `TEXCOORD` rejects the
   import.
   - Specular-glossiness goes through `importer.specular_glossiness`, like the Khronos converter;
-    with its texture it becomes a dielectric with a warning.
+    with its texture it becomes a dielectric with a warning. An index of refraction of 0, the
+    compatibility mode of `KHR_materials_ior`, is converted the same way
+    (`importer.ior_zero_convert`): a material holds no such mode.
   - Sheen of color `c` is a fuzz of weight `max(c)` and color `c / max(c)`, which leaves the base
     `1 − max(c)·R` as the extension asks; with a texture, the base is darkened by the factor
     (warning).

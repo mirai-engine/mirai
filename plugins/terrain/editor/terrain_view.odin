@@ -120,7 +120,7 @@ terrain_view_lit :: proc(pass:^erender.Pass,user:rawptr) {
 // layer of the panel alone.
 @(private)
 weights_values :: proc(look:^erender.Material_Values,overlay:Terrain_Overlay,layer:int) {
-    erender.material_value(look,"inspect",[4]f32{overlay==.Layer?2:1,f32(layer),0,0})
+    erender.material_value(look,"inspect",{overlay==.Layer?2:1,f32(layer),0,0})
 }
 
 @(private)

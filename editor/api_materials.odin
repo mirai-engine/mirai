@@ -47,7 +47,7 @@ materials_api_register :: proc(s:^Session,st:^Api_State) {
 material_values_read :: proc(call:^api.Call,text:string,info:^asset.Material_Info) -> bool {
     if !asset_values_read(call,text,info) {return false}
     if !asset.material_check({info=info}) {
-        api.call_fail(call,api.INVALID_PARAMS,"values: a number that is not finite or is outside its range: opacity, metallic, roughness, weights, amounts and the colors of the layers go from 0 to 1, ior is 0 or at least 1 and the coat ior at least 1")
+        api.call_fail(call,api.INVALID_PARAMS,"values: a number that is not finite or is outside its range: opacity, metallic, roughness, weights, amounts and the colors of the layers go from 0 to 1, ior and the coat ior are at least 1")
         return false
     }
     return true
@@ -122,18 +122,7 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         serial.write_u8(out,']')
     }
     serial.write_u8(out,'}')
-    api.write_key(out,"overlays")
-    serial.write_u8(out,'[')
-    blends:=OVERLAY_BLEND_NAMES
-    for overlay,i in view.overlays {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_key(out,"material",first=true);api_asset_write(out,overlay.material)
-        api.write_text(out,"blend",blends[overlay.blend])
-        api.write_key(out,"enabled");api.write_flag(out,overlay.enabled)
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
+    api_overlays_write(out,view.overlays)
     serial.write_u8(out,'}')
 }
 
@@ -171,7 +160,7 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
     if t.created {
         bytes,error:=asset.material_bytes(&s.app.assets.types,{id=t.id,info=info},context.temp_allocator)
         written=error==.None && file_write(s,t.file,bytes,label)
-        if written && !erender.material_values_unnamed(&given) {written=material_write(s,t.id,{kind=.Set,info=info,override=&given})}
+        if written && !erender.material_values_plain(&given) {written=material_write(s,t.id,{kind=.Set,info=info,override=&given})}
     } else {
         written=material_write(s,t.id,{kind=.Set,info=info,override=&given})
     }

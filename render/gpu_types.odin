@@ -260,23 +260,15 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 
 // What an instance gives over the rows of its materials, which the shaders
-// read where they evaluate one of those rows at a point of it: a value of
-// the parameters of the program of a row, or one of the standard model
-// (Instance_Material_Value_Target). It costs the instance its words in the index pool
-// and no row of the material table.
+// read where they evaluate one of those rows at a point of it. It costs the
+// instance its words in the index pool and no row of the material table.
 INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
 INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
 // A value of the standard model an instance gives: the others are of the row.
-Instance_Material_Value_Target :: enum u32 {
-	Base_Color = abi.INSTANCE_VALUE_BASE_COLOR,
-	Opacity    = abi.INSTANCE_VALUE_OPACITY,
-	Emission   = abi.INSTANCE_VALUE_EMISSION,
-	Roughness  = abi.INSTANCE_VALUE_ROUGHNESS,
-	Metallic   = abi.INSTANCE_VALUE_METALLIC,
-}
+Instance_Material_Value_Target :: enum u32 {Base_Color = abi.INSTANCE_VALUE_STANDARD, Opacity, Metallic, Roughness, Emission}
 Instance_Material_Value :: struct {
 	row:    u32,    // of the material table: the value is for the points of the instance that show it
-	target: u32,    // a word of the parameters of the program of the row, or an Instance_Material_Value_Target; its count of words from INSTANCE_VALUE_COUNT_SHIFT
+	target: u32,    // a word of the parameters of the program of the row, or an Instance_Material_Value_Target; from INSTANCE_VALUE_COUNT_SHIFT, how many of its words it gives
 	words:  [4]u32, // as the row holds them
 }
 #assert(size_of(Instance_Material_Value) == INSTANCE_VALUE_WORDS * size_of(u32))
@@ -285,33 +277,19 @@ Instance_Material_Values :: struct {
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
 
-// A value of the standard model for the points of an instance that show row.
-instance_material_value_standard :: proc "contextless" (row: u32, target: Instance_Material_Value_Target, value: Vec4) -> Instance_Material_Value {
-	count := u32(3) if target == .Base_Color || target == .Emission else 1
-	return {row = row, target = u32(target) | count << abi.INSTANCE_VALUE_COUNT_SHIFT, words = transmute([4]u32)value}
-}
-
-// The words a parameter of the program of row holds in params, for the points
-// of an instance that show row.
-instance_material_value_parameter :: proc "contextless" (row: u32, parameter: ^Program_Parameter, params: ^[16]Vec4) -> (value: Instance_Material_Value, ok: bool) {
-	if parameter == nil || parameter.kind == .Texture || parameter.components < 1 || parameter.components > 4 || int(parameter.offset) + int(parameter.components) * 4 > PROGRAM_PARAMETER_BYTES {return}
-	value = {row = row, target = u32(parameter.offset / 4) | u32(parameter.components) << abi.INSTANCE_VALUE_COUNT_SHIFT}
-	copy(value.words[:], (cast(^[PROGRAM_PARAMETER_BYTES / 4]u32)params)[parameter.offset / 4:][:parameter.components])
-	return value, true
-}
-
-// Adds a value; one for the same row and target takes its place. False when
-// the values hold INSTANCE_VALUES_MAX others.
-instance_material_values_put :: proc "contextless" (values: ^Instance_Material_Values, value: Instance_Material_Value) -> bool {
-	MASK :: u32(1) << abi.INSTANCE_VALUE_COUNT_SHIFT - 1
-	count := min(int(values.count), len(values.entries))
-	for &entry in values.entries[:count] {
-		if entry.row == value.row && entry.target & MASK == value.target & MASK {entry = value; return true}
+// A value of the standard model, or of a number of the program of row
+// (target: the parameter), for the points of an instance that show row.
+instance_material_value :: proc(row: u32, target: union #no_nil {Instance_Material_Value_Target, ^Program_Parameter}, value: Vec4) -> (held: Instance_Material_Value) {
+	switch to in target {
+	case Instance_Material_Value_Target:
+		held = {row = row, target = u32(to) | 4 << abi.INSTANCE_VALUE_COUNT_SHIFT, words = transmute([4]u32)value}
+	case ^Program_Parameter:
+		params: [16]Vec4
+		program_parameter_set(&params, to, {f64(value.x), f64(value.y), f64(value.z), f64(value.w)})
+		held = {row = row, target = u32(to.offset / 4) | u32(to.components) << abi.INSTANCE_VALUE_COUNT_SHIFT}
+		copy(held.words[:], (cast(^[PROGRAM_PARAMETER_BYTES / 4]u32)&params)[to.offset / 4:][:to.components])
 	}
-	if count >= len(values.entries) {return false}
-	values.entries[count] = value
-	values.count = u32(count + 1)
-	return true
+	return
 }
 
 // uv' = linear * uv + offset: the transform of the material and that of the

@@ -89,9 +89,9 @@ its body animation; no solver evaluates it.
 - **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
   material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
   curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
-  switch, a blush. `animation_skin` draws it over the `Material_Override` of each mesh of the rig
+  switch, a blush. `animation_skin` draws it over the `Material_Values` of each mesh of the rig
   (the rig and those that share its pose) without writing the component, whose writers stay the
-  game and the editor; past the capacity of the override it is the problem
+  game and the editor; past the capacity of the component it is the problem
   `animation.curve_material`.
 - Each distinct material value is a derived material of the renderer, freed when no drawing uses
   it: a stepped curve costs a few; one that changes in every frame makes one per frame and mesh,

@@ -289,10 +289,9 @@ space_map :: proc(space:Source_Space,mapping:^asset.Material_Map) {
     mapping.offset={mapping.offset.x-mapping.scale.y*math.sin(angle),1-mapping.scale.y*math.cos(angle)-mapping.offset.y}
 }
 
-// The scale and offset of a material, applied before its maps, with v from the top.
+// The mappings of the maps of a material, with v from the top.
 @(private)
 space_material :: proc(space:Source_Space,info:^asset.Material_Info) {
     if space.v_origin==.Top {return}
-    info.uv_offset.y=1-info.uv_scale.y-info.uv_offset.y
     for slot in asset.Material_Map_Kind {space_map(space,material_map(info,slot))}
 }

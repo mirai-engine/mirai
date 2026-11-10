@@ -140,6 +140,8 @@ per bone.
   ([model](../../mirai-rendering/references/materials.md#layers-openpbr)).
 - An empty `program` is the standard model; `parameters` keeps its values and, with nonzero
   `overlay`, those of a layer of `overlays`. `hidden` are the names the editor does not show.
+- The UVs have one transform, that of each map (`Material_Map`): a material that tiles gives the
+  scale to its maps. The index of refraction is 1 or above.
 - `material_view` validates ranges, also those of `imported` and `imported_parameters`.
 
 ### What was imported and what was changed

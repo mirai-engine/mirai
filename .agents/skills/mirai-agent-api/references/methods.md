@@ -988,20 +988,23 @@ instance" are `-32602`; the rest, `-32000`
 - `material.set` with `path`: `values` are the fields that change over `MATERIAL_DEFAULTS`, also
   those of a block (`{"coat":{"weight":1}}` leaves the other coat fields). Fails if the file
   exists.
-- `material.set`: changes the file's values for all the entities that show it; keeps the program
-  parameters and the overlays. An out-of-range value or a field the type does not have is `-32602`
-  and changes nothing. What a single entity changes is its `Material_Override`, which the inspector
+- `material.set`: changes a material for all the entities that show it: its `values` and, by name,
+  the `parameters` and `textures` of its Surface program (those of the program its values name after
+  the call) and its `overlays`, which replace the ones it has; what it is not given stays. An
+  out-of-range value, a field the type does not have or a name its program does not have is `-32602`
+  and changes nothing. What a single entity changes is its `Material_Values`, which the inspector
   edits. `material.set` leaves the `.mat` in memory, unsaved, in an undo step attributed to the AI
   turn that calls them. In an imported material, a field that ends up different from what was
   imported goes to `overrides`.
 - `material.instance.*`: what an entity with `Mesh_Renderer` shows of the material of a slot
-  (`slot`, 0 if missing), its `Material_Override`, as the inspector edits it; the overlays are the
+  (`slot`, 0 if missing), its `Material_Values`, as the inspector edits it; the overlays are the
   first slot's. `set` takes `values` (as `inspect` gives them: those that differ from the material
   become the entity's), `parameters` of the program, `textures` by map (`maps.base_color`) or
   program texture, and `overlays` (`null` gives back those of the material); the material does not
-  change. `revert` removes the slot's from it. `apply` writes it to the slot's material, removes it
-  from the entity and saves the file right away; a slot without an override, or with the default
-  material, which has no file, is `-32602`.
+  change. `revert` removes the slot's from it. `apply` writes it to the slot's material and removes
+  it from the entity, in one undo step and in memory like every edit (`asset.save` writes the file);
+  a slot the entity changes nothing of, or with the default material, which has no file, is
+  `-32602`.
 - `material.revert`: `material` and `paths` (comma-separated paths, as `overrides` gives them, or a
   whole part: `coat`, `maps.normal`; empty: the whole material). Those parts take what the source
   gave and stop being overrides, in an undo step and unsaved, and the result is that of

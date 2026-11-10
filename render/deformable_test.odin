@@ -106,19 +106,15 @@ an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own :: proc(t: ^tes
 	skins_bounds(r)
 	testing.expect_value(t, s.instances[0].bounds_max.xyz, s.meshes[source].bounds_max + 1)
 	// A reach the instance gives over its row grows its box alone and moves its pose again: the row stays.
-	given: Instance_Material_Values
-	params: [16]Vec4
-	testing.expect(t, program_parameter_set(&params, program_parameter(pieces, "reach"), {2, 0, 0, 0}))
-	value, held := instance_material_value_parameter(1, program_parameter(pieces, "reach"), &params)
-	testing.expect(t, held && instance_material_values_put(&given, value))
+	given := Instance_Material_Values{count = 1, entries = {0 = instance_material_value(1, program_parameter(pieces, "reach"), {2, 0, 0, 0})}}
 	version := s.material_versions[1]
 	skin.dirty = false
-	testing.expect(t, scene_material_values(r, {0}, {given}))
+	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, nil, {given}))
 	displaced_prepare(r)
 	testing.expect(t, skin.dirty && s.material_versions[1] == version)
 	skins_bounds(r)
 	testing.expect_value(t, s.instances[0].bounds_max.xyz, s.meshes[source].bounds_max + 2)
-	testing.expect(t, scene_material_values(r, {0}, {{}}))
+	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, nil, {{}}))
 	displaced_prepare(r)
 	skins_bounds(r)
 	testing.expect_value(t, s.instances[0].bounds_max.xyz, s.meshes[source].bounds_max + 1)

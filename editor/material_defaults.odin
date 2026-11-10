@@ -8,33 +8,7 @@ import "mirai:std/base"
 import "mirai:ui"
 
 material_parameter_value :: proc(v:^gpu.Material_Desc,program:^gpu.Program,name:u64) -> [4]f32 {
-    for value in Material_Value {
-        if name!=material_value_name(value) {continue}
-        switch value {
-        case .Base_Color: return {v.base_color.x,v.base_color.y,v.base_color.z,0}
-        case .Emission: return {v.emission.x,v.emission.y,v.emission.z,0}
-        case .Opacity: return {v.opacity,0,0,0}
-        case .Metallic: return {v.metallic,0,0,0}
-        case .Roughness: return {v.roughness,0,0,0}
-        case .Specular: return {v.specular_factor,0,0,0}
-        case .Ior: return {v.ior,0,0,0}
-        case .Transmission: return {v.transmission,0,0,0}
-        case .Alpha_Mode: return {f32(v.alpha_mode),0,0,0}
-        case .Coat: return {v.coat.weight,0,0,0}
-        case .Coat_Roughness: return {v.coat.roughness,0,0,0}
-        case .Coat_Color: return {v.coat.color.x,v.coat.color.y,v.coat.color.z,0}
-        case .Coat_Ior: return {v.coat.ior,0,0,0}
-        case .Fuzz: return {v.fuzz.weight,0,0,0}
-        case .Fuzz_Color: return {v.fuzz.color.x,v.fuzz.color.y,v.fuzz.color.z,0}
-        case .Fuzz_Roughness: return {v.fuzz.roughness,0,0,0}
-        case .Anisotropy: return {v.anisotropy.amount,0,0,0}
-        case .Anisotropy_Rotation: return {v.anisotropy.rotation,0,0,0}
-        case .Unlit: return {v.unlit?1:0,0,0,0}
-        case .Emission_Mode: return {f32(v.emission_mode),0,0,0}
-        case .Diffuse_Transmission: return {v.diffuse_transmission.weight,0,0,0}
-        case .Diffuse_Transmission_Color: return {v.diffuse_transmission.color.x,v.diffuse_transmission.color.y,v.diffuse_transmission.color.z,0}
-        }
-    }
+    if standard:[4]f32;erender.material_standard_value(&v.info,name,&standard,false) {return standard}
     if program!=nil {
         for &parameter in program.parameters {
             if base.name_hash(parameter.name)!=name {continue}

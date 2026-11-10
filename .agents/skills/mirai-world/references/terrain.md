@@ -33,13 +33,12 @@ Chunks:
   (`chunk_place`), so a terrain kilometers wide loses no f32 precision far from its center. An
   empty chunk keeps entity and coordinate for later edits while it is
   [resident](#jobs-publishing-and-residency).
-- The children show in slot 0 the [layers](#materials-and-layers), with their material and their
-  override, and in the other slots of a Mesh its materials (`chunk_materials`); they receive the
-  owner's Tint.
-- `terrain_update` writes `Terrain_Chunk`, `Material_Override` and, in its chunks, `Mesh_Renderer`,
-  `Tint` and `Collider` (`shared` tables); the `Transform` and `Parent` of a new chunk it gives with
-  `core.Commands`, because those tables have other writers. Chunks receive Tint and
-  `Material_Override` from the owner, except with [layers](#materials-and-layers).
+- The children show in slot 0 the [layers](#materials-and-layers), with their material and its
+  values, and in the other slots of a Mesh its materials (`chunk_materials`); they receive the
+  color and the emission of the owner's `Material_Values`.
+- `terrain_update` writes `Terrain_Chunk` and, in its chunks, `Mesh_Renderer`, `Material_Values`
+  and `Collider` (`shared` tables); the `Transform` and `Parent` of a new chunk it gives with
+  `core.Commands`, because those tables have other writers.
 - Reusing or retiring a handle requires the right component, owner, coordinate and Parent, local
   transform and absence of Id; one in another place (another source size) is replaced.
 - The sweep of incomplete chunks is triggered by layout changes or `Parent.version`; it keeps its
@@ -229,9 +228,9 @@ Construction and publishing:
 - Slot 0 shows the source's layers material (`layers_material`): a Surface program that blends
   them reading their weights in `ctx.uv0` and `ctx.uv1`, and what it needs of the point (world
   position, normal, object). Without one, the standard layers one is a case of the same path:
-  `LAYERS_MATERIAL` (`Terrain_Layers` program of `shaders/`) with a `Material_Override` that the
-  plugin builds with each layer material. The owner's override does not pass to the chunks, and a
-  program of its own takes its parameters from its material.
+  `LAYERS_MATERIAL` (`Terrain_Layers` program of `shaders/`) with the `Material_Values` that the
+  plugin builds with each layer material. The values the owner gives by name do not pass to the
+  chunks, and a program of its own takes its parameters from its material.
 - `Terrain_Layers` projects the textures from the three axes, each by how much the surface faces
   it, sharpened: flat ground reads only the top one and a cliff those of its sides. A projection
   that barely weighs and a layer without weight are not read, and a ray reads the dominant

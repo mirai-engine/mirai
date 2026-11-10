@@ -228,11 +228,6 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"INSTANCE_VALUE_WORDS",abi.INSTANCE_VALUE_WORDS)
     u(&b,"INSTANCE_VALUE_COUNT_SHIFT",abi.INSTANCE_VALUE_COUNT_SHIFT)
     u(&b,"INSTANCE_VALUE_STANDARD",abi.INSTANCE_VALUE_STANDARD)
-    u(&b,"INSTANCE_VALUE_BASE_COLOR",abi.INSTANCE_VALUE_BASE_COLOR)
-    u(&b,"INSTANCE_VALUE_OPACITY",abi.INSTANCE_VALUE_OPACITY)
-    u(&b,"INSTANCE_VALUE_EMISSION",abi.INSTANCE_VALUE_EMISSION)
-    u(&b,"INSTANCE_VALUE_ROUGHNESS",abi.INSTANCE_VALUE_ROUGHNESS)
-    u(&b,"INSTANCE_VALUE_METALLIC",abi.INSTANCE_VALUE_METALLIC)
     for name,value in reflect.enum_field_names(abi.Debug_View) {u(&b,strings.concatenate({"DEBUG_",strings.to_upper(name,context.temp_allocator)},context.temp_allocator),u32(value))}
     strings.write_string(&b,"#endif\n")
     return strings.to_string(b)
