@@ -14,10 +14,17 @@ import "mirai:std/serial"
 // pipelines of shaders that changed age out. The file belongs to one device and
 // driver; that of another is discarded whole, as is a file that does not read
 // back exactly.
+//
+// A driver puts in the blob of each pipeline what all of them share (NVIDIA a
+// dictionary of megabytes), so blobs are kept as chunks cut by their content,
+// each stored once: the same bytes give the same chunks wherever they sit.
 PIPELINE_STORE_MAGIC :: u32(0x5350_494d) // "MIPS"
-PIPELINE_STORE_VERSION :: u32(1)
-PIPELINE_STORE_BYTES :: 256 << 20 // the most a store file holds, and the blobs a run adds in memory
+PIPELINE_STORE_VERSION :: u32(2)
+PIPELINE_STORE_BYTES :: 256 << 20 // the most a store file holds, and the chunks a run adds in memory
 PIPELINE_STORE_RUNS :: 8          // runs an entry stays in the file without being used
+PIPELINE_CHUNK_MIN :: 2 << 10
+PIPELINE_CHUNK_MAX :: 64 << 10
+PIPELINE_CHUNK_BITS :: 13         // a cut after PIPELINE_CHUNK_MIN has 1 chance in 2^13 per byte
 
 // What a driver blob is valid for: the device, its driver, and the cache UUID
 // the driver gives its blobs.
@@ -26,41 +33,65 @@ Pipeline_Device :: struct {
 	uuid:                   [16]u8,
 }
 
+Pipeline_Chunk :: struct {
+	id:    [2]u64, // base.hash128 of data
+	data:  []u8,   // nil once no entry holds it
+	refs:  int,    // entries that hold it
+	owned: bool,   // data was allocated for it; else it points into Pipeline_Store.file
+}
+
 Pipeline_Entry :: struct {
-	key:   u64,
-	data:  []u8,
-	age:   u32, // runs since one used it
-	used:  u64, // when this run used it, counted in uses of the store; 0 = not used
-	owned: bool, // data was allocated for it; else it points into Pipeline_Store.file
+	key:    u64,
+	chunks: []u32, // indices into Pipeline_Store.chunks, in the order of the blob
+	size:   int,   // bytes of the blob
+	age:    u32,   // runs since one used it
+	used:   u64,   // when this run used it, counted in uses of the store; 0 = not used
 }
 
 Pipeline_Store :: struct {
 	device:    Pipeline_Device,
-	limit:     int, // the most bytes of the file, and of the blobs this run uses
+	limit:     int, // the most bytes of the file, and of the chunks this run adds
 	file:      []u8,
+	chunks:    [dynamic]Pipeline_Chunk,
+	by_id:     base.Hash_Map(u32), // id[0] of a chunk that holds data -> its index
 	entries:   [dynamic]Pipeline_Entry,
-	owned:     int, // bytes of the blobs of this run
-	reused:    int, // bytes of the blobs of the file this run used
+	owned:     int, // bytes of the chunks this run added
 	uses:      u64,
+	gear:      [256]u64, // the value of each byte in the rolling hash that cuts chunks
 	lock:      sync.Mutex, // pipelines are created on several threads
 	allocator: runtime.Allocator,
 }
 
 @(private = "file")
-STORE_HEADER :: 40
+STORE_HEADER :: 48
 @(private = "file")
-ENTRY_HEADER :: 24
+CHUNK_HEADER :: 24
+@(private = "file")
+ENTRY_HEADER :: 16
 
 pipeline_store_init :: proc(s: ^Pipeline_Store, device: Pipeline_Device, limit := PIPELINE_STORE_BYTES, allocator := context.allocator) {
 	s^ = {device = device, limit = limit, allocator = allocator}
+	s.chunks.allocator = allocator
 	s.entries.allocator = allocator
+	for &g, i in s.gear {g = base.hash_u64(u64(i) + 1)}
 }
 
 pipeline_store_destroy :: proc(s: ^Pipeline_Store) {
-	for e in s.entries {if e.owned {delete(e.data, s.allocator)}}
-	delete(s.entries)
+	pipeline_store_clear(s)
 	delete(s.file, s.allocator)
 	s^ = {}
+}
+
+@(private = "file")
+pipeline_store_clear :: proc(s: ^Pipeline_Store) {
+	for c in s.chunks {if c.owned {delete(c.data, s.allocator)}}
+	for e in s.entries {delete(e.chunks, s.allocator)}
+	delete(s.chunks)
+	delete(s.entries)
+	base.hash_map_destroy(&s.by_id)
+	s.chunks, s.entries, s.owned = {}, {}, 0
+	s.chunks.allocator = s.allocator
+	s.entries.allocator = s.allocator
 }
 
 // Reads the store of path, after removing what processes that ended left of
@@ -79,93 +110,209 @@ pipeline_store_decode :: proc(s: ^Pipeline_Store, data: []u8) -> bool {
 	if len(data) < STORE_HEADER || len(data) > s.limit {return false}
 	if store_read_u32(data, 0) != PIPELINE_STORE_MAGIC || store_read_u32(data, 4) != PIPELINE_STORE_VERSION {return false}
 	device := Pipeline_Device{vendor = store_read_u32(data, 8), device = store_read_u32(data, 12), driver = store_read_u32(data, 16)}
-	copy(device.uuid[:], data[24:40])
+	copy(device.uuid[:], data[32:48])
 	if device != s.device {return false}
-	count := int(store_read_u32(data, 20))
-	if count > (len(data) - STORE_HEADER) / ENTRY_HEADER {return false}
-	entries, error := make([dynamic]Pipeline_Entry, 0, count, s.allocator)
-	if error != nil {return false}
-	at := STORE_HEADER
-	for _ in 0 ..< count {
-		if len(data) - at < ENTRY_HEADER {delete(entries); return false}
-		key, check, age, size := store_read_u64(data, at), store_read_u64(data, at + 8), store_read_u32(data, at + 16), int(store_read_u32(data, at + 20))
-		at += ENTRY_HEADER
-		if size == 0 || size > len(data) - at || age >= PIPELINE_STORE_RUNS {delete(entries); return false}
-		blob := data[at:][:size]
-		at += size
-		if base.hash64(blob) != check || pipeline_store_index(entries[:], key) >= 0 {delete(entries); return false}
-		append(&entries, Pipeline_Entry{key = key, data = blob, age = age})
-	}
-	if at != len(data) {delete(entries); return false}
-	for e in s.entries {if e.owned {delete(e.data, s.allocator)}}
-	delete(s.entries)
+	chunk_count, entry_count := int(store_read_u32(data, 20)), int(store_read_u32(data, 24))
+	if chunk_count > (len(data) - STORE_HEADER) / CHUNK_HEADER || entry_count > (len(data) - STORE_HEADER) / ENTRY_HEADER {return false}
+	pipeline_store_clear(s)
+	if !pipeline_store_decode_into(s, data, chunk_count, entry_count) {pipeline_store_clear(s); return false}
 	delete(s.file, s.allocator)
-	s.entries, s.file, s.owned, s.reused = entries, data, 0, 0
+	s.file = data
 	return true
 }
 
 @(private = "file")
-pipeline_store_index :: proc(entries: []Pipeline_Entry, key: u64) -> int {
-	for e, i in entries {if e.key == key {return i}}
+pipeline_store_decode_into :: proc(s: ^Pipeline_Store, data: []u8, chunk_count, entry_count: int) -> bool {
+	if reserve(&s.chunks, chunk_count) != nil || reserve(&s.entries, entry_count) != nil {return false}
+	if !base.hash_map_init(&s.by_id, max(chunk_count, 1), s.allocator) {return false}
+	at := STORE_HEADER
+	for _ in 0 ..< chunk_count {
+		if len(data) - at < CHUNK_HEADER {return false}
+		id := [2]u64{store_read_u64(data, at), store_read_u64(data, at + 8)}
+		size := int(store_read_u32(data, at + 16))
+		at += CHUNK_HEADER
+		if size == 0 || size > PIPELINE_CHUNK_MAX || size > len(data) - at {return false}
+		chunk := data[at:][:size]
+		at += size
+		if base.hash128(chunk) != id || base.hash_map_contains(&s.by_id, id[0]) {return false}
+		if !base.hash_map_set(&s.by_id, id[0], u32(len(s.chunks))) {return false}
+		append(&s.chunks, Pipeline_Chunk{id = id, data = chunk})
+	}
+	for _ in 0 ..< entry_count {
+		if len(data) - at < ENTRY_HEADER {return false}
+		key, age, count := store_read_u64(data, at), store_read_u32(data, at + 8), int(store_read_u32(data, at + 12))
+		at += ENTRY_HEADER
+		if count == 0 || count > (len(data) - at) / 4 || age >= PIPELINE_STORE_RUNS || pipeline_store_index(s, key) >= 0 {return false}
+		chunks, error := make([]u32, count, s.allocator)
+		if error != nil {return false}
+		size := 0
+		for &c in chunks {
+			c = store_read_u32(data, at)
+			at += 4
+			if int(c) >= len(s.chunks) {delete(chunks, s.allocator); return false}
+			size += len(s.chunks[c].data)
+		}
+		for c in chunks {s.chunks[c].refs += 1}
+		append(&s.entries, Pipeline_Entry{key = key, chunks = chunks, size = size, age = age})
+	}
+	if at != len(data) {return false}
+	for c in s.chunks {if c.refs == 0 {return false}}
+	return true
+}
+
+@(private = "file")
+pipeline_store_index :: proc(s: ^Pipeline_Store, key: u64) -> int {
+	for e, i in s.entries {if e.key == key {return i}}
 	return -1
 }
 
-// The blob of key, marked as used by this run; nil without one. The caller
-// holds s.lock while it reads the blob.
-pipeline_store_find :: proc(s: ^Pipeline_Store, key: u64) -> []u8 {
-	i := pipeline_store_index(s.entries[:], key)
+// A copy of the blob of key, in allocator, marked as used by this run; nil
+// without one or without memory.
+pipeline_store_find :: proc(s: ^Pipeline_Store, key: u64, allocator := context.allocator) -> []u8 {
+	i := pipeline_store_index(s, key)
 	if i < 0 {return nil}
 	e := &s.entries[i]
-	if !e.owned && e.used == 0 {s.reused += len(e.data)}
+	blob, error := make([]u8, e.size, allocator)
+	if error != nil {return nil}
+	at := 0
+	for c in e.chunks {at += copy(blob[at:], s.chunks[c].data)}
 	s.uses += 1
 	e.used = s.uses
-	return e.data
+	return blob
 }
 
-// Keeps a blob of this run, allocated with s.allocator, which the store then
-// owns, under key. Past the limit, with what the run used of the file, the
-// oldest blobs of this run go first; one that does not fit at all is freed.
+// The length of the chunk data starts with: where the rolling hash of the last
+// 64 bytes has its top PIPELINE_CHUNK_BITS clear, between PIPELINE_CHUNK_MIN
+// and PIPELINE_CHUNK_MAX.
+pipeline_chunk_length :: proc(gear: ^[256]u64, data: []u8) -> int {
+	end := min(len(data), PIPELINE_CHUNK_MAX)
+	if end <= PIPELINE_CHUNK_MIN {return end}
+	h: u64
+	for i in max(PIPELINE_CHUNK_MIN - 64, 0) ..< end {
+		h = h << 1 + gear[data[i]]
+		if i + 1 >= PIPELINE_CHUNK_MIN && h >> (64 - PIPELINE_CHUNK_BITS) == 0 {return i + 1}
+	}
+	return end
+}
+
+// Keeps a copy of data, the blob of this run for key. Past the limit the
+// pipelines this run used longest ago go first; a blob that does not fit at all
+// is not kept.
 pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) {
-	if i := pipeline_store_index(s.entries[:], key); i >= 0 {pipeline_store_drop(s, i)}
-	if len(data) == 0 || len(data) > s.limit - s.reused {delete(data, s.allocator); return}
-	for s.owned + len(data) > s.limit - s.reused {
+	if i := pipeline_store_index(s, key); i >= 0 {pipeline_store_drop(s, i)}
+	if len(data) == 0 || len(data) > s.limit {return}
+	for s.owned + len(data) > s.limit {
 		oldest := -1
-		for e, i in s.entries {if e.owned && (oldest < 0 || e.used < s.entries[oldest].used) {oldest = i}}
+		for e, i in s.entries {
+			if e.used != 0 && pipeline_store_owns(s, e) && (oldest < 0 || e.used < s.entries[oldest].used) {oldest = i}
+		}
+		if oldest < 0 {break}
 		pipeline_store_drop(s, oldest)
 	}
-	s.uses += 1
-	if _, error := append(&s.entries, Pipeline_Entry{key = key, data = data, used = s.uses, owned = true}); error != nil {
-		delete(data, s.allocator)
-		return
+	count := 0
+	for at := 0; at < len(data); count += 1 {at += pipeline_chunk_length(&s.gear, data[at:])}
+	chunks, error := make([]u32, count, s.allocator)
+	if error != nil {return}
+	at := 0
+	for &c, n in chunks {
+		length := pipeline_chunk_length(&s.gear, data[at:])
+		index, ok := pipeline_store_chunk(s, data[at:][:length])
+		if !ok {
+			for taken in chunks[:n] {pipeline_store_release(s, taken)}
+			delete(chunks, s.allocator)
+			return
+		}
+		c = index
+		at += length
 	}
+	s.uses += 1
+	if _, append_error := append(&s.entries, Pipeline_Entry{key = key, chunks = chunks, size = len(data), used = s.uses}); append_error != nil {
+		for c in chunks {pipeline_store_release(s, c)}
+		delete(chunks, s.allocator)
+	}
+}
+
+@(private = "file")
+pipeline_store_owns :: proc(s: ^Pipeline_Store, e: Pipeline_Entry) -> bool {
+	for c in e.chunks {if s.chunks[c].owned {return true}}
+	return false
+}
+
+// The index of a chunk with those bytes, held once more: the one the store has,
+// or a copy. Not ok without memory.
+@(private = "file")
+pipeline_store_chunk :: proc(s: ^Pipeline_Store, bytes: []u8) -> (index: u32, ok: bool) {
+	id := base.hash128(bytes)
+	if found, exists := base.hash_map_get(&s.by_id, id[0]); exists && s.chunks[found].id == id {
+		s.chunks[found].refs += 1
+		return found, true
+	}
+	if s.by_id.keys == nil {
+		if !base.hash_map_init(&s.by_id, 64, s.allocator) {return 0, false}
+	} else if s.by_id.count >= s.by_id.capacity && !base.hash_map_grow(&s.by_id, 2 * s.by_id.capacity) {return 0, false}
+	data, error := make([]u8, len(bytes), s.allocator)
+	if error != nil {return 0, false}
+	copy(data, bytes)
+	index = u32(len(s.chunks))
+	if _, append_error := append(&s.chunks, Pipeline_Chunk{id = id, data = data, refs = 1, owned = true}); append_error != nil {
+		delete(data, s.allocator)
+		return 0, false
+	}
+	// Another chunk with the same id[0] keeps the slot: this one is only not shared.
+	if !base.hash_map_contains(&s.by_id, id[0]) {base.hash_map_set(&s.by_id, id[0], index)}
 	s.owned += len(data)
+	return index, true
+}
+
+@(private = "file")
+pipeline_store_release :: proc(s: ^Pipeline_Store, index: u32) {
+	c := &s.chunks[index]
+	c.refs -= 1
+	if c.refs > 0 {return}
+	if found, exists := base.hash_map_get(&s.by_id, c.id[0]); exists && found == index {base.hash_map_remove(&s.by_id, c.id[0])}
+	if c.owned {
+		s.owned -= len(c.data)
+		delete(c.data, s.allocator)
+	}
+	c.data, c.owned = nil, false
 }
 
 @(private = "file")
 pipeline_store_drop :: proc(s: ^Pipeline_Store, i: int) {
 	e := s.entries[i]
-	if e.owned {delete(e.data, s.allocator); s.owned -= len(e.data)} else if e.used != 0 {s.reused -= len(e.data)}
+	for c in e.chunks {pipeline_store_release(s, c)}
+	delete(e.chunks, s.allocator)
 	unordered_remove(&s.entries, i)
 }
 
 // The file the next run reads: the entries this run used, the last used
 // first, then those of earlier runs, the youngest first, while they fit in
-// s.limit; nil when nothing goes in it. Not ok without memory.
+// s.limit, each chunk once; nil when nothing goes in it. Not ok without memory.
 pipeline_store_encode :: proc(s: ^Pipeline_Store, allocator := context.allocator) -> (out: []u8, ok: bool) {
 	order, order_error := make([]Pipeline_Entry, len(s.entries), context.temp_allocator)
-	if order_error != nil {return nil, false}
+	// The index in the file of each chunk that goes in it, plus one; 0: it does not.
+	placed, placed_error := make([]u32, len(s.chunks), context.temp_allocator)
+	if order_error != nil || placed_error != nil {return nil, false}
 	copy(order, s.entries[:])
 	slice.sort_by(order, proc(a, b: Pipeline_Entry) -> bool {
 		if (a.used != 0) != (b.used != 0) {return a.used != 0}
 		return a.used > b.used if a.used != 0 else a.age < b.age
 	})
-	size, count := STORE_HEADER, 0
+	size, chunk_count, entry_count := STORE_HEADER, 0, 0
 	for &e in order {
-		if e.used == 0 && e.age + 1 >= PIPELINE_STORE_RUNS || ENTRY_HEADER + len(e.data) > s.limit - size {e.data = nil; continue}
-		size += ENTRY_HEADER + len(e.data)
-		count += 1
+		cost := ENTRY_HEADER + 4 * len(e.chunks)
+		for c, n in e.chunks {
+			if placed[c] != 0 || slice.contains(e.chunks[:n], c) {continue}
+			cost += CHUNK_HEADER + len(s.chunks[c].data)
+		}
+		if e.used == 0 && e.age + 1 >= PIPELINE_STORE_RUNS || cost > s.limit - size {e.chunks = nil; continue}
+		for c in e.chunks {
+			if placed[c] == 0 {chunk_count += 1; placed[c] = u32(chunk_count)}
+		}
+		size += cost
+		entry_count += 1
 	}
-	if count == 0 {return nil, true}
+	if entry_count == 0 {return nil, true}
 	error: runtime.Allocator_Error
 	out, error = make([]u8, size, allocator)
 	if error != nil {return nil, false}
@@ -174,17 +321,29 @@ pipeline_store_encode :: proc(s: ^Pipeline_Store, allocator := context.allocator
 	store_write_u32(out, 8, s.device.vendor)
 	store_write_u32(out, 12, s.device.device)
 	store_write_u32(out, 16, s.device.driver)
-	store_write_u32(out, 20, u32(count))
-	copy(out[24:40], s.device.uuid[:])
+	store_write_u32(out, 20, u32(chunk_count))
+	store_write_u32(out, 24, u32(entry_count))
+	copy(out[32:48], s.device.uuid[:])
+	// Chunks in the order they were placed.
+	sorted, sorted_error := make([]u32, chunk_count, context.temp_allocator)
+	if sorted_error != nil {delete(out, allocator); return nil, false}
+	for p, c in placed {if p != 0 {sorted[p - 1] = u32(c)}}
 	at := STORE_HEADER
+	for c in sorted {
+		chunk := s.chunks[c]
+		store_write_u64(out, at, chunk.id[0])
+		store_write_u64(out, at + 8, chunk.id[1])
+		store_write_u32(out, at + 16, u32(len(chunk.data)))
+		copy(out[at + CHUNK_HEADER:], chunk.data)
+		at += CHUNK_HEADER + len(chunk.data)
+	}
 	for e in order {
-		if e.data == nil {continue}
+		if e.chunks == nil {continue}
 		store_write_u64(out, at, e.key)
-		store_write_u64(out, at + 8, base.hash64(e.data))
-		store_write_u32(out, at + 16, 0 if e.used != 0 else e.age + 1)
-		store_write_u32(out, at + 20, u32(len(e.data)))
-		copy(out[at + ENTRY_HEADER:], e.data)
-		at += ENTRY_HEADER + len(e.data)
+		store_write_u32(out, at + 8, 0 if e.used != 0 else e.age + 1)
+		store_write_u32(out, at + 12, u32(len(e.chunks)))
+		at += ENTRY_HEADER
+		for c in e.chunks {store_write_u32(out, at, placed[c] - 1); at += 4}
 	}
 	return out, true
 }
