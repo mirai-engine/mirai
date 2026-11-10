@@ -54,7 +54,7 @@ them. `Play` starts from the start (the end, backwards); `Stop` returns there an
 jumps without firing the markers it skips.
 
 - `Animation` is the game's, its one writer: what a command asks is kept in the playback of the
-  entity, in place of `Animation.playing`, until the game writes that field again.
+  entity, in place of `Animation.playing`, until the game changes that field.
   `animation_playing` says what the clip does, and `Animation_Progress` keeps it for a saved game.
 - The editor, which does not play, takes only `Seek`: its previews seek.
 - A command for an entity that plays nothing is the problem `animation.command`.

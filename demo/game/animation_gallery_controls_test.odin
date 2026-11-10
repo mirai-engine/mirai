@@ -55,10 +55,11 @@ gallery_panel_events_become_the_commands_of_their_station :: proc(t:^testing.T) 
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     gallery:core.Table(Animation_Gallery);defer core.table_destroy(&gallery)
     panels:core.Table(Gallery_Panel);defer core.table_destroy(&panels)
+    animations:core.Table(anim.Animation);defer core.table_destroy(&animations)
     station,panel_entity,other:=core.create(&entities),core.create(&entities),core.create(&entities)
     core.add(&gallery,station,{kind=.Matching})
     core.add(&panels,panel_entity,{station=station})
-    core.table_settle(&gallery,&entities);core.table_settle(&panels,&entities)
+    core.table_settle(&gallery,&entities);core.table_settle(&panels,&entities);core.table_settle(&animations,&entities)
     events:gui.UI_Events;defer delete(events.items)
     append(&events.items,
         gui.UI_Event{entity=panel_entity,name=base.name_hash("value"),kind=.Changed,item=0,value=.5},
@@ -67,7 +68,7 @@ gallery_panel_events_become_the_commands_of_their_station :: proc(t:^testing.T) 
         gui.UI_Event{entity=other,name=base.name_hash("button"),kind=.Clicked,item=0},
     )
     panel:Gallery_UI
-    gallery_panel_input(core.read(&panels),core.read(&gallery),{&events},{},&panel)
+    gallery_panel_input(core.read(&panels),core.read(&gallery),{&events},{},core.read(&animations),&panel)
     if !testing.expect_value(t,int(panel.count),2) {return}
     testing.expect(t,panel.commands[0].kind==.Speed && panel.commands[0].entity==station && panel.commands[0].value==GALLERY_MATCH_SPEED*.5)
     testing.expect(t,panel.commands[1].kind==.Match_Play && base.text_get(panel.commands[1].name[:])=="wave")

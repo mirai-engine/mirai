@@ -59,8 +59,8 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
         animation:=core.get(animations,command.entity);if animation==nil {continue}
         #partial switch command.kind {
         case .Automatic: if command.enabled {animation.playing=true}
-        case .Playing: anim.animation_command(requests,command.entity,.Resume if command.enabled else .Pause)
-        case .Restart: anim.animation_command(requests,command.entity,.Play)
+        case .Playing: animation.playing=command.enabled
+        case .Restart: animation.playing=true;anim.animation_seek(requests,command.entity,0)
         case .Seek: anim.animation_seek(requests,command.entity,command.value)
         case .Rate: animation.speed=command.value
         case .Weight: anim.animation_weight(animation,0,command.value)
@@ -137,7 +137,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 // What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
 // for the other of what its clip does.
 @(step="fixed",before="gallery_animate")
-gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
+gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),animations:core.Read(anim.Animation),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -152,7 +152,8 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
             gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
         } else if event.kind==.Clicked && event.name==base.name_hash("button") && int(event.item)<button_count {
             button:=buttons[event.item]
-            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback.ptr,value.station))
+            animation,_:=core.get(animations,value.station)
+            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !animation.playing)
         }
     }
 }
@@ -188,7 +189,7 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
         }
         for button,i in buttons[:button_count] {base.text_set(next.buttons[i].label[:],button.label)}
         hint:="manual    E: back" if item.manual else "automatic    E: back"
-        if item.kind==.Sequence {hint="playing    E: back" if anim.animation_playing(playback.ptr,current.station) else "paused    E: back"}
+        if item.kind==.Sequence {hint="playing    E: back" if animation.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
         if next!=current {core.at(panels,row)^=next}
     }

@@ -29,12 +29,12 @@ Animation_Command :: struct {
     command:Timeline_Command,
 }
 
-// What the last command left a clip doing, in place of Animation.playing, until the game writes
-// that field again: the component is the game's, and what others ask is kept here.
+// What the last command left a clip doing, in place of Animation.playing, until the game changes
+// that field: the component is the game's, and what others ask is kept here.
 Timeline_Transport :: enum u8 {Component,Play,Pause}
 
 // Asks the clip of an entity for a command in the next tick. Play, Pause, Resume and Stop hold
-// until the game writes Animation.playing again. The editor, which does not play, takes only Seek.
+// until the game changes Animation.playing. The editor, which does not play, takes only Seek.
 animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,time:f32=0) {
     if requests==nil {return}
     if entity==core.NONE || command>max(Timeline_Command) || !finite(time) {core.refuse(&requests.timeline);return}
