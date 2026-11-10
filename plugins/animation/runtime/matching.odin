@@ -11,29 +11,26 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import "base:runtime"
 
-// A .match plays locomotion by motion matching over its clips: every interval it looks for the
-// frame whose feet, hips and trajectory are closest to what the body does and is asked to do,
-// and jumps there with an inertial blend. Animation.asset names it. The body is told each tick by
-// match_goal (the animation_physics plugin tells it from the Character); the locomotion mode of
-// the goal picks the clips that serve it, and entering a mode searches the starts of its entry
-// clips (a jump, a landing). An action without a layer (play) takes the whole body from the search
-// through the same inertial blend (a vault, a hit, a death), and matching goes on when it ends.
+// The locomotion of a .character plays by motion matching over its clips: every interval it looks
+// for the frame whose feet, hips and trajectory (the @foot_l, @foot_r and @pelvis of the body of
+// the skeleton) are closest to what the body does and is asked to do, and jumps there with an
+// inertial blend. The body is told each tick by match_goal (the animation_physics plugin tells it
+// from the Character); the locomotion mode of the goal picks the clips that serve it, and entering
+// a mode searches the starts of its entry clips (a jump, a landing). An action without a layer
+// (play) takes the whole body from the search through the same inertial blend (a vault, a hit, a
+// death), and matching goes on when it ends.
 
-MATCH_KIND :: asset.Fourcc(u32('A')|u32('M')<<8|u32('T')<<16|u32('C')<<24)
-MATCH_VERSION :: 7
 MATCH_CLIPS :: 64
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.
 MATCH_LAG_CLOSE :: .5
 
 Match_Info :: struct {
-    animation:base.Asset_Id,           // .anim of its clips
     rate:f32 `mirai:"unit=1/s"`,       // rows of the database per second of clip
     interval:f32 `mirai:"unit=s"`,     // between searches
     blend:f32 `mirai:"unit=s"`,        // of the inertial blend of a jump
     bias:f32,                          // of cost a jump has to save over playing on
     min_rate,max_rate:f32,             // of the speed a clip that travels plays at to follow the body, unless its source has its own
     memory:u32 `mirai:"unit=KiB"`,     // most the database of one skeleton keeps
-    left_foot,right_foot,hips:Bone_Ref,
     foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32, // weights
     keep_loop_phase:bool,              // do not seek within the current looping clip
     stationary_speed:f32,              // if positive, a body this slow plays the clips that stand, and a faster one those that travel
@@ -46,7 +43,6 @@ Match_Info :: struct {
 }
 MATCH_INFO_DEFAULT :: Match_Info{
     rate=30,interval=0,blend=.2,bias=.5,min_rate=.5,max_rate=1,memory=16384,
-    left_foot={path={0='@',1='f',2='o',3='o',4='t',5='_',6='l'}},right_foot={path={0='@',1='f',2='o',3='o',4='t',5='_',6='r'}},hips={path={0='@',1='p',2='e',3='l',4='v',5='i',6='s'}},
     foot_position=.75,foot_velocity=1,hip_velocity=1,body_velocity=1,trajectory_position=2,trajectory_direction=1.5,
     reselect=.3,hold=.1,lag_half_life=.2,
     landing_marker={0='l',1='a',2='n',3='d'},landing_rates={.5,2},
@@ -84,11 +80,10 @@ match_source_clips :: proc(source:^Match_Source) -> (names:[MATCH_BLEND]string,c
 
 match_check :: proc(profile:Match_Profile) -> bool {
     info:=profile.info
-    if info.animation=={} || len(profile.clips)==0 || len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || info.memory==0 {return false}
+    if len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || info.memory==0 {return false}
     for value in ([19]f32{info.rate,info.interval,info.blend,info.bias,info.min_rate,info.max_rate,info.foot_position,info.foot_velocity,info.hip_velocity,info.body_velocity,info.trajectory_position,info.trajectory_direction,info.stationary_speed,info.reselect,info.hold,info.lag,info.lag_half_life,info.landing_rates[0],info.landing_rates[1]}) {if !finite(value) || value<0 {return false}}
     if info.rate<=0 || info.rate>lib.FRAMES_MAX_RATE || info.min_rate<=0 || info.min_rate>info.max_rate || info.lag>0 && info.lag_half_life<=0 {return false}
     if !blend_text_valid(info.landing_marker[:],true) || info.landing_rates[0]<=0 || info.landing_rates[0]>info.landing_rates[1] {return false}
-    for bone in ([3]Bone_Ref{info.left_foot,info.right_foot,info.hips}) {if !profile_bone(bone) || bone.path[0]==0 {return false}}
     for &clip,i in profile.clips {
         if !blend_text_valid(clip.clip[:],false) || clip.modes==0 || clip.entry && clip.loop || !finite(clip.speed) || clip.speed<0 || !lib.match_rates_valid({clip.min_rate,clip.max_rate}) {return false}
         for other in profile.clips[:i] {if other.clip==clip.clip && other.animation==clip.animation {return false}}
@@ -115,99 +110,10 @@ match_check :: proc(profile:Match_Profile) -> bool {
     }
     return true
 }
-match_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,profile:Match_Profile,allocator:=context.allocator) -> asset.Error {
-    if !match_check(profile) {return .Invalid}
-    asset.document_init(doc,MATCH_KIND,id,allocator);doc.kind_version=MATCH_VERSION
-    error:=match_tables(doc,types,profile)
-    if error!=.None {asset.document_destroy(doc)}
-    return error
-}
-@(private)
-match_tables :: proc(doc:^asset.Document,types:^asset.Types,profile:Match_Profile) -> asset.Error {
-    info:=profile.info
-    asset.document_put_row(doc,types,"match",&info) or_return
-    asset.document_put(doc,types,"clips",profile.clips) or_return
-    asset.document_put(doc,types,"samples",profile.samples) or_return
-    return .None
-}
-match_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile:Match_Profile,allocator:=context.allocator) -> asset.Error {
-    doc:asset.Document
-    match_document(&doc,types,id,profile,allocator) or_return
-    defer asset.document_destroy(&doc)
-    return asset.document_save(&doc,path)
-}
-match_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Match_Profile,error:asset.Error) {
-    asset.kind_check(file,MATCH_KIND,MATCH_VERSION) or_return
-    info:=asset.asset_row(file,types,"match",Match_Info) or_return
-    profile.info=info^
-    profile.clips=asset.asset_rows(file,types,"clips","",Match_Source) or_return
-    profile.samples=asset.asset_rows(file,types,"samples","",Match_Sample) or_return
-    if !match_check(profile) {return {},.Corrupt}
-    return profile,.None
-}
-match_profile_free :: proc(profile:^Match_Profile,allocator:=context.allocator) {delete(profile.clips,allocator);delete(profile.samples,allocator);profile^={}}
-
 // What makes a blended source unplayable with a library: a clip it does not have, or two clips
 // of a source (member 0 and member) that last more than a row of the database apart.
 @(private)
 Match_Blend_Fault :: struct {kind:enum u8 {None,Missing,Duration},source,member:i32,durations:[2]f32}
-// A database built for a library and a skeleton.
-@(private)
-Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Blend_Fault}
-Match_Content :: struct {
-    id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,profile:Match_Profile,valid:bool,error:asset.Error,
-    databases:[dynamic]Match_Built,
-}
-@(private)
-match_content_free :: proc(content:^Match_Content) {
-    delete(content.profile.clips);delete(content.profile.samples)
-    for &built in content.databases {lib.match_database_free(&built.database)}
-    delete(content.databases)
-    content^={}
-}
-
-@(storage,host,free="match_assets_free")
-Match_Assets :: struct {allocator:mem.Allocator,contents:[dynamic]Match_Content}
-match_assets_free :: proc(cache:^Match_Assets) {
-    if cache.allocator.procedure!=nil {context.allocator=cache.allocator}
-    for &content in cache.contents {match_content_free(&content)}
-    delete(cache.contents);cache^={}
-}
-
-match_content :: proc(cache:^Match_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Match_Content {
-    if cache==nil || assets==nil || id=={} {return nil}
-    context.allocator=allocator;cache.allocator=allocator
-    row:=-1
-    for content,i in cache.contents {if content.id==id {row=i;break}}
-    if row<0 {row=len(cache.contents);if append(&cache.contents,Match_Content{id=id})!=1 {return nil}}
-    content:=&cache.contents[row]
-    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&assets.registry,id)
-    stamp:=[2]i64{}
-    if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
-    profile:Match_Profile;error:=asset.Error.Not_Found
-    if found {
-        file:asset.Asset
-        error=host.assets_file(assets,id,MATCH_KIND,&file)
-        if error==.None {
-            view,read:=match_view(&file,&assets.types);error=read
-            if read==.None {
-                profile.info=view.info
-                clips,ok:=rows_clone(view.clips,allocator)
-                samples,cloned:=rows_clone(view.samples,allocator)
-                if ok && cloned {profile.clips,profile.samples=clips,samples} else {delete(clips);delete(samples);error=.Out_Of_Memory}
-            }
-            asset.asset_close(&file)
-        }
-    }
-    if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
-    revision:=content.revision
-    match_content_free(content)
-    content^={id=id,profile=profile,valid=error==.None,error=error,stamp=stamp,checked=assets_stamp(assets),revision=revision+1}
-    return content if content.valid else nil
-}
-
 // What the body does and is asked to do in this tick, for a rig that plays a .match: mode is its
 // locomotion mode; velocity, where it goes; desired, the velocity its walk heads to at
 // acceleration (braking toward zero); facing, where it turns to at turn_rate rad/s (0: at once);
@@ -253,7 +159,7 @@ travel_turn :: proc "contextless" (from,to:mm.Vec3,remaining:f32) -> mm.Vec3 {
 // False for an entity that does not play a .match.
 animation_match :: proc(playback:^Playback,entity:core.Entity) -> (value:Animation_Match,ok:bool) {
     state:=constraint_playing(playback,entity) if playback!=nil else nil
-    if state==nil || state.program.kind!=MATCH_KIND || !state.program.ready {return}
+    if state==nil || !state.program.matched || !state.program.ready {return}
     m:=state.program.match
     return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=m.phase==.Play,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
 }
@@ -328,8 +234,8 @@ match_database_key :: proc(library:^host.Content_Animation,state:^Playing,source
 
 // The database the matching of a rig searches, of library, what it plays: nil for a rig that
 // plays no .match, before its first tick or when its database could not be built.
-animation_match_database :: proc(matches:^Match_Assets,library:^host.Content_Animation,state:^Playing) -> ^lib.Match_Database {
-    if matches==nil || library==nil || state==nil || state.program.kind!=MATCH_KIND || !state.program.ready {return nil}
+animation_match_database :: proc(matches:^Character_Assets,library:^host.Content_Animation,state:^Playing) -> ^lib.Match_Database {
+    if matches==nil || library==nil || state==nil || !state.program.matched || !state.program.ready {return nil}
     key:=match_database_key(library,state,state.program.library)
     for &content in matches.contents {
         if content.id!=state.program.asset || content.revision!=state.program.revision || !content.valid {continue}
@@ -341,26 +247,26 @@ animation_match_database :: proc(matches:^Match_Assets,library:^host.Content_Ani
 // The database of a library for the skeleton of a rig, built the first time a rig of that
 // skeleton loads it.
 @(private)
-match_database :: proc(content:^Match_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Blend_Fault) {
+match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Blend_Fault) {
     if library==nil || len(state.parents)<2 || len(state.rest)!=len(state.parents) {return nil,.Invalid,{}}
     key:=match_database_key(library,state,source)
     for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault}}
     context.allocator=allocator
-    info:=content.profile.info
-    bones:=[3]int{bone_resolve(state,info.left_foot),bone_resolve(state,info.right_foot),bone_resolve(state,info.hips)}
+    info:=content.set.match.info;animation:=content.set.info.animation
+    bones:=[3]int{int(state.body[.Foot_L]),int(state.body[.Foot_R]),int(state.body[.Pelvis])}
     // A source without blend is one clip of the database; a blend, one per sample of it.
-    count:=len(content.profile.samples)
-    for &clip in content.profile.clips {if clip.blend[0][0]==0 {count+=1}}
+    count:=len(content.set.match.samples)
+    for &clip in content.set.match.clips {if clip.blend[0][0]==0 {count+=1}}
     clips,clips_error:=make([]lib.Match_Clip,count);defer delete(clips)
     found:=bones[0]>0 && bones[1]>0 && bones[2]>0 && clips_error==nil
     built:=Match_Built{key=key,error=.Invalid}
     at:=0
-    for &clip,i in content.profile.clips {
+    for &clip,i in content.set.match.clips {
         if !found {break}
         names,members:=match_source_clips(&clip)
         handles:[MATCH_BLEND]lib.Clip
         for name,k in names[:members] {
-            handle:=lib.clip_find(&library.lib,source_clip_name(source,source_effective(clip.animation,info.animation,source),base.name_hash(name)))
+            handle:=lib.clip_find(&library.lib,source_clip_name(source,source_effective(clip.animation,animation,source),base.name_hash(name)))
             if handle==0 || int(handle)>library.clip_count {
                 found=false
                 if members>1 {built.fault={kind=.Missing,source=i32(i),member=i32(k)}}
@@ -376,7 +282,7 @@ match_database :: proc(content:^Match_Content,library:^host.Content_Animation,st
         if !found {break}
         rates:=[2]f32{clip.min_rate,clip.max_rate}
         if members==1 {clips[at]={clips={0=handles[0]},modes=clip.modes,entry=clip.entry,speed=clip.speed,rates=rates};at+=1;continue}
-        for sample in content.profile.samples {
+        for sample in content.set.match.samples {
             if int(sample.source)==i {clips[at]={clips=handles,weights=sample.weights,modes=clip.modes,speed=sample.speed,rates=rates};at+=1}
         }
     }
@@ -386,11 +292,6 @@ match_database :: proc(content:^Match_Content,library:^host.Content_Animation,st
             copy(rest,state.rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
             body:=lib.body_map_empty();body.up={0,1,0}
             for bone,part in state.body {if bone>0 {body.bones[part]=bone}}
-            for part,i in ([3]lib.Body_Part{.Foot_L,.Foot_R,.Pelvis}) {
-                if body.bones[part]>=0 {continue}
-                taken:=false;for other in body.bones {if int(other)==bones[i] {taken=true}}
-                if !taken {body.bones[part]=i32(bones[i])}
-            }
             rig:=lib.Match_Rig{skeleton={parents=state.parents[:],names=state.targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2])}
             weights:=lib.Match_Weights{.Foot_Position=info.foot_position,.Foot_Velocity=info.foot_velocity,.Hip_Velocity=info.hip_velocity,.Body_Velocity=info.body_velocity,.Trajectory_Position=info.trajectory_position,.Trajectory_Direction=info.trajectory_direction}
             // Each clip names its landing with a marker of its own: every one of that name.
@@ -421,8 +322,8 @@ match_lag_apply :: proc(state:^Playing,placed:mm.Transform) {
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
 // facing is the -Z of the rig in the world.
 @(private)
-match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,inject:Match_Inject,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
-    runtime:=&state.program;m:=&runtime.match;info:=content.profile.info
+match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,inject:Match_Inject,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
+    runtime:=&state.program;m:=&runtime.match;info:=content.set.match.info
     goal:Match_Goal;has_goal:=false
     for value in goals {if value.rig==state.entity {goal,has_goal=value,true}}
     mode:=goal.mode if has_goal else m.mode
@@ -431,7 +332,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Conten
     if db==nil && len(state.parents)>=2 {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
         names:[MATCH_BLEND]string
-        if fault.kind!=.None && int(fault.source)<len(content.profile.clips) {names,_=match_source_clips(&content.profile.clips[fault.source])}
+        if fault.kind!=.None && int(fault.source)<len(content.set.match.clips) {names,_=match_source_clips(&content.set.match.clips[fault.source])}
         #partial switch built {
         case .Memory_Limit: core.report(problems,state.entity,"animation.match_memory","the motion matching database of %s for this skeleton keeps more than its memory of %d KiB; lower its rate, give it fewer or shorter clips, or raise its memory",path,info.memory)
         case .Out_Of_Memory: memory_problem(problems,state.entity,"its motion matching database")
@@ -600,9 +501,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Conten
     // the new one: it starts over from the first.
     if m.range<0 && m.phase!=.Play && m.clip!=0 && lib.clip_find(&library.lib,m.clip)==0 {m.clip=0}
     if m.clip==0 {
-        if len(content.profile.clips)==0 {return false}
-        first:=content.profile.clips[0]
-        m.clip,m.loop,m.mode,m.range=source_clip_name(source,source_effective(first.animation,info.animation,source),base.name_hash(base.text_get(first.clip[:]))),first.loop,mode,-1
+        if len(content.set.match.clips)==0 {return false}
+        first:=content.set.match.clips[0]
+        m.clip,m.loop,m.mode,m.range=source_clip_name(source,source_effective(first.animation,content.set.info.animation,source),base.name_hash(base.text_get(first.clip[:]))),first.loop,mode,-1
         start=0
     }
     m.rate=1

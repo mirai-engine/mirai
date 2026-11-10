@@ -23,13 +23,14 @@ CLIP_CAPACITY :: 64
 // moves the entities below it by name, and any other that names it in its
 // Animation_Target, and writes the fields its "@field" tracks name. Those
 // entities are written on the ticks its clip moves: one that does not play
-// leaves them where they are, for whoever else moves them. What plays over
-// it are the layers and the actions of its action set (actions).
-@(component,description="Plays a clip (.anim) or motion matching locomotion (.match), with the layers and actions of an action set over it and a root motion policy. Can use another entity's animation source.")
+// leaves them where they are, for whoever else moves them. A .character
+// plays its locomotion, or without one its clip of the animation of the set,
+// with its layers and actions over it and its modifiers after it.
+@(component,description="Plays a clip of an .anim, or a .character: its motion matching locomotion with the layers and actions of the set over it and its modifiers (IK, look, grounding) after it, and a root motion policy.")
 Animation :: struct {
-    asset:base.Asset_Id `mirai:"section=Clip,kind=.anim .match"`, // .anim or .match
-    library:base.Asset_Id `mirai:"kind=.anim"`, // .anim whose clips replace those of a .match, by name
-    clip:[CLIP_CAPACITY]u8 `mirai:"text"`, // empty: the first of the asset
+    asset:base.Asset_Id `mirai:"section=Clip,kind=.anim .character"`,
+    library:base.Asset_Id `mirai:"kind=.anim"`, // .anim whose clips replace those of a .character, by name
+    clip:[CLIP_CAPACITY]u8 `mirai:"text"`, // empty: the first of the asset or of the animation of the set
     speed:f32 `mirai:"section=Playback"`, // negative plays backwards: once, from the end
     loop:bool,
     mirror:bool,                           // left and right bones of a skeleton swap, reflected across the plane between them
@@ -38,10 +39,6 @@ Animation :: struct {
     weight:f32 `mirai:"min=0,max=1"`,
     fade:f32 `mirai:"min=0,unit=s"`,
     root_motion:Root_Motion_Policy `mirai:"section=Motion"`,
-    source:core.Entity,
-    retarget:base.Asset_Id `mirai:"kind=.pose"`,
-    motion:base.Asset_Id `mirai:"kind=.motion"`,
-    actions:base.Asset_Id `mirai:"kind=.action"`,
     event_policy:Event_Policy `mirai:"section=Events"`,
     event_threshold:f32 `mirai:"min=0,max=1"`,
 }
@@ -67,8 +64,8 @@ Layer_Ask :: struct {
     reference_clip:u64,  // Additive: name in the library of that clip; 0: its own clip
     curves:Curve_Blend,
     mesh_space:bool, // Override: the rotations of its branch blend in the space of the rig
-    space:base.Asset_Id, // instead of clip: the .blend its parameters sample
-    injected:bool,   // slot 0 over a .match: the action plays as the clip of the program, not as a layer
+    space:u8,        // instead of clip: 1 + the space of the set its parameters sample
+    injected:bool,   // slot 0 over locomotion: the action plays as the clip of the program, not as a layer
 }
 
 // What the tracks of a clip call this entity: its path below the entity that plays the clip
@@ -152,7 +149,7 @@ Layer_Playing :: struct {
     fader:lib.Fader,
     clip:u64,   // the one it plays; 0: none
     weight:f32, // on its way to the one asked
-    space:base.Asset_Id,             // the space it samples instead of a clip
+    space:u8,                        // 1 + the space of the set it samples instead of a clip
     leaves:[SPACE_LEAVES]Space_Leaf, // the clips of the space at the place its parameters give, by their weight
     leaf_count:u8,
     time:f32,   // of the clock the clips of its space play by
@@ -216,8 +213,11 @@ Playing :: struct {
     changed:u64,               // Playback.frame of the last tick whose pose differed from previous
     pose_ready:bool,
     finished:u64,              // Playback.frame of the last tick its modifiers ran
-    leader:core.Entity,        // the rig of another skeleton whose pose it follows (Pose_Source); NONE: none
+    leader:core.Entity,        // the rig whose pose it takes (Pose_Source); NONE: none
+    stage:Pose_Stage,          // of the pose of its leader it takes
     follow:[dynamic]lib.Follow_Bone,       // by bone: the bone of the leader it takes
+    retarget:[dynamic]lib.Retarget_Bone,   // sampled: by bone, how it takes the pose of its bone of the leader
+    retarget_rest,retarget_world:[dynamic]mm.Transform, // sampled: the rests of the leader and its own, and room for their poses in the world
     world_final:u64,                       // Playback.frame whose finished pose world holds, in the world, for its followers
     follow_bound:[2]u64,                   // the bound of the leader and its own the follow was paired for
     driven:[dynamic]Curve_Output,          // its curves after those of its leader and the drives of its profile, while driven_ready
@@ -228,10 +228,10 @@ Playing :: struct {
 }
 
 // An entity whose Mesh_Renderer shows a mesh with a skeleton and that does
-// not share the pose of another of that skeleton through Pose_Source: it poses
-// that skeleton. One whose Pose_Source names a rig of another skeleton follows
-// it: leader is that rig.
-Rig :: struct {entity:core.Entity,skeleton:base.Asset_Id,leader:core.Entity}
+// not share the finished pose of another of that skeleton through Pose_Source:
+// it poses that skeleton. One whose Pose_Source names another rig takes its
+// pose: leader is that rig.
+Rig :: struct {entity:core.Entity,skeleton:base.Asset_Id,leader:core.Entity,stage:Pose_Stage}
 // A rig that follows another, and how many leaders are above it (max: it is in a loop).
 Rig_Follow :: struct {entity:core.Entity,depth:u32}
 
@@ -267,8 +267,8 @@ animation_tick :: proc(
     animations:core.Read(Animation),transforms:^core.Table(core.Transform),
     parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),requests:^Animation_Requests,events:^Animation_Events,
     targets:core.Read(Animation_Target),roots:core.Read(Root_Motion),
-    playback:^Playback,app:^host.App,time:core.Time,frame:core.Frame_Time,skeleton_assets:^Skeleton_Assets,problems:^core.Problems,blends:^Blend_Assets=nil,matches:^Match_Assets=nil,
-    actions:^Action_Runtime=nil,action_assets:^Actions_Assets=nil,motion:^Motion_Runtime=nil,motion_requests:^Motion_Requests=nil,motion_assets:^Motion_Assets=nil,sources:^Source_Assets=nil,
+    playback:^Playback,app:^host.App,time:core.Time,frame:core.Frame_Time,skeleton_assets:^Skeleton_Assets,problems:^core.Problems,characters:^Character_Assets=nil,
+    actions:^Action_Runtime=nil,motion:^Motion_Runtime=nil,motion_requests:^Motion_Requests=nil,sources:^Source_Assets=nil,
     paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,budget:=ANIMATION_BUDGET_CONFIG_DEFAULT,
 ) {
     playback.frame+=1
@@ -279,16 +279,16 @@ animation_tick :: proc(
     if !time.playing {tick_dt=frame.dt if finite(frame.dt) && frame.dt>0 else 0}
     if core.touched(parents,&playback.hierarchy_seen[0]) | core.touched(names,&playback.hierarchy_seen[1]) | core.touched(targets,&playback.hierarchy_seen[2]) | core.reshaped(transforms,&playback.hierarchy_shapes[0]) | core.reshaped(animations,&playback.hierarchy_shapes[1]) {playback.hierarchy_stamp+=1}
     stamp:=playback.hierarchy_stamp+playback.rigs_stamp+1
-    if actions!=nil && !actions_prepare(actions,requests,action_assets,animations,playback,events,app.assets,app.allocator,problems) {return}
+    if actions!=nil && !actions_prepare(actions,requests,characters,animations,playback,events,app,problems) {return}
     if actions==nil {core.queue_clear(&requests.plays)}
     for value in core.take(&requests.values) {
         state:=constraint_playing(playback,value.entity)
         if state==nil && (core.has(animations,value.entity) || rig_find(playback,value.entity)>=0) {state=state_get(playback,value.entity)}
         if state==nil || !stack_parameter_set(state,value.name,value.value) {
-            core.report(problems,value.entity,"animation.parameter","a parameter was set on this entity, which has no Animation, or on which more than %d names are set; set the weights of layers and the axes of spaces on the entity whose Animation has the action set",STACK_PARAMETERS)
+            core.report(problems,value.entity,"animation.parameter","a parameter was set on this entity, which has no Animation, or on which more than %d names are set; set the weights of layers and the axes of spaces on the entity whose Animation plays the .character",STACK_PARAMETERS)
         }
     }
-    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,motion_assets,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
+    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,characters,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
     distances:=core.take(&requests.distances)
     seeks:=core.take(&requests.timeline)
     pose_requests:=core.take(&requests.poses)
@@ -318,7 +318,7 @@ animation_tick :: proc(
         state:=state_get(playback,e)
         if state==nil {memory_problem(problems,e,"its animation");continue}
         timeline_transport(state,&animation,seeks,time.playing)
-        content,source_error:=animation_content(sources,app,state,animation,blends,matches,actions)
+        content,source_error:=animation_content(sources,app,state,animation,characters)
         // Until its sources load it plays on what it played (a weapon's set swapped into library
         // takes over once loaded), or, having played nothing, as an Animation without asset: a rig
         // holds its rest pose.
@@ -329,25 +329,20 @@ animation_tick :: proc(
         if source_error!=.None {state.program.error=source_error;program_problem(problems,e,app.assets,animation,source_error);continue}
         if content==nil && animation.asset!={} {
             name:[base.ASSET_ID_TEXT]u8
-            core.report(problems,e,"animation.asset","Animation.asset names %s, which cannot be played: it is missing, is not an .anim or a .match, or is damaged; asset_errors of engine.diagnostics says which, and importing it again fixes a damaged one",host.assets_name(app.assets,animation.asset,&name))
+            core.report(problems,e,"animation.asset","Animation.asset names %s, which cannot be played: it is missing, is not an .anim or a .character, or is damaged; asset_errors of engine.diagnostics says which, and importing it again fixes a damaged one",host.assets_name(app.assets,animation.asset,&name))
         }
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
         facing:=mm.FORWARD;placed:=mm.TRANSFORM_IDENTITY
-        if state.program.kind==MATCH_KIND {if world,ok:=constraint_world(core.read(transforms),parents,{},e);ok {placed=world;facing=mm.quat_rotate(world.rotation,facing)}}
+        if state.program.matched {if world,ok:=constraint_world(core.read(transforms),parents,{},e);ok {placed=world;facing=mm.quat_rotate(world.rotation,facing)}}
         rig_goals:[]Match_Goal
         if at:=int(state.program.match.goal)-1;at>=0 && at<len(match_goals) && match_goals[at].rig==e {rig_goals=match_goals[at:][:1]} else if unindexed>0 {
             for &goal,i in match_goals {if goal.rig==e {rig_goals=match_goals[i:][:1]}}
         }
         state.program.match.goal=0
-        program,programmed,program_valid:=program_resolve(state,animation,app,matches,dt,events,playback,content,problems,rig_goals,action_inject(actions,state,animation,content),facing)
+        program,programmed,program_valid:=program_resolve(state,animation,app,characters,dt,events,playback,content,problems,rig_goals,action_inject(actions,state,animation,content),facing)
         if !program_valid {program_problem(problems,e,app.assets,animation,state.program.error);continue}
-        if !programmed && animation.library!={} {
-            name:[base.ASSET_ID_TEXT]u8
-            core.report(problems,e,"animation.library","Animation.library replaces the clips of a .match, and Animation.asset %s is not one; clear library, or set asset to a .match",host.assets_name(app.assets,animation.asset,&name))
-            continue
-        }
-        content_id:=program.asset if programmed else animation.asset
+        content_id:=program.asset if programmed else content.id if content!=nil else animation.asset
         if !skeletal && content==nil {continue}
         sought:=f32(-1)
         for seek in seeks {if seek.entity==e {sought=max(seek.time,0)}}
@@ -368,7 +363,7 @@ animation_tick :: proc(
             if !skeletal {state.hierarchy_stamp=0}
         }
         if skeletal {
-            state.leader=playback.rigs[row].leader
+            state.leader,state.stage=playback.rigs[row].leader,playback.rigs[row].stage
             skeleton:=playback.rigs[row].skeleton
             definition:=skeleton_content(skeleton_assets,app.assets,app.allocator,skeleton)
             if definition==nil {
@@ -433,7 +428,7 @@ animation_tick :: proc(
                 curves_prepare(state,content)
                 if actions!=nil {actions_sample(actions,state,animation,dt,problems,content,playback,events,action_distance,pace,false)}
             }
-            layers_advance(playback,state,content,animation,events,dt,problems,blends,app,actions)
+            layers_advance(playback,state,content,animation,events,dt,problems,characters,app,actions)
             if actions!=nil {actions_layer_finish(actions,state)}
             for &layer in state.layers[:state.stack] {if layer.weight>0 {state.held=false}}
             stack_parameters_check(state,problems)
@@ -480,7 +475,7 @@ animation_tick :: proc(
             state.body_motion.translation=lib.mirror_vector(state.mirror_plane,state.body_motion.translation)
             if state.has_action_in_place {if bone:=bone_resolve(state,state.action_in_place_root.bone);bone>0 && state.parents[bone]==0 {state.action_in_place_local=lib.mirror_transform(state.mirror_plane,state.mirror_corrections[bone],state.action_in_place_local)}}
         }
-        if motion!=nil && animation.motion!={} && content!=nil {
+        if character:=animation_character(app.assets,animation^);motion!=nil && character!={} && content!=nil {
             actor,ok:=constraint_world(core.read(transforms),parents,{},e)
             clock:=animation_motion_clock(state,content,&state.program.output if programmed else nil,dt,current_dt)
             clock.weight*=mm.saturate(animation.weight)
@@ -488,13 +483,13 @@ animation_tick :: proc(
             action:=action_clock(actions,e);if action.player.clip!=0 {clock=action}
             if animation.mirror && len(state.mirror_pairs)>0 {clock.mirror=!clock.mirror}
             unwarped:=state.motion.translation
-            if ok && !motion_apply_root(motion,motion_assets,app.assets,app.allocator,state,animation.motion,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
-                if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error,app.assets,motion_assets,animation.motion)}
+            if ok && !motion_apply_root(motion,characters,app.assets,app.allocator,state,character,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
+                if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error)}
             }
             // The warp of the clock of an action that moves the body moves the body as much.
             if leading:=action_root_slot(actions,e);leading!=nil && leading.body!=.None {state.body_motion.translation+=state.motion.translation-unwarped} else if !state.has_action_root && action_body_injected(actions,state) {state.body_motion.translation=state.motion.translation}
         }
-        if programmed && state.program.kind==MATCH_KIND {match_lag_apply(state,row.placed)}
+        if programmed {match_lag_apply(state,row.placed)}
         copy(state.sampled[:],state.local[:])
         if row.distance_error!=.None {state.program.error=.Invalid_Parameter;distance_problem(problems,e,row.distance_error)}
         state.seen=playback.frame
@@ -518,20 +513,19 @@ work_content :: proc(playback:^Playback,content:^host.Content_Animation) -> i32 
 
 finite :: proc "contextless" (value:f32) -> bool {return abs(value)<=max(f32)}
 
-// Reports why the .match of an Animation did not play.
+// Reports why the .character of an Animation did not play.
 @(private)
 program_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,animation:Animation,error:Program_Error) {
     name:[base.ASSET_ID_TEXT]u8
     path:=host.assets_name(assets,animation.asset,&name)
     switch error {
     case .None,.Out_Of_Memory: memory_problem(problems,e,"its animation program")
-    case .Invalid_Asset: core.report(problems,e,"animation.program_asset","Animation.asset %s, its library, its action set or a space or clip source they name cannot be read or is of another kind, or they name more than %d animations; check them with animation.asset.inspect, and import or save them again",path,ANIMATION_SOURCES)
+    case .Invalid_Asset: core.report(problems,e,"animation.program_asset","Animation.asset %s, its library or a clip source it names cannot be read or is of another kind, or they name more than %d animations; check them with animation.asset.inspect, and import or save them again",path,ANIMATION_SOURCES)
     case .Invalid_Parameter: core.report(problems,e,"animation.program_parameter","a speed, a sync or a transition of %s cannot advance: a value of it is not finite, or a clip it plays by distance cannot reach the time asked; check Animation.speed and the distance asked",path)
     case .Missing_Clip: core.report(problems,e,"animation.program_clip","%s plays a clip its animation library does not have; add the clip, or set Animation.library to an .anim that has it",path)
     case .Incompatible_Root: core.report(problems,e,"animation.program_root","%s blends clips whose root motion has different bones or channels; give them the same root motion, or blend clips without it",path)
     case .Capacity: core.report(problems,e,"animation.program_capacity","%s plays more clips at once than fit (%d); blend fewer clips at a time",path,PROGRAM_PLAYERS)
     case .Pending: // its sources still load: it plays once they are ready
-    case .Layer_Space: core.report(problems,e,"animation.layer_space","Animation.asset %s is a .blend, a space of aim offsets or additive poses that plays only in a layer of an action set; name it in the space of a layer (animation.action.set), and set asset to a .match or an .anim",path)
     }
 }
 
@@ -564,8 +558,8 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 }
 
 // The rigs of the world, found again when its meshes or skins change. A mesh
-// with a Pose_Source shares the pose of its rig when both have one skeleton,
-// and is a rig that follows it when they have two.
+// with a Pose_Source of stage Finished shares the pose of its rig when both
+// have one skeleton; otherwise it is a rig that takes the pose of that one.
 @(private)
 rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets) -> bool {
     if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_seen,playback.rigs_assets={},0;return true}
@@ -588,8 +582,8 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
         if skins.table!=nil {
             if source,has:=core.get(skins,e);has {
                 leader:=skeleton_of(meshes,assets,source.rig)
-                if leader=={} || leader==skeleton || source.rig==e {return}
-                rig.leader=source.rig
+                if leader=={} || leader==skeleton && source.stage==.Finished || source.rig==e {return}
+                rig.leader,rig.stage=source.rig,source.stage
             }
         }
         return rig,true
@@ -750,7 +744,7 @@ stack_parameters_check :: proc(state:^Playing,problems:^core.Problems) {
     for &parameter in state.parameters {
         if parameter.name==0 {continue}
         if !parameter.used {
-            core.report(problems,state.entity,"animation.parameter","a parameter was set on this entity that names no layer of its action set and no axis of the space of one, or it has no action set; set the name of a layer (its weight) or of an axis of its .blend (animation.inspect lists them)")
+            core.report(problems,state.entity,"animation.parameter","a parameter was set on this entity that names no layer of its .character and no axis of the space of one, or it plays no .character; set the name of a layer (its weight) or of an axis of a space of its set (animation.inspect lists them)")
             parameter={};continue
         }
         parameter.used=false
@@ -779,22 +773,23 @@ layer_players :: proc "contextless" (layer:^Layer_Playing,out:^[LAYER_PLAYERS]li
 // The clips of the space of a layer at the place its axes are set to (set), and its weight on the
 // way to the one asked. False when the space or a clip of it cannot be played.
 @(private)
-layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,content:^host.Content_Animation,animation:Animation,blends:^Blend_Assets,app:^host.App,dt:f32) -> bool {
-    space:=blend_content(blends,app.assets,app.allocator,asked.space)
-    if space==nil {layer^={};return false}
-    info:=space.profile.info
+layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,content:^host.Content_Animation,animation:Animation,characters:^Character_Assets,app:^host.App,dt:f32) -> bool {
+    set:=character_content(characters,app.assets,app.allocator,animation.asset)
+    index:=int(asked.space)-1
+    if set==nil || index<0 || index>=len(set.spaces) {layer^={};return false}
+    info:=set.set.spaces[index];ready:=&set.spaces[index]
     position:mm.Vec2
-    x,_:=stack_parameter(state,space.axis_names[0]);position.x=clamp(x,info.x.min,info.x.max)
-    if info.dimension==.Two {y,_:=stack_parameter(state,space.axis_names[1]);position.y=clamp(y,info.y.min,info.y.max)}
-    weights,sampled:=blend_content_sample(space,position)
+    x,_:=stack_parameter(state,ready.axis_names[0]);position.x=clamp(x,info.x.min,info.x.max)
+    if info.dimension==.Two {y,_:=stack_parameter(state,ready.axis_names[1]);position.y=clamp(y,info.y.min,info.y.max)}
+    weights,sampled:=space_sample(info,ready,position)
     if !sampled {layer^={};return false}
     if layer.space!=asked.space {layer^={space=asked.space}}
     layer.leaf_count=0
     for weight,w in weights.weights[:weights.count] {
         if weight<=0 {continue}
-        sample:=space.profile.samples[weights.samples[w]]
-        source:=source_effective(sample.animation,info.animation,animation.library)
-        handle:=lib.clip_find(&content.lib,source_clip_name(content.id,source,space.sample_names[weights.samples[w]]))
+        sample:=set.set.space_samples[ready.first+int(weights.samples[w])]
+        source:=source_effective(sample.animation,set.set.info.animation,animation.library)
+        handle:=lib.clip_find(&content.lib,source_clip_name(content.id,source,ready.names[weights.samples[w]]))
         if handle==0 || int(handle)>content.clip_count {layer^={};return false}
         layer.leaves[layer.leaf_count]={clip=handle+lib.Clip(content.clip_count),weight=weight,speed=sample.speed};layer.leaf_count+=1
     }
@@ -808,21 +803,21 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
 // The slots of the stack follow what they are asked: a new clip cross-fades in, the weight moves to
 // the one asked over fade, and a slot without clip fades out.
 @(private)
-layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,blends:^Blend_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
+layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
     library:=&content.lib
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
         if asked.injected {continue}
-        if asked.space!={} {
-            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,blends,app,dt) {
-                core.report(problems,state.entity,"animation.layer_space","layer '%s' of the action set of this entity samples a space that cannot be played: its .blend is missing or damaged, or names a clip its animation does not have; check it with animation.asset.inspect, and save it again with animation.blend_space.set",stack_slot_name(actions,state.entity,i))
+        if asked.space!=0 {
+            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt) {
+                core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
             }
             continue
         }
-        if layer.space!={} {layer={}}
+        if layer.space!=0 {layer={}}
         index:=int(lib.clip_find(library,asked.clip))-1 if asked.clip!=0 else -1
         known:=index>=0 && index<content.clip_count
-        if asked.clip!=0 && !known {core.report(problems,state.entity,"animation.layer_clip","layer '%s' of the action set of this entity plays a clip its animation does not have, so it plays nothing; name one of its clips in the layer (animation.asset.inspect lists them)",stack_slot_name(actions,state.entity,i))}
+        if asked.clip!=0 && !known {core.report(problems,state.entity,"animation.layer_clip","layer '%s' of the .character of this entity plays a clip its animation does not have, so it plays nothing; name one of its clips in the layer (animation.asset.inspect lists them)",stack_slot_name(actions,state.entity,i))}
         handle:=lib.Clip(index+1+(asked.loop?content.clip_count:0)) if known else 0
         if known && asked.clip!=layer.clip && (layer.clip!=0 || asked.weight>0) {
             lib.fader_play(&layer.fader,handle,asked.speed,asked.fade if layer.clip!=0 else 0)
@@ -1174,7 +1169,7 @@ playing_free :: proc(state:^Playing) {
     delete(state.curves);delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases);delete(state.previous)
     delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled)
-    delete(state.follow);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
+    delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.retarget_world);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
     state^={}
 }
 
@@ -1213,11 +1208,11 @@ pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allo
     return pose,true
 }
 
-animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,motion_assets:^Motion_Assets=nil,final_poses:[]Pose_Request=nil,paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,places:^core.Places=nil) {
+animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil,paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,places:^core.Places=nil) {
     grounding_prepare(grounding,ground_inputs.configs,ground_inputs.problems)
-    finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime,motion:^Motion_Runtime,motion_assets:^Motion_Assets,final_poses:[]Pose_Request,paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
+    finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime,motion:^Motion_Runtime,characters:^Character_Assets,final_poses:[]Pose_Request,paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
         if state.skeleton!={} {if root,ok:=core.get(transforms,state.entity);ok {state.local[0]=core.to_math(root)}}
-        constraints_apply(state,playback,inputs,constraints,transforms,parents,dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,motion_assets,final_poses)
+        constraints_apply(state,playback,inputs,constraints,transforms,parents,dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,characters,final_poses)
         pose_write(playback,state,transforms,parents,places)
         if !state.pose_ready || !slice.equal(state.local[:],state.previous[:]) {state.changed=playback.frame}
         if !state.pose_ready {copy(state.previous[:],state.local[:])}
@@ -1226,18 +1221,18 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints
     }
     for &state in playback.states {
         if state.seen!=playback.frame || state.leader!=core.NONE {continue}
-        finish(&state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,motion_assets,final_poses,paces,clock,places)
+        finish(&state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,characters,final_poses,paces,clock,places)
     }
     // Each follower after the rig it follows, in the order rigs_update found;
     // then those it does not list (a leader set by hand), and those of a loop.
     for follow in playback.follow_order {
         state:=constraint_playing(playback,follow.entity)
         if state==nil || state.seen!=playback.frame || state.leader==core.NONE || state.finished==playback.frame {continue}
-        finish(state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,motion_assets,final_poses,paces,clock,places)
+        finish(state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,characters,final_poses,paces,clock,places)
     }
     for &state in playback.states {
         if state.seen!=playback.frame || state.leader==core.NONE || state.finished==playback.frame {continue}
-        finish(&state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,motion_assets,final_poses,paces,clock,places)
+        finish(&state,playback,inputs,constraints,transforms,parents,dt,grounding,ground_inputs,rig_runtime,motion,characters,final_poses,paces,clock,places)
     }
     #reverse for &state,i in playback.states {
         if state.seen==playback.frame {continue}

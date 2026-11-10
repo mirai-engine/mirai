@@ -39,7 +39,6 @@ modifier_control_state :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Mo
     #partial switch kind {
     case .IK: row=rig_slot_row(&runtime.ik,rig,slot)
     case .Look: row=rig_slot_row(&runtime.look,rig,slot)
-    case .Contact: row=rig_slot_row(&runtime.feet,rig,slot)
     case .Grounding: row=rig_slot_row(&runtime.grounding,rig,slot)
     case .Limit: row=rig_slot_row(&runtime.limits,rig,slot)
     case .Chain_IK: row=rig_slot_row(&runtime.chain_ik,rig,slot)
@@ -52,7 +51,7 @@ modifier_control_state :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Mo
     case .Follow: row=rig_slot_row(&runtime.follow,rig,slot)
     }
     if row<0 {return nil}
-    counts:=[Modifier_Kind]int{.IK=len(runtime.ik.values),.Look=len(runtime.look.values),.Contact=len(runtime.feet.values),.Grounding=len(runtime.grounding.values),.Limit=len(runtime.limits.values),.Chain_IK=len(runtime.chain_ik.values),.Twist=len(runtime.twist.values),.Spring=len(runtime.springs.values),.Multi_IK=len(runtime.multi_ik.values),.Chain_Retarget=len(runtime.retarget_chains.values),.Spline_IK=len(runtime.spline_ik.values),.Corrective=len(runtime.correctives.values),.Follow=len(runtime.follow.values)}
+    counts:=[Modifier_Kind]int{.IK=len(runtime.ik.values),.Look=len(runtime.look.values),.Grounding=len(runtime.grounding.values),.Limit=len(runtime.limits.values),.Chain_IK=len(runtime.chain_ik.values),.Twist=len(runtime.twist.values),.Spring=len(runtime.springs.values),.Multi_IK=len(runtime.multi_ik.values),.Chain_Retarget=len(runtime.retarget_chains.values),.Spline_IK=len(runtime.spline_ik.values),.Corrective=len(runtime.correctives.values),.Follow=len(runtime.follow.values)}
     for previous in Modifier_Kind {if previous>=kind {break};row+=counts[previous]}
     if row>=len(runtime.controls) {return nil}
     state:=&runtime.controls[row]
@@ -76,7 +75,7 @@ modifier_controls_prepare :: proc(next,previous:^Modifier_Runtime) -> bool {
         }
         return true
     }
-    if !prepare(next,previous,&next.ik,.IK) || !prepare(next,previous,&next.look,.Look) || !prepare(next,previous,&next.feet,.Contact) || !prepare(next,previous,&next.grounding,.Grounding) || !prepare(next,previous,&next.limits,.Limit) || !prepare(next,previous,&next.chain_ik,.Chain_IK) || !prepare(next,previous,&next.twist,.Twist) || !prepare(next,previous,&next.springs,.Spring) || !prepare(next,previous,&next.multi_ik,.Multi_IK) || !prepare(next,previous,&next.retarget_chains,.Chain_Retarget) || !prepare(next,previous,&next.spline_ik,.Spline_IK) || !prepare(next,previous,&next.correctives,.Corrective) || !prepare(next,previous,&next.follow,.Follow) || reserve(&next.fades,len(next.controls))!=nil {return false}
+    if !prepare(next,previous,&next.ik,.IK) || !prepare(next,previous,&next.look,.Look) || !prepare(next,previous,&next.grounding,.Grounding) || !prepare(next,previous,&next.limits,.Limit) || !prepare(next,previous,&next.chain_ik,.Chain_IK) || !prepare(next,previous,&next.twist,.Twist) || !prepare(next,previous,&next.springs,.Spring) || !prepare(next,previous,&next.multi_ik,.Multi_IK) || !prepare(next,previous,&next.retarget_chains,.Chain_Retarget) || !prepare(next,previous,&next.spline_ik,.Spline_IK) || !prepare(next,previous,&next.correctives,.Corrective) || !prepare(next,previous,&next.follow,.Follow) || reserve(&next.fades,len(next.controls))!=nil {return false}
     for &state,row in next.controls {
         if state.elapsed<state.duration {append(&next.fades,u32(row));state.fade_row=u32(len(next.fades))}
     }
@@ -97,7 +96,6 @@ modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control
     switch state.kind {
     case .IK: apply(&runtime.ik,state.row,weight,enabled)
     case .Look: apply(&runtime.look,state.row,weight,enabled)
-    case .Contact: apply(&runtime.feet,state.row,weight,enabled)
     case .Grounding: apply(&runtime.grounding,state.row,weight,enabled)
     case .Limit: apply(&runtime.limits,state.row,weight,enabled)
     case .Chain_IK: apply(&runtime.chain_ik,state.row,weight,enabled)

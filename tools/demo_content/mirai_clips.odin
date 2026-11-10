@@ -65,7 +65,7 @@ mirai_steps :: proc(frames:[][]mm.Transform,times:[]f32,left,right:int) -> (mark
         if frame>0 {
             previous:=frames[frame-1][now].position.z
             advance+=max(0,pose[now].position.z-previous)
-            if now!=lower {append(&list,asset.Animation_Marker_Desc{times[frame],"left_step" if now==left else "right_step"})}
+            if now!=lower {append(&list,asset.Animation_Marker_Desc{time=times[frame],name="left_step" if now==left else "right_step"})}
         }
         lower=now
     }
@@ -99,7 +99,7 @@ mirai_clip_scaled :: proc(clip:asset.Animation_Clip_Desc,name:string,time,swing:
     }
     result.tracks=tracks
     markers:=make([]asset.Animation_Marker_Desc,len(clip.markers),context.temp_allocator)
-    for marker,i in clip.markers {markers[i]={marker.time*time,marker.name}}
+    for marker,i in clip.markers {markers[i]={marker.time*time,marker.name,marker.duration*time}}
     result.markers=markers
     return result
 }

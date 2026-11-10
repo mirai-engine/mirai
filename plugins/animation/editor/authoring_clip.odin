@@ -90,6 +90,7 @@ Marker_Set_Params :: struct {
     clip:[64]u8 `mirai:"text"`,
     name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,label=The marker by its name"`,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where it goes; needed unless it is removed"`,
+    duration:f32 `mirai:"optional,min=0,unit=s,label=Makes it a span of that length: a section or a window of an action, a warp window"`,
     at:f32 `mirai:"optional,min=0,unit=s,label=Of a name several markers have: the time of the one to change or remove"`,
     add:bool `mirai:"optional,label=Adds one more of that name at time instead of changing the one it has"`,
     remove:bool `mirai:"optional"`,
@@ -104,7 +105,7 @@ authoring_clip_register :: proc(s:^editor.Session) {
     authoring_method_register(s,{name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",params=Clip_Set_Params,params_info=type_info_of(Clip_Set_Params),run=authoring_clip_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
     authoring_method_register(s,{name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",params=Track_Set_Params,params_info=type_info_of(Track_Set_Params),run=authoring_track_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
     authoring_method_register(s,{name="animation.key.set",summary="Replaces, appends or removes one key of a track; the clip must stay valid, with finite values and ordered times.",params=Key_Set_Params,params_info=type_info_of(Key_Set_Params),run=authoring_key_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization.",params=Marker_Set_Params,params_info=type_info_of(Marker_Set_Params),run=authoring_marker_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    authoring_method_register(s,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization, or a span with a duration that actions and warping name.",params=Marker_Set_Params,params_info=type_info_of(Marker_Set_Params),run=authoring_marker_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
 }
 
 @(private)
@@ -311,7 +312,7 @@ authoring_marker_set :: proc(s:^editor.Session,call:^api.Call) {
         if !given_at && same>1 {authoring_failure(call,"name","Ambiguous_Marker","the time of one of them in at, or add true for one more",strings.to_string(times),fmt.tprintf("%d markers are named %s",same,name));return}
     }
     if p.remove && at==len(rows) {authoring_failure(call,"name","Missing_Marker","the name of a marker of the clip",name,"The clip has no marker of that name",fix="animation.asset.inspect of the clip lists its markers");return}
-    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
+    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name,p.duration},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
     if !replaced {authoring_failure(call,"name","Invalid_Edit","a clip with room for the marker",fmt.tprintf("%d markers; remove=%t",len(rows),p.remove),"The marker edit cannot be prepared within capacity");return}
     clips[index].markers=markers
     authoring_clip_save(s,call,file,p.asset,view,clips)

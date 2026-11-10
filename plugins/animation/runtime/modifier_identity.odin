@@ -18,7 +18,6 @@ modifier_name_at :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier
     switch kind {
     case .IK: return name(&runtime.ik,rig,slot)
     case .Look: return name(&runtime.look,rig,slot)
-    case .Contact: return name(&runtime.feet,rig,slot)
     case .Grounding: return name(&runtime.grounding,rig,slot)
     case .Limit: return name(&runtime.limits,rig,slot)
     case .Chain_IK: return name(&runtime.chain_ik,rig,slot)

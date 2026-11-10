@@ -10,17 +10,12 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import "base:runtime"
 
-MOTION_KIND :: asset.Fourcc(u32('M')|u32('O')<<8|u32('T')<<16|u32('N')<<24)
-MOTION_VERSION :: 2
 MOTION_WINDOWS :: 64
 MOTION_KEYS :: 4096
-Pose_Warp_Leg :: struct {hip,knee,foot:Bone_Ref}
+// The warping of the pose of a .character to the velocity of its body: orientation turns its legs
+// toward where it goes, against the spine; stride stretches them to its speed. Its pelvis, spine
+// and legs are those of the body of the skeleton.
 Pose_Warp_Profile :: struct {
-    pelvis:Bone_Ref,
-    spine:[16]Bone_Ref,
-    spine_count:u8,
-    legs:[16]Pose_Warp_Leg,
-    count:u8,
     min_stride,max_stride,max_angle,weight:f32,
     orientation,stride:bool,
 }
@@ -28,38 +23,25 @@ POSE_WARP_PROFILE_DEFAULT :: Pose_Warp_Profile{min_stride=.5,max_stride=2,max_an
 
 // m/s below which the pose warp fades out with the speed of the body or of its clip.
 MOTION_WARP_FADE_SPEED :: .3
-Motion_Info :: struct {pose:Pose_Warp_Profile}
+// A warp window: while a clip crosses its span of this name, the root motion of the clip is
+// warped to end at the target of that name (motion_target).
 Motion_Window :: struct {
-    clip:[64]u8 `mirai:"text"`,
     name:[32]u8 `mirai:"text"`,
-    start,end:f32 `mirai:"unit=s,min=0"`,
     translation,rotation:bool,
     axes:[3]bool,
     weight:f32 `mirai:"min=0,max=1"`,
-    animation:base.Asset_Id,
 }
 MOTION_WINDOW_DEFAULT :: Motion_Window{translation=true,rotation=true,axes={true,true,true},weight=1}
 Motion_Distance :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,first,count:u32,animation:base.Asset_Id}
-Motion_Profile :: struct {info:Motion_Info,windows:[]Motion_Window,distances:[]Motion_Distance,keys:[]lib.Distance_Key}
+Motion_Profile :: struct {warp:Pose_Warp_Profile,windows:[]Motion_Window,distances:[]Motion_Distance,keys:[]lib.Distance_Key}
 
 motion_profile_check :: proc(profile:Motion_Profile) -> bool {
     if len(profile.windows)>MOTION_WINDOWS || len(profile.distances)>MOTION_WINDOWS || len(profile.keys)>MOTION_KEYS {return false}
-    pose:=profile.info.pose
-    if pose.spine_count>16 || pose.count>16 || !profile_weight(pose.weight) || !finite(pose.min_stride) || !finite(pose.max_stride) || pose.min_stride<=0 || pose.max_stride<pose.min_stride || !finite(pose.max_angle) || pose.max_angle<0 || pose.max_angle>mm.PI {return false}
-    if pose.orientation || pose.stride {
-        if !profile_bone(pose.pelvis) || pose.pelvis=={} || pose.stride && pose.count==0 {return false}
-        for bone,i in pose.spine[:pose.spine_count] {
-            if !profile_bone(bone) || bone=={} || bone==pose.pelvis {return false}
-            for previous in pose.spine[:i] {if previous==bone {return false}}
-        }
-        for leg,i in pose.legs[:pose.count] {
-            if !profile_bone(leg.hip) || !profile_bone(leg.knee) || !profile_bone(leg.foot) || leg.hip=={} || leg.knee=={} || leg.foot=={} || leg.hip==leg.knee || leg.hip==leg.foot || leg.knee==leg.foot {return false}
-            for previous in pose.legs[:i] {for bone in ([3]Bone_Ref{leg.hip,leg.knee,leg.foot}) {if bone==previous.hip || bone==previous.knee || bone==previous.foot {return false}}}
-        }
-    }
+    pose:=profile.warp
+    if !profile_weight(pose.weight) || !finite(pose.min_stride) || !finite(pose.max_stride) || pose.min_stride<=0 || pose.max_stride<pose.min_stride || !finite(pose.max_angle) || pose.max_angle<0 || pose.max_angle>mm.PI {return false}
     for &window,i in profile.windows {
-        if !blend_text_valid(window.clip[:],false) || !blend_text_valid(window.name[:],false) || !finite(window.start) || window.start<0 || !finite(window.end) || window.end<=window.start || !profile_weight(window.weight) || !window.translation && !window.rotation {return false}
-        for &previous in profile.windows[:i] {if previous.animation==window.animation && previous.clip==window.clip && window.start<previous.end && previous.start<window.end {return false}}
+        if !blend_text_valid(window.name[:],false) || !profile_weight(window.weight) || !window.translation && !window.rotation {return false}
+        for &previous in profile.windows[:i] {if previous.name==window.name {return false}}
     }
     for &track,i in profile.distances {
         if !blend_text_valid(track.clip[:],false) || !blend_text_valid(track.name[:],false) || track.first>u32(len(profile.keys)) || track.count>256 || track.count>u32(len(profile.keys))-track.first {return false}
@@ -67,95 +49,6 @@ motion_profile_check :: proc(profile:Motion_Profile) -> bool {
         for &previous in profile.distances[:i] {if previous.name==track.name {return false}}
     }
     return true
-}
-
-motion_profile_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,profile:Motion_Profile,allocator:=context.allocator) -> asset.Error {
-    if !motion_profile_check(profile) {return .Invalid}
-    asset.document_init(doc,MOTION_KIND,id,allocator);doc.kind_version=MOTION_VERSION
-    error:=motion_profile_tables(doc,types,profile)
-    if error!=.None {asset.document_destroy(doc)}
-    return error
-}
-@(private)
-motion_profile_tables :: proc(doc:^asset.Document,types:^asset.Types,profile:Motion_Profile) -> asset.Error {
-    info:=[1]Motion_Info{profile.info}
-    asset.document_put(doc,types,"info",info[:]) or_return
-    asset.document_put(doc,types,"windows",profile.windows) or_return
-    asset.document_put(doc,types,"distances",profile.distances) or_return
-    asset.document_put(doc,types,"keys",profile.keys) or_return
-    return .None
-}
-motion_profile_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile:Motion_Profile,allocator:=context.allocator) -> asset.Error {
-    doc:asset.Document
-    motion_profile_document(&doc,types,id,profile,allocator) or_return
-    defer asset.document_destroy(&doc)
-    return asset.document_save(&doc,path)
-}
-motion_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Motion_Profile,error:asset.Error) {
-    asset.kind_check(file,MOTION_KIND,MOTION_VERSION) or_return
-    info:=asset.asset_rows(file,types,"info","",Motion_Info) or_return
-    if len(info)!=1 {return {},.Corrupt};profile.info=info[0]
-    profile.windows=asset.asset_rows(file,types,"windows","",Motion_Window) or_return
-    profile.distances=asset.asset_rows(file,types,"distances","",Motion_Distance) or_return
-    profile.keys=asset.asset_rows(file,types,"keys","",lib.Distance_Key) or_return
-    if !motion_profile_check(profile) {return {},.Corrupt}
-    return profile,.None
-}
-motion_profile_free :: proc(profile:^Motion_Profile,allocator:=context.allocator) {
-    if profile==nil {return}
-    delete(profile.windows,allocator);delete(profile.distances,allocator);delete(profile.keys,allocator);profile^={}
-}
-
-Motion_Content :: struct {id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,profile:Motion_Profile,valid:bool,error:asset.Error}
-@(storage,host,free="motion_assets_free")
-Motion_Assets :: struct {allocator:mem.Allocator,contents:[dynamic]Motion_Content}
-motion_assets_free :: proc(cache:^Motion_Assets) {
-    if cache==nil {return}
-    if cache.allocator.procedure!=nil {context.allocator=cache.allocator}
-    for &content in cache.contents {motion_profile_free(&content.profile)}
-    delete(cache.contents);cache^={}
-}
-@(private)
-motion_cached_content :: proc(cache:^Motion_Assets,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
-    if cache==nil || id=={} {return nil}
-    row:=int(hint^)-1 if hint!=nil else -1
-    if row<0 || row>=len(cache.contents) || cache.contents[row].id!=id {row=-1;for &content,i in cache.contents {if content.id==id {row=i;break}}}
-    if row<0 {return nil}
-    if hint!=nil {hint^=i32(row+1)}
-    return &cache.contents[row]
-}
-motion_content :: proc(cache:^Motion_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
-    if cache==nil || assets==nil || id=={} {return nil}
-    context.allocator=allocator;cache.allocator=allocator
-    content:=motion_cached_content(cache,id,hint)
-    if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) || append(&cache.contents,Motion_Content{id=id})!=1 {return nil};content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
-    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&assets.registry,id)
-    stamp:=[2]i64{};if found {stamp={record.size,record.time}}
-    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
-    profile:Motion_Profile;error:=asset.Error.Not_Found
-    if found {
-        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        read,read_error:=motion_profile_read(assets,allocator,id)
-        profile=read;error=read_error
-    }
-    content.error=error
-    if error==.Out_Of_Memory {content.checked=0;return nil}
-    motion_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
-    return content if content.valid else nil
-}
-@(private)
-motion_profile_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Motion_Profile,error:asset.Error) {
-    file:asset.Asset
-    if error:=host.assets_file(assets,id,MOTION_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=motion_profile_view(&file,&assets.types);if read!=.None {return {},read}
-    profile.info=view.info
-    ok:bool
-    profile.windows,ok=rows_clone(view.windows,allocator);if !ok {return {},.Out_Of_Memory}
-    profile.distances,ok=rows_clone(view.distances,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
-    profile.keys,ok=rows_clone(view.keys,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
-    return profile,.None
 }
 
 Motion_Clock :: struct {player:lib.Player,from,to:f32,root:Root_Motion,weight:f32,active,mirror:bool} // mirror: the clip moves the rig reflected
@@ -186,7 +79,7 @@ motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) {
 
 Motion_Instance :: struct {
     entity:core.Entity,
-    profile:base.Asset_Id,
+    profile:base.Asset_Id, // the .character it was bound for
     content:i32,
     revision,bound,seen:u64,
     bound_valid:bool,
@@ -223,17 +116,15 @@ motion_inspect :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> (Motion_In
 }
 
 // Reports why the motion profile of a rig did not apply in a tick.
-motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,loaded:^host.Assets=nil,assets:^Motion_Assets=nil,profile:base.Asset_Id={}) {
+motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error) {
     switch error {
-    case .None,.Unsupported_Clock:
+    case .None,.Unsupported_Clock,.Missing_Profile:
     case .Invalid:
-        core.report(problems,e,"animation.motion_invalid","the motion profile of this rig could not warp it: a value of the profile, of its targets, of the locomotion asked or of the root motion is not finite or is out of range; check them (animation.inspect)")
-    case .Missing_Profile:
-        if assets!=nil {asset_problem(problems,e,loaded,"animation.motion_asset","Animation.motion",profile,content_error(assets.contents[:],profile))}
+        core.report(problems,e,"animation.motion_invalid","the warping of this rig could not warp it: a value of its .character, of its targets, of the locomotion asked or of the root motion is not finite or is out of range; check them (animation.inspect)")
     case .Unbound_Bone:
-        core.report(problems,e,"animation.motion_bones","the motion profile of this rig names a pelvis, spine or leg bone its skeleton does not have, or legs that are not chains (hip, knee, foot) or that share bones; fix the profile (animation.asset.inspect lists the bones)")
+        core.report(problems,e,"animation.motion_bones","the warping of the stride or orientation of this rig needs the pelvis, the spine and the legs (hip, knee, foot) of the body of its skeleton, and its body lacks them or its legs are not chains; detect the body with skeleton.body.detect or set it with skeleton.body.set")
     case .Missing_Target:
-        core.report(problems,e,"animation.motion_target","a warp window of the motion profile of this rig has no target: none was given with motion_target for its name, or what it names is gone: an entity without Transform, a rig not animated in the previous tick, or a bone or socket its skeleton does not have; give it one that exists")
+        core.report(problems,e,"animation.motion_target","a warp window of the .character of this rig has no target: none was given with motion_target for its name, or what it names is gone: an entity without Transform, a rig not animated in the previous tick, or a bone or socket its skeleton does not have; give it one that exists")
     case .Capacity:
         core.report(problems,e,"animation.motion_targets","a motion target was refused: this rig has %d targets with other names, as many as fit; reuse their names",MOTION_WINDOWS)
     case .Out_Of_Memory:
@@ -241,26 +132,29 @@ motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,
     }
 }
 
+// The pelvis, spine and legs of the body of the skeleton of state, which the warping of its stride
+// and orientation moves.
 @(private)
-motion_bind :: proc(instance:^Motion_Instance,state:^Playing,content:^Motion_Content) -> bool {
+motion_bind :: proc(instance:^Motion_Instance,state:^Playing,content:^Character_Content) -> bool {
     if instance.profile==content.id && instance.revision==content.revision && instance.bound==state.bound {if !instance.bound_valid {instance.error=.Unbound_Bone};return instance.bound_valid}
-    config:=content.profile.info.pose
+    config:=content.set.motion.warp
     instance.profile,instance.revision,instance.bound=content.id,content.revision,state.bound
     instance.bound_valid=false
-    instance.spine_count,instance.leg_count=config.spine_count,config.count
+    instance.spine_count,instance.leg_count=0,0
     instance.error=.None;instance.window=-1
     if config.orientation || config.stride {
-        instance.pelvis=i32(bone_resolve(state,config.pelvis));if instance.pelvis<0 {instance.error=.Unbound_Bone;return false}
-        for bone,i in config.spine[:config.spine_count] {
-            instance.spine[i]=i32(bone_resolve(state,bone));if instance.spine[i]<0 || instance.spine[i]==instance.pelvis {instance.error=.Unbound_Bone;return false}
-            for previous in instance.spine[:i] {if previous==instance.spine[i] {instance.error=.Unbound_Bone;return false}}
+        body:=state.body
+        instance.pelvis=body[.Pelvis];if instance.pelvis<=0 {instance.error=.Unbound_Bone;return false}
+        // The spine: the bones from the parent of the neck down to the pelvis, the top one first.
+        if neck:=int(body[.Neck]);neck>0 {
+            for at:=int(state.parents[neck]);at>0 && i32(at)!=instance.pelvis && int(instance.spine_count)<len(instance.spine);at=int(state.parents[at]) {instance.spine[instance.spine_count]=i32(at);instance.spine_count+=1}
         }
-        for leg,i in config.legs[:config.count] {
-            instance.legs[i]={hip=i32(bone_resolve(state,leg.hip)),knee=i32(bone_resolve(state,leg.knee)),foot=i32(bone_resolve(state,leg.foot))}
-            value:=instance.legs[i]
-            if value.hip<0 || value.knee<0 || value.foot<0 || state.parents[value.knee]!=value.hip || state.parents[value.foot]!=value.knee {instance.error=.Unbound_Bone;return false}
-            for previous in instance.legs[:i] {for bone in ([3]i32{value.hip,value.knee,value.foot}) {if bone==previous.hip || bone==previous.knee || bone==previous.foot {instance.error=.Unbound_Bone;return false}}}
+        for side in ([2][3]lib.Body_Part{{.Hip_L,.Knee_L,.Foot_L},{.Hip_R,.Knee_R,.Foot_R}}) {
+            leg:=lib.Pose_Warp_Limb{hip=body[side[0]],knee=body[side[1]],foot=body[side[2]]}
+            if leg.hip<=0 || leg.knee<=0 || leg.foot<=0 || state.parents[leg.knee]!=leg.hip || state.parents[leg.foot]!=leg.knee {continue}
+            instance.legs[instance.leg_count]=leg;instance.leg_count+=1
         }
+        if config.stride && instance.leg_count==0 {instance.error=.Unbound_Bone;return false}
     }
     instance.bound_valid=true
     return true
@@ -271,7 +165,7 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
     for request in requests.targets.items {
         instance:=motion_instance(runtime,request.rig)
         if instance==nil {
-            core.report(problems,request.rig,"animation.motion_owner","a motion target was given for this entity, and its Animation has no motion profile; set Animation.motion first, or give it to the entity that has one")
+            core.report(problems,request.rig,"animation.motion_owner","a motion target was given for this entity, and its Animation plays no .character; set Animation.asset to one, or give it to the entity that has one")
             continue
         }
         found:=-1
@@ -290,14 +184,14 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
         if instance:=motion_instance(runtime,request.rig);instance!=nil {
             instance.locomotion=request
         } else {
-            core.report(problems,request.rig,"animation.motion_owner","a motion locomotion was given for this entity, and its Animation has no motion profile; set Animation.motion first, or give it to the entity that has one")
+            core.report(problems,request.rig,"animation.motion_owner","a motion locomotion was given for this entity, and its Animation plays no .character; set Animation.asset to one, or give it to the entity that has one")
         }
     }
     clear(&requests.targets.items);clear(&requests.locomotion.items)
 }
 
 @(private)
-motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),problems:^core.Problems) -> bool {
+motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),assets:^host.Assets,problems:^core.Problems) -> bool {
     // Kept only when the entities found have their room: without it they are looked for again.
     seen:=runtime.animations_seen
     c:=core.changes(animations,&seen)
@@ -305,14 +199,14 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     added,rows:=0,len(runtime.rows)
     counted:=c
     for row in core.each_changed(animations,&counted) {
-        if animations.table.values[row].motion=={} {continue}
+        if animation_character(assets,animations.table.values[row])=={} {continue}
         index:=core.entity_index(core.entity_at(animations,row));rows=max(rows,index+1)
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {added+=1}
     }
     if !program_array_reserve(&runtime.instances,len(runtime.instances)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
     for row in core.each_changed(animations,&c) {
-        if animations.table.values[row].motion=={} {continue}
+        if animation_character(assets,animations.table.values[row])=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
             slot=len(runtime.instances)
@@ -328,22 +222,21 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     return true
 }
 
-motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     if runtime==nil || playback==nil || animations.table==nil {return false}
     if allocator.procedure!=nil {context.allocator=allocator}
     runtime.frame+=1
-    if !motion_discover(runtime,animations,problems) {return false}
+    if !motion_discover(runtime,animations,loaded,problems) {return false}
     kept:=0
     for &instance,i in runtime.instances {
         row:=core.row_of(animations,instance.entity);index:=core.entity_index(instance.entity)
-        if row<0 || animations.table.values[row].motion=={} {if index<len(runtime.rows) && runtime.rows[index]==i32(i+1) {runtime.rows[index]=0};motion_instance_free(&instance);continue}
+        id:=animation_character(loaded,animations.table.values[row]) if row>=0 else {}
+        if id=={} {if index<len(runtime.rows) && runtime.rows[index]==i32(i+1) {runtime.rows[index]=0};motion_instance_free(&instance);continue}
         instance.seen=runtime.frame
         state:=constraint_playing(playback,instance.entity)
-        id:=animations.table.values[row].motion
-        content:=motion_content(assets,loaded,allocator,id,&instance.content)
+        content:=character_content(characters,loaded,allocator,id,&instance.content)
         if content==nil {
             instance.error=.Missing_Profile
-            motion_problem(problems,instance.entity,.Missing_Profile,loaded,assets,id)
         } else if state!=nil && !motion_bind(&instance,state,content) {
             motion_problem(problems,instance.entity,instance.error)
         }
@@ -367,10 +260,10 @@ motion_resolve_targets :: proc(runtime:^Motion_Runtime,playback:^Playback,skelet
     }}
 }
 
-motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
+motion_apply_root :: proc(runtime:^Motion_Runtime,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
-    definition:=motion_content(assets,loaded,allocator,profile,&instance.content)
+    definition:=character_content(characters,loaded,allocator,profile,&instance.content)
     if definition==nil {return false}
     if !motion_bind(instance,state,definition) {return false}
     instance.window=-1;instance.remaining_error=0;instance.error=.None;instance.source_velocity={}
@@ -401,13 +294,15 @@ motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,loaded:^
     if !root.translation && !root.rotation {return true}
     root_target:=bone_target(state,root.bone)
     if root_target==0 {instance.error=.Unbound_Bone;return false}
-    clip_name:=lib.clip_data(&content.lib,player.clip).name
     spans:[MOTION_WINDOWS]Motion_Window_Span;span_count:=0
-    for &window,w in definition.profile.windows {
-        if source_clip_name(content.id,window.animation,base.name_hash(base.text_get(window.clip[:])))!=clip_name || window.weight==0 || !(window.translation && root.translation && (window.axes[0] || window.axes[1] || window.axes[2]) || window.rotation && root.rotation) {continue}
+    for &window,w in definition.set.motion.windows {
+        if window.weight==0 || !(window.translation && root.translation && (window.axes[0] || window.axes[1] || window.axes[2]) || window.rotation && root.rotation) {continue}
+        // Its span on the clip that plays: one without that span is not warped.
+        window_start,window_end,spanned:=clip_span(content,player.clip,base.name_hash(base.text_get(window.name[:])))
+        if !spanned {continue}
         offset:=f32(0)
-        if to>duration && from>=window.end {offset=duration}
-        start,end:=window.start+offset,window.end+offset
+        if to>duration && from>=window_end {offset=duration}
+        start,end:=window_start+offset,window_end+offset
         if end>duration+offset {instance.error=.Unsupported_Clock;return false}
         a,b:=max(from,start),min(to,end);if b<=a {continue}
         slot:=span_count
@@ -416,7 +311,7 @@ motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,loaded:^
     }
     original:=state.motion
     for span in spans[:span_count] {
-        w:=int(span.window);window:=&definition.profile.windows[w];a,b,end:=span.from,span.to,span.end
+        w:=int(span.window);window:=&definition.set.motion.windows[w];a,b,end:=span.from,span.to,span.end
         target:^Motion_Target
         for &value in instance.targets {if value.name==window.name && value.enabled && value.resolved {target=&value;break}}
         if target==nil {instance.error=.Missing_Target;continue}
@@ -449,13 +344,13 @@ motion_root_sample :: proc(content:^host.Content_Animation,state:^Playing,mirror
     return
 }
 
-motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.Asset_Id,actor,root_transform:mm.Transform,assets:^Motion_Assets,problems:^core.Problems) -> bool {
+motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.Asset_Id,actor,root_transform:mm.Transform,characters:^Character_Assets,problems:^core.Problems) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
-    content:=motion_cached_content(assets,profile,&instance.content)
-    if content==nil || !content.valid {instance.error=.Missing_Profile;return false}
+    content:=character_cached(characters,profile,&instance.content)
+    if content==nil {instance.error=.Missing_Profile;return false}
     if !motion_bind(instance,state,content) {motion_problem(problems,state.entity,instance.error);return false}
-    config:=content.profile.info.pose
+    config:=content.set.motion.warp
     goal:=instance.locomotion
     if !goal.enabled || goal.weight==0 || config.weight==0 || !config.orientation && !config.stride {return true}
     speed:=linalg.length(goal.velocity)
