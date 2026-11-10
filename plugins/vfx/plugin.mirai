@@ -2,6 +2,7 @@
   "name": "vfx",
   "version": "0.1.0",
   "dependencies": [],
+  "test_dependencies": ["fog"],
   "parts": ["Runtime", "Editor", "Shaders"],
   "asset_kinds": [{"extension": ".particle", "merged": true}, {"extension": ".grid"}]
 }
