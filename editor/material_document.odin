@@ -696,46 +696,18 @@ material_document_register :: proc(s:^Session,st:^Api_State) {
 
 @(private)
 api_material_document :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    o:Rpc_Object
-    material:[256]u8
-    name:string
-    picks:[MATERIAL_PICKS][64]u8
-    pick_count:=0
-    picking:=false // parameters was given: the picks it names replace those there were
-    channel_text:[16]u8
-    channel:=""
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&o) {
-        switch key {
-        case "material":
-            name,_=rpc_text(&a,"material",material[:])
-        case "parameters":
-            picking=true
-            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"parameters must be an array of names");return}
-            for i:=0;!serial.text_accept(&a.r,']');i+=1 {
-                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"parameters must be an array of names");return}
-                if pick_count>=len(picks) {rpc_fail(&a,"parameters takes at most %d names",len(picks));return}
-                rpc_text(&a,"a parameter",picks[pick_count][:len(picks[0])-1])
-                pick_count+=1
-            }
-        case "channel":
-            channel,_=rpc_text(&a,"channel",channel_text[:])
-        }
-    }
-    if a.failed {return}
+    p:=api.call_params(call,Api_Editor_Material_Show_Params)
+    name:=p.material
+    picking:=api.call_given(call,"parameters") // the picks it names replace those there were
+    if len(p.parameters)>MATERIAL_PICKS {api.call_failf(call,api.INVALID_PARAMS,"parameters takes at most %d names",MATERIAL_PICKS);return}
+    channel_ids:=MATERIAL_CHANNEL_IDS
+    channel:=api.call_given(call,"channel")?channel_ids[Material_Channel(p.channel)]:""
     if name=="" {
         if material_document_shown(s) {asset_document_close_now(s,s.asset_shown-1)}
         api.call_result(call,Api_Material_Document_Result)^={}
         return
     }
-    chosen:=Material_Channel.Lit
-    if channel!="" {
-        found:=false
-        for id,c in MATERIAL_CHANNEL_IDS {if id==channel {chosen,found=c,true}}
-        if !found {api.call_failf(call,api.INVALID_PARAMS,"%q is not a channel: lit, base_color, roughness, metallic, normal or emission",channel);return}
-    }
+    chosen:=Material_Channel(p.channel)
     if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id,found:=asset_named(s,call,name,asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
@@ -746,13 +718,12 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
     material_document_read(s,w)
     if picking {
         known:=material_value_names(s,w)
-        for i in 0..<pick_count {
-            pick:=base.text_get(picks[i][:])
+        for pick in p.parameters {
             if pick!="" && !slice.contains(known,pick) {api.call_failf(call,api.INVALID_PARAMS,"%q is not a value of the material (material.inspect lists them)",pick);return}
         }
         w.pick_count=0
-        for i in 0..<pick_count {
-            if pick:=base.text_get(picks[i][:]);pick!="" {material_pick_toggle(w,pick,true)}
+        for pick in p.parameters {
+            if pick!="" {material_pick_toggle(w,pick,true)}
         }
     }
     if channel!="" {w.channel=chosen}
@@ -781,55 +752,25 @@ material_value_names :: proc(s:^Session,w:^Material_Document) -> []string {
 
 @(private)
 api_material_variants :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    o:Rpc_Object
-    material:[256]u8
-    name:string
+    p:=api.call_params(call,Api_Editor_Material_Variants_Params)
+    name:=p.material
     variants:[MATERIAL_VARIANTS]Material_Variant
-    count:=0
-    listed:=false
+    count:=len(p.variants)
     raw:[MATERIAL_VARIANTS][MATERIAL_VARIANT_VALUES]string // the JSON of each value, read once the program is known
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&o) {
-        switch key {
-        case "material":
-            name,_=rpc_text(&a,"material",material[:])
-        case "variants":
-            listed=true
-            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"variants must be an array");return}
-            for i:=0;!serial.text_accept(&a.r,']');i+=1 {
-                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"variants must be an array");return}
-                if count>=len(variants) {rpc_fail(&a,"variants takes at most %d",len(variants));return}
-                v:=&variants[count]
-                vo:Rpc_Object
-                if !rpc_object_begin(&a,"a variant") {return}
-                labelled:=false
-                for field in rpc_next(&a,&vo) {
-                    switch field {
-                    case "label":
-                        _,labelled=rpc_text(&a,"label",v.label[:len(v.label)-1])
-                    case "values":
-                        values:Rpc_Object
-                        if !rpc_object_begin(&a,"values") {return}
-                        for value_name in rpc_next(&a,&values) {
-                            if v.count>=MATERIAL_VARIANT_VALUES {rpc_fail(&a,"a variant takes at most %d values",MATERIAL_VARIANT_VALUES);return}
-                            base.text_set(v.values[v.count].name[:],value_name)
-                            raw[count][v.count],_=rpc_raw(&a)
-                            v.count+=1
-                        }
-                    case:
-                        rpc_fail(&a,"%s is not a field of a variant: label or values",field)
-                    }
-                }
-                if a.failed {return}
-                if !labelled {rpc_fail(&a,"a variant needs its label");return}
-                count+=1
-            }
+    if count>MATERIAL_VARIANTS {api.call_failf(call,api.INVALID_PARAMS,"variants takes at most %d",MATERIAL_VARIANTS);return}
+    for &given,i in p.variants {
+        v:=&variants[i]
+        if given.label=="" {api.call_failf(call,api.INVALID_PARAMS,"variants[%d] needs its label",i);return}
+        base.text_set(v.label[:len(v.label)-1],given.label)
+        values,is_object:=api.json_members(string(given.values))
+        if !is_object && given.values!="" {api.call_failf(call,api.INVALID_PARAMS,"variants[%d].values is an object of values by name",i);return}
+        if len(values)>MATERIAL_VARIANT_VALUES {api.call_failf(call,api.INVALID_PARAMS,"a variant takes at most %d values",MATERIAL_VARIANT_VALUES);return}
+        for value,k in values {
+            base.text_set(v.values[k].name[:],value.name)
+            raw[i][k]=value.value
         }
+        v.count=len(values)
     }
-    if a.failed {return}
-    if !listed {api.call_fail(call,api.INVALID_PARAMS,"variants is required: an array, empty to take them out");return}
     if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id:base.Asset_Id
     if name!="" {
