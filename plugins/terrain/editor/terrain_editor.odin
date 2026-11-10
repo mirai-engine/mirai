@@ -142,7 +142,7 @@ stroke_baseline :: proc(t:^Terrain_Tool) -> bool {
     }
     if entry.held && entry.revision==stroke.revision {return true}
     head:terrain.Source
-    if !terrain.source_clone(&head,&stroke.source,editable=false) {return false}
+    if !terrain.source_clone(&head,&stroke.source) {return false}
     terrain.source_destroy(&entry.head)
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     entry.head=head

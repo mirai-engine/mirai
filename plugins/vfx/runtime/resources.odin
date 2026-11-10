@@ -50,7 +50,7 @@ Resource_Need :: struct {
     name:u64, // base.name_hash of its name
     kind:Resource_Kind,
     words:u32, // a data channel: of an entry
-    channel:Particle_Channel_Name, // a channel: the one of its name (channel_needs)
+    channel:core.Birth_Channel, // a channel: the one of its name (channel_needs)
 }
 
 // shaders/particles.slang: Particle_Resource.

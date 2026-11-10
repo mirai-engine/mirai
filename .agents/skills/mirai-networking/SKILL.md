@@ -4,8 +4,8 @@ description: Mirai networking - the `net` package (UDP and in-memory transport, 
   channels, delta replication, composite types made of fragments, scope and priority, messages,
   authority, clock, inputs, rollback and the bitstream), the `multiplayer` plugin that connects it
   with the data world (session, the player's `--server`/`--connect` arguments, connection seats) and
-  the `destruct_multiplayer`, `terrain_multiplayer` and `foliage_multiplayer` bridges (networked
-  fractures, terrain edits and removed foliage). Use when changing `net`, when declaring replicated
+  the `destruct_multiplayer` and `terrain_multiplayer` bridges (networked fractures and terrain
+  edits). Use when changing `net`, when declaring replicated
   entities or `@(net_message)` messages in a game, or when changing how the client predicts and
   corrects.
 ---

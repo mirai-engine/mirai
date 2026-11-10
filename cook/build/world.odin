@@ -17,6 +17,7 @@ import "mirai:std/serial"
 //
 //   @(component) @(component,shared) @(component,locks="core.Transform")
 //   @(component,replicated) @(component,replicated="owner") @(component,replicated="others")
+//   @(component,replicated="object")
 //   @(storage) @(storage,host) @(storage,setting) @(storage,setting="machine")
 //   @(storage,queue) @(storage,shared) @(storage,keep)
 //   @(storage,copy="state_copy") @(storage,free="state_free") @(storage,reset="state_reset")
@@ -534,7 +535,7 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             t.kind=is_component?.Component:.Storage
             switch core.declared_read(&t.declared,options,pkg.editor) {
             case "replicated":
-                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",t.where_,name,options["replicated"]))
+                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner, replicated=\"others\" for the rest or replicated=\"object\" for every end of an entity it replicates by itself",t.where_,name,options["replicated"]))
                 continue
             case "setting":
                 append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",t.where_,name,options["setting"]))

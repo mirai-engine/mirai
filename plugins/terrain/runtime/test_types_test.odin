@@ -14,5 +14,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Terrain_Data,copy=terrain_data_copy,swap=terrain_data_swap,free=terrain_data_free,reset=terrain_data_reset),
         core.test_type(Terrain_Displacement,free=terrain_displacement_free),
         core.test_type(Terrain_Resident,free=terrain_resident_free),
+        core.test_type(Terrain_Dust,default=proc(dst:^Terrain_Dust) {dst^=TERRAIN_DUST_DEFAULT}),
     )
 }

@@ -42,7 +42,7 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
             }
             held:=tracking.current_memory_allocated
             snapshot:Source
-            testing.expect(t,source_clone(&snapshot,&s,allocator,editable=false))
+            testing.expect(t,source_clone(&snapshot,&s,allocator))
             snapshot_bytes:=tracking.current_memory_allocated-held
             data,error:=source_bytes(&s,base.Asset_Id{7,7},&types,context.allocator)
             testing.expect_value(t,error,asset.Error.None)
