@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "core:mem"
 import "mirai:core"
 import "mirai:editor/history"
@@ -17,7 +18,6 @@ import "mirai:ui"
 Camera_Preview_Run :: struct {
     camera:core.Entity,         // the camera shown; none: not previewing
     blend:ecamera.Camera_Blend, // how the view came to it
-    request:core.Entity,        // the camera to preview once the requests run
 }
 
 CAMERA_PREVIEW_CAPACITY :: 12 // cameras the bar offers
@@ -85,8 +85,7 @@ camera_preview_button :: proc(c:^Inspect,camera:core.Entity) {
     if s.mode!=.Edit {return}
     ctx:=s.gui.ctx
     if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,style=.Field,width=-1,height=ctx.theme.row,size=ctx.theme.font_small,center=true}).clicked {
-        s.camera_run.request=camera
-        s.requests+={.Camera_Preview}
+        command_call(s,"camera.preview",fmt.tprintf(`{{"entity":"0x%016x"}}`,u64(camera)))
     }
 }
 

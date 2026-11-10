@@ -14,6 +14,10 @@ import mm "mirai:std/math"
 // body near it (cover), which the caller measures and writes. Plain slices
 // made once: nothing allocates after influence_init.
 
+Cell :: [2]i32
+
+NEIGHBORS_8 :: [8]Cell{{1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}
+
 INFLUENCE_DIRECTIONS :: 8 // of the cover of a cell: bit d faces the angle d*45° from +x toward +z
 
 Influence_Grid :: struct {

@@ -115,8 +115,12 @@ nav_build_margin :: proc "contextless" (config:Nav_Build_Config) -> f32 {
 // and areas of input into out, whose slices live in one block allocated with
 // allocator. out is overwritten: what it held is not freed. The scratch keeps
 // the memory of the steps between builds and must come from
-// nav_build_scratch_init. Same input, same bytes.
-nav_build_tile :: proc(config:Nav_Build_Config,coord:[2]i32,input:Nav_Build_Input,scratch:^Nav_Build_Scratch,out:^Nav_Tile_Data,allocator:=context.allocator) -> Nav_Build_Status {
+// nav_build_scratch_init. Same input, same bytes. With `field`, the walkable
+// spans the triangles gave are kept in it, in a block of allocator, for
+// nav_build_tile_again; it is overwritten like out, and left empty unless
+// the tile has walkable spans.
+nav_build_tile :: proc(config:Nav_Build_Config,coord:[2]i32,input:Nav_Build_Input,scratch:^Nav_Build_Scratch,out:^Nav_Tile_Data,allocator:=context.allocator,field:^Nav_Tile_Field=nil) -> Nav_Build_Status {
+    if field!=nil {field^={}}
     if out==nil {return .Invalid}
     out^={}
     if scratch==nil || scratch.allocator.procedure==nil {return .Invalid}
@@ -128,13 +132,117 @@ nav_build_tile :: proc(config:Nav_Build_Config,coord:[2]i32,input:Nav_Build_Inpu
     if status:=nav_rasterize(s,&g,input);status!=.Built {return status}
     nav_filter_spans(s,&g)
     if status:=nav_build_compact(s,&g);status!=.Built {return status}
-    nav_mark_volumes(s,&g,input.volumes)
-    if status:=nav_erode(s,&g);status!=.Built {return status}
-    if status:=nav_build_regions(s,&g);status!=.Built {return status}
-    if status:=nav_build_contours(s,&g);status!=.Built {return status}
-    if status:=nav_build_polymesh(s,&g);status!=.Built {return status}
-    if status:=nav_build_detail(s,&g);status!=.Built {return status}
-    return nav_build_finish(s,&g,coord,out,allocator)
+    if field!=nil && !nav_tile_field_keep(s,&g,field,allocator) {return .Out_Of_Memory}
+    return nav_build_surface(s,&g,coord,input.volumes,out,allocator)
+}
+
+// The walkable spans of the heightfield of a tile and its border, as its
+// triangles give them before the volumes mark them and the radius erodes
+// them: what the tile is built again from when only its volumes changed
+// (an obstacle that settles, an area), without voxelizing its triangles.
+Nav_Tile_Field :: struct {
+    side:i32,      // columns across
+    base:f64,      // global height cell of the height 0 of its spans
+    cells:[]u32,   // first span of each column, and one past the last
+    spans:[]Nav_Compact_Span,
+    areas:[]u8,
+    block:[]byte,
+    allocator:runtime.Allocator,
+}
+
+nav_tile_field_free :: proc(field:^Nav_Tile_Field) {
+    if field==nil {return}
+    if field.block!=nil {delete(field.block,field.allocator)}
+    field^={}
+}
+
+// A field with room for that many columns and spans, in one block.
+@(private)
+nav_tile_field_alloc :: proc(cells,spans:int,allocator:runtime.Allocator) -> (field:Nav_Tile_Field,ok:bool) {
+    span_offset:=(cells*size_of(u32)+align_of(Nav_Compact_Span)-1)&~int(align_of(Nav_Compact_Span)-1)
+    area_offset:=span_offset+spans*size_of(Nav_Compact_Span)
+    block,error:=mem.alloc_bytes(area_offset+spans,align_of(Nav_Compact_Span),allocator)
+    if error!=nil || block==nil {return}
+    field.cells=([^]u32)(raw_data(block))[:cells]
+    field.spans=([^]Nav_Compact_Span)(raw_data(block[span_offset:]))[:spans]
+    field.areas=block[area_offset:][:spans]
+    field.block,field.allocator=block,allocator
+    return field,true
+}
+
+@(private)
+nav_tile_field_keep :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,field:^Nav_Tile_Field,allocator:runtime.Allocator) -> bool {
+    kept,ok:=nav_tile_field_alloc(len(s.cells),len(s.compact),allocator)
+    if !ok {return false}
+    kept.side,kept.base=g.side,g.base
+    copy(kept.cells,s.cells[:])
+    copy(kept.spans,s.compact[:])
+    copy(kept.areas,s.area[:])
+    field^=kept
+    return true
+}
+
+// A copy of a field in a block of its own.
+nav_tile_field_clone :: proc(field:^Nav_Tile_Field,allocator:=context.allocator) -> (copy_of:Nav_Tile_Field,ok:bool) {
+    if field==nil || field.block==nil {return}
+    copy_of,ok=nav_tile_field_alloc(len(field.cells),len(field.spans),allocator)
+    if !ok {return}
+    copy_of.side,copy_of.base=field.side,field.base
+    copy(copy_of.block,field.block)
+    return
+}
+
+// Whether a field is one a build of this grid kept: its columns are those of
+// the tile and its border, in order, and the spans of each one stand over
+// the other, as solids leave them.
+@(private)
+nav_tile_field_valid :: proc "contextless" (g:^Nav_Grid,field:^Nav_Tile_Field) -> bool {
+    columns:=int(g.side)*int(g.side)
+    if field.side!=g.side || len(field.cells)!=columns+1 || len(field.spans)==0 || len(field.areas)!=len(field.spans) {return false}
+    if !(abs(field.base)<=1<<62) || field.cells[0]!=0 || int(field.cells[columns])!=len(field.spans) {return false}
+    for c in 0..<columns {
+        first,end:=field.cells[c],field.cells[c+1]
+        if end<first || int(end)>len(field.spans) {return false}
+        for i in int(first)..<int(end) {
+            if field.areas[i]>NAV_AREA_MAX {return false}
+            if i>int(first) && int(field.spans[i].y)<int(field.spans[i-1].y)+int(field.spans[i-1].h) {return false}
+        }
+    }
+    return true
+}
+
+// Builds the tile again from the field a build of the same config and
+// coordinate kept, with other volumes: the same tile, byte for byte, as
+// nav_build_tile gives from the triangles of that build and these volumes.
+// Invalid for a field that is not of this grid.
+nav_build_tile_again :: proc(config:Nav_Build_Config,coord:[2]i32,field:^Nav_Tile_Field,volumes:[]Nav_Area_Volume,scratch:^Nav_Build_Scratch,out:^Nav_Tile_Data,allocator:=context.allocator) -> Nav_Build_Status {
+    if out==nil {return .Invalid}
+    out^={}
+    if scratch==nil || scratch.allocator.procedure==nil || field==nil {return .Invalid}
+    g,ok:=nav_build_grid(config,coord)
+    if !ok || !nav_build_input_valid({volumes=volumes}) || !nav_tile_field_valid(&g,field) {return .Invalid}
+    context.allocator=scratch.allocator
+    s:=scratch
+    if !nav_resize(&s.cells,len(field.cells)) || !nav_resize(&s.compact,len(field.spans)) || !nav_resize(&s.area,len(field.areas)) {return .Out_Of_Memory}
+    copy(s.cells[:],field.cells)
+    copy(s.compact[:],field.spans)
+    copy(s.area[:],field.areas)
+    g.base=field.base
+    nav_link_compact(s,&g)
+    return nav_build_surface(s,&g,coord,volumes,out,allocator)
+}
+
+// From the walkable spans to the tile: the volumes, the erosion, the
+// regions, their outlines and the polygons.
+@(private)
+nav_build_surface :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,coord:[2]i32,volumes:[]Nav_Area_Volume,out:^Nav_Tile_Data,allocator:runtime.Allocator) -> Nav_Build_Status {
+    nav_mark_volumes(s,g,volumes)
+    if status:=nav_erode(s,g);status!=.Built {return status}
+    if status:=nav_build_regions(s,g);status!=.Built {return status}
+    if status:=nav_build_contours(s,g);status!=.Built {return status}
+    if status:=nav_build_polymesh(s,g);status!=.Built {return status}
+    if status:=nav_build_detail(s,g);status!=.Built {return status}
+    return nav_build_finish(s,g,coord,out,allocator)
 }
 
 // What a build derives from its config: sizes in cells and the heightfield.

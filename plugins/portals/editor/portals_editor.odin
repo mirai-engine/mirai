@@ -39,7 +39,7 @@ portal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 Portals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The opening of each selected portal, its front, and the way to its exit.
-@(step="frame",after="editor_tools")
+@(step="frame")
 portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,portal:portals.Portal) {
         placed:=editor.entity_world(w,e)
