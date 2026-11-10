@@ -13,10 +13,8 @@ import "mirai:std/serial"
 
 @(private="file")
 View_World :: struct {
-    entities:core.Entities,
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     bodies:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     lenses:core.Table(erender.Camera),
@@ -51,32 +49,8 @@ view_number :: proc(value:json.Value) -> f64 {
 @(test)
 play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(t:^testing.T) {
     w:View_World
-    core.entities_init(&w.entities)
-    core.table_init(&w.names,"Name");core.table_init(&w.transforms,"Transform");core.table_init(&w.parents,"Parent")
-    core.table_init(&w.bodies,"Drivable");core.table_init(&w.seats,"Seat")
-    core.table_init(&w.lenses,"Camera");core.table_init(&w.follows,"Camera_Follow")
-    defer {
-        core.table_destroy(&w.names);core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
-        core.table_destroy(&w.bodies);core.table_destroy(&w.seats)
-        core.table_destroy(&w.lenses);core.table_destroy(&w.follows)
-        core.entities_destroy(&w.entities)
-    }
-    tables:=[7]core.Table_Info{
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(View_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(View_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(View_World,parents)},
-        {name="Drivable",type=input.Drivable,info=type_info_of(input.Drivable),offset=offset_of(View_World,bodies)},
-        {name="Seat",type=input.Seat,info=type_info_of(input.Seat),offset=offset_of(View_World,seats)},
-        {name="Camera",type=erender.Camera,info=type_info_of(erender.Camera),offset=offset_of(View_World,lenses)},
-        {name="Camera_Follow",type=ecamera.Camera_Follow,info=type_info_of(ecamera.Camera_Follow),offset=offset_of(View_World,follows)},
-    }
-    storages:=[4]core.Storage_Info{
-        {type=input.Seats,offset=offset_of(View_World,players)},
-        {type=core.View,offset=offset_of(View_World,view)},
-        {type=ecamera.Camera_Views,offset=offset_of(View_World,views)},
-        {type=core.Time,offset=offset_of(View_World,time)},
-    }
-    info:=core.World_Info{entities=offset_of(View_World,entities),tables=tables[:],storages=storages[:]}
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     seat,body,camera:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.names,body,core.name_make("Hero"))
     core.add(&w.names,camera,core.name_make("Hero camera"))
@@ -89,15 +63,12 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     follow.state.ready,follow.state.pivot.position=true,{0,2,-1}
     follow.looking={0.5,-0.25}
     core.add(&w.follows,camera,follow)
-    core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.bodies,&w.entities);core.table_settle(&w.seats,&w.entities)
-    core.table_settle(&w.lenses,&w.entities);core.table_settle(&w.follows,&w.entities)
-    core.entities_settle(&w.entities)
+    core.test_world_settle(&w)
     w.players.local_count=1
     w.view={position={0,2,6},rotation=1,fov=60*math.RAD_PER_DEG,near=0.1,size={1600,900},camera=camera}
     w.views.slots[0]={camera=camera,blending=true,blend={seconds=0.5,ease=.Linear},elapsed=0.125}
     w.time.tick,w.time.seconds=30,0.5
-    ref:=core.world_ref(&w,&info)
+    ref:=core.test_world_ref(&w)
     targets:=[3]Play_View_Target{{entity=body,named=true},{point={0,2,10}},{point={20,2,-4}}}
     text,problem:=play_view_json(ref,targets[:])
     testing.expect_value(t,problem,"")
@@ -129,7 +100,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     testing.expect(t,(aside["in_front"].(json.Boolean) or_else false) && !(aside["on_screen"].(json.Boolean) or_else true) && view_number(across[0])>1,"off the right edge")
 
     // Conditions and traces read the same document with view.
-    s:=Session{info=&info}
+    s:=Session{info=core.test_world_info(&w)}
     conditions:=[4]Api_Play_Condition{{view=true,compare=.At_Most,number=7.5},{view=true,compare=.Above,number=0.45},{view=true,compare=.Equal},{view=true,compare=.Gone}}
     copy(conditions[0].field[:],"follow.pivot_distance")
     copy(conditions[1].entity[:],"Hero");copy(conditions[1].field[:],"points.0.normalized.0")

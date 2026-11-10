@@ -7,7 +7,7 @@ import "mirai:platform"
 import "mirai:ui"
 
 @(private="file")
-Play_Chat_Input_World :: struct {time:core.Time,input:core.Input,frame:core.Frame_Input,frame_time:core.Frame_Time}
+Play_Chat_Input_World :: struct {using world:core.Test_World,time:core.Time,input:core.Input,frame:core.Frame_Input,frame_time:core.Frame_Time}
 
 // While the game plays Tab is its own and the chat stays closed; in the pause
 // Tab opens it, and resuming closes it and gives the capture back.
@@ -20,20 +20,16 @@ the_chat_opens_only_while_the_game_is_paused :: proc(t:^testing.T) {
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
-    storages:=[4]core.Storage_Info{
-        {type=core.Time,offset=offset_of(Play_Chat_Input_World,time)},
-        {type=core.Input,offset=offset_of(Play_Chat_Input_World,input)},
-        {type=core.Frame_Input,offset=offset_of(Play_Chat_Input_World,frame)},
-        {type=core.Frame_Time,offset=offset_of(Play_Chat_Input_World,frame_time)},
-    }
-    info:=core.World_Info{storages=storages[:]}
-    app:=host.App{info=&info,platform=p,tick_dt=1.0/60,max_ticks=8,game_input_excluded={.F1}}
-    defer delete(app.worlds)
     world:Play_Chat_Input_World
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
+    info:=core.test_world_info(&world)
+    app:=host.App{info=info,platform=p,tick_dt=1.0/60,max_ticks=8,game_input_excluded={.F1}}
+    defer delete(app.worlds)
     viewport:Viewport
     gui:=Editor_Ui{ctx=&ctx}
     ai:=new(Ai);defer free(ai)
-    s:=Session{mode=.Play,app=&app,info=&info,gui=&gui,ai=ai,viewport=&viewport}
+    s:=Session{mode=.Play,app=&app,info=info,gui=&gui,ai=ai,viewport=&viewport}
     s.runs[0]={world=&world}
     key :: proc(s:^Session,p:^platform.Platform,key:core.Key,down:bool) {
         platform.input_inject(p,platform.Key_Event{key=key,down=down})
