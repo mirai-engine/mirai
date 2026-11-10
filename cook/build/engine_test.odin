@@ -727,6 +727,7 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     engine_cache_store(entry,paths,library)
     testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the library is kept")
     testing.expect(t,!os.exists(project.path(entry,"mirai-other.txt")),"with nothing of another")
+    testing.expect(t,base.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
     testing.expect(t,os.make_directory_all(restored.folder)==nil)

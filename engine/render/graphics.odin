@@ -131,8 +131,11 @@ GRAPHICS_TEXTURE_POOL_MIN :: u32(256)
 graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings,device:rhi.Device_Info) -> gpu.Settings {
     s:=settings
     probes,sizes,pixels:=GRAPHICS_PROBES,GRAPHICS_TEXTURE_SIZES,GRAPHICS_DETAIL_PIXELS
-    s.render_scale,s.render_height=1,quality.preset_height
-    if quality.render_scale>0 {s.render_scale,s.render_height=clamp(quality.render_scale,0.25,2),0}
+    switch {
+    case quality.render_scale>0:  s.resolution=gpu.Render_Scale(clamp(quality.render_scale,0.25,2))
+    case quality.preset_height>0: s.resolution=gpu.Render_Lines(quality.preset_height)
+    case:                         s.resolution=gpu.Render_Scale(1)
+    }
     // A plugin that resolves the technique replaces the Resolve stage, where the TAA runs, in its pipeline.
     technique:=quality.antialiasing
     s.taa=base.text_get(technique[:])!=gpu.ANTIALIASING_OFF

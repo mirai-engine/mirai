@@ -170,7 +170,7 @@ minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:
         return
     }
     key:=mind_name(name)
-    ctx.time,ctx.tick,ctx.lease=time.seconds,time.tick,1
+    ctx.tick,ctx.dt,ctx.lease=time.tick,time.dt,1
     w.far=false
     for row in 0..<core.count(agents) {
         if agents.values[row].mind!=key {continue}

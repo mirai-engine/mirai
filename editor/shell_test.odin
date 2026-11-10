@@ -65,6 +65,11 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
     defer core.value_free(&content,type_info_of(Content))
+    history.edits_reset(&edits,edited_world(&session))
+    defer history.edits_free(&edits)
+    commands:Api
+    if !test_commands_open(t,&session,&commands) {return}
+    defer test_commands_close(&session)
     history.selection_set(&selection,{selected})
     for size in ([2][2]f32{{1440,900},{800,420}}) {
         for _ in 0..<3 {
@@ -105,11 +110,11 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     shell_test_click(t,&session,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
     testing.expect(t,!ai.chat_open && g.layout.library_tab==.Editor)
     testing.expect_value(t,selection.entities[0],selected)
-    testing.expect(t,action_run(&session,.Library_Panel))
+    testing.expect(t,test_command(&session,"library_panel"))
     shell_test_frame(&session,{size={1440,900},pointer_absent=true})
     _,left_shown:=ui.widget_rect(&ctx,shell_id(&g,"left"))
     testing.expect(t,!left_shown && g.layout.library_tab==.Editor)
-    testing.expect(t,action_run(&session,.Library_Panel))
+    testing.expect(t,test_command(&session,"library_panel"))
     for _ in 0..<2 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
     // The tab shown folds the panel, another shows that one.
     shell_test_click(t,&session,shell_id(&g,"library_tab",int(Library_Tab.Editor)+1))
@@ -120,12 +125,11 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,g.layout.left_open && g.layout.library_tab==.Editor)
     for _ in 0..<2 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
     // Move, Rotate and Scale, then the snaps and the axes.
-    scale_tool,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Tool_Scale)+1))
+    scale_tool,_:=ui.widget_rect(&ctx,command_widget(&g,"tool_scale"))
     snap_button,_:=ui.widget_rect(&ctx,shell_id(&g,"snap"))
-    space,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Space)+1))
+    space,_:=ui.widget_rect(&ctx,command_widget(&g,"space"))
     camera_speed,_:=ui.widget_rect(&ctx,shell_id(&g,"camera_speed"))
     testing.expect(t,scale_tool.x<snap_button.x && snap_button.x<space.x && space.x<camera_speed.x)
-    redo,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Redo)+1))
     if tools,found:=ui.widget_rect(&ctx,shell_id(&g,"tools"));found {testing.expect(t,camera_speed.x<tools.x)}
     move_snap,scale_snap:=viewport.snap,viewport.snap_scale
     shell_test_click(t,&session,shell_id(&g,"snap_open"))
@@ -140,8 +144,8 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,ui.popup_is_open(&ctx,shell_id(&g,"snap_popup")) && !ui.popup_is_open(&ctx,shell_id(&g,"snap_presets",int(Tool.Rotate)+1)))
     field,_:=ui.widget_rect(&ctx,shell_id(&g,"snap_value",int(Tool.Move)+1))
     testing.expect(t,field.w>0 && field.w<=SNAP_POPUP_WIDTH/3)
-    // Edit > Snap to grid and the toggle of Position change the same field.
-    action_run(&session,.Snap)
+    // The entry Snap to grid and the toggle of Position change the same field.
+    testing.expect(t,test_command(&session,"snap"))
     testing.expect(t,viewport.snap!=move_snap)
     shell_test_click(t,&session,shell_id(&g,"snap_toggle",int(Tool.Move)+1))
     testing.expect(t,viewport.snap==move_snap)
@@ -155,9 +159,10 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     shell_test_click(t,&session,shell_id(&g,"run_menu"))
     // Choosing a mode keeps it for the button and runs it.
     shell_test_click(t,&session,shell_id(&g,"run_kind",int(Run_Kind.Simulate)+1))
-    testing.expect(t,g.layout.run_kind==.Simulate && session.requests=={.Simulate})
-    session.requests={}
-    testing.expect(t,action_run(&session,.Rename))
+    asked:=&api_state(&session).commands
+    testing.expect(t,g.layout.run_kind==.Simulate && asked.asked_count==1 && asked.asked[0].method=="play.start" && string(asked.asked[0].params[:asked.asked[0].length])==`{"simulate":true}`)
+    asked.asked_count=0
+    testing.expect(t,test_command(&session,"rename"))
     ui.frame_begin(&ctx,{size={800,420},pointer_absent=true,dt=1.0/60})
     shell_build(&session,shown_world(&session))
     ui.frame_end(&ctx)
@@ -165,46 +170,26 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,g.layout.library_tab!=.Hierarchy)
     ctx.edit={}
     g.begun=true
-    tool:=ui.id_derive(&ctx,0x7061696e,"tool")
-    preview:=ui.id_derive(&ctx,0x70726576,"animation_preview")
-    for _ in 0..<3 {
-        ui.frame_begin(&ctx,{size={1440,900},pointer_absent=true})
-        shell_build(&session,shown_world(&session))
-        testing.expect(t,!tool_button(&g,tool,.Edit,"Paint","B",false))
-        testing.expect(t,!view_toggle(&g,preview,"Animation preview",false))
-        ui.frame_end(&ctx)
-    }
+    // The tool of a plugin is an entry of the Tools menu, which editor.tool turns on.
+    _,no_tools:=ui.widget_rect(&ctx,shell_id(&g,"tools"))
+    testing.expect(t,!no_tools)
+    testing.expect(t,tool_entry(&session,"paint","Paint",.Edit,{key=.B,set=true}))
+    for _ in 0..<3 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
     rect,found:=ui.widget_rect(&ctx,shell_id(&g,"tools"))
     testing.expect(t,found && rect.h==TOOLBAR_BUTTON && rect.y>=ctx.theme.bar_height && rect.y+rect.h<=ctx.theme.bar_height+DOCUMENT_TOOLBAR_HEIGHT)
-    space,_=ui.widget_rect(&ctx,shell_id(&g,"action",int(Action.Space)+1))
+    space,_=ui.widget_rect(&ctx,command_widget(&g,"space"))
     camera_speed,_=ui.widget_rect(&ctx,shell_id(&g,"camera_speed"))
     testing.expect(t,space.x<camera_speed.x && camera_speed.x<rect.x)
-    clicks:=0
-    for target in 0..<2 {
-        if target==1 {
-            rect,found=ui.widget_rect(&ctx,tool)
-            testing.expect(t,found)
-        }
-        for phase in 0..<3 {
-            input:=ui.Input{size={1440,900},pointer=ui.rect_center(rect)}
-            if phase==1 {input.down,input.pressed={.Left},{.Left}}
-            if phase==2 {input.released={.Left}}
-            ui.frame_begin(&ctx,input)
-            shell_build(&session,shown_world(&session))
-            if tool_button(&g,tool,.Edit,"Paint","B",false) {clicks+=1}
-            testing.expect(t,!view_toggle(&g,preview,"Animation preview",false))
-            ui.frame_end(&ctx)
-        }
-    }
-    testing.expect_value(t,clicks,1)
-    for _ in 0..<2 {
-        ui.frame_begin(&ctx,{size={1440,900},pointer_absent=true})
-        shell_build(&session,shown_world(&session))
-        ui.frame_end(&ctx)
-    }
-    _,found=ui.widget_rect(&ctx,tool)
-    _,tools_found:=ui.widget_rect(&ctx,shell_id(&g,"tools"))
-    testing.expect(t,!found && !tools_found && g.item_count==0)
+    shell_test_click(t,&session,shell_id(&g,"tools"))
+    shell_test_click(t,&session,command_widget(&g,"paint"))
+    testing.expect(t,!tool_on(&session,"paint"),"the entry runs between frames")
+    commands_run(&session)
+    testing.expect(t,tool_on(&session,"paint") && command_state(&session,"paint").checked)
+    // Its key is the shortcut of the entry.
+    shortcuts_run(&session,{.B},{})
+    commands_run(&session)
+    testing.expect(t,!tool_on(&session,"paint"))
+    for _ in 0..<2 {shell_test_frame(&session,{size={1440,900},pointer_absent=true})}
     session.mode=.Play
     for released in ([2]bool{false,true}) {
         session.play_input_released=released
@@ -264,7 +249,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     testing.expect(t,!session.play_chat_open,"while the game plays the rail stays and the chat does not open")
     g.layout=layout_before_play
     world.graphics.show_fps=true
-    labels:=[3]string{"Paint","Terrain","Placement"}
+    testing.expect(t,tool_entry(&session,"terrain","Terrain",.Edit) && tool_entry(&session,"placement","Placement",.Edit))
     for mode in ([3]Mode{.Edit,.Simulate,.Simulation_Paused}) {
         session.mode=mode
         for width in ([8]f32{800,900,1000,1100,1180,1200,1280,1440}) {
@@ -272,7 +257,6 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
             for _ in 0..<3 {
                 ui.frame_begin(&ctx,{size=size,pointer_absent=true})
                 shell_build(&session,shown_world(&session))
-                if !playing(&session) {for label,index in labels {tool_button(&g,ui.id_derive(&ctx,0x706c7567,"tool",index),.Edit,label,"",false)}}
                 frame:=ui.frame_end(&ctx)
                 testing.expect(t,!frame.overflow)
                 testing.expect_value(t,ctx.stats.layout_errors,u32(0))
@@ -284,11 +268,11 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
             testing.expect_value(t,shown,!playing(&session))
             if shown {testing.expect(t,tools.x>=0 && tools.x+tools.w<=width)}
             fps,_:=ui.widget_rect(&ctx,shell_id(&g,"fps"))
-            run,_:=ui.widget_rect(&ctx,shell_id(&g,"action",int(session.mode==.Edit?Action.Simulate:Action.Stop)+1))
+            run,_:=ui.widget_rect(&ctx,command_widget(&g,session.mode==.Edit?"simulate":"stop"))
             testing.expectf(t,fps.x+fps.w<=width-9,"FPS fits at %.0fpx: %v",width,fps)
             // The counter goes before the controls of the run, 12 points from them.
             if run.w>0 {testing.expect(t,run.x-fps.x-fps.w>=12)}
-            if simulating(&session) {testing.expect(t,!action_state(&session,.Apply_Simulation).disabled)}
+            if simulating(&session) {testing.expect(t,!command_state(&session,"apply_simulation").disabled)}
             when platform.WINDOW_CONTROLS==.Right {
                 close,found:=ui.widget_rect(&ctx,shell_id(&g,"window_control",int(User_Icon.Close)+1))
                 testing.expectf(t,found && abs(close.x+close.w-width)<0.01 && close.y==0,"Close takes the top right corner at %.0fpx: %v",width,close)

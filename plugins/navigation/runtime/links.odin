@@ -69,6 +69,7 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:core.Read(Nav_Link
     }
     seen,enough:=seen_reset(b,len(b.links.values),problems)
     if !enough {b.links_stamps={};return}
+    b.looked+=u64(core.count(links))+u64(len(seen))
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)
         link:=links.table.values[row]

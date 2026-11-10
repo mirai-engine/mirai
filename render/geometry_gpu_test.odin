@@ -112,8 +112,6 @@ gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^tes
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
 	cube, _ := mesh_add(r, box[:], indices[:])
 	settings := r.settings
-	settings.occlusion_culling = false
-	testing.expect(t, renderer_apply_settings(r, settings))
 	camera := Camera{position = {0, 0, 0}, forward = {0, 0, 1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 5000, exposure = UNIT_EXPOSURE}
 	// At 1000 m a pixel of this view is about 9.6 m: the box of 2 m spans under half of one, that of 60 m about eleven.
 	tiny := [1]Batch_Instance{batch_instance({0, 0, 1000}, 1, 2, 2)}

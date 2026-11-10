@@ -209,7 +209,7 @@ api_language :: proc(call:^api.Call,named:string) -> (language:gui.Language,ok:b
     for l in gui.Language {
         if strings.equal_fold(fmt.tprintf("%v",l),named) || strings.equal_fold(language_name(l),named) || codes[l]==named {return l,true}
     }
-    api.call_fail(call,api.INVALID_PARAMS,"language is one of English, Simplified_Chinese, Russian, Spanish, Latam_Spanish, German, French, Japanese, Portuguese, Korean or Italian, or its code")
+    api.call_fail(call,api.INVALID_PARAMS,"language is one of English, Russian, Spanish, Latam_Spanish, German, French, Portuguese or Italian, or its code")
     return
 }
 

@@ -27,7 +27,7 @@ physics_source_save :: proc(o:^Out,b:^asset.Fracture_Builder,name:string) -> (fr
     asset.content_check(&o.content,fmt.tprintf("%s.fracture",name),asset.fracture_save(path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),&o.content.types,asset.fracture_builder_desc(b,fracture,mesh)))
     indices:=make([dynamic]u32,context.temp_allocator)
     for piece in b.pieces {for index in b.indices[piece.first_index:][:piece.index_count] {append(&indices,piece.first_vertex+index)}}
-    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics_gallery/%s.mesh",name),{id=mesh,slots={{id=0,material=game.material_asset("Bricks")},{id=1,material=game.material_asset("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
+    mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics_gallery/%s.mesh",name),{id=mesh,slots={{id=0,material=material_id("Bricks")},{id=1,material=material_id("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
     return
 }
 
@@ -104,11 +104,11 @@ physics_gallery_item :: proc(s:^asset.Scene_Builder,label:base.Asset_Id,station:
 physics_gallery_breakable :: proc(s:^asset.Scene_Builder,name:string,position:mm.Vec3,source,mesh:base.Asset_Id,anchored:=false,parent:base.Entity_Id=0) -> base.Entity_Id {
     e:=asset.builder_entity(s,name,{position=position},parent)
     config:=destruct.destructible(16,anchored);config.fracture,config.strength=source,60;config.impact_damage=false;config.debris_volume=0
-    config.interior=game.material_asset("Cobblestone")
+    config.interior=material_id("Cobblestone")
     pieces:=destruct.collider_fracture();pieces.density=160
     asset.builder_set(s,e,config)
     asset.builder_set(s,e,pieces)
-    renderer:=render.Mesh_Renderer{mesh=mesh};renderer.materials[0],renderer.materials[1]=game.material_asset("Bricks"),game.material_asset("Cobblestone")
+    renderer:=render.Mesh_Renderer{mesh=mesh};renderer.materials[0],renderer.materials[1]=material_id("Bricks"),material_id("Cobblestone")
     asset.builder_set(s,e,renderer)
     return e
 }
@@ -193,7 +193,7 @@ write_physics_gallery :: proc(o:^Out) {
             if station==1 {source,mesh=sources.mixed,sources.mixed_mesh}
             offset:=mm.Vec3{0,1,0} if station==11 else mm.Vec3{0,-.825,0} if station==1 else mm.Vec3{0,-.7,0}
             target=physics_gallery_breakable(&s,"Collection",origin+offset,source,mesh)
-            config:=destruct.destructible();config.fracture,config.strength=source,60;config.impact_damage=false;config.debris_volume=0;config.interior=game.material_asset("Cobblestone")
+            config:=destruct.destructible();config.fracture,config.strength=source,60;config.impact_damage=false;config.debris_volume=0;config.interior=material_id("Cobblestone")
             if station==1 {config.debris_volume=.1;config.debris_lifetime=8}
             if station==11 {config.kinematic=true}
             if station==2 {config.hull_vertices=8}

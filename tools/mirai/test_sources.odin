@@ -281,11 +281,6 @@ system_named :: proc(tag:string) -> (system:runtime.Odin_OS_Type,known:bool) {
     return
 }
 
-// The name of a test without its package (pkg.name).
-test_bare :: proc(name:string) -> string {
-    return name[strings.last_index_byte(name,'.')+1:]
-}
-
 // The tests of names most like asked, at most five: first those that share
 // more of its words, then those nearer in letters.
 test_similar :: proc(asked:string,names:[]string,allocator:=context.allocator) -> []string {

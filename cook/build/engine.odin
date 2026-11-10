@@ -534,7 +534,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     }
     // No stamp says what the binaries, the stage, the declarations and the programs there were built from.
     if desc.force || !plan.stamped {
-        for folder in ([3]string{paths.stage,paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=os.remove_all(folder)}
+        for folder in ([3]string{paths.stage,paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=base.remove_all(folder)}
         engine_binaries_remove(paths.folder)
     }
     if os.make_directory_all(paths.folder)!=nil && !os.is_dir(paths.folder) {
@@ -936,7 +936,7 @@ engine_cache_store :: proc(entry:string,paths:Engine_Paths,library:Engine_Librar
         if name=="" {continue}
         from:=project.path(paths.folder,name,allocator=context.temp_allocator)
         if at==2 && !os.is_file(from) {continue}
-        if os.copy_file(project.path(staging,name,allocator=context.temp_allocator),from)!=nil {_=os.remove_all(staging);return}
+        if os.copy_file(project.path(staging,name,allocator=context.temp_allocator),from)!=nil {_=base.remove_all(staging);return}
     }
     cache_entry_commit(entry,staging)
 }
@@ -964,7 +964,7 @@ cache_entry_used :: proc(entry:string) {
 cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
     if cache_entry_complete(entry) {return "",false}
     staging=fmt.tprintf("%s.part-%d",entry,os.get_pid())
-    _=os.remove_all(staging)
+    _=base.remove_all(staging)
     if os.make_directory_all(staging)!=nil {return "",false}
     return staging,true
 }
@@ -976,7 +976,7 @@ cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
 @(private)
 cache_entry_commit :: proc(entry,staging:string,keep:=0) {
     if os.write_entire_file(project.path(staging,CACHE_COMPLETE,allocator=context.temp_allocator),"")!=nil || os.rename(staging,entry)!=nil {
-        _=os.remove_all(staging)
+        _=base.remove_all(staging)
         return
     }
     if keep>0 {cache_trim(entry[:strings.last_index_byte(entry,'/')],keep)}

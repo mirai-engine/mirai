@@ -363,7 +363,7 @@ plugin_cache_store :: proc(engine_root:string,lib:^Plugin_Library,hash:u64) {
 	for file in plugin_cache_files(lib) {
 		if file[0]=="" {continue}
 		if os.copy_file(project.path(staging,file[0],allocator=context.temp_allocator),file[1])!=nil {
-			_=os.remove_all(staging)
+			_=base.remove_all(staging)
 			return
 		}
 	}

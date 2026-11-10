@@ -61,8 +61,8 @@ A document only sees its own `styles` and those of what it lists in `use`.
 - Read it back with `mirai rpc --project . ui.inspect asset=ui/screen.ui --select document`, change
   what you want and write it again. `ui.check` says what does not resolve.
 - A node is `{name, kind, text, style, children}` plus what it sets by the name of its keys. `kind`
-  is a `ui.Node_Kind` (`Box`, `Text`, `Button`, `Image`, `Selector`...) or the name of the file of
-  a widget it uses: [styles.md](styles.md#widgets).
+  is a `ui.Node_Kind` (`Box`, `Text`, `Button`, [`Draw`](hud-panels.md#custom-drawing)...) or the
+  file of a widget it uses: [styles.md](styles.md#widgets).
 - Keys of a node: `width`, `height` (`"grow"`, `"fit"`, `"50%"` or a number for fixed),
   `direction`, `gap`, `padding` (a number, `[x, y]` or four numbers), `align_x`, `align_y`,
   `float`, `bind_text`, `bind_value`, `bind_visible`, `bind_disabled`, `bind_items`, `image`
@@ -95,16 +95,16 @@ mirai ui check
 
 - `read --sources` writes the document of every `.ui`, and `read <asset>` prints one. `write`
   takes files or a folder and makes each asset say its document, making those that do not exist.
-- `write` refuses what `ui.write` refuses, with the same message, and leaves the file as it was.
-  Paths are checked against the game as it was built (`mirai build editor . --dev`): a project
-  never built, or built before its code changed, is refused with that command, exit code 1.
+  `check` also reads `game/`: the literals `gui.clicked` and its like name are nodes of a `.ui`.
+- `write` refuses what `ui.write` refuses, with its message, and leaves the file as it was. Paths
+  are checked against the built game: `mirai build editor . --dev` after its code changes.
 
 ## Controls
 
-`Button` reports `Clicked`; `Checkbox`, `Slider`, `Selector`, `Dropdown`, `Radio`, `Number` and
-`Field` report `Changed`; `Field` also `Submitted`. A `Selector` takes its options in `text`
-separated by `|`; what each one writes: [add an option](menus-settings.md#add-an-option). The game
-answers on each event: [events](../ui.md#events).
+`Button` reports `Clicked` (with a `bind_value` it writes its `choice` there); `Checkbox`,
+`Slider`, `Selector`, `Dropdown`, `Radio`, `Number` and `Field` report `Changed`; `Field` also
+`Submitted`. A `Selector` takes its options in `text` separated by `|`; what each one writes:
+[add an option](menus-settings.md#add-an-option). Who writes what: [events](../ui.md#events).
 
 ## Texts
 
@@ -114,7 +114,7 @@ and `mirai texts` moves them through a CSV for translators: [texts.md](texts.md)
 ## Pitfalls that fail silently
 
 - A `.ui` that does not load shows nothing: `engine.diagnostics` has `gui.asset`.
-- Controls need distinct `name`s: events carry only the hash of the name, and asking for a name the
-  screen does not have is a problem `gui.names` once at run time.
+- Controls need distinct `name`s: events carry only its hash. A name no `.ui` has is refused by
+  `mirai ui check` when the code says it as a literal, and is a problem `gui.names` at run time.
 - `ui.write` without `save=true` waits for Save (the changes are one step of history); agents pass
   `save=true`.

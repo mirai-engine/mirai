@@ -12,6 +12,7 @@ import "core:strings"
 import "core:sync"
 import "mirai:render/abi"
 import "core:thread"
+import "mirai:std/base"
 
 // Programs: Slang sources that declare `//! mirai surface Name`,
 // `//! mirai postprocess Name`, `//! mirai vfx Name` or `//! mirai ui Name`,
@@ -1066,7 +1067,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     if !schema_write(include) {return {},fmt.aprintf("could not write %s and %s",SCHEMA_INCLUDE,CONSTANTS_INCLUDE,allocator=allocator)}
     owned,owned_problem:=owned_constants_write(files,include,project,sources,allocator)
     if owned_problem!="" {return {},owned_problem}
-    if os.exists(copied) {os.remove_all(copied)}
+    if os.exists(copied) {base.remove_all(copied)}
     if failed:=copy_sources(files,materials,path_join(copied,"builtin",allocator=context.temp_allocator));failed!="" {return {},fmt.aprintf("could not copy the programs of the engine: %s",failed,allocator=allocator)}
     paths:=make([dynamic]string,context.temp_allocator)
     append(&paths,..sources_in(files,materials,".slang",context.temp_allocator))
@@ -1088,7 +1089,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     temporary,temporary_error:=os.make_directory_temp("","mirai-material-reflection-*",context.temp_allocator)
     if temporary_error!=nil {return {},strings.clone("could not create the temporary reflection folder",allocator)}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
 
     configuration:=transmute([]u8)strings.concatenate({GENERATOR_CONTRACT,version,shared_constants(),owned},context.temp_allocator)
     bases:=make([dynamic]Base,context.temp_allocator)

@@ -466,7 +466,7 @@ records_translation :: proc(r:^Records,id:u64,code:string) -> int {
 KIND_NAMES :: [ui.Node_Kind]string{.Box="box",.Text="text",.Image="image",.Progress="progress",.Button="button",.Checkbox="checkbox",.Spacer="spacer",.Component="component",
     .Scroll="scroll",.Switcher="switcher",.List="list",.Prompt="prompt",.Slider="slider",.Field="field",.Selector="selector",.Dropdown="dropdown",.Radio="radio",
     .Tooltip="tooltip",.Rich_Text="rich_text",.View="view",.Action_Bar="action_bar",.Number="number",.Tabs="tabs",.Popup="popup",.Modal="modal",
-    .Context_Menu="context_menu",.Radial="radial",.Particles="particles"}
+    .Context_Menu="context_menu",.Radial="radial",.Particles="particles",.Draw="draw"}
 
 // Names a node after base_name and the first number no other node of its scope uses.
 records_name_unique :: proc(r:^Records,row:int,base_name:string) {

@@ -224,7 +224,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     }
 
     // A checkout that has not built it copies it.
-    testing.expect(t,os.remove_all(project.folder_path(p.root,.Generated))==nil)
+    testing.expect(t,base.remove_all(project.folder_path(p.root,.Generated))==nil)
     again:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&again.arena)
     if !testing.expect_value(t,job_plugins_plan(again,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}
