@@ -122,8 +122,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives
   the meter's gray the same light under each; the ACES 2.0 calibration is not touched.
 - `render` does not see native handles: backend differences stay in `rhi`, with a single
-  implementation of each pass for Vulkan and Metal. A plugin's runtime imports neither `render`
-  nor `rhi`.
+  implementation of each pass for Vulkan and Metal. A plugin imports neither `render` nor `rhi`
+  outside its tests, in its runtime or in its editor part: `mirai check` fails on it.
 - A GPU loss neither aborts nor hangs: `rhi` stores it typed (`device_failure`) from the first
   point that reports it, and everything that submits or waits returns at once; no Vulkan wait
   exceeds `GPU_WAIT_LIMIT_NS`.

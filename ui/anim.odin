@@ -51,11 +51,6 @@ Keyframe :: struct {
 }
 @(private)
 Anim_Track :: struct {property:Anim_Property,first,count:u32}
-Anim_Kind :: enum u8 {
-    Clip,     // tracks that play together
-    Sequence, // animations one after another
-    Parallel, // animations together
-}
 Anim_Loop :: enum u8 {Once,Loop,Ping_Pong}
 @(private)
 Anim_Node :: struct {kind:Anim_Kind,loop:Anim_Loop,first,count:u32,duration:f32}

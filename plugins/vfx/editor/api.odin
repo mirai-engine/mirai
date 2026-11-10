@@ -9,7 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
-import gpu "mirai:render"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -379,7 +378,7 @@ api_particle_programs :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,`{"programs":[`)
     first:=true
     if s.app.renderer!=nil {
-        for &program in gpu.renderer_programs(s.app.renderer) {
+        for &program in erender.programs(s.app.renderer) {
             if program.domain!=.Vfx {continue}
             if !first {serial.write_u8(out,',')}
             first=false
