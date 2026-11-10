@@ -45,8 +45,9 @@ Each unit (the main chat and each subagent) has its own record of scene and proj
 
 ## Change sets
 
-`editor/changes.odin`, shared with the undo of an author who reverts a step of theirs after steps
-of others:
+`editor/history/changes.odin`, shared with the undo of an author who reverts a step of theirs
+after steps of others; `editor/changes.odin` puts the files of a set, which are edits of the
+session:
 
 - `Change_Set` (`state`, `rows`, `files`) is a transaction: `Change_Row` by id and component and
   `Change_File` by project path. `change_set_take(s, set, step, history, limit)` adds to it what a

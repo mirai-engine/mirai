@@ -1,10 +1,11 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store` and
-  `editor/git`) - session, Play, Simulate and networked Play, undo (`edits_*`), viewport and tools
-  (`tool_set`/`tool_on`), inspector, content browser, prefabs, collaboration (`--share`,
-  `--join`), AI chats and extensions. Use when changing the editor, adding a tool or panel of a
-  plugin, editing the scene from editor code or driving an open editor.
+description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store`,
+  `editor/git`, `editor/history` and `editor/records`) - session, Play, Simulate and networked
+  Play, undo (`edits_*`, the journal), viewport and tools (`tool_set`/`tool_on`), inspector,
+  content browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when
+  changing the editor, adding a tool or panel of a plugin, editing the scene from editor code or
+  driving an open editor.
 ---
 
 # Mirai editor
@@ -128,9 +129,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
    `field_write`, `material_assign`). Without an open gesture it is an undo step of its own; with
    one open it joins it ([edits and undo](references/document.md#edits-and-undo)).
 2. A gesture (dragging a field, typing a value, moving the gizmo) goes between `edits_begin` and
-   `edits_end`; `edits_flush` records it at the end of the frame. Outside the loop,
-   `edits_commit` records immediately. `edits_cancel` restores the last copy only with a gesture
-   open or pending.
+   `edits_end`, of the package `editor/history` like the rest of the journal; `edits_flush`
+   records it at the end of the frame. Outside the loop, `edits_commit` records immediately.
+   `edits_cancel` restores the last copy only with a gesture open or pending.
 3. A new edit procedure starts with `if watching(s) {return}`: what is being watched is not
    edited. What another editor of the session has selected is edited like the rest.
 4. A created or copied entity has `core.Id` (`core.id_new` with `Session.id_state`), `core.Name`
@@ -152,9 +153,11 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
-- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`), not the
-  `Session`, when it needs nothing else. What needs no storage of the editor is its own package
-  under `editor/` (`acp`, `ai_store`, `diff`, `git`). Files outside `ai_*.odin` do not reach the
+- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`, `^Edits`),
+  not the `Session`, when it needs nothing else. What does not need the `Session` is its own
+  package under `editor/` (`acp`, `ai_store`, `diff`, `git`, `history`, `records`), and `editor`
+  keeps the thin part that reaches the session; `history` declares the storages `Edits` and
+  `Selection`. Files outside `ai_*.odin` do not reach the
   fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
   runs or what is watched in `Watch`. UI edits during a Play go to the Play's world and are not
@@ -233,8 +236,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 
 - `mirai check editor` and the `editor/` of the affected plugin; `mirai test editor <names>` with
   the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
-  and what they print: `mirai test editor/git`. The editor's tests need more memory than the
-  default limit (`MIRAI_COMPILER_MEMORY=14`).
+  and what they print: `mirai test editor/git`; the journal and undo without a session:
+  `mirai test editor/history`; the rows and texts of a table of game data:
+  `mirai test editor/records`. The editor's tests need more memory than the default limit
+  (`MIRAI_COMPILER_MEMORY=14`).
 - AI panel: the line diff, `mirai test editor/diff`; the thread as Markdown and multi-line messages,
   `ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills`; the steps of the
   agent's tools,
@@ -325,14 +330,15 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved`; recovery after killing
   the process, by API in an open editor. Prefab instances in collaboration:
   `prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file`.
-- Journal, undo and transactions: `editor/journal_test.odin` (each reader's cursors, steps that
-  grow with what changed, cancellation and undo without allocating,
-  `collaboration_reads_the_journal_and_does_not_echo_what_it_applies`,
+- Journal, undo and transactions: `editor/history/journal_test.odin` (each reader's cursors,
+  steps that grow with what changed, cancellation and undo without allocating) and
+  `editor/history/edits_memory_test.odin`; with collaboration, `editor/collab_journal_test.odin`
+  (`collaboration_reads_the_journal_and_does_not_echo_what_it_applies`,
   `undo_at_each_end_keeps_what_the_other_end_wrote_since`; the fields several editors change in
   one row, in the order of the host and under undo,
   `fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host` and
-  `a_gesture_left_open_keeps_what_another_end_writes_to_another_field`) and
-  `editor/edits_memory_test.odin`. What another editor selected is edited:
+  `a_gesture_left_open_keeps_what_another_end_writes_to_another_field`); through the API and the
+  inspector, `editor/edits_memory_test.odin`. What another editor selected is edited:
   `what_another_editor_selected_is_edited_and_stays_outlined`; a file that cannot travel,
   `a_file_too_large_to_travel_is_told_to_every_editor`.
   Undo by author and selection steps: `editor/history_test.odin`. Memory with a large scene:
@@ -365,11 +371,6 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `terrain_initial_asset_revision_is_the_baseline_of_the_first_undo`. A material imported unsaved
   on reimport:
   `an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field`.
-- Journal, undo and transactions: `editor/journal_test.odin` (with
-  `collaboration_reads_the_journal_and_does_not_echo_what_it_applies` and
-  `undo_at_each_end_keeps_what_the_other_end_wrote_since`), `editor/edits_memory_test.odin` and,
-  for undo by author, `editor/history_test.odin`. Memory with a large scene:
-  `journal_memory_of_a_large_scene` with `-define:EDITOR_JOURNAL_BENCH=true`.
 - Scene settings: `editor/scene_settings_test.odin`, with
   `a_change_to_the_sky_travels_to_the_other_editors_of_a_session` and
   `the_review_of_a_turn_keeps_and_reverts_the_settings_of_the_scene_it_changed`. The scene a guest
