@@ -49,7 +49,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_play_observe.odin","writes_result=true",2},
     {"editor/api_play_scenario.odin","writes_result=true",1},
     {"editor/api_play_wait.odin","writes_result=true",2},
-    {"editor/api_programs.odin","writes_result=true",4},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
     {"plugins/playtest/editor/explore.odin","writes_result=true",1},
@@ -62,7 +61,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_material_instance.odin","rpc_init(",2},
     {"editor/api_methods.odin","rpc_init(",1},
     {"editor/api_play_edit.odin","rpc_init(",1},
-    {"editor/api_programs.odin","rpc_init(",1},
 }
 
 // No method is described, read or written by hand past the files above.
