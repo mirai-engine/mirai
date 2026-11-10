@@ -183,7 +183,7 @@ a_setting_or_a_collider_of_an_undeclared_value_is_a_problem :: proc(t:^testing.T
         if base.text_get(p.code[:])=="physics.collision" {collider_problem=p.entity==e && strings.contains(text,"preset 12")}
     }
     testing.expect(t,settings_problem && collider_problem)
-    testing.expect_value(t,link_find(&f.state,e).filter,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
+    testing.expect_value(t,sim.shape_filter(&f.state.world,link_find(&f.state,e).shape),Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
 @(test)

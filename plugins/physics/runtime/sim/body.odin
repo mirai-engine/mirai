@@ -412,6 +412,12 @@ body_mass_update :: proc(w:^World,h:Body_Handle) {
     body_wake(w,index)
 }
 
+// Whether body_set_mass_properties fixed the mass of a body, rather than its shapes giving it.
+body_mass_fixed :: proc(w:^World,h:Body_Handle) -> bool {
+    body,_:=body_read(w,h)
+    return body!=nil && .Mass_Override in body.flags
+}
+
 body_reset_mass_properties :: proc(w:^World,h:Body_Handle) {
     body,index:=body_get(w,h)
     if body==nil {return}
