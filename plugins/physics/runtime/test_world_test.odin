@@ -2,6 +2,7 @@ package physics
 
 import "mirai:core"
 import "mirai:host"
+import cam "mirai:engine/camera"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
@@ -26,6 +27,11 @@ Test_Physics :: struct {
     character_states:core.Table(Character_State),
     joint_states:core.Table(Joint_State),
     volumes:core.Table(Fluid_Volume),
+    verticals:core.Table(core.Vertical),
+    // The gravity of the places of the world: a step reads them when its host says fields.
+    gravities:core.Table(volume.Gravity),
+    gravity_volumes:core.Table(volume.Volume),
+    worlds:core.Table(core.World_Transform), // of what has a Gravity: the bodies of a test have none
     hierarchy:core.Hierarchy,
     state:Physics_State,
     settings:Physics_Settings,
@@ -44,21 +50,15 @@ Test_Physics_Host :: struct {
     meshes:Collider_Meshes,
     app:host.App,
     problems:core.Problems,
-    gravity:[3]f32,          // of its world: none unless a test gives it, or fields does
-    fields:^Test_Physics_Fields,
-    whole:bool,              // physics_step gets no hierarchy: every sync goes through every body
+    gravity:[3]f32, // of its world: none unless a test gives it, or fields does
+    fields:bool,    // the gravity of the world is that of its Gravity rows
+    whole:bool,     // physics_step gets no hierarchy: every sync goes through every body
 }
 
-// The Gravity of a test, with its own World_Transform: the bodies of the
-// test have none.
-Test_Physics_Fields :: struct {
-    gravities:core.Table(volume.Gravity),
-    volumes:core.Table(volume.Volume),
-    worlds:core.Table(core.World_Transform),
-}
-
-// What the declarations of physics name: core.Test_Types.
+// What the declarations of physics and of the libraries it uses name: core.Test_Types.
 test_types :: proc(types:^[dynamic]core.Test_Type) {
+    cam.test_types(types)
+    volume.test_types(types)
     append(types,
         core.test_type(Physics_State,copy=state_copy,copy_kept=state_copy_kept,swap=state_swap,free=state_destroy,reset=state_reset),
         core.test_type(Collider_Meshes,free=collider_meshes_destroy),
@@ -86,9 +86,9 @@ test_host_destroy :: proc(h:^Test_Physics_Host) {
 // physics_step alone, on the rows as they are and as the loop calls it.
 test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
     gravities:core.Read(volume.Gravity);gravity_volumes:core.Read(volume.Volume);worlds:core.Read(core.World_Transform)
-    if g:=h.fields;g!=nil {gravities,gravity_volumes,worlds=core.read(&g.gravities),core.read(&g.volumes),core.read(&g.worlds)}
+    if h.fields {gravities,gravity_volumes,worlds=core.read(&p.gravities),core.read(&p.gravity_volumes),core.read(&p.worlds)}
     if state_make(&p.state,&p.settings,&h.app,&h.problems) {
-        if h.fields==nil {sim.world_set_gravity(&p.state.world,h.gravity)}
+        if !h.fields {sim.world_set_gravity(&p.state.world,h.gravity)}
     }
     physics_step(
         &p.state,core.ref(&p.settings),&p.requests,&p.events,&h.meshes,&h.app,{dt=dt,playing=dt>0},

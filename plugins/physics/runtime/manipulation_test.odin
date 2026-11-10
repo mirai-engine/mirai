@@ -18,9 +18,6 @@ Physics_Test :: struct {
 }
 
 @(private)
-Physics_Test_Fields :: Test_Physics_Fields
-
-@(private)
 physics_test_init :: proc(t:^testing.T,f:^Physics_Test) -> bool {
     if !core.test_world_init(t,&f.w,test_types) {return false}
     f.settings={bodies=32,shapes=32,contacts=128,joints=8,characters=2}

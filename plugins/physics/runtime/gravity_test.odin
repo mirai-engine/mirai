@@ -8,25 +8,12 @@ import mm "mirai:std/math"
 import sim "plugins:physics/runtime/sim"
 
 @(private="file")
-fields_init :: proc(f:^Physics_Test,fields:^Physics_Test_Fields) {
-    core.table_init(&fields.gravities,"Gravity")
-    core.table_init(&fields.volumes,"Volume")
-    core.table_init(&fields.worlds,"World_Transform")
-    f.fields=fields
-}
-
-@(private="file")
-fields_destroy :: proc(fields:^Physics_Test_Fields) {
-    core.table_destroy(&fields.gravities);core.table_destroy(&fields.volumes);core.table_destroy(&fields.worlds)
-}
-
-@(private="file")
-field_place :: proc(f:^Physics_Test,fields:^Physics_Test_Fields,g:volume.Gravity,v:Maybe(volume.Volume),position:[3]f32) -> core.Entity {
+field_place :: proc(f:^Physics_Test,g:volume.Gravity,v:Maybe(volume.Volume),position:[3]f32) -> core.Entity {
     e:=core.create(&f.entities)
-    core.add(&fields.gravities,e,g)
-    if v,ok:=v.?;ok {core.add(&fields.volumes,e,v)}
-    core.add(&fields.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=1}})
-    core.table_settle(&fields.gravities,&f.entities);core.table_settle(&fields.volumes,&f.entities);core.table_settle(&fields.worlds,&f.entities)
+    core.add(&f.gravities,e,g)
+    if v,ok:=v.?;ok {core.add(&f.gravity_volumes,e,v)}
+    core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=1}})
+    physics_test_settle(f)
     return e
 }
 
@@ -37,10 +24,10 @@ bodies_fall_with_the_gravity_of_their_place :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
-    field_place(&f,&fields,volume.GRAVITY_DEFAULT,nil,{})
-    field_place(&f,&fields,volume.Gravity{},volume.Volume{shape=.Box,extents={5,5,5},priority=1},{20,0,0})
-    field_place(&f,&fields,volume.Gravity{pull=.Center,acceleration=5,radius=2},volume.Volume{shape=.Sphere,extents={10,0,0},priority=1},{-40,0,0})
+    f.fields=true
+    field_place(&f,volume.GRAVITY_DEFAULT,nil,{})
+    field_place(&f,volume.Gravity{},volume.Volume{shape=.Box,extents={5,5,5},priority=1},{20,0,0})
+    field_place(&f,volume.Gravity{pull=.Center,acceleration=5,radius=2},volume.Volume{shape=.Sphere,extents={10,0,0},priority=1},{-40,0,0})
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
     falling:=physics_test_box(&f,{0,0,0},{0.2,0.2,0.2},rigid)
@@ -64,8 +51,8 @@ a_planet_at_the_origin_pulls_bodies_and_leaves_the_gravity_of_the_world :: proc(
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
-    field_place(&f,&fields,volume.Gravity{pull=.Center,acceleration=9.81,radius=20},nil,{})
+    f.fields=true
+    field_place(&f,volume.Gravity{pull=.Center,acceleration=9.81,radius=20},nil,{})
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
     above:=physics_test_box(&f,{0,25,0},{0.2,0.2,0.2},rigid)
@@ -97,9 +84,9 @@ without_local_fields_a_body_costs_reading_the_gravity_of_the_world :: proc(t:^te
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
-    level:=field_place(&f,&fields,volume.Gravity{acceleration=4},nil,{})
-    field_place(&f,&fields,volume.Gravity{acceleration=1},volume.Volume{shape=.Unbounded,priority=1,mode=.Add},{})
+    f.fields=true
+    level:=field_place(&f,volume.Gravity{acceleration=4},nil,{})
+    field_place(&f,volume.Gravity{acceleration=1},volume.Volume{shape=.Unbounded,priority=1,mode=.Add},{})
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
     floor:=physics_test_box(&f,{0,-1,0},{10,0.5,10})
@@ -115,7 +102,7 @@ without_local_fields_a_body_costs_reading_the_gravity_of_the_world :: proc(t:^te
     body:=body_of(core.ref(&f.state),resting)
     testing.expect(t,!sim.body_is_awake(&f.state.world,body),"the body came to rest")
     // The level turns: what fell down now falls along +X, and the body wakes.
-    core.get(&fields.worlds,level).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    core.get(&f.worlds,level).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
     physics_test_step(&f)
     testing.expect(t,linalg.length(gravity(core.ref(&f.state))-{4,-1,0})<1e-4)
     testing.expect(t,sim.body_is_awake(&f.state.world,body),"a body asleep wakes when its gravity changes")
