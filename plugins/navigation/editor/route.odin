@@ -7,6 +7,7 @@ import "mirai:editor"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // The way a drive of play.step takes through the navigation meshes: the next
@@ -46,8 +47,8 @@ route_next :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,goal:[3]f
     if n==nil {return {}}
     if !n.ready {return {state=.Waiting}}
     if n.count==0 {return {}}
-    characters,colliders,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Collider),core.world_table_of(w,phys.Walk)
-    swims,worlds:=core.world_table_of(w,phys.Swim),core.world_table_of(w,core.World_Transform)
+    characters,colliders,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Collider),core.world_table_of(w,locomotion.Walk)
+    swims,worlds:=core.world_table_of(w,locomotion.Swim),core.world_table_of(w,core.World_Transform)
     physics:=core.world_storage_of(w,phys.Physics_State)
     if characters==nil || colliders==nil || walks==nil || swims==nil || worlds==nil || physics==nil {return {}}
     character,is_character:=core.get(characters,body)

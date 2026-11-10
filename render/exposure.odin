@@ -104,7 +104,6 @@ frame_exposure_copy :: proc(p: ^Pass, constants: rhi.Transient) {
 	scale := p.r.scene.light_scale if p.r.scene.light_scale > 0 else 1
 	if view.exposure_adapted != (Exposure_Adapted{generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, bias = display_exposure_bias(p.r.display_transform), recorded = true}) {return}
 	rhi.cmd_copy_buffer(p.cmd, view.exposure, u64(offset_of(Gpu_Exposure, exposure)), constants.buffer, constants.offset + u64(offset_of(Gpu_Frame, exposure)), size_of(f32))
-	rhi.cmd_barrier_buffer(p.cmd, constants.buffer, .Shader_Read)
 }
 
 // The exposure of the views whose camera has none of its own; zero: Auto at once.
