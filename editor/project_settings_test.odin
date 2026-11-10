@@ -53,8 +53,8 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     if !made {return}
     defer core.test_info_destroy(&info)
     world:Api_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector

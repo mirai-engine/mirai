@@ -80,7 +80,7 @@ collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
     f.name_bits={{type=phys.Collision_Layers,of=phys.Collision_Category}}
     f.info.names,f.info.named_types,f.info.name_bits=f.names[:],f.named_types[:],f.name_bits[:]
     core.test_info_index(&f.info)
-    if !f.info.init[.World](&f.world,context.allocator) {return false}
+    if !core.world_init(&f.info,.World,&f.world,context.allocator) {return false}
     if !ui.context_init(&f.ctx,{}) {return false}
     f.gui={ctx=&f.ctx}
     f.session={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,gui=&f.gui,selection=&f.selection,inspector=&f.inspector,document=&f.document,viewport=&f.viewport,edits=&f.edits}
@@ -93,7 +93,7 @@ collision_inspector_destroy :: proc(f:^Collision_Inspector) {
     history.edits_free(&f.edits)
     core.value_free(&f.inspector,type_info_of(editor.Inspector))
     delete(f.selection.entities)
-    f.info.destroy[.World](&f.world)
+    core.world_destroy(&f.info,.World,&f.world)
     core.test_info_destroy(&f.info)
 }
 

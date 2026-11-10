@@ -20,7 +20,7 @@ a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: p
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     ref:=core.world_ref(&world,&info)
     failure:=Rollback_Allocation{owner=context.allocator}
     limited:=runtime.Allocator{rollback_allocator,&failure}

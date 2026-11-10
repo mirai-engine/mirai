@@ -45,8 +45,8 @@ world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) 
     // A replacement keeps the id of the live world; the World it traded with
     // releases what was kept for its own id, never for the live one.
     source:Id_World
-    if !testing.expect(t,info.init[.World](&source,context.allocator)) {return}
-    defer info.destroy[.World](&source)
+    if !testing.expect(t,core.world_init(&info,.World,&source,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&source)
     append(&source.values,7)
     testing.expect(t,app_world_replace(&app,shown,&source))
     testing.expect_value(t,(cast(^Id_World)shown).id,shown_id)
@@ -61,18 +61,12 @@ world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) 
     testing.expect_value(t,app_world_count(&app),0)
 }
 
-@(private) By_World_Shared :: struct {values:core.By_World(u32),seen_at_release:bool}
+@(private) By_World_Held :: struct {value:u32}
+@(private) By_World_Shared :: struct {values:core.By_World(By_World_Held),seen_at_release:bool}
 
 @(private)
-by_world_test_attach :: proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool {
-    w,s:=cast(^Id_World)world,cast(^By_World_Shared)shared
-    return core.by_world_attach(&s.values,w.id,u32(w.id.index)+10,allocator)
-}
-
-@(private)
-by_world_test_detach :: proc(world,shared:rawptr) {
-    w,s:=cast(^Id_World)world,cast(^By_World_Shared)shared
-    core.by_world_release(&s.values,core.by_world_detach(&s.values,w.id))
+by_world_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(By_World_Held,default=proc(dst:^By_World_Held) {dst.value=10}))
 }
 
 @(private)
@@ -83,10 +77,9 @@ by_world_test_release :: proc(world,shared,editor,app_data:rawptr) {
 
 @(test)
 each_world_gets_its_by_world_value_when_made_and_loses_it_after_its_release :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Id_World)
+    info,described:=core.test_info(t,Id_World,By_World_Shared,core.Test_None,by_world_test_types)
     if !described {return}
     defer core.test_info_destroy(&info)
-    info.attach,info.detach=by_world_test_attach,by_world_test_detach
     info.loops[.Game][.Release]=by_world_test_release
     succeeded,failed:=false,false
     for budget in 0..<64 {
@@ -103,7 +96,8 @@ each_world_gets_its_by_world_value_when_made_and_loses_it_after_its_release :: p
             allocation.remaining=-1
             second:=app_world_create(&app)
             a,b:=app_world_id(&app,first),app_world_id(&app,second)
-            testing.expect(t,core.by_world_get(&shared.values,a)^==u32(a.index)+10 && core.by_world_get(&shared.values,b)^==u32(b.index)+10)
+            held_a,held_b:=core.by_world_get(&shared.values,a),core.by_world_get(&shared.values,b)
+            testing.expect(t,held_a!=held_b && held_a.value==10 && held_b.value==10)
             app_world_free(&app,first)
             testing.expect(t,shared.seen_at_release && core.by_world_get(&shared.values,a)==nil)
             testing.expect(t,core.by_world_get(&shared.values,b)!=nil)

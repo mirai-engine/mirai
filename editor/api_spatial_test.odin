@@ -41,7 +41,7 @@ Spatial_Fixture :: struct {
 spatial_open :: proc(t:^testing.T,f:^Spatial_Fixture) -> bool {
     w:=&f.w
     f.info=core.test_info(t,Spatial_World,core.Test_None,Spatial_Editor,test_types) or_return
-    if !testing.expect(t,f.info.init[.World](w,context.allocator)) {return false}
+    if !testing.expect(t,core.world_init(&f.info,.World,w,context.allocator)) {return false}
     entity :: proc(w:^Spatial_World,id:u64,name:string,place:core.Transform,cube:bool,parent:=core.NONE) -> core.Entity {
         e:=core.create(&w.entities)
         core.add(&w.ids,e,core.Id{base.Entity_Id(id)})
@@ -72,7 +72,7 @@ spatial_close :: proc(f:^Spatial_Fixture) {
     test_session_close(&f.edited)
     picker_clear(&f.picker);delete(f.picker.meshes)
     viewport_free(&f.viewport)
-    f.info.destroy[.World](&f.w)
+    core.world_destroy(&f.info,.World,&f.w)
     core.test_info_destroy(&f.info)
 }
 

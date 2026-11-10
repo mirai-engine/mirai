@@ -213,11 +213,11 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     }
     defer host.app_world_free(app,data)
     candidate:=host.app_world_ref(app,data)
-    if !w.info.copy(data,w.data) {
+    if !core.world_copy(w.info,data,w.data) {
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    if !w.info.clear(data) {
+    if !core.world_clear(w.info,data) {
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
@@ -231,7 +231,7 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     root_set(candidate,a.blob.header.id)
     references_resolve(candidate)
     propagate(candidate,app)
-    w.info.swap(w.data,data)
+    core.world_swap(w.info,w.data,data)
     // A look without memory for it stays asked for: scene_sections looks again, and reports it.
     _=records_look(w)
     return

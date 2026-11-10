@@ -39,7 +39,7 @@ party_init :: proc(t:^testing.T,p:^Party) -> bool {
 party_destroy :: proc(p:^Party) {
     for &session in p.sessions {session_destroy(&session);delete(session.reason_text)}
     wire.sim_network_destroy(&p.network)
-    for &world in p.worlds {p.info.destroy[.World](&world)}
+    for &world in p.worlds {core.world_destroy(&p.info,.World,&world)}
     delete(p.info.messages)
     core.test_info_destroy(&p.info)
 }

@@ -124,7 +124,7 @@ receives the place of its origin: a type or a function of an editor package neve
   epochs of physics and terrain).
 - `free="proc"`: a procedure of the package `(^S)` that releases what the storage contains; by
   default `core.value_free`.
-- **Class of a `World` storage.** Clearing a world (`clear_world`: loading a scene or a save,
+- **Class of a `World` storage.** Clearing a world (`core.world_clear`: loading a scene or a save,
   opening a document) removes its entities, and a storage is of one of these classes:
   - derived (the default, also `queue` and `events`): state that a library derives from the
     entities or requests about them; it goes back to its start. What a save must keep goes in a
@@ -201,10 +201,13 @@ scene does not use the default: it reads what it saved.
   `p_<declared name>`, so no identifier of a package collides with those of the world.
 - `info()` returns the `core.World_Info` ([reflection](core.md#world-reflection)), completed with
   `core.world_info_index`.
-- `init_*` builds the tables with the allocator received and sets up the `locks`. `copy_world`,
-  `copy_changed_world` (with fewer marks than tables, it copies whole) and `swap_world` leave the
-  `Id` index following the table that arrived with it ([identity](core.md#persistent-identity)).
-- `clear_world` clears entities and tables and takes each derived storage to its start: its
+- The generator writes no procedure that makes, frees, copies, swaps or clears a world:
+  `core.world_init`, `world_destroy`, `world_copy`, `world_copy_changed` (with fewer marks than
+  `copy_marks_count`, it copies whole), `world_swap` and `world_clear` are loops over the tables
+  and storages of the `World_Info`, which says of each what its attributes say (`locks`,
+  `copy=false`, the procedures a storage names). A copy and a swap leave the `Id` index following
+  the table that arrived with it ([identity](core.md#persistent-identity)).
+- `core.world_clear` clears entities and tables and takes each derived storage to its start: its
   `reset`, or its `free` and its initial value. Without memory for the entities it answers false
   and leaves the World as it was.
 
@@ -337,7 +340,7 @@ parameters by hand.
   `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes what is disabled
   and then settles the others, which move the rows of the entities that were disabled or enabled.
   It comes only to the tables that wait: `add`, `remove`, `enable` and `disable` mark their table
-  in the `Entities` of its World (`init_World` gives each table its mark with `table_follow`), and
+  in the `Entities` of its World (`core.world_init` gives each table its mark with `raw_follow`), and
   an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
   marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive

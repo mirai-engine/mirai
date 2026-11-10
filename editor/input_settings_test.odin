@@ -71,7 +71,7 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     }
     f.info.names,f.info.actions=f.names[:],input_test_actions()
     core.test_info_index(&f.info)
-    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {return false}
+    if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {return false}
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=f.folder,has_project=true}
     history.edits_reset(&f.edits,edited_world(&f.session))
     if !testing.expect(t,api_open(&f.session,0,true)==.None) {return false}
@@ -88,7 +88,7 @@ input_fixture_destroy :: proc(f:^Input_Fixture) {
     api_close(&f.session)
     history.edits_free(&f.edits)
     delete(f.selection.entities)
-    if f.info.destroy[.World]!=nil {f.info.destroy[.World](&f.world)}
+    if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
     core.test_info_destroy(&f.info)
 }
 

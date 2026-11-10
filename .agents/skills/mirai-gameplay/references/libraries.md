@@ -27,7 +27,7 @@ the name of their type) and a world (handles and tables).
     `missing` in the `Report`); `load` and `replace` do it except for a saved game.
 - `load(world, app, path|id)` replaces the world with a scene from the assets using `replace`, all
   or nothing: it instantiates in another `World` of the application, a copy of the world cleaned
-  (`info.clear`: entities, rows and the storages derived from them,
+  (`core.world_clear`: entities, rows and the storages derived from them,
   [classes](../../mirai-core/references/generator.md#attributes)), and only if everything went in
   does it swap its content with the world. It leaves settle and transform propagation done.
   `replace` is also used by loading a save and by the scene a collaboration guest receives.
@@ -725,8 +725,9 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
     leaves its `Result` with `kind=.Autosave`, also those the game did not request.
 - **Checkpoints:** `request_checkpoint` writes the slot `CHECKPOINT` and `request_load_checkpoint`
   loads it.
-- Loading replaces the world with `scene.replace`, like a scene: it is left clean (`info.clear`:
-  derived storages return to their start, also the physics simulation) with the slot's entities.
+- Loading replaces the world with `scene.replace`, like a scene: it is left clean
+  (`core.world_clear`: derived storages return to their start, also the physics simulation) with
+  the slot's entities.
   - Handles change and the in-flight events name entities that are no longer there.
   - A slot that does not load entirely leaves the world as it was (`Failed`).
   - The world's clock returns to the saved tick and seconds.

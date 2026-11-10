@@ -34,7 +34,7 @@ Secret :: struct {value:f32}
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expectf(t,strings.contains(text,`{"Ping","game",`) && strings.contains(text,`.Client,true}`),"%s",text)
         testing.expect(t,strings.contains(text,`{"Tick","game",`) && strings.contains(text,`.Server,false}`))
-        testing.expect(t,strings.contains(text,`.World,false,.Owner,true,nil,"",nil,false,false}`))
+        testing.expect(t,strings.contains(text,`.World,false,.Owner,true,nil,"",nil,false,false,`))
     }
 
     wrong:=`package game

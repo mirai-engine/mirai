@@ -167,7 +167,7 @@ transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table
         clear(&p.moving)
         previous_moving=p.spare[:]
     }
-    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=len(locals.table.rows) {
+    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=raw_indices(raw(locals.table)) {
         if !propagation_order(locals,h,p) {return}
         for e in p.order {transform_compute(locals,h,worlds,p,e,tick)}
         for i:=len(worlds.entities)-1;i>=0;i-=1 {
@@ -234,7 +234,7 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
 // without one. False without memory: it is built again on the next pass.
 @(private)
 propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation) -> bool {
-    size:=len(locals.table.rows)
+    size:=raw_indices(raw(locals.table))
     if resize(&p.order,count(locals))!=nil || resize(&p.worlds,size)!=nil || resize(&p.position,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil {
         p.built_locals=layout(locals)-1
         return false

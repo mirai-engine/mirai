@@ -113,7 +113,7 @@ history_free :: proc(s:^Session,r:^Run) {
 @(private)
 history_slot_free :: proc(s:^Session,h:^Run_History,slot:^History_Slot) {
     if slot.world!=nil {
-        s.info.destroy[.World](slot.world)
+        core.world_destroy(s.info,.World,slot.world)
         mem.free(slot.world,mem.tracking_allocator(&h.tracker))
     }
     delete(slot.marks,mem.tracking_allocator(&h.tracker))
@@ -280,11 +280,11 @@ history_key :: proc(s:^Session,h:^Run_History,w:core.World_Ref,t:^core.Time,edit
                 slot.world=data
                 marks,marks_error:=make([]core.Copy_Mark,core.copy_marks_count(s.info),allocator)
                 slot.marks=marks
-                if marks_error!=nil || !s.info.init[.World](data,allocator) {history_slot_free(s,h,slot)}
+                if marks_error!=nil || !core.world_init(s.info,.World,data,allocator) {history_slot_free(s,h,slot)}
             }
         }
         if slot.world!=nil {
-            copied=s.info.copy_changed!=nil?s.info.copy_changed(slot.world,w.data,slot.marks):s.info.copy(slot.world,w.data)
+            copied=core.world_copy_changed(s.info,slot.world,w.data,slot.marks)
         }
     }
     if !copied {
@@ -423,8 +423,8 @@ history_save :: proc(s:^Session,r:^Run) -> (saved:History_Saved,ok:bool) {
     context.allocator=allocator
     data,error:=mem.alloc(max(s.info.sizes[.World],1),max(s.info.aligns[.World],1),allocator)
     if error!=nil || data==nil {return}
-    if !s.info.init[.World](data,allocator) || !s.info.copy(data,r.world) {
-        s.info.destroy[.World](data)
+    if !core.world_init(s.info,.World,data,allocator) || !core.world_copy(s.info,data,r.world) {
+        core.world_destroy(s.info,.World,data)
         mem.free(data,allocator)
         return
     }
@@ -437,8 +437,8 @@ history_save :: proc(s:^Session,r:^Run) -> (saved:History_Saved,ok:bool) {
 // Puts back the World history_save kept, without allocating.
 history_restore :: proc(s:^Session,r:^Run,saved:^History_Saved) {
     if saved.world==nil {return}
-    s.info.swap(r.world,saved.world)
-    s.info.destroy[.World](saved.world)
+    core.world_swap(s.info,r.world,saved.world)
+    core.world_destroy(s.info,.World,saved.world)
     mem.free(saved.world,s.app.allocator)
     w:=run_ref(s,r)
     if f:=core.world_storage_of(w,core.Frame_Time);f!=nil {f^=saved.frame}

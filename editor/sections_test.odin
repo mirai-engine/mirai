@@ -58,7 +58,7 @@ SECTIONS_TEST_LOCAL :: base.Entity_Id(0xc0)
 sections_fixture_init :: proc(t:^testing.T,f:^Sections_Fixture,name:string,state:=scene.Section_State.Active) -> bool {
     w:=&f.world
     f.info=core.test_info(t,Sections_World,core.Test_None,Sections_Editor,test_types) or_return
-    if !f.info.init[.World](w,context.allocator) {return false}
+    if !core.world_init(&f.info,.World,w,context.allocator) {return false}
     f.root=base.test_folder(t,fmt.tprintf("sections-%s",name))
     if f.root=="" {return false}
     // The scene of the section: one entity, as it was saved before.
@@ -105,7 +105,7 @@ sections_fixture_destroy :: proc(f:^Sections_Fixture) {
     core.value_free(&f.watch,type_info_of(Sections_Watch))
     delete(f.app.worlds)
     host.assets_destroy(&f.assets)
-    f.info.destroy[.World](&f.world)
+    core.world_destroy(&f.info,.World,&f.world)
     core.test_info_destroy(&f.info)
 }
 

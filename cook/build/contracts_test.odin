@@ -52,7 +52,6 @@ import "mirai:core"
         testing.expect(t,at>=0 && strings.contains(text[at:][:400],"p_core.settle(app.info,w,e)"))
         // The settle is one loop of core over the tables of the World: none is written for it.
         testing.expect(t,!strings.contains(text,"settle :: proc") && !strings.contains(text,"info.settle"),text)
-        testing.expect(t,strings.contains(text,"!p_core.entities_tables(&w.entities,1)") && strings.contains(text,"p_core.table_follow(&w.thing,&w.entities,0)"),text)
         count:=strings.index(text,"p_core.things_count(")
         _,_,after:=strings.partition(text[max(count,0):],"}\n\n")
         call:=text[max(count,0):][:len(text[max(count,0):])-len(after)]
@@ -88,7 +87,8 @@ import "mirai:core"
 
 // Clearing a World resets the storages derived from its entities: with the
 // reset of their package, or freed and back to their default. Settings, what
-// is not copied and what says keep or persist stay.
+// is not copied and what says keep or persist stay. The World_Info says of
+// each storage which it is, for core.world_clear.
 @(test)
 clearing_a_world_resets_its_derived_storages :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"contracts")
@@ -113,19 +113,22 @@ simulation_reset :: proc(s:^Simulation) {}
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     text:=output.game_world
-    at:=strings.index(text,"clear_world :: proc")
-    if !testing.expect(t,at>=0) {return}
-    clear:=text[at:]
-    clear=clear[:strings.index(clear,"\n}\n")]
-    testing.expect(t,strings.contains(clear,"p_core.value_free(&w.cache,type_info_of(p_core.Cache))\n    w.cache={}"),clear)
-    testing.expect(t,strings.contains(clear,"p_core.tally_free(&w.tally)\n    w.tally=p_core.TALLY_DEFAULT"),clear)
+    testing.expect(t,!strings.contains(text,"clear_world"),"clearing a World is a loop of core")
+    line :: proc(text,field:string) -> string {
+        _,_,rest:=strings.partition(text,strings.concatenate({"offset_of(World,",field,"),"},context.temp_allocator))
+        found,_,_:=strings.partition(rest,"\n")
+        return found
+    }
+    testing.expect_value(t,line(text,"cache"),`.World,.None,nil,false,nil,false,false,"",false,false,{},false}`)
+    testing.expect(t,strings.contains(text,"free_tally :: proc(value:rawptr) {p_core.tally_free(cast(^p_core.Tally)value)}"),text)
+    testing.expect_value(t,line(text,"tally"),`.World,.None,default_tally,false,nil,false,false,"",false,false,{free=free_tally},false}`)
     testing.expect(t,strings.contains(text,"default_paced :: proc") && strings.contains(text,",default_paced,"),"a table starts its rows at the default of its component")
-    testing.expect(t,strings.contains(clear,"p_core.simulation_reset(&w.simulation)"),clear)
-    testing.expect(t,strings.has_prefix(clear,"clear_world :: proc(data:rawptr) -> bool {\n    w:=cast(^World)data\n    if !p_core.entities_clear(&w.entities) {return false}\n"),"a clear without memory for the entities touches nothing")
-    testing.expect(t,strings.contains(text,"if !p_core.table_init(&w.paced,\"Paced\",allocator) {return false}"),"a table without memory fails the init of its World")
-    testing.expect(t,strings.contains(clear,"w.requests={}"),clear)
-    testing.expect(t,strings.contains(text,"type_info_of(p_core.Progress),offset_of(World,progress),.World,.None,nil,false,nil,true,true,\"\",false}"),text)
-    for kept in ([]string{"w.clock","w.progress","w.settings","w.world_id"}) {testing.expectf(t,!strings.contains(clear,kept),"%s in %s",kept,clear)}
+    testing.expect(t,strings.contains(text,"reset_simulation :: proc(value:rawptr) {p_core.simulation_reset(cast(^p_core.Simulation)value)}"),text)
+    testing.expect_value(t,line(text,"simulation"),`.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_simulation},false}`)
+    testing.expect_value(t,line(text,"clock"),`.World,.None,nil,false,nil,false,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"progress"),`.World,.None,nil,false,nil,true,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"settings"),`.World,.Project,nil,false,nil,false,false,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"world_id"),`.World,.None,nil,false,nil,false,false,"",false,true,{},false}`)
     // keep and reset are of storages of the World that do not survive already.
     wrong:=`package core
 @(storage,host,keep) Shared_State :: struct {}

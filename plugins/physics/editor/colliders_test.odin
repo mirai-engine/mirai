@@ -35,7 +35,7 @@ Collider_Test :: struct {
 @(private="file")
 collider_test_init :: proc(t:^testing.T,f:^Collider_Test) -> bool {
     f.info=core.test_info(t,Collider_World,core.Test_None,Collider_Editor,test_types) or_return
-    if !testing.expect(t,f.info.init[.World](&f.w,context.allocator)) {
+    if !testing.expect(t,core.world_init(&f.info,.World,&f.w,context.allocator)) {
         collider_test_destroy(f)
         return false
     }
@@ -51,7 +51,7 @@ collider_test_destroy :: proc(f:^Collider_Test) {
     delete(f.selection.entities)
     free(f.tools)
     phys.test_host_destroy(&f.application)
-    f.info.destroy[.World](&f.w)
+    core.world_destroy(&f.info,.World,&f.w)
     core.test_info_destroy(&f.info)
 }
 
