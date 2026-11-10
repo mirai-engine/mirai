@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -38,7 +39,7 @@ Ai_Report_Text :: struct {
 
 Ai_Chat_Hit :: struct {
     sequence:u64,
-    snippet:[AI_LAST_BYTES]u8,
+    snippet:[ai_store.LAST_BYTES]u8,
     length:int,
 }
 
@@ -55,8 +56,8 @@ ai_report_answer :: proc(m:^Ai,id:int) -> string {
     if task:=ai_task_find(m,id);task!=nil {return ai_task_answer(task)}
     for &entry in m.reports {if entry.id==id {return string(entry.text[:entry.length])}}
     if m.store.db==nil {return ""}
-    lines:[AI_HIT_LINES*4]Ai_Stored_Line
-    count,message:=ai_store_page(&m.store,u64(id),-1,lines[:])
+    lines:[AI_HIT_LINES*4]ai_store.Stored_Line
+    count,message:=ai_store.page(&m.store,u64(id),-1,lines[:])
     if message!="" {return ""}
     last:=count-1
     for last>=0 && (lines[last].kind!=.Output || strings.trim_space(lines[last].text)=="") {
@@ -120,7 +121,7 @@ ai_report_height :: proc(s:^Session,text:string,width,size:f32) -> f32 {
 ai_unit_open :: proc(s:^Session,id:int) {
     m:=s.ai
     if task:=ai_task_find(m,id);task!=nil {ai_chat_select(s,task);return}
-    if saved:=ai_store_find(&m.store,u64(id));saved!=nil {
+    if saved:=ai_store.find(&m.store,u64(id));saved!=nil {
         conversation:=saved^
         ai_history_select(s,&conversation)
     }
@@ -283,16 +284,16 @@ ai_dashed_box_draw :: proc(ctx:^ui.Context,rect:ui.Rect,color:ui.Color) {
 ai_chat_hits_refresh :: proc(s:^Session,needle:string) {
     m:=s.ai
     m.chat_hit_count=0
-    if needle=="" || m.main==0 || m.store.db==nil || ai_index_match(needle,true)=="" {return}
-    hits:[AI_CHAT_HITS]Ai_Search_Hit
-    count,message:=ai_store_search(&m.store,needle,hits[:],u64(m.main),true)
+    if needle=="" || m.main==0 || m.store.db==nil || ai_store.index_match(needle,true)=="" {return}
+    hits:[AI_CHAT_HITS]ai_store.Search_Hit
+    count,message:=ai_store.search(&m.store,needle,hits[:],u64(m.main),true)
     if message!="" {notify(s,message);return}
-    plain:[AI_LAST_BYTES*2]u8
+    plain:[ai_store.LAST_BYTES*2]u8
     for &hit in hits[:count] {
         if hit.kind!=.Prompt && hit.kind!=.Output {continue}
         entry:=&m.chat_hits[m.chat_hit_count]
         entry.sequence=hit.sequence
-        entry.length=copy(entry.snippet[:],ai_utf8_cut(ai_entity_marks_plain(hit.snippet,plain[:]),AI_LAST_BYTES))
+        entry.length=copy(entry.snippet[:],ai_utf8_cut(ai_entity_marks_plain(hit.snippet,plain[:]),ai_store.LAST_BYTES))
         m.chat_hit_count+=1
     }
 }
@@ -310,8 +311,8 @@ ai_chat_hit_open :: proc(s:^Session,sequence:u64) {
         m.scroll_to=int(sequence)+1
         return
     }
-    lines:[AI_HIT_LINES]Ai_Stored_Line
-    count,message:=ai_store_page(&m.store,u64(m.main),i64(sequence)+AI_HIT_LINES/2,lines[:])
+    lines:[AI_HIT_LINES]ai_store.Stored_Line
+    count,message:=ai_store.page(&m.store,u64(m.main),i64(sequence)+AI_HIT_LINES/2,lines[:])
     if message!="" {notify(s,message);return}
     view:=&m.hit_view
     used:=0

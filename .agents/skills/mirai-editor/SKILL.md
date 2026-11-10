@@ -1,10 +1,10 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/acp`) - session, Play, Simulate and
-  networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`), inspector, content
-  browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when changing
-  the editor, adding a tool or panel of a plugin, editing the scene from editor code or driving an
-  open editor.
+description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store` and
+  `editor/git`) - session, Play, Simulate and networked Play, undo (`edits_*`), viewport and tools
+  (`tool_set`/`tool_on`), inspector, content browser, prefabs, collaboration (`--share`,
+  `--join`), AI chats and extensions. Use when changing the editor, adding a tool or panel of a
+  plugin, editing the scene from editor code or driving an open editor.
 ---
 
 # Mirai editor
@@ -152,6 +152,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
+- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`), not the
+  `Session`, when it needs nothing else. What needs no storage of the editor is its own package
+  under `editor/` (`acp`, `ai_store`, `diff`, `git`). Files outside `ai_*.odin` do not reach the
+  fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
   runs or what is watched in `Watch`. UI edits during a Play go to the Play's world and are not
   saved; the edit API always writes to the document.
@@ -228,17 +232,19 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 ## Verification
 
 - `mirai check editor` and the `editor/` of the affected plugin; `mirai test editor <names>` with
-  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`. The editor's
-  tests need more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
+  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
+  and what they print: `mirai test editor/git`. The editor's tests need more memory than the
+  default limit (`MIRAI_COMPILER_MEMORY=14`).
 - AI panel: the line diff, `mirai test editor/diff`; the thread as Markdown and multi-line messages,
   `ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills`; the steps of the
   agent's tools,
   `ai_codex_models_are_restricted_and_tools_of_the_agent_are_steps_once_they_end`. Its image,
   `editor.action` `ai_chat` and `capture` with the UI in a session.
-- Chat database and its search: the `ai_store_*` tests of `editor/ai_store_test.odin` (reopening,
-  search ranked and kept up to date, a corrupt database left alone, each table, kinds and
-  parents, a second store on the same project); live, `ai.history.search` in a session for a
-  word of the chat.
+- Chat database and its search: `mirai test editor/ai_store` (reopening, search ranked and kept up
+  to date, a corrupt database left alone, each table, kinds and parents, a second store on the
+  same project, writes kept while another editor holds the database); the frames of a streaming
+  answer with the database held, `ai_stream_does_not_wait_for_another_editor_and_loses_no_line`;
+  live, `ai.history.search` in a session for a word of the chat.
 - Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`):
   `the_main_chat_is_restored_with_its_transcript_and_never_evicted`,
   `a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user`,

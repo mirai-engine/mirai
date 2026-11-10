@@ -5,6 +5,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:platform"
 import "mirai:std/base"
 
@@ -74,7 +75,7 @@ ai_delta_listed_write :: proc(s:^Session,task:^Ai_Task,b:^strings.Builder) {
 
 // All the delta of a turn: what the message was sent with, what the database
 // holds as it starts, and what only the start of the turn knows.
-ai_delta_build :: proc(s:^Session,task:^Ai_Task,turn,handoff:string,deliveries:[]Ai_Delivery,remind:bool) -> string {
+ai_delta_build :: proc(s:^Session,task:^Ai_Task,turn,handoff:string,deliveries:[]ai_store.Delivery,remind:bool) -> string {
     m:=s.ai
     b:=strings.builder_make(context.temp_allocator)
     strings.write_string(&b,turn)
@@ -109,8 +110,8 @@ ai_ids_parse :: proc(text:string,allocator:=context.temp_allocator) -> []int {
 // those the editor closed on first.
 @(private)
 ai_handoff_agents_write :: proc(m:^Ai,task:^Ai_Task,b:^strings.Builder) {
-    interrupted,_:=ai_store_meta_get(&m.store,AI_META_INTERRUPTED_AGENTS)
-    since_text,_:=ai_store_meta_get(&m.store,fmt.tprintf(AI_META_CONTEXT_SINCE,task.conversation.id))
+    interrupted,_:=ai_store.meta_get(&m.store,AI_META_INTERRUPTED_AGENTS)
+    since_text,_:=ai_store.meta_get(&m.store,fmt.tprintf(AI_META_CONTEXT_SINCE,task.conversation.id))
     since,_:=strconv.parse_i64(since_text,10)
     names:=AI_STATE_NAMES
     listed:=false
@@ -120,13 +121,13 @@ ai_handoff_agents_write :: proc(m:^Ai,task:^Ai_Task,b:^strings.Builder) {
     ids:=ai_ids_parse(interrupted)
     for id in ids {
         if other:=ai_task_find(m,id);other!=nil && other.state!=.Interrupted {continue}
-        saved:=ai_store_find(&m.store,u64(id))
+        saved:=ai_store.find(&m.store,u64(id))
         if saved==nil || saved.parent!=task.conversation.id {continue}
         head(b,&listed)
         fmt.sbprintf(b,"- %d, %q: interrupted when the editor closed, on %s; it does not go on unless you send it agent.message\n",id,string(saved.title[:saved.title_len]),string(saved.document[:saved.document_len]))
     }
-    conversations:[AI_HANDOFF_AGENTS]Ai_Conversation
-    count,_:=ai_store_list(&m.store,conversations[:],kinds={.Agent},parent=task.conversation.id)
+    conversations:[AI_HANDOFF_AGENTS]ai_store.Conversation
+    count,_:=ai_store.list(&m.store,conversations[:],kinds={.Agent},parent=task.conversation.id)
     for &c in conversations[:count] {
         if c.updated_at<since {continue}
         other:=ai_task_find(m,int(c.id))
@@ -147,12 +148,12 @@ ai_handoff_build :: proc(s:^Session,task:^Ai_Task,before:i64) -> string {
     if m.store.db==nil {return ""}
     c:=&task.conversation
     b:=strings.builder_make(context.temp_allocator)
-    notes,_:=ai_store_note_get(&m.store,c.id)
+    notes,_:=ai_store.note_get(&m.store,c.id)
     if notes=strings.trim_space(notes);notes!="" {
         fmt.sbprintf(&b,"Notes of this chat:\n%s\n",ai_utf8_cut(notes,AI_HANDOFF_NOTES_BYTES))
     }
-    lines:=make([]Ai_Stored_Line,AI_HANDOFF_LINES,context.temp_allocator)
-    count,_:=ai_store_page(&m.store,c.id,before,lines)
+    lines:=make([]ai_store.Stored_Line,AI_HANDOFF_LINES,context.temp_allocator)
+    count,_:=ai_store.page(&m.store,c.id,before,lines)
     first,used:=count,0
     for first>0 {
         line:=&lines[first-1]
@@ -164,7 +165,7 @@ ai_handoff_build :: proc(s:^Session,task:^Ai_Task,before:i64) -> string {
     }
     if used>0 {
         fmt.sbprintf(&b,"Latest messages (%s with id %d reads the rest):\n",ai_tool_name("ai.history"),c.id)
-        previous:Ai_Line_Kind=.Note
+        previous:ai_store.Line_Kind=.Note
         for &line in lines[first:count] {
             if line.kind==.Report {fmt.sbprintf(&b,"[subagent %s ended a turn]\n",line.text);previous=.Report;continue}
             if line.kind!=.Prompt && line.kind!=.Output {continue}
@@ -195,16 +196,16 @@ ai_working_agents_save :: proc(s:^Session,m:^Ai) {
     for &task in m.tasks[:m.task_count] {
         if task.conversation.kind==.Agent && !ai_task_finished(&task) {fmt.sbprintf(&b,"%d,",task.id)}
     }
-    if message:=ai_store_meta_set(&m.store,AI_META_WORKING_AGENTS,strings.to_string(b));message!="" {notify(s,message)}
+    if message:=ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,strings.to_string(b));message!="" {notify(s,message)}
 }
 
 // The main chat comes back with a clean context, unless a Build restarted the editor.
 @(private)
 ai_main_reopen :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
-    resume,problem:=ai_store_meta_get(&m.store,AI_META_RESUME_NATIVE)
+    resume,problem:=ai_store.meta_get(&m.store,AI_META_RESUME_NATIVE)
     if problem!="" {notify(s,problem)}
     if resume!="" {
-        if message:=ai_store_meta_set(&m.store,AI_META_RESUME_NATIVE,"");message!="" {notify(s,message)}
+        if message:=ai_store.meta_set(&m.store,AI_META_RESUME_NATIVE,"");message!="" {notify(s,message)}
         return
     }
     if task.conversation.native_session_len==0 {return}
@@ -217,11 +218,11 @@ ai_main_reopen :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
 // them: nothing starts them by itself.
 @(private)
 ai_agents_interrupted_restore :: proc(s:^Session,m:^Ai) {
-    working,_:=ai_store_meta_get(&m.store,AI_META_WORKING_AGENTS)
-    earlier,_:=ai_store_meta_get(&m.store,AI_META_INTERRUPTED_AGENTS)
+    working,_:=ai_store.meta_get(&m.store,AI_META_WORKING_AGENTS)
+    earlier,_:=ai_store.meta_get(&m.store,AI_META_INTERRUPTED_AGENTS)
     if working=="" && earlier=="" {return}
     mark :: proc(s:^Session,m:^Ai,id:int,noted:bool) {
-        saved:=ai_store_find(&m.store,u64(id))
+        saved:=ai_store.find(&m.store,u64(id))
         if saved==nil || saved.kind!=.Agent {return}
         conversation:=saved^
         task:=ai_conversation_restore(s,&conversation)
@@ -234,14 +235,14 @@ ai_agents_interrupted_restore :: proc(s:^Session,m:^Ai) {
     }
     for id in ai_ids_parse(earlier) {mark(s,m,id,false)}
     for id in ai_ids_parse(working) {mark(s,m,id,true)}
-    if message:=ai_store_meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,strings.concatenate({earlier,working},context.temp_allocator));message!="" {notify(s,message)}
-    if message:=ai_store_meta_set(&m.store,AI_META_WORKING_AGENTS,"");message!="" {notify(s,message)}
+    if message:=ai_store.meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,strings.concatenate({earlier,working},context.temp_allocator));message!="" {notify(s,message)}
+    if message:=ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,"");message!="" {notify(s,message)}
 }
 
 // A Build is about to restart the editor: the main chat goes on where it was.
 ai_resume_native_mark :: proc(s:^Session) {
     if s.ai==nil || s.ai.store.db==nil || s.ai.main==0 {return}
-    if message:=ai_store_meta_set(&s.ai.store,AI_META_RESUME_NATIVE,"1");message!="" {notify(s,message)}
+    if message:=ai_store.meta_set(&s.ai.store,AI_META_RESUME_NATIVE,"1");message!="" {notify(s,message)}
 }
 
 // The stable block has to be sent again: the context lost it, or it changed.

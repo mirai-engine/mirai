@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:core"
+import "mirai:editor/git"
 import scene "mirai:engine/scene"
 import "mirai:project"
 import gpu "mirai:render"
@@ -26,7 +27,7 @@ GIT_VALUE_BYTES :: 256
 
 Git_Conflict :: struct {
     kind:asset.Merge_Kind,
-    path:[GIT_PATH_BYTES]u8,   // as document_locate reads it
+    path:[git.PATH_BYTES]u8,   // as document_locate reads it
     table:[64]u8,              // the component, or the table
     field:[160]u8,             // what follows the row in path: ".value.position"
     ours,theirs:[GIT_VALUE_BYTES]u8, // the values as JSON; "" when the side has no row
@@ -38,7 +39,7 @@ Git_Conflict :: struct {
 Git_Whole :: enum u8 {Theirs,Ours,Folder} // Folder: as it is in the work tree, what the AI wrote
 
 Git_Merge_File :: struct {
-    path:[GIT_PATH_BYTES]u8, // from the root of the repository
+    path:[git.PATH_BYTES]u8, // from the root of the repository
     stages:[3][]u8,          // base, ours and theirs from git; nil: that side does not have it
     merged:[]u8,             // the merge of assets with every conflict as ours; nil: the file merges whole
     whole:Git_Whole,
@@ -77,12 +78,15 @@ git_merge_load_start :: proc(s:^Session) {
         append(&g.merge.files,file)
     }
     if len(g.merge.files)==0 {return}
-    git_start(s,.Load)
+    for &file in g.merge.files {append(&g.load_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))}
+    git.start(g,s.app.platform,git_roots(s),.Load)
 }
 
 git_merge_clear :: proc(g:^Git) {
     m:=&g.merge
     clear(&m.files);clear(&m.items);clear(&m.conflicts)
+    // Their paths lived in the arena.
+    clear(&g.load_paths);clear(&g.finish_paths)
     vmem.arena_destroy(&m.arena)
     m.arena={}
     m.loaded,m.current,m.shown=false,0,false
@@ -94,20 +98,9 @@ git_merge_arena :: proc(g:^Git) -> mem.Allocator {
     return vmem.arena_allocator(&g.merge.arena)
 }
 
-// Step k of the load is stage k%3+1 of file k/3.
+// The stage a step of the load read (git.Repository.load_paths), kept for the merge.
 @(private)
-git_merge_load_command :: proc(g:^Git,step:int) -> []string {
-    if step>=3*len(g.merge.files) {return nil}
-    file:=&g.merge.files[step/3]
-    out:=make([]string,2,context.temp_allocator)
-    out[0]="show"
-    out[1]=fmt.tprintf(":%d:%s",step%3+1,base.text_get(file.path[:]))
-    return out
-}
-
-@(private)
-git_merge_load_done :: proc(s:^Session,step:int,code:int) {
-    g:=s.git
+git_merge_load_done :: proc(g:^Git,step:int,code:int) {
     if step>=3*len(g.merge.files) {return}
     if code!=0 {return}
     data:=make([]u8,len(g.out),git_merge_arena(g))
@@ -122,7 +115,7 @@ git_merge_compute :: proc(s:^Session) {
     m:=&g.merge
     a:=s.app.assets
     m.loaded=true
-    plugins:=git_plugin_kinds(s)
+    plugins:=git_plugin_kinds(git_roots(s))
     for &file,f in m.files {
         name:=base.text_get(file.path[:])
         file.text=file.stages[1]!=nil
@@ -395,7 +388,7 @@ git_select :: proc(s:^Session,key:base.Entity_Id) {
 // Writes every file as chosen, then adds and commits them.
 git_merge_finish :: proc(s:^Session) -> string {
     g:=s.git
-    if git_working(g) {return "Wait for git to finish"}
+    if git.working(g) {return "Wait for git to finish"}
     if !g.merging || !g.merge.loaded {return "No merge to finish"}
     for item in g.merge.items {
         if !item.accepted {return "Accept or reject every conflict first"}
@@ -406,7 +399,7 @@ git_merge_finish :: proc(s:^Session) -> string {
         if data!=nil && serial.file_write_atomic(git_file_absolute(g,&file),data)!=.None {return fmt.tprintf("%s could not be written",base.text_get(file.path[:]))}
         append(&g.finish_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))
     }
-    git_start(s,.Finish)
+    git.start(s.git,s.app.platform,git_roots(s),.Finish)
     return ""
 }
 
@@ -492,17 +485,7 @@ git_merge_ai :: proc(s:^Session,index:int) {
     } else {
         strings.write_string(&prompt,"Resolve the merge conflicts of the project. Call git.conflicts to see them, choose ours or theirs for each value with git.choose, merge the files of code that both sides changed keeping both changes (save them and choose folder for them), and accept every item with git.accept. Do not call git.finish.")
     }
-    if !git_ai_ask(s,strings.to_string(prompt)) {notify(s,"Connect an AI agent first")}
-}
-
-@(private)
-git_ai_ask :: proc(s:^Session,text:string) -> bool {
-    m:=s.ai
-    if m==nil {return false}
-    m.selected=m.main
-    m.prompt_length=copy(m.prompt[:AI_MESSAGE_BYTES-1],text)
-    library_select(s,.Ai)
-    return ai_chat_send(s)
+    if !ai_chat_ask(s,s.ai,strings.to_string(prompt)) {notify(s,"Connect an AI agent first")}
 }
 
 // While the merge waits, its entities are outlined red until accepted.
@@ -538,7 +521,7 @@ git_highlight_style :: proc(s:^Session) {
 
 git_merge_build :: proc(s:^Session,width,room:f32) {
     g:=s.git;ctx:=s.gui.ctx;th:=&ctx.theme
-    busy:=git_working(g)
+    busy:=git.working(g)
     m:=&g.merge
     left:=0
     for item in m.items {if !item.accepted {left+=1}}
@@ -583,7 +566,7 @@ git_merge_build :: proc(s:^Session,width,room:f32) {
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
         if ui.button(ctx,ui.id(ctx,"git_abort"),{label="Abort",style=.Field,width=-1,center=true,disabled=busy}).clicked {
-            if message:=git_abort(s);message!="" {notify(s,message)}
+            if message:=git.abort(s.git,s.app.platform,git_roots(s));message!="" {notify(s,message)}
         }
         if ui.button(ctx,ui.id(ctx,"git_reject_all"),{label="Reject all",style=.Field,width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,true)}
         if left==0 {

@@ -5,6 +5,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -87,7 +88,7 @@ Ai_Task :: struct {
     files_changed:bool, // it changed files of the project its review could not keep: the turn cannot be reverted
     code:[dynamic]Ai_Code_File, // while it runs: the files of the project as it found them (ai_code.odin)
     transcript:Ai_Transcript,
-    conversation:Ai_Conversation,
+    conversation:ai_store.Conversation,
     dirty_sequence:int,
     dirty:bool,
     stream_open:bool,
@@ -152,10 +153,11 @@ Ai :: struct {
     agents_home:[AI_PATH_BYTES]u8, // project.agents_folder, or the folder a test gives
     probe:Ai_Probe,
     connection_ui:Ai_Connections_Ui,
-    store:Ai_Store,
-    history:[64]Ai_Conversation,
+    store:ai_store.Store,
+    history:[64]ai_store.Conversation,
     history_count,history_offset:int,
     last_flush:f64,
+    landed_seen:u64, // Store.landed when what shows rows of the store last read them
     login:bool,
     login_provider:Ai_Provider,
     login_process:platform.Process,
