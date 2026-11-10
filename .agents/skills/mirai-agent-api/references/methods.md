@@ -59,19 +59,26 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
 ## Editor and viewport
 
 - `editor.inspect`: selection, tool, snap, document, camera, interactions (capture, modal, popups,
-  text being edited, pending dialog, hover), window, layout and `actions` with
-  `{name,disabled,checked}`.
+  text being edited, pending dialog, hover), window, layout and `commands`: every entry of the
+  menus, shortcuts and buttons of the editor and of its plugins, with the method it calls, its
+  params and whether it is off or checked for the person now
+  ([commands](../../mirai-editor/references/editor.md#commands-and-shortcuts)).
   - Rectangles are `[x,y,width,height]` in window points.
-  - `layout.widgets` brings those of `action.<name>`, `menu.file|edit|view|help`, `stats` and
+  - `layout.widgets` brings those of `command.<name>`, `menu.file|edit|view|help`, `stats` and
     `share` that are on screen.
   - `camera` is `{position,target,yaw,pitch,distance,fov}` (`fov` in vertical degrees).
   - `snap` is that of Move; Rotate and Scale have their own state and increments
     ([gizmo](../../mirai-editor/references/panels.md#viewport)).
-- `editor.action`: runs an action of `editor.inspect.actions` as its menu or its shortcut (`save`,
-  `undo`, `duplicate`, `tool_move`, `focus`, `grid`, `play`, `prefab_apply`, `library_panel`…).
-  - Fails with a disabled action and with those that open a dialog: `open`, `save_as`, `quit`,
-    `shortcuts`, `import` (use `scene.open`, `scene.save`, `engine.shutdown`, `asset.import`).
-  - `library_panel` (Tab) toggles the shared left panel keeping its tab and state.
+- What a menu does, an agent does by calling the method of its entry with values of its own in
+  place of what the entry takes from the person (`$roots`, `$toggle`, `$ask`): there is no method
+  that runs entries by name.
+  - `editor.tool` sets the mode of the gizmo or turns the tool of a plugin on and off;
+    `editor.view` shows a dialog, a popup, a tab of the left panel, the name field or the studio
+    light; the panels and the options of the viewport the editor remembers are `preferences.set`
+    (`Layout`, `Viewport_Preferences`).
+  - `scene.new`, `scene.group`, `scene.thumbnail`, `editor.copy`, `editor.save_all`, `play.release`
+    and `camera.preview` are what the File menu, Ctrl+G, View, Ctrl+C, Save all, F1 and the camera
+    preview do.
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
@@ -347,7 +354,7 @@ Reading a capture:
   `Nothing to undo`/`Nothing to redo` (the caller has no steps of its own) or with a step that only
   goes in order (a change of linked prefabs with steps of others after it: the error says what to
   do).
-- In a manual editor they run a frame before replying, like `editor.action` with `undo` and `redo`:
+- In a manual editor they run a frame before replying:
   what the plugins derive from the history (the file of a terrain takes the revision of its
   owners) is already there when it replies.
 
@@ -723,11 +730,14 @@ when the viewport draws with them, which `mirai shaders` asks for.
   last build that remains and answers when the game plays; if the build fails, it fails with the
   first error and the rest in `data.diagnostics`.
 - `build.check` checks the types of the project code (game, editor and plugins, with the generated
-  world) without compiling or loading anything, and `build.test` compiles and runs the `@(test)`s
-  of a project package (`package_folder`, `game` if missing; `tests` by name) against the engine it
-  uses, without loading it. Both reply when done, with each error and its file and line, or each
-  test that failed with what it logged; the editor keeps drawing meanwhile and they do not run
-  during a build.
+  world) without compiling or loading anything, and replies when done with each error and its file
+  and line. `build.test` compiles and runs the `@(test)`s of a project package (`package_folder`,
+  `game` if missing; `tests` by name) against the libraries the editor loads, without loading them,
+  with the runner and the executable of `mirai test` of that package
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). It replies at
+  once with `running`, and the editor answers other calls while the job builds and runs:
+  `build.test.status` says how long it has run and, once `running` is false, each test that failed
+  with what it logged. Neither runs during a build, nor two at once.
 
 - With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
   shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`

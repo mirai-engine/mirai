@@ -178,25 +178,7 @@ nav_volume_path_step :: proc(q:^Nav_Volume_Query,budget:int) -> Search_Status {
 // of it stopped being valid while the search ran.
 nav_volume_path_finish :: proc(q:^Nav_Volume_Query,out:[]Nav_Ref) -> (count:int,status:Search_Status,partial:bool) {
     if q.volume==nil {return 0,.Invalid,false}
-    status=q.search.status
-    keys:=transmute([]u64)out
-    #partial switch status {
-    case .Found:
-        count,status=search_path(&q.search,keys)
-    case .No_Path,.Open_Full:
-        best:=f32(max(f32))
-        nearest:u64
-        for slot in 0..<u32(len(q.points)) {
-            if !search_reached(&q.search,slot) {continue}
-            d:=linalg.length2(q.points[slot]-q.end)
-            if d<best {best=d;nearest=search_key(&q.search,slot)}
-        }
-        if nearest==0 {return 0,status,false}
-        count,_=search_path_to(&q.search,nearest,keys)
-        partial=count>0
-    case:
-        return 0,status,false
-    }
+    count,status,partial=nav_search_finish(&q.search,q.points,q.end,out)
     for ref in out[:count] {
         if !nav_volume_ref_valid(q.volume,ref) {return 0,.Invalid,false}
     }

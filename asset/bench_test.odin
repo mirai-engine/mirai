@@ -238,7 +238,7 @@ scene_file_against_a_file_per_entity :: proc(t:^testing.T) {
             }
             fmt.printfln("%d entities, file per entity: save %.2f ms, load warm %.2f ms, load uncached %.2f ms, %d bytes (%d in 4 KiB clusters)",count,save_many*1000,load_many*1000,cold_many*1000,many_bytes,many_clusters)
             fmt.printfln("%d entities, file per entity / one file: save %.0fx, load warm %.0fx, load uncached %.0fx, size %.1fx",count,save_many/save_single,load_many/load_single,cold_many/cold_single,f64(many_bytes)/f64(single_bytes))
-            os.remove_all(folder)
+            base.remove_all(folder)
             free_all(context.temp_allocator)
         }
     }

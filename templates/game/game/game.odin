@@ -39,22 +39,19 @@ Status :: struct {
     hits:i32,
 }
 
-// The actions of the game, bound by Game_Actions; move and jump are of physics (phys.Walk_Action)
-// and look of the engine (inp.Look_Action).
+// The actions of the game; move and jump are of physics (phys.Walk_Action) and look of the engine
+// (inp.Look_Action).
 @(actions)
 Action :: enum u8 {Hit,Save,Load}
 
-// The bindings of the actions of the game. The editor (Project Settings > Input), input.set and the
-// player write in an input.mirai only what they change of these.
-@(storage,host)
-Game_Actions :: struct {defaults:[Action]inp.Action_Default}
-
-game_actions_default :: proc "contextless" () -> Game_Actions {
-    return {defaults={
+// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
+// input.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+    return {
         .Hit=inp.action_default(.Button,inp.binding_mouse_button(.Left),inp.binding_gamepad_axis(.Right_Trigger)),
         .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Dpad_Up)),
         .Load=inp.action_default(.Button,inp.binding_key(.F9),inp.binding_gamepad_button(.Back)),
-    }}
+    }
 }
 
 @(private="file")

@@ -285,7 +285,7 @@ asset_folder_duplicate :: proc(s:^Session,from:string,folder:Maybe(string)=nil,n
             if os.copy_file(to,asset.registry_file_path(r,file,context.temp_allocator))!=nil {problem=fmt.tprintf("%s could not be copied",file)}
         }
         if problem!="" {
-            _=os.remove_all(target)
+            _=base.remove_all(target)
             return "",problem
         }
     }

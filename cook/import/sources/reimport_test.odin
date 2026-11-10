@@ -416,7 +416,7 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     testing.expectf(t,current.sources==3 && current.imported==0 && current.removed==0 && len(current.failures)==0,"%v",current)
 
     // What a clone has: no imported folder.
-    testing.expect(t,os.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
+    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
     cloned:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,cloned.sources==3 && cloned.imported==3 && len(cloned.failures)==0 && len(cloned.warnings)==0,"%v",cloned)
     for file in built {

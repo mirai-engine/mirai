@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor/history"
@@ -79,11 +80,10 @@ viewport_menu_items :: proc(s:^Session,m:^Viewport_Menu) {
         if ui.menu_item(ctx,ui.id(ctx,"ask"),"Ask agent",{icon=.Sparkle,disabled=!s.has_project}) {ai_ask(s)}
         ui.menu_separator(ctx)
     }
-    if ui.menu_item(ctx,ui.id(ctx,"here"),"Play from here",{icon=.Play,disabled=!m.hit || action_state(s,.Play).disabled}) {
-        s.play_asked=point_origin(s,m.here)
-        play_request(s,true)
+    if ui.menu_item(ctx,ui.id(ctx,"here"),"Play from here",{icon=.Play,disabled=!m.hit || command_state(s,"play").disabled}) {
+        command_call(s,"play.start",fmt.tprintf(`{{"from":"Point","point":[%v,%v,%v]}}`,m.here.x,m.here.y,m.here.z))
     }
-    if ui.menu_item(ctx,ui.id(ctx,"camera"),ACTION_LABELS[.Play_From_Camera],{icon=action_icon(.Play_From_Camera),disabled=action_state(s,.Play_From_Camera).disabled}) {action_run(s,.Play_From_Camera)}
+    command_menu_item(s,ui.id(ctx,"camera"),"play_from_camera")
     if m.count>0 {ui.menu_separator(ctx)}
     w:=shown_world(s)
     for e,i in m.entities[:m.count] {

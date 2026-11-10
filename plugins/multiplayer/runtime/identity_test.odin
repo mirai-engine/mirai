@@ -1,5 +1,7 @@
 package multiplayer
 
+import "core:bytes"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -128,6 +130,43 @@ a_client_that_presents_the_id_of_another_player_does_not_take_its_seat :: proc(t
     other,_:=seat_of_player(p,impostor)
     testing.expect(t,other!=core.NONE && other!=seat)
     testing.expect_value(t,core.count(&p.worlds[0].seats),2)
+}
+
+// A transport that looks for the secret of a player in what its host sends.
+@(private="file")
+Scan :: struct {inner:wire.Transport,secret:[2]u64,datagrams,readable:int}
+@(private="file")
+scan_transport :: proc(s:^Scan) -> wire.Transport {
+    return {s,proc(data:rawptr,to:wire.Address,sent:[]u8) -> bool {
+        s:=(^Scan)(data)
+        s.datagrams+=1
+        for half in s.secret {
+            half:=half
+            if bytes.index(sent,mem.ptr_to_bytes(&half))>=0 {s.readable+=1}
+        }
+        return s.inner.send(s.inner.data,to,sent)
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:wire.Address,ok:bool) {
+        s:=(^Scan)(data)
+        return s.inner.receive(s.inner.data,buffer)
+    }}
+}
+
+// Every connection of a session is sealed: the secret a client presents as its player never
+// travels readable, and the server still takes it.
+@(test)
+the_secret_of_a_player_never_travels_readable :: proc(t:^testing.T) {
+    p:=new(Party)
+    defer free(p)
+    if !party_init(t,p) {return}
+    defer party_destroy(p)
+    p.worlds[1].identity.secret={0x0123456789abcdef,0x7edcba9876543210}
+    scan:=Scan{inner=p.sessions[1].host.desc.transport,secret=p.worlds[1].identity.secret}
+    p.sessions[1].host.desc.transport=scan_transport(&scan)
+    if !party_join(t,p,1) {return}
+    party_frames(p,30)
+    seat,_:=seat_of_player(p,player_id(scan.secret))
+    testing.expect(t,seat!=core.NONE,"the server takes the player")
+    testing.expectf(t,scan.datagrams>0 && scan.readable==0,"%d of %d datagrams carry the secret readable",scan.readable,scan.datagrams)
 }
 
 // A player that comes back with its secret gets its seat back, the same

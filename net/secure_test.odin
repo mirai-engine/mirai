@@ -35,8 +35,8 @@ capture_transport :: proc(c:^Capture) -> Transport {
 @(test)
 encrypted_traffic_drops_and_counts_tampered_replayed_truncated_and_late_datagrams :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,channels=SECURE_CHANNELS,security={mode=.Encrypted}})
-    client:=test_host(&w,{mode=.Client,channels=SECURE_CHANNELS,security={mode=.Encrypted}})
+    server:=test_host(&w,{mode=.Server,channels=SECURE_CHANNELS})
+    client:=test_host(&w,{mode=.Client,channels=SECURE_CHANNELS})
     capture:=Capture{inner=server.desc.transport}
     server.desc.transport=capture_transport(&capture)
     on_server,on_client:=test_connect(&w,server,client)
@@ -105,8 +105,8 @@ an_encrypted_server_refuses_bad_and_expired_tokens_with_a_reason :: proc(t:^test
     now:=time.to_unix_seconds(time.now())
     attempt :: proc(t:^testing.T,issuer_public:Key,token:Token,signer:Key,has_token:=true) -> (reason:Disconnect_Reason,client_id:u64) {
         w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-        server:=test_host(&w,{mode=.Server,security={mode=.Encrypted,token_key=issuer_public,require_token=true,addresses={0=address_memory(0)}}})
-        client:=test_host(&w,{mode=.Client,security={mode=.Encrypted}})
+        server:=test_host(&w,{mode=.Server,security={token_key=issuer_public,require_token=true,addresses={0=address_memory(0)}}})
+        client:=test_host(&w,{mode=.Client})
         credentials:=Credentials{server_key=host_public_key(server)}
         if has_token {
             blob,issued:=token_issue(token,signer)
@@ -147,7 +147,7 @@ an_encrypted_server_refuses_bad_and_expired_tokens_with_a_reason :: proc(t:^test
     testing.expect_value(t,reason,Disconnect_Reason.Denied_Token)
     // A token is sealed for the server's key: without that key the client does not even start.
     w:Test_World;test_world_init(&w,1);defer test_world_destroy(&w)
-    client:=test_host(&w,{mode=.Client,security={mode=.Encrypted}})
+    client:=test_host(&w,{mode=.Client})
     blob,_:=token_issue(good,issuer)
     testing.expect_value(t,host_connect(client,address_memory(0),{token=blob,has_token=true}),Error.Invalid)
 }
@@ -155,8 +155,8 @@ an_encrypted_server_refuses_bad_and_expired_tokens_with_a_reason :: proc(t:^test
 @(test)
 a_client_that_pins_another_server_key_does_not_connect :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,security={mode=.Encrypted}})
-    client:=test_host(&w,{mode=.Client,security={mode=.Encrypted}})
+    server:=test_host(&w,{mode=.Server})
+    client:=test_host(&w,{mode=.Client})
     other,other_public:Key
     testing.expect(t,key_generate(&other,&other_public))
     host_connect(client,address_memory(0),{server_key=other_public})
@@ -171,9 +171,12 @@ a_client_that_pins_another_server_key_does_not_connect :: proc(t:^testing.T) {
         }
         if reason!=.None {break}
     }
-    // The answer of the server opens with keys only the pinned server could have: the client gives up.
+    // Its proof opens only with the key of the server it pinned: this one answers nothing more.
     testing.expect(t,!connected)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Security)
+    testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
+    testing.expect(t,host_stats(server).handshakes_dropped>0 && host_stats(server).handshakes_refused==0)
+    on_server,on_client:=test_connect(&w,server,client,credentials={server_key=host_public_key(server)})
+    testing.expect(t,on_server!=0 && on_client!=0,"with the key of this server it connects")
 }
 
 // Opt-in: mirai test net cost_of_sealing_a_datagram --release -define:NET_BENCHMARK=true
@@ -211,6 +214,89 @@ cost_of_sealing_a_datagram :: proc(t:^testing.T) {
     exchange:=time.duration_microseconds(time.tick_since(start))/200
     testing.expect_value(t,opened,2*ROUNDS)
     fmt.printfln("NET_BENCH_SECURE,datagram_bytes=%v,seal_us=%.2f,seal_and_open_us=%.2f,checksum_write_and_check_us=%.3f,x25519_exchange_us=%.1f",PACKET_BYTES,seal,both,plain,exchange)
+}
+
+// A transport that keeps what its host sends instead of putting it on the network.
+@(private="file")
+Kept :: struct {inner:Transport,keep:bool,datagrams:[200][PACKET_BYTES]u8,sizes:[200]int,count:int}
+@(private="file")
+kept_transport :: proc(k:^Kept) -> Transport {
+    return {k,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+        k:=(^Kept)(data)
+        if !k.keep {return k.inner.send(k.inner.data,to,bytes)}
+        if k.count<len(k.datagrams) {
+            copy(k.datagrams[k.count][:],bytes)
+            k.sizes[k.count]=len(bytes)
+            k.count+=1
+        }
+        return true
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        k:=(^Kept)(data)
+        return k.inner.receive(k.inner.data,buffer)
+    }}
+}
+
+// Opt-in: mirai test net cost_of_connecting_and_of_each_datagram -define:NET_BENCHMARK=true
+// The CPU of a handshake on the in-memory network and the updates it takes, and the CPU of the host
+// per datagram of 1000 bytes of message: the client's update that sends it and the server's reading.
+@(test)
+cost_of_connecting_and_of_each_datagram :: proc(t:^testing.T) {
+    when !#config(NET_BENCHMARK,false) {return}
+    CONNECTS :: 100
+    connect_us:f64
+    rounds:=0
+    for _ in 0..<CONNECTS {
+        w:Test_World;test_world_init(&w,2)
+        server:=test_host(&w,{mode=.Server,channels=SECURE_CHANNELS})
+        client:=test_host(&w,{mode=.Client,channels=SECURE_CHANNELS})
+        host_connect(client,address_memory(0))
+        start:=time.tick_now()
+        for round in 1..=100 {
+            w.now+=0.001
+            sim_network_advance(&w.sim,w.now)
+            host_update(client,w.now)
+            host_update(server,w.now)
+            connected:=false
+            for command in host_poll(client) {connected||=command.kind==.Connected}
+            if connected {rounds+=round;break}
+        }
+        connect_us+=time.duration_microseconds(time.tick_since(start))
+        test_world_destroy(&w)
+    }
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,channels=SECURE_CHANNELS})
+    client:=test_host(&w,{mode=.Client,channels=SECURE_CHANNELS})
+    kept:=Kept{inner=client.desc.transport}
+    client.desc.transport=kept_transport(&kept)
+    _,on_client:=test_connect(&w,server,client)
+    testing.expect(t,on_client!=0)
+    payload:[1000]u8
+    send_us,receive_us:f64
+    datagrams:=0
+    for _ in 0..<20 {
+        kept.keep,kept.count=true,0
+        for _ in 0..<len(kept.datagrams) {
+            message_send(client,on_client,1,payload[:])
+            w.now+=TEST_STEP
+            start:=time.tick_now()
+            host_update(client,w.now)
+            send_us+=time.duration_microseconds(time.tick_since(start))
+        }
+        buffer:[PACKET_BYTES]u8
+        start:=time.tick_now()
+        for i in 0..<kept.count {
+            copy(buffer[:],kept.datagrams[i][:kept.sizes[i]])
+            packet_receive(server,buffer[:kept.sizes[i]],address_memory(1))
+        }
+        receive_us+=time.duration_microseconds(time.tick_since(start))
+        datagrams+=kept.count
+        kept.keep=false
+        test_step(&w,2)
+        host_poll(server);host_poll(client)
+    }
+    testing.expect(t,datagrams>0 && host_stats(server).connections==1)
+    fmt.printfln("NET_BENCH_LINK,connect_us=%.1f,connect_updates=%.1f,send_us_per_datagram=%.2f,receive_us_per_datagram=%.2f,datagrams=%d",
+        connect_us/CONNECTS,f64(rounds)/CONNECTS,send_us/f64(datagrams),receive_us/f64(datagrams),datagrams)
 }
 
 @(test)

@@ -44,10 +44,13 @@ Each technique states its status; what is listed as prepared is not implemented.
   software BVH (`rays[k].bvh_node_count` 0). When switching to software,
   `renderer_apply_settings` builds the one of each mesh that lacks it (one pose, from its bind
   vertices); when going back to hardware, the missing BLAS. Poses refit only the structure in use.
-  - The software TLAS is kept on the CPU with any tracer (it costs per instance) and is uploaded
-    to the GPU only when tracing in software.
-  - Hardware RT requires all the `_hw` variants of the passes (`hardware_pipelines_ready`): with
-    it no pass traverses the software BVH.
+  - The software TLAS (the tree of the instances) is built and kept only when tracing in software
+    (`Scene_State.tlas_off` with hardware RT): it stays stale until a switch to software rebuilds
+    it, and only then does it have GPU buffers.
+  - A device makes only the pipelines of the tracer in use (`tracer_settle`): the other one's are
+    made when settings switch to it, or at start when hardware RT falls back. Hardware RT requires
+    all the `_hw` variants of the passes (`tracer_missing`): with it no pass traverses the
+    software BVH.
 - **Hardware ray tracing** (implemented). Inline ray queries in the `_hw` variants of direct
   light, probes, contact occlusion and reflections; SPIRV-Cross translates them to Metal. The
   self-test and the fallback to software protect it ([RHI](rhi.md#hardware-ray-tracing)).
@@ -288,8 +291,7 @@ absorption and a tent-shaped ozone layer. The world is flat and horizontal at th
 - **Aerial perspective** per view (`Targets.aerial`, `air_aerial.comp`): columns over the view
   without jitter in slices along it up to `AIR_AERIAL_DISTANCE`, each texel the air light to the
   end of its slice and the mean transmittance. It is recomputed when the camera, the sun or the
-  air change. Composite applies it to the image that is shown (`out_display`) and not to the scene
-  light that the next frame traces; the fog of the `fog` plugin is composed on top in `Lit`: they
-  are two media and they add up, without counting anything twice. Glass and what blends afterwards
-  do not take it.
+  air change. Composite applies it to the image that is shown (`out_display`); the fog of the
+  `fog` plugin is composed on top in `Lit`: they are two media and they add up, without counting
+  anything twice. Glass and what blends afterwards do not take it.
 - Nothing is sampled: each table integrates with fixed steps, and a still view recomputes none.
