@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import stbi "vendor:stb/image"
+import "mirai:std/base"
 
 @(private="file")
 gradient :: proc(width,height:int,scale:f32) -> []f32 {
@@ -95,9 +96,9 @@ a_png16_holds_sixteen_bits_a_channel :: proc(t:^testing.T) {
 
 @(test)
 a_wav_written_in_parts_says_how_long_it_is :: proc(t:^testing.T) {
-    folder,_:=os.temp_directory(context.temp_allocator)
+    folder:=base.test_folder(t,"movie")
+    if folder=="" {return}
     path,_:=filepath.join({folder,"mirai_movie_test.wav"},context.temp_allocator)
-    defer os.remove(path)
     w:Wav_Writer
     testing.expect_value(t,wav_open(&w,path,48000,2),Error.None)
     part:=[?]f32{0.5,-0.5,0.25,-0.25}

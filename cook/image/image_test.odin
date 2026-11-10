@@ -4,16 +4,12 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 solid :: proc(width,height:int,r,g,b:u8) -> Image {
     pixels:=make([]u8,width*height*4,context.temp_allocator)
     for i in 0..<width*height {pixels[i*4],pixels[i*4+1],pixels[i*4+2],pixels[i*4+3]=r,g,b,255}
     return {pixels=pixels,width=width,height=height,allocator=context.temp_allocator}
-}
-
-temp_path :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    return fmt.tprintf("%s/mirai-image-%d-%s",directory,os.get_pid(),name)
 }
 
 @(test)
@@ -119,9 +115,10 @@ stats_describe_a_known_image :: proc(t:^testing.T) {
 
 @(test)
 a_montage_puts_images_side_by_side_at_one_height :: proc(t:^testing.T) {
-    first,second:=temp_path("a.png"),temp_path("b.png")
-    out:=temp_path("montage.png")
-    defer {os.remove(first);os.remove(second);os.remove(out)}
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
+    first,second:=fmt.tprintf("%s/a.png",folder),fmt.tprintf("%s/b.png",folder)
+    out:=fmt.tprintf("%s/montage.png",folder)
     testing.expect_value(t,image_write(first,solid(4,4,255,0,0)),Error.None)
     testing.expect_value(t,image_write(second,solid(8,8,0,0,255)),Error.None)
     error,failed:=image_montage({first,second},out,context.temp_allocator)
@@ -134,7 +131,7 @@ a_montage_puts_images_side_by_side_at_one_height :: proc(t:^testing.T) {
     testing.expect_value(t,montage.pixels[(0*8+4)*4+2],u8(255))
     testing.expect_value(t,montage.pixels[(3*8+7)*4+2],u8(255))
 
-    missing:=temp_path("missing.png")
+    missing:=fmt.tprintf("%s/missing.png",folder)
     error,failed=image_montage({first,missing},out,context.temp_allocator)
     testing.expect_value(t,error,Error.Unreadable)
     testing.expect_value(t,failed,missing)
@@ -273,8 +270,9 @@ mottle_leaves_out_texture_a_moving_image_blurs :: proc(t:^testing.T) {
 
 @(test)
 a_file_that_is_not_an_image_is_refused :: proc(t:^testing.T) {
-    path:=temp_path("text.png")
-    defer os.remove(path)
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/text.png",folder)
     _=os.write_entire_file(path,"not a png")
     _,error:=image_load(path,context.temp_allocator)
     testing.expect_value(t,error,Error.Undecodable)

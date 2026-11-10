@@ -7,6 +7,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 @(private="file")
 FILL :: `#include "native.slang"
@@ -69,7 +70,8 @@ mini_make :: proc(t:^testing.T,mini:^Mini) -> bool {
         path,found=tool_find(engine,tool,context.temp_allocator)
         if !found {log.warnf("%v is not installed: the generation is not tested",tool);return false}
     }
-    mini.root=fixture_make(t)
+    mini.root=base.test_folder(t,"shaders")
+    if mini.root=="" {return false}
     for folder in ([]string{"shaders/include","shaders/materials"}) {
         for path in listing_read(path_join(engine,folder,allocator=context.temp_allocator),true,context.temp_allocator).files {
             data,_:=os.read_entire_file(path,context.temp_allocator)
@@ -119,7 +121,6 @@ files_in :: proc(folder:string) -> []os.File_Info {
 generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     first:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,first.error,"")
     if first.error!="" {return}
@@ -184,7 +185,6 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
 generation_that_fails_keeps_the_previous_one_whole :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     first:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,first.error,"")
     if first.error!="" {return}
@@ -213,7 +213,6 @@ generation_that_fails_keeps_the_previous_one_whole :: proc(t:^testing.T) {
 generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     engine:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,engine.error,"")
     if engine.error!="" {return}
@@ -263,8 +262,8 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
 
 @(test)
 generation_reports_a_tool_that_is_missing :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     options:=Options{root=root}
     for &path in options.tools {path=path_join(root,"no-such-tool",allocator=context.temp_allocator)}
     result:=generate(options,context.temp_allocator)
@@ -321,7 +320,6 @@ GLOW_PROGRAM :: "//! mirai postprocess Glow\n//! parameter amount {\"default\":0
 program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its_system :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
     fixture_write(t,mini.root,"shaders/post.frag.slang",POST)
     engine_options:=mini.options
@@ -443,7 +441,6 @@ SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex animated reach 0.5\nnamespac
 stage_per_vertex_program_is_compiled_only_for_the_programs_that_move_vertices :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/move.comp.slang",MOVE_EACH)
     engine:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,engine.error,"")
@@ -478,7 +475,6 @@ stage_per_vertex_program_is_compiled_only_for_the_programs_that_move_vertices ::
 stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_reaches_it :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
     engine:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,engine.error,"")
@@ -515,7 +511,6 @@ stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_rea
 generation_is_current_until_a_source_a_folder_the_request_or_an_output_changes :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     testing.expect(t,!current(mini.options),"nothing was generated yet")
     first:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,first.error,"")
@@ -604,12 +599,11 @@ generation_is_current_until_a_source_a_folder_the_request_or_an_output_changes :
 a_worktree_reuses_what_another_checkout_compiled :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     first:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,first.error,"")
     if first.error!="" {return}
-    worktree:=fixture_make(t)
-    defer fixture_remove(worktree)
+    worktree:=base.test_folder(t,"shaders")
+    if worktree=="" {return}
     for path in listing_read(path_join(mini.root,"shaders",allocator=context.temp_allocator),true,context.temp_allocator).files {
         relative,_:=path_relative(path,mini.root)
         if strings.has_prefix(relative,"shaders/build/") {continue}
@@ -685,7 +679,6 @@ PROBE_HOOK :: "//! mirai hook probes gate_probes\nfloat gate_probes(float3 posit
 stage_is_compiled_against_the_extensions_its_sources_name :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/frame.comp.slang",FRAME)
     fixture_write(t,mini.root,"shaders/gated.comp.slang",GATED)
     engine_options:=mini.options
@@ -748,7 +741,6 @@ void main(uint3 id : SV_DispatchThreadID) {
 frame_fields_and_nested_views_reach_only_the_stages_that_read_them :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/frame.comp.slang",FRAME)
     engine_options:=mini.options
     engine_options.odin=false
@@ -776,7 +768,6 @@ frame_fields_and_nested_views_reach_only_the_stages_that_read_them :: proc(t:^te
 first_stages_go_out_alone_before_the_others :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
     fixture_write(t,mini.root,"shaders/tone.frag.slang",SHADE_EACH)
     engine_options:=mini.options
@@ -831,7 +822,6 @@ first_stages_go_out_alone_before_the_others :: proc(t:^testing.T) {
 stages_in_use_go_out_before_the_idle_ones :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
     fixture_write(t,mini.root,"shaders/tone.frag.slang",SHADE_EACH)
     engine_options:=mini.options
@@ -886,7 +876,6 @@ stages_in_use_go_out_before_the_idle_ones :: proc(t:^testing.T) {
 cancelled_generation_publishes_nothing :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     published:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,published.error,"")
     if published.error!="" {return}
@@ -909,7 +898,6 @@ cancelled_generation_publishes_nothing :: proc(t:^testing.T) {
 overlay_compiles_sources_from_memory_and_saving_them_leaves_the_generation_current :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    defer fixture_remove(mini.root)
     fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
     engine_options:=mini.options
     engine_options.odin=false

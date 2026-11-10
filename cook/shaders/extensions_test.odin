@@ -5,13 +5,14 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 // The probe volume reads the probe hook before the lighting the other hooks
 // use: its source has no other hook, and it comes out in an include of its own.
 @(test)
 the_probe_hook_has_a_source_and_an_include_of_its_own :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     folder:=path_join(root,"gates/shaders",allocator=context.temp_allocator)
     sources:=[]Source{{name="gates",folder=folder}}
     output:=path_join(root,"out",allocator=context.temp_allocator)
@@ -65,8 +66,8 @@ extensions_slang_of_a_stage_has_only_the_features_it_names :: proc(t:^testing.T)
 // them, and the catalog says so; another need is refused with the ones there are.
 @(test)
 a_source_asks_for_the_instance_ids :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     folder:=path_join(root,"blend/shaders",allocator=context.temp_allocator)
     sources:=[]Source{{name="blend",folder=folder}}
     output:=path_join(root,"out",allocator=context.temp_allocator)
@@ -90,8 +91,8 @@ a_source_asks_for_the_instance_ids :: proc(t:^testing.T) {
 // and comes out in its include, which the G-buffer reads.
 @(test)
 the_vertex_hook_has_a_source_and_an_include_of_its_own :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     folder:=path_join(root,"wind/shaders",allocator=context.temp_allocator)
     sources:=[]Source{{name="wind",folder=folder}}
     output:=path_join(root,"out",allocator=context.temp_allocator)

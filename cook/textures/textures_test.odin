@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import stbi "vendor:stb/image"
 import "mirai:asset"
@@ -205,9 +204,9 @@ a_built_texture_is_saved_and_read_back_by_asset :: proc(t:^testing.T) {
     defer built_destroy(&built)
     testing.expect_value(t,error,Error.None)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-textures-%d.tex",directory,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"textures")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/texture.tex",folder)
     desc:=built_desc(&built,base.Asset_Id{7,1},nil)
     testing.expect_value(t,asset.texture_save(path,&types,desc),asset.Error.None)
     a:asset.Asset
