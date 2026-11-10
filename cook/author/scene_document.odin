@@ -352,6 +352,7 @@ Scene_Entity :: struct {
     preset:string,     // "": none given
     recipe:int,        // its place among the recipes; -1 without a preset
     components,off,prefab:string, // as given; "": left out
+    given:Scene_Prefab, // what prefab says
     e:base.Entity_Id,  // the entity it is matched to or made as
     made:bool,
     placed:bool,       // it names its prefab by path or id, placed now or before: what it leaves out is what its prefab gives
@@ -555,15 +556,9 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
     }
     for &d in decls {
         if d.preset!="" {scene_recipe(&a,&d) or_return}
+        if d.prefab!="" {d.given=scene_prefab_read(reading,d.prefab,d.path) or_return}
         if d.e==0 {continue}
-        if d.prefab!="" {
-            if !scene_prefab_check(f,reading,&d) {return false}
-            // The path or the id of its prefab alone, as the document that placed it: an instance as its prefab gives it.
-            if text:=strings.trim_space(d.prefab);len(text)>0 && text[0]!='{' {
-                d.placed=true
-                a.placed[asset.scene_entity_instance(scene,d.e)]=true
-            }
-        }
+        if d.prefab!="" {scene_prefab_linked(&a,&d) or_return}
         parent:=decls[d.parent].e if d.parent>=0 else 0
         if scene_member(f,d.e) && asset.scene_parents(scene)[scene.index[d.e]]!=parent {
             reading_failf(reading,"%s: it is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under its parent, or leave it out to turn it off",d.path)
@@ -577,7 +572,11 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
             scene_place(&a,&d,parent) or_return
             // What it declares under the instance is of its members, by their names.
             scene_children(f)
-            scene_match(&a,d.e,i+1,d.end,true)
+            for c in i..<d.end {
+                if decls[c].e==0 {continue}
+                if c>i && decls[c].prefab!="" {scene_prefab_linked(&a,&decls[c]) or_return}
+                scene_match(&a,decls[c].e,c+1,decls[c].end,true)
+            }
         } else if d.e==0 {
             d.e=d.id if d.id!=0 else asset.scene_new_id(scene)
             if _,error:=asset.scene_entity_add(scene,d.e,parent,d.name if d.name!="" else scene_recipe_name(&d));error!=.None {reading_broke(reading,"the file holds no more entities");return false}
@@ -686,35 +685,11 @@ scene_recipe :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
 @(private="file")
 scene_place :: proc(a:^Scene_Apply,d:^Scene_Entity,parent:base.Entity_Id) -> bool {
     f,reading:=a.f,a.reading
-    p:=f.p
-    text:=strings.trim_space(d.prefab)
-    named:=text
-    if len(text)>0 && text[0]=='{' {
-        keys,values:=tree_object(reading,text,fmt.tprintf("%s.prefab",d.path)) or_return
-        named=""
-        for key,i in keys {
-            switch key {
-            case "asset": named=values[i]
-            case "root","instance","source":
-            case:
-                reading_failf(reading,"%s.prefab has no '%s'; it is the path or the id of a prefab, or {asset}",d.path,key)
-                return false
-            }
-        }
-    }
-    word,is_text:=doc_string(reading,named)
-    if !is_text || word=="" {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",d.path);return false}
-    id,unknown:=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab")
-    if unknown!="" {reading_failf(reading,"%s.prefab: %s",d.path,unknown);return false}
-    record,found:=asset.registry_find(&p.registry,id)
-    if !found || record.kind!=asset.KIND_PREFAB {reading_failf(reading,"%s.prefab: %q is no prefab of the project",d.path,word);return false}
     prefab:asset.Scene
-    file:=asset.registry_file_path(&p.registry,record.path,context.temp_allocator)
-    if asset.scene_load(&prefab,&p.types,file,context.temp_allocator)!=.None {reading_failf(reading,"%s.prefab: %s does not load; mirai asset verify says what its file has",d.path,record.path);return false}
-    if id==f.scene.doc.id {reading_failf(reading,"%s.prefab: a prefab places no instance of itself",d.path);return false}
+    scene_prefab_open(reading,{&f.p.registry,&f.p.types},d.given,d.path,f.scene.doc.id,&prefab) or_return
     before:=asset.scene_entity_count(&f.scene)
-    instance,root,error:=asset.scene_instantiate(&f.scene,&prefab,id,parent)
-    if error!=.None {reading_failf(reading,"%s.prefab: %s could not be placed (%v): a prefab has one entity at its top",d.path,record.path,error);return false}
+    instance,root,error:=asset.scene_instantiate(&f.scene,&prefab,d.given.asset,parent)
+    if error!=.None {reading_brokef(reading,"%s.prefab: %s could not be placed (%v)",d.path,d.given.named,error);return false}
     d.e,d.placed,d.made=root,true,true
     a.placed[instance]=true
     a.taken[root]=true
@@ -722,39 +697,91 @@ scene_place :: proc(a:^Scene_Apply,d:^Scene_Entity,parent:base.Entity_Id) -> boo
     return true
 }
 
-// The prefab a matched entity gives is what the file says of it.
+// The prefab a matched entity gives is what the file says of it; by its path
+// or id alone, as the document that placed it, the instance is declared as
+// its prefab gives it.
 @(private="file")
-scene_prefab_check :: proc(f:^Scene_File,reading:^Reading,d:^Scene_Entity) -> bool {
-    text:=strings.trim_space(d.prefab)
-    given:base.Asset_Id
-    root,has_root:=false,false
-    asset_text:=text
-    if len(text)>0 && text[0]=='{' {
-        asset_text=""
-        keys,values:=tree_object(reading,text,fmt.tprintf("%s.prefab",d.path)) or_return
+scene_prefab_linked :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
+    prefab,root,linked:=scene_link(a.f,d.e)
+    scene_prefab_same(a.reading,d.given,d.path,prefab,root,linked) or_return
+    if d.given.alone {
+        d.placed=true
+        a.placed[asset.scene_entity_instance(&a.f.scene,d.e)]=true
+    }
+    return true
+}
+
+// What an entity of a document says of its prefab: the path or the id of one
+// alone, or {asset, root} as the document of a file gives it.
+Scene_Prefab :: struct {
+    asset:base.Asset_Id, // zero: none given
+    named:string,        // as the document names it, for errors
+    root,has_root:bool,
+    alone:bool,          // by its path or id alone: what the entity leaves out is what its prefab gives
+}
+
+scene_prefab_read :: proc(reading:^Reading,text,path:string) -> (given:Scene_Prefab,ok:bool) {
+    text:=strings.trim_space(text)
+    named:=text
+    given.alone=len(text)==0 || text[0]!='{'
+    if !given.alone {
+        named=""
+        keys,values:=tree_object(reading,text,fmt.tprintf("%s.prefab",path)) or_return
         for key,i in keys {
             switch key {
-            case "asset": asset_text=values[i]
+            case "asset": named=values[i]
             case "root":
-                flag,ok:=doc_bool(values[i])
-                if !ok {reading_failf(reading,"%s.prefab.root must be true or false",d.path);return false}
-                root,has_root=flag,true
+                if given.root,given.has_root=doc_bool(values[i]);!given.has_root {reading_failf(reading,"%s.prefab.root must be true or false",path);return}
             case "instance","source":
             case:
-                reading_failf(reading,"%s.prefab has no '%s'; it is what the document of the file gives: asset and root",d.path,key)
-                return false
+                reading_failf(reading,"%s.prefab has no '%s'; it is the path or the id of a prefab, or {asset, root} as the document of a file gives it",path,key)
+                return
             }
         }
+        if named=="" {return given,true}
     }
-    if asset_text!="" {
-        word,is_text:=doc_string(reading,asset_text)
-        problem:="it must be the path or the id of a prefab"
-        if is_text {given,problem=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab")}
-        if problem!="" {reading_failf(reading,"%s.prefab.asset: %s",d.path,problem);return false}
+    word,is_text:=doc_string(reading,named)
+    if !is_text || word=="" {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return}
+    problem:string
+    if given.asset,problem=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab");problem!="" {reading_failf(reading,"%s.prefab: %s",path,problem);return}
+    given.named=word
+    return given,true
+}
+
+// What an entity that is there gives of its prefab is what links it: prefab
+// and root are those of the instance it is a member of, linked false for none.
+scene_prefab_same :: proc(reading:^Reading,given:Scene_Prefab,path:string,prefab:base.Asset_Id,root,linked:bool) -> bool {
+    if linked && (given.asset=={} || given.asset==prefab) && (!given.has_root || given.root==root) {return true}
+    reading_failf(reading,"%s.prefab: it is not what links the entity to a prefab; a document changes no link of an entity that is there: leave prefab out, or declare a new entity with it to place an instance",path)
+    return false
+}
+
+// Reads the prefab a new entity names, to be placed in the file of id into:
+// one of the project that loads, has one entity at its top and does not hold
+// that file. prefab lives in the temporary allocator.
+scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:string,into:base.Asset_Id,prefab:^asset.Scene) -> bool {
+    if given.asset=={} {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return false}
+    if a.registry==nil {reading_brokef(reading,"%s.prefab: the project has no assets folder to read a prefab from",path);return false}
+    record,found:=asset.registry_find(a.registry,given.asset)
+    if !found || record.kind!=asset.KIND_PREFAB {reading_failf(reading,"%s.prefab: %q is no prefab of the project; give the path or the id of a .prefab",path,given.named);return false}
+    files:asset.Registry_Prefabs
+    asset.registry_prefabs_init(&files,a.registry,context.temp_allocator)
+    defer asset.registry_prefabs_destroy(&files)
+    opened:=asset.registry_prefab_files(&files)
+    file,opening:=opened.open(opened.data,given.asset)
+    if opening!=.None {reading_brokef(reading,"%s.prefab: %s could not be read: %v",path,record.path,opening);return false}
+    if file==nil || asset.scene_from_asset(prefab,a.types,file,context.temp_allocator)!=.None {
+        reading_failf(reading,"%s.prefab: %s does not load; mirai asset verify says what its file has",path,record.path)
+        return false
     }
-    prefab,is_root,linked:=scene_link(f,d.e)
-    if !linked || given!={} && given!=prefab || has_root && root!=is_root {
-        reading_failf(reading,"%s.prefab: it is not what links the entity to a prefab; a document changes no link of an entity that is there: leave prefab out, or declare a new entity with it to place an instance",d.path)
+    if _,rooted:=asset.prefab_root(prefab);!rooted {
+        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it",path,record.path)
+        return false
+    }
+    holds,asking:=asset.prefab_holds(opened,a.types,given.asset,into)
+    if asking!=.None {reading_brokef(reading,"%s.prefab: the prefabs %s places could not be read: %v",path,record.path,asking);return false}
+    if holds {
+        reading_failf(reading,"%s.prefab: %s holds the file it would be placed in, itself or through the prefabs it places; place another prefab, or take that instance out of it",path,record.path)
         return false
     }
     return true

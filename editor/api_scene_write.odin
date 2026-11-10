@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
@@ -23,8 +24,13 @@ import "mirai:std/serial"
 // name among their siblings, else by place, keep what ties them to the scene
 // (their Id, the overrides of an instance); the others are made, and those it
 // does not declare go. A member of an instance of a prefab keeps the place its
-// prefab gives it: left out, it is turned off. Entities without an Id and what
-// a section holds are not part of the document.
+// prefab gives it: left out, it is turned off. A new entity with prefab is
+// placed as a linked instance of that prefab, as prefab.instantiate places
+// one, and what it and the entities under it leave out stays as the prefab
+// gives it; so does an instance that is there and names its prefab the same
+// way, by path or id alone. What prefab says is read and checked by
+// cook/author, as the write with no editor does. Entities without an Id and
+// what a section holds are not part of the document.
 
 Api_Write_Result :: struct {
     id:base.Entity_Id `mirai:"label=The root: the one given or the one the document made"`,
@@ -42,13 +48,16 @@ Api_Write_Entity :: struct {
     id:base.Entity_Id, // 0: none given
     name:string,       // "": none given
     position,rotation_deg,scale:[3]f32,
-    has_rotation,has_scale:bool,
+    has_position,has_rotation,has_scale:bool,
     hidden,disabled:bool,
+    has_visible,has_enabled:bool,
     preset:string,     // "": none given
     card:int,          // its place in cards(); -1 without a preset
     components,off,prefab:string, // as given; "": left out
+    given:author.Scene_Prefab,    // what prefab says
     e:core.Entity,     // the entity it is matched to or made as
     made:bool,
+    sparse:bool,       // of an instance the document names by its prefab alone: what it leaves out is what its prefab gives
 }
 
 // A component a card gives, with its value as the API shows it.
@@ -63,7 +72,7 @@ API_WRITE_KEYS :: "id, name, preset, position, rotation_deg, scale, visible, ena
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params_schema=API_WRITE_SCHEMA,summary="Makes an entity and what hangs from it say what a document of nested entities declares, as scene.inspect with root gives it: matched by id, name or place, the others made and what it leaves out taken away, in one step.",result=Api_Write_Result,run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params_schema=API_WRITE_SCHEMA,summary="Makes an entity and what hangs from it say what a document of nested entities declares, as scene.inspect with root gives it: matched by id, name or place, the others made (one with prefab as a linked instance of it) and what it leaves out taken away, in one step.",result=Api_Write_Result,run=api_scene_write})
 }
 
 // Prefixes the error of the call with where it happened in the document; false.
@@ -99,7 +108,7 @@ api_write_entity_read :: proc(a:^Rpc_Args,index:int,out:^[dynamic]Api_Write_Enti
         ok:=true
         switch key {
         case "id":           d.id,ok=rpc_id(a,key)
-        case "position":     ok=rpc_vector(a,key,d.position[:])
+        case "position":     ok=rpc_vector(a,key,d.position[:]);d.has_position=ok
         case "rotation_deg": ok=rpc_vector(a,key,d.rotation_deg[:]);d.has_rotation=ok
         case "scale":        ok=rpc_vector(a,key,d.scale[:]);d.has_scale=ok
         case "components":   d.components,ok=rpc_raw(a)
@@ -119,7 +128,7 @@ api_write_entity_read :: proc(a:^Rpc_Args,index:int,out:^[dynamic]Api_Write_Enti
         case "visible","enabled":
             value:bool
             if value,ok=rpc_bool(a,key);ok {
-                if key=="visible" {d.hidden=!value} else {d.disabled=!value}
+                if key=="visible" {d.hidden,d.has_visible=!value,true} else {d.disabled,d.has_enabled=!value,true}
             }
         case "children":
             api_write_read(a,index,fmt.tprintf("%s.children",path),out) or_return
@@ -204,6 +213,8 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
     if !api_edit_begin(s,call,"Write entities") {return}
     result,applied:=api_write_apply(s,call,edited_world(s),root,decls[:])
     if api_edit_end(s,call,applied) {api.call_result(call,Api_Write_Result)^=result}
+    // The records of an instance the write placed follow its step, or go back with it.
+    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
 }
 
 // Makes the part of root say what the document declares, inside the open
@@ -245,33 +256,19 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         d.e=e
         taken[e]=true
     }
-    // Without an id, by name among the entities of the parent, then by place.
     for &p,i in decls {
-        if p.e==core.NONE {continue}
-        children:=entity_children(w,p.e,call.allocator)
-        for by_name in ([]bool{true,false}) {
-            for c:=i+1;c<p.end;c=decls[c].end {
-                d:=&decls[c]
-                if d.e!=core.NONE || d.id!=0 || (d.name!="")!=by_name {continue}
-                for x in children {
-                    if used,inside:=taken[x];!inside || used {continue}
-                    if by_name && entity_name(w,x)!=d.name {continue}
-                    d.e=x
-                    taken[x]=true
-                    break
-                }
-            }
-        }
+        if p.e!=core.NONE {api_write_match(w,decls,i,&taken,call.allocator)}
     }
+    reading:=author.Reading{allocator=call.allocator,raw=call.raw,assets={s,asset_text_resolve}}
+    // The instances the document names by their prefab alone: what it leaves out of them stays.
+    sparse:=make(map[u32]bool,call.allocator)
     for &d in decls {
-        if d.e==core.NONE {
-            if d.prefab!="" {
-                api.call_failf(call,api.INVALID_PARAMS,"%s.prefab: scene.write places no prefab; prefab.instantiate places an instance, and a write with it as root or by its id changes it",d.path)
-                return
-            }
-            continue
+        if d.prefab!="" {
+            read:bool
+            if d.given,read=author.scene_prefab_read(&reading,d.prefab,d.path);!read {api_write_unread(call,&reading);return}
         }
-        if d.prefab!="" {api_write_prefab_check(s,call,w,links,&d) or_return}
+        if d.e==core.NONE {continue}
+        if d.prefab!="" {api_write_linked(call,w,&reading,links,&sparse,&d) or_return}
         if d.parent>=0 && member(w,links,d.e) && entity_parent(w,d.e)!=decls[d.parent].e {
             api.call_failf(call,api.INVALID_PARAMS,"%s: %s is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under %s, or leave it out to turn it off",d.path,entity_label(w,d.e),entity_label(w,entity_parent(w,d.e)))
             return
@@ -289,14 +286,23 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         if d.card not_in parts {parts[d.card]=api_card_parts(s,w,d.card,call.allocator)}
     }
     // What the document adds, and what it moves.
-    for &d in decls {
+    for &d,i in decls {
         parent:=d.parent>=0?decls[d.parent].e:core.NONE
         if d.e!=core.NONE && (d.parent<0 || entity_parent(w,d.e)==parent) {continue}
         if _,reason:=section_target_texts(s,w,parent!=core.NONE?parent:section_editing(s));reason!="" {
             api.call_failf(call,api.SERVER_ERROR,"%s: %s",d.path,reason)
             return
         }
-        if d.e==core.NONE {
+        if d.e==core.NONE && d.prefab!="" {
+            result.made+=api_write_place(s,call,w,&reading,decls,i,parent,part,&taken,&sparse) or_return
+            links=prefab_links(s,w,call.allocator)
+            // What it declares under the instance is of its members, by their names.
+            for c in i..<d.end {
+                if decls[c].e==core.NONE {continue}
+                if c>i && decls[c].prefab!="" {api_write_linked(call,w,&reading,links,&sparse,&decls[c]) or_return}
+                api_write_match(w,decls,c,&taken,call.allocator)
+            }
+        } else if d.e==core.NONE {
             local:=core.Transform{d.position,mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG),d.scale}
             d.e=entity_create(s,{card=d.card,parent=parent,name=d.name,named=d.name!="",transform=local})
             if d.e==core.NONE {api.call_failf(call,api.SERVER_ERROR,"%s: the entity cannot be made there: its parent has no size in some axis",d.path);return}
@@ -309,7 +315,10 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         core.world_settle(w)
     }
     result.id=api_entity_id(w,decls[0].e)
-    for &d in decls {api_write_values(s,call,w,&d,parts[d.card] if d.card>=0 else nil) or_return}
+    for &d in decls {
+        d.sparse||=sparse[links[api_entity_id(w,d.e)].instance]
+        api_write_values(s,call,w,&d,parts[d.card] if d.card>=0 else nil) or_return
+    }
     // Siblings in the order of the document; a member keeps the place of its prefab.
     for &p,i in decls {
         last:=min(i32)
@@ -326,18 +335,19 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         }
     }
     // What the part held and the document leaves out: it goes with what hangs
-    // from it, and a member of an instance is turned off.
+    // from it, and a member of an instance is turned off, unless the document
+    // names the instance by its prefab alone: what it leaves out of it stays.
     gone:=make([dynamic]core.Entity,call.allocator)
     for e in part {
         if taken[e] {continue}
         parent:=entity_parent(w,e)
         parent_taken,parent_inside:=taken[parent]
         if member(w,links,e) {
-            if !parent_taken || entity_has(w,e,core.Disabled) {continue}
+            if sparse[links[api_entity_id(w,e)].instance] || !parent_taken || entity_has(w,e,core.Disabled) {continue}
             api_write_editable(s,call,w,e,"root") or_return
             entity_enabled_set(s,e,false)
             result.disabled+=1
-        } else if parent_taken || !parent_inside || member(w,links,parent) {
+        } else if parent_taken || !parent_inside || member(w,links,parent) && !sparse[links[api_entity_id(w,parent)].instance] {
             api_write_editable(s,call,w,e,"root") or_return
             append(&gone,e)
         }
@@ -351,39 +361,84 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
     return result,true
 }
 
-// The prefab a matched entity gives is what scene.inspect says of it: the
-// links of an instance change with the prefab methods.
+// Fails the call with what a reading of the document failed with; false.
 @(private)
-api_write_prefab_check :: proc(s:^Session,call:^api.Call,w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link,d:^Api_Write_Entity) -> bool {
-    a:Rpc_Args
-    rpc_init(&a,call,d.prefab)
-    asset_id:base.Asset_Id
-    root,has_root:=false,false
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"prefab") {return api_write_failed(call,d.path)}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "asset":
-            text:[API_PATH_BYTES]u8
-            given,read:=rpc_text(&a,key,text[:])
-            if !read {break}
-            problem:string
-            if asset_id,problem=asset_resolve(s,given,".prefab");problem!="" {rpc_fail(&a,"prefab.asset: %s",problem)}
-        case "root":
-            root,has_root=rpc_bool(&a,key)
-        case "instance","source":
-            rpc_raw(&a)
-        case:
-            rpc_fail(&a,"prefab has no '%s'; it is what scene.inspect gives: asset and root",key)
+api_write_unread :: proc(call:^api.Call,reading:^author.Reading) -> bool {
+    api.call_fail(call,api.SERVER_ERROR if reading.internal else api.INVALID_PARAMS,reading.problem)
+    return false
+}
+
+// The entities the document declares under the entity at p that no id
+// matched take those that hang from it: by name, then by place.
+@(private)
+api_write_match :: proc(w:core.World_Ref,decls:[]Api_Write_Entity,p:int,taken:^map[core.Entity]bool,allocator:runtime.Allocator) {
+    children:=entity_children(w,decls[p].e,allocator)
+    for by_name in ([]bool{true,false}) {
+        for c:=p+1;c<decls[p].end;c=decls[c].end {
+            d:=&decls[c]
+            if d.e!=core.NONE || d.id!=0 || (d.name!="")!=by_name {continue}
+            for x in children {
+                if used,inside:=taken[x];!inside || used {continue}
+                if by_name && entity_name(w,x)!=d.name {continue}
+                d.e=x
+                taken[x]=true
+                break
+            }
         }
     }
-    if a.failed {return api_write_failed(call,d.path)}
+}
+
+// The prefab a matched entity gives is what links it; by its path or id
+// alone, the instance is declared as its prefab gives it.
+@(private)
+api_write_linked :: proc(call:^api.Call,w:core.World_Ref,reading:^author.Reading,links:map[base.Entity_Id]Prefab_Link,sparse:^map[u32]bool,d:^Api_Write_Entity) -> bool {
     link,linked:=links[api_entity_id(w,d.e)]
-    if !linked || asset_id!={} && asset_id!=link.asset || has_root && root!=link.root {
-        api.call_failf(call,api.INVALID_PARAMS,"%s.prefab: it is not what links the entity to a prefab; scene.write changes no link: prefab.instantiate places an instance and prefab.unlink takes one apart",d.path)
-        return false
+    if !author.scene_prefab_same(reading,d.given,d.path,link.asset,link.root,linked) {return api_write_unread(call,reading)}
+    if d.given.alone {
+        d.sparse=true
+        sparse[link.instance]=true
     }
     return true
+}
+
+// Places the prefab the new entity at index names under parent, inside the
+// open edit, with prefab_instantiate. That replaces the World, so the
+// entities the write holds are found again by their ids. The members of the
+// instance are left to be matched; made counts them.
+@(private)
+api_write_place :: proc(s:^Session,call:^api.Call,w:core.World_Ref,reading:^author.Reading,decls:[]Api_Write_Entity,index:int,parent:core.Entity,part:[]core.Entity,taken:^map[core.Entity]bool,sparse:^map[u32]bool) -> (made:int,ok:bool) {
+    d:=&decls[index]
+    prefab:asset.Scene
+    if !author.scene_prefab_open(reading,author.assets_of(s.app.assets),d.given,d.path,s.document.id,&prefab) {return 0,api_write_unread(call,reading)}
+    // What the document leaves out of the place of the root is what its prefab gives it.
+    source,_:=asset.prefab_root(&prefab)
+    local,placed:=asset.scene_get(&prefab,source,"Transform",core.Transform)
+    if !placed {local=core.TRANSFORM_IDENTITY}
+    ids:=make([]base.Entity_Id,len(decls)+len(part),call.allocator)
+    for other,i in decls {ids[i]=api_entity_id(w,other.e)}
+    for e,i in part {ids[len(decls)+i]=api_entity_id(w,e)}
+    held:=make(map[base.Entity_Id]bool,len(taken),call.allocator)
+    for e,used in taken {held[api_entity_id(w,e)]=used}
+    root,error:=prefab_instantiate(s,d.given.asset,{parent=parent,position=local.position,rotation={local.rotation.x,local.rotation.y,local.rotation.z,local.rotation.w}},true)
+    link,linked:=prefab_link_of(s,root)
+    if error==.None && !linked {error=.Rejected}
+    if error!=.None {
+        api.call_failf(call,api.SERVER_ERROR,"%s.prefab: %s",d.path,prefab_error_text(error))
+        return 0,false
+    }
+    core.world_settle(w)
+    for &other,i in decls {other.e=api_entity(w,ids[i])}
+    for &e,i in part {e=api_entity(w,ids[len(decls)+i])}
+    clear(taken)
+    for id,used in held {taken[api_entity(w,id)]=used}
+    d.e,d.made,d.sparse=api_entity(w,root),true,true
+    sparse[link.instance]=true
+    for member in s.document.previous.members {
+        if member.instance!=link.instance {continue}
+        taken[api_entity(w,member.entity)]=member.entity==root
+        made+=1
+    }
+    return made,true
 }
 
 // The entity of the document takes what it declares: name, transform, being
@@ -405,16 +460,21 @@ api_write_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,d:^Api_Write
     // The rotation scene.inspect gave keeps its quaternion: degrees do not say it to the last bit.
     angles:=d.has_rotation?d.rotation_deg:mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
     if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}
+    if d.sparse {
+        if !d.has_position {target.position=local.position}
+        if !d.has_rotation {target.rotation=local.rotation}
+        if !d.has_scale {target.scale=local.scale}
+    }
     if target!=local {
         api_write_editable(s,call,w,e,d.path) or_return
         if !transform_set(s,e,target) {api.call_failf(call,api.SERVER_ERROR,"%s: the entity has no Transform",d.path);return false}
     }
-    if entity_has(w,e,erender.Hidden)!=d.hidden {
+    if entity_has(w,e,erender.Hidden)!=d.hidden && (d.has_visible || !d.sparse) {
         if core.world_table_of(w,erender.Hidden)==nil {api.call_failf(call,api.SERVER_ERROR,"%s.visible: the world has no Hidden",d.path);return false}
         api_write_editable(s,call,w,e,d.path) or_return
         entity_hidden_set(s,e,d.hidden)
     }
-    if entity_has(w,e,core.Disabled)!=d.disabled {
+    if entity_has(w,e,core.Disabled)!=d.disabled && (d.has_enabled || !d.sparse) {
         api_write_editable(s,call,w,e,d.path) or_return
         entity_enabled_set(s,e,!d.disabled)
     }
@@ -445,9 +505,10 @@ api_write_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,d:^Api_Write
         if !api_write_component(s,&a,w,e,part.t,parts,fmt.aprintf("%s.preset",d.path,allocator=call.allocator)) {return false}
         append(&declared,part.t)
     }
-    // What the document leaves out goes, with what the editor added beside a component it declares.
+    // What the document leaves out goes, with what the editor added beside a component it declares;
+    // of an instance it names by its prefab alone, it stays.
     for &t in s.info.tables {
-        if !api_component_listed(s,&t) || slice.contains(declared[:],&t) || core.raw_find(core.world_table_at(w,&t),t.info,e)==nil {continue}
+        if d.sparse || !api_component_listed(s,&t) || slice.contains(declared[:],&t) || core.raw_find(core.world_table_at(w,&t),t.info,e)==nil {continue}
         api_write_editable(s,call,w,e,d.path) or_return
         component_remove(s,e,&t)
     }
@@ -621,5 +682,5 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
 }
 
 // The shape of the params of scene.write.
-@(private) API_WRITE_ENTITY :: `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","description":"matches the entity with this id under root, which may move to another parent"},"preset":{"type":"string","description":"a preset or the card of a plugin, as scene.add takes it (cube, point_light, sun, spawn...): it gives the entity its components, whose fields components changes, and the rotation and scale it has when those are left out"},"name":{"type":"string","description":"without id, matches the entity of this name among those of its parent"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"local to the parent; [0,0,0] when left out"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[0,0,0] or that of its preset when left out"},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[1,1,1] or that of its preset when left out"},"visible":{"type":"boolean","description":"true when left out"},"enabled":{"type":"boolean","description":"true when left out"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go"},"off":{"type":"array","items":{"type":"string"},"description":"components it declares that are turned off by themselves"},"prefab":{"type":"object","description":"as scene.inspect gives it; a write changes no link"},"children":{"type":"array","items":{"type":"object"},"description":"the entities that hang from it, in order, each with these keys"}}}`
+@(private) API_WRITE_ENTITY :: `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","description":"matches the entity with this id under root, which may move to another parent"},"preset":{"type":"string","description":"a preset or the card of a plugin, as scene.add takes it (cube, point_light, sun, spawn...): it gives the entity its components, whose fields components changes, and the rotation and scale it has when those are left out"},"name":{"type":"string","description":"without id, matches the entity of this name among those of its parent"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"local to the parent; [0,0,0] when left out"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[0,0,0] or that of its preset when left out"},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[1,1,1] or that of its preset when left out"},"visible":{"type":"boolean","description":"true when left out"},"enabled":{"type":"boolean","description":"true when left out"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go"},"off":{"type":"array","items":{"type":"string"},"description":"components it declares that are turned off by themselves"},"prefab":{"type":["string","object"],"description":"on a new entity, the path or the id of a .prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"},"children":{"type":"array","items":{"type":"object"},"description":"the entities that hang from it, in order, each with these keys"}}}`
 @(private) API_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entities"],"properties":{"root":{"type":["string","null"],"description":"by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it; left out: the document makes a new root"},"entities":{"type":"array","minItems":1,"maxItems":1,"items":` + API_WRITE_ENTITY + `,"description":"the entity root is, or the new one, nesting what hangs from it by children; matched by id, else by name among siblings, else by place, the others are made and what it leaves out goes (a member of an instance of a prefab is turned off)"}}}`
