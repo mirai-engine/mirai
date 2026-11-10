@@ -16,6 +16,7 @@ body_create :: proc(w:^World,desc:Body_Desc) -> Body_Handle {
     }
     w.body_count+=1
     body:=&w.bodies[index]
+    stamp(w,body)
     rotation:=q_normalize(desc.rotation)
     body^={
         user_data=desc.user_data,
@@ -58,9 +59,13 @@ body_destroy :: proc(w:^World,h:Body_Handle) {
 body_wake :: proc(w:^World,index:i32) {
     body:=&w.bodies[index]
     if body.type==.Static {return}
-    if .Awake in body.flags {body.sleep_time=0;return}
+    if .Awake in body.flags {
+        if body.sleep_time!=0 {stamp(w,body);body.sleep_time=0}
+        return
+    }
     for i:=w.islands[body.island].head;i>=0;i=w.bodies[i].island_next {
         other:=&w.bodies[i]
+        stamp(w,other)
         other.flags+={.Awake}
         other.sleep_time=0
         if st:=&w.step;st.woken_count<len(st.woken) {st.woken[st.woken_count]=i;st.woken_count+=1}
@@ -71,6 +76,7 @@ body_wake :: proc(w:^World,index:i32) {
 @(private)
 body_sleep :: proc(w:^World,index:i32) {
     body:=&w.bodies[index]
+    stamp(w,body)
     body.flags-={.Awake}
     body.linear_velocity,body.angular_velocity={},{}
     body.force,body.torque={},{}
@@ -103,6 +109,7 @@ body_wake_touching :: proc(w:^World,index:i32) {
 @(private)
 body_update_mass :: proc(w:^World,index:i32) {
     body:=&w.bodies[index]
+    stamp(w,body)
     body.max_extent,body.min_extent=0,max(f32)
     mass:f32
     center:Vec3
@@ -148,6 +155,7 @@ body_update_proxies :: proc(w:^World,index:i32) {
     tree:=&w.trees[body.type==.Static?STATIC_TREE:DYNAMIC_TREE]
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
+        stamp(w,shape)
         shape.aabb=shape_aabb(w,shape,xf)
         shape.fat=body.type==.Static?shape.aabb:shape_fat(shape.aabb)
         shape.flags+={.Moved}
@@ -156,21 +164,21 @@ body_update_proxies :: proc(w:^World,index:i32) {
 }
 
 body_transform :: proc(w:^World,h:Body_Handle) -> Transform {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return TRANSFORM_IDENTITY}
     return {body.position,body.rotation}
 }
 body_position :: proc(w:^World,h:Body_Handle) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?Vec3{}:body.position
 }
 body_rotation :: proc(w:^World,h:Body_Handle) -> Quat {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?QUAT_IDENTITY:body.rotation
 }
 // World center of mass.
 body_center :: proc(w:^World,h:Body_Handle) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?Vec3{}:body.center
 }
 
@@ -190,16 +198,16 @@ body_set_transform :: proc(w:^World,h:Body_Handle,position:Vec3,rotation:Quat) {
 }
 
 body_linear_velocity :: proc(w:^World,h:Body_Handle) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?Vec3{}:body.linear_velocity
 }
 body_angular_velocity :: proc(w:^World,h:Body_Handle) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?Vec3{}:body.angular_velocity
 }
 // Velocity of a world point moving with the body.
 body_point_velocity :: proc(w:^World,h:Body_Handle,point:Vec3) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return {}}
     return body.linear_velocity+cross(body.angular_velocity,point-body.center)
 }
@@ -223,7 +231,7 @@ body_set_angular_velocity :: proc(w:^World,h:Body_Handle,angular:Vec3) {
 // Gives a kinematic body the velocity that takes it to a pose in one step of dt seconds, so that it
 // pushes and carries what it touches instead of teleporting.
 body_set_kinematic_target :: proc(w:^World,h:Body_Handle,position:Vec3,rotation:Quat,dt:f32) {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil || body.type!=.Kinematic || dt<=0 {return}
     target:=q_normalize(rotation)
     angular:=q_rotation_vector(target*conj(body.rotation))/dt
@@ -291,7 +299,7 @@ body_apply_angular_impulse :: proc(w:^World,h:Body_Handle,impulse:Vec3,wake:=tru
 }
 
 body_type :: proc(w:^World,h:Body_Handle) -> Body_Type {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?.Static:body.type
 }
 
@@ -337,13 +345,13 @@ body_set_type :: proc(w:^World,h:Body_Handle,type:Body_Type) {
 }
 
 body_mass :: proc(w:^World,h:Body_Handle) -> f32 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?0:body.mass
 }
 // Local center of mass and inertia tensor about it, in the body frame.
 
 body_mass_properties :: proc(w:^World,h:Body_Handle) -> (mass:f32,local_center:Vec3,inertia:Mat3) {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return}
     return body.mass,body.local_center,body.inertia
 }
@@ -380,7 +388,7 @@ body_reset_mass_properties :: proc(w:^World,h:Body_Handle) {
 }
 
 body_is_awake :: proc(w:^World,h:Body_Handle) -> bool {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body!=nil && .Awake in body.flags
 }
 // Putting a body to sleep also puts to sleep the bodies it touches or is joined to, directly or not.
@@ -438,7 +446,7 @@ bodies_group :: proc(w:^World) #no_bounds_check {
 
 // The group bodies_group gave a body: the same number for the bodies of a group, 0 for one that was not awake.
 body_group :: proc(w:^World,h:Body_Handle) -> u32 {
-    _,index:=body_get(w,h)
+    _,index:=body_read(w,h)
     if index<0 || w.step.grouped[index]!=w.step.grouping {return 0}
     return u32(union_find(w.step.groups,index))+1
 }
@@ -463,7 +471,7 @@ body_set_damping :: proc(w:^World,h:Body_Handle,linear,angular:f32) {
     if body!=nil {body.linear_damping,body.angular_damping=max(linear,0),max(angular,0)}
 }
 body_gravity_scale :: proc(w:^World,h:Body_Handle) -> f32 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?0:body.gravity_scale
 }
 body_set_gravity_scale :: proc(w:^World,h:Body_Handle,scale:f32) {
@@ -473,7 +481,7 @@ body_set_gravity_scale :: proc(w:^World,h:Body_Handle,scale:f32) {
 
 // The gravity a body falls with, m/s2: its own, or that of the world.
 body_gravity :: proc(w:^World,h:Body_Handle) -> Vec3 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?w.gravity:body_gravity_of(w,body)
 }
 body_gravity_of :: #force_inline proc "contextless" (w:^World,body:^Body) -> Vec3 {
@@ -512,14 +520,17 @@ world_set_body_gravity :: proc(w:^World,world:Vec3,at:proc(user:rawptr,point:Vec
 @(private)
 body_gravity_take :: #force_inline proc "contextless" (w:^World,body:^Body,g:Vec3) {
     if g==w.gravity {
+        if .Own_Gravity not_in body.flags {return}
         body.flags-={.Own_Gravity}
     } else {
+        if .Own_Gravity in body.flags && body.gravity==g {return}
         body.gravity=g
         body.flags+={.Own_Gravity}
     }
+    stamp(w,body)
 }
 body_locks :: proc(w:^World,h:Body_Handle) -> Body_Flags {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?{}:body.flags&BODY_LOCKS
 }
 body_set_locks :: proc(w:^World,h:Body_Handle,locks:Body_Flags) {
@@ -534,7 +545,7 @@ body_set_bullet :: proc(w:^World,h:Body_Handle,bullet:bool) {
     if bullet {body.flags+={.Bullet}} else {body.flags-={.Bullet}}
 }
 body_user_data :: proc(w:^World,h:Body_Handle) -> u64 {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body==nil?0:body.user_data
 }
 body_set_user_data :: proc(w:^World,h:Body_Handle,user_data:u64) {
@@ -544,12 +555,12 @@ body_set_user_data :: proc(w:^World,h:Body_Handle,user_data:u64) {
 
 // Shapes of a body written to a caller buffer; returns how many the body has.
 body_is_debris :: proc(w:^World,h:Body_Handle) -> bool {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body!=nil && .Debris in body.flags
 }
 
 body_shapes :: proc(w:^World,h:Body_Handle,out:[]Shape_Handle) -> int {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return 0}
     count:=0
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
@@ -567,7 +578,7 @@ Contact_Info :: struct {
 
 // Touching contacts of an awake body after a step, written to a caller buffer; returns how many there are.
 body_contacts :: proc(w:^World,h:Body_Handle,out:[]Contact_Info) -> int {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil || .Awake not_in body.flags {return 0}
     count:=0
     for key:=body.contact_list;key>=0; {

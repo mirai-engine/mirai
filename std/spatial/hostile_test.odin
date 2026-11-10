@@ -314,8 +314,6 @@ hostile_calls_through_the_dynamic_tree :: proc(t:^testing.T) {
     h:=base.Hostile{5}
     live:[dynamic]i32
     defer delete(live)
-    buffer:[]byte
-    defer delete(buffer)
     other:Dynamic_Tree
     defer dynamic_tree_destroy(&other)
     _=dynamic_tree_init(&other,{proxy_capacity=64})
@@ -350,15 +348,7 @@ hostile_calls_through_the_dynamic_tree :: proc(t:^testing.T) {
             case 9:
                 _=dynamic_tree_height(&tree)
                 _=dynamic_tree_area_ratio(&tree)
-            case 10:
-                size:=dynamic_tree_snapshot_size(&tree)
-                delete(buffer)
-                buffer=make([]byte,max(size+base.hostile_int(&h,5)-2,0))
-                written,ok:=dynamic_tree_snapshot(&tree,buffer)
-                if ok {
-                    _,_=dynamic_tree_snapshot_check(&other,buffer[:written])
-                    _,_=dynamic_tree_restore(&other,buffer[:written])
-                }
+            case 10: _,_=dynamic_tree_copy(&other,&tree,base.hostile_int(&h,2)==0)
             }
         }
         tree_probe(t,&tree,&h)
@@ -489,66 +479,6 @@ hostile_handles_through_every_structure :: proc(t:^testing.T) {
             }
             index.destroy(&s)
         }
-    }
-}
-
-@(test)
-hostile_bytes_through_the_tree_restore :: proc(t:^testing.T) {
-    h:=base.Hostile{10}
-    source:Dynamic_Tree
-    _=dynamic_tree_init(&source,{proxy_capacity=24})
-    defer dynamic_tree_destroy(&source)
-    for _ in 0..<20 {_,_=dynamic_tree_insert(&source,hostile_valid_box(&h),1)}
-    proxy,_:=dynamic_tree_insert(&source,hostile_valid_box(&h),1)
-    dynamic_tree_remove(&source,proxy)
-    good:=make([]byte,dynamic_tree_snapshot_size(&source))
-    defer delete(good)
-    _,_=dynamic_tree_snapshot(&source,good)
-    scratch:=make([]byte,len(good))
-    defer delete(scratch)
-    for _ in 0..<HOSTILE_ROUNDS {
-        copy(scratch,good)
-        for _ in 0..<1+base.hostile_int(&h,3) {
-            at:=base.hostile_int(&h,len(scratch)/4)*4
-            word:u32
-            switch base.hostile_int(&h,8) {
-            case 0: word=0xffffffff
-            case 1: word=0
-            case 2: word=1
-            case 3: word=0x7fffffff
-            case 4: word=0x80000000
-            case 5: word=0x7fc00000
-            case 6: word=u32(base.hostile_int(&h,30))
-            case: word=u32(base.hostile_next(&h))
-            }
-            (^u32)(&scratch[at])^=word
-        }
-        src:=scratch[:len(scratch)-(base.hostile_int(&h,4)==0?base.hostile_int(&h,len(scratch)):0)]
-        capacity:=base.hostile_int(&h,3)==0?1+base.hostile_int(&h,30):24
-        dst:Dynamic_Tree
-        if !dynamic_tree_init(&dst,{proxy_capacity=capacity}) {continue}
-        _,_=dynamic_tree_snapshot_check(&dst,src)
-        _,ok:=dynamic_tree_restore(&dst,src)
-        if ok && dynamic_tree_validate(&dst) {
-            tree_probe(t,&dst,&h)
-            _=dynamic_tree_height(&dst)
-            _=dynamic_tree_area_ratio(&dst)
-            _,_=dynamic_tree_insert(&dst,hostile_valid_box(&h),1)
-            testing.expect(t,dynamic_tree_validate(&dst),"tree is not valid after an insertion")
-        }
-        dynamic_tree_destroy(&dst)
-    }
-    for _ in 0..<HOSTILE_ROUNDS {
-        random:=make([]byte,base.hostile_int(&h,200))
-        for &b in random {b=u8(base.hostile_next(&h))}
-        dst:Dynamic_Tree
-        if dynamic_tree_init(&dst,{proxy_capacity=8}) {
-            _,_=dynamic_tree_snapshot_check(&dst,random)
-            _,_=dynamic_tree_restore(&dst,random)
-            _=dynamic_tree_validate(&dst)
-            dynamic_tree_destroy(&dst)
-        }
-        delete(random)
     }
 }
 
@@ -724,11 +654,9 @@ hostile_calls_through_empty_structures :: proc(t:^testing.T) {
         tree_probe(t,&tree,&h)
         _=dynamic_tree_validate(&tree)
         _=dynamic_tree_area_ratio(&tree)
-        _=dynamic_tree_snapshot_size(&tree)
-        _,_=dynamic_tree_snapshot(&tree,nil)
-        _,checked:=dynamic_tree_snapshot_check(&tree,nil)
-        _,restored:=dynamic_tree_restore(&tree,nil)
-        testing.expect(t,!inserted && dynamic_tree_height(&tree)==0 && !checked && !restored,"A zeroed tree takes nothing, and no bytes are not a snapshot")
+        zeroed:Dynamic_Tree
+        copied,fits:=dynamic_tree_copy(&zeroed,&tree,true)
+        testing.expect(t,!inserted && dynamic_tree_height(&tree)==0 && fits && copied==0,"A zeroed tree takes nothing, and copies as an empty one")
         dynamic_tree_clear(&tree)
         dynamic_tree_destroy(&tree)
         bvh:Bvh

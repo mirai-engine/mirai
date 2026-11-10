@@ -319,7 +319,7 @@ ray_cast_all :: proc(w:^World,origin,translation:Vec3,hits:[]Ray_Hit,filter:=QUE
 }
 // Ray against a single shape, whatever its filter.
 shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_Hit,bool) {
-    shape,index:=shape_get(w,h)
+    shape,index:=shape_read(w,h)
     if shape==nil {return {},false}
     xf:=shape_transform_of(w,shape)
     t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),1)
