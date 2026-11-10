@@ -858,14 +858,15 @@ Pipeline_List :: struct {
 @(private)
 pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	list.count = 0
-	// A stage that traces rays has a shader for each tracer (`//! variant hw`).
-	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, lazy := false) {
-		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays), shaders = {shader, shader}, name = reflect.enum_string(id),
+	// A stage that traces rays has a shader for each tracer (`//! variant hw`),
+	// whose pipelines are kept as variants; one that only a tracer runs, in r.pipelines.
+	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, lazy := false, twin := false) {
+		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays if twin else .Any), shaders = {shader, shader}, name = reflect.enum_string(id),
 			rays = rays, required = !lazy, lazy = lazy})
 	}
 	traced :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, software, hardware: Shader_Id, lazy := false) {
-		compute(list, r, id, software, .Software, lazy)
-		compute(list, r, id, hardware, .Hardware, lazy)
+		compute(list, r, id, software, .Software, lazy, true)
+		compute(list, r, id, hardware, .Hardware, lazy, true)
 	}
 	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any) {
 		clip := pipeline_uses_clip_distance(id)
@@ -1081,7 +1082,7 @@ pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constan
 	pipelines_list(r, &list)
 	for item in list.items[:list.count] {
 		if item.id != id || item.rays != .Any && item.rays != tracer || item.target == nil {continue}
-		target := pipeline_slot(r, id, item.rays, constants)
+		target := pipeline_slot(r, id, .Any if item.target == &r.pipelines[id] else item.rays, constants)
 		if target == nil {
 			set_error(r, "pipeline %s: more than %d variants of stages", pipeline_name(r, item), PIPELINE_VARIANTS)
 			break
