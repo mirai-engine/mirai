@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:strings"
+import "mirai:editor/ai_store"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
@@ -41,7 +42,7 @@ ai_memory_ui_refresh :: proc(s:^Session) {
     }
     if m.store.db==nil {return}
     ai_memory_scan(s)
-    docs,message:=ai_store_memory_list(&m.store)
+    docs,message:=ai_store.memory_list(&m.store)
     if message!="" {notify(s,message);return}
     for &doc in docs {
         if e.topic_count==len(e.topics) {break}

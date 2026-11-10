@@ -93,13 +93,39 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+
+// What host.App holds that a step receives by itself, bound by the type that
+// names it: the call hands out what the application owns.
+@(private="file")
+App_Part :: struct {
+    key:string,   // the type as a file names it: import path and name
+    form:string,  // how a step receives it
+    value:string, // in the generated call, from app
+}
+
+@(private="file")
+APP_PARTS :: [?]App_Part{
+    {"mirai:host.Assets","^host.Assets","app.assets"},
+    {"mirai:host.Frame_Extras","^host.Frame_Extras","&app.extras"},
+    {"mirai:render.Renderer","^render.Renderer","app.renderer"},
+    {"mirai:engine/render.Renderer","^render.Renderer","app.renderer"},
+    {"mirai:audio.Mixer","^audio.Mixer","app.mixer"},
+    {"mirai:engine/audio.Mixer","^audio.Mixer","app.mixer"},
+    {"mirai:std/jobs.Job_System","^jobs.Job_System","&app.jobs"},
+    {"base:runtime.Allocator","runtime.Allocator","app.allocator"},
+    {"core:mem.Allocator","mem.Allocator","app.allocator"},
+}
+
+@(private="file")
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
 
 @(private="file")
 Param :: struct {
     kind:Param_Kind,
     type:^Type,
     record:^Record_Type, // Records
+    part:int,            // App_Part: its index in APP_PARTS
     actions:^Action_Enum, // the enum of the generic @(params) it is a field of
     bundle:^Bundle, // the @(params) the step receives it in; nil when it receives it by itself
     name:string,    // of the field in the bundle, or of the parameter
@@ -852,7 +878,11 @@ bundles_settle :: proc(g:^Generator) {
             param,ok:=param_read(g,b.file,b.pkg,field.type)
             for n in field.names {
                 if !ok {
-                    append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: ^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref or ^host.App",b.where_,ident_name(n),b.name,expr_text(b.file,field.type)))
+                    if param.kind==.App_Part {
+                        append(&g.errors,part_error(b.where_,fmt.tprintf("the field %s of %s",ident_name(n),b.name),expr_text(b.file,field.type),param))
+                    } else {
+                        append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: %s",b.where_,ident_name(n),b.name,expr_text(b.file,field.type),PARAM_FORMS))
+                    }
                     b.valid=false
                     continue
                 }
@@ -1036,7 +1066,11 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                     param,ok:=param_read(g,file,pkg,field.type)
                     for n in field.names {
                         if !ok {
-                            append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive ^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref or ^host.App, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type)))
+                            if param.kind==.App_Part {
+                                append(&g.errors,part_error(where_,fmt.tprintf("the parameter %s of %s",ident_name(n),name),expr_text(file,field.type),param))
+                            } else {
+                                append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive %s, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type),PARAM_FORMS))
+                            }
                             arg+=1
                             continue
                         }
@@ -1086,9 +1120,20 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
     case "mirai:core.World_Ref": return {kind=.World_Ref,type=nil},!pointer
     case "mirai:host.App": return {kind=.App,type=nil},pointer
     }
+    for part,index in APP_PARTS {
+        if part.key==key {return {kind=.App_Part,part=index},pointer==(part.form[0]=='^')}
+    }
     t,found:=g.by_key[key]
     if !found || t.kind!=.Storage {return}
     return {kind=pointer?.Storage_Write:.Storage_Value,type=t},true
+}
+
+// A part of the application asked for in a form it is not handed out in.
+@(private="file")
+part_error :: proc(where_,what,written:string,param:Param) -> string {
+    parts:=APP_PARTS
+    form:=parts[param.part].form
+    return fmt.aprintf("%s: %s is %s, and the application hands that part out as %s: receive %s",where_,what,written,form,form)
 }
 
 @(private="file")
@@ -1699,6 +1744,9 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
             case .App: fmt.sbprint(&args,"app")
+            case .App_Part:
+                parts:=APP_PARTS
+                fmt.sbprint(&args,parts[param.part].value)
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)

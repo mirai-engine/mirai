@@ -5,7 +5,6 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
 import scene "mirai:engine/scene"
-import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -282,11 +281,11 @@ foliage_terrain_ground :: proc(
     state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,requests:^foliage.Foliage_Ground_Requests,
     data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),
     terrains:core.Read(terrain.Terrain),terrain_data:core.Ref(terrain.Terrain_Data),worlds:core.Read(core.World_Transform),
-    sources:core.Ref(scene.Streaming_Sources),app:^host.App,focus:terrain.Terrain_Focus,problems:^core.Problems,
+    sources:core.Ref(scene.Streaming_Sources),job_system:^jobs.Job_System,focus:terrain.Terrain_Focus,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.cells)
     if data.ptr==nil || terrain_data.ptr==nil {return}
-    defer ground_read(state,ground,data,foliages,worlds,sources.ptr,app)
+    defer ground_read(state,ground,data,foliages,worlds,sources.ptr,job_system)
     ground_hide(state,ground,foliages,terrains,worlds,focus)
     td:=terrain_data.ptr
     // The versions of the tables: an entity can show another source that is already loaded.
@@ -522,7 +521,7 @@ task_order :: proc(a,b:Ground_Task) -> slice.Ordering {
 // whose box covers it, fine or coarse by where the sources are then, and
 // writes them in the order they were asked.
 @(private)
-ground_read :: proc(state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),sources:^scene.Streaming_Sources,app:^host.App) {
+ground_read :: proc(state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System) {
     if len(state.queue)==0 {return}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
     work:=make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)
@@ -557,8 +556,8 @@ ground_read :: proc(state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,data:c
     sample :: proc(work:^[dynamic]Tile_Work,first,last:int,worker:int) {
         for &w in work[first:last] {w.any=tile_sample(w.views,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.coarse)}
     }
-    if app!=nil && jobs.worker_count(&app.jobs)>1 && len(work)>1 {
-        jobs.parallel_for(&app.jobs,jobs.OWNER,len(work),1,sample,&work)
+    if job_system!=nil && jobs.worker_count(job_system)>1 && len(work)>1 {
+        jobs.parallel_for(job_system,jobs.OWNER,len(work),1,sample,&work)
     } else {sample(&work,0,len(work),jobs.OWNER)}
     for &w in work {
         owner:=foliage.ground_owner(ground,w.task.entity)

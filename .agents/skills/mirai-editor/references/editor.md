@@ -324,7 +324,7 @@ Each agent ([in scene](ai-tasks.md#agents-in-scene-and-review)) and each other e
 session ([collaboration](collaboration.md#what-travels)) is drawn with the same figure
 (`presence.odin`):
 
-- The dog of `editor/assets/presence`, a transient visual instance (`host.app_instance_add`,
+- The dog of `editor/assets/presence`, a transient visual instance (`host.extras_instance_add`,
   `copy_owner` `PRESENCE_OWNER`) without entities or a place in the scene. It faces -Z rotated only
   around +Y: without a rig, it does not look up or down.
 - La malla separa pelaje, piezas neutras y los slots del arnés, la franja de la nave, la pantalla,

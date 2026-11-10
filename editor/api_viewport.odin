@@ -298,10 +298,8 @@ api_view_viewport :: proc(s:^Session,call:^api.Call) {
     }
     if !ai_snapshot_name_valid(request) {api.call_fail(call,api.INVALID_PARAMS,"request must identify a saved message snapshot");return}
     if s.project_root=="" {api.call_fail(call,api.SERVER_ERROR,"The editor has no project folder");return}
-    if s.ai!=nil {
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            if base.text_get(task.name[:])==request {host.app_png_write_wait(s.app,&task.image_write)}
-        }
+    for &task in ai_tasks(s.ai) {
+        if base.text_get(task.name[:])==request {host.app_png_write_wait(s.app,&task.image_write)}
     }
     path:=project.path(s.project_root,fmt.tprintf(".mirai/ai/%s/%s",request,AI_FILE_IMAGE),allocator=context.temp_allocator)
     if !os.is_file(path) {api.call_fail(call,api.SERVER_ERROR,"The viewport snapshot for this message is unavailable");return}

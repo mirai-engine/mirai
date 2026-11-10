@@ -206,7 +206,7 @@ skin_rigs_pack_the_influences_and_morph_deltas_of_every_level_in_the_order_the_r
     app:=host.App{assets=&assets,allocator=context.allocator}
     state:Skin_Runtime
     defer skin_runtime_free(&state)
-    row:=skin_rig_load(&state,&app,id,nil,core.NONE)
+    row:=skin_rig_load(&state,app.assets,app.allocator,id,nil,core.NONE)
     if !testing.expect(t,row!=max(u32)) {return}
     rig:=&state.rigs[row]
     testing.expect(t,len(rig.influences)==7 && len(rig.morph.ranges)==7 && len(rig.morph.deltas)==3 && rig.morph.count==1)
@@ -248,7 +248,7 @@ a_rigid_mesh_the_assets_loaded_is_not_read_again_for_its_rig :: proc(t:^testing.
     state:Skin_Runtime
     defer skin_runtime_free(&state)
     problems:core.Problems
-    row:=skin_rig_load(&state,&app,id,&problems,core.NONE)
+    row:=skin_rig_load(&state,app.assets,app.allocator,id,&problems,core.NONE)
     testing.expect(t,row!=max(u32) && len(state.rigs[row].morphs)==0 && len(state.rigs[row].influences)==0)
     testing.expect_value(t,problems.count,0)
 }

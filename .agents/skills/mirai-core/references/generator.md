@@ -220,7 +220,14 @@ Each parameter is bound by its type; the order in the signature is free.
   ([commands](core.md#creating-with-components-of-other-libraries)).
 - `core.World_Ref`: the whole world by reflection, for code that does not know the types (scenes,
   saving, network, the binding of an interface by name, the editor).
-- `^host.App`: the application (window, renderer, mixer, assets).
+- A part of the application, by the type that names it: `^host.Assets` (nil without assets),
+  `^render.Renderer` (nil without a GPU; a plugin names it through `engine/render`),
+  `^host.Frame_Extras` (what a function adds to the frame), `^audio.Mixer` (nil without audio; a
+  game names it through `engine/audio`), `^jobs.Job_System` and `runtime.Allocator` (the
+  application's, for what outlives the call). The application owns them and the call hands out
+  what it holds.
+- `^host.App`: the application itself, for what is not one of those parts (its worlds, its window
+  and the views of the frame, its clock, its content, the launch).
 - `core.Records(T)`, with `T` a `@(record)`: the rows of its tables, read-only
   (`host.app_record_set`).
 - A `@(params)` struct, by value ([groups](#parameter-groups)).
@@ -257,7 +264,8 @@ Each violation is a message with file and line that says how to fix it; `mirai g
 all. The ones most often stumbled on:
 
 - A parameter without a table or storage: a type that is not `@(component)`, `@(storage)` or one of
-  those above.
+  those above. A part of the application asked for in another form (`host.Assets` by value,
+  `^runtime.Allocator`) says which form to receive.
 - A parameter with a default value: the generator binds them all; whoever calls the function
   outside the loop uses `core.world_run` or passes all of them.
 - A function that returns something.
@@ -391,11 +399,12 @@ still says what the function does with it, and each form has its reader:
   again ([reflection](core.md#world-reflection)).
 - `^core.Entities`, `core.Commands` and `core.World_Ref`: the World settles after the function;
   `core.Ref(core.Entities)` asks for no settle.
-- `^host.App`, `core.Records(T)` and the storages of the application or of the editor: what the
-  rules of the loops and phases check ([rules](#rules-the-generator-checks)).
+- `^host.App` and its parts, `core.Records(T)` and the storages of the application or of the
+  editor: what the rules of the loops and phases check ([rules](#rules-the-generator-checks)).
 
-A function that spreads its work does it inside, with `std/jobs` and the application as the owner
-of the job system; what it requests from `context.temp_allocator` is released on return.
+A function that spreads its work does it inside, with `std/jobs` and the `^jobs.Job_System` of the
+application, which it receives; what it requests from `context.temp_allocator` is released on
+return.
 
 ## Outputs
 

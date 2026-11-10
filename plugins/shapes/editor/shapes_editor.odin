@@ -11,6 +11,7 @@ import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
+import "base:runtime"
 
 // The Shapes tool: stamps squares, circles, stars and the other kinds onto the outline
 // shapes of a plane, drags, inserts and removes their corners, and places
@@ -87,9 +88,9 @@ shapes_pointer :: proc(s:^editor.Session,tool:^Shapes_Tool,input:core.Input) {
 }
 
 @(step="frame",after="editor_tools")
-shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,app:^host.App,input:core.Input) {
+shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input) {
     gpu.debug_lines_clear(&tool.lines)
-    defer if tool.lines.count>0 {host.app_debug_lines_add(app,tool.lines)}
+    defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}
     if !s.gui.begun {return}
     if !tool.active || editor.playing(s) {
         tool_cancel(s,tool)
@@ -106,7 +107,7 @@ shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,ap
     }
     ray:=editor.viewport_ray(s.viewport,input.mouse_position)
     switch tool.mode {
-    case .Stamp:   stamp_frame(s,tool,world,app,input,ray)
+    case .Stamp:   stamp_frame(s,tool,world,allocator,input,ray)
     case .Corners: corners_frame(s,tool,world,input,ray)
     case .Brush:   brush_frame(s,tool,world,input,ray)
     }
@@ -131,7 +132,7 @@ selected_shape :: proc(s:^editor.Session,w:core.World_Ref) -> (e:core.Entity,sha
 // ---------------------------------------------------------------- stamps
 
 @(private)
-stamp_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,app:^host.App,input:core.Input,ray:mm.Ray) {
+stamp_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,allocator:runtime.Allocator,input:core.Input,ray:mm.Ray) {
     stroke:=&tool.stroke
     settings:=&tool.settings
     color:=settings.operation==.Cut?editor.BRUSH_TAKE:editor.BRUSH_ADD
@@ -156,7 +157,7 @@ stamp_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,app:^ho
     stamp_draw(tool,plane,settings.stamp,point,settings.size,settings.angle,color)
     if !tool.begin {return}
     tolerance:=stroke_tolerance(s.viewport,plane,point)
-    if !stroke_begin(stroke,w,plane,e,settings.operation==.Cut,settings.stamp,settings.size,settings.angle,tolerance,settings.material,app.allocator) {return}
+    if !stroke_begin(stroke,w,plane,e,settings.operation==.Cut,settings.stamp,settings.size,settings.angle,tolerance,settings.material,allocator) {return}
     stroke_refused(s,stroke,stroke_to(stroke,point))
     stroke_write(s,tool)
 }

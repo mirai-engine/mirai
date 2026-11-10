@@ -42,7 +42,7 @@ pose_query :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Enti
     skeleton:=query.skeleton if query.skeleton!={} else rig_skeleton(s,w,e)
     if skeleton=={} || s.app==nil || s.app.shared==nil {return}
     cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
-    content:=anim.skeleton_content(cache,s.app,skeleton)
+    content:=anim.skeleton_content(cache,s.app.assets,s.app.allocator,skeleton)
     if content==nil {return}
     rows,error:=make([]Pose_Row,asked,call.allocator)
     if error!=nil {authoring_failure(call,"names","Out_Of_Memory","memory for the names asked","allocation failed","The Pose part could not be prepared",api.SERVER_ERROR);return {}}

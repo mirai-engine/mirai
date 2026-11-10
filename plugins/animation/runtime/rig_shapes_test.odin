@@ -300,7 +300,7 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     prepare :: proc(modifiers:^Modifier_Runtime,configs:^core.Table(Pose_Modifiers),animations:^core.Table(Animation),attachments:^core.Table(Bone_Attachment),profiles:^Pose_Assets,skeletons:^Skeleton_Assets,playback:^Playback,app:^host.App) -> bool {
-        return modifier_prepare(modifiers,core.read(configs),core.read(animations),core.read(attachments),profiles,skeletons,playback,app,nil)
+        return modifier_prepare(modifiers,core.read(configs),core.read(animations),core.read(attachments),profiles,skeletons,playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)

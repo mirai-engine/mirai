@@ -166,7 +166,8 @@ door_move :: proc(
 | `core.Ref(core.Entities)` | Reads which entities are alive |
 | `core.Commands` | Creates entities with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |
-| `^host.App` | The application: window, renderer, mixer, assets |
+| `^host.Assets`, `^host.Frame_Extras`, `^render.Renderer`, `^audio.Mixer`, `^jobs.Job_System`, `runtime.Allocator` | A part of the application: its assets, what is added to the frame, its renderer, its mixer, its job system, its allocator |
+| `^host.App` | The application itself: its worlds, its window and views, its clock, its content |
 
 The generator rejects with a message:
 
@@ -276,8 +277,8 @@ entities that have it:
 
 ## Build
 
-The engine is compiled into dynamic runtime and editor libraries, with declarations that allow
-compiling the project separately. The editor and the player load the project's world through
+The engine is compiled into dynamic libraries, one per group of layers, with declarations that
+allow compiling each library and the project separately. The editor and the player load the project's world through
 `World_Info`. The distributed game is compiled from source and excludes the engine-time packages.
 
 - Targets, collections, outputs and binary updates:

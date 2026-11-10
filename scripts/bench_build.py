@@ -25,7 +25,7 @@ Steps (--steps, comma separated; all of them by default):
   noop_turn_held      mirai build editor demo --release without changes while this script holds
                       the build turn for --hold seconds
   phases_demo         the compiler on the library of the demo at -o:speed, by phases
-  phases_runtime      the compiler on the runtime library at -o:speed from its stage, by phases
+  phases_runtime      the compiler on the mirai-engine library at -o:speed from its stage, by phases
 
 shaders_cold removes the shared shader cache of the repository
 (<main>/.mirai/cache/shaders): run it when no other checkout depends on it.
@@ -263,8 +263,8 @@ class Bench:
                            f"-collection:project={project}", f"-collection:plugins={checkout / 'plugins'}",
                            f"-collection:generated={project / '.mirai/gen'}", attribute]
             else:
-                stage = release / "stage-runtime"
-                command = [str(compiler(checkout)), "build", str(stage / "__mirai_runtime"), "-build-mode:dll",
+                stage = release / "stage-engine"
+                command = [str(compiler(checkout)), "build", str(stage / "__mirai_engine"), "-build-mode:dll",
                            f"-collection:mirai={stage}", "-o:speed", "-debug", attribute]
             command += [f"-out:{Path(folder) / ('editor' if demo else 'mirai-engine')}.dll", "-show-more-timings",
                         "-export-timings:json", f"-export-timings-file:{timings}"]

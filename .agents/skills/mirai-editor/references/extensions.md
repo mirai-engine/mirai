@@ -17,9 +17,10 @@ to an unloaded library. Those of one type are looked up in a single place (`prov
   own, `@(storage,free="proc")`. A `@(component)` of the editor package lives in `Editor`, not in
   `World`: what must survive Play and saving goes in `runtime/`.
 - **Functions.** They run by default in the `editor` loop and receive as parameters what they use:
-  `^editor.Session`, its storage, `core.World_Ref` (the shown world), `core.Input`, `core.Time`,
-  `^host.App` and tables. The generator rejects an editor function in the `game` loop or with
-  editor types in `fixed`.
+  `^editor.Session`, its storage, `core.World_Ref` (the shown world), `core.Input`, `core.Time`, the
+  part of the application they reach (`^host.Assets`, `^host.Frame_Extras`; `^host.App` for the
+  application itself) and tables. The generator rejects an editor function in the `game` loop or
+  with editor types in `fixed`.
 - A step that builds UI starts with `if !g.begun || editor.playing(s) {return}`: `Editor_Ui.begun`
   says the `ctx` frame is open, and in Play the tools do not act.
 - Order against the [editor steps](editor.md#the-editor-loop): reading the pointer or deciding
@@ -56,7 +57,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
    gizmo of its own (terrain) calls `editor.tool_lend`: while it has the scene, W, E and R are not
    shown active, and pressing them lends the scene to the gizmo and the selection without turning it
    off or closing its panel (`tool_aside`); choosing a brush takes it back with `tool_take`.
-7. **Show.** Guides with `host.app_debug_lines_add`; a ring of constant width on screen, with
+7. **Show.** Guides with `host.extras_debug_lines_add`; a ring of constant width on screen, with
    `viewport_screen` and `ui.draw_line` or `ui.draw_polyline`. The panel, only with the tool
    active: `if ui.panel(ctx, id, editor.tool_panel(g, id)) { controls }`. The result, with
    `editor.notify`. What a component draws over the selection (a mirror's face, a decal's box) goes
@@ -80,7 +81,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
 **Authoring geometry preview** (used by [terrain](../../mirai-world/references/terrain.md)):
 
 - During a stroke it is shown with an immutable generated mesh (`host.assets_mesh_generate`) and a
-  visual instance of the frame (`host.app_instance_add`, `replace_source` to substitute the shown
+  visual instance of the frame (`host.extras_instance_add`, `replace_source` to substitute the shown
   entity), without changing components or history. The mesh is released on replacing it, cancelling
   or finishing, before `render_sync`.
 - To confirm, it writes the asset in the registry's memory, unsaved, and what is loaded reloads by
@@ -313,7 +314,7 @@ Rules:
   `entity_create` with `Create_Desc.card`.
 - What a selected entity shows besides the icon (a decal's box, a portal's opening and the path to
   its exit) is drawn by a `frame` `after="editor_tools"` step of the plugin with
-  `host.app_debug_lines_add`, outside a Play.
+  `host.extras_debug_lines_add`, outside a Play.
 
 ## An inspection mode
 
@@ -323,13 +324,12 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
 
 - `name` cannot be a core one nor one already declared in the frame; an empty `group` goes to
   `Plugins`; with non-empty `reason` the mode cannot be shown now and is not drawn.
-- `record` is a pass of the
-  [`Inspect`](../../mirai-rendering/references/views.md#extension-stages) stage that the
-  renderer records only in the view that shows the mode, over its lit image: it requests its
-  pipeline with `erender.stage_pipeline(app, {stage = .Inspect, shader})` (a `<shader>.comp.slang`
-  of its `shaders/`), binds the image with `pass_image_bind` and dispatches. A lines mode delivers
-  them itself while it is the one seen (`editor.view_mode_current`), with a `record` that does
-  nothing.
+- `record` is a pass of the [`Inspect`](../../mirai-rendering/references/views.md#extension-stages)
+  stage that the renderer records only in the view that shows the mode, over its lit image: it
+  requests its pipeline with `erender.stage_pipeline(renderer, {stage = .Inspect, shader})` (a
+  `<shader>.comp.slang` of its `shaders/`), binds the image with `pass_image_bind` and dispatches. A
+  lines mode delivers them itself while it is the one seen (`editor.view_mode_current`), with a
+  `record` that does nothing.
 - Up to `VIEW_MODE_PLUGIN_CAPACITY` per frame; the declarations are emptied in `input`, and a mode
   that stops being declared returns to Lit.
 - `portals` declares `nested` (`plugins/portals/editor/view_mode.odin`) and `physics`, Collision

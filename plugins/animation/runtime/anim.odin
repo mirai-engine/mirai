@@ -250,8 +250,8 @@ animation_tick :: proc(
     tick_dt:=time.dt
     if !time.playing {tick_dt=frame.dt if finite(frame.dt) && frame.dt>0 else 0}
     stamp:=core.layout(parents)+core.version(parents)+core.layout(names)+core.version(names)+core.layout(targets)+core.version(targets)+core.layout(core.read(transforms))+core.layout(animations)+playback.rigs_stamp+1
-    if actions!=nil && !actions_prepare(actions,action_requests,action_assets,animations,playback,app,problems) {return}
-    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,motion_assets,app,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
+    if actions!=nil && !actions_prepare(actions,action_requests,action_assets,animations,playback,app.assets,app.allocator,problems) {return}
+    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,motion_assets,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
     distances:=core.take(&requests.distances)
     seeks:=core.take(&requests.seeks)
     pose_requests:=core.take(&requests.poses)
@@ -287,7 +287,7 @@ animation_tick :: proc(
             previous,played,library,kept:=source_previous(sources,app,state,animation)
             if kept {content,animation.asset,animation.library,source_error=previous,played,library,.None} else {animation.asset,animation.library,source_error={},{},.None}
         }
-        if source_error!=.None {state.program.error=source_error;program_problem(problems,e,app,animation,source_error);continue}
+        if source_error!=.None {state.program.error=source_error;program_problem(problems,e,app.assets,animation,source_error);continue}
         if content==nil && animation.asset!={} {
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,e,"animation.asset","Animation.asset names %s, which cannot be played: it is missing, is not an .anim, .match or .agraph, or is damaged; asset_errors of engine.diagnostics says which, and importing it again fixes a damaged one",host.assets_name(app.assets,animation.asset,&name))
@@ -302,7 +302,7 @@ animation_tick :: proc(
         }
         state.program.match.goal=0
         program,programmed,program_valid:=program_resolve(state,animation,app,blends,graphs,dt,events,playback,content,problems,rig_goals,match_plays,facing)
-        if !program_valid {program_problem(problems,e,app,animation,state.program.error);continue}
+        if !program_valid {program_problem(problems,e,app.assets,animation,state.program.error);continue}
         if !programmed && animation.library!={} {
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,e,"animation.library","Animation.library replaces the clips of a .match or .agraph, and Animation.asset %s is neither; clear library, or set asset to a .match or .agraph",host.assets_name(app.assets,animation.asset,&name))
@@ -336,9 +336,9 @@ animation_tick :: proc(
         if skeletal {
             state.leader=playback.rigs[row].leader
             skeleton:=playback.rigs[row].skeleton
-            definition:=skeleton_content(skeleton_assets,app,skeleton)
+            definition:=skeleton_content(skeleton_assets,app.assets,app.allocator,skeleton)
             if definition==nil {
-                if skeleton_assets!=nil {asset_problem(problems,e,app,"animation.skeleton","the mesh of its Mesh_Renderer",skeleton,content_error(skeleton_assets.contents[:],skeleton))}
+                if skeleton_assets!=nil {asset_problem(problems,e,app.assets,"animation.skeleton","the mesh of its Mesh_Renderer",skeleton,content_error(skeleton_assets.contents[:],skeleton))}
                 continue
             }
             if changed || state.skeleton!=definition.id || state.skeleton_revision!=definition.revision || len(state.bindings)==0 {
@@ -380,13 +380,13 @@ animation_tick :: proc(
         refused:=playback.pose.failed
         if content!=nil {
             if programmed {
-                if !program_masks_prepare(state,program,content,graphs,app) {program_problem(problems,e,app,animation,state.program.error);continue}
-                if !program_players(state,program,content,animation,events,playback,dt,sought,problems,distance) {program_problem(problems,e,app,animation,state.program.error);continue}
+                if !program_masks_prepare(state,program,content,graphs,app.assets,app.allocator) {program_problem(problems,e,app.assets,animation,state.program.error);continue}
+                if !program_players(state,program,content,animation,events,playback,dt,sought,problems,distance) {program_problem(problems,e,app.assets,animation,state.program.error);continue}
                 if state.program.has_root {
                     state.base_root=state.program.root
                     state.has_base_root=true
                 }
-                if !program_pose(playback,state,content,animation,program,core.read(transforms)) {program_problem(problems,e,app,animation,state.program.error);continue}
+                if !program_pose(playback,state,content,animation,program,core.read(transforms)) {program_problem(problems,e,app.assets,animation,state.program.error);continue}
             } else {
                 state.program.ready=false;state.program.has_root=false
                 advance(playback,state,content,animation,events,dt,problems,sought,current_dt)
@@ -444,8 +444,8 @@ animation_tick :: proc(
             action:=action_clock(actions,e);if action.player.clip!=0 {clock=action}
             if animation.mirror && len(state.mirror_pairs)>0 {clock.mirror=!clock.mirror}
             unwarped:=state.motion.translation
-            if ok && !motion_apply_root(motion,motion_assets,app,state,animation.motion,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
-                if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error,app,motion_assets,animation.motion)}
+            if ok && !motion_apply_root(motion,motion_assets,app.assets,app.allocator,state,animation.motion,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
+                if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error,app.assets,motion_assets,animation.motion)}
             }
             // The warp of the clock of an action that moves the body moves the body as much.
             if leading:=action_root_slot(actions,e);leading!=nil && leading.body!=.None {state.body_motion.translation+=state.motion.translation-unwarped}
@@ -463,9 +463,9 @@ finite :: proc "contextless" (value:f32) -> bool {return abs(value)<=max(f32)}
 
 // Reports why the program of an Animation (its asset, graph or blend space) did not play.
 @(private)
-program_problem :: proc(problems:^core.Problems,e:core.Entity,app:^host.App,animation:Animation,error:Program_Error) {
+program_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,animation:Animation,error:Program_Error) {
     name:[base.ASSET_ID_TEXT]u8
-    path:=host.assets_name(app.assets if app!=nil else nil,animation.asset,&name)
+    path:=host.assets_name(assets,animation.asset,&name)
     switch error {
     case .None,.Out_Of_Memory: memory_problem(problems,e,"its animation program")
     case .Invalid_Asset: core.report(problems,e,"animation.program_asset","Animation.asset %s, its library or a blend space, graph or clip source it names cannot be read or is of another kind, or they name more than %d animations; check them with animation.asset.inspect, and import or save them again",path,ANIMATION_SOURCES)
@@ -516,24 +516,24 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 // with a Pose_Source shares the pose of its rig when both have one skeleton,
 // and is a rig that follows it when they have two.
 @(private)
-rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),app:^host.App) -> bool {
+rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets) -> bool {
     if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_inputs={};return true}
-    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(app)}
+    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(assets)}
     if inputs==playback.rigs_inputs {return true}
-    skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),app:^host.App,e:core.Entity) -> base.Asset_Id {
+    skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
         static,has:=core.get(meshes,e)
         if !has || static.mesh=={} {return {}}
-        mesh:=host.assets_mesh(app.assets,static.mesh)
+        mesh:=host.assets_mesh(assets,static.mesh)
         return mesh.skeleton if mesh!=nil && !mesh.failed else {}
     }
-    rig_of :: proc(meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),app:^host.App,row:int) -> (rig:Rig,ok:bool) {
+    rig_of :: proc(meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets,row:int) -> (rig:Rig,ok:bool) {
         e:=core.entity_at(meshes,row)
-        skeleton:=skeleton_of(meshes,app,e)
+        skeleton:=skeleton_of(meshes,assets,e)
         if skeleton=={} {return}
         rig={entity=e,skeleton=skeleton}
         if skins.table!=nil {
             if source,has:=core.get(skins,e);has {
-                leader:=skeleton_of(meshes,app,source.rig)
+                leader:=skeleton_of(meshes,assets,source.rig)
                 if leader=={} || leader==skeleton || source.rig==e {return}
                 rig.leader=source.rig
             }
@@ -542,7 +542,7 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
     }
     changed:=false;count:=0
     for row in 0..<core.count(meshes) {
-        rig,ok:=rig_of(meshes,skins,app,row)
+        rig,ok:=rig_of(meshes,skins,assets,row)
         if !ok {continue}
         count+=1
         known:=rig_find(playback,rig.entity)
@@ -552,7 +552,7 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
         next,error:=make([dynamic]Rig,0,count)
         if error!=nil {return false}
         for row in 0..<core.count(meshes) {
-            if rig,ok:=rig_of(meshes,skins,app,row);ok {append(&next,rig)}
+            if rig,ok:=rig_of(meshes,skins,assets,row);ok {append(&next,rig)}
         }
         slice.sort_by(next[:],proc(a,b:Rig) -> bool {return a.entity<b.entity})
         delete(playback.rigs);playback.rigs=next;playback.rigs_stamp+=1

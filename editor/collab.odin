@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:log"
 import "core:mem"
 import "core:slice"
@@ -1404,7 +1403,7 @@ collab_draw :: proc(s:^Session) {
         yaw:=presence_yaw(forward)
         name:=string(peer.name[:peer.name_length])
         if loaded {
-            if presence_prepare(s,&st.figures[i],eyes,yaw,color,agent_level(i),u64(COLLAB_PEERS+i)) {host.app_instance_add(s.app,st.figures[i].instance)}
+            if presence_prepare(s,&st.figures[i],eyes,yaw,color,agent_level(i),u64(COLLAB_PEERS+i)) {host.extras_instance_add(&s.app.extras,st.figures[i].instance)}
             if rect,shown:=presence_glyph_rect(s,presence_shown(&st.figures[i],eyes)+{0,high.y,0},s.viewport.view_projection);shown {
                 presence_initial_draw(s,rect,name,color)
                 presence_name_draw(s,rect,name,color)

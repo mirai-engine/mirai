@@ -11,6 +11,7 @@ import sim "plugins:physics/runtime/sim"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:host"
+import "mirai:std/jobs"
 
 // Capacities of the simulation, read when its world is made; zero takes the
 // default. Where things fall is a Gravity of the world. Changing a capacity afterwards has no effect.
@@ -758,7 +759,7 @@ physics_parallel_for :: proc(count,grain:int,data:rawptr,body:proc(data:rawptr,f
 }
 
 @(private)
-state_make :: proc(state:^Physics_State,settings:^Physics_Settings,app:^host.App,problems:^core.Problems) -> bool {
+state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^jobs.Job_System,problems:^core.Problems) -> bool {
     if state.ready {return true}
     desc:=sim.world_desc_default()
     desc.allocator=context.allocator
@@ -773,7 +774,7 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,app:^host.App
     if settings.heightfields>0 {desc.heightfield_capacity=int(settings.heightfields)}
     if settings.events>0 {desc.event_capacity=int(settings.events)}
     if settings.substeps>0 {desc.substeps=int(settings.substeps)}
-    desc.worker_count=jobs_workers(app)
+    desc.worker_count=jobs_workers(job_system)
     desc.parallel_for=physics_parallel_for
     clear(&state.geometry)
     clear(&state.sources)

@@ -86,7 +86,7 @@ navigation_view_modes :: proc(s:^editor.Session,view:^Nav_View) {
 }
 
 @(step="render",after="render_sync")
-navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
+navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Frame_Extras) {
     if view.shown<0 {return}
     w:=editor.shown_world(s)
     n:=core.world_storage_of(w,nav.Navigation)
@@ -105,7 +105,7 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
         view.count,view.dropped,view.ready=lines.count,lines.dropped,true
     }
     lines.count,lines.dropped=view.count,view.dropped
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
     if s.selection==nil || len(s.selection.entities)==0 {return}
     paths:=core.world_table_of(w,nav.Nav_Path)
     if paths==nil {return}
@@ -116,7 +116,7 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
         if !found || p.class<0 || int(p.class)>=n.count {continue}
         if nav.class_in_volume(n,int(p.class)) {draw_flier(&agent_lines,&n.classes[p.class].volume,p)} else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p)}
     }
-    if agent_lines.count>0 {host.app_debug_lines_add(app,agent_lines)}
+    if agent_lines.count>0 {host.extras_debug_lines_add(extras,agent_lines)}
 }
 
 NAV_VIEW_AGENT_LINES :: 4096

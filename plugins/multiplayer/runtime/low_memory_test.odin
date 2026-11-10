@@ -64,7 +64,7 @@ a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: p
         // The player is told with an error in the log, which would fail the test.
         logger:=context.logger
         context.logger=log.nil_logger()
-        session_fail(&ended,&player,"the server went away")
+        session_fail(&ended,player.allocator,"the server went away")
         context.logger=logger
         failure.remaining=max(int)
         testing.expectf(t,ended.reason_text=="" && core.problem_find(&problems,core.NONE,"net.reason")!=nil,"%v: the reason found memory, or no problem says it did not",mode)

@@ -50,14 +50,14 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     core.table_settle(&worlds,&world.entities)
 
     stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,worlds:^core.Table(core.World_Transform),owner:core.Entity,brush:terrain.Brush) {
-        terrain_sync(s,tool,core.read(&world.terrains),s.app)
-        if !testing.expect(t,stroke_prepare(tool,s.app,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner})) {return}
+        terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
+        if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner})) {return}
         if !testing.expect(t,stroke_baseline(tool)) {return}
         tool.stroke.active=true
         change:=terrain.source_edit(&tool.stroke.source,brush)
         testing.expect(t,change.changed && change.error==.None)
         stroke_changed(&tool.stroke,change)
-        stroke_end(s,tool,ref,s.app)
+        stroke_end(s,tool,ref,s.app.assets)
         testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
     }
     stroke(t,&s,&tool,ref,&world,&worlds,owner,{kind=.Raise,center={-100,0,-100},radius=3,amount=2})
@@ -71,7 +71,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     // Undo twice and redo twice put back the bytes of each revision.
     walk :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,app:^host.App,undo:bool) {
         if undo {testing.expect(t,editor.undo(s.edits,editor.edited_world(s),s.selection))} else {testing.expect(t,editor.redo(s.edits,editor.edited_world(s),s.selection))}
-        terrain_sync(s,tool,core.read(&world.terrains),app)
+        terrain_sync(s,tool,core.read(&world.terrains),app.assets)
     }
     walk(t,&s,&tool,&world,&app,true)
     held:=test_held(t,&assets,relative);testing.expect(t,string(held)==string(first));delete(held)

@@ -318,7 +318,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     total,written:=0,0
     if skeleton_id!={} {
         cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
-        content:=anim.skeleton_content(cache,s.app,skeleton_id)
+        content:=anim.skeleton_content(cache,s.app.assets,s.app.allocator,skeleton_id)
         playback:=core.world_storage_of(world,anim.Playback)
         if content!=nil && playback!=nil {
             for &state in playback.states {

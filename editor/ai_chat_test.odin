@@ -4,6 +4,7 @@ import "core:testing"
 import "core:strings"
 import "core:time"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -715,9 +716,9 @@ ai_sessions_keep_their_own_model_and_a_new_one_takes_that_of_its_agent :: proc(t
     m.task_count=1
     task:=&m.tasks[0];task.id=1;task.state=.Done
     c:=&task.conversation;c.id=1
-    ai_conversation_set_text(c.provider[:],&c.provider_len,"codex")
-    ai_conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
-    ai_conversation_set_text(c.effort[:],&c.effort_len,"high")
+    ai_store.conversation_set_text(c.provider[:],&c.provider_len,"codex")
+    ai_store.conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
+    ai_store.conversation_set_text(c.effort[:],&c.effort_len,"high")
     m.selected=1
     model,effort:=ai_chat_model(m)
     testing.expect(t,model=="gpt-6.1-sol" && effort=="high","a session shows its own model")

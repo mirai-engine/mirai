@@ -100,8 +100,8 @@ View_Postprocess :: struct {
 // Gives the renderer the effects of layers for the local view slot
 // (render.Camera.slot is slot + 1) when they, the assets they name or what
 // the renderer holds for the slot changed since last.
-view_postprocess_sync :: proc(app:^host.App,slot:int,layers:[POST_PROCESS_CAPACITY]Post_Process_Layer,last:^View_Postprocess) {
-    a,r:=app.assets,app.renderer
+view_postprocess_sync :: proc(assets:^host.Assets,renderer:^Renderer,slot:int,layers:[POST_PROCESS_CAPACITY]Post_Process_Layer,last:^View_Postprocess) {
+    a,r:=assets,renderer
     if a==nil || r==nil || slot<0 || slot>=len(r.view_postprocesses) {return}
     if last.layers==layers && last.revision==a.revision && last.structure==a.structure && r.view_postprocesses[slot]==last.given {return}
     last.given=postprocess_effects(a,layers)

@@ -47,9 +47,9 @@ previews_free :: proc(p:^Previews) {
 }
 
 @(private)
-previews_ready :: proc(p:^Previews,app:^host.App) {
+previews_ready :: proc(p:^Previews,allocator:runtime.Allocator) {
     if p.ready {return}
-    p.ready,p.allocator=true,app.allocator
+    p.ready,p.allocator=true,allocator
     p.animation.image={key=KEY_ANIMATION,name="previews.animation"}
     p.animation.speed,p.animation.loop,p.animation.sun=1,true,true
     p.sound.image={key=KEY_SOUND,name="previews.sound"}
@@ -61,12 +61,12 @@ previews_ready :: proc(p:^Previews,app:^host.App) {
 previews_document :: proc(s:^editor.Session,p:^Previews,world:core.World_Ref,app:^host.App,frame:core.Frame_Time) {
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
-    previews_ready(p,app)
+    previews_ready(p,app.allocator)
     d:=editor.asset_document_active(s)
     if d==nil {return}
     switch d.kind {
     case asset.KIND_ANIMATION: animation_document(s,p,world,app,frame,d)
-    case asset.KIND_SOUND,asset.KIND_SOUND_SET: sound_document(s,p,app,d)
+    case asset.KIND_SOUND,asset.KIND_SOUND_SET: sound_document(s,p,app.assets,app.mixer,d)
     }
 }
 

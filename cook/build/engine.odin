@@ -17,57 +17,126 @@ import "mirai:std/subprocess"
 // release stand side by side, so going from one mode to the other builds
 // nothing.
 //
-//   runtime library  every package a game or a plugin can import
-//   editor library   the editor and the engine-time packages, linked against the runtime
+//   mirai-<library>  the libraries (ENGINE_LIBRARIES), each linked against the ones it needs
 //   decl/            the declarations projects compile against instead of those sources
 //   mirai-editor, mirai-player  the programs that load the library of a project
-//   mirai-import     the program of mirai import, on the editor library
-//   mirai-author     the program of mirai ui and mirai scene, on the editor library
-//   stage-runtime/, stage-editor/  the copies the libraries are built from (declare.odin)
+//   mirai-import     the program of mirai import, on the libraries of the editor
+//   mirai-author     the program of mirai ui and mirai scene, on the libraries of the editor
+//   stage-<library>/ the copy each library is built from (declare.odin), with the
+//                    declarations of the libraries it needs
 //
-// Each part is built again only for what it reads: the runtime library for
-// its sources; the editor library for its sources and the declarations of the
-// runtime it compiles against, so a change of the editor alone leaves the
-// runtime as it is, and a change of the runtime that declares the same leaves
-// the editor; the programs for the declarations of both.
+// Each part is built again only for what it reads: a library for its sources
+// and for the declarations its packages import from the libraries it needs,
+// so a change in the body of a procedure builds its library and no other, and
+// one of a declaration builds, besides, the libraries and the programs that
+// reach its package.
 //
 // A project then compiles its generated world, its game and its plugins
 // alone, into a library the editor or the player loads.
 
-ENGINE_RUNTIME_PACKAGES :: [?]string{
-    "std/base","std/subprocess","std/math","std/geom","std/serial","std/spatial","std/jobs","std/anim","std/ai","std/input",
-    "std/compressor","std/compressor/bc7split","std/compressor/lz/entropy","std/compressor/lz/match","std/compressor/lz/parse",
-    "std/compressor/lz",
-    "third_party/freetype","platform","rhi","render","net","audio","asset","ui","project","core","host",
-    "engine/volume","engine/input","engine/scene","engine/render","engine/audio","engine/gui","engine/camera","engine/save",
+// The libraries of the engine, each after the ones it needs: the layers of
+// the packages, cut where no import goes up.
+Engine_Library :: enum u8 {
+    Base,   // what needs no renderer: the standard library, the system, the device and the data core
+    Engine, // the rest of what a game or a plugin can import
+    Cook,   // engine-time: what imports, cooks and builds
+    Editor, // engine-time: the editor
 }
 
-ENGINE_EDITOR_PACKAGES :: [?]string{
-    "cook/workspace","cook/cache","cook/compressor/bc7split","cook/compressor/texture/common","cook/compressor/texture/bc67","cook/compressor/texture/bc1",
-    "cook/compressor/texture/bc4","cook/compressor/texture/bc6","cook/compressor/texture/bc7","cook/compressor/texture","cook/textures","cook/image","cook/movie","cook/rig","cook/import","cook/import/obj","cook/import/gltf","cook/import/usd","third_party/ufbx","cook/import/fbx","cook/shaders","cook/prefab",
-    "cook/import/sources","cook/author","cook/install","cook/build","third_party/sqlite","editor/api","editor/acp","editor/diff","editor",
+Engine_Library_Info :: struct {
+    name:string,                   // mirai-<name> its file, stage-<name> its stage
+    needs:bit_set[Engine_Library], // the libraries its packages may import, with the ones those need
+    engine_time:bool,              // no game contains its packages
 }
 
-// How many packages have declarations: the stamp counts them, those of the runtime first.
+ENGINE_LIBRARIES :: [Engine_Library]Engine_Library_Info{
+    .Base={name="base"},
+    .Engine={name="engine",needs={.Base}},
+    .Cook={name="cook",needs={.Base,.Engine},engine_time=true},
+    .Editor={name="editor",needs={.Base,.Engine,.Cook},engine_time=true},
+}
+
+Engine_Package :: struct {
+    library:Engine_Library,
+    path:string, // relative to the root and to the collection: core, engine/scene
+}
+
+// Every package of the engine with a declaration, and the library that holds
+// it. A package goes in the lowest library that has what it imports; a C
+// library, with the package that binds it.
+ENGINE_PACKAGES :: [?]Engine_Package{
+    {.Base,"std/base"},{.Base,"std/subprocess"},{.Base,"std/math"},{.Base,"std/geom"},{.Base,"std/serial"},{.Base,"std/spatial"},
+    {.Base,"std/jobs"},{.Base,"std/anim"},{.Base,"std/ai"},{.Base,"std/input"},
+    {.Base,"std/compressor"},{.Base,"std/compressor/bc7split"},{.Base,"std/compressor/lz/entropy"},{.Base,"std/compressor/lz/match"},
+    {.Base,"std/compressor/lz/parse"},{.Base,"std/compressor/lz"},
+    {.Base,"audio"},{.Base,"platform"},{.Base,"rhi"},{.Base,"project"},{.Base,"core"},
+
+    {.Engine,"third_party/freetype"},{.Engine,"asset"},{.Engine,"net"},{.Engine,"render"},{.Engine,"ui"},{.Engine,"host"},
+    {.Engine,"engine/volume"},{.Engine,"engine/input"},{.Engine,"engine/scene"},{.Engine,"engine/render"},{.Engine,"engine/audio"},
+    {.Engine,"engine/gui"},{.Engine,"engine/camera"},{.Engine,"engine/save"},
+
+    {.Cook,"cook/workspace"},{.Cook,"cook/cache"},{.Cook,"cook/compressor/bc7split"},{.Cook,"cook/compressor/texture/common"},
+    {.Cook,"cook/compressor/texture/bc67"},{.Cook,"cook/compressor/texture/bc1"},{.Cook,"cook/compressor/texture/bc4"},
+    {.Cook,"cook/compressor/texture/bc6"},{.Cook,"cook/compressor/texture/bc7"},{.Cook,"cook/compressor/texture"},
+    {.Cook,"cook/textures"},{.Cook,"cook/image"},{.Cook,"cook/movie"},{.Cook,"cook/rig"},{.Cook,"cook/import"},
+    {.Cook,"cook/import/obj"},{.Cook,"cook/import/gltf"},{.Cook,"cook/import/usd"},{.Cook,"third_party/ufbx"},{.Cook,"cook/import/fbx"},
+    {.Cook,"cook/shaders"},{.Cook,"cook/prefab"},{.Cook,"cook/import/sources"},{.Cook,"cook/author"},{.Cook,"cook/install"},
+    {.Cook,"cook/build"},
+
+    {.Editor,"third_party/sqlite"},{.Editor,"editor/api"},{.Editor,"editor/acp"},{.Editor,"editor/diff"},{.Editor,"editor/ai_store"},{.Editor,"editor/git"},
+    {.Editor,"editor"},
+}
+
 @(private)
-ENGINE_PACKAGE_COUNT :: len(ENGINE_RUNTIME_PACKAGES)+len(ENGINE_EDITOR_PACKAGES)
+ENGINE_PACKAGE_COUNT :: len(ENGINE_PACKAGES)
 
 @(private)
 engine_package :: proc(index:int) -> string {
-    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
-    return runtime_packages[index] if index<len(runtime_packages) else editor_packages[index-len(runtime_packages)]
+    packages:=ENGINE_PACKAGES
+    return packages[index].path
 }
 
 @(private)
 engine_package_index :: proc(path:string) -> (index:int,found:bool) {
-    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
-    for name,at in runtime_packages {
-        if name==path {return at,true}
-    }
-    for name,at in editor_packages {
-        if name==path {return len(runtime_packages)+at,true}
+    packages:=ENGINE_PACKAGES
+    for entry,at in packages {
+        if entry.path==path {return at,true}
     }
     return
+}
+
+// The packages of a library, in the order of ENGINE_PACKAGES.
+engine_library_packages :: proc(library:Engine_Library,allocator:=context.allocator) -> []string {
+    packages:=ENGINE_PACKAGES
+    list:=make([dynamic]string,allocator)
+    for entry in packages {
+        if entry.library==library {append(&list,entry.path)}
+    }
+    return list[:]
+}
+
+// The packages a game binary can contain: those of the libraries that are not engine-time.
+engine_runtime_packages :: proc(allocator:=context.allocator) -> []string {
+    packages,libraries:=ENGINE_PACKAGES,ENGINE_LIBRARIES
+    list:=make([dynamic]string,allocator)
+    for entry in packages {
+        if !libraries[entry.library].engine_time {append(&list,entry.path)}
+    }
+    return list[:]
+}
+
+// The file of a library without its extension.
+@(private)
+engine_library_file :: proc(library:Engine_Library,allocator:=context.allocator) -> string {
+    libraries:=ENGINE_LIBRARIES
+    return strings.concatenate({"mirai-",libraries[library].name},allocator)
+}
+
+// The package a library is built from (entry_write).
+@(private)
+engine_library_entry :: proc(library:Engine_Library,allocator:=context.allocator) -> string {
+    libraries:=ENGINE_LIBRARIES
+    return strings.concatenate({"__mirai_",libraries[library].name},allocator)
 }
 
 // Changes when what declare writes changes, so that binaries built by an
@@ -77,13 +146,13 @@ DECLARE_VERSION :: 8
 
 Engine_Paths :: struct {
     folder:string,
-    stage_runtime,stage_editor:string,
-    decl:string,                          // the collection "mirai" of a project
-    runtime,editor:string,                // the libraries
-    runtime_import,editor_import:string,  // what links against them
+    decl:string,                      // the collection "mirai" of a project
+    stages:[Engine_Library]string,
+    libraries:[Engine_Library]string,
+    imports:[Engine_Library]string,   // what links against each library
     editor_program,player_program:string,
-    import_program:string,                // runs cook/import/sources.command: what mirai import does
-    author_program:string,                // runs cook/author.command: what mirai ui and mirai scene do
+    import_program:string,            // runs cook/import/sources.command: what mirai import does
+    author_program:string,            // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
 }
 
@@ -119,6 +188,9 @@ ENGINE_MODE_HERE :: Engine_Mode.Dev when ODIN_OPTIMIZATION_MODE==.Minimal || ODI
 @(private)
 ENGINE_STAMP :: "engine.stamp"
 
+@(private)
+ENGINE_STAGE_PREFIX :: "stage-"
+
 // The mode of the binaries an installed engine carries, the only one it
 // has: --dev builds the libraries of a project at -o:minimal against them.
 ENGINE_MODE_INSTALLED :: Engine_Mode.Release
@@ -144,15 +216,16 @@ engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allo
     context.allocator=allocator
     folders:=ENGINE_MODE_FOLDERS
     paths.folder=project.path(engine_root,".mirai","engine",folders[engine_mode_resolve(engine_root,mode)])
-    // The stage of the editor holds a copy of the declarations: at the same
-    // depth, the relative paths of their foreign imports stand.
-    paths.stage_runtime=project.path(paths.folder,"stage-runtime")
-    paths.stage_editor=project.path(paths.folder,"stage-editor")
     paths.decl=project.path(paths.folder,"decl")
-    paths.runtime=project.path(paths.folder,project.library_file("mirai-engine",context.temp_allocator))
-    paths.editor=project.path(paths.folder,project.library_file("mirai-editor",context.temp_allocator))
-    paths.runtime_import=project.path(paths.folder,library_import_file("mirai-engine",context.temp_allocator))
-    paths.editor_import=project.path(paths.folder,library_import_file("mirai-editor",context.temp_allocator))
+    libraries:=ENGINE_LIBRARIES
+    for info,library in libraries {
+        file:=engine_library_file(library,context.temp_allocator)
+        // A stage holds a copy of the declarations it compiles against: at the
+        // depth of decl, the relative paths of their foreign imports stand.
+        paths.stages[library]=project.path(paths.folder,strings.concatenate({ENGINE_STAGE_PREFIX,info.name},context.temp_allocator))
+        paths.libraries[library]=project.path(paths.folder,project.library_file(file,context.temp_allocator))
+        paths.imports[library]=project.path(paths.folder,library_import_file(file,context.temp_allocator))
+    }
     paths.editor_program=project.path(paths.folder,strings.concatenate({"mirai-editor",EXECUTABLE_EXTENSION},context.temp_allocator))
     paths.player_program=project.path(paths.folder,strings.concatenate({"mirai-player",EXECUTABLE_EXTENSION},context.temp_allocator))
     paths.import_program=project.path(paths.folder,strings.concatenate({"mirai-import",EXECUTABLE_EXTENSION},context.temp_allocator))
@@ -180,62 +253,73 @@ Engine_Result :: struct {
     seconds:f64,
 }
 
-// What the last build of a mode left: the fingerprint of the sources of each
-// library and that of the compiler and the flags the programs were built
-// with, and the version of declare. Zero: unknown, built again. A declaration
-// that changes zeroes what compiles against it before anything else is built,
-// so a build that fails halfway leaves those parts to the next one.
+// What the last compile of a library left. Zero: nothing of it stands, and it
+// is declared and compiled again.
+@(private)
+Library_Stamp :: struct {
+    sources:u64, // the fingerprint of its sources and of what it was compiled with
+    tools:u64,   // the compiler, the flags and what it embeds besides its sources
+}
+
+// What the last build of a mode left: of each library, of the programs (the
+// compiler and the flags they were built with) and of declare. A declaration
+// that changes zeroes what compiles against it before anything else is
+// built, so a build that stops halfway leaves those parts to the next one.
 @(private)
 Engine_Stamp :: struct {
-    runtime,editor,programs:u64,
-    tools:u64,  // the compiler and the flags the runtime library was compiled with
-    loads:u64,  // what the runtime embeds besides its sources (the shaders manifest) when it was compiled
+    libraries:[Engine_Library]Library_Stamp,
+    programs:u64,
+    declares:int,
     // Of each package (engine_package), what whoever imports it compiles
     // against: its declarations and those of every package of the engine they
     // import, directly or not (decl_hashes). Zero: unknown.
     declared:[ENGINE_PACKAGE_COUNT]u64,
-    declares:int,
-    runtime_pending:bool, // the runtime library was being compiled and did not finish
 }
 
-// What a build of a mode finds: the fingerprints of now, and which parts
-// stand as the last build left them.
+// What a build of a mode finds: the fingerprints of now, and whether every
+// part stands as the last build left it.
 @(private)
 Engine_Plan :: struct {
     previous:Engine_Stamp,
+    stamped:bool, // previous is of a build of this version of declare
     flags:[dynamic]string,
-    runtime,editor,programs,tools,loads:u64,
-    key:u64, // of both and of declare: the entry of the shared cache
-    tools_changed:bool, // the compiler, the flags or what the runtime embeds moved since its library was compiled
-    runtime_current,editor_current,current:bool,
+    libraries:[Engine_Library]Library_Stamp,
+    programs:u64,
+    key:u64, // of every library and of declare: the entry of the shared cache
+    current:bool,
+}
+
+@(private)
+engine_programs :: proc(paths:Engine_Paths) -> [4]string {
+    return {paths.editor_program,paths.player_program,paths.import_program,paths.author_program}
 }
 
 @(private)
 engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths) -> (plan:Engine_Plan) {
     plan.flags=engine_flags(root,mode==.Dev)
-    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
     // render embeds the code of the shaders of the engine, whose manifest has the hash of each.
     // A release build embeds it as encoded to ship; a dev build, however it was encoded.
     names:=shaders.EMBEDDED_NAMES
     embedded:=[2]string{project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
-    shaders_loads:=embedded[:] if mode==.Release else embedded[:1]
-    plan.runtime,_=fingerprint(root,compiler,plan.flags[:],engine_sources(root,runtime_packages[:],..shaders_loads))
-    plan.editor,_=fingerprint(root,compiler,plan.flags[:],engine_sources(root,editor_packages[:]))
+    packages:=ENGINE_PACKAGES
+    render,_:=engine_package_index("render")
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
-    plan.tools=plan.programs
-    plan.loads,_=fingerprint(root,compiler,nil,shaders_loads)
-    plan.key=base.hash_combine(base.hash_combine(plan.runtime,plan.editor),DECLARE_VERSION)
+    plan.key=DECLARE_VERSION
+    for &library,which in plan.libraries {
+        loads:=(embedded[:] if mode==.Release else embedded[:1]) if packages[render].library==which else nil
+        library.sources,_=fingerprint(root,compiler,plan.flags[:],engine_sources(root,engine_library_packages(which,context.temp_allocator),..loads))
+        library.tools,_=fingerprint(root,compiler,plan.flags[:],loads)
+        plan.key=base.hash_combine(plan.key,library.sources)
+    }
     previous,stamped:=engine_stamp_read(paths.stamp)
-    // The text of the stage does not change when only an embedded file does,
-    // and a compile that did not finish left the stage written.
-    plan.tools_changed=!stamped || previous.declares!=DECLARE_VERSION || previous.tools!=plan.tools || previous.loads!=plan.loads || previous.runtime_pending
-    if !stamped || previous.declares!=DECLARE_VERSION {return}
-    plan.previous=previous
-    plan.runtime_current=previous.runtime==plan.runtime && library_present(paths.runtime,paths.runtime_import) && os.is_dir(paths.decl)
-    plan.editor_current=previous.editor==plan.editor && library_present(paths.editor,paths.editor_import)
-    programs:=previous.programs==plan.programs
-    for program in ([4]string{paths.editor_program,paths.player_program,paths.import_program,paths.author_program}) {programs&&=os.is_file(program)}
-    plan.current=plan.runtime_current && plan.editor_current && programs
+    // Without the declarations nothing compiles against what stands.
+    if !stamped || previous.declares!=DECLARE_VERSION || !os.is_dir(paths.decl) {return}
+    plan.previous,plan.stamped=previous,true
+    plan.current=previous.programs==plan.programs
+    for library,which in plan.libraries {
+        plan.current&&=previous.libraries[which].sources==library.sources && library_present(paths.libraries[which],paths.imports[which])
+    }
+    for program in engine_programs(paths) {plan.current&&=os.is_file(program)}
     return
 }
 
@@ -266,6 +350,79 @@ engine_state :: proc(engine_root:string,mode:Engine_Mode) -> (stamped,current:bo
     if !found {return}
     current=engine_plan(root,compiler,engine_mode_resolve(root,mode),paths).current
     return
+}
+
+// The programs, each a main over the declarations of the libraries.
+@(private)
+Engine_Program :: struct {name,package_name,source,output:string}
+
+@(private)
+engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
+    return {
+        {"editor program","editor","package main\n\nimport \"core:os\"\nimport \"mirai:editor\"\n\nmain :: proc() {os.exit(editor.launch(os.args[1:]))}\n",paths.editor_program},
+        {"player program","host","package main\n\nimport \"core:os\"\nimport \"mirai:host\"\n\nmain :: proc() {os.exit(host.launch(os.args[1:]))}\n",paths.player_program},
+        {"import program","import",`package main
+
+import "core:os"
+import "mirai:cook/import/sources"
+
+main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
+`,paths.import_program},
+        {"author program","author",`package main
+
+import "core:os"
+import "mirai:cook/author"
+import "mirai:editor"
+
+main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_recipes))}
+`,paths.author_program},
+    }
+}
+
+// What the stage of a library holds before it compiles: the declarations of
+// the libraries it needs, its sources staged and declared, and its entry.
+// stage: whether what the library compiles from its own packages was written.
+@(private)
+engine_library_stage :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (errors:[]string,stage:bool,ok:bool) {
+    libraries:=ENGINE_LIBRARIES
+    for needed in libraries[library].needs {
+        if !decl_mirror(paths.stages[library],paths.decl,engine_library_packages(needed,context.temp_allocator)) {return}
+    }
+    packages:=engine_library_packages(library,context.temp_allocator)
+    changed:Declare_Changed
+    errors,changed=declare({root=root,packages=packages,binary="mirai",library=paths.imports[library],stage=paths.stages[library],decl=paths.decl})
+    if len(errors)>0 {return errors,changed.stage,true}
+    entry,written:=entry_write(paths.stages[library],engine_library_entry(library,context.temp_allocator),entry_imports("mirai",packages)[:])
+    return nil,changed.stage || entry,written
+}
+
+// The packages of the libraries a library needs that its sources import:
+// what it compiles against.
+@(private)
+engine_library_reach :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (reached:[ENGINE_PACKAGE_COUNT]bool) {
+    packages,libraries:=ENGINE_PACKAGES,ENGINE_LIBRARIES
+    engine_imports(paths.decl,engine_sources(root,engine_library_packages(library,context.temp_allocator)),&reached)
+    for &package_reached,index in reached {package_reached&&=packages[index].library in libraries[library].needs}
+    return
+}
+
+// The hash of what the packages reached declare. Zero when one is unknown.
+@(private)
+declared_hash :: proc(declared:^[ENGINE_PACKAGE_COUNT]u64,reached:^[ENGINE_PACKAGE_COUNT]bool) -> (hash:u64) {
+    hash=1
+    for package_reached,index in reached {
+        if !package_reached {continue}
+        if declared[index]==0 {return 0}
+        hash=base.hash_combine(base.hash_combine(hash,base.name_hash(engine_package(index))),declared[index])
+    }
+    return
+}
+
+// Whether what a part compiles against is the same under both sets of hashes.
+@(private)
+declared_same :: proc(before,after:^[ENGINE_PACKAGE_COUNT]u64,reached:^[ENGINE_PACKAGE_COUNT]bool) -> bool {
+    hash:=declared_hash(after,reached)
+    return hash!=0 && hash==declared_hash(before,reached)
 }
 
 // Generates the shaders of the engine and builds the parts of its binaries
@@ -319,98 +476,65 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
     if file,unlocked:=engine_unlock(paths.folder);!unlocked {
         return engine_fail(.Write_Failed,"binaries of the engine",fmt.tprintf("%s runs and could not be moved aside: close what runs it",file))
     }
-    cache:=engine_cache_entry(root,plan.key,mode)
-    if !desc.force && engine_cache_restore(cache,paths) {
-        result.status,result.restored=.Built,true
-        return
+    // No stamp says what the stages, the declarations and the programs there were written from.
+    if desc.force || !plan.stamped {
+        engine_stages_remove(paths.folder)
+        for folder in ([2]string{paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=os.remove_all(folder)}
     }
-    if desc.force {
-        for folder in ([4]string{paths.stage_runtime,paths.stage_editor,paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=os.remove_all(folder)}
-        plan.runtime_current,plan.editor_current=false,false
+    cache:=engine_cache_entry(root,plan.key,mode)
+    if !desc.force && cache_entry_complete(cache) {
+        if engine_cache_restore(cache,paths) {
+            result.status,result.restored=.Built,true
+            return
+        }
+        // A copy that stopped halfway left nothing that stands.
+        plan.previous={}
     }
     if os.make_directory_all(paths.folder)!=nil && !os.is_dir(paths.folder) {
         result.status,result.failure=.Failed,.Write_Failed
         return
     }
+    programs:=engine_program_sources(paths)
+    reaches:[Engine_Library][ENGINE_PACKAGE_COUNT]bool
+    for &reached,library in reaches {reached=engine_library_reach(root,paths,library)}
+    programs_reach:[ENGINE_PACKAGE_COUNT]bool
+    for program in programs {engine_imports_text(paths.decl,program.source,&programs_reach)}
+
     // The stamp says what stands as each part ends: a part that fails costs
     // itself and not the ones before it.
     stamp:=plan.previous
     stamp.declares=DECLARE_VERSION
-    runtime_packages:=ENGINE_RUNTIME_PACKAGES
-    editor_packages:=ENGINE_EDITOR_PACKAGES
-    if !plan.runtime_current {
-        stamp.runtime=0
+    libraries:=ENGINE_LIBRARIES
+    for info,library in libraries {
+        file:=engine_library_file(library,context.temp_allocator)
+        present:=library_present(paths.libraries[library],paths.imports[library])
+        was:=stamp.libraries[library]
+        if !desc.force && present && was.sources==plan.libraries[library].sources {continue}
+        stamp.libraries[library]={}
         _=engine_stamp_write(paths.stamp,stamp)
-        errors,changed:=declare({root=root,packages=runtime_packages[:],binary="mirai",library=paths.runtime_import,stage=paths.stage_runtime,decl=paths.decl})
-        if len(errors)>0 {return engine_fail(.Generate,"declarations of the runtime",strings.join(errors,"\n"))}
-        if of_runtime:=stamp.declared[:len(runtime_packages)];changed.decl || slice.contains(of_runtime,0) {
-            hashes:=decl_hashes(paths.decl)
-            copy(of_runtime,hashes[:])
-        }
-        // The editor and the programs compile against what the runtime declares,
-        // and so do the declarations of the editor, hashed again once it declares.
-        if changed.decl {
-            stamp.editor,stamp.programs=0,0
-            slice.zero(stamp.declared[len(runtime_packages):])
-            plan.editor_current=false
+        errors,stage_changed,staged:=engine_library_stage(root,paths,library)
+        if len(errors)>0 {return engine_fail(.Generate,fmt.tprintf("declarations of %s",file),strings.join(errors,"\n"))}
+        if !staged {return engine_fail(.Write_Failed,fmt.tprintf("stage of %s",file),"")}
+        // What reaches a package that declares something else compiles again:
+        // the libraries after this one and the programs.
+        if declared:=decl_hashes(paths.decl);declared!=stamp.declared {
+            for &reached,other in reaches {
+                if other>library && !declared_same(&stamp.declared,&declared,&reached) {stamp.libraries[other]={}}
+            }
+            if !declared_same(&stamp.declared,&declared,&programs_reach) {stamp.programs=0}
+            stamp.declared=declared
             _=engine_stamp_write(paths.stamp,stamp)
         }
-        stage_changed:=changed.stage
-        if changed,_:=entry_write(paths.stage_runtime,"__mirai_runtime",entry_imports("mirai",runtime_packages[:])[:]);changed {stage_changed=true}
-        // The stage may declare the same while the compiler or the flags moved:
-        // the library is compiled again anyway.
-        if engine_library_compile(desc.force,library_present(paths.runtime,paths.runtime_import),stage_changed,plan.tools_changed) {
-            stamp.runtime_pending=true
-            _=engine_stamp_write(paths.stamp,stamp)
-            if !library_compile(&result,compiler,root,paths.stage_runtime,"__mirai_runtime",paths.runtime,"mirai-engine",plan.flags[:],"runtime library") {return}
+        // The stage may be the same while the compiler, the flags or what the
+        // library embeds moved: it is compiled again anyway.
+        if engine_library_compile(desc.force,present,stage_changed,was.tools!=plan.libraries[library].tools) {
+            if !library_compile(&result,compiler,root,paths.stages[library],engine_library_entry(library,context.temp_allocator),paths.libraries[library],file,info.needs!={},plan.flags[:],fmt.tprintf("library %s",file)) {return}
         }
-        stamp.runtime,stamp.tools,stamp.loads,stamp.runtime_pending=plan.runtime,plan.tools,plan.loads,false
+        stamp.libraries[library]=plan.libraries[library]
         _=engine_stamp_write(paths.stamp,stamp)
     }
 
-    // The editor is built against the declarations of the runtime, as a project is.
-    if !plan.editor_current {
-        stamp.editor=0
-        _=engine_stamp_write(paths.stamp,stamp)
-        if !decl_mirror(paths.stage_editor,paths.decl,runtime_packages[:]) {
-            return engine_fail(.Write_Failed,"stage of the editor","")
-        }
-        errors,changed:=declare({root=root,packages=editor_packages[:],binary="mirai",library=paths.editor_import,stage=paths.stage_editor,decl=paths.decl})
-        if len(errors)>0 {return engine_fail(.Generate,"declarations of the editor",strings.join(errors,"\n"))}
-        if of_editor:=stamp.declared[len(runtime_packages):];changed.decl || slice.contains(of_editor,0) {
-            hashes:=decl_hashes(paths.decl)
-            copy(of_editor,hashes[len(runtime_packages):])
-        }
-        if changed.decl {
-            stamp.programs=0
-            _=engine_stamp_write(paths.stamp,stamp)
-        }
-        entry_write(paths.stage_editor,"__mirai_editor",entry_imports("mirai",editor_packages[:])[:])
-        if !library_compile(&result,compiler,root,paths.stage_editor,"__mirai_editor",paths.editor,"mirai-editor",plan.flags[:],"editor library") {return}
-        stamp.editor=plan.editor
-        _=engine_stamp_write(paths.stamp,stamp)
-    }
-
-    // The programs are built against the declarations of both libraries.
-    programs:=[4]struct{name,package_name,source,output:string}{
-        {"editor program","editor","package main\n\nimport \"core:os\"\nimport \"mirai:editor\"\n\nmain :: proc() {os.exit(editor.launch(os.args[1:]))}\n",paths.editor_program},
-        {"player program","host","package main\n\nimport \"core:os\"\nimport \"mirai:host\"\n\nmain :: proc() {os.exit(host.launch(os.args[1:]))}\n",paths.player_program},
-        {"import program","import",`package main
-
-import "core:os"
-import "mirai:cook/import/sources"
-
-main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
-`,paths.import_program},
-        {"author program","author",`package main
-
-import "core:os"
-import "mirai:cook/author"
-import "mirai:editor"
-
-main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_recipes))}
-`,paths.author_program},
-    }
+    // The programs are built against the declarations of the libraries.
     build_programs:=stamp.programs!=plan.programs
     for program in programs {
         folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
@@ -450,14 +574,24 @@ main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to
 @(private)
 engine_installed_present :: proc(root:string) -> bool {
     paths:=engine_paths(root,ENGINE_MODE_INSTALLED,context.temp_allocator)
-    present:=library_present(paths.runtime,paths.runtime_import) && library_present(paths.editor,paths.editor_import) && os.is_dir(paths.decl) && os.is_file(paths.stamp)
-    for program in ([4]string{paths.editor_program,paths.player_program,paths.import_program,paths.author_program}) {present&&=os.is_file(program)}
+    present:=os.is_dir(paths.decl) && os.is_file(paths.stamp)
+    for library,which in paths.libraries {present&&=library_present(library,paths.imports[which])}
+    for program in engine_programs(paths) {present&&=os.is_file(program)}
     return present
+}
+
+// Removes the stages of a folder of binaries: what they hold is of no library that stands there.
+@(private)
+engine_stages_remove :: proc(folder:string) {
+    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    for entry in entries {
+        if entry.type==.Directory && strings.has_prefix(entry.name,ENGINE_STAGE_PREFIX) {_=os.remove_all(entry.fullpath)}
+    }
 }
 
 // Leaves in stage the declarations of the packages as decl has them: what
 // is the same by size and date is not copied again, and what decl no longer
-// has goes. The stage of the editor compiles against them.
+// has goes. What the stage builds compiles against them.
 @(private)
 decl_mirror :: proc(stage,decl:string,packages:[]string) -> bool {
     for path in packages {
@@ -516,12 +650,14 @@ CACHE_COMPLETE :: "complete"
 
 // Copies an entry of the cache over the binaries of the engine; false when
 // there is none or it cannot be copied whole, and then nothing stands. Its
-// stamp, of fingerprints relative to the root, goes last.
+// stamp, of fingerprints relative to the root, goes last. The stages go: the
+// libraries copied were not compiled from them.
 @(private)
 engine_cache_restore :: proc(entry:string,paths:Engine_Paths) -> bool {
     if !cache_entry_complete(entry) {return false}
     _=os.remove(paths.stamp)
     _=os.remove_all(paths.decl)
+    engine_stages_remove(paths.folder)
     if os.make_directory_all(paths.folder)!=nil && !os.is_dir(paths.folder) {return false}
     for name in engine_cache_files(entry) {
         if name==CACHE_COMPLETE || name==ENGINE_STAMP {continue}
@@ -630,15 +766,13 @@ engine_stamp_read :: proc(file:string) -> (stamp:Engine_Stamp,ok:bool) {
     lines:=strings.split_lines(strings.trim_space(string(data)),context.temp_allocator)
     if len(lines)!=1+ENGINE_PACKAGE_COUNT {return}
     fields:=strings.fields(lines[0],context.temp_allocator)
-    if len(fields)!=7 {return}
-    values:[5]u64
-    for &value,i in values {
-        value=strconv.parse_u64_of_base(fields[i],16) or_return
+    if len(fields)!=2+2*len(Engine_Library) {return}
+    stamp.declares=strconv.parse_int(fields[0],10) or_return
+    stamp.programs=strconv.parse_u64_of_base(fields[1],16) or_return
+    for &library,which in stamp.libraries {
+        library.sources=strconv.parse_u64_of_base(fields[2+2*int(which)],16) or_return
+        library.tools=strconv.parse_u64_of_base(fields[3+2*int(which)],16) or_return
     }
-    stamp.runtime,stamp.editor,stamp.programs,stamp.tools,stamp.loads=values[0],values[1],values[2],values[3],values[4]
-    stamp.declares=strconv.parse_int(fields[5],10) or_return
-    pending:=strconv.parse_int(fields[6],10) or_return
-    stamp.runtime_pending=pending!=0
     // One line per package, in their order, each with its name.
     for line,index in lines[1:] {
         declared:=strings.fields(line,context.temp_allocator)
@@ -648,10 +782,12 @@ engine_stamp_read :: proc(file:string) -> (stamp:Engine_Stamp,ok:bool) {
     return stamp,true
 }
 
+// The first line says what every binary was built from (engine_stamp_of).
 @(private)
 engine_stamp_write :: proc(file:string,stamp:Engine_Stamp) -> os.Error {
     b:=strings.builder_make(context.temp_allocator)
-    fmt.sbprintf(&b,"%x %x %x %x %x %d %d",stamp.runtime,stamp.editor,stamp.programs,stamp.tools,stamp.loads,stamp.declares,int(stamp.runtime_pending))
+    fmt.sbprintf(&b,"%d %x",stamp.declares,stamp.programs)
+    for library in stamp.libraries {fmt.sbprintf(&b," %x %x",library.sources,library.tools)}
     for hash,index in stamp.declared {fmt.sbprintf(&b,"\n%x %s",hash,engine_package(index))}
     return os.write_entire_file(file,strings.to_string(b))
 }
@@ -704,25 +840,28 @@ engine_imports :: proc(decl:string,files:[]string,reached:^[ENGINE_PACKAGE_COUNT
     followed=true
     for file in files {
         data,error:=os.read_entire_file(file,context.temp_allocator)
-        if error!=nil {
+        followed&&=error==nil && engine_imports_text(decl,string(data),reached)
+    }
+    return
+}
+
+@(private)
+engine_imports_text :: proc(decl,source:string,reached:^[ENGINE_PACKAGE_COUNT]bool) -> (followed:bool) {
+    followed=true
+    text:=source
+    for {
+        at:=strings.index(text,ENGINE_COLLECTION)
+        if at<0 {break}
+        quote:=text[at-1] if at>0 else 0
+        text=text[at+len(ENGINE_COLLECTION):]
+        if quote!='"' && quote!='`' {continue}
+        end:=strings.index_byte(text,quote)
+        if end<=0 {continue}
+        path:=text[:end]
+        if index,found:=engine_package_index(path);found {
+            reached[index]=true
+        } else if folder_path(path) && len(engine_sources(decl,{path}))>0 {
             followed=false
-            continue
-        }
-        text:=string(data)
-        for {
-            at:=strings.index(text,ENGINE_COLLECTION)
-            if at<0 {break}
-            quote:=text[at-1] if at>0 else 0
-            text=text[at+len(ENGINE_COLLECTION):]
-            if quote!='"' && quote!='`' {continue}
-            end:=strings.index_byte(text,quote)
-            if end<=0 {continue}
-            path:=text[:end]
-            if index,found:=engine_package_index(path);found {
-                reached[index]=true
-            } else if folder_path(path) && len(engine_sources(decl,{path}))>0 {
-                followed=false
-            }
         }
     }
     return
@@ -791,20 +930,20 @@ entry_imports :: proc(collection:string,packages:[]string) -> [dynamic]string {
 }
 
 // A library is compiled again when it is missing, its stage moved, or the
-// compiler or the flags moved. The per-half stamps tell which halves to ask
-// about without touching the other.
+// compiler, the flags or what it embeds moved.
 @(private)
 engine_library_compile :: proc(force,present,stage_changed,tools_changed:bool) -> bool {
     return force || !present || stage_changed || tools_changed
 }
 
 @(private="file")
-library_compile :: proc(result:^Engine_Result,compiler,root,stage,entry,output,name:string,flags:[]string,step:string) -> bool {
+library_compile :: proc(result:^Engine_Result,compiler,root,stage,entry,output,name:string,links_libraries:bool,flags:[]string,step:string) -> bool {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,compiler,"build",project.path(stage,entry,allocator=context.temp_allocator),"-build-mode:dll",fmt.tprintf("-collection:mirai=%s",stage),fmt.tprintf("-out:%s",output))
     append(&command,..flags)
-    when ODIN_OS==.Linux {linker_flags_append(&command,fmt.tprintf("-Wl,-soname,%s",project.library_file(name,context.temp_allocator)),context.temp_allocator)}
-    else when ODIN_OS==.Darwin {linker_flags_append(&command,fmt.tprintf("-Wl,-install_name,@rpath/%s",project.library_file(name,context.temp_allocator)),context.temp_allocator)}
+    // A library finds the ones it links beside it, whatever loads it.
+    when ODIN_OS==.Linux {linker_flags_append(&command,fmt.tprintf("-Wl,-soname,%s%s",project.library_file(name,context.temp_allocator),links_libraries?" -Wl,-rpath,$ORIGIN":""),context.temp_allocator)}
+    else when ODIN_OS==.Darwin {linker_flags_append(&command,fmt.tprintf("-Wl,-install_name,@rpath/%s%s",project.library_file(name,context.temp_allocator),links_libraries?" -Wl,-rpath,@loader_path":""),context.temp_allocator)}
     ok:=compile(result,root,command[:],step)
     // The diagnostics of a staged source point at the source.
     for &diagnostic in result.diagnostics {

@@ -57,12 +57,12 @@ Decals_Gpu :: struct {
 @(step="render",loops="game editor",after="render_sync")
 decals_render :: proc(
     state:^Decals_Gpu,decals:core.Read(Decal),worlds:core.Read(core.World_Transform),
-    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),app:^host.App,
+    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),assets:^host.Assets,renderer:^render.Renderer,
 ) {
     state.count=0
-    if app.assets==nil || core.count(decals)==0 {return}
+    if assets==nil || core.count(decals)==0 {return}
     // 0 while the shaders in use have no decals: a generation made without the plugin.
-    state.pipeline=render.stage_pipeline(app,{stage=.Surface,shader="decal",targets={.Albedo,.Emission},blend=.Alpha_Color,name="decals"})
+    state.pipeline=render.stage_pipeline(renderer,{stage=.Surface,shader="decal",targets={.Albedo,.Emission},blend=.Alpha_Color,name="decals"})
     if state.pipeline==0 {return}
     n:=0
     for row in 0..<core.count(decals) {
@@ -83,7 +83,7 @@ decals_render :: proc(
             texture=max(u32),
         }
         if decal.texture!={} {
-            if texture:=host.assets_texture_image(app.assets,decal.texture);texture!=nil && texture.handle!=0 && !texture.failed {
+            if texture:=host.assets_texture_image(assets,decal.texture);texture!=nil && texture.handle!=0 && !texture.failed {
                 entry.texture=render.texture_index(texture.handle)
                 entry.density=f32(texture.width)/max(abs(world.scale.x),1e-4)
             }
@@ -91,8 +91,8 @@ decals_render :: proc(
         state.items[state.count]=entry
         state.count+=1
     }
-    host.assets_commit(app.assets)
-    if state.count>0 {render.frame_pass(app,.Surface,decals_record,state)}
+    host.assets_commit(assets)
+    if state.count>0 {render.frame_pass(renderer,.Surface,decals_record,state)}
 }
 
 // A decal for shaders whose places are relative to origin (the origin the

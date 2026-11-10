@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -169,8 +170,8 @@ ai_chat_choose :: proc(s:^Session,provider:Ai_Provider,model,effort:string) {
     task:=ai_chat_target(m)
     if task==nil || task.conversation.id==0 {return}
     c:=&task.conversation
-    if model!="" {ai_conversation_set_text(c.model[:],&c.model_len,model)}
-    if effort!="" {ai_conversation_set_text(c.effort[:],&c.effort_len,effort)}
+    if model!="" {ai_store.conversation_set_text(c.model[:],&c.model_len,model)}
+    if effort!="" {ai_store.conversation_set_text(c.effort[:],&c.effort_len,effort)}
     ai_task_dirty(task)
     ai_task_persist(s,task)
 }
@@ -249,7 +250,7 @@ ai_models_items :: proc(s:^Session,needle:string,current:Ai_Provider,chosen:stri
         }
         shown:=0
         for value in values[:count] {
-            if contains_fold(group,needle) || contains_fold(ai_model_name(m,provider,value),needle) || contains_fold(value,needle) {shown+=1}
+            if base.contains_fold(group,needle) || base.contains_fold(ai_model_name(m,provider,value),needle) || base.contains_fold(value,needle) {shown+=1}
         }
         if shown==0 {continue}
         any_model=true
@@ -258,7 +259,7 @@ ai_models_items :: proc(s:^Session,needle:string,current:Ai_Provider,chosen:stri
         ai_chat_models_header(ctx,connection.agent,group)
         for value,at in values[:count] {
             name:=ai_model_name(m,provider,value)
-            if !contains_fold(group,needle) && !contains_fold(name,needle) && !contains_fold(value,needle) {continue}
+            if !base.contains_fold(group,needle) && !base.contains_fold(name,needle) && !base.contains_fold(value,needle) {continue}
             if ui.menu_item(ctx,ui.id(ctx,"model",at+1),name,{checked=current==provider && chosen==value}) {taken,model,picked=provider,value,true}
         }
     }
@@ -368,7 +369,7 @@ ai_chat_bar_buttons :: proc(s:^Session) {
     if ui.button(ctx,history,{icon=.History,icon_color=th.text_muted,icon_size=15,style=.Ghost,width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
         m.history_scroll=0
         m.chat_hit_count=0
-        if m.store.folder!="" {ai_history_refresh(s)}
+        if m.store.folder!="" {if message:=ai_history_refresh(m);message!="" {notify(s,message)}}
         anchor,_:=ui.widget_rect(ctx,history)
         ui.popup_open(ctx,popup,anchor)
     }
@@ -459,7 +460,7 @@ ai_chat_history_build :: proc(s:^Session,width:f32) {
         if changed {
             m.history_scroll=0
             ai_chat_hits_refresh(s,needle)
-            if m.store.folder!="" {ai_history_refresh(s,0,needle)}
+            if m.store.folder!="" {if message:=ai_history_refresh(m,0,needle);message!="" {notify(s,message)}}
         }
         now:=time.to_unix_nanoseconds(time.now())/1_000_000
         plain:[AI_LINE_BYTES]u8
@@ -474,7 +475,7 @@ ai_chat_history_build :: proc(s:^Session,width:f32) {
             ui.menu_header(ctx,"Finished agents")
             // Finished turns not saved yet, then the saved ones.
             #reverse for &task in m.tasks[:m.task_count] {
-                if !ai_finished_agent(m,&task) || !contains_fold(base.text_get(task.title[:]),needle) {continue}
+                if !ai_finished_agent(m,&task) || !base.contains_fold(base.text_get(task.title[:]),needle) {continue}
                 saved:=false
                 for conversation in m.history[:m.history_count] {if int(conversation.id)==task.id {saved=true;break}}
                 if saved {continue}

@@ -428,8 +428,8 @@ post_process_picker_build :: proc(s:^Session) {
 	filter:=string(p.filter[:p.filter_length])
 	shown:=make([dynamic]int,context.temp_allocator)
 	for &choice,i in p.choices[:p.choice_count] {
-		if contains_fold(asset_label_of(s,choice.id,""),filter) ||
-			contains_fold(base.text_get(choice.program[:]),filter) {
+		if base.contains_fold(asset_label_of(s,choice.id,""),filter) ||
+			base.contains_fold(base.text_get(choice.program[:]),filter) {
 			append(&shown,i)
 		}
 	}

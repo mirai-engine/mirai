@@ -118,6 +118,9 @@ A game is a struct in memory and a list of functions that transform it
 - **A function touches only what it receives.** Its parameters say what it reads and writes:
   from them come the settle after it, the revisions of the storages a rollback copies again and
   the single writer of each datum ([parameters](references/generator.md#parameters)).
+- **Of the application, a function receives the part it reaches** (its assets, its renderer, the
+  extras of the frame, its mixer, its job system, its allocator), in a step and in the helpers it
+  calls; `^host.App` only for the application itself.
 - **Steps run in order; spread work inside a step.** A phase calls its functions one after another
   on the thread of the loop; what is heavy spreads its own work with `std/jobs`.
 - **What decides the rules is `server`.** A function whose whole body belongs to the server or to a

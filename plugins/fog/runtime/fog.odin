@@ -237,14 +237,14 @@ fog_submit :: proc(state:^Fog_Gpu,app:^host.App) {
     state.time=f64(app.time)
     // 0 while the shaders in use have no fog: a generation made without the plugin.
     state.pipelines={
-        render.stage_pipeline(app,{stage=.Lit,shader="fog_far",name="fog far"}),
-        render.stage_pipeline(app,{stage=.Lit,shader="fog_reach",name="fog reach"}),
-        render.stage_pipeline(app,{stage=.Lit,shader="fog_light",name="fog light"}),
-        render.stage_pipeline(app,{stage=.Lit,shader="fog_integrate",name="fog integrate"}),
-        render.stage_pipeline(app,{stage=.Lit,shader="fog_apply",name="fog apply"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="fog_far",name="fog far"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="fog_reach",name="fog reach"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="fog_light",name="fog light"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="fog_integrate",name="fog integrate"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="fog_apply",name="fog apply"}),
     }
     for pipeline in state.pipelines {if pipeline==0 {return}}
-    render.frame_pass(app,.Lit,fog_record,state)
+    render.frame_pass(app.renderer,.Lit,fog_record,state)
 }
 
 // A medium into the frame, a box that adds to what is there; false when the

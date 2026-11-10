@@ -87,9 +87,9 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer {delete(events.items);delete(events.plays.items)}
-    match:=match_content(graphs,app,id);if match==nil {return}
+    match:=match_content(graphs,app.assets,app.allocator,id);if match==nil {return}
     content:=host.content_animation(app,match.profile.info.animation)
-    definition:=skeleton_content(skeletons,app,skeleton)
+    definition:=skeleton_content(skeletons,app.assets,app.allocator,skeleton)
     if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&transforms) || !lib.pose_init(&playback.pose,max(POSE_CAPACITY,content.lib.track_count)) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
     if toes[0]<0 || toes[1]<0 {return}
@@ -113,7 +113,7 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
         copy(state.local[:],state.rest[:])
         clear(&events.items)
         output,programmed,resolved:=program_resolve(&state,animation,app,&blends,graphs,dt,&events,&playback,content,nil,goals[:],{},facing)
-        if !resolved || !programmed || !program_masks_prepare(&state,output,content,graphs,app) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !program_pose(&playback,&state,content,animation,output,{}) {
+        if !resolved || !programmed || !program_masks_prepare(&state,output,content,graphs,app.assets,app.allocator) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !program_pose(&playback,&state,content,animation,output,{}) {
             log.errorf("tick %d: %v",tick,state.program.error);return
         }
         if tick==0 {metrics.load=f64(time.duration_nanoseconds(time.tick_since(start)))} else {metrics.nanoseconds+=f64(time.duration_nanoseconds(time.tick_since(start)))}
@@ -266,7 +266,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     info:=MATCH_INFO_DEFAULT;info.animation,info.memory=f.content.id,memory
     info.left_foot,info.right_foot,info.hips=bone_ref("foot_l"),bone_ref("foot_r"),bone_ref("hips")
     profile:=Match_Profile{info=info,clips=clips}
-    append(&f.graphs.matches,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(&f.app),revision=1,valid=true,profile=profile})
+    append(&f.graphs.matches,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=profile})
     if !testing.expect(t,match_check(profile) && lib.pose_init(&f.playback.pose,64)) {return false}
     f.state=state_get(&f.playback,f.rig)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID

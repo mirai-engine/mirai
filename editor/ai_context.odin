@@ -9,6 +9,7 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -378,7 +379,7 @@ AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","scene.add","scene.
 // the same text goes out while the project does not change, so that the prompt
 // cache of the agent holds. A subagent adds what it is.
 @(private)
-ai_prompt_stable :: proc(s:^Session,kind:Ai_Conversation_Kind) -> string {
+ai_prompt_stable :: proc(s:^Session,kind:ai_store.Conversation_Kind) -> string {
     b:=strings.builder_make(context.temp_allocator)
     engine:=s.engine_root
     fmt.sbprintf(&b,"You are the game agent of the Mirai project at %s, working from inside its editor, which is running.\n",s.project_root)
@@ -641,12 +642,12 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
         // The main chat follows the document of its latest turn; a subagent stays on its own.
         previous_document:=string(task.conversation.document[:task.conversation.document_len])
         if task.conversation.kind==.Main {
-            ai_conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
+            ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
         } else if previous_document!=document || document=="" && task.world!=nil && task.world!=s.edit_world {
             return nil,"The selected conversation belongs to another document"
         }
         if string(task.conversation.provider[:task.conversation.provider_len])!=chosen {
-            ai_conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
+            ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
             ai_context_drop(task)
         }
         if !task.review_finished {ai_task_finish(s,m,task)}
@@ -658,7 +659,7 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
         task.review_finished=false
         task.stream_open=false;task.finish_called=false;task.document_closed=false
     } else {
-        id,error:=ai_store_next_id(&m.store)
+        id,error:=ai_store.next_id(&m.store)
         if error!="" {return nil,error}
         if id>u64(max(int)) {return nil,"Chat identifiers are exhausted"}
         task=ai_task_slot(m)
@@ -675,16 +676,16 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
         title:=turn.title!=""?turn.title:text
         if split:=strings.index_byte(title,'\n');split>=0 {title=title[:split]}
         title=title[:min(len(title),len(task.conversation.title))]
-        ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
-        ai_conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
-        ai_conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
+        ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
+        ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
+        ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
         connection:=&m.connections[provider]
-        ai_conversation_set_text(task.conversation.model[:],&task.conversation.model_len,base.text_get(connection.model[:]))
-        ai_conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,base.text_get(connection.effort[:]))
+        ai_store.conversation_set_text(task.conversation.model[:],&task.conversation.model_len,base.text_get(connection.model[:]))
+        ai_store.conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,base.text_get(connection.effort[:]))
         base.text_set(task.title[:],title[:min(len(title),len(task.title)-1)])
     }
-    ai_conversation_set_text(task.conversation.model[:],&task.conversation.model_len,chosen_model)
-    ai_conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,chosen_effort)
+    ai_store.conversation_set_text(task.conversation.model[:],&task.conversation.model_len,chosen_model)
+    ai_store.conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,chosen_effort)
     if continuing==0 {
         task.icon=u8(base.hash_combine(u64(task.id),u64(time.time_to_unix_nano(time.now()))))%AI_AGENT_ICON_COUNT
         task.color_index=u8((task.id-1)%len(AGENT_COLORS))
@@ -749,10 +750,10 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     ai_working_agents_save(s,m)
     if !task.dirty && !turn.system {
         if snapshot,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_CONTEXT),context.temp_allocator);error==nil {
-            if error:=ai_store_annotate(&m.store,task.conversation.id,u64(prompt_sequence),"user","user_message","",string(snapshot));error!="" {notify(s,error)}
+            if error:=ai_store.annotate(&m.store,task.conversation.id,u64(prompt_sequence),"user","user_message","",string(snapshot));error!="" {notify(s,error)}
         }
     }
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     ai_queue_advance(s,m)
     return task,""
 }

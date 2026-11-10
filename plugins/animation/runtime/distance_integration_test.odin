@@ -71,7 +71,7 @@ distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_
     nodes:=program_test_graph();nodes[3].weight=.25
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil))
+    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}))
     testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
     testing.expect(t,program_pose(&playback,&state,&content,animation,output,{}))
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.8}
@@ -86,7 +86,7 @@ distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_
     testing.expect(t,ok && abs(walk-.8)<1e-5 && abs(run-.2)<1e-5 && abs(state.motion.translation.x-.625)<1e-5)
     testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.from-.1)<1e-5 && abs(clock.to-.8)<1e-5 && abs(clock.weight-.75)<1e-5)
     nodes[3].right,nodes[3].weight=2,.9
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil) && program_players(&state,output,&content,animation,&events,&playback,0,-1,nil))
+    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}) && program_players(&state,output,&content,animation,&events,&playback,0,-1,nil))
     clock=animation_motion_clock(&state,&content,output,0,0)
     testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.weight-.1)<1e-5)
 }

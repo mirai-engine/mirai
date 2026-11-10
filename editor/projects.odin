@@ -1124,7 +1124,7 @@ projects_add_plugin_popup :: proc(s:^Session,popup:ui.Id) {
     for i in 0..<(catalog==nil?0:project.catalog_count(catalog)) {
         entry:=&catalog.plugins[i]
         if projects_plugin_find(p,entry.name)>=0 {continue}
-        if needle=="" || contains_fold(base.text_get(entry.name[:]),needle) || contains_fold(base.text_get(entry.description[:]),needle) {append(&found,i)}
+        if needle=="" || base.contains_fold(base.text_get(entry.name[:]),needle) || base.contains_fold(base.text_get(entry.description[:]),needle) {append(&found,i)}
     }
     row_height:=ASSET_LIST_ROW
     chosen,taken:=-1,false

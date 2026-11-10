@@ -27,7 +27,7 @@ terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown :: proc(t:^tes
     s:=editor.Session{info=&info,edit_world=&world,app=&app,viewport=&viewport,document=&document,view_modes=&modes}
     view:Terrain_View
 
-    terrain_view_modes(&s,&view,&app)
+    terrain_view_modes(&s,&view,app.renderer)
     testing.expect_value(t,modes.count,len(Terrain_View_Mode)+len(Terrain_Overlay)-1)
     testing.expect_value(t,view.pipeline,erender.Pipeline(0))
     // Declared while Lit was shown: each can be chosen, and its pass draws it.
@@ -38,7 +38,7 @@ terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown :: proc(t:^tes
     // Shown without a renderer, there is no pipeline: the mode says so and the view stays lit.
     app.inspection={}
     editor.view_modes_begin(&modes)
-    terrain_view_modes(&s,&view,&app)
+    terrain_view_modes(&s,&view,app.renderer)
     testing.expect_value(t,view.mode,Terrain_View_Mode.Slope)
     editor.view_mode_render(&s,&viewport,&modes,&app)
     testing.expect_value(t,app.inspection,gpu.View_Inspection{})
@@ -47,14 +47,14 @@ terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown :: proc(t:^tes
     base.text_set(viewport.view_mode[:],"contours_height")
     s.mode=.Play
     editor.view_modes_begin(&modes)
-    terrain_view_modes(&s,&view,&app)
+    terrain_view_modes(&s,&view,app.renderer)
     testing.expect_value(t,view.mode,Terrain_View_Mode.Slope)
     s.mode=.Edit
     editor.view_modes_begin(&modes)
-    terrain_view_modes(&s,&view,&app)
+    terrain_view_modes(&s,&view,app.renderer)
     testing.expect_value(t,view.mode,Terrain_View_Mode.Contours_Height)
     base.text_set(viewport.view_mode[:],"layer_weights")
     editor.view_modes_begin(&modes)
-    terrain_view_modes(&s,&view,&app)
+    terrain_view_modes(&s,&view,app.renderer)
     testing.expect(t,view.overlay==.Layers && view.pipeline==0)
 }

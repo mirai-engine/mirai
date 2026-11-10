@@ -214,7 +214,7 @@ api_save_ask :: proc(s:^Session,call:^api.Call,r:^Run,op:save.Op,slot:string,kin
         if result,ok=api_save_answer(s,run,op,slot,kind);ok {break}
     }
     if !ok {
-        save.writes_flush(host.app_world_storage(s.app,run.world,save.Save_Work),s.app,core.world_storage_of(run_ref(s,run),save.Save_Results))
+        save.writes_flush(host.app_world_storage(s.app,run.world,save.Save_Work),&s.app.jobs,core.world_storage_of(run_ref(s,run),save.Save_Results))
         if result,ok=api_save_answer(s,run,op,slot,kind);!ok {
             api.call_fail(call,api.SERVER_ERROR,"The game did not serve the request: its loop has no saves_serve; generate the project again")
             return

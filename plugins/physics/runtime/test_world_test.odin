@@ -87,7 +87,7 @@ test_host_destroy :: proc(h:^Test_Physics_Host) {
 test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
     gravities:core.Read(volume.Gravity);gravity_volumes:core.Read(volume.Volume);worlds:core.Read(core.World_Transform)
     if h.fields {gravities,gravity_volumes,worlds=core.read(&p.gravities),core.read(&p.gravity_volumes),core.read(&p.worlds)}
-    if state_make(&p.state,&p.settings,&h.app,&h.problems) {
+    if state_make(&p.state,&p.settings,&h.app.jobs,&h.problems) {
         if !h.fields {sim.world_set_gravity(&p.state.world,h.gravity)}
     }
     physics_step(

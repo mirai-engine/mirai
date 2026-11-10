@@ -115,27 +115,27 @@ skeleton_and_skin_content_retry_every_allocation_failure_without_publishing_part
     for budget in 0..<512 {
         skeletons:Skeleton_Assets;skins:Skin_Runtime;skins.allocator=context.allocator
         failure.remaining=1000
-        content:=skeleton_content(&skeletons,&app,skeleton_id)
-        index:=skin_rig_load(&skins,&app,mesh_id,nil,core.NONE)
+        content:=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
+        index:=skin_rig_load(&skins,app.assets,app.allocator,mesh_id,nil,core.NONE)
         if !testing.expect(t,content!=nil && index!=max(u32)) {skeleton_assets_free(&skeletons);skin_runtime_free(&skins);return}
         old_bones:=raw_data(content.bones);old_joints:=raw_data(skins.rigs[index].joints)
         old_skeleton_revision,old_skin_revision:=content.revision,skins.rigs[index].revision
         skeleton_record.time+=1;mesh_record.time+=1;assets.revision+=1
         failure.remaining=budget
-        reloaded:=skeleton_content(&skeletons,&app,skeleton_id)
+        reloaded:=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
         if reloaded==nil {
             testing.expect_value(t,raw_data(skeletons.contents[0].bones),old_bones)
             testing.expect_value(t,skeletons.contents[0].revision,old_skeleton_revision)
         } else {skeleton_success=true}
         failure.remaining=budget
-        new_index:=skin_rig_load(&skins,&app,mesh_id,nil,core.NONE)
+        new_index:=skin_rig_load(&skins,app.assets,app.allocator,mesh_id,nil,core.NONE)
         if new_index==max(u32) {
             testing.expect_value(t,raw_data(skins.rigs[index].joints),old_joints)
             testing.expect_value(t,skins.rigs[index].revision,old_skin_revision)
         } else {skin_success=true}
         failure.remaining=1000
-        testing.expect(t,skeleton_content(&skeletons,&app,skeleton_id)!=nil)
-        testing.expect_value(t,skin_rig_load(&skins,&app,mesh_id,nil,core.NONE),index)
+        testing.expect(t,skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)!=nil)
+        testing.expect_value(t,skin_rig_load(&skins,app.assets,app.allocator,mesh_id,nil,core.NONE),index)
         testing.expect_value(t,len(skeletons.contents),1);testing.expect_value(t,len(skins.rigs),1)
         skeleton_assets_free(&skeletons);skin_runtime_free(&skins)
         if skeleton_success && skin_success {break}
@@ -144,12 +144,12 @@ skeleton_and_skin_content_retry_every_allocation_failure_without_publishing_part
     for budget in 0..<4 {
         skeletons:Skeleton_Assets;skins:Skin_Runtime;skins.allocator=context.allocator
         failure.remaining=budget
-        skeleton_content(&skeletons,&app,skeleton_id)
+        skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
         failure.remaining=budget
-        skin_rig_load(&skins,&app,mesh_id,nil,core.NONE)
+        skin_rig_load(&skins,app.assets,app.allocator,mesh_id,nil,core.NONE)
         failure.remaining=1000
-        testing.expect(t,skeleton_content(&skeletons,&app,skeleton_id)!=nil)
-        testing.expect_value(t,skin_rig_load(&skins,&app,mesh_id,nil,core.NONE),u32(0))
+        testing.expect(t,skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)!=nil)
+        testing.expect_value(t,skin_rig_load(&skins,app.assets,app.allocator,mesh_id,nil,core.NONE),u32(0))
         testing.expect_value(t,len(skeletons.contents),1);testing.expect_value(t,len(skins.rigs),1)
         skeleton_assets_free(&skeletons);skin_runtime_free(&skins)
     }

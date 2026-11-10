@@ -555,7 +555,7 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
     editor,_:=engine_package_index("editor")
     stamp.declared[editor]=0
     for build in ([2]u64{1,2}) {
-        stamp.runtime=build
+        stamp.libraries[.Base].sources=build
         testing.expect(t,engine_stamp_write(engine.stamp,stamp)==nil)
         after:=keys(&p,&libraries,engine)
         for part in Part {

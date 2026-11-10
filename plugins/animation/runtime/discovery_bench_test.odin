@@ -33,7 +33,7 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         playback:Playback;defer playback_free(&playback)
         problems:core.Problems
         for _ in 0..<2 {
-            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,&app,&problems) && motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,&app,&problems)) {return}
+            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
         }
         best:=max(time.Duration);valid:=true
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
@@ -41,8 +41,8 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
                 if case_index==3 {core.at(&descriptions,COUNT-1).weight=f32(tick&1)}
-                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,&app,&problems)
-                valid &&=motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,&app,&problems)
+                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&descriptions),&playback,app.assets,app.allocator,&problems)
+                valid &&=motion_prepare(&motion,&targets,core.read(&descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
             }
             best=min(best,time.tick_since(start))
         }

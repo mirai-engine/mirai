@@ -20,8 +20,7 @@ alloc_lint_applies :: proc(root,folder:string) -> bool {
     engine:=strings.trim_right(project.path_absolute(root,context.temp_allocator),"/")
     if !path_inside(inside,engine) || len(inside)<=len(engine) {return false}
     relative:=inside[len(engine)+1:]
-    packages:=build.ENGINE_RUNTIME_PACKAGES
-    for name in packages {
+    for name in build.engine_runtime_packages(context.temp_allocator) {
         if !strings.has_prefix(name,"third_party/") && path_same(relative,name) {return true}
     }
     parts:=strings.split(relative,"/",context.temp_allocator)

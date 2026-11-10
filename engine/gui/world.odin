@@ -118,8 +118,8 @@ surface_aim :: proc(gui:^Gui,app:^host.App,s:^Surface,p:int,input:^ui.Input,keyb
     size:=view.rect.zw if view.rect.z>0 && view.rect.w>0 else input.size
     point:=size*0.5 if aim else input.pointer-view.rect.xy
     pixel:=point*max(app.density,0.01)
-    host.app_depth_probe_add(app,{pixel=pixel,view=view.index,camera=view.camera,size=size*max(app.density,0.01)})
-    view.depth=probe_nearest(render.depth_probes(app),view.index,pixel)
+    host.extras_depth_probe_add(&app.extras,{pixel=pixel,view=view.index,camera=view.camera,size=size*max(app.density,0.01)})
+    view.depth=probe_nearest(render.depth_probes(app.renderer),view.index,pixel)
     input.ray.scene={scene_hides,view}
 }
 
@@ -145,11 +145,11 @@ scene_hides :: proc(user:rawptr,point:[3]f32,share,metres:f32) -> bool {
 }
 
 // Whether a view sees the mesh of a widget on it, as it was drawn in the last
-// frame (host.app_slot_shown), and how far it is; one not drawn yet is seen.
+// frame (host.extras_slot_shown), and how far it is; one not drawn yet is seen.
 @(private)
-mesh_seen :: proc(app:^host.App,view:^Player_View,e:core.Entity,position:[3]f32) -> (distance:f32,seen:bool) {
-    shown,drawn:=host.app_slot_shown(app,u64(e))
-    low,high,known:=render.mesh_bounds(app,shown.mesh)
+mesh_seen :: proc(renderer:^render.Renderer,extras:^host.Frame_Extras,view:^Player_View,e:core.Entity,position:[3]f32) -> (distance:f32,seen:bool) {
+    shown,drawn:=host.extras_slot_shown(extras,u64(e))
+    low,high,known:=render.mesh_bounds(renderer,shown.mesh)
     if !drawn || !known {return linalg.length(position-view.camera.position),true}
     m:=shown.transform
     center:=(m*[4]f32{(low.x+high.x)*0.5,(low.y+high.y)*0.5,(low.z+high.z)*0.5,1}).xyz+shown.anchor
@@ -173,7 +173,7 @@ Mesh_Surface :: struct {
 // The surface of a widget on a mesh, with a texture of its size; -1 when no
 // texture is left or the renderer does not make one.
 @(private)
-mesh_surface_get :: proc(gui:^Gui,app:^host.App,e:core.Entity,widget:World_Widget,mesh_handle:render.Mesh_Handle,problems:^core.Problems) -> int {
+mesh_surface_get :: proc(gui:^Gui,renderer:^render.Renderer,e:core.Entity,widget:World_Widget,mesh_handle:render.Mesh_Handle,problems:^core.Problems) -> int {
     texels:=widget.pixels>0?widget.pixels:MESH_TEXELS
     size:=[2]u32{u32(clamp(math.ceil(widget.size.x*texels),1,MESH_PIXELS)),u32(clamp(math.ceil(widget.size.y*texels),1,MESH_PIXELS))}
     at,free:=-1,-1
@@ -182,13 +182,13 @@ mesh_surface_get :: proc(gui:^Gui,app:^host.App,e:core.Entity,widget:World_Widge
         if mesh.texture==0 && free<0 {free=i}
     }
     if at>=0 && gui.meshes[at].size!=size {
-        render.ui_texture_remove(app,gui.meshes[at].texture)
+        render.ui_texture_remove(renderer,gui.meshes[at].texture)
         gui.meshes[at]={}
         free,at=at,-1
     }
     if at<0 {
-        if free<0 || app.renderer==nil {return -1}
-        texture,made:=render.ui_texture_add(app,size.x,size.y,"ui on mesh")
+        if free<0 || renderer==nil {return -1}
+        texture,made:=render.ui_texture_add(renderer,size.x,size.y,"ui on mesh")
         if !made {
             core.report(problems,e,"gui.mesh","its World_Widget is not drawn on its mesh: the renderer took no texture of %dx%d; give it a smaller size or pixels, or fewer widgets on meshes",size.x,size.y)
             return -1
@@ -198,8 +198,8 @@ mesh_surface_get :: proc(gui:^Gui,app:^host.App,e:core.Entity,widget:World_Widge
     }
     mesh:=&gui.meshes[at]
     mesh.slot,mesh.emission,mesh.planned=widget.slot,widget.emission,gui.frame
-    if mesh_handle!=host.ASSETS_MESH_NONE && mesh.ray!=u32(mesh_handle)+1 && render.mesh_ray_prepare(app,mesh_handle) {
-        ray_release(gui,app,at)
+    if mesh_handle!=host.ASSETS_MESH_NONE && mesh.ray!=u32(mesh_handle)+1 && render.mesh_ray_prepare(renderer,mesh_handle) {
+        ray_release(gui,renderer,at)
         mesh.ray=u32(mesh_handle)+1
     }
     return at
@@ -208,23 +208,23 @@ mesh_surface_get :: proc(gui:^Gui,app:^host.App,e:core.Entity,widget:World_Widge
 // Where the ray of the window meets each widget on a mesh, in the layout
 // units of its panel, for the routing of the next frame: the first texture
 // coordinates of the mesh there, as the last frame drew it, posed, offset or
-// carried (host.app_slot_shown). A mesh the renderer cannot meet leaves the
+// carried (host.extras_slot_shown). A mesh the renderer cannot meet leaves the
 // plane of the panel to the ray.
 @(private)
-meshes_aim :: proc(gui:^Gui,app:^host.App,s:^Surface,p:int,ray:ui.World_Ray,meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform)) {
-    if p!=0 || !ray.valid || app.assets==nil {return}
+meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,s:^Surface,p:int,ray:ui.World_Ray,meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform)) {
+    if p!=0 || !ray.valid || assets==nil {return}
     for &entry in gui.plan {
         if entry.player!=p || entry.mesh<0 {continue}
-        shown,drawn:=host.app_slot_shown(app,u64(entry.entity))
+        shown,drawn:=host.extras_slot_shown(extras,u64(entry.entity))
         if !drawn {
             static,has:=core.get(meshes,entry.entity)
             world,placed:=core.get(worlds,entry.entity)
             if !has || !placed {continue}
-            mesh:=static.mesh!={}?host.assets_mesh(app.assets,static.mesh):host.assets_shape(app.assets,static.shape)
+            mesh:=static.mesh!={}?host.assets_mesh(assets,static.mesh):host.assets_shape(assets,static.shape)
             if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {continue}
             shown={mesh=mesh.handle,transform=mm.transform_matrix(world.transform)}
         }
-        distance,uv,hit:=render.mesh_ray(app,shown.mesh,shown.transform,ray.origin-shown.anchor,ray.direction)
+        distance,uv,hit:=render.mesh_ray(renderer,shown.mesh,shown.transform,ray.origin-shown.anchor,ray.direction)
         id:=ui.id(s.ctx,"world",core.entity_index(entry.entity))
         ui.world_panel_aim(s.ctx,id,uv*entry.panel.size,distance,hit)
     }
@@ -232,11 +232,11 @@ meshes_aim :: proc(gui:^Gui,app:^host.App,s:^Surface,p:int,ray:ui.World_Ray,mesh
 
 // The runs of the widgets on meshes of the window's frame, into their textures.
 @(private)
-meshes_draw :: proc(gui:^Gui,app:^host.App,runs:[]host.Ui_Offscreen) {
+meshes_draw :: proc(gui:^Gui,extras:^host.Frame_Extras,runs:[]host.Ui_Offscreen) {
     for run in runs {
         for &mesh in gui.meshes {
             if mesh.texture==0 || mesh.planned!=gui.frame || ui.id(gui.surfaces[0].ctx,"world",core.entity_index(mesh.entity))!=run.id {continue}
-            host.app_ui_texture_draw(app,{texture=mesh.texture,layer=run.layer,size=run.size,clear={0,0,0,1}})
+            host.extras_ui_texture_draw(extras,{texture=mesh.texture,layer=run.layer,size=run.size,clear={0,0,0,1}})
             mesh.drawn=true
             break
         }
@@ -246,33 +246,33 @@ meshes_draw :: proc(gui:^Gui,app:^host.App,runs:[]host.Ui_Offscreen) {
 // The widgets on meshes not planned this frame let go of their textures,
 // and of the trees of their meshes no other one meets.
 @(private)
-meshes_sweep :: proc(gui:^Gui,app:^host.App) {
+meshes_sweep :: proc(gui:^Gui,renderer:^render.Renderer) {
     for &mesh,at in gui.meshes {
         if mesh.texture==0 || mesh.planned==gui.frame {continue}
-        render.ui_texture_remove(app,mesh.texture)
-        ray_release(gui,app,at)
+        render.ui_texture_remove(renderer,mesh.texture)
+        ray_release(gui,renderer,at)
         mesh={}
     }
 }
 
 // The tree the surface at made for the ray, when no other surface meets its mesh.
 @(private)
-ray_release :: proc(gui:^Gui,app:^host.App,at:int) {
+ray_release :: proc(gui:^Gui,renderer:^render.Renderer,at:int) {
     ray:=gui.meshes[at].ray
     if ray==0 {return}
     gui.meshes[at].ray=0
     for other in gui.meshes {if other.ray==ray {return}}
-    render.mesh_ray_release(app,render.Mesh_Handle(ray-1))
+    render.mesh_ray_release(renderer,render.Mesh_Handle(ray-1))
 }
 
 // The textures of the World_Widgets drawn on meshes, in the material slots
 // they name: as the base color, lit, or as light. Whatever draws the mesh
 // shows them (host.Slot_Texture).
 @(step="render",before="render_sync")
-gui_meshes_render :: proc(gui:^Gui,app:^host.App) {
-    if gui==nil || app.renderer==nil {return}
+gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,extras:^host.Frame_Extras) {
+    if gui==nil || renderer==nil {return}
     for &mesh in gui.meshes {
         if mesh.texture==0 || !mesh.drawn {continue}
-        host.app_slot_texture_add(app,{object=u64(mesh.entity),slot=mesh.slot,texture=mesh.texture,emission=mesh.emission})
+        host.extras_slot_texture_add(extras,{object=u64(mesh.entity),slot=mesh.slot,texture=mesh.texture,emission=mesh.emission})
     }
 }

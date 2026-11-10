@@ -22,14 +22,14 @@ unsaved_test_sculpt :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,re
 
 @(private)
 unsaved_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,worlds:^core.Table(core.World_Transform),owner:core.Entity,brush:terrain.Brush) {
-    terrain_sync(s,tool,core.read(&world.terrains),s.app)
-    if !testing.expect(t,stroke_prepare(tool,s.app,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner})) {return}
+    terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
+    if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner})) {return}
     if !testing.expect(t,stroke_baseline(tool)) {return}
     tool.stroke.active=true
     change:=terrain.source_edit(&tool.stroke.source,brush)
     testing.expect(t,change.changed && change.error==.None)
     tool.stroke.changed=true
-    stroke_end(s,tool,ref,s.app)
+    stroke_end(s,tool,ref,s.app.assets)
     testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
 }
 
@@ -81,13 +81,13 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     saved,written:=editor.assets_save(&s,{relative})
     testing.expect(t,written && saved==1 && !unsaved(&assets,relative))
     on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,unsaved(&assets,relative))
     undone:=test_held(t,&assets,relative);testing.expect(t,string(undone)==string(disk));delete(undone)
     testing.expect(t,editor.redo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,!unsaved(&assets,relative))
 
     // Discard takes back the disk: the revision the owners are at holds it,
@@ -96,17 +96,17 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(3))
     testing.expect(t,unsaved(&assets,relative))
     testing.expect_value(t,editor.assets_discard(&s,{relative}),1)
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
     testing.expect_value(t,terrain.source_value(head,middle),f32(2))
-    testing.expect(t,stroke_prepare(&tool,&app,core.read(&world.terrains),core.read(&worlds),editor.Pick{entity=owner}))
+    testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&worlds),editor.Pick{entity=owner}))
     testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle),f32(2))
     testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,!unsaved(&assets,relative))
     testing.expect(t,editor.redo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,!unsaved(&assets,relative))
     on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
 }
@@ -138,7 +138,7 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=517}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
-    terrain_create(&s,&tool,ref,&app)
+    terrain_create(&s,&tool,ref,app.assets,app.allocator)
     if !testing.expect(t,editor.edits_commit(&edits,ref,&selection)) {return}
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
@@ -156,7 +156,7 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     testing.expect(t,editor.redo(&edits,ref,&selection))
     held:=test_held(t,&assets,relative);testing.expect(t,string(held)==string(created));delete(held)
     for _ in 0..<2 {testing.expect(t,editor.redo(&edits,ref,&selection))}
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(stroked));delete(held)
     testing.expect(t,!os.exists(path))
 }
@@ -186,7 +186,7 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=519}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Volume;tool.samples,tool.depth,tool.chunk_cells=97,97,16
-    terrain_create(&s,&tool,ref,&app)
+    terrain_create(&s,&tool,ref,app.assets,app.allocator)
     if !testing.expect(t,editor.edits_commit(&edits,ref,&selection)) {return}
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
@@ -220,17 +220,17 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     testing.expect(t,carved_air,"the carved block is all air in the step that fills it")
     // Undo and redo bring back the file of each step.
     testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     held:=test_held(t,&assets,relative);testing.expect(t,string(held)==string(carved));delete(held)
     testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(created));delete(held)
     loaded:terrain.Source;defer terrain.source_destroy(&loaded)
     testing.expect(t,terrain.terrain_read(&loaded,&assets,id))
     testing.expect(t,terrain.source_value(&loaded,deep)<0,"undoing the carving gives back the solid")
     for _ in 0..<2 {
         testing.expect(t,editor.redo(&edits,ref,&selection))
-        terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+        terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     }
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(filled));delete(held)
 }

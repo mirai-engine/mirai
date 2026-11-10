@@ -468,6 +468,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     points_read(r,slot)
     pages_update(r,slot)
     extension_counters_begin(r,cmd,slot)
+    // A frame none of whose views culls reports no counts, not those of the last one that did.
+    rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
     depth_probes_begin(r,cmd,slot,frame.probes)
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]

@@ -96,7 +96,7 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if skeleton=={} {return false}
     cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
     if cache==nil {return false}
-    content:=anim.skeleton_content(cache,s.app,skeleton)
+    content:=anim.skeleton_content(cache,s.app.assets,s.app.allocator,skeleton)
     if content==nil {return false}
     value:=core.raw_find(core.world_table_at(c.world,c.table),c.table.info,c.entities[0])
     if value==nil {return false}

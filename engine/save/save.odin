@@ -13,6 +13,7 @@ import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "base:runtime"
 
 // Save games: the world written to a slot, a file in the folder the user
 // keeps for the game. A slot holds every entity with its components, hierarchy
@@ -227,10 +228,10 @@ request_error :: proc(op:Op,slot:string,kind:=Slot_Kind.Manual,label:="") -> Err
 
 // Where the slots are kept from now on; made when the first one is written.
 // False, with no folder for them, without memory for its name.
-folder_set :: proc(state:^Save_State,app:^host.App,path:string) -> bool {
-    delete(state.folder,app.allocator)
+folder_set :: proc(state:^Save_State,allocator:runtime.Allocator,path:string) -> bool {
+    delete(state.folder,allocator)
     error:mem.Allocator_Error
-    state.folder,error=strings.clone(path,app.allocator)
+    state.folder,error=strings.clone(path,allocator)
     state.resolved=true
     return error==nil
 }
@@ -358,7 +359,7 @@ saves_serve :: proc(
     if !game.off && !clock.paused {game.played+=f64(frame.dt)}
     if work!=nil {
         work.frame+=1
-        writes_step(work,app,results,problems)
+        writes_step(work,app.renderer,&app.jobs,results,problems)
     }
     // A load replaces the world, and with it the buffer the requests were taken from.
     asked,_:=slice.clone(core.take(&requests.queue),context.temp_allocator)
@@ -378,13 +379,13 @@ saves_serve :: proc(
             base.text_set(result.slot[:],slot)
             queued,result.error=slot_save(world,app,state,work,game,result,slot,game_label(game,&r))
         case r.op==.Load:
-            writes_flush(work,app,results)
+            writes_flush(work,&app.jobs,results)
             result.error=read(world,app,state,base.text_get(r.slot[:]),game)
             if result.error==.None {autosave_settle(work,core.world_storage_of(world,scene.Scene_Root))}
         case r.op==.Delete:
-            writes_flush(work,app,results)
+            writes_flush(work,&app.jobs,results)
             result.error=delete_slot(state,app,base.text_get(r.slot[:]))
-            thumbnail_release(thumbnails,app,base.text_get(r.slot[:]))
+            thumbnail_release(thumbnails,app.assets,base.text_get(r.slot[:]))
         }
         if !queued {core.push(&results.queue,result)}
     }
@@ -405,7 +406,7 @@ saves_serve :: proc(
         work.due=result.error==.Busy
         if !work.due {game.saved=game.played}
     }
-    writes_step(work,app,results,problems)
+    writes_step(work,app.renderer,&app.jobs,results,problems)
 }
 
 // Captures the world into a slot: queued to be written with its thumbnail in
@@ -416,7 +417,7 @@ slot_save :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,work:^Save_Wo
     if work!=nil && len(work.writes)>=WRITES_CAPACITY {return false,.Busy}
     out:serial.Writer
     serial.writer_init(&out,0,app.allocator)
-    if error=capture(w,app,&out,result.kind,label,game.played);error!=.None {
+    if error=capture(w,app.assets,app.allocator,&out,result.kind,label,game.played);error!=.None {
         serial.writer_destroy(&out)
         return
     }
@@ -425,15 +426,15 @@ slot_save :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,work:^Save_Wo
         defer serial.writer_destroy(&out)
         return false,slot_file_write(path,serial.writer_bytes(&out),nil)
     }
-    error=write_queue(work,app,result,path,serial.writer_take(&out))
+    error=write_queue(work,app.renderer,app.allocator,result,path,serial.writer_take(&out))
     return error==.None,error
 }
 
 // The types of the saves: the ones of the assets, or a local set without them.
 @(private)
-types_open :: proc(app:^host.App,local:^asset.Types) -> ^asset.Types {
-    if app.assets!=nil {return &app.assets.types}
-    asset.types_init(local,app.allocator)
+types_open :: proc(assets:^host.Assets,allocator:runtime.Allocator,local:^asset.Types) -> ^asset.Types {
+    if assets!=nil {return &assets.types}
+    asset.types_init(local,allocator)
     return local
 }
 
@@ -443,13 +444,13 @@ write :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,slot:string,kind:
     out:serial.Writer
     serial.writer_init(&out,0,app.allocator)
     defer serial.writer_destroy(&out)
-    capture(w,app,&out,kind,label,played) or_return
+    capture(w,app.assets,app.allocator,&out,kind,label,played) or_return
     return slot_file_write(path,serial.writer_bytes(&out),nil)
 }
 
 // The world as the bytes of a slot, without a thumbnail. Entities without an
 // Id lend one for the trip.
-capture :: proc(w:core.World_Ref,app:^host.App,out:^serial.Writer,kind:=Slot_Kind.Manual,label:="",played:=0.0) -> Error {
+capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,out:^serial.Writer,kind:=Slot_Kind.Manual,label:="",played:=0.0) -> Error {
     if w.place!=.World {return .Failed}
     ids:=core.world_table_of(w,core.Id)
     if ids==nil {return .Failed}
@@ -481,16 +482,16 @@ capture :: proc(w:core.World_Ref,app:^host.App,out:^serial.Writer,kind:=Slot_Kin
     }
 
     local:asset.Types
-    types:=types_open(app,&local)
+    types:=types_open(assets,allocator,&local)
     defer if types==&local {asset.types_destroy(&local)}
     document:asset.Scene
     // What a network session keeps on entities is of the session, not of the game.
     excluded:=[]typeid{core.Remote,core.Pose_Target}
-    report,error:=scene.capture(w,&document,types,{kind=asset.KIND_SCENE,id=DOCUMENT,sections=true,excluded=excluded},app.allocator)
+    report,error:=scene.capture(w,&document,types,{kind=asset.KIND_SCENE,id=DOCUMENT,sections=true,excluded=excluded},allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)
     body:serial.Writer
-    serial.writer_init(&body,0,app.allocator)
+    serial.writer_init(&body,0,allocator)
     defer serial.writer_destroy(&body)
     if asset.scene_write(&document,&body)!=.None || body.overflow!=0 {return .Failed}
 
@@ -537,7 +538,7 @@ restore :: proc(w:core.World_Ref,app:^host.App,data:[]u8,game:^Save_Game=nil) ->
     slice.sort(lent)
 
     local:asset.Types
-    types:=types_open(app,&local)
+    types:=types_open(app.assets,app.allocator,&local)
     defer if types==&local {asset.types_destroy(&local)}
     file:asset.Asset
     if asset.asset_open(&file,data[at:][:header.bytes],app.allocator)!=.None {return .Corrupt}

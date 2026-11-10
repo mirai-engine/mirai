@@ -555,12 +555,12 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
     entry:Planned
     ctx:ui.Context
     rect:=[4]f32{0,0,800,600}
-    first:=screen_key(app,&ctx,&instance,&entry,0,rect)
+    first:=screen_key(app.assets,&ctx,&instance,&entry,0,rect)
     ctx.game.family=.PlayStation
-    pad:=screen_key(app,&ctx,&instance,&entry,0,rect)
+    pad:=screen_key(app.assets,&ctx,&instance,&entry,0,rect)
     testing.expect(t,pad!=first,"the prompts of another device")
     ctx.game.language=7
-    testing.expect(t,screen_key(app,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
+    testing.expect(t,screen_key(app.assets,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
 }
 
 @(test)
@@ -675,7 +675,7 @@ widgets_out_of_sight_are_not_built_and_the_nearest_come_first :: proc(t:^testing
     testing.expect_value(t,widget_unit(&view,on_screen,{reference={2000,1000}},1.5),f32(1.5))
     testing.expect_value(t,widget_unit(&view,widget,{reference={2000,1000}},1.5),widget.scale)
     app:host.App
-    _,mesh:=mesh_seen(&app,&view,core.Entity(7),{0,0,10})
+    _,mesh:=mesh_seen(app.renderer,&app.extras,&view,core.Entity(7),{0,0,10})
     testing.expect(t,mesh,"a mesh not drawn yet is seen: the frame that draws it says where it is")
     candidates:=[?]Widget_Candidate{{player=1,distance=3},{player=0,distance=9},{player=1,distance=1},{player=0,distance=2}}
     sort_candidates(candidates[:])

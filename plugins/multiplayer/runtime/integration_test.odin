@@ -508,7 +508,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     if sh.session!=nil {
         outbox:Net_Outbox
         adoptions:Net_Adoptions
-        net_tick_tail(ref,app,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
         core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }
@@ -551,7 +551,7 @@ net_test_session :: proc(s:^Net_Session,w:^Net_Test_World,info:^core.World_Info,
     desc.replication.max_objects=s.desc.max_objects
     if wire.host_init(&s.host,desc)!=.None {return false}
     s.host_ready,s.mode=true,mode
-    ready:=mode==.Client?client_init(s,core.world_ref(w,info),app):server_init(s,context.allocator)
+    ready:=mode==.Client?client_init(s,core.world_ref(w,info),app.allocator):server_init(s,context.allocator)
     world_seen(s,core.world_ref(w,info))
     return ready
 }
@@ -685,9 +685,9 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
     words:=make([]u32,s.client.words_per)
     defer delete(words)
     one:=net_test_command(&s,first,r,1,4,words)
-    replica_update(&s,core.world_ref(&world,&info),&app,&one)
+    replica_update(&s,core.world_ref(&world,&info),app.assets,&one)
     three:=net_test_command(&s,third,r,3,7,words)
-    replica_update(&s,core.world_ref(&world,&info),&app,&three)
+    replica_update(&s,core.world_ref(&world,&info),app.assets,&three)
     client_reconcile(&s,core.world_ref(&world,&info),&app,1.0/60)
     testing.expect_value(t,s.stats.corrected,u64(1))
     testing.expect_value(t,world.values.values[0].force,f32(7))
@@ -735,7 +735,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
     s:Net_Session
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,0,.Server)) {return}
     defer session_destroy(&s)
-    if !testing.expect(t,client_init(&s,core.world_ref(&world,&info),&app)) {return}
+    if !testing.expect(t,client_init(&s,core.world_ref(&world,&info),app.allocator)) {return}
     type:=net_test_type(&s,core.world_ref(&world,&info),source)
     target_object,error:=wire.object_create(&s.host,{type=type})
     if !testing.expect_value(t,error,wire.Error.None) {return}
@@ -755,7 +755,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
             words[leaf.word+1]=u32(u64(target_object)>>32)
         }
     }
-    replica_create(&s,core.world_ref(&world,&info),&app,&command)
+    replica_create(&s,core.world_ref(&world,&info),app.assets,&command)
     net_test_settle(&world,nil,nil)
     testing.expect(t,!core.has(&world.values,source),"it waits for its target off the replica")
     testing.expect_value(t,wire.object_bind(&s.host,target_object,u64(target)),wire.Error.None)
@@ -794,19 +794,19 @@ server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T
     outbox:Net_Outbox
     defer core.value_free(&outbox,type_info_of(Net_Outbox))
     for tick in 1..<4 {
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))
+        server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
         net_test_settle(&world,nil,nil)
     }
     before:=s.stats.fragments_published
     core.get(&world.values,first).force=9
-    server_publish(&s,core.world_ref(&world,&info),&app,&outbox,4)
+    server_publish(&s,core.world_ref(&world,&info),&outbox,4)
     testing.expect_value(t,s.stats.fragments_published-before,u64(1))
     // Ten times a second at 60 ticks: on its turn, once every six ticks, whatever changed between turns.
     core.get(&world.objects,first).update_hz=10
     before=s.stats.fragments_published
     for tick in 5..<17 {
         core.get(&world.values,first).force=f32(tick)
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))
+        server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,s.stats.fragments_published-before,u64(2))
     testing.expect_value(t,wire.object_poll_interval(&s.host,wire.object_of_user(&s.host,u64(first))),6)
@@ -896,7 +896,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
             for &session in sessions {wire.host_update(&session.host,now)}
             server_events,client_events:Net_Events
             server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
-            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],wire.host_poll(&sessions[1].host),&client_events)
+            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
             for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
             core.value_free(&server_events,type_info_of(Net_Events));core.value_free(&client_events,type_info_of(Net_Events))
             if connected!=0 && sessions[1].status==.Connected {break}
@@ -920,7 +920,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
                 net_test_physical_objects(&worlds[0],entities[0],connected)
             }
         }
-        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
@@ -1018,11 +1018,11 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     one:=net_test_command(&s,&world,r,1,0,words)
     driver:=Driver_State{has_move=true,move=inp.Move_Input{move={1,0,0}}}
     wire.object_pack(&s.host,r.type,driver_fragment,&driver,words)
-    replica_update(&s,core.world_ref(&world,&info),&app,&one)
+    replica_update(&s,core.world_ref(&world,&info),app.assets,&one)
     three:=net_test_command(&s,&world,r,3,0,words)
     driver.move=inp.Move_Input{move={-1,0,0},look_yaw=0.25}
     wire.object_pack(&s.host,r.type,driver_fragment,&driver,words)
-    replica_update(&s,core.world_ref(&world,&info),&app,&three)
+    replica_update(&s,core.world_ref(&world,&info),app.assets,&three)
     for tick in 1..<4 {
         client_inputs(&s,core.world_ref(&world,&info),u32(tick))
         move,_:=core.get(core.read(&world.moves),e)
@@ -1145,7 +1145,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         }
         if tick==165 {core.add(&world.parents,child,core.Parent{entity=replacement})}
         net_test_settle(world,nil,nil)
-        server_publish(&sessions[0],core.world_ref(world,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(world,&info),&outbox,u32(tick))
         wire.host_update(&sessions[0].host,now)
         if tick==19 {
             child_object=wire.object_of_user(&sessions[0].host,u64(child))
@@ -1207,7 +1207,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     session:Net_Session
     if !testing.expect(t,net_test_session(&session,&world,&info,&app,&network,0,.Server)) {return}
     defer session_destroy(&session)
-    if !testing.expect(t,client_init(&session,ref,&app)) {return}
+    if !testing.expect(t,client_init(&session,ref,app.allocator)) {return}
     type:=net_test_type(&session,ref,source)
     joint_fragment,state_fragment:=net_test_fragment(&session,type,phys.Joint),net_test_fragment(&session,type,phys.Joint_State)
     if !testing.expect(t,joint_fragment>=0 && state_fragment>=0,"the body replicates its joint") {return}
@@ -1229,7 +1229,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
         if int(leaf.fragment)==joint_fragment && leaf.kind==.Object {words[leaf.word]=u32(u64(target_object));words[leaf.word+1]=u32(u64(target_object)>>32);break}
     }
     command.kind,command.role,command.simulation=.Object_Created,.Predicted,.Server
-    replica_create(&session,ref,&app,&command)
+    replica_create(&session,ref,app.assets,&command)
     net_test_settle(&world,nil,nil)
     testing.expect(t,!core.has(&world.joints,source))
     net_test_physics(&world,&shared,&app)
@@ -1252,7 +1252,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     retarget:=net_test_command(&session,&world,r,2,0,words)
     wire.object_pack(&session.host,type,joint_fragment,&joint,words)
     wire.object_pack(&session.host,type,state_fragment,&state,words)
-    replica_update(&session,ref,&app,&retarget)
+    replica_update(&session,ref,app.assets,&retarget)
     net_test_settle(&world,nil,nil)
     net_test_physics(&world,&shared,&app)
     took,_=core.get(core.read(&world.joint_states),source)
@@ -1262,7 +1262,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     retune:=net_test_command(&session,&world,r,3,0,words)
     wire.object_pack(&session.host,type,joint_fragment,&joint,words)
     wire.object_pack(&session.host,type,state_fragment,&state,words)
-    replica_update(&session,ref,&app,&retune)
+    replica_update(&session,ref,app.assets,&retune)
     net_test_settle(&world,nil,nil)
     net_test_physics(&world,&shared,&app)
     testing.expect_value(t,world.physics.world.joints[0].generation,generation)

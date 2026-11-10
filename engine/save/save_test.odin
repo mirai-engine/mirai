@@ -146,7 +146,7 @@ a_transient_entity_comes_back_from_a_save_without_the_id_it_was_lent :: proc(t:^
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
     header:=(cast(^Header)raw_data(serial.writer_bytes(&out)))^
     testing.expect_value(t,header.lent,1)
     testing.expect_value(t,len(w.ids.values),1)
@@ -183,7 +183,7 @@ an_id_of_the_scene_that_the_lending_sequence_would_give_stays_its_own :: proc(t:
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
     testing.expect_value(t,core.entity_of(&w.entities,taken),authored)
 
     if !testing.expect_value(t,restore(ref,&f.app,serial.writer_bytes(&out)),Error.None) {return}
@@ -215,7 +215,7 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
     // The transforms of the broken copy do not decompress.
     broken:=make([]u8,len(serial.writer_bytes(&out)))
     defer delete(broken)
@@ -271,7 +271,7 @@ a_server_saves_what_a_client_simulates_without_the_marks_of_the_session :: proc(
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
     remotes,targets:=[2]u64{w.remotes.version,w.remotes.layout},[2]u64{w.targets.version,w.targets.layout}
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
     target,kept:=core.get(core.read(&w.targets),lent)
     testing.expect(t,core.has(&w.remotes,lent) && kept && target.placed==2,"the session keeps what it has")
     testing.expect_value(t,[2]u64{w.remotes.version,w.remotes.layout},remotes)
@@ -311,7 +311,7 @@ serve_init :: proc(t:^testing.T,f:^Save_Test,s:^Serve) -> bool {
     dir,error:=os.make_directory_temp("","mirai-save-*",context.allocator)
     if !testing.expect(t,error==nil) {return false}
     s.folder=dir
-    folder_set(&s.state,&f.app,dir)
+    folder_set(&s.state,f.app.allocator,dir)
     s.settings=SAVE_SETTINGS_DEFAULT
     s.profile.read=true
     s.frame.dt=1.0/60
@@ -386,7 +386,7 @@ a_slot_lists_what_it_is_and_its_thumbnail_without_loading_the_world :: proc(t:^t
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
-    if !testing.expect_value(t,capture(ref,&f.app,&out,.Checkpoint,"Gate",125.5),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out,.Checkpoint,"Gate",125.5),Error.None) {return}
     // Columns black and white: each four pixels halve to the gray of their light.
     width,height:=int(THUMBNAIL_SIZE.x)*2,int(THUMBNAIL_SIZE.y)*2
     pixels:=make([]u8,width*height*4)
@@ -470,7 +470,7 @@ a_thumbnail_becomes_a_texture_the_game_shows_until_the_slot_changes :: proc(t:^t
         out:serial.Writer
         serial.writer_init(&out,0,context.allocator)
         defer serial.writer_destroy(&out)
-        testing.expect_value(t,capture(ref,&f.app,&out),Error.None)
+        testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None)
         path,_:=slot_path(&s.state,&f.app,slot)
         testing.expect_value(t,slot_file_write(path,serial.writer_bytes(&out),pixels),Error.None)
     }
@@ -709,9 +709,9 @@ a_slot_waiting_for_its_thumbnail_is_written_before_a_load_or_after_a_while :: pr
 
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
     s.work.frame=1
-    if !testing.expect_value(t,write_queue(&s.work,&f.app,result,path,serial.writer_take(&out)),Error.None) {return}
+    if !testing.expect_value(t,write_queue(&s.work,f.app.renderer,f.app.allocator,result,path,serial.writer_take(&out)),Error.None) {return}
     s.work.writes[0].phase=.Thumbnail
     s.work.drawn=1
     for _ in 0..<THUMBNAIL_WAIT {
@@ -726,8 +726,8 @@ a_slot_waiting_for_its_thumbnail_is_written_before_a_load_or_after_a_while :: pr
 
     place(w,5,{4,5,6})
     serial.writer_init(&out,0,context.allocator)
-    if !testing.expect_value(t,capture(ref,&f.app,&out),Error.None) {return}
-    if !testing.expect_value(t,write_queue(&s.work,&f.app,result,path,serial.writer_take(&out)),Error.None) {return}
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
+    if !testing.expect_value(t,write_queue(&s.work,f.app.renderer,f.app.allocator,result,path,serial.writer_take(&out)),Error.None) {return}
     s.work.writes[0].phase=.Thumbnail
     place(w,5,{9,9,9})
     request_load(&s.requests,"wait")
@@ -773,7 +773,7 @@ a_slot_without_memory_is_refused_and_leaves_nothing :: proc(t:^testing.T) {
             case .Queue:
                 data,_:=make([]u8,64,owner)
                 f.app.allocator={memory_limit_proc,&limit}
-                error:=write_queue(&s.work,&f.app,Result{op=.Save},"slot",data)
+                error:=write_queue(&s.work,f.app.renderer,f.app.allocator,Result{op=.Save},"slot",data)
                 f.app.allocator=owner
                 done=error==.None
                 if done {

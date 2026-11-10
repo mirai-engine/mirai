@@ -354,9 +354,9 @@ subject_node :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,paren
 }
 
 @(private)
-subject_begin :: proc(app:^host.App,sub:^Subject,root:core.Entity,key:u64) {
+subject_begin :: proc(renderer:^erender.Renderer,sub:^Subject,root:core.Entity,key:u64) {
     subject_skins_clear(sub)
-    sub.renderer=app.renderer
+    sub.renderer=renderer
     clear(&sub.locals);clear(&sub.posed);clear(&sub.materials)
     sub.root,sub.key,sub.part_count,sub.short,sub.fit_key=root,key,0,false,0
 }
@@ -378,7 +378,7 @@ subject_end :: proc(app:^host.App,w:core.World_Ref,sub:^Subject) {
 @(private)
 subject_gather :: proc(app:^host.App,w:core.World_Ref,scene:Scene,sub:^Subject,root:core.Entity,key:u64) {
     context.allocator=app.allocator
-    subject_begin(app,sub,root,key)
+    subject_begin(app.renderer,sub,root,key)
     if !core.alive(core.world_entities(w),root) || app.assets==nil {return}
     subject_node(app.assets,scene,sub,root,-1)
     subject_end(app,w,sub)
@@ -388,7 +388,7 @@ subject_gather :: proc(app:^host.App,w:core.World_Ref,scene:Scene,sub:^Subject,r
 @(private)
 subject_gather_mesh :: proc(app:^host.App,w:core.World_Ref,sub:^Subject,mesh:base.Asset_Id,key:u64) {
     context.allocator=app.allocator
-    subject_begin(app,sub,core.NONE,key)
+    subject_begin(app.renderer,sub,core.NONE,key)
     if app.assets==nil || mesh=={} {return}
     part:=&sub.parts[0]
     sub.part_count=1

@@ -64,10 +64,10 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
     lines.count,lines.dropped=preview.count,preview.dropped
     if lines.count==0 {return}
     // What is in sight, firm; what is behind something, faint.
-    host.app_debug_lines_add(s.app,lines)
+    host.extras_debug_lines_add(&s.app.extras,lines)
     faint:=gpu.debug_lines_make(preview.faint[:],depth_test=false)
     faint.count=preview.count
-    host.app_debug_lines_add(s.app,faint)
+    host.extras_debug_lines_add(&s.app.extras,faint)
 }
 
 // A Character takes its capsule from a Collider: one that comes without gets it.

@@ -64,7 +64,7 @@ rig_world_settle :: proc(w:^Rig_World) {
 
 @(private="file")
 rig_world_advance :: proc(w:^Rig_World,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
-    if app.assets!=nil {rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app)}
+    if app.assets!=nil {rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets)}
     animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),&w.requests,&w.events,core.read(&w.targets),core.read(&w.roots),&w.playback,app,time,frame,&w.cache,&w.problems)
     inputs:=Constraint_Inputs{core.read(&w.ik),core.read(&w.look),core.read(&w.limits),core.read(&w.feet),core.read(&w.sockets),core.read(&w.retargets),core.read(&w.roots),core.read(&w.worlds),0,&w.cache,&w.problems}
     ground_inputs:=Grounding_Inputs{core.read(&w.grounded),{},core.read(&w.transforms),core.read(&w.parents),0,&w.problems,{}}
@@ -111,7 +111,7 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    content:=skeleton_content(&skeletons,&app,skeleton_id)
+    content:=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,content!=nil && len(content.bones)==3) {return}
     path:=fmt.tprintf("%s/rig.skeleton",directory)
     disk,_:=os.read_entire_file(path,context.temp_allocator)
@@ -123,12 +123,12 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     // What an editor leaves unsaved: only the registry holds it, and only its revision tells.
     revision:=assets.revision
     testing.expect_value(t,asset.registry_memory_set(&assets.registry,"rig.skeleton",bytes),asset.Error.None)
-    content=skeleton_content(&skeletons,&app,skeleton_id)
+    content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==1 && base.text_get(content.bones[0].name[:])=="alone")
     after,_:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,assets.revision==revision && string(after)==string(disk))
     {dropped,_:=asset.registry_memory_drop(&assets.registry,"rig.skeleton");testing.expect(t,dropped)}
-    content=skeleton_content(&skeletons,&app,skeleton_id)
+    content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==3)
 }
 
@@ -141,21 +141,21 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     w:Rig_World;core.entities_init(&w.entities);defer rig_world_destroy(&w)
     first,second,third:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.meshes,second,{mesh=mesh_id});core.add(&w.meshes,first,{mesh=mesh_id});rig_world_settle(&w)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     stamp:=w.playback.rigs_stamp;pointer:=raw_data(w.playback.rigs)
     testing.expect(t,rig_find(&w.playback,first)>=0 && rig_find(&w.playback,second)>=0 && rig_find(&w.playback,third)<0)
     assets.revision+=1;core.get(&w.meshes,first).materials[0]={0xab,0xcd}
     saved_context:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer)
     core.add(&w.meshes,third,{mesh=mesh_id});rig_world_settle(&w)
     inputs:=w.playback.rigs_inputs
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_inputs==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&app))
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     testing.expect(t,w.playback.rigs_stamp==stamp+1 && len(w.playback.rigs)==3 && rig_find(&w.playback,third)>=0)
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
 }
@@ -449,11 +449,11 @@ live_retarget_profile_changes_compare_full_asset_ids_and_preserve_source_identit
     profiles:Pose_Assets;defer pose_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil))
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil))
     testing.expect_value(t,modifiers.retargets.values[0].translation,lib.Retarget_Translation.Reference)
     geometry:=modifiers.geometry
     core.get(&animations,target).retarget=b
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil))
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil))
     testing.expect_value(t,modifiers.geometry,geometry+1)
     testing.expect_value(t,modifiers.retargets.values[0].translation,lib.Retarget_Translation.Scaled)
     testing.expect_value(t,modifiers.sources[0].profile,b)

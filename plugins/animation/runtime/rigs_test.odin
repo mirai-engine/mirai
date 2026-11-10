@@ -168,7 +168,7 @@ profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_a
     profiles:Pose_Assets;defer pose_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
+    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)) {return}
     if !testing.expect(t,rigs_apply(&playback.states[0],&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
     requests:Modifier_Requests;defer delete(requests.controls.items);defer delete(requests.queue.items)
     modifier_control(&requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0})
@@ -179,13 +179,13 @@ profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_a
     assets.revision+=1
     record,found:=asset.registry_find(&assets.registry,id);if !testing.expect(t,found) {return};record.time+=1
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=runtime.nil_allocator()
-    prepared:=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)
+    prepared:=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;profiles.allocator=saved.allocator
     testing.expect(t,!prepared)
     testing.expect(t,modifiers.geometry==geometry && modifiers.inputs==inputs && len(modifiers.springs.values)==1 && len(modifiers.controls)==1 && len(modifiers.spring_states)==1)
     if len(modifiers.controls)>0 {testing.expect_value(t,modifiers.controls[0],control)}
     if len(modifiers.spring_states)>0 {testing.expect(t,raw_data(modifiers.spring_states)==buffer);testing.expect_value(t,modifiers.spring_states[0].springs[2],joint)}
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
+    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)) {return}
     testing.expect_value(t,modifiers.controls[0],control)
     testing.expect_value(t,modifiers.springs.values[0].weight,f32(.4))
     testing.expect(t,rigs_apply(&playback.states[0],&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))

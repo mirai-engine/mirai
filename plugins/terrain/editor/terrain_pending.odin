@@ -30,11 +30,11 @@ pending_begin :: proc(tool:^Terrain_Tool,point:[3]f32) {
 
 // A frame of a ramp or a shape not applied yet; false when it ended.
 @(private)
-pending_frame :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,input:core.Input,view:core.View) -> bool {
+pending_frame :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,input:core.Input,view:core.View) -> bool {
     stroke:=&tool.stroke
     p:=&stroke.pending
     if ui.escape(s.gui.ctx) {stroke_cancel(tool);return false}
-    if !p.placing && p.handle<0 && core.key_pressed(input,.Enter) && s.gui.ctx.edit.id==0 {pending_apply(s,tool,world,app);return stroke.active}
+    if !p.placing && p.handle<0 && core.key_pressed(input,.Enter) && s.gui.ctx.edit.id==0 {pending_apply(s,tool,world,assets);return stroke.active}
     if p.handle>=0 {
         if core.mouse_down(input,.Left) {
             if point,ok:=pending_point(tool,s.viewport,input.mouse_position);ok {pending_move(tool,point)}
@@ -44,7 +44,7 @@ pending_frame :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
         }
     } else if tool.begin {
         // A press on a handle moves it; anywhere else it applies what was placed.
-        if handle:=pending_handle(s,tool,input.mouse_position);handle>=0 {p.handle=handle} else {pending_apply(s,tool,world,app);return stroke.active}
+        if handle:=pending_handle(s,tool,input.mouse_position);handle>=0 {p.handle=handle} else {pending_apply(s,tool,world,assets);return stroke.active}
     }
     pending_preview(s,tool,world)
     return true
@@ -133,7 +133,7 @@ pending_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
 }
 
 @(private)
-pending_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+pending_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     stroke:=&tool.stroke
     label:=stroke.pending.kind==.Ramp?"Ramp":"Shape"
     if stroke.source.kind==.Mesh {
@@ -142,5 +142,5 @@ pending_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
         if change.error!=.None {edit_error(s,change.error);return}
         stroke_changed(stroke,change)
     } else {pending_preview(s,tool,world)}
-    stroke_end(s,tool,world,app,label=label)
+    stroke_end(s,tool,world,assets,label=label)
 }

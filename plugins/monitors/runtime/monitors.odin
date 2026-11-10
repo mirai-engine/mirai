@@ -73,8 +73,8 @@ Monitors :: struct {
 }
 
 @(private)
-fed_forget :: proc(app:^host.App,fed:^Fed) {
-    for texture in fed.textures {if texture!=0 {erender.view_texture_remove(app,texture)}}
+fed_forget :: proc(renderer:^erender.Renderer,fed:^Fed) {
+    for texture in fed.textures {if texture!=0 {erender.view_texture_remove(renderer,texture)}}
     fed^={}
 }
 
@@ -151,7 +151,7 @@ monitors_render :: proc(
         if !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
         mesh:=static.mesh!={}?host.assets_mesh(app.assets,static.mesh):host.assets_shape(app.assets,static.shape)
         if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {continue}
-        bounds_min,bounds_max,known:=erender.mesh_bounds(app,mesh.handle)
+        bounds_min,bounds_max,known:=erender.mesh_bounds(app.renderer,mesh.handle)
         if !known {continue}
         at:=asked_of(asked[:count],screen)
         if at<0 {
@@ -184,7 +184,7 @@ monitors_render :: proc(
         }
         if at<0 {continue}
         fed:=&state.fed[at]
-        if fed.width!=a.width || fed.height!=a.height {fed_forget(app,fed)}
+        if fed.width!=a.width || fed.height!=a.height {fed_forget(app.renderer,fed)}
         fed.entity,fed.width,fed.height,fed.seen=a.camera,a.width,a.height,state.frame
         fed.drawn,fed.shown,fed.next,fed.warmed={},-1,-1,0
         a.place=at
@@ -212,7 +212,7 @@ monitors_render :: proc(
             if level<0 {continue}
             width,height:=fed.width>>uint(level),fed.height>>uint(level)
             if fed.textures[level]==0 {
-                texture,made:=erender.view_texture_add(app,width,height,"feed")
+                texture,made:=erender.view_texture_add(app.renderer,width,height,"feed")
                 if !made {continue}
                 fed.textures[level]=texture
             }
@@ -221,7 +221,7 @@ monitors_render :: proc(
             erender.view_volume_expose(&seen,view_volumes,volumes,worlds)
             // A level left alone for long has histories of another moment.
             stale:=fed.drawn[level]==0 || state.frame-fed.drawn[level]>interval*UNSEEN_INTERVAL+1
-            if !erender.view_texture_draw(app,fed.textures[level],seen,width,height,stale,erender.pipeline_standard(app,a.light?.Light:.Full)) {continue}
+            if !erender.view_texture_draw(&app.extras,fed.textures[level],seen,width,height,stale,erender.pipeline_standard(app.renderer,a.light?.Light:.Full)) {continue}
             fed.drawn[level]=state.frame
             if level==fed.next {fed.warmed+=1}
         }
@@ -257,6 +257,6 @@ monitors_render :: proc(
         shown.copy_owner,shown.replace_source=base.name_hash("monitors"),true
         shown.highlight=erender.instance_outline(highlights,outlines,e)
         if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-        erender.instance_add(app,shown)
+        erender.instance_add(&app.extras,shown)
     }
 }

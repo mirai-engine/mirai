@@ -305,7 +305,7 @@ bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_K
 // not; with only, just the tiles and zones of those keys.
 @(private)
 bake_load :: proc(n:^Navigation,bake:Navigation_Bake,app:^host.App,problems:^core.Problems,only:Bake_Keys=nil) {
-    if bake.asset=={} || app==nil || app.assets==nil {return}
+    if bake.asset=={} || app.assets==nil {return}
     started:=time.tick_now()
     file:asset.Asset
     if host.assets_file(app.assets,bake.asset,BAKE_KIND,&file)!=.None {
