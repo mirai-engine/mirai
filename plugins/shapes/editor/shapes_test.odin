@@ -279,8 +279,8 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     solid:=shapes_test_shape(f,shapes.Shape{kind=.Solid,uv_scale=1})
 
     // On the top of the solid, its Y up the normal: an added box rests on the surface.
-    place:=brush_place_at(false,{0,0,0.5},{0,0,1},0.25,0)
-    brush,error:=brush_place(s,place,{0,0,0.5},.Box,false,{},solid)
+    place:=brush_place_at(.Union,{0,0,0.5},{0,0,1},0.25,0)
+    brush,error:=brush_place(s,place,{0,0,0.5},.Box,.Union,{},solid)
     testing.expect_value(t,error,shapes.Shape_Error.None)
     if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
@@ -294,11 +294,11 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     testing.expectf(t,abs(mm.quat_rotate(local.rotation,{0,1,0}).z-1)<1e-5,"%v",local.rotation)
 
     // Away from every solid, a cut has nothing to cut and an add makes a Solid with the brush, in one step.
-    away:=brush_place_at(true,{5,0,0},{0,0,1},0.25,0)
-    _,refused:=brush_place(s,away,{5,0,0},.Sphere,true,{},core.NONE)
+    away:=brush_place_at(.Subtract,{5,0,0},{0,0,1},0.25,0)
+    _,refused:=brush_place(s,away,{5,0,0},.Sphere,.Subtract,{},core.NONE)
     testing.expect_value(t,refused,shapes.Shape_Error.Empty)
-    away=brush_place_at(false,{5,0,0},{0,0,1},0.25,0)
-    made,made_error:=brush_place(s,away,{5,0,0},.Cylinder,false,{},core.NONE)
+    away=brush_place_at(.Union,{5,0,0},{0,0,1},0.25,0)
+    made,made_error:=brush_place(s,away,{5,0,0},.Cylinder,.Union,{},core.NONE)
     testing.expect_value(t,made_error,shapes.Shape_Error.None)
     if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,2)
@@ -332,4 +332,43 @@ a_ray_meets_a_brush_primitive_where_it_enters_and_leaves :: proc(t:^testing.T) {
         testing.expectf(t,hit==c.hit,"%v from %v: hit %v",c.kind,c.origin,hit)
         if c.hit && c.enter!=0 {testing.expectf(t,abs(enter-c.enter)<1e-5 && abs(leave-c.leave)<1e-5,"%v from %v: %v %v",c.kind,c.origin,enter,leave)}
     }
+}
+
+// The points of a spline lie in its local XZ: the API takes them by world
+// points from above, inserts with the width and height in proportion, and
+// keeps two; the panel writes the size of one point as a step.
+@(test)
+shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
+    f:=new(Shapes_Test)
+    defer free(f)
+    if !shapes_test_open(t,f) {return}
+    defer shapes_test_close(f)
+    s,w:=&f.session,&f.world
+    e:=shapes_test_shape(f,shapes.SPLINE_DEFAULT)
+    run :: proc(s:^editor.Session,params:Corner_Params) -> (corner:u32,failed:bool) {
+        method:=api.Method{params_id=Corner_Params,result_id=Corner_Result}
+        params:=params
+        copy(params.entity[:],"0000000000000007")
+        result:Corner_Result
+        call:=api.Call{method=&method,params=&params,result=&result,raw=`{"to":[0,0,0]}`,allocator=context.temp_allocator}
+        api_corner(s,&call)
+        return result.corner,call.failed
+    }
+    // Inserted from 9 m above the middle of the path.
+    corner,failed:=run(s,{op=.Insert,at={0.5,9,-6}})
+    shape:=core.at(&w.shapes,core.row_of(&w.shapes,e))
+    testing.expectf(t,!failed && corner==1 && shape.point_count==3 && abs(shape.points[1].x)<1e-4 && abs(shape.points[1].y+6)<1e-4 && shape.widths[1]==3,"%v %v",shape.point_count,shape.points[1])
+    _,failed=run(s,{op=.Move,at={0,0,-6},to={2,5,-6}})
+    shape=core.at(&w.shapes,core.row_of(&w.shapes,e))
+    testing.expectf(t,!failed && abs(shape.points[1].x-2)<1e-4 && abs(shape.points[1].y+6)<1e-4,"%v",shape.points[1])
+    taken:=Corner_Taken{e,1}
+    width:=f32(5)
+    corner_size_write(s,&taken,int(offset_of(Corner_Size,width)),([^]u8)(&width)[:size_of(f32)])
+    shape=core.at(&w.shapes,core.row_of(&w.shapes,e))
+    testing.expect(t,shape.widths[1]==5)
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection) && core.at(&w.shapes,core.row_of(&w.shapes,e)).widths[1]==3,"one step")
+    testing.expect(t,history.redo(&f.edits,f.ref,&f.selection))
+    run(s,{op=.Remove,at={2,0,-6}})
+    _,failed=run(s,{op=.Remove,at={0,0,0}})
+    testing.expect(t,failed && core.at(&w.shapes,core.row_of(&w.shapes,e)).point_count==2,"a spline keeps two points")
 }

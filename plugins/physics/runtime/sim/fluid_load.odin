@@ -300,8 +300,8 @@ fluid_terms :: proc "contextless" (w:^World,wet:^Wet,com:Vec3,terms:^[1+WET_DRY]
     fluid.interface=1
     fluid.count=1
     f:=&w.fluids[wet.fluid]
-    if f.shape==.River {
-        for plane in river_planes(f,com) {
+    if f.shape==.Path {
+        for plane in path_planes(f,com) {
             fluid.planes[fluid.count]=shift(plane,com)
             fluid.count+=1
         }

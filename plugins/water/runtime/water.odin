@@ -223,7 +223,7 @@ water_render :: proc(
         if !custom {look=WATER_DEFAULT}
         dry:=desc.density<=0
         made:=look_of(state,app.assets,info.entity,look,program)
-        if desc.shape==.River {
+        if desc.shape==.Path {
             ribbon_place(state,app,physics,found[:count],i,made.row)
             continue
         }

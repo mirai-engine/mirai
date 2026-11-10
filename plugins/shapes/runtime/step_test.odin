@@ -23,7 +23,10 @@ Step_World :: struct {
     parents:core.Table(core.Parent),
     transforms:core.Table(core.Transform),
     ids:core.Table(core.Id),
+    fluids:core.Table(physics.Fluid),
+    paths:core.Table(physics.Fluid_Path),
     hierarchy:core.Hierarchy,
+    ground:core.Ground_Queries,
 }
 
 // A world of shapes with what its application holds for it.
@@ -77,7 +80,8 @@ world_settle :: proc(w:^Step_Test) {
 world_step :: proc(w:^Step_Test) {
     world_settle(w)
     shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,core.test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
-        &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems)
+        &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
+        core.read(&w.fluids),&w.paths,core.ref(&w.ground),core.test_world_ref(&w.rows))
     world_settle(w)
 }
 
@@ -257,7 +261,7 @@ a_solid_is_made_of_its_brush_children_and_follows_their_changes :: proc(t:^testi
     core.add(&w.transforms,solid,core.TRANSFORM_IDENTITY)
     core.add(&w.shapes,solid,Shape{kind=.Solid,uv_scale=1})
     box:=brush_add(&w,solid,0,{kind=.Box},{0,0,0},{2,2,2})
-    cut:=brush_add(&w,solid,1,{kind=.Sphere,subtract=true},{1,1,1},{1.6,1.6,1.6})
+    cut:=brush_add(&w,solid,1,{kind=.Sphere,op=.Subtract},{1,1,1},{1.6,1.6,1.6})
     world_step(&w)
     testing.expect_value(t,w.problems.count,0)
     child,count:=parts_of(&w,solid)
@@ -333,7 +337,7 @@ a_body_of_brushes_that_only_add_has_a_piece_per_brush :: proc(t:^testing.T) {
 }
 
 @(test)
-outlines_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :: proc(t:^testing.T) {
+polygons_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     a:App
     if !testing.expect(t,app_init(&a)) {return}
@@ -354,7 +358,7 @@ outlines_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
     defer mem.tracking_allocator_destroy(&track)
     allocator:=a.app.allocator
     a.app.allocator=mem.tracking_allocator(&track)
-    // The entities move: what moves an outline is not its source.
+    // The entities move: what moves a polygon is not its source.
     for i in 0..<3 {
         for row in 0..<core.count(&w.transforms) {core.edit_at(&w.transforms,row).position.y=f32(i)}
         world_step(&w)
@@ -363,4 +367,85 @@ outlines_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
     testing.expect_value(t,w.cache.pass,pass)
     testing.expect_value(t,track.total_allocation_count,0)
     testing.expect_value(t,len(w.cache.brushes.values),0)
+}
+
+// Ground of a test that rises toward +x, and the same ground a meter higher after a change.
+@(private="file")
+slope_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+    probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
+        return {point={origin.x,origin.x/10,origin.z},normal={0,1,0}},.Ground
+    }
+    return {probe=probe,spacing=0.5,revision=1},true
+}
+
+@(private="file")
+raised_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+    probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
+        return {point={origin.x,origin.x/10+1,origin.z},normal={0,1,0}},.Ground
+    }
+    return {probe=probe,spacing=0.5,revision=2},true
+}
+
+// A spline lies on the ground: without a Fluid it is a ribbon of its own that
+// follows the ground across and collides with nothing; with one it is the path
+// of the water instead, in the world, and has no child.
+@(test)
+a_spline_lies_on_the_ground_as_a_ribbon_or_as_the_path_of_its_fluid :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    a:App
+    if !testing.expect(t,app_init(&a)) {return}
+    defer app_destroy(&a)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
+    defer world_destroy(&w)
+    w.ground.open=slope_open
+    road:=core.create(&w.entities)
+    core.add(&w.transforms,road,core.Transform{{0,5,0},mm.QUAT_IDENTITY,{1,1,1}})
+    core.add(&w.shapes,road,SPLINE_DEFAULT)
+    world_step(&w)
+    testing.expect_value(t,w.problems.count,0)
+    child,count:=parts_of(&w,road)
+    if !testing.expect_value(t,count,1) {return}
+    testing.expect(t,!core.has(&w.colliders,child),"a ribbon collides with nothing")
+    ribbon:=host.assets_mesh(&a.assets,mesh_of(&w,child))
+    if !testing.expect(t,ribbon!=nil) {return}
+    // 12 m along -z and 3 wide in the frame of the entity, 5 m over the ground, which rises 0.3 m across it.
+    lo,hi:=ribbon.bounds_min,ribbon.bounds_max
+    testing.expectf(t,abs(lo.x+1.5)<1e-3 && abs(hi.x-1.5)<1e-3 && abs(lo.z+12)<1e-3 && abs(hi.z)<1e-3,"%v %v",lo,hi)
+    testing.expectf(t,abs(lo.y-(-5-0.15+0.05))<1e-3 && abs(hi.y-(-5+0.15+0.05))<1e-3,"it follows the ground across: %v %v",lo,hi)
+    testing.expect(t,ribbon.vertex_count>=2*7,"points across as the ground has samples")
+
+    // The ground changes: the ribbon lies on it again.
+    first:=mesh_of(&w,child)
+    w.ground.open=raised_open
+    world_step(&w)
+    raised:=host.assets_mesh(&a.assets,mesh_of(&w,child))
+    testing.expect(t,mesh_of(&w,child)!=first && raised!=nil && abs(raised.bounds_min.y-(lo.y+1))<1e-3)
+
+    // With a Fluid it is water along its path: the samples on the ground, in the world, and no ribbon.
+    core.add(&w.fluids,road,physics.FLUID_DEFAULT)
+    world_step(&w)
+    _,count=parts_of(&w,road)
+    path,has:=core.get(&w.paths,road)
+    testing.expect(t,count==0 && has && path.count>=12,"the path replaces the ribbon")
+    if has && path.count>0 {
+        start,end:=path.points[0],path.points[path.count-1]
+        testing.expectf(t,abs(start.position.y-1.05)<1e-3 && abs(end.position.z+12)<1e-3 && start.width==3 && start.height==0.05,"%v %v",start,end)
+    }
+    // It moves with its entity.
+    core.edit(&w.transforms,road).position.x=10
+    world_step(&w)
+    path,_=core.get(&w.paths,road)
+    testing.expectf(t,abs(path.points[0].position.x-10)<1e-3 && abs(path.points[0].position.y-2.05)<1e-3,"%v",path.points[0])
+
+    // Without the Fluid the ribbon comes back and the path goes.
+    core.remove(&w.fluids,road)
+    world_step(&w)
+    _,count=parts_of(&w,road)
+    testing.expect(t,count==1 && !core.has(&w.paths,road))
+
+    // A point without width is refused, and the ribbon it had stays.
+    core.edit(&w.shapes,road).widths[1]=0
+    world_step(&w)
+    testing.expect(t,reported(&w,road,"shapes.invalid"))
 }

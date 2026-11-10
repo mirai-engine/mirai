@@ -10,17 +10,19 @@ import "mirai:host"
 import erender "mirai:engine/render"
 import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
+import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:ui"
 import "base:runtime"
 
-// The Shapes tool: stamps squares, circles, stars and the other kinds onto the outline
-// shapes of a plane, drags, inserts and removes their corners, and places
-// brushes of solids on the surface under the pointer. The camera stays free;
-// the outline modes work on the plane of the shape selected, its local XY at
-// z = 0, or on the plane z = 0 of the world with no shape selected. Every
-// write goes through the steps of the document: a stroke, a corner drag, an
-// insertion, a removal or a brush is one step.
+// The Shapes tool: stamps squares, circles, stars and the other kinds onto the
+// polygons of the shapes of a plane, drags, inserts and removes the corners of
+// a polygon or the points of a spline, and places brushes of solids on the
+// surface under the pointer. The camera stays free; stamps work on the plane
+// of the shape selected, its local XY at z = 0, or on the plane z = 0 of the
+// world with no shape selected. Every write goes through the steps of the
+// document: a stroke, a corner drag, an insertion, a removal or a brush is
+// one step.
 
 TOOL :: "shapes"
 PANEL_SCOPE :: ui.Id(0x73686170)
@@ -39,6 +41,7 @@ Shapes_Settings :: struct {
     stamp:shapes.Stamp_Kind `mirai:"label=Shape"`,
     brush:shapes.Brush_Kind,
     operation:Shapes_Operation,
+    combine:geom.Boolean_Op `mirai:"label=Operation"`, // of a brush
     size:f32 `mirai:"min=0.01,max=100,unit=m"`,
     angle:f32 `mirai:"angle"`,
     material:base.Asset_Id `mirai:"kind=.mat"`,
@@ -57,6 +60,7 @@ Shapes_Tool :: struct {
     stroke:Stroke,
     drag:Corner_Drag,
     hover:Corner_Hover,
+    taken:Corner_Taken, // the point of a spline whose width and height the panel shows
     lines_storage:[dynamic]erender.Debug_Vertex,
     lines:erender.Debug_Lines,
 }
@@ -227,20 +231,19 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
         }
         t:=editor.entity_world(w,drag.entity)
         // A move the shape refuses leaves the corner where it was last taken.
-        if p,hit:=local_point(t,ray);hit {corner_drag_move(s,drag,p)}
+        if p,hit:=local_point(corner_plane(t,&drag.shape,drag.vertex),ray);hit {corner_drag_move(s,drag,p)}
         corners_draw(s,tool,t,&drag.shape,{entity=drag.entity,vertex=drag.vertex,edge=-1})
         if !core.mouse_down(input,.Left) {corner_drag_end(s,drag)}
         return
     }
     tool.hover={vertex=-1,edge=-1}
     e,shape,found:=selected_shape(s,w)
-    if !found || shape.kind!=.Outline {
+    if !found || shape.loop_count==0 {
         if tool.begin {select_under(s,w,input)}
         return
     }
     t:=editor.entity_world(w,e)
-    local,on_plane:=local_point(t,ray)
-    if tool.over {tool.hover=corner_hover(s,&shape,t,input.mouse_position,local,on_plane)}
+    if tool.over {tool.hover=corner_hover(s,&shape,t,input.mouse_position)}
     tool.hover.entity=e
     corners_draw(s,tool,t,&shape,tool.hover)
     hover:=tool.hover
@@ -252,6 +255,7 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
     case !tool.begin:
     case hover.vertex>=0:
         corner_drag_begin(drag,e,hover.vertex,shape)
+        tool.taken={e,hover.vertex}
     case hover.edge>=0:
         if ctx.input.clicks>=2 {corner_refused(s,.Insert,corner_edit(s,e,.Insert,hover.edge,hover.at,"Insert corner"))}
     case:
@@ -263,7 +267,7 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
 corner_refused :: proc(s:^editor.Session,op:Corner_Op,error:shapes.Shape_Error) {
     switch {
     case error==.None:
-    case op==.Remove && error==.Invalid: editor.notify(s,"A loop keeps at least three corners")
+    case op==.Remove && error==.Invalid: editor.notify(s,"A loop keeps at least three corners, a spline two")
     case:                                editor.notify(s,shapes.shape_error_text(error))
     }
 }
@@ -309,15 +313,15 @@ brush_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input:c
         at,normal=mm.transform_point(plane,{point.x,point.y,0}),mm.quat_rotate(plane.rotation,{0,0,1})
         if linalg.dot(normal,ray.direction)>0 {normal=-normal}
     }
-    subtract:=settings.operation==.Cut
-    place:=brush_place_at(subtract,at,normal,settings.size,settings.angle)
-    brush_draw(tool,settings.brush,place,subtract?editor.BRUSH_TAKE:editor.BRUSH_ADD)
+    op:=settings.combine
+    place:=brush_place_at(op,at,normal,settings.size,settings.angle)
+    brush_draw(tool,settings.brush,place,op==.Union?editor.BRUSH_ADD:op==.Subtract?editor.BRUSH_TAKE:editor.BRUSH_CHANGE)
     if !tool.begin {return}
-    if subtract && target==core.NONE {
-        editor.notify(s,"A cut brush needs a Solid shape under the pointer or selected to cut from")
+    if op!=.Union && target==core.NONE {
+        editor.notify(s,"A brush that cuts or intersects needs a Solid shape under the pointer or selected to work on")
         return
     }
-    if _,error:=brush_place(s,place,at,settings.brush,subtract,settings.material,target);error!=.None {
+    if _,error:=brush_place(s,place,at,settings.brush,op,settings.material,target);error!=.None {
         editor.notify(s,shapes.shape_error_text(error))
     }
 }
@@ -378,24 +382,20 @@ brush_draw :: proc(tool:^Shapes_Tool,kind:shapes.Brush_Kind,place:mm.Transform,c
     }
 }
 
-// The loops of an outline shape placed at t and a square at each corner,
-// the one under the pointer and the edge it would insert on marked.
+// The edges of the corners of a shape placed at t and a square at each
+// corner, the one under the pointer and the edge it would insert on marked.
 @(private)
 corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^shapes.Shape,hover:Corner_Hover) {
     count:=min(int(shape.point_count),shapes.SHAPE_POINTS)
     edge,mark,taken:=color_of(editor.BRUSH_CHANGE),color_of(editor.BRUSH_CHANGE),color_of(editor.BRUSH_ADD)
     edge.a*=0.6
-    first:=0
-    for l in 0..<min(int(shape.loop_count),shapes.SHAPE_LOOPS) {
-        n:=int(shape.loops[l])
-        if first+n>count {break}
-        for i in 0..<n {
-            a,b:=shape.points[first+i],shape.points[first+(i+1)%n]
-            erender.debug_line(&tool.lines,mm.transform_point(t,{a.x,a.y,0}),mm.transform_point(t,{b.x,b.y,0}),first+i==hover.edge?taken:edge)
-        }
-        first+=n
+    edges:=make([dynamic][2]int,context.temp_allocator)
+    corner_edges(shape,&edges)
+    for e in edges {
+        erender.debug_line(&tool.lines,corner_world(t,shape,e[0]),corner_world(t,shape,e[1]),e[0]==hover.edge?taken:edge)
     }
-    x,y:=mm.quat_rotate(t.rotation,{1,0,0}),mm.quat_rotate(t.rotation,{0,1,0})
+    plane:=corner_plane(t,shape,-1)
+    x,y:=mm.quat_rotate(plane.rotation,{1,0,0}),mm.quat_rotate(plane.rotation,{0,1,0})
     square :: proc(s:^editor.Session,lines:^erender.Debug_Lines,center,x,y:[3]f32,color:[4]f32) {
         // A meter along the plane, in points of the window: the square keeps its size on screen.
         a,seen_a:=editor.viewport_screen(s.viewport,center)
@@ -406,10 +406,14 @@ corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^s
         corners:=[4][3]f32{center+(-x-y)*h,center+(x-y)*h,center+(x+y)*h,center+(-x+y)*h}
         for i in 0..<4 {erender.debug_line(lines,corners[i],corners[(i+1)%4],color)}
     }
-    for p,i in shape.points[:count] {
-        square(s,&tool.lines,mm.transform_point(t,{p.x,p.y,0}),x,y,i==hover.vertex?taken:mark)
+    for i in 0..<count {
+        square(s,&tool.lines,corner_world(t,shape,i),x,y,i==hover.vertex?taken:mark)
     }
-    if hover.vertex<0 && hover.edge>=0 {square(s,&tool.lines,mm.transform_point(t,{hover.at.x,hover.at.y,0}),x,y,taken)}
+    if hover.vertex<0 && hover.edge>=0 {
+        a,b:=shape.points[hover.edge],shape.points[(hover.edge+1)%count]
+        along:=linalg.length(b-a)>0?linalg.length(hover.at-a)/linalg.length(b-a):0
+        square(s,&tool.lines,linalg.lerp(corner_world(t,shape,hover.edge),corner_world(t,shape,(hover.edge+1)%count),along),x,y,taken)
+    }
 }
 
 // ---------------------------------------------------------------- panel
@@ -426,7 +430,13 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
     if keys_free && !tool_busy(tool) {
         keys:=MODE_KEYS
         for key,mode in keys {if core.key_pressed(input,key) {mode_set(s,tool,mode)}}
-        if core.key_pressed(input,.X) {tool.settings.operation=tool.settings.operation==.Add?.Cut:.Add}
+        if core.key_pressed(input,.X) {
+            if tool.mode==.Brush {
+                tool.settings.combine=geom.Boolean_Op((int(tool.settings.combine)+1)%len(geom.Boolean_Op))
+            } else {
+                tool.settings.operation=tool.settings.operation==.Add?.Cut:.Add
+            }
+        }
     }
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
@@ -437,8 +447,8 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             if solid:=selected_solid(s,world);solid!=core.NONE {e,shape,found=solid,editor.entity_get(world,solid,shapes.Shape)}
         }
         note:=""
-        if found && shape.kind==.Outline {note=fmt.tprintf("%d corners",shape.point_count)}
-        if found && shape.kind==.Solid {
+        if found && tool.mode!=.Brush && shape.loop_count>0 {note=fmt.tprintf("%d corners",shape.point_count)}
+        if found && tool.mode==.Brush {
             count:=0
             for child in editor.entity_children(world,e) {
                 if editor.entity_has(world,child,shapes.Shape_Brush) {count+=1}
@@ -462,9 +472,16 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             editor.held_field_row(s,h,"angle")
             editor.held_field_row(s,h,"material","","Of the shapes a stamp makes outside every shape")
         case .Corners:
+            if found && shape.kind==.Spline && tool.taken.entity==e && tool.taken.vertex<int(shape.point_count) {
+                size:=Corner_Size{shape.widths[tool.taken.vertex],shape.heights[tool.taken.vertex]}
+                same:=size
+                held:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|2,info=type_info_of(Corner_Size),value=&size,defaults=&same,width=editor.tool_panel_inner(g),write=corner_size_write,user=&tool.taken,name="Point size"}
+                editor.held_field_row(s,held,"width")
+                editor.held_field_row(s,held,"height")
+            }
         case .Brush:
             editor.held_field_row(s,h,"brush")
-            editor.held_field_row(s,h,"operation")
+            editor.held_field_row(s,h,"combine")
             editor.held_field_row(s,h,"size","",SIZE_DESCRIPTION)
             editor.held_field_row(s,h,"angle")
             editor.held_field_row(s,h,"material","","Of the solid a brush makes with no solid under the pointer or selected")

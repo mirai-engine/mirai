@@ -88,14 +88,14 @@ physics_step :: proc(
     jumps:^core.Jumps,problems:^core.Problems,
     gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
     fluid_waves:core.Read(Fluid_Waves),winds:core.Read(volume.Wind),
-    hierarchy:core.Ref(core.Hierarchy),rivers:core.Read(River),
+    hierarchy:core.Ref(core.Hierarchy),paths:core.Read(Fluid_Path),
 ) {
     if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
         return
     }
     w:=&state.world
-    fluids_sync(state,fluids,volumes,core.read(transforms),parents,problems,fluid_waves,winds,worlds,rivers)
+    fluids_sync(state,fluids,volumes,core.read(transforms),parents,problems,fluid_waves,winds,worlds,paths)
     if !events_reserve(events,w.desc.event_capacity) {
         memory_problem(problems,core.NONE,"the events of the physics, so nothing is simulated in this tick")
         core.queue_clear(&requests.queue)

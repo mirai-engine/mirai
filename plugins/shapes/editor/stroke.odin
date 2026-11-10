@@ -11,7 +11,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 // A stroke of a stamp on a plane (shapes.Shape_Edit) in the scene: it takes
-// the outline shapes of the plane as its pieces when it begins, and each
+// the polygons of the shapes of the plane as its pieces when it begins, and each
 // frame writes the pieces that changed into the world, inside the one step
 // of the stroke: a split makes a shape entity for each other polygon and a
 // shape cut away whole is deleted.
@@ -55,7 +55,7 @@ local_point :: proc(t:mm.Transform,ray:mm.Ray) -> (point:[2]f32,hit:bool) {
 // A world point taken onto the local XY plane of t, in its local XY.
 local_of :: proc(t:mm.Transform,p:[3]f32) -> [2]f32 {return mm.transform_inverse_point(t,p).xy}
 
-// Gives the edit the outline shapes of the plane, first the one given: the
+// Gives the edit the shapes with a polygon of the plane, first the one given: the
 // shapes a stroke may change. tolerance: how far, in meters on the plane,
 // the path may shake and stay one segment. False when the world has no
 // shapes or the stamp is not valid.
@@ -67,7 +67,7 @@ stroke_begin :: proc(stroke:^Stroke,w:core.World_Ref,plane:Plane,first:core.Enti
     made.material=material
     if shapes.shape_edit_begin(&stroke.edit,plane,cut,kind,size,angle,tolerance,made,allocator)!=.None {return false}
     take :: proc(stroke:^Stroke,w:core.World_Ref,e:core.Entity,shape:^shapes.Shape) {
-        if shape.kind!=.Outline {return}
+        if shape.kind!=.Solid || shape.loop_count==0 {return}
         shapes.shape_edit_piece(&stroke.edit,e,editor.entity_world(w,e),shape^)
     }
     if first!=core.NONE {

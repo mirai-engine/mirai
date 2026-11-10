@@ -2,6 +2,7 @@ package mirai_physics
 
 import "core:testing"
 import cmath "core:math"
+import math "mirai:std/math"
 
 @(private="file")
 ocean :: proc(w:^World,height:f32=0,density:f32=1000,current:=Vec3{}) -> Fluid_Handle {
@@ -75,22 +76,29 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     testing.expect_value(t,world_stats(&w).fluids,2)
 }
 
-// A river is water along its path: its surface goes through its points, it
-// ends at its banks and its ends, and what floats in it drifts downstream.
+// The samples of the curve through points, as the plugin of a path hands them over (math.path_sample).
+@(private="file")
+path_of :: proc(points:[]Path_Point) -> []Path_Point {
+    out:=make([]Path_Point,FLUID_PATH_SAMPLES,context.temp_allocator)
+    return out[:math.path_sample(points,1,out)]
+}
+
+// Water along a path: its surface goes through its samples, it ends at its
+// banks and its ends, and what floats in it drifts with its current.
 @(test)
-a_river_holds_water_along_its_path_between_its_banks_and_carries_what_floats :: proc(t:^testing.T) {
+water_along_a_path_holds_between_its_banks_and_carries_what_floats :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
     // 40 m toward -z falling 2 m, 4 m wide and 2 m deep, at 1 m/s; then 20 m toward -x, level.
-    desc:=Fluid_Desc{shape=.River,density=1000,river_count=3}
-    desc.river[0]={{0,2,0},4,2,1}
-    desc.river[1]={{0,0,-40},4,2,1}
-    desc.river[2]={{-20,0,-40},4,2,1}
-    river:=fluid_create(&w,desc)
+    desc:=Fluid_Desc{shape=.Path,density=1000,current={0,0,-1}}
+    path:=path_of({{{0,2,0},4,2},{{0,0,-40},4,2},{{-20,0,-40},4,2}})
+    river:=fluid_create(&w,desc,path)
     testing.expect(t,river!={})
     back,_:=fluid_desc(&w,river)
-    testing.expect(t,back==desc,"its description comes back as it was given")
+    samples:[FLUID_PATH_SAMPLES]Path_Point
+    count:=fluid_path(&w,river,&samples)
+    testing.expect(t,count==len(path) && samples[count-1]==path[count-1] && back==desc,"its samples and description come back as they were given")
     Case :: struct {p:Vec3,inside:bool,height,density:f32}
     for c in ([]Case{
         {{0,1.5,0},true,2,1000},      // at its first point the surface is at that point
@@ -109,7 +117,7 @@ a_river_holds_water_along_its_path_between_its_banks_and_carries_what_floats :: 
         expect_near(t,sample.density,c.density,1e-4)
     }
     sample,_:=fluid_sample(&w,{0,0.5,-20})
-    testing.expectf(t,sample.normal.z<0 && sample.normal.y>0.99,"the surface leans down the river: %v",sample.normal)
+    testing.expectf(t,sample.normal.z<0 && sample.normal.y>0.99,"the surface leans down the path: %v",sample.normal)
     testing.expectf(t,sample.current.z< -0.99 && abs(sample.current.x)<0.1,"it flows down the path: %v",sample.current)
     bounds:=fluid_bounds(&w,river)
     testing.expect(t,bounds.max.y>=2 && bounds.min.y<= -2 && bounds.min.x<= -20 && bounds.max.z>=0)
@@ -120,28 +128,30 @@ a_river_holds_water_along_its_path_between_its_banks_and_carries_what_floats :: 
     testing.expectf(t,at.z< -12 && drift.z< -0.5,"it drifts downstream: at %v at %v m/s",at,drift)
     height,_,_:=fluid_surface(&w,river,at.x,at.z)
     testing.expectf(t,abs(at.y-height)<0.4,"and floats on the surface at %v, %v",at,height)
-    for refused in ([]Fluid_Desc{
-        {shape=.River,density=1000,river_count=1,river={0={{0,0,0},1,1,1}}},
-        {shape=.River,density=1000,river_count=2,river={0={{0,0,0},1,1,1},1={{0,1,0},1,1,1}}},
-        {shape=.River,density=1000,river_count=2,river={0={{0,0,0},0,1,1},1={{0,0,4},1,1,1}}},
-        {shape=.River,density=1000,river_count=2,river={0={{cmath.nan_f32(),0,0},1,1,1},1={{0,0,4},1,1,1}}},
-        {shape=.River,river_count=2,river={0={{0,0,0},1,1,1},1={{0,0,4},1,1,1}}},
-        {shape=.River,density=1000,river_count=17},
-    }) {testing.expect_value(t,fluid_create(&w,refused),Fluid_Handle{})}
+    many:[FLUID_PATH_SAMPLES+1]Path_Point
+    for &p,i in many {p={{0,0,-f32(i)},1,1}}
+    for refused in ([][]Path_Point{
+        {{{0,0,0},1,1}},
+        {{{0,0,0},1,1},{{0,1,0},1,1}},
+        {{{0,0,0},0,1},{{0,0,4},1,1}},
+        {{{0,0,0},1,0},{{0,0,4},1,1}},
+        {{{cmath.nan_f32(),0,0},1,1},{{0,0,4},1,1}},
+        many[:],
+    }) {testing.expect_value(t,fluid_create(&w,{shape=.Path,density=1000},refused),Fluid_Handle{})}
+    testing.expect_value(t,fluid_create(&w,{shape=.Path},{{{0,0,0},1,1},{{0,0,4},1,1}}),Fluid_Handle{})
 }
 
-// A river longer than FLUID_RIVER_POINTS is two whose ends meet, the second
-// going on the way the first ends: across the join there is water all along.
+// Two paths whose ends meet, the second going on the way the first ends: across
+// the join there is water all along.
 @(test)
-two_rivers_whose_ends_meet_hold_water_across_the_join :: proc(t:^testing.T) {
+two_paths_whose_ends_meet_hold_water_across_the_join :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
-    up:=Fluid_Desc{shape=.River,density=1000,river_count=3}
-    up.river[0],up.river[1],up.river[2]={{0,3,0},4,1,1},{{10,2,-10},4,1,1},{{10,1,-30},4,1,1}
-    down:=Fluid_Desc{shape=.River,density=1000,river_count=2}
-    down.river[0],down.river[1]={{10,1,-30},4,1,1},{{10,0,-50},4,1,1}
-    testing.expect(t,fluid_create(&w,up)!={} && fluid_create(&w,down)!={})
+    water:=Fluid_Desc{shape=.Path,density=1000}
+    up:=fluid_create(&w,water,path_of({{{0,3,0},4,1},{{10,2,-10},4,1},{{10,1,-30},4,1}}))
+    down:=fluid_create(&w,water,path_of({{{10,1,-30},4,1},{{10,0,-50},4,1}}))
+    testing.expect(t,up!={} && down!={})
     for x in ([]f32{8.1,9,10,11,11.9}) {
         for z in ([]f32{-29.9,-30,-30.1}) {
             sample,ok:=fluid_sample(&w,{x,0.5,z})
