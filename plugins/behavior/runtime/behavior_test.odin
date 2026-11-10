@@ -698,7 +698,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     testing.expect(t,ok)
     // Used: closed until its cooldown passes, as long at 60 as at 120 Hz; spent after its uses.
     for hz in ([]f64{60,120}) {
-        core.get(&world.states,crate)^={}
+        core.edit(&world.states,crate)^={}
         smart_used(&world.uses,found)
         smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(hz,1))
         core.test_world_settle(&world)
