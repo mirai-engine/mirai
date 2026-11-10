@@ -819,3 +819,32 @@ named_of :: proc(source:string) -> map[string]bool {
     declared_named({file},nil,&names)
     return names
 }
+
+// What a library loads with #load is part of what it is built from, and a
+// declaration made of a loaded file changes with it: changing only the loaded
+// file builds again the library that loads it and what names that declaration.
+@(test)
+a_loaded_file_is_part_of_what_loads_it :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"declare-load")
+    if root=="" {return}
+    source_write(t,root,"kit","kit.odin","package kit\n\nTHEME :: #load(\"theme.ui\")\n\nFONTS :: #load_directory(\"fonts\")\n")
+    source_write(t,root,"kit/fonts","a.txt","first")
+    desc:=describe(root,[]string{"kit"})
+    desc.names=true
+    key :: proc(t:^testing.T,root:string,desc:Declare_Desc,theme,font:string) -> (library,declaration:u64) {
+        testing.expect(t,os.write_entire_file(project.path(root,"kit","theme.ui"),theme)==nil)
+        testing.expect(t,os.write_entire_file(project.path(root,"kit","fonts","a.txt"),font)==nil)
+        library,_=fingerprint(root,"",nil,engine_sources(root,{"kit"}))
+        errors,changed:=declaring(desc)
+        declared_ok(t,errors)
+        return library,changed.declared
+    }
+    library,declaration:=key(t,root,desc,"one","first")
+    for c in ([]struct{what,theme,font:string}{{"the loaded file","two","first"},{"a file of the loaded folder","two","second"}}) {
+        now_library,now_declaration:=key(t,root,desc,c.theme,c.font)
+        testing.expectf(t,now_library!=library,"%s builds the library again",c.what)
+        testing.expectf(t,now_declaration!=declaration,"%s moves the declaration",c.what)
+        library,declaration=now_library,now_declaration
+    }
+}

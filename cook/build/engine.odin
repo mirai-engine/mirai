@@ -1060,7 +1060,8 @@ engine_flags :: proc(root:string,dev:bool) -> [dynamic]string {
     return flags
 }
 
-// The sources of some packages under root, sorted, and the files given besides.
+// The sources of some packages under root, sorted, with the files they load
+// (#load and its kin: what is built from them reads those too), and the files given besides.
 @(private)
 engine_sources :: proc(root:string,packages:[]string,files:..string) -> []string {
     list:=make([dynamic]string,context.temp_allocator)
@@ -1070,6 +1071,10 @@ engine_sources :: proc(root:string,packages:[]string,files:..string) -> []string
         for entry in entries {
             if entry.type==.Directory || !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
             append(&list,slashes(entry.fullpath,context.temp_allocator))
+            text,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
+            for loaded in loaded_files(string(text),folder) {
+                if !slice.contains(list[:],loaded) {append(&list,loaded)}
+            }
         }
     }
     for file in files {append(&list,slashes(file,context.temp_allocator))}

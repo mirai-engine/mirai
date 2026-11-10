@@ -234,6 +234,10 @@ import_package :: proc(desc:^Declare_Desc,imp:^ast.Import_Decl) -> (path:string,
 names_line :: proc(scope:^File_Scope,out:^Output,names:[]string,text:string,nodes:..^ast.Node) {
     if out.names==nil {return}
     hash:=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
+    // What it loads is part of it: a constant made of a file changes with the file.
+    for loaded in loaded_files(text,scope.decl_folder) {
+        if data,error:=os.read_entire_file(loaded,context.temp_allocator);error==nil && len(data)>0 {hash=base.hash_combine(hash,xxhash.XXH3_64_default(data))}
+    }
     carried:=make(map[string]bool,context.temp_allocator)
     found:=Names{file=&carried,all=&carried,imports=&scope.imports}
     for condition in scope.conditions {
@@ -922,6 +926,34 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
     }
     strings.write_string(&b,src[at:])
     return strings.to_string(b)
+}
+
+// The files a text loads with #load and its kin, the paths relative to folder:
+// those of a #load_directory, the files of its folder.
+@(private)
+loaded_files :: proc(text,folder:string) -> []string {
+    files:=make([dynamic]string,context.temp_allocator)
+    rest:=text
+    for {
+        at:=directive_path(rest)
+        if at.start<0 {break}
+        value:=rest[at.start+1:at.end-1]
+        rest=rest[at.end:]
+        if strings.contains(value,":") {continue}
+        path:=value if filepath.is_abs(value) else project.path(folder,value,allocator=context.temp_allocator)
+        cleaned,_:=filepath.clean(path,context.temp_allocator)
+        path=slashes(cleaned,context.temp_allocator)
+        if !os.is_dir(path) {
+            append(&files,path)
+            continue
+        }
+        entries,_:=os.read_all_directory_by_path(path,context.temp_allocator)
+        slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
+        for entry in entries {
+            if entry.type!=.Directory {append(&files,slashes(entry.fullpath,context.temp_allocator))}
+        }
+    }
+    return files[:]
 }
 
 // The string literal right after the next #load, #load_hash or #load_directory.
