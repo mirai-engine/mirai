@@ -37,29 +37,29 @@ Camera_Follow :: struct {
     target:core.Entity `mirai:"section=Follow"`, // none: the body whose camera it is, or else the one of the focused local player
     mode:Camera_Mode,
     offset:[3]f32 `mirai:"unit=m"`, // from the target to the pivot, in the axes of the vertical of the target: world axes without one
-    distance:f32 `mirai:"min=0,unit=m"`, // Orbit: from the pivot to the camera
-    half_life:f32 `mirai:"min=0,unit=s"`, // time the pivot takes to close half of its distance to the target; 0: rigid
-    up_half_life:f32 `mirai:"min=0,unit=s"`, // the same along the up of the target; 0: half_life
-    probe_radius:f32 `mirai:"min=0,unit=m"`, // Orbit: of the sphere kept clear from the pivot to the camera; 0: nothing pulls it in
-    shoulder:[2]f32 `mirai:"unit=m"`, // Orbit: right and up of the camera, from the pivot to where its arm starts
-    look_up_offset:[3]f32 `mirai:"unit=m"`,   // Orbit: right, up and back of the camera added to where its arm starts when it looks straight up, in proportion to the pitch
-    look_down_offset:[3]f32 `mirai:"unit=m"`, // Orbit: the same looking straight down
-    dead_zone:[3]f32 `mirai:"min=0,unit=m,section=Framing"`, // half the box, along the right, up and back of the camera, the target moves in before the pivot follows
-    look_ahead:f32 `mirai:"min=0,unit=s"`, // the pivot leads the target by how far it goes across the ground in this time
-    look_ahead_max:f32 `mirai:"min=0,unit=m"`, // 0: no limit
-    yaw:f32 `mirai:"angle,section=Look"`, // Orbit: where it starts; aiming, what it adds to the look
-    pitch:f32 `mirai:"angle"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
-    min_pitch,max_pitch:f32 `mirai:"angle"`, // both 0: almost straight up and down
-    turn:bool,                      // Orbit without aim: the look action of the focused local player who drives its target turns it
-    recenter:f32 `mirai:"min=0,unit=s"`, // Orbit without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
-    look_at:bool,                   // Follow: the camera faces the target
-    aim:bool,                       // Orbit: it looks where the Move_Input of the target looks
+    distance:f32 `mirai:"min=0,unit=m,mode=Orbit"`, // from the pivot to the camera
+    half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // time the pivot takes to close half of its distance to the target; 0: rigid
+    up_half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // the same along the up of the target; 0: half_life
+    probe_radius:f32 `mirai:"min=0,unit=m,mode=Orbit"`, // of the sphere kept clear from the pivot to the camera; 0: nothing pulls it in
+    shoulder:[2]f32 `mirai:"unit=m,mode=Orbit"`, // right and up of the camera, from the pivot to where its arm starts
+    look_up_offset:[3]f32 `mirai:"unit=m,mode=Orbit"`,   // right, up and back of the camera added to where its arm starts when it looks straight up, in proportion to the pitch
+    look_down_offset:[3]f32 `mirai:"unit=m,mode=Orbit"`, // the same looking straight down
+    dead_zone:[3]f32 `mirai:"min=0,unit=m,section=Framing,mode=Follow|Orbit"`, // half the box, along the right, up and back of the camera, the target moves in before the pivot follows
+    look_ahead:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // the pivot leads the target by how far it goes across the ground in this time
+    look_ahead_max:f32 `mirai:"min=0,unit=m,mode=Follow|Orbit"`, // 0: no limit
+    yaw:f32 `mirai:"angle,section=Look,mode=Orbit"`, // where it starts; aiming, what it adds to the look
+    pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
+    min_pitch,max_pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // both 0: almost straight up and down
+    turn:bool `mirai:"mode=Orbit"`, // without aim: the look action of the local player who drives its target turns it
+    recenter:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
+    look_at:bool `mirai:"mode=Follow"`, // the camera faces the target
+    aim:bool `mirai:"mode=Orbit"`,  // it looks where the Move_Input of the target looks
     facing:bool,                    // Orbit: the body it follows looks where it looks, as when aiming (move_relative_to View)
-    pull_grace:f32 `mirai:"min=0,unit=s,section=Advanced"`, // Orbit: what only crosses between the pivot and the camera is let be this long before the camera comes in
-    pull_time:f32 `mirai:"min=0,unit=s"`,    // half-life of coming in toward it; 0: at once
-    return_delay:f32 `mirai:"min=0,unit=s"`, // it stays in this long after the way clears
-    return_time:f32 `mirai:"min=0,unit=s"`,  // half-life of going back out; 0: at once
-    arm_margin:f32 `mirai:"min=0,unit=m"`,   // kept between the camera and what it hit
+    pull_grace:f32 `mirai:"min=0,unit=s,section=Advanced,mode=Orbit"`, // what only crosses between the pivot and the camera is let be this long before the camera comes in
+    pull_time:f32 `mirai:"min=0,unit=s,mode=Orbit"`,    // half-life of coming in toward it; 0: at once
+    return_delay:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // it stays in this long after the way clears
+    return_time:f32 `mirai:"min=0,unit=s,mode=Orbit"`,  // half-life of going back out; 0: at once
+    arm_margin:f32 `mirai:"min=0,unit=m,mode=Orbit"`,   // kept between the camera and what it hit
     hide_within:f32 `mirai:"min=0,unit=m"`,  // the body it follows is not drawn in its view while the camera is nearer than this to its pivot, and fades out from twice as far; 0: always drawn
     looking:[2]f32 `mirai:"transient,readonly"`, // yaw and pitch it looks with now, radians
     state:Camera_Follow_State `mirai:"transient,hidden"`,
@@ -331,16 +331,17 @@ camera_follow :: proc(
             other.looking={seen.looking.x,clamp(seen.looking.y,low,high)}
         }
     }
-    turn:=input.vector(look_actions,.Look)*input.LOOK_SPEED
-    if seat,ok:=core.get(seats,player);!ok || seat.blocked&input.action_bit(input.action_of(look_actions,.Look))!=0 {turn={}}
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.edit_at(follows,row)
         target:=follow_target(e,follow.target,drivables,player)
-        if follow.turn && turn!={} && follow.state.ready && follow.mode==.Orbit && !follow.aim && input.seat_of(drivables,target)==player {
-            low,high:=pitch_limits(follow^)
-            follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
-            follow.state.idle=0
+        // The look of the local seat that drives its target turns it, from the devices of its slot.
+        if seat,local:=core.get(seats,input.seat_of(drivables,target));local && input.seat_local(seat) && follow.turn && follow.state.ready && follow.mode==.Orbit && !follow.aim {
+            if turn:=input.slot_frame_state(look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
+                low,high:=pitch_limits(follow^)
+                follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
+                follow.state.idle=0
+            }
         }
         vertical:=core.vertical_of(verticals,target)
         if placed,ok:=core.get(worlds,target);ok && core.has(verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
@@ -381,11 +382,11 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         want.state.changes=1
         want.state.blend=change.blend
         core.add(follows,change.camera,want)
-        camera_lens_set(camera,change.setup.lens)
+        camera^=lens_on(camera^,change.setup.lens)
         return
     }
     want.target=follow.target
-    if camera_follow_config(follow^)==want && lens_of(camera^)==change.setup.lens {return}
+    if camera_follow_config(follow^)==want && lens_on(camera^,change.setup.lens)==camera^ {return}
     state:=follow.state
     looked:=follow.looking
     if own,ok:=core.get(worlds,change.camera);ok {looked=look_of(own.rotation)}
@@ -399,12 +400,7 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         follow.state.handoff=looked
         follow.state.handing=true
     }
-    camera_lens_set(camera,change.setup.lens)
-}
-
-camera_lens_set :: proc "contextless" (camera:^render.Camera,lens:Camera_Lens) {
-    camera.projection,camera.fov,camera.near,camera.height,camera.shift,camera.layers=lens.projection,lens.fov,lens.near,lens.height,lens.shift,lens.layers
-    camera.own_hidden=lens.own_hidden
+    camera^=lens_on(camera^,change.setup.lens)
 }
 
 // The yaw and pitch of an Orbit that looks as rotation does.

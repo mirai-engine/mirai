@@ -1,7 +1,4 @@
 {
-  "Spawn_Settings": {
-    "players": true
-  },
   "UI_Settings": {
     "scale": 1,
     "languages": ["English", "Spanish"],

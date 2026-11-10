@@ -953,7 +953,7 @@ geometry_set :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,shape:
 fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,prefix:string) {
     v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return}
-    current:=""
+    current,titled:="",""
     first:=true
     skip:=-1
     folded:=false // in a section that is closed
@@ -965,6 +965,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 {current=title}
         if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
         if _,transient:=core.field_option(tag,"transient");transient {continue}
+        if modes,only:=core.field_option(tag,"mode");only && !mode_shows(c,v,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
         if c.type==erender.Mesh_Renderer && v.names[i]=="materials" {continue}
         offset:=origin+v.offsets[i]
@@ -982,7 +983,10 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
         if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
-        if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 && !c.sections {
+        // A section starts at the first of its fields shown.
+        if depth==0 && !c.sections && current!=titled {
+            titled=current
+            title:=current
             if banded {fold_band_end(c.s);banded=false}
             folded=false
             // Searching, the rows that have it show without their part.
@@ -1009,6 +1013,23 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         field_row(c,v.types[i],tag,v.names[i],label,offset,depth,description)
     }
+}
+
+// Whether a field tagged mode=A|B shows: while the field mode of its struct,
+// an enum, is one of those values.
+@(private)
+mode_shows :: proc(c:^Inspect,v:runtime.Type_Info_Struct,origin:uintptr,modes:string) -> bool {
+    for i in 0..<int(v.field_count) {
+        if v.names[i]!="mode" {continue}
+        name,named:=reflect.enum_name_from_value_any(any{rawptr(&c.value[origin+v.offsets[i]]),v.types[i].id})
+        if !named {return true}
+        rest:=modes
+        for want in strings.split_iterator(&rest,"|") {
+            if want==name {return true}
+        }
+        return false
+    }
+    return true
 }
 
 // Two masks of the same names as one table, with one arrow that reverts both.

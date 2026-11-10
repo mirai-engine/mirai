@@ -12,17 +12,6 @@ import mm "mirai:std/math"
 
 Camera_Preset :: enum u8 {Isometric,Top_Down,Side,First_Person,Third_Person,Aim}
 
-// What a mode gives the render.Camera of its camera.
-Camera_Lens :: struct {
-    projection:render.Camera_Projection,
-    fov:f32,    // vertical, radians
-    near:f32,   // m
-    height:f32, // m: what an orthographic one covers from bottom to top
-    shift:[2]f32,
-    layers:u32, // of the meshes it draws; 0: every one
-    own_hidden:u32, // of the body of its own player, those it does not draw
-}
-
 // The render.Layers of a head, which a camera at the eyes of its own body
 // does not draw of that body: a mesh in this layer, or a part of a skinned
 // mesh (animation Skin_Part). Every other camera, and the views of other
@@ -31,7 +20,7 @@ HEAD_LAYER :: u32(1)<<15
 
 Camera_Setup :: struct {
     follow:Camera_Follow, // its target and its transient fields are not used: the camera keeps its own
-    lens:Camera_Lens,
+    lens:render.Camera,   // its active and clip_plane are not used: the camera keeps its own
 }
 
 ISOMETRIC_PITCH :: 0.6154797 // radians: atan(1/sqrt(2)), a cube seen along its diagonal
@@ -133,7 +122,7 @@ camera_preset_of :: proc(follows:core.Read(Camera_Follow),cameras:core.Read(rend
     config.target=core.NONE
     for preset in Camera_Preset {
         setup:=camera_preset(preset)
-        if camera_follow_config(setup.follow)==config && setup.lens==lens_of(lens) {return preset,true}
+        if camera_follow_config(setup.follow)==config && lens_on(lens,setup.lens)==lens {return preset,true}
     }
     return {},false
 }
@@ -146,9 +135,11 @@ camera_follow_config :: proc "contextless" (follow:Camera_Follow) -> Camera_Foll
     return config
 }
 
-@(private)
-lens_of :: proc "contextless" (camera:render.Camera) -> Camera_Lens {
-    return {projection=camera.projection,fov=camera.fov,near=camera.near,height=camera.height,shift=camera.shift,layers=camera.layers,own_hidden=camera.own_hidden}
+// A lens on a camera: it keeps whether the camera is active and its clip plane.
+lens_on :: proc "contextless" (camera,lens:render.Camera) -> render.Camera {
+    out:=lens
+    out.active,out.clip_plane=camera.active,camera.clip_plane
+    return out
 }
 
 // Why a setup cannot be taken; empty when it can.

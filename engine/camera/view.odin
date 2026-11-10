@@ -43,20 +43,12 @@ Camera_Views :: struct {
     slots:[input.LOCAL_CAPACITY]Camera_View,
 }
 
-// The camera the focused view is drawn from, whatever its seat sees, while
-// the editor previews it: it comes into it with blend. none: as the seat sees.
-@(storage)
-Camera_Preview :: struct {
-    camera:core.Entity,
-    blend:Camera_Blend,
-}
-
 // The view of every local slot; the focused one's is the view of the game.
 @(step="late",stage="end")
 camera_blend :: proc(
     views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
     cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,
-    bodies:^render.View_Bodies,preview:core.Ref(Camera_Preview),frame:core.Frame_Time,
+    bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state.ptr,seats)
     n:=clamp(seat_state.local_count,1,input.LOCAL_CAPACITY)
@@ -70,7 +62,6 @@ camera_blend :: proc(
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
         camera,through:=seat_camera(shown.ptr,drivables,cameras,seat)
-        if slot==focus_slot && preview.camera!=core.NONE && camera_valid(cameras,preview.camera) {camera,through=preview.camera,preview.blend}
         body:=input.body_of(drivables,seat)
         view_update(v,camera,through,body,cameras,follows,worlds,frame)
         // The own body of the view is the body of its player, or else the one its

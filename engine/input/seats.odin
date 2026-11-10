@@ -64,20 +64,10 @@ Seat :: struct {
 // A seat of this machine: not one of another end, nor of a player away.
 seat_local :: #force_inline proc "contextless" (seat:Seat) -> bool {return seat.peer==0 && seat.player==0}
 
-// How many players share this machine, on an entity of the scene. Without
-// one, a single player. The players asked for (Run_Players, which the editor
-// sets for its runs, or app.launch.players: --players) take its place; a
-// server has none unless they are asked for.
-@(component,single,description="Players at this machine, each with a part of the screen.")
-Local_Multiplayer :: struct {
-    players:int `mirai:"min=1,max=4"`,
-}
-
-LOCAL_MULTIPLAYER_DEFAULT :: Local_Multiplayer{players=2}
-
-// How many local players whoever runs this world asks for before its first
-// tick (the editor, for a run); 0: app.launch.players, else the scene. Of the
-// run: it stays when the world loads another scene or a save.
+// How many players share this machine, each with a part of the screen: of
+// the run, which the editor sets before the first tick of its runs and a
+// player takes from --players (app.launch.players); 0: one, none on a server.
+// It stays when the world loads another scene or a save.
 @(storage,keep)
 Run_Players :: struct {
     count:int,
@@ -238,16 +228,14 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 // other ends get their actions from the network.
 @(step="fixed",stage="input")
 input_seats :: proc(
-    es:core.Commands,app:^host.App,seats:^core.Table(Seat),
-    multiplayer:core.Read(Local_Multiplayer),state:^Seats,run:core.Ref(Run_Players),
+    es:core.Commands,app:^host.App,seats:^core.Table(Seat),state:^Seats,run:^Run_Players,
     device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
-    // A server has players of its own only when someone asks for them: one
+    if run.count==0 {run.count=app.launch.players}
+    // A server has players of its own only when the run asks for them: one
     // that is also a player, as the Play of an editor that serves.
-    asked:=run.count>0?run.count:app.launch.players
-    count:=1
-    if core.count(multiplayer)>0 {count=clamp(core.at(multiplayer,0).players,1,LOCAL_CAPACITY)}
-    if asked>0 {count=clamp(asked,1,LOCAL_CAPACITY)} else if network.role==.Server {count=0}
+    count:=clamp(run.count,1,LOCAL_CAPACITY)
+    if run.count==0 && network.role==.Server {count=0}
     state.local_count=count
     state.focus=clamp(state.focus,0,max(count-1,0))
     for slot in 0..<count {

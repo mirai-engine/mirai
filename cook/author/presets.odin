@@ -50,9 +50,7 @@ preset_components :: proc(w:core.World_Ref,e:core.Entity,preset:Preset) {
         mode,_:=preset_camera_mode(preset)
         setup:=ecamera.camera_preset(mode)
         if t:=core.world_table_of(w,erender.Camera);t!=nil {
-            camera:=erender.CAMERA_DEFAULT
-            ecamera.camera_lens_set(&camera,setup.lens)
-            core.add(t,e,camera)
+            core.add(t,e,ecamera.lens_on(erender.CAMERA_DEFAULT,setup.lens))
         }
         if t:=core.world_table_of(w,ecamera.Camera_Follow);t!=nil {core.add(t,e,setup.follow)}
         if preset==.Aim_Camera {

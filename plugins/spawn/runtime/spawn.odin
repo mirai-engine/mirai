@@ -8,10 +8,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 // Bodies for the seats. A Spawn_Point is a place where bodies appear, with the
-// prefab of the body of a player there (or else Spawn_Settings.prefab, the
-// body of the project). With Spawn_Settings.players every
-// seat (local or of a connection) that has no body gets one: it arrived, its
-// body was destroyed, it came back. spawn gives a seat a body when the game
+// prefab of the body of a player there, or else Spawn_Settings.prefab, the
+// body of the project. While a body is to be had (the project names one, or a
+// point does), every seat (local or of a connection) that has no body gets
+// one: it arrived, its body was destroyed, it came back. spawn gives a seat a body when the game
 // asks, and respawn places an existing body at a point. Without a point asked
 // for, the points are used in turn, in the order of the table. On a client
 // the server decides: it spawns nothing. In the Play of the editor a body
@@ -22,9 +22,9 @@ import mm "mirai:std/math"
 SPAWN_CAPACITY :: 8 // bodies that appear for seats in one tick
 SPAWN_RETRY :: 0.5  // s the seats wait after a body could not appear for one
 
-@(component,description="A place where the bodies of the players appear: a body of its prefab, for each seat that has none when the project setting Spawn_Settings.players is on.")
+@(component,description="A place where the bodies of the players appear: for each seat that has none, a body of its prefab, or else of the project setting Spawn_Settings.prefab.")
 Spawn_Point :: struct {
-    prefab:base.Asset_Id `mirai:"with=Drivable"`, // the body of a player here; none: the point only places bodies the game gives
+    prefab:base.Asset_Id, // the body of a player here; none: the one of Spawn_Settings
 }
 
 // A body that appeared for a seat: it goes when its seat goes (a player who
@@ -35,8 +35,7 @@ Seat_Body :: struct {}
 // How spawn gives bodies to the players. A project setting.
 @(storage,setting)
 Spawn_Settings :: struct {
-    players:bool,         // every seat without a body gets one at a spawn point; off: the game gives them bodies
-    prefab:base.Asset_Id `mirai:"with=Drivable"`, // the body of a player where the request and the point name none
+    prefab:base.Asset_Id, // the body of a player where the request and the point name none; none and no point with one: the game gives them bodies
 }
 
 // What this library derives while the world runs.
@@ -129,13 +128,13 @@ spawn_step :: proc(
         switch request.kind {
         case .Spawn:
             if client {
-                core.report(problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or turn on Spawn_Settings.players")
+                core.report(problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or give Spawn_Settings.prefab the body of the players")
             } else {spawn_body(&a,request)}
         case .Respawn:
             respawn_body(&a,request)
         }
     }
-    if client || !settings.players || !core.due(time,spawning.retry_after) {return}
+    if client || !core.due(time,spawning.retry_after) || !prefab_found(&a) {return}
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
         if input.body_of(drivables,seat)!=core.NONE {continue}
@@ -147,6 +146,17 @@ spawn_step :: proc(
             return
         }
     }
+}
+
+// Whether a seat can be given a body without naming its prefab: the project
+// names one, or a point does.
+@(private)
+prefab_found :: proc(a:^Apply) -> bool {
+    if a.settings.prefab!={} {return true}
+    for point in a.points.table.values[:core.count(a.points)] {
+        if point.prefab!={} {return true}
+    }
+    return false
 }
 
 // The point asked for, or else the next one in turn that has what is needed;

@@ -5,6 +5,7 @@ import "core:mem"
 import "mirai:core"
 import "mirai:editor/history"
 import ecamera "mirai:engine/camera"
+import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -18,6 +19,7 @@ import "mirai:ui"
 Camera_Preview_Run :: struct {
     camera:core.Entity,         // the camera shown; none: not previewing
     blend:ecamera.Camera_Blend, // how the view came to it
+    asked:core.Entity,          // the camera the focused seat was last asked to see through
 }
 
 CAMERA_PREVIEW_CAPACITY :: 12 // cameras the bar offers
@@ -38,16 +40,22 @@ camera_preview_start :: proc(s:^Session,camera:core.Entity) -> bool {
     return true
 }
 
-// Each frame: the view of the copy is drawn from the camera shown.
+// Each frame: the focused seat of the copy sees through the camera shown, an
+// override of its own.
 camera_preview_frame :: proc(s:^Session) {
     if s.camera_run.camera==core.NONE {return}
     if s.mode==.Edit {
         s.camera_run={}
         return
     }
-    if preview:=core.world_storage_of(shown_world(s),ecamera.Camera_Preview);preview!=nil {
-        preview.camera,preview.blend=s.camera_run.camera,s.camera_run.blend
-    }
+    if s.camera_run.asked==s.camera_run.camera {return}
+    w:=shown_world(s)
+    seats,state,requests:=core.world_table_of(w,input.Seat),core.world_storage_of(w,input.Seats),core.world_storage_of(w,ecamera.Camera_Requests)
+    if seats==nil || state==nil || requests==nil {return}
+    seat:=input.focused(state,core.read(seats))
+    if seat==core.NONE {return}
+    ecamera.camera_override(requests,seat,seat,s.camera_run.camera,blend=s.camera_run.blend)
+    s.camera_run.asked=s.camera_run.camera
 }
 
 // Shows a camera: with the blend of its activation coming into it, or with

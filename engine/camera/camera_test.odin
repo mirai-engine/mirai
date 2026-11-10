@@ -105,7 +105,7 @@ a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testin
     testing.expect(t,follow.state.changes==1 && follow.state.blend.seconds==0.5)
     testing.expect(t,follow.state.handing && close(follow.state.handoff.x,1) && close(follow.state.handoff.y,0.2),"a free Orbit goes on from where the camera looked")
     lens,_:=core.get(&f.cameras,camera)
-    testing.expect(t,lens_of(lens)==third.lens)
+    testing.expect(t,lens_on(lens,third.lens)==lens)
 
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,third,{0.5,.Linear}},&f.problems)
     testing.expect(t,follow.state.changes==1,"the mode it has does nothing")
