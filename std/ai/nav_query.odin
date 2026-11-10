@@ -167,29 +167,39 @@ nav_path_step :: proc(q:^Nav_Query,budget:int) -> Search_Status {
 // Invalid when a node of it stopped being valid while the search ran.
 nav_path_finish :: proc(q:^Nav_Query,out:[]Nav_Ref) -> (count:int,status:Search_Status,partial:bool) {
     if q.mesh==nil {return 0,.Invalid,false}
-    status=q.search.status
+    count,status,partial=nav_search_finish(&q.search,q.points,q.end,out)
+    for ref in out[:count] {
+        if !nav_ref_valid(q.mesh,ref) {return 0,.Invalid,false}
+    }
+    return
+}
+
+// The path of a finished search of any space, over the points where it
+// entered each node: the one it found, or without a way to the end, the path
+// to the node it reached nearest to `end` that is not a link, with `partial`.
+// Whoever searched checks that its nodes still are.
+@(private)
+nav_search_finish :: proc(search:^Search,points:[]math.Vec3,end:math.Vec3,out:[]Nav_Ref) -> (count:int,status:Search_Status,partial:bool) {
+    status=search.status
     keys:=transmute([]u64)out
     #partial switch status {
     case .Found:
-        count,status=search_path(&q.search,keys)
+        count,status=search_path(search,keys)
     case .No_Path,.Open_Full:
         best:=f32(max(f32))
         nearest:u64
-        for slot in 0..<u32(len(q.points)) {
-            if !search_reached(&q.search,slot) {continue}
-            key:=search_key(&q.search,slot)
+        for slot in 0..<u32(len(points)) {
+            if !search_reached(search,slot) {continue}
+            key:=search_key(search,slot)
             if nav_ref_is_link(Nav_Ref(key)) {continue}
-            d:=linalg.length2(q.points[slot]-q.end)
+            d:=linalg.length2(points[slot]-end)
             if d<best {best=d;nearest=key}
         }
         if nearest==0 {return 0,status,false}
-        count,_=search_path_to(&q.search,nearest,keys)
+        count,_=search_path_to(search,nearest,keys)
         partial=count>0
     case:
         return 0,status,false
-    }
-    for ref in out[:count] {
-        if !nav_ref_valid(q.mesh,ref) {return 0,.Invalid,false}
     }
     return
 }

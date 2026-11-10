@@ -129,8 +129,10 @@ avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_
 // `planes`; how many. A wall away from the agent forbids the velocities that
 // reach it within the horizon: the cone from the agent to its two ends, cut
 // at the wall, linearized at the side of it nearest to the velocity of the
-// agent, as RVO2 does for the edges of its obstacles (Agent.cpp,
-// computeNewVelocity). A wall the agent is on forbids moving into it; at the
+// agent. That part is adapted from the obstacle lines of the RVO2 Library
+// (Agent.cpp, computeNewVelocity; Apache License 2.0, Copyright 2008
+// University of North Carolina at Chapel Hill), for an agent that is a point
+// to the walls. A wall the agent is on forbids moving into it; at the
 // corner of two walls that turns away from the agent (a pillar), only the one
 // of the two the preferred velocity breaks least, as either side is walked.
 @(private)

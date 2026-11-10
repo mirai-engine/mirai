@@ -165,6 +165,7 @@ Navigation_Agents :: struct {
     searching_tree:u8,     // index+1 of the search toward a target it reads its path from; 0: its own
     trees:[NAV_FOLLOW_TREES]Follow_Tree,
     uid:u64,               // of the Navigation the search is in
+    made:u32,              // and which of its meshes
     coarse:ai.Search,      // over the portals of a coarse graph
     route:[NAV_FAR_POINTS]mm.Vec3,
     far_sections:u64,      // the sections the far simulation last looked at
@@ -310,9 +311,9 @@ navigation_agents :: proc(
     // Without an agent, near or far, nothing searches, steps aside or steers: no memory for it and no look at the characters.
     if len(paths.entities)==0 {return}
     budget:=int(n.settings.path_iterations) if n.settings.path_iterations>0 else 2048
-    if a.uid!=n.uid {
-        // Another copy of the world: the search under way was in the other.
-        a.uid=n.uid
+    if a.uid!=n.uid || a.made!=n.made {
+        // Another copy of the world, or its meshes made anew: the search under way was in the others.
+        a.uid,a.made=n.uid,n.made
         a.searching,a.searching_tree=core.NONE,0
         for &tree in a.trees {tree.target,tree.built=core.NONE,false}
         clear(&a.waiting)
@@ -389,8 +390,6 @@ navigation_agents :: proc(
         // A flier plans and steps aside by the center of its capsule; its feet are the origin of its entity.
         center:=pose.position+{0,height*0.5,0}
         append(&a.near,Near{entity=e,position=center,velocity=motion.linear,radius=radius,height=height,avoids=agent.avoidance,flies=flies || swims,excluded=agent_avoids(agent,can_swim)})
-        // Each agent jumps under the gravity of its place: a planet, a room without it.
-        gravity:=linalg.length(phys.gravity_of_entity(physics,e))
         if p.target!=core.NONE && p.state==.Failed {
             // A follower tries again: its target may come where it can go.
             p.time+=time.dt
@@ -416,7 +415,8 @@ navigation_agents :: proc(
             } else {
                 walk_row,_:=core.get(walks,e)
                 walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
-                filter:=agent_filter(n.ptr,class,agent,walk,can_swim,gravity)
+                // Each agent jumps under the gravity of its place: a planet, a room without it.
+                filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,events,loco)
             }
         case .Crossing:
@@ -436,7 +436,7 @@ navigation_agents :: proc(
             } else if !p.manual {
                 p.time+=time.dt
                 ground,_:=core.get(grounds,e)
-                agent_crossing(n.ptr,p,e,pose.position,ground,gravity,events,loco)
+                agent_crossing(n.ptr,p,e,pose.position,ground,linalg.length(phys.gravity_of_entity(physics,e)),events,loco)
             }
         }
     }
