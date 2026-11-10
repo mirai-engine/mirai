@@ -343,7 +343,7 @@ column :: proc(s:^asset.Scene_Builder,meshes:Feature_Meshes,name:string,position
 @(private)
 model :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,mesh:base.Asset_Id,material:string) {
     shown:=render.Mesh_Renderer{mesh=mesh}
-    shown.materials[0]=game.material_asset(material)
+    shown.materials[0]=material_id(material)
     asset.builder_set(s,id,shown)
 }
 

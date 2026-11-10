@@ -145,7 +145,7 @@ pose_key :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref,target:c
     }
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 cinematics_frame :: proc(s:^editor.Session,c:^Cinematic_Editor,frame:core.Frame_Time) {
     if editor.playing(s) || !editor.tool_on(s,TOOL) {
         view_restore(s,c)

@@ -56,7 +56,7 @@ net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settin
 
 // After the libraries read what arrived: what they learned changed ticks
 // already simulated goes back to the earliest of them and runs again.
-@(step="input",loops="game",stage="begin",after="net_begin")
+@(step="input",loops="game",stage="begin")
 net_rewind :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,rewinds:^Net_Rewinds,problems:^core.Problems) {
     asked:=core.take(&rewinds.queue)
     if !session.host_ready || session.mode!=.Client || len(asked)==0 {return}

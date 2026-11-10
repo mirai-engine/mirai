@@ -14,7 +14,7 @@ import phys "plugins:physics/runtime"
 MANTLE_WINDOW :: "mantle"
 MANTLE_ROOT_MOVE :: u32(0x4d4e544c) // the id of its layered moves
 
-@(step="fixed",stage="apply",after="animation_sample")
+@(step="fixed",stage="apply")
 animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {

@@ -39,7 +39,10 @@ Scene_Launch :: struct {
     first:bool, // the load under way is the one the player was launched with
 }
 
-request :: proc(requests:^Scene_Requests,scene:base.Asset_Id) {
+// Asks for a scene of the assets by its path ("arena/main.scene") or its id.
+request :: proc{request_path,request_id}
+
+request_id :: proc(requests:^Scene_Requests,scene:base.Asset_Id) {
     core.push(&requests.queue,Scene_Request{scene=scene})
 }
 
@@ -102,7 +105,7 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
         if root.ptr!=nil {r.scene=root.scene}
         if r.scene=={} {
             core.push(&results.queue,Scene_Result{error=.Not_Found})
-            core.report(problems,core.NONE,"scene.restart","there is no scene to restart: the world did not come from a scene of the assets; load one with request or request_path first")
+            core.report(problems,core.NONE,"scene.restart","there is no scene to restart: the world did not come from a scene of the assets; load one with request first")
             return
         }
     }

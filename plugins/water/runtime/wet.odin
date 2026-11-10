@@ -60,7 +60,7 @@ wet_members :: proc "contextless" (wet:^Water_Wet) -> (sum:u64) {
     return
 }
 
-@(step="render",loops="game editor",after="render_sync")
+@(step="render",loops="game editor")
 water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:core.Read(core.Parent),renderer:^render.Renderer) {
     if renderer==nil || wet.ptr==nil || synced.ptr==nil {return}
     sync:=synced.ptr

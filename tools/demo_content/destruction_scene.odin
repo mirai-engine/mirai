@@ -27,7 +27,7 @@ write_destruction_scene :: proc(o:^Out) {
     // A wall of 5 x 2.6 x 0.4 m standing on the floor, held by its base.
     wall:=asset.builder_entity(&s,"Wall",{position={0,1.3,-2},scale={5,2.6,0.4}})
     breakable:=destruct.destructible(32,true,11)
-    breakable.damage_radius,breakable.interior=0.8,game.material_asset("Cobblestone")
+    breakable.damage_radius,breakable.interior=0.8,material_id("Cobblestone")
     cube(&s,wall,"Bricks")
     asset.builder_set(&s,wall,breakable)
     pieces:=destruct.collider_fracture()
@@ -41,7 +41,7 @@ write_destruction_scene :: proc(o:^Out) {
         turn:=core.Transform{place,mm.quat_axis_angle({0,1,0},0.3*f32(at)),{1,1,1}}
         asset.builder_set(&s,block,turn)
         loose:=destruct.destructible(8,false,u64(21+at))
-        loose.damage_radius,loose.interior=0.7,game.material_asset("Planks")
+        loose.damage_radius,loose.interior=0.7,material_id("Planks")
         cube(&s,block,"Decking")
         asset.builder_set(&s,block,loose)
         asset.builder_set(&s,block,pieces)

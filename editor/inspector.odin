@@ -2169,7 +2169,8 @@ asset_field_find :: proc(s:^Session,id:ui.Id,value:base.Asset_Id) {
 asset_field_hear :: proc(c:^Inspect,id:ui.Id,value:base.Asset_Id) {
     s:=c.s
     ctx:=s.gui.ctx
-    source:=eaudio.Audio_Source{sound=value,bus=eaudio.BUS_MASTER,volume=1,pitch=1}
+    source:=eaudio.AUDIO_SOURCE_DEFAULT
+    source.sound,source.bus=value,eaudio.BUS_MASTER
     if c.type==eaudio.Audio_Source && c.size==size_of(eaudio.Audio_Source) {
         source=(cast(^eaudio.Audio_Source)c.value)^
         source.sound=value

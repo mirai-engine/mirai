@@ -88,7 +88,7 @@ shapes_pointer :: proc(s:^editor.Session,tool:^Shapes_Tool,input:core.Input) {
     tool.active,tool.over,tool.begin=editor.tool_pointer(s,TOOL,input)
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input) {
     erender.debug_lines_clear(&tool.lines)
     defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}

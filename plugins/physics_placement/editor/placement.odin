@@ -252,7 +252,7 @@ physics_placement_pointer :: proc(s:^editor.Session,tool:^Physics_Placement,inpu
     tool.held=(tool.held || tool.press) && s.viewport.hovered && core.mouse_down(input,.Left)
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 physics_placement_frame :: proc(s:^editor.Session,tool:^Physics_Placement,world:core.World_Ref,frame:core.Frame_Time) {
     if tool.preview.data!=nil {
         if editor.playing(s) || !editor.tool_on(s,PLACEMENT_TOOL) || (s.gui.begun && ui.escape(s.gui.ctx)) {placement_cancel(tool);return}
