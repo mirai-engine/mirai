@@ -11,6 +11,7 @@ import "mirai:rhi"
 graphics_default_is_medium_on_a_gpu_without_hardware_ray_tracing_or_integrated :: proc(t:^testing.T) {
     medium:=GRAPHICS_SETTINGS_DEFAULT
     graphics_preset_apply(&medium,.Medium)
+    medium.render_megapixels=GRAPHICS_SMALL_DEVICE_MEGAPIXELS
     testing.expect_value(t,graphics_settings_for_device({type=.Discrete,features={ray_query=true}}),GRAPHICS_SETTINGS_DEFAULT)
     for device in ([]rhi.Device_Info{{type=.Discrete},{type=.Integrated,features={ray_query=true}},{type=.Integrated}}) {
         testing.expect_value(t,graphics_settings_for_device(device),medium)
@@ -52,7 +53,7 @@ graphics_default_without_a_device_is_the_high_preset :: proc(t:^testing.T) {
 }
 
 @(test)
-resolution_is_a_budget_of_pixels_under_one_per_point :: proc(t:^testing.T) {
+resolution_is_a_budget_of_pixels_under_one_per_point_that_no_preset_sets :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
     settings.render_scale=0.5
@@ -60,9 +61,9 @@ resolution_is_a_budget_of_pixels_under_one_per_point :: proc(t:^testing.T) {
     testing.expect(t,s.render_scale==1 && s.render_megapixels==2.0736)
     g.render_megapixels=0
     testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_megapixels,f32(0))
-    presets:=GRAPHICS_PRESETS
     for preset in Graphics_Preset {
-        if preset>.Low {testing.expect(t,presets[preset].render_megapixels>=presets[preset-Graphics_Preset(1)].render_megapixels)}
+        graphics_preset_apply(&g,preset)
+        testing.expect_value(t,g.render_megapixels,f32(0))
     }
 }
 

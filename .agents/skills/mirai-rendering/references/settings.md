@@ -39,7 +39,7 @@
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the budget recreates their targets.
-- The `Graphics_Settings` presets set a budget per height of a 16:9 image.
+- `Graphics_Settings.render_megapixels` is its own setting: no preset changes it.
 
 ## Inspection modes
 

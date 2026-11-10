@@ -56,13 +56,13 @@ GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
 
 Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
-// The technique of antialiasing is not one of them: it is the same in all.
-// Its pixels are those of a 16:9 image 720, 900, 1080 or 1440 tall.
+// The resolution and the technique of antialiasing are not of them: a preset
+// leaves them as they are.
 GRAPHICS_PRESETS :: [Graphics_Preset]Graphics_Settings{
-    .Low   ={render_megapixels=0.9216,indirect_light=.Probes,light_probes=.Low,reflections=.Off,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={render_megapixels=1.44,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={render_megapixels=2.0736,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={render_megapixels=3.6864,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={indirect_light=.Probes,light_probes=.Low,reflections=.Off,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -85,7 +85,6 @@ graphics_generates :: proc(graphics:Graphics_Settings,app:^host.App) -> bool {
 graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Preset) {
     presets:=GRAPHICS_PRESETS
     p:=presets[preset]
-    g.render_megapixels=p.render_megapixels
     g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
     g.light_samples,g.glass_shadows,g.glass_layers=p.light_samples,p.glass_shadows,p.glass_layers
     g.light_half_resolution=p.light_half_resolution
@@ -93,11 +92,17 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Preset) {
     g.frame_generation=p.frame_generation
 }
 
-// The default on a device: Medium on a GPU without hardware ray tracing or an
-// integrated one, High on the others.
+// The resolution of the default of a small device: the pixels of a 16:9 image 900 tall.
+GRAPHICS_SMALL_DEVICE_MEGAPIXELS :: f32(1.44)
+
+// The default on a device: Medium at GRAPHICS_SMALL_DEVICE_MEGAPIXELS on a GPU
+// without hardware ray tracing or an integrated one, High on the others.
 graphics_settings_for_device :: proc(device:rhi.Device_Info) -> Graphics_Settings {
     g:=GRAPHICS_SETTINGS_DEFAULT
-    if !device.features.ray_query || device.type==.Integrated {graphics_preset_apply(&g,.Medium)}
+    if !device.features.ray_query || device.type==.Integrated {
+        graphics_preset_apply(&g,.Medium)
+        g.render_megapixels=GRAPHICS_SMALL_DEVICE_MEGAPIXELS
+    }
     return g
 }
 

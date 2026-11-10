@@ -29,7 +29,7 @@ Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Li
 // The choice each option is at; -1 when its values are none of the choices.
 Graphics_Choices :: [Graphics_Option]i8
 
-GRAPHICS_QUALITY :: bit_set[Graphics_Option]{.Resolution,.Frame_Generation,.Indirect_Light,.Probes,.Reflections,.Light_Samples,.Light_Resolution,.Glass_Shadows,.Glass_Layers,.Textures,.Detail}
+GRAPHICS_QUALITY :: bit_set[Graphics_Option]{.Frame_Generation,.Indirect_Light,.Probes,.Reflections,.Light_Samples,.Light_Resolution,.Glass_Shadows,.Glass_Layers,.Textures,.Detail}
 
 GRAPHICS_OPTION_LABELS :: [Graphics_Option]string{
     .Resolution="Resolution",.Antialiasing="Antialiasing",.Frame_Generation="Frame generation",.Indirect_Light="Indirect light",.Probes="Light probes",.Reflections="Reflections",
