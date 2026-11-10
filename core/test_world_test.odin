@@ -509,7 +509,7 @@ field_procs :: proc(f:^Test_Field) -> (problem:string) {
 // The defaults the package of a type declares for it were given, and no other.
 @(private="file")
 field_defaults :: proc(f:^Test_Field,folders:^[dynamic]Folder,sources:^[dynamic]Source,allocator:runtime.Allocator) -> (problem:string) {
-    if f.file=="" {return}
+    if f.file=="" || strings.has_suffix(f.file,"_test.odin") {return} // a test file declares no default: its type takes the one it is given
     buffer:[512]u8
     constant,maker,for_device:=default_names(f.name,buffer[:])
     names,found:=folder_defaults(folders,path_folder(f.file),sources,allocator)

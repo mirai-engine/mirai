@@ -29,13 +29,9 @@ host_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    tables:=[1]core.Table_Info{{name="Marks_Model",type=Marks_Model,info=type_info_of(Marks_Model),offset=offset_of(Marks_World,models)}}
-    storages:=[1]core.Storage_Info{{name="Marks_Held",type=Marks_Held,info=type_info_of(Marks_Held),offset=offset_of(Marks_World,held)}}
-    info:=core.World_Info{entities=offset_of(Marks_World,entities),tables=tables[:],storages=storages[:]}
-    info.sizes[.World],info.aligns[.World]=size_of(Marks_World),align_of(Marks_World)
-    info.init[.World],info.destroy[.World]=marks_init,marks_destroy
-    core.world_info_index(&info)
-    defer {core.world_schema_destroy(info.schema);delete(info.tables_by_type);delete(info.storages_by_type)}
+    info,described:=core.test_info(t,Marks_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
 
     Call :: enum {Assets_Init,Content,Ui_Context,Marks}
     for call in Call {

@@ -15,30 +15,15 @@ world_create_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alig
     }
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
-@(private) World_Create_Value :: struct {entities:core.Entities,owned:[]u64}
-@(private)
-world_create_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^World_Create_Value)data
-    if !core.entities_init(&w.entities,allocator) {return false}
-    error:runtime.Allocator_Error
-    w.owned,error=make([]u64,3,allocator)
-    return error==nil && raw_data(w.owned)!=nil
-}
-@(private)
-world_create_free :: proc(data:rawptr) {
-    w:=cast(^World_Create_Value)data
-    delete(w.owned)
-    core.entities_destroy(&w.entities)
-}
+@(private) World_Create_Value :: struct {using world:core.Test_World,owned:core.Table(u64)}
 
 @(test)
 world_creation_frees_every_partial_initializer_and_publishes_no_failed_clock :: proc(t:^testing.T) {
-    info:=core.World_Info{
-        sizes={.World=size_of(World_Create_Value),.Shared=0,.Editor=0},aligns={.World=align_of(World_Create_Value),.Shared=1,.Editor=1},
-        init={.World=world_create_init,.Shared=nil,.Editor=nil},destroy={.World=world_create_free,.Shared=nil,.Editor=nil},
-    }
+    info,described:=core.test_info(t,World_Create_Value)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     succeeded:=false
-    for budget in 0..<8 {
+    for budget in 0..<64 {
         tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator)
         allocation:=World_Create_Allocation{owner=mem.tracking_allocator(&tracking),remaining=budget}
         app:=App{info=&info,allocator={world_create_allocator,&allocation}}

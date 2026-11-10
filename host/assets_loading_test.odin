@@ -141,7 +141,7 @@ a_load_waits_for_the_geometry_of_the_meshes_it_took_over_frames :: proc(t:^testi
 }
 
 @(private="file") Building_Model :: struct {mesh:base.Asset_Id}
-@(private="file") Building_World :: struct {entities:core.Entities,models:core.Table(Building_Model),plain:core.Table(core.Name)}
+@(private="file") Building_World :: struct {using world:core.Test_World,models:core.Table(Building_Model),plain:core.Table(core.Name)}
 
 // A World a job builds is not read by the marks: what only it names unloads,
 // and what it names counts once it is done. A table that never changed and
@@ -161,25 +161,9 @@ the_marks_leave_out_a_world_a_job_builds :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    tables:=[2]core.Table_Info{
-        {name="Building_Model",type=Building_Model,info=type_info_of(Building_Model),offset=offset_of(Building_World,models)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Building_World,plain)},
-    }
-    info:=core.World_Info{entities=offset_of(Building_World,entities),tables=tables[:]}
-    info.sizes[.World],info.aligns[.World]=size_of(Building_World),align_of(Building_World)
-    info.init[.World]=proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-        w:=cast(^Building_World)data
-        core.table_init(&w.models,"Building_Model",allocator)
-        core.table_init(&w.plain,"Name",allocator)
-        return core.entities_init(&w.entities,allocator)
-    }
-    info.destroy[.World]=proc(data:rawptr) {
-        w:=cast(^Building_World)data
-        core.table_destroy(&w.models);core.table_destroy(&w.plain)
-        core.entities_destroy(&w.entities)
-    }
-    core.world_info_index(&info)
-    defer {core.world_schema_destroy(info.schema);delete(info.tables_by_type);delete(info.storages_by_type)}
+    info,described:=core.test_info(t,Building_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     app:=App{info=&info,assets=&assets,allocator=context.allocator}
     app.worlds=make([dynamic]World_Slot)
     defer delete(app.worlds)

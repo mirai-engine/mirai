@@ -209,6 +209,7 @@ an_animation_compresses_in_a_job_and_keeps_what_it_had_until_it_ends :: proc(t:^
 
 @(private="file")
 Content_Frame_World :: struct {
+    using world:core.Test_World,
     time:core.Time,
     frame_time:core.Frame_Time,
     ready:bool, // the fixed tick found the .anim
@@ -230,19 +231,15 @@ a_frame_played_again_finds_the_content_it_found_when_it_played :: proc(t:^testin
     p,error:=platform.create({headless=true,fixed_dt=1.0/60,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) {return}
     defer platform.destroy(p)
-    storages:=[2]core.Storage_Info{
-        {name="Time",type=core.Time,info=type_info_of(core.Time),
-            offset=offset_of(Content_Frame_World,time)},
-        {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),
-            offset=offset_of(Content_Frame_World,frame_time)},
-    }
-    info:=core.World_Info{storages=storages[:]}
+    w:Content_Frame_World
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    info:=core.test_world_info(&w)
     info.loops[.Game][.Fixed]=content_frame_fixed
     app:=&f.app
-    app.info,app.platform,app.tick_dt,app.max_ticks=&info,p,1.0/60,4
+    app.info,app.platform,app.tick_dt,app.max_ticks=info,p,1.0/60,4
     defer {delete(app.worlds);assets_marks_free(&app.asset_marks)}
     tick:=f64(app.tick_dt)
-    w:=Content_Frame_World{frame_time=core.FRAME_TIME_DEFAULT}
     found:=w
     records:[3]Frame_Record
 
