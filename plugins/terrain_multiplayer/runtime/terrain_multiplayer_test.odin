@@ -8,12 +8,10 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import input "mirai:engine/input"
-import render "mirai:engine/render"
 import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
 import multiplayer "plugins:multiplayer/runtime"
-import phys "plugins:physics/runtime"
 import terrain "plugins:terrain/runtime"
 
 // One end of a session over one Heightfield of 2 by 2 pages: its tables, its
@@ -21,40 +19,30 @@ import terrain "plugins:terrain/runtime"
 // them. The messages go from one end to another by hand, as the network
 // would deliver them, in the order a test chooses.
 @(private="file")
-End :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    terrains:core.Table(terrain.Terrain),
-    chunks:core.Table(terrain.Terrain_Chunk),
-    meshes:core.Table(render.Mesh_Renderer),
-    locals:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    colliders:core.Table(phys.Collider),
-    tints:core.Table(render.Tint),
-    overrides:core.Table(render.Material_Override),
-    worlds:core.Table(core.World_Transform),
+End_World :: struct {
+    using world:core.Test_World,
+    using ground:terrain.Test_Terrain,
     seats:core.Table(input.Seat),
     drivables:core.Table(input.Drivable),
-    streaming:scene.Streaming_Sources,
-    data:terrain.Terrain_Data,
-    resident:terrain.Terrain_Resident,
-    requests:terrain.Terrain_Requests,
-    digs:terrain.Terrain_Digs,
     replays:terrain.Terrain_Replays,
     replayed:terrain.Terrain_Replay_Events,
-    net:Terrain_Net,
-    state:Terrain_Net_World,
-    settings:Terrain_Net_Settings,
+    net_state:Terrain_Net_World,
+    net_settings:Terrain_Net_Settings,
     authority:core.Network,
-    session:multiplayer.Net_Session,
     inbox:multiplayer.Net_Events,
     outbox:multiplayer.Net_Outbox,
     connections:multiplayer.Net_Connections,
     rewinds:multiplayer.Net_Rewinds,
     root:scene.Scene_Root,
+}
+
+@(private="file")
+End :: struct {
+    using w:End_World,
+    resident:terrain.Terrain_Resident, // of its application, as net, session and problems
+    net:Terrain_Net,
+    session:multiplayer.Net_Session,
     problems:core.Problems,
-    info:core.World_Info,
-    tables:[9]core.Table_Info,
     owner:core.Entity,
     connection:multiplayer.Connection, // client: its own
     tick:u64,
@@ -96,22 +84,12 @@ fixture_destroy :: proc(f:^Fixture) {
     os.remove(fmt.tprintf("%s/ground.terrain",f.folder));os.remove(f.folder)
 }
 
-@(private="file")
-end_settle :: proc(e:^End) {
-    core.table_settle(&e.ids,&e.entities);core.table_settle(&e.terrains,&e.entities);core.table_settle(&e.chunks,&e.entities)
-    core.table_settle(&e.meshes,&e.entities);core.table_settle(&e.locals,&e.entities);core.table_settle(&e.parents,&e.entities)
-    core.table_settle(&e.colliders,&e.entities);core.table_settle(&e.tints,&e.entities);core.table_settle(&e.overrides,&e.entities)
-    core.table_settle(&e.worlds,&e.entities);core.table_settle(&e.seats,&e.entities);core.table_settle(&e.drivables,&e.entities)
-    core.entities_settle(&e.entities)
-}
-
 // A call of terrain_update in a tick of a world that plays: it loads the
 // sources and applies the requests of a tick that is not routed.
 @(private="file")
 end_update :: proc(e:^End,f:^Fixture) {
-    terrain.terrain_update(core.commands(e,&e.info),&e.terrains,&e.chunks,core.read(&e.locals),core.read(&e.parents),core.read(&e.ids),&e.colliders,&e.meshes,&e.tints,&e.overrides,
-        &e.data,&e.resident,&e.requests,&e.digs,{lod_distance=-1},&f.app,{playing=true},{phase=.Fixed},{},core.read(&e.worlds),core.ref(&e.streaming),{},{},{},nil,&e.problems,{})
-    end_settle(e)
+    terrain.test_step(&e.ground,core.commands(&e.w,core.test_world_info(&e.w)),&e.resident,&f.app,&e.problems)
+    core.test_world_settle(&e.w)
 }
 
 // An end with its terrain loaded, as the first tick of terrain_update leaves
@@ -119,25 +97,8 @@ end_update :: proc(e:^End,f:^Fixture) {
 @(private="file")
 end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connection:multiplayer.Connection=0,loaded:=true) -> bool {
     e.fixture=f
-    core.entities_init(&e.entities)
-    core.table_init(&e.ids,"Id");core.table_init(&e.terrains,"Terrain");core.table_init(&e.chunks,"Terrain_Chunk")
-    core.table_init(&e.meshes,"Mesh_Renderer");core.table_init(&e.locals,"Transform");core.table_init(&e.parents,"Parent")
-    core.table_init(&e.colliders,"Collider");core.table_init(&e.tints,"Tint");core.table_init(&e.overrides,"Material_Override")
-    core.table_init(&e.worlds,"World_Transform");core.table_init(&e.seats,"Seat");core.table_init(&e.drivables,"Drivable")
-    e.tables={
-        {type=core.Id,info=type_info_of(core.Id),offset=offset_of(End,ids)},
-        {type=terrain.Terrain,info=type_info_of(terrain.Terrain),offset=offset_of(End,terrains)},
-        {type=terrain.Terrain_Chunk,info=type_info_of(terrain.Terrain_Chunk),offset=offset_of(End,chunks)},
-        {type=render.Mesh_Renderer,info=type_info_of(render.Mesh_Renderer),offset=offset_of(End,meshes)},
-        {type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(End,locals)},
-        {type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(End,parents)},
-        {type=phys.Collider,info=type_info_of(phys.Collider),offset=offset_of(End,colliders)},
-        {type=render.Tint,info=type_info_of(render.Tint),offset=offset_of(End,tints)},
-        {type=render.Material_Override,info=type_info_of(render.Material_Override),offset=offset_of(End,overrides)},
-    }
-    e.info={entities=offset_of(End,entities),tables=e.tables[:]}
+    if !core.test_world_init(t,&e.w,test_types) {return false}
     e.authority.role=role
-    e.settings=TERRAIN_NET_SETTINGS_DEFAULT
     e.connection=connection
     if role==.Client {
         e.session.host_ready,e.session.mode,e.session.status=true,.Client,.Connected
@@ -147,9 +108,9 @@ end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connectio
         for c in 1..=3 {core.push(&e.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=multiplayer.Connection(c)})}
     }
     e.owner=core.create(&e.entities)
-    core.add(&e.locals,e.owner,core.TRANSFORM_IDENTITY)
+    core.add(&e.transforms,e.owner,core.TRANSFORM_IDENTITY)
     core.add(&e.terrains,e.owner,terrain.Terrain{source=SOURCE,solid=false})
-    end_settle(e)
+    core.test_world_settle(&e.w)
     end_update(e,f)
     if !loaded {return testing.expect(t,terrain.terrain_unread(core.ref(&e.data),&e.fixture.assets,SOURCE),"an end without the file of the source cannot read it")}
     return testing.expectf(t,terrain.terrain_source(core.ref(&e.data),SOURCE)!=nil,"the source loads: %v",core.problems_list(&e.problems))
@@ -157,14 +118,8 @@ end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connectio
 
 @(private="file")
 end_destroy :: proc(e:^End) {
-    terrain.terrain_data_free(&e.data);terrain.terrain_resident_free(&e.resident);net_free(&e.net)
-    core.value_free(&e.requests,type_info_of(terrain.Terrain_Requests));core.value_free(&e.replays,type_info_of(terrain.Terrain_Replays))
-    core.value_free(&e.replayed,type_info_of(terrain.Terrain_Replay_Events));core.value_free(&e.digs,type_info_of(terrain.Terrain_Digs));core.value_free(&e.inbox,type_info_of(multiplayer.Net_Events))
-    delete(e.outbox.queue.items);delete(e.connections.events.items);delete(e.rewinds.queue.items)
-    core.table_destroy(&e.ids);core.table_destroy(&e.terrains);core.table_destroy(&e.chunks);core.table_destroy(&e.meshes)
-    core.table_destroy(&e.locals);core.table_destroy(&e.parents);core.table_destroy(&e.colliders);core.table_destroy(&e.tints)
-    core.table_destroy(&e.overrides);core.table_destroy(&e.worlds);core.table_destroy(&e.seats);core.table_destroy(&e.drivables)
-    core.entities_destroy(&e.entities)
+    terrain.terrain_resident_free(&e.resident);net_free(&e.net)
+    core.test_world_destroy(&e.w)
 }
 
 // A seat of the server for the player of a connection.
@@ -172,13 +127,13 @@ end_destroy :: proc(e:^End) {
 end_seat :: proc(e:^End,connection:multiplayer.Connection) {
     seat:=core.create(&e.entities)
     core.add(&e.seats,seat,input.Seat{peer=u64(connection)})
-    end_settle(e)
+    core.test_world_settle(&e.w)
 }
 
 // The messages an end is about to receive this frame, and the step of the input phase.
 @(private="file")
 end_receive :: proc(e:^End) {
-    terrain_net_receive(core.ref(&e.inbox),core.ref(&e.authority),&e.net,core.ref(&e.state),core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),e.settings,nil)
+    terrain_net_receive(core.ref(&e.inbox),core.ref(&e.authority),&e.net,core.ref(&e.net_state),core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),e.net_settings,nil)
     core.queue_clear(&e.inbox.received)
 }
 
@@ -188,10 +143,10 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     f:=e.fixture
     e.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
-    terrain_net_follow(core.ref(&e.authority),&e.net,&e.state,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
-        core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.settings,core.ref(&e.root),f.app.assets,&e.problems)
-    terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
-    terrain_net_send(core.ref(&e.authority),&e.net,&e.state,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
+    terrain_net_follow(core.ref(&e.authority),&e.net,&e.net_state,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
+        core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
+    terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
+    terrain_net_send(core.ref(&e.authority),&e.net,&e.net_state,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
     core.queue_clear(&e.connections.events)
 }
 
@@ -266,11 +221,11 @@ an_edit_a_client_asks_for_is_applied_by_the_server_and_seen_by_another_client ::
     defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b)
     if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
     end_seat(&s,1);end_seat(&s,2)
-    terrain.dig(&a.requests,brush_at(&a,.Raise,40,40,4,1),a.owner)
+    terrain.dig(&a.terrain_requests,brush_at(&a,.Raise,40,40,4,1),a.owner)
     // The client predicts at once: its ground rises in its tick.
     end_tick(&a,&f)
     testing.expect(t,height(&a,40,40)>0.5,"the prediction is applied in the tick it was asked")
-    testing.expect_value(t,a.state.prediction_count,u32(1))
+    testing.expect_value(t,a.net_state.prediction_count,u32(1))
     s.tick,b.tick=a.tick-1,a.tick-1
     end_tick(&b,&f)
     round(&f,&s,&a,&b)
@@ -281,11 +236,11 @@ an_edit_a_client_asks_for_is_applied_by_the_server_and_seen_by_another_client ::
         testing.expectf(t,same,"a client holds the ground of the server: %d samples differ",differ)
     }
     testing.expect_value(t,a.net.stats.absorbed,u64(1))
-    testing.expect_value(t,a.state.prediction_count,u32(0))
+    testing.expect_value(t,a.net_state.prediction_count,u32(0))
     testing.expect_value(t,a.net.stats.desyncs,u64(0))
     testing.expect_value(t,b.net.stats.desyncs,u64(0))
-    testing.expect_value(t,a.state.cursors[0].edits,u32(1))
-    testing.expect_value(t,b.state.cursors[0].edits,u32(1))
+    testing.expect_value(t,a.net_state.cursors[0].edits,u32(1))
+    testing.expect_value(t,b.net_state.cursors[0].edits,u32(1))
 }
 
 @(test)
@@ -299,8 +254,8 @@ two_edits_of_one_region_end_in_the_order_of_the_server_on_every_client :: proc(t
     if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
     end_seat(&s,1);end_seat(&s,2)
     // Each predicts its own over the same samples: a flattens to 2, b raises by 1. Their order changes what is left.
-    terrain.dig(&a.requests,brush_at(&a,.Flatten,30,30,6,1,2),a.owner)
-    terrain.dig(&b.requests,brush_at(&b,.Raise,32,30,6,1),b.owner)
+    terrain.dig(&a.terrain_requests,brush_at(&a,.Flatten,30,30,6,1,2),a.owner)
+    terrain.dig(&b.terrain_requests,brush_at(&b,.Raise,32,30,6,1),b.owner)
     end_tick(&a,&f);end_tick(&b,&f)
     s.tick=a.tick-1
     // The server hears b first.
@@ -319,7 +274,7 @@ two_edits_of_one_region_end_in_the_order_of_the_server_on_every_client :: proc(t
     for e in ([]^End{&a,&b}) {
         same,differ:=same_ground(e,&s)
         testing.expectf(t,same,"a client holds the ground of the server: %d samples differ",differ)
-        testing.expect_value(t,e.state.prediction_count,u32(0))
+        testing.expect_value(t,e.net_state.prediction_count,u32(0))
     }
     testing.expect(t,a.net.stats.resyncs>0,"a client whose order was not the server's asks for the pages")
     testing.expect(t,s.net.stats.pages_sent>0)
@@ -338,7 +293,7 @@ edits_that_arrive_out_of_order_wait_for_their_turn_and_a_lost_one_brings_a_base 
     sent:[3][dynamic]multiplayer.Outgoing
     defer for &items in sent {delete(items)}
     for i in 0..<3 {
-        terrain.dig(&s.requests,brush_at(&s,i==1?.Smooth:.Raise,50+i,50,5,0.7),s.owner)
+        terrain.dig(&s.terrain_requests,brush_at(&s,i==1?.Smooth:.Raise,50+i,50,5,0.7),s.owner)
         end_tick(&s,&f)
         append(&sent[i],..s.outbox.queue.items[:])
         clear(&s.outbox.queue.items)
@@ -350,10 +305,10 @@ edits_that_arrive_out_of_order_wait_for_their_turn_and_a_lost_one_brings_a_base 
     // a hears the second and the third first: it waits for the first.
     deliver(&a,sent[1][:]);deliver(&a,sent[2][:])
     end_receive(&a);end_tick(&a,&f)
-    testing.expect_value(t,a.state.cursors[0].edits,u32(0))
+    testing.expect_value(t,a.net_state.cursors[0].edits,u32(0))
     deliver(&a,sent[0][:])
     end_receive(&a);end_tick(&a,&f)
-    testing.expect_value(t,a.state.cursors[0].edits,u32(3))
+    testing.expect_value(t,a.net_state.cursors[0].edits,u32(3))
     same,differ:=same_ground(&a,&s)
     testing.expectf(t,same,"edits applied in their order leave the ground of the server: %d samples differ",differ)
     testing.expect_value(t,a.net.stats.desyncs,u64(0))
@@ -361,14 +316,14 @@ edits_that_arrive_out_of_order_wait_for_their_turn_and_a_lost_one_brings_a_base 
     deliver(&b,sent[0][:]);deliver(&b,sent[2][:])
     end_receive(&b)
     for _ in 0..<NET_ASK_TICKS+2 {end_tick(&b,&f)}
-    testing.expect_value(t,b.state.cursors[0].edits,u32(1))
+    testing.expect_value(t,b.net_state.cursors[0].edits,u32(1))
     // The base it asks for as it loads the source, and one for the lost edit.
     testing.expect_value(t,b.net.stats.resyncs,u64(2))
     s.tick=b.tick
     for _ in 0..<8 {round(&f,&s,&b)}
     same,differ=same_ground(&b,&s)
     testing.expectf(t,same,"a base after a lost edit leaves the ground of the server: %d samples differ",differ)
-    testing.expect_value(t,b.state.cursors[0].edits,u32(3))
+    testing.expect_value(t,b.net_state.cursors[0].edits,u32(3))
 }
 
 @(test)
@@ -381,7 +336,7 @@ a_client_that_enters_late_gets_the_pages_the_edits_touched_and_converges :: proc
     defer end_destroy(&s);defer end_destroy(&c)
     if !end_init(t,&s,&f,.Server) || !end_init(t,&c,&f,.Client,3) {return}
     for i in 0..<6 {
-        terrain.dig(&s.requests,brush_at(&s,.Raise,10+i*15,20+i*12,6,1.5),s.owner)
+        terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,10+i*15,20+i*12,6,1.5),s.owner)
         end_tick(&s,&f)
     }
     clear(&s.outbox.queue.items)
@@ -393,12 +348,12 @@ a_client_that_enters_late_gets_the_pages_the_edits_touched_and_converges :: proc
     for _ in 0..<16 {round(&f,&s,&c)}
     same,differ:=same_ground(&c,&s)
     testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)
-    testing.expect_value(t,c.state.cursors[0].edits,u32(6))
+    testing.expect_value(t,c.net_state.cursors[0].edits,u32(6))
     testing.expect_value(t,c.net.stats.received,u64(0))
     // The head and the end of the base, and the pages the edits touched.
     testing.expect(t,s.net.stats.pages_sent>2 && s.net.stats.pages_sent<=2+4,"only the pages the edits touched travel")
     // An edit after it comes as any other.
-    terrain.dig(&s.requests,brush_at(&s,.Lower,70,70,4,1),s.owner)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Lower,70,70,4,1),s.owner)
     round(&f,&s,&c);round(&f,&s,&c)
     same,differ=same_ground(&c,&s)
     testing.expectf(t,same,"an edit after the base: %d samples differ",differ)
@@ -416,9 +371,9 @@ an_edit_the_server_does_not_allow_is_refused_with_what_failed_and_taken_back :: 
     if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
     // a has a seat; b does not.
     end_seat(&s,1)
-    s.settings.radius=3
-    terrain.dig(&a.requests,brush_at(&a,.Raise,40,40,5,1),a.owner)
-    terrain.dig(&b.requests,brush_at(&b,.Raise,60,60,2,1),b.owner)
+    s.net_settings.radius=3
+    terrain.dig(&a.terrain_requests,brush_at(&a,.Raise,40,40,5,1),a.owner)
+    terrain.dig(&b.terrain_requests,brush_at(&b,.Raise,60,60,2,1),b.owner)
     end_tick(&a,&f);end_tick(&b,&f)
     testing.expect(t,height(&a,40,40)>0.5 && height(&b,60,60)>0.5,"each predicts its edit")
     s.tick=a.tick-1
@@ -433,7 +388,7 @@ an_edit_the_server_does_not_allow_is_refused_with_what_failed_and_taken_back :: 
     expect_refusal(t,&a,"Terrain_Net_Settings.radius")
     expect_refusal(t,&b,"no seat")
     for e in ([]^End{&a,&b}) {
-        testing.expect_value(t,e.state.prediction_count,u32(0))
+        testing.expect_value(t,e.net_state.prediction_count,u32(0))
         same,differ:=same_ground(e,&s)
         testing.expectf(t,same,"a refused prediction is taken back by the pages of the server: %d samples differ",differ)
     }
@@ -450,13 +405,13 @@ Saved :: struct {
 
 @(private="file")
 end_save :: proc(saved:^Saved,e:^End) -> bool {
-    saved.state,saved.tick=e.state,e.tick
+    saved.state,saved.tick=e.net_state,e.tick
     return terrain.terrain_data_copy(&saved.data,&e.data)
 }
 
 @(private="file")
 end_restore :: proc(e:^End,saved:^Saved) -> bool {
-    e.state,e.tick=saved.state,saved.tick
+    e.net_state,e.tick=saved.state,saved.tick
     return terrain.terrain_data_copy(&e.data,&saved.data)
 }
 
@@ -474,28 +429,28 @@ a_correction_that_goes_back_applies_the_edits_of_the_server_and_the_predictions_
     defer terrain.terrain_data_free(&saved.data)
     testing.expect(t,end_save(&saved,&a))
     // The server edits; the client predicts one of its own two ticks later.
-    terrain.dig(&s.requests,brush_at(&s,.Raise,20,20,5,1),s.owner)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,20,20,5,1),s.owner)
     own:=brush_at(&a,.Lower,60,60,5,1)
     asked:=a.tick+3
     for _ in 0..<8 {
-        if a.tick+1==asked {terrain.dig(&a.requests,own,a.owner)}
+        if a.tick+1==asked {terrain.dig(&a.terrain_requests,own,a.owner)}
         round(&f,&s,&a)
     }
     same,differ:=same_ground(&a,&s)
     testing.expectf(t,same,"the client holds the ground of the server: %d samples differ",differ)
     testing.expect_value(t,a.net.stats.absorbed,u64(1))
     end:=a.tick
-    present:=a.state
+    present:=a.net_state
     // Back to before both, and every tick again: the game asks its edit again at its tick.
     testing.expect(t,end_restore(&a,&saved))
     for a.tick<end {
-        if a.tick+1==asked {terrain.dig(&a.requests,own,a.owner)}
+        if a.tick+1==asked {terrain.dig(&a.terrain_requests,own,a.owner)}
         end_tick(&a,&f,true)
     }
     same,differ=same_ground(&a,&s)
     testing.expectf(t,same,"after going back the client holds the ground of the server: %d samples differ",differ)
-    testing.expect_value(t,a.state.cursors[0],present.cursors[0])
-    testing.expect_value(t,a.state.prediction_count,present.prediction_count)
+    testing.expect_value(t,a.net_state.cursors[0],present.cursors[0])
+    testing.expect_value(t,a.net_state.prediction_count,present.prediction_count)
     testing.expect_value(t,a.net.stats.desyncs,u64(0))
     testing.expect_value(t,len(a.outbox.queue.items),0)
 }
@@ -566,7 +521,7 @@ a_mesh_edit_that_differs_on_a_client_comes_back_as_its_sections_and_a_late_clien
     for _ in 0..<4 {round(&f,&s,&a)}
     // Where the server edits, the client holds another mesh, as another architecture could leave it.
     testing.expect_value(t,terrain.source_edit(terrain.terrain_source(core.ref(&a.data),SOURCE),brush_at(&a,.Raise,40,40,6,0.5)).error,terrain.Edit_Error.None)
-    terrain.dig(&s.requests,brush_at(&s,.Raise,40,40,6,1),s.owner)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,40,40,6,1),s.owner)
     for _ in 0..<60 {round(&f,&s,&a)}
     testing.expect(t,a.net.stats.desyncs>0,"the edit of the server left another mesh on the client")
     same,differ:=same_mesh(&a,&s)
@@ -594,15 +549,15 @@ layer_changes_travel_in_the_order_of_the_edits_and_a_paint_of_them_lands_the_sam
     rock,grass,sand:=terrain.LAYER_DEFAULT,terrain.LAYER_DEFAULT,terrain.LAYER_DEFAULT
     rock.tiling,grass.tiling,sand.tiling=2,3,5
     // The server adds two layers and paints the second in one tick.
-    terrain.request_layer(&s.requests,s.owner,0,rock)
-    terrain.request_layer(&s.requests,s.owner,1,grass)
+    terrain.request_layer(&s.terrain_requests,s.owner,0,rock)
+    terrain.request_layer(&s.terrain_requests,s.owner,1,grass)
     paint:=brush_at(&s,.Paint,30,30,8,0.6);paint.layer=1
-    terrain.dig(&s.requests,paint,s.owner)
+    terrain.dig(&s.terrain_requests,paint,s.owner)
     for _ in 0..<4 {round(&f,&s,&a)}
     testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
     testing.expect(t,same_layers(&a,&s),"the layers and the paint of the server reach the client")
     // The client asks for a third: it is applied when the server sends it back, and a paint of it after.
-    terrain.request_layer(&a.requests,a.owner,2,sand)
+    terrain.request_layer(&a.terrain_requests,a.owner,2,sand)
     end_tick(&a,&f)
     testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
     s.tick=a.tick-1
@@ -610,9 +565,9 @@ layer_changes_travel_in_the_order_of_the_edits_and_a_paint_of_them_lands_the_sam
     testing.expect_value(t,terrain.terrain_source(core.ref(&s.data),SOURCE).layer_count,u32(3))
     testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(3))
     paint=brush_at(&a,.Paint,50,50,8,0.8);paint.layer=2
-    terrain.dig(&a.requests,paint,a.owner)
+    terrain.dig(&a.terrain_requests,paint,a.owner)
     // The server takes the first away: every weight is rewritten, in its order with the paint.
-    terrain.request_layer_remove(&s.requests,s.owner,0)
+    terrain.request_layer_remove(&s.terrain_requests,s.owner,0)
     for _ in 0..<8 {round(&f,&s,&a)}
     testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
     testing.expect(t,same_layers(&a,&s),"after a layer taken away the client holds the layers and weights of the server")
@@ -633,16 +588,16 @@ a_base_brings_what_was_edited_before_the_session_and_a_source_the_client_has_oth
     if !end_init(t,&s,f,.Server) {return}
     // Before the session the server edits, saves to its file, and edits and paints again.
     s.authority.role=.Standalone
-    terrain.dig(&s.requests,brush_at(&s,.Raise,30,30,6,2),s.owner)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,30,30,6,2),s.owner)
     end_update(&s,f)
-    terrain.request_save(&s.requests,s.owner)
+    terrain.request_save(&s.terrain_requests,s.owner)
     end_update(&s,f)
-    terrain.dig(&s.requests,brush_at(&s,.Lower,70,60,5,1),s.owner)
-    terrain.request_layer(&s.requests,s.owner,0,terrain.LAYER_DEFAULT)
-    terrain.request_layer(&s.requests,s.owner,1,terrain.LAYER_DEFAULT)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Lower,70,60,5,1),s.owner)
+    terrain.request_layer(&s.terrain_requests,s.owner,0,terrain.LAYER_DEFAULT)
+    terrain.request_layer(&s.terrain_requests,s.owner,1,terrain.LAYER_DEFAULT)
     end_update(&s,f)
     paint:=brush_at(&s,.Paint,70,60,6,0.7);paint.layer=1
-    terrain.dig(&s.requests,paint,s.owner)
+    terrain.dig(&s.terrain_requests,paint,s.owner)
     end_update(&s,f)
     s.authority.role=.Server
     // c has the file the server saved, a another source of the same id, b none.
@@ -678,7 +633,7 @@ traffic_of_a_long_stroke :: proc(t:^testing.T) {
         base_sent,base_bytes:=s.net.stats.pages_sent,s.net.stats.bytes_sent
         for i in 0..<STROKE {
             x:=8+f32(i)*0.33
-            terrain.dig(&s.requests,brush_at(&s,.Raise,int(x),48,4,0.3),s.owner)
+            terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,int(x),48,4,0.3),s.owner)
             if differs {
                 source:=terrain.terrain_source(core.ref(&c.data),SOURCE)
                 terrain.source_edit(source,brush_at(&c,.Raise,int(x),48,1,0.001))
