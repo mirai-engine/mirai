@@ -29,7 +29,7 @@ Api_Unsaved_Asset :: struct {
 
 Api_Saved_Result :: struct {
     saved:int `mirai:"label=Assets written: to their files or as copies under folder"`,
-    folder:[2*API_PATH_BYTES]u8 `mirai:"text,optional,label=With folder: the full path of the copies"`,
+    folder:string `mirai:"optional,label=With folder: the full path of the copies"`,
 }
 
 Api_Discarded_Result :: struct {
@@ -45,7 +45,7 @@ Api_Asset_Save_Params :: struct {
 @(private)
 unsaved_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,flags={.Read_Only},run=api_asset_unsaved})
-    api_register(s,st,{name="asset.save",flags={.Core},params=Api_Asset_Save_Params,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,writes_result=true,run=api_asset_save})
+    api_register(s,st,{name="asset.save",flags={.Core},params=Api_Asset_Save_Params,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,run=api_asset_save})
     api_register(s,st,{name="asset.discard",params=Api_Asset_Save_Params,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
 }
 
@@ -154,8 +154,7 @@ api_asset_save :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%d of %d assets could not be written and stay unsaved: %s",len(paths)-saved,len(paths),failures)
         return
     }
-    serial.text_write_raw(call.out,`{"saved":`);serial.text_write_int(call.out,i64(saved))
-    serial.write_u8(call.out,'}')
+    api.call_result(call,Api_Saved_Result).saved=saved
 }
 
 // Copies of unsaved assets under a folder of .mirai/tmp/ of the project, at
@@ -181,9 +180,7 @@ api_unsaved_copy :: proc(s:^Session,call:^api.Call,folder:string,paths:[]string)
         }
         copied+=1
     }
-    serial.text_write_raw(call.out,`{"saved":`);serial.text_write_int(call.out,i64(copied))
-    api.write_key(call.out,"folder");serial.text_write_string(call.out,target)
-    serial.write_u8(call.out,'}')
+    api.call_result(call,Api_Saved_Result)^={copied,target}
 }
 
 @(private)
