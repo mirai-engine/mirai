@@ -1,19 +1,13 @@
 package editor
 
-import "core:fmt"
 import "core:mem"
-import "core:os"
-import "core:strings"
 import "core:testing"
-import "mirai:project"
 import "mirai:std/base"
 
 @(test)
 the_view_of_a_scene_is_kept_at_each_size_and_shown_where_it_already_is :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    folder,_:=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-scene-thumbs-%d",os.get_pid()),allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"scene-thumbs")
+    if folder=="" {return}
     p:Thumbnails
     defer {delete(p.pixels);delete(p.image);thumbnail_file_destroy(&p.file)}
     id:=base.Asset_Id{0x7363,1}

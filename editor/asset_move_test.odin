@@ -24,7 +24,7 @@ Move_Test :: struct {
 
 @(private="file")
 move_test_open :: proc(t:^testing.T,m:^Move_Test,name:string) -> bool {
-    files_test_open(&m.files,name)
+    files_test_open(t,&m.files,name) or_return
     if !testing.expect(t,host.assets_init(&m.assets,{root=project.path(m.root,"assets",allocator=context.temp_allocator),capacity=16})) {return false}
     m.app=host.App{assets=&m.assets}
     m.s.app=&m.app
@@ -97,7 +97,7 @@ move_test_import :: proc(m:^Move_Test,path:string) -> (source:string,found:bool)
 @(test)
 moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move") {return}
+    if !move_test_open(t,m,"asset-move") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -167,7 +167,7 @@ move_test_last_file :: proc(m:^Move_Test) -> string {
 @(test)
 an_import_moves_and_copies_with_its_parts :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-import") {return}
+    if !move_test_open(t,m,"asset-move-import") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -228,7 +228,7 @@ an_import_moves_and_copies_with_its_parts :: proc(t:^testing.T) {
 @(test)
 a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-folder") {return}
+    if !move_test_open(t,m,"asset-move-folder") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -290,7 +290,7 @@ a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
 @(test)
 the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-api") {return}
+    if !move_test_open(t,m,"asset-move-api") {return}
     defer move_test_close(m)
     s:=&m.s
     move_test_texture(t,m,"Rocks/rock.tex",MOVE_TEST_TEXTURE)
@@ -363,10 +363,8 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
 // renames it. A card let go on the header of a folder moves there.
 @(test)
 the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-content-rename-%d",temporary,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"content-rename")
+    if root=="" {return}
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil))
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Archive",root)),os.Error(nil))
     ctx:ui.Context

@@ -18,10 +18,8 @@ import "mirai:ui"
 @(test)
 stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-editor-%d-thumbnails",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"thumbnails")
+    if root=="" {return}
     assets,folder:=fmt.tprintf("%s/assets",root),fmt.tprintf("%s/.mirai/thumbs",root)
     os.make_directory_all(fmt.tprintf("%s/textures",assets))
     texture,material,other:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}

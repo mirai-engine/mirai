@@ -11,7 +11,8 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Api_Test_World :: struct {entities:core.Entities}
+@(private="file") Api_Test_World :: struct {using world:core.Test_World}
+@(private="file") Api_Test_Editor :: struct {api:Api}
 
 @(private="file")
 api_test_execute :: proc(state:^Api_State,out:^serial.Writer,name,params:string) -> api.Error {
@@ -36,8 +37,8 @@ plugin_folder_write :: proc(root,name,dependency:string) {
 // what the file has and every plugin the project sees.
 @(test)
 project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-editor-project",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"editor-project")
+    if folder=="" {return}
     root:=project.path(folder,"game",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(project.path(root,"assets/scenes",allocator=context.temp_allocator))==nil)
     m:=project.manifest_default("Game")
@@ -48,19 +49,21 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     testing.expect(t,os.write_entire_file(project.path(root,"assets/scenes/main.scene",allocator=context.temp_allocator),"")==nil)
     testing.expect(t,os.write_entire_file(project.path(root,"icon.png",allocator=context.temp_allocator),"")==nil)
 
+    info,made:=core.test_info(t,Api_Test_World,core.Test_None,Api_Test_Editor,test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
     world:Api_Test_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    storages:=[1]core.Storage_Info{{type=Api,info=type_info_of(Api),place=.Editor}}
-    info:=core.World_Info{entities=offset_of(Api_Test_World,entities),storages=storages[:]}
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
-    api_storage:Api
+    editor:Api_Test_Editor
     app:host.App
     // Without the root of the engine a change of the plugins starts no build.
     building:Build_State
     processes:Player_Processes
-    session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,build=&building,processes=&processes,project_root=root,assets_root=project.path(root,"assets",allocator=context.temp_allocator),has_project=true}
+    session:=Session{info=&info,edit_world=&world,editor_world=&editor,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,build=&building,processes=&processes,project_root=root,assets_root=project.path(root,"assets",allocator=context.temp_allocator),has_project=true}
     history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator

@@ -45,7 +45,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     engine,_:=strings.replace_all(cleaned,"\\","/",context.temp_allocator)
     if _,found:=shaders.tool_find(engine,.Slangc,context.temp_allocator);!found {log.warn("slangc is not installed: run `mirai setup slang`");return}
     f:Files_Test
-    files_test_open(&f,"mirai-programs-api")
+    if !files_test_open(t,&f,"programs-api") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
