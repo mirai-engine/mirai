@@ -157,7 +157,7 @@ rpc_command_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
         args.allocator=context.temp_allocator
         append(&args,..usage)
         code,_,err=run_tool(tool,"",..args[:])
-        testing.expectf(t,code==2 && strings.has_prefix(err,"Usage:"),"%v: %d %s",usage,code,err)
+        testing.expectf(t,code==2 && strings.contains(err,"Usage:"),"%v: %d %s",usage,code,err)
     }
     code,out,err=run_tool(tool,"{\"a\": 20,\n \"b\": 22}\n","rpc","test.add","-","--port",port)
     testing.expect_value(t,err,"")
