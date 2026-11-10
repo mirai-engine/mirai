@@ -118,6 +118,32 @@ ids_depend_on_name_index_and_scope_and_are_never_zero :: proc(t:^testing.T) {
     testing.expect(t,id(&ctx,"")!=0)
 }
 
+// A widget is found by its id as the frame before left it: the first of those
+// that share one, and none of a frame further back, also when the generations
+// of the table start over.
+@(test)
+widgets_are_found_by_id_as_the_previous_frame_left_them :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    defer context_destroy(&ctx)
+    input:=test_input()
+    twice,once,later:=id(&ctx,"twice"),id(&ctx,"once"),id(&ctx,"later")
+    test_frame(&ctx,&input,proc(ctx:^Context,_:rawptr) {
+        widget_add(ctx,id(ctx,"twice"),{});widget_add(ctx,id(ctx,"once"),{});widget_add(ctx,id(ctx,"twice"),{})
+    })
+    testing.expect(t,widget_previous(&ctx,twice)==&ctx.previous[0] && widget_previous(&ctx,once)==&ctx.previous[1])
+    testing.expect(t,widget_previous(&ctx,later)==nil)
+    ctx.previous_ids.generation=max(u32)
+    for _ in 0..<2 {
+        test_frame(&ctx,&input,proc(ctx:^Context,_:rawptr) {
+            widget_add(ctx,id(ctx,"later"),{});widget_add(ctx,id(ctx,"once"),{})
+        })
+        testing.expect(t,widget_previous(&ctx,later)==&ctx.previous[0] && widget_previous(&ctx,once)==&ctx.previous[1])
+        _,found:=widget_rect(&ctx,twice)
+        testing.expect(t,!found,"what the last frame did not build is not found")
+    }
+}
+
 @(test)
 frame_text_outlives_the_buffer_it_came_from_and_counts_what_does_not_fit :: proc(t:^testing.T) {
     ctx:Context

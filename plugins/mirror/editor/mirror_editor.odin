@@ -3,7 +3,7 @@ package mirror_editor
 import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:ui"
 import mirror "plugins:mirror/runtime"
 
@@ -33,12 +33,12 @@ mirror_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 }
 
 @(storage)
-Mirror_Gizmo :: struct {vertices:[GIZMO_VERTICES]gpu.Debug_Vertex}
+Mirror_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The face of each selected mirror and its front.
 @(step="frame",after="editor_tools")
 mirror_gizmo :: proc(s:^editor.Session,gizmo:^Mirror_Gizmo,app:^host.App) {
-    draw :: proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,face:mirror.Mirror) {
+    draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,face:mirror.Mirror) {
         editor.gizmo_face(lines,editor.entity_world(w,e),face.ellipse,GIZMO_COLOR)
     }
     editor.selection_gizmo(s,app,gizmo.vertices[:],mirror.Mirror,draw)

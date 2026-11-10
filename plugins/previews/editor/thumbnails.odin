@@ -5,7 +5,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -42,7 +41,7 @@ thumbnail_subject :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,s
 // skeleton, and the materials of its slots: by the clip-th clip of an
 // animation halfway through it, or at rest when the clip cannot be read.
 @(private)
-thumbnail_triangles :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,vertices:^[dynamic]gpu.Thumbnail_Vertex,materials:^[dynamic]gpu.Material_Desc) -> bool {
+thumbnail_triangles :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,vertices:^[dynamic]editor.Thumbnail_Vertex,materials:^[dynamic]erender.Material_Desc) -> bool {
     app:=s.app
     a:=app.assets
     if a==nil || app.renderer==nil {return false}
