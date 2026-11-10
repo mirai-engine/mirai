@@ -56,6 +56,25 @@ KINDS :: [?]Kind_Info{
     {KIND_RECORDS,".records","records",RECORDS_VERSION,false,true},
 }
 
+// A kind engines before this one wrote and no build reads: version_message
+// says of a file of it what took its place.
+Kind_Retired :: struct {
+    kind:Fourcc,
+    name:string,
+    now:string, // what holds it now
+}
+
+KINDS_RETIRED :: [?]Kind_Retired{
+    {Fourcc(u32('P')|u32('R')<<8|u32('F')<<16|u32('B')<<24),"prefab","a prefab is a .scene with exactly one root"},
+}
+
+kind_retired :: proc(kind:Fourcc) -> (info:Kind_Retired,found:bool) {
+    for candidate in KINDS_RETIRED {
+        if candidate.kind==kind {return candidate,true}
+    }
+    return {},false
+}
+
 kind_of_extension :: proc(path:string) -> (kind:Fourcc,found:bool) {
     for info in KINDS {
         if strings.has_suffix(path,info.extension) {return info.kind,true}
@@ -127,6 +146,7 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
         if version==current {stale=fmt.tprintf("%s is a %s of version %d that does not store every field of that version",slashed(path),kind,version)}
     }
     if a.lacking[1]!="" {stale=fmt.tprintf("%s is a %s whose table %s does not store the field %s of version %d",slashed(path),kind,a.lacking[0],a.lacking[1],version)}
+    if retired,gone:=kind_retired(a.blob.header.kind);gone {stale=fmt.tprintf("%s is a %s, a kind of file this build does not have: %s",slashed(path),retired.name,retired.now)}
     info,_:=import_info(a,types)
     if info==nil {return copied(fmt.tprintf("%s; it was not imported: make it again",stale),allocator)}
     source:=serial.text_field(info.source[:])
