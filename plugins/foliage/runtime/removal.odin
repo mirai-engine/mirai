@@ -73,7 +73,7 @@ foliage_requests_serve :: proc(requests:^Foliage_Requests,ground:^Foliage_Ground
 @(storage)
 Foliage_Removals :: struct {
     owners:[dynamic]Removed_Owner,
-    seen:[2]u64, // the versions of the tables of Foliage_Removed and Foliage it was made from
+    seen:[2]core.Seen, // the tables of Foliage_Removed and Foliage it was made from
     made:bool,
 }
 Removed_Owner :: struct {
@@ -141,9 +141,8 @@ removals_destroy :: proc(r:^Foliage_Removals) {
 // that name them, when they or the Foliage changed.
 removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) -> (enough:bool) {
     enough=true
-    key:=[2]u64{core.version(removed),core.version(foliages)}
-    if r.made && key==r.seen {return}
-    r.made,r.seen=true,key
+    if !(core.touched(removed,&r.seen[0]) | core.touched(foliages,&r.seen[1])) && r.made {return}
+    r.made=true
     for &owner in r.owners {clear(&owner.items);clear(&owner.pages)}
     for row in 0..<core.count(removed) {
         page:=&removed.table.values[row]
@@ -257,7 +256,7 @@ removed_write :: proc(removed:^core.Table(Foliage_Removed),pages:[]Removed_Page,
     for &page in pages {
         if len(left)==0 {return}
         if page.count>=REMOVED_PAGE {continue}
-        row:=core.get(removed,page.entity)
+        row:=core.edit(removed,page.entity)
         if row==nil {continue}
         n:=min(len(left),REMOVED_PAGE-page.count)
         for id,k in left[:n] {row.instances[page.count+k]={id}}

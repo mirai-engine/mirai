@@ -148,8 +148,8 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     testing.expect_value(t,len(rewinds.queue.items),0)
     end_tick(&b)
-    testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
-    testing.expect_value(t,physics.breakable_check(core.ref(&b.physics),core.get(&b.states,client).handle),physics.breakable_check(core.ref(&a.physics),core.get(&a.states,server).handle))
+    testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
+    testing.expect_value(t,physics.breakable_check(core.ref(&b.physics),core.at(&b.states,core.row_of(&b.states,client)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
     testing.expect_value(t,b.net.stats.desyncs,u64(0))
     testing.expect_value(t,a.net.stats.sent,u64(1))
 }
@@ -171,11 +171,11 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
     defer delete(rewinds.queue.items)
     destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     for _ in 8..=12 {end_tick(&b)}
-    testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
+    testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
     hash:=physics.state_hash(core.ref(&b.physics))
     testing.expect(t,end_restore(&b,&saved))
     for _ in 3..=12 {end_tick(&b,true)}
-    testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
+    testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
     testing.expect_value(t,physics.state_hash(core.ref(&b.physics)),hash)
 }
 
@@ -200,7 +200,7 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
     // The correction it asked for: from the world as tick 3 found it.
     testing.expect(t,end_restore(&b,&saved))
     end_tick(&b,true)
-    testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
+    testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
     for _ in 4..=7 {end_tick(&b,true)}
     for _ in 8..=12 {end_tick(&b)}
     hash:=physics.state_hash(core.ref(&b.physics))
@@ -258,7 +258,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     defer delete(rewinds.queue.items)
     destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     end_tick(&b)
-    if !testing.expect_value(t,core.get(&b.states,client).sequence,u32(1)) {return}
+    if !testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1)) {return}
 
     // The same scene again on the client: a new World, and what the application keeps for it goes on.
     if !testing.expect(t,end_init(t,&c,"scene-again",.Client)) {return}
@@ -267,7 +267,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     c.root.changes=b.root.changes+1
     c.tick=b.tick
     for _ in 0..<4 {end_tick(&c)}
-    testing.expect_value(t,core.get(&c.states,again).sequence,u32(0))
+    testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(0))
     testing.expect_value(t,len(c.net.links),0)
 
     // The server loads a game where it is broken: a scene that replaces its world.
@@ -282,6 +282,6 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     defer core.value_free(&chunks,type_info_of(multiplayer.Net_Events))
     destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)
     for _ in 0..<2 {end_tick(&c)}
-    testing.expect_value(t,core.get(&c.states,again).sequence,u32(1))
-    testing.expect_value(t,physics.breakable_check(core.ref(&c.physics),core.get(&c.states,again).handle),physics.breakable_check(core.ref(&a.physics),core.get(&a.states,server).handle))
+    testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(1))
+    testing.expect_value(t,physics.breakable_check(core.ref(&c.physics),core.at(&c.states,core.row_of(&c.states,again)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
 }

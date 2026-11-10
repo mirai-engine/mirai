@@ -191,7 +191,7 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
 
     p,_:=panel_test_parse(t,PANEL_TEST_TEXT)
     testing.expect_value(t,panel_check(s,p),"")
-    tint :: proc(f:^Panel_Test_Fixture,e:core.Entity) -> [3]f32 {return core.get(&f.world.looks,e).tint}
+    tint :: proc(f:^Panel_Test_Fixture,e:core.Entity) -> [3]f32 {return core.at(&f.world.looks,core.row_of(&f.world.looks,e)).tint}
     changed,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,3)
@@ -209,13 +209,13 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,4)
     history.edits_flush(&f.edits,w,&f.selection)
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[0]).exposure.compensation,f32(0))
-    for e in f.entities {testing.expect_value(t,core.get(&f.world.looks,e).sky,[3]f32{0.5,0.25,0.1})}
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[0])).exposure.compensation,f32(0))
+    for e in f.entities {testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,e)).sky,[3]f32{0.5,0.25,0.1})}
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(0))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(0))
     testing.expect(t,history.redo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
 
     // A where finds the entities when the button is pressed.
     late:=core.create(&f.world.entities)
@@ -302,7 +302,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
         testing.expect_value(t,problem,"")
         history.edits_flush(&f.edits,w,&f.selection)
     }
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{1,0,0})
     testing.expect(t,panel_kept_count(&f.panels,p)>0)
 
     restored,message:=panel_restore(s,p)
@@ -310,17 +310,17 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     testing.expect_value(t,restored,panel_test_kept)
     history.edits_flush(&f.edits,w,&f.selection)
     for e in f.entities {
-        look:=core.get(&f.world.looks,e)^
+        look:=core.at(&f.world.looks,core.row_of(&f.world.looks,e))
         testing.expect_value(t,look.tint,[3]f32{0,0,0})
         testing.expect_value(t,look.sky,[3]f32{1,1,1})
         testing.expect_value(t,look.exposure.compensation,f32(0))
     }
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{0,1,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{0,1,0})
     testing.expect_value(t,f.world.quality.level,i32(1))
     testing.expect_value(t,panel_kept_count(&f.panels,p),0)
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{1,0,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
 }
 
 // Kept: the tint of 0x10, 0x30 and 0x40, the level, the compensation of 0x20

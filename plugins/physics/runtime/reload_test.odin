@@ -46,7 +46,7 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
         _,error:=scene.instantiate(w,&source,&types)
         core.world_settle(w)
         if !testing.expect_value(t,error,scene.Error.None) {return}
-        e:=core.entity_at(core.read(&f.rigids),0)
+        e:=core.entity_at(&f.rigids,0)
         testing.expect(t,e!=previous && !core.alive(&f.entities,previous))
         testing.expect_value(t,physics_test_pose(&f,e),pose)
         physics_test_step(&f)
@@ -82,7 +82,7 @@ scaled_chain_links_keep_their_adjacent_edge_anchors_together_after_launch :: pro
         if tick<60 {continue}
         for index in 1..<len(links) {
             a,b:=physics_test_pose(&f,links[index-1]),physics_test_pose(&f,links[index])
-            state,_:=core.get(core.read(&f.joint_states),links[index])
+            state,_:=core.get(&f.joint_states,links[index])
             testing.expect_value(t,state.error,Joint_Error.None)
             target:=a.position+mm.quat_rotate(a.rotation,state.target_anchor*a.scale)
             own:=b.position+mm.quat_rotate(b.rotation,mm.Vec3{-.525,0,0}*b.scale)

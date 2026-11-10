@@ -118,7 +118,10 @@ Propagation :: struct {
     moving,spare:[dynamic]Entity, // rows computed since the tick whose previous is not their transform
     dirty:[dynamic]Ordered,
     pass,ticks:u32,
-    built_tree,built_locals,seen_locals:u64,
+    built_tree:u64,
+    built_locals:Shape,
+    built:bool,                   // false: the order is made again
+    seen_locals:Seen,
 }
 
 Ordered :: struct {position:i32,entity:Entity}
@@ -149,7 +152,7 @@ transforms_propagate :: proc(locals:Read(Transform),hierarchy:Ref(Hierarchy),wor
                 continue
             }
             if row:=row_of(worlds,e);row>=0 {
-                world:=at(worlds,row)
+                world:=edit_at(worlds,row)
                 world.previous=mm.transform_compose(jumped.by,world.previous)
             }
             e=subtree_next(hierarchy,jumped.entity,e)
@@ -167,16 +170,16 @@ transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table
         clear(&p.moving)
         previous_moving=p.spare[:]
     }
-    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=raw_indices(raw(locals.table)) {
+    c:=changes(locals,&p.seen_locals)
+    if reshaped(locals,&p.built_locals) || !p.built || p.built_tree!=h.version || len(p.position)!=raw_indices(raw(locals.table)) {
         if !propagation_order(locals,h,p) {return}
         for e in p.order {transform_compute(locals,h,worlds,p,e,tick)}
         for i:=len(worlds.entities)-1;i>=0;i-=1 {
             if !has(locals,worlds.entities[i]) {remove(worlds,worlds.entities[i])}
         }
-    } else if version(locals)!=p.seen_locals {
+    } else {
         clear(&p.dirty)
-        for row in 0..<count(locals) {
-            if stamp(locals,row)<=p.seen_locals {continue}
+        for row in each_changed(locals,&c) {
             e:=entity_at(locals,row)
             append(&p.dirty,Ordered{p.position[entity_index(e)],e})
         }
@@ -193,13 +196,12 @@ transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table
             }
         }
     }
-    p.seen_locals=version(locals)
     // What moved the tick before and not in this one stops between two places.
     for e in previous_moving {
         if i:=entity_index(e);i<len(p.computed) && p.computed[i]==p.pass {continue}
         row:=row_of(worlds,e)
         if row>=0 && worlds.values[row].previous!=worlds.values[row].transform {
-            world:=at(worlds,row)
+            world:=edit_at(worlds,row)
             world.previous=world.transform
         }
     }
@@ -219,7 +221,7 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
         current:=worlds.values[row]
         next:=World_Transform{world,tick?current.transform:current.previous}
         // A row is written only when it changes: its readers see what moved.
-        if next!=current {at(worlds,row)^=next}
+        if next!=current {edit_at(worlds,row)^=next}
         if next.previous!=next.transform && p.listed[i]!=p.ticks+1 {
             p.listed[i]=p.ticks+1
             append(&p.moving,e)
@@ -236,7 +238,7 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
 propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation) -> bool {
     size:=raw_indices(raw(locals.table))
     if resize(&p.order,count(locals))!=nil || resize(&p.worlds,size)!=nil || resize(&p.position,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil {
-        p.built_locals=layout(locals)-1
+        p.built=false
         return false
     }
     n:=0
@@ -256,7 +258,7 @@ propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation
     }
     base.truncate(&p.order,n)
     p.built_tree=h.version
-    p.built_locals=layout(locals)
+    p.built=true
     return true
 }
 

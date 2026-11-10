@@ -59,8 +59,8 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
   storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`, `^core.Entities`,
   `core.Placer`; of the application, its part (`^host.Assets`, `^render.Renderer`, `^audio.Mixer`,
   `runtime.Allocator`) or `^host.App`. No result or defaults. Names are unique in the whole world.
-- `core.Read` hands out copies; a write needs `^core.Table`, whose `core.writable`, `core.at` and
-  `core.get` mark rows changed (`core.read(table)` reads). `core.add` waits (`core.staged_has`).
+- `core.get` and `core.at` read any table. `^core.Table` writes: `core.edit`, `core.edit_at`,
+  `core.writable` mark the row, `core.set` only a new value. `core.add` waits (`core.staged_has`).
 - One function writes each table; the others push a request ([wiring.md](core/wiring.md)).
   `core.free(table, e)` is the row, or `nil` when a library owns it (`Transform` of a body).
 

@@ -258,7 +258,7 @@ a_rejected_heightfield_shape_releases_its_geometry_and_an_explicit_edit_can_retr
     testing.expect(t,link_find(&g.state,b).heightfield=={})
     core.remove(&g.colliders,a)
     geometry_test_step(&g)
-    core.get(&g.colliders,b).center.x=0.1
+    core.edit(&g.colliders,b).center.x=0.1
     geometry_test_step(&g)
     testing.expect(t,link_find(&g.state,b).heightfield!={})
     hit,hit_ok:=raycast({&g.state},{0.35,3,0.25},{0,-1,0})
@@ -303,7 +303,7 @@ volume_mesh_replacement_excavation_empty_chunks_and_parent_motion_keep_collision
     testing.expectf(t,after_ok && before.point.y-after.point.y>0.7,"excavation from %v to %v",before.point,after.point)
     old,old_ok:=raycast({&saved},{7,10,-5},{0,-1,0})
     testing.expect(t,old_ok && abs(old.point.y-1.65)<1e-4)
-    core.get(&g.transforms,owner).position={20,4,7}
+    core.edit(&g.transforms,owner).position={20,4,7}
     geometry_test_step(&g)
     _,ghost:=raycast({&g.state},{7,10,-5},{0,-1,0})
     testing.expect(t,!ghost)
@@ -342,7 +342,7 @@ adjacent_heightfield_chunks_with_distinct_origins_share_the_boundary_after_paren
         core.add(&g.statics,e,render.Mesh_Renderer{mesh=index==0?a:b})
     }
     for pass in 0..<2 {
-        if pass==1 {core.get(&g.transforms,owner).position={20,4,-10}}
+        if pass==1 {core.edit(&g.transforms,owner).position={20,4,-10}}
         geometry_test_step(&g)
         center:=pass==0?[3]f32{6,7,10}:[3]f32{20,7,-10}
         for offset in ([3]f32{-0.001,0,0.001}) {
@@ -397,7 +397,7 @@ physics_geometry_budgets_are_applied_once_and_exhausted_heightfields_can_be_reus
     geometry_test_step(&g)
     testing.expect_value(t,g.state.world.desc.heightfield_capacity,1)
     testing.expect(t,link_find(&g.state,chunks[1]).heightfield=={})
-    core.get(&g.colliders,chunks[1]).center.x=0.1
+    core.edit(&g.colliders,chunks[1]).center.x=0.1
     geometry_test_step(&g)
     testing.expect(t,link_find(&g.state,chunks[1]).heightfield!={})
     testing.expect(t,collider_ready({&g.state},chunks[1]))
@@ -818,7 +818,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     defer state_destroy(&copy)
     testing.expect(t,state_copy(&copy,&f.state))
 
-    core.get(&f.statics,e).mesh=step_mesh
+    core.edit(&f.statics,e).mesh=step_mesh
     physics_test_step(&f,0)
     l:=link_find(&f.state,e)
     testing.expect(t,l!=nil && l.pieces.count==2)
@@ -828,7 +828,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect(t,hit_ok && hit.entity==e && abs(hit.point.y-1.5)<1e-3)
 
     // Four pieces do not fit in three hulls: no shape, and nothing held.
-    core.get(&f.statics,e).mesh=big_mesh
+    core.edit(&f.statics,e).mesh=big_mesh
     physics_test_step(&f,0)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.geometry_budget")!=nil)
     l=link_find(&f.state,e)
@@ -838,7 +838,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     for piece in f.state.pieces {testing.expect_value(t,piece,Piece{})}
 
     // A piece without volume is not a part of a body.
-    core.get(&f.statics,e).mesh=flat_mesh
+    core.edit(&f.statics,e).mesh=flat_mesh
     physics_test_step(&f,0)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.collider_hull")!=nil)
     testing.expect(t,l.shape=={} && hulls_used(&f)==0)
@@ -846,7 +846,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect_value(t,meshes,0)
 
     // Removed, every slot is free; back from the copy, the L is there and collides.
-    core.get(&f.statics,e).mesh=l_mesh
+    core.edit(&f.statics,e).mesh=l_mesh
     physics_test_step(&f,0)
     testing.expect_value(t,sim.body_shapes(w,link_find(&f.state,e).body,shapes[:]),2)
     core.remove(&f.colliders,e)

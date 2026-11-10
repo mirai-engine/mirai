@@ -91,10 +91,10 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         editor.notify(s,"Heightfield Terrain requires a plane or heightmap");return
     } else if tool.create_kind==.Mesh && tool.create_source==.Selection {
         converted=history.selection_active(s.selection)
-        static,found:=core.get(core.read(meshes),converted)
-        if !found || core.has(core.read(terrains),converted) {editor.notify(s,"Select a static mesh to convert");return}
+        static,found:=core.get(meshes,converted)
+        if !found || core.has(terrains,converted) {editor.notify(s,"Select a static mesh to convert");return}
         if bodies:=core.world_table_of(world,phys.Rigid_Body);bodies!=nil {
-            if body,ok:=core.get(core.read(bodies),converted);ok && body.type!=.Static {editor.notify(s,"Terrain requires a static entity");return}
+            if body,ok:=core.get(bodies,converted);ok && body.type!=.Static {editor.notify(s,"Terrain requires a static entity");return}
         }
         geometry:geom.Mesh_Buffer
         geom.mesh_buffer_init(&geometry,allocator);defer geom.mesh_buffer_destroy(&geometry)
@@ -169,7 +169,7 @@ Ground_Placement :: struct {transform:core.Transform,id:base.Entity_Id}
 @(private)
 volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,ground:core.Entity,at:[3]f32,placed:bool,tool:^Terrain_Tool,source:^terrain.Source) -> (over:Ground_Placement,ok:bool) {
     terrains:=core.world_table_of(world,terrain.Terrain)
-    marker,is:=core.get(core.read(terrains),ground)
+    marker,is:=core.get(terrains,ground)
     place:=editor.entity_world(world,ground)
     over.id=editor.api_entity_id(world,ground)
     if !is || over.id==0 {editor.notify(s,"The ground to join is no terrain with an Id");return}
@@ -238,12 +238,12 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     meshes:=core.world_table_of(world,erender.Mesh_Renderer);worlds:=core.world_table_of(world,core.World_Transform)
     if meshes==nil || worlds==nil {return}
     operand:=core.NONE
-    for e in s.selection.entities {if e!=stroke.entity && core.has(core.read(meshes),e) {operand=e}}
-    static,found:=core.get(core.read(meshes),operand)
-    placed,positioned:=core.get(core.read(worlds),operand)
+    for e in s.selection.entities {if e!=stroke.entity && core.has(meshes,e) {operand=e}}
+    static,found:=core.get(meshes,operand)
+    placed,positioned:=core.get(worlds,operand)
     if !found || !positioned {editor.notify(s,"Select the terrain and a closed mesh operand");return}
     if editor.prefab_member_locked(s,world,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
-    if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil && core.has(core.read(terrains),operand) {editor.notify(s,"The operand must be a static mesh");return}
+    if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil && core.has(terrains,operand) {editor.notify(s,"The operand must be a static mesh");return}
     if parents:=core.world_table_of(world,core.Parent);parents!=nil {
         for parent in parents.values {if parent.entity==operand {editor.notify(s,"The mesh operand must have no children");return}}
     }

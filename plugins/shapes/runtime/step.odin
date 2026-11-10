@@ -101,11 +101,11 @@ shapes_update :: proc(
     cb:=core.changes(rigids,&cache.bodies_seen)
     cc:=core.changes(colliders,&cache.colliders_seen)
     cr:=core.changes(brushes,&cache.brushes_seen)
-    all:=cs.all || core.version(shapes)<cs.since
+    all:=cs.all
     // While there are brushes they are compared every tick: what moves one is
     // its Transform, whose stamps belong to every entity of the world.
     following:=core.count(brushes)>0 || len(cache.brushes.values)>0
-    if !all && !following && quiet(cs,core.version(shapes)) && quiet(cb,core.version(rigids)) && quiet(cc,core.version(colliders)) {return}
+    if !all && !following && quiet(cs) && quiet(cb) && quiet(cc) {return}
     context.allocator=allocator
     u:=Update{cache=cache,assets=assets,commands=commands,shapes=shapes,brushes=brushes,parts=parts,rigids=rigids,colliders=colliders,meshes=meshes,transforms=transforms,parents=parents,hierarchy=hierarchy,problems=problems}
 
@@ -123,17 +123,11 @@ shapes_update :: proc(
 
     cache.pass+=1
     clear(&cache.dirty)
-    for row in 0..<core.count(shapes) {
-        if all || core.changed(shapes,cs,row) {mark(&u,core.entity_at(shapes,row))}
-    }
+    for row in core.each_changed(shapes,&cs) {mark(&u,core.entity_at(shapes,row))}
     if !all {
-        for row in 0..<core.count(rigids) {
-            if core.changed(rigids,cb,row) {mark(&u,core.entity_at(rigids,row))}
-        }
+        for row in core.each_changed(rigids,&cb) {mark(&u,core.entity_at(rigids,row))}
         for e in cb.gone {mark(&u,e)}
-        for row in 0..<core.count(colliders) {
-            if core.changed(colliders,cc,row) {mark(&u,core.entity_at(colliders,row))}
-        }
+        for row in core.each_changed(colliders,&cc) {mark(&u,core.entity_at(colliders,row))}
         for e in cc.gone {mark(&u,e)}
     }
     if following {brushes_follow(&u,cr)}
@@ -208,8 +202,8 @@ Update :: struct {
 
 // Nothing was written, added or removed since the reader looked.
 @(private)
-quiet :: proc "contextless" (c:core.Changes,version:u64) -> bool {
-    return !c.all && len(c.gone)==0 && version<=c.since
+quiet :: proc "contextless" (c:core.Changes) -> bool {
+    return !c.written && len(c.gone)==0
 }
 
 // Takes a shape into the pass, once.
@@ -350,7 +344,7 @@ collider_write :: proc(u:^Update,child:core.Entity,collider:physics.Collider) {
     if row<0 {
         core.commands_add(u.commands,child,collider)
     } else if u.colliders.values[row]!=collider {
-        core.get(u.colliders,child)^=collider
+        core.edit(u.colliders,child)^=collider
     }
 }
 
@@ -405,7 +399,7 @@ install :: proc(u:^Update,b:^Shape_Build) {
         entry.child=child
         return
     }
-    if row:=core.get(u.meshes,entry.child);row!=nil {row^=shown} else {core.commands_add(u.commands,entry.child,shown)}
+    if row:=core.edit(u.meshes,entry.child);row!=nil {row^=shown} else {core.commands_add(u.commands,entry.child,shown)}
     collider_write(u,entry.child,b.collider)
 }
 

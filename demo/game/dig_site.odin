@@ -59,8 +59,8 @@ dig_site :: proc(
         core.commands_add(commands,run,Dig_Inventory{})
         return
     }
-    inventory:=core.at(inventories,0)
-    site:=core.at(sites,0)
+    inventory:=core.edit_at(inventories,0)
+    site:=core.edit_at(sites,0)
     if site.every>0 && site.dug<site.digs && time.tick%u64(site.every)==0 {
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
         i:=f32(site.dug)
@@ -135,6 +135,6 @@ dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),a
         row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
     }
     for row in 0..<core.count(shown) {
-        if core.at(shown,row)!=next {core.at(huds,row)^=next}
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

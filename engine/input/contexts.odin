@@ -85,7 +85,7 @@ input_contexts :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat),state:
     }
     for row in 0..<core.count(seats) {
         stack:=context_stack(state,core.entity_at(seats,row),seat_local(seats.values[row]))
-        if seats.values[row].contexts!=stack {core.at(seats,row).contexts=stack}
+        if seats.values[row].contexts!=stack {core.edit_at(seats,row).contexts=stack}
     }
 }
 

@@ -271,7 +271,7 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
         canonical:=change_canonical(w,nil,info,current,context.temp_allocator)
         if change_restore_fields(info,raw_data(canonical),raw_data(to),raw_data(from),kept) {
             restored:=change_materialize(w,info,canonical)
-            saved_copy(core.raw_get(table,info,e),raw_data(restored),info.size,transient_ranges(info))
+            saved_copy(core.raw_edit(table,info,e),raw_data(restored),info.size,transient_ranges(info))
         }
         if from_off!=to_off && off!=to_off {
             if to_off {core.raw_disable(table,e)} else {core.raw_enable(table,e)}

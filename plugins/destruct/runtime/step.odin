@@ -101,7 +101,7 @@ destruct_step :: proc(
 @(private)
 entity_end :: proc(c:^Ctx,e:core.Entity,entry:^Entry) {
     physics.proxy_remove(c.state,e)
-    if st:=core.get(c.states,e);st!=nil {
+    if st:=core.edit(c.states,e);st!=nil {
         if physics.breakable_valid(c.view,st.handle) {
             physics.breakable_destroy(c.state,st.handle)
             c.cache.stats.destroyed+=1
@@ -131,9 +131,9 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     cache:=c.cache
     held:Destructible_State
     has:bool
-    held,has=core.get(core.read(c.states),e)
+    held,has=core.get(c.states,e)
     st:=held
-    static,has_mesh:=core.get(core.read(c.meshes),e)
+    static,has_mesh:=core.get(c.meshes,e)
     world,placed:=core.world_of(c.locals,c.parents,e)
     scale:=linalg.abs(world.scale)
     entry:=entry_take(cache,e)
@@ -253,8 +253,8 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     }
     st.failed,st.handle,st.body=false,handle,physics.breakable_body(c.view,handle)
     cache.stats.created+=1
-    if local:=core.get(c.transforms,e);local!=nil {
-        st.written_position,st.written_rotation,st.initial=local.position,local.rotation,local^
+    if local,ok:=core.get(c.transforms,e);ok {
+        st.written_position,st.written_rotation,st.initial=local.position,local.rotation,local
         physics.proxy_set(c.state,e,st.body,local.position,local.rotation)
     }
     count:=min(physics.breakable_pieces(c.view,handle,cache.infos),len(cache.infos))
@@ -298,7 +298,7 @@ shortfall_report :: proc(c:^Ctx,e:core.Entity,handle:physics.Breakable_Handle) {
 
 @(private)
 cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,entry:^Entry) {
-    st:=core.get(c.states,e)
+    st:=core.edit(c.states,e)
     if st==nil {return}
     if entry.prepared==nil {
         _,interior,generated:=slots_of(c.assets,d,static.mesh)
@@ -337,15 +337,15 @@ follow :: proc(c:^Ctx,e:core.Entity) {
     }
     if pose,valid:=physics.body_pose(c.view,st.body);has_local && valid {
         if position,rotation,ok:=physics.local_of(c.locals,c.parents,e,pose);ok {
-            if local.position!=position || local.rotation!=rotation {if output:=core.get(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
+            if local.position!=position || local.rotation!=rotation {if output:=core.edit(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
             written_position,written_rotation=position,rotation
             physics.proxy_written(c.state,e,position,rotation)
         }
     }
     if written_position!=st.written_position || written_rotation!=st.written_rotation {
-        if output:=core.get(c.states,e);output!=nil {output.written_position,output.written_rotation=written_position,written_rotation}
+        if output:=core.edit(c.states,e);output!=nil {output.written_position,output.written_rotation=written_position,written_rotation}
     }
-    if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision {mirror(c,e,core.get(c.states,e),entry,revision)}
+    if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision {mirror(c,e,core.edit(c.states,e),entry,revision)}
     for &group in entry.groups {
         pose,valid:=physics.body_pose(c.view,group.body)
         if !valid {continue}
@@ -358,8 +358,8 @@ follow :: proc(c:^Ctx,e:core.Entity) {
             core.fail("Entity %v is a body of a broken destructible, which owns its Transform: do not write it",group.entity)
         }
         if position,rotation,ok:=physics.local_of(c.locals,c.parents,group.entity,pose);ok {
-            if moved.position!=position || moved.rotation!=rotation {if output:=core.get(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
-            if row.written_position!=position || row.written_rotation!=rotation {if output:=core.get(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
+            if moved.position!=position || moved.rotation!=rotation {if output:=core.edit(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
+            if row.written_position!=position || row.written_rotation!=rotation {if output:=core.edit(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
             physics.proxy_written(c.state,group.entity,position,rotation)
         }
     }
@@ -465,7 +465,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
         if record.mesh!={} {core.add(c.meshes,record.entity,render.Mesh_Renderer{mesh=record.mesh,materials=entry.materials})}
     }
     if !created {
-        if moved:=core.get(c.transforms,record.entity);moved!=nil {physics.proxy_set(c.state,record.entity,group.body,moved.position,moved.rotation)}
+        if moved,ok:=core.get(c.transforms,record.entity);ok {physics.proxy_set(c.state,record.entity,group.body,moved.position,moved.rotation)}
         return
     }
     pose:=core.TRANSFORM_IDENTITY
@@ -487,7 +487,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
     core.add(c.groups,record.entity,row)
     physics.proxy_set(c.state,record.entity,group.body,pose.position,pose.rotation)
     if group.group!=0 {group_identify(c,owner,record.entity,group)}
-    if tint,has:=core.get(core.read(c.tints),owner);has {core.add(c.tints,record.entity,tint)}
+    if tint,has:=core.get(c.tints,owner);has {core.add(c.tints,record.entity,tint)}
 }
 
 // Destroys the entities of a group that no destructible of this world accounts for: what a world that went back in time left.
@@ -521,7 +521,7 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
         target:=request.entity
         body:physics.Body_Handle
         cosmetic:=false
-        if group,has:=core.get(core.read(c.groups),target);has {
+        if group,has:=core.get(c.groups,target);has {
             cosmetic=group.debris
             if c.authority==.Client && (request.kind!=.Remove || !cosmetic) {continue}
             body=physics.body_of(core.ref(c.state),target);target=group.owner
@@ -530,7 +530,7 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
                 continue
             }
         } else if c.authority==.Client || request.kind==.Remove {continue}
-        st,has:=core.get(core.read(c.states),target)
+        st,has:=core.get(c.states,target)
         entry:=entry_find(cache,target)
         if !has || entry==nil || !physics.breakable_valid(c.view,st.handle) {
             if core.has(c.destructibles,target) && (!has || st.waiting || !st.failed) {core.push(retry,request)}
