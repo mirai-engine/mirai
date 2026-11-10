@@ -146,6 +146,7 @@ Net_Session :: struct {
     port:int,       // server: of the socket
     invite:u32,     // server: the token a client must bring, 0: anyone joins; client: the one it brings
     invite_code:string, // server: the code of the invitation, once the router answered
+    invite_lan_code:string, // server: the code its own network joins with, which a router without hairpin needs
     mapping:wire.Port_Mapping, // server: of the port, when it made its own invitation
     mapping_on:bool,
     now:f64,
@@ -521,6 +522,7 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
+    delete(s.invite_lan_code,allocator);s.invite_lan_code=""
     if s.mapping_on {wire.mapping_close(&s.mapping)}
     s.mapping_on=false
     if s.status_file!=nil {
@@ -589,7 +591,10 @@ report_update :: proc(s:^Net_Session,app:^host.App) {
         told.served=true
         fmt.printfln("mirai: server on UDP port %d, protocol %016x",s.port,s.protocol.hash)
     }
-    if invited {fmt.printfln("mirai: invitation %s",s.invite_code)}
+    if invited {
+        if s.invite_lan_code==s.invite_code {fmt.printfln("mirai: invitation %s",s.invite_code)}
+        else {fmt.printfln("mirai: invitation %s (from the internet), %s (from this network)",s.invite_code,s.invite_lan_code)}
+    }
     if s.joined+s.left!=told.seen {
         told.seen=s.joined+s.left
         fmt.printfln("mirai: %d connections (%d arrived, %d left, %d without notice)",s.connections,s.joined,s.left,s.lost)
@@ -614,10 +619,12 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
     rtt:=0.0
     if s.mode==.Client && s.host_ready {rtt=wire.clock_state(&s.host).rtt*1000}
     // The UDP bytes of the whole host both ways: the bandwidth of a run.
-    sent,received:u64
+    // And the connection attempts it denied, or left without an answer.
+    sent,received,refused,dropped:u64
     if s.host_ready {
         totals:=wire.host_stats(&s.host)
         sent,received=totals.bytes_sent,totals.bytes_received
+        refused,dropped=totals.handshakes_refused,totals.handshakes_dropped
     }
     // Of the client, how far its tick runs ahead of the estimate of the
     // server's and why (bias, jitter), and the corrections it could not
@@ -628,8 +635,8 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
         ahead,bias,jitter=f64(tick)-clock.server,clock.bias,clock.jitter*1000
         margin,margin_low=wire.clock_margin_take(&s.host)
     }
-    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d blended=%d rtt_ms=%.0f sent=%d received=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d overtaken=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
-        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
+    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d blended=%d rtt_ms=%.0f sent=%d received=%d refused=%d dropped=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d overtaken=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
+        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,refused,dropped,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
     transforms:=core.world_table_of(w,core.Transform)
     line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:bool) {
         local:=core.get(transforms,e)
@@ -658,12 +665,17 @@ invite_update :: proc(s:^Net_Session) -> bool {
     if !s.host_ready || s.mode!=.Server || s.invite==0 || s.invite_code!="" {return false}
     if s.mapping_on && wire.mapping_poll(&s.mapping).phase==.Pending {return false}
     s.invite_code=wire.invite_encode(wire.address_reachable(&s.mapping,s.mapping_on,s.port),s.invite,s.allocator)
+    s.invite_lan_code=wire.invite_encode(wire.address_lan(s.port),s.invite,s.allocator)
     return true
 }
 
 // The code of the invitation of this server, for the game to show: empty
 // without one (--invite), and while the router is still being asked.
 invite_code :: proc(s:core.Ref(Net_Session)) -> string {return s.invite_code}
+
+// The code of the invitation for the network of this server: the one a player
+// on it joins with when the router does not send its own traffic back to it.
+invite_lan_code :: proc(s:core.Ref(Net_Session)) -> string {return s.invite_lan_code}
 
 // Whether this application is a client of a session now.
 is_client :: proc(s:core.Ref(Net_Session)) -> bool {return s.host_ready && s.mode==.Client}
