@@ -60,7 +60,7 @@ Scenes:
 - **`destruction`**: destructible walls and blocks that the cubes the player throws break.
 - **`dig`**: a grass Volume over earth over rock with ore pockets, which digs a pit by itself when a
   Play starts; Use digs where the player looks. It raises dust of each layer's color, drops pieces
-  of earth and rock and ore drops that are picked up on passing (`terrain_vfx` and
+  of earth and rock and ore drops that are picked up on passing (`Terrain_Dust` and
   `terrain_debris`).
 - **`physics`**: gallery of 23 stations.
 - **`vfx`**: gallery of the `vfx` plugin (`game/vfx_gallery.odin`), five exhibits that the camera

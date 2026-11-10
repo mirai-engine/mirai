@@ -10,7 +10,6 @@ import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 import terrain "plugins:terrain/runtime"
 import debris "plugins:terrain_debris/runtime"
-import terrain_vfx "plugins:terrain_vfx/runtime"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
 
@@ -56,8 +55,8 @@ dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asse
 
 // A Volume to dig, standing in the open: grass over soil over rock with
 // pockets of ore, the dust each raises and the pieces and drops each leaves
-// (plugins terrain, terrain_vfx and terrain_debris), and a site that digs a
-// pit by itself at the start of a Play (game/dig_site.odin).
+// (plugins terrain and terrain_debris), and a site that digs a pit by itself
+// at the start of a Play (game/dig_site.odin).
 write_dig_scene :: proc(o:^Out) {
     os.make_directory_all(path(o,"assets/dig"))
     grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
@@ -112,7 +111,7 @@ write_dig_scene :: proc(o:^Out) {
     asset.builder_set(&s,site,terrain.Terrain{source=terrain_id,solid=true})
     site_dig:=game.DIG_SITE_DEFAULT
     asset.builder_set(&s,site,site_dig)
-    raised:=terrain_vfx.TERRAIN_DUST_DEFAULT
+    raised:=terrain.TERRAIN_DUST_DEFAULT
     raised.layers[DIG_GRASS].color={0.62,0.66,0.45,1}
     raised.layers[DIG_SOIL].color={0.78,0.62,0.45,1}
     raised.layers[DIG_ROCK].color={0.8,0.8,0.78,1}
@@ -127,7 +126,7 @@ write_dig_scene :: proc(o:^Out) {
 
     dust_entity:=asset.builder_entity(&s,"Dig dust")
     asset.builder_set(&s,dust_entity,vfx.Particle_Emitter{particle=dust_id,active=true,loop=true})
-    channel:=vfx.Particle_Channel{name=terrain_vfx.CHANNEL_DUST}
+    channel:=vfx.Particle_Channel{name=terrain.CHANNEL_DUST}
     asset.builder_set(&s,dust_entity,channel)
     spawn_point(&s,{0,0.2,7})
     asset.builder_save(&s,path(o,"assets/dig/dig.scene"))

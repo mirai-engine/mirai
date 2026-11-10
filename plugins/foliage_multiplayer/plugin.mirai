@@ -1,7 +1,0 @@
-{
-  "name": "foliage_multiplayer",
-  "version": "0.1.0",
-  "dependencies": ["foliage", "multiplayer"],
-  "parts": ["Runtime"],
-  "automatic": true
-}

@@ -91,6 +91,7 @@ declared_read :: proc(d:^Declared,options:map[string]string,editor:bool) -> (inv
         case "":       d.replication=.All
         case "owner":  d.replication=.Owner
         case "others": d.replication=.Others
+        case "object": d.replication=.Object
         case:          invalid="replicated"
         }
     }

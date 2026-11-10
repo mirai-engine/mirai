@@ -29,7 +29,10 @@ A game is a struct in memory and a list of functions that transform it
 - Teleporting or placing an entity without knowing who owns its `Transform` (`place`, `Places`):
   [requested places](references/core.md#requested-places).
 - Rays and spheres against the world regardless of physics (`World_Queries`, `world_query`):
-  [world queries](references/core.md#world-queries).
+  [world queries](references/core.md#world-queries); the ground regardless of terrain
+  (`Ground_Queries`, `ground_query`, unloaded and changed boxes):
+  [ground](references/core.md#ground); births of effects regardless of vfx (`Births`,
+  `Birth_Channel`): [births](references/core.md#births).
 - Transforms and hierarchy: [transform](references/core.md#transform-and-hierarchy); children,
   subtrees, ancestors and world poses: [queries](references/core.md#queries).
 - Code that does not know the game types: [reflection](references/core.md#world-reflection).

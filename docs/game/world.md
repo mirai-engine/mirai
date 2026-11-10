@@ -26,8 +26,8 @@ editor.
 ## Plugins
 
 In `project.mirai`: `"plugins": ["spawn","physics","terrain","foliage","water","fog"]`.
-`foliage_terrain` (foliage standing on terrain) turns itself on when both are listed; `water`
-brings `fog`. A plugin not listed skips its components in a scene without an error.
+Foliage stands on whatever ground the world has (terrain); `water` brings `fog`. A plugin not
+listed skips its components in a scene without an error.
 
 ## Light
 

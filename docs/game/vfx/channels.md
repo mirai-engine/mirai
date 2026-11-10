@@ -7,24 +7,22 @@ An entity with `Particle_Channel{name=CHANNEL_IMPACTS}` next to its `Particle_Em
 particles of its effect at every birth pushed to that channel, besides the emitter's own.
 
 ```odin
-import vfx "plugins:vfx/runtime"
-
-CHANNEL_IMPACTS :: vfx.Particle_Channel_Name(16) // game channels start at vfx.CHANNEL_GAME
+CHANNEL_IMPACTS :: core.Birth_Channel(16) // game channels start at core.CHANNEL_GAME
 
 @(step="fixed")
-impacts :: proc(hits:core.Read(Hit), channels:^vfx.Particle_Channels) {
+impacts :: proc(hits:core.Read(Hit), births:^core.Births) {
     for i in 0..<core.count(hits) {
         hit:=core.at(hits, i)
-        vfx.channel_emit(channels, CHANNEL_IMPACTS, vfx.Channel_Birth{
-            position=hit.point, velocity=hit.normal*6, count=12,
+        core.push(&births.queue, core.Birth{
+            channel=CHANNEL_IMPACTS, position=hit.point, velocity=hit.normal*6, count=12,
         })
     }
 }
 ```
 
-- `Channel_Birth`: `position`, `velocity` (added to the effect's), `color` and `size` (multiply
-  the effect's; zero means white and one), `count` (zero is one), `values` for the effect's
-  program.
+- `core.Birth`: `channel`, `position`, `velocity` (added to the effect's), `color` and `size`
+  (multiply the effect's; zero means white and one), `count` (zero is one), `values` for the
+  effect's program. The queue is in `core`: code that pushes births does not import `vfx`.
 - The emitter that listens is in the scene (a prefab or the editor); `Particle_Channel` has
   `silent` for an effect whose program reads the births itself instead of starting particles.
 

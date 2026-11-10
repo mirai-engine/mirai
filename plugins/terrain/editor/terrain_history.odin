@@ -28,7 +28,7 @@ head_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,head:^terra
 
 @(private)
 head_read :: proc(fresh:^terrain.Source,a:^host.Assets,id:base.Asset_Id,head:^terrain.Source) -> bool {
-    return terrain.terrain_read(fresh,a,id,head.allocator,editable=false)
+    return terrain.terrain_read(fresh,a,id,head.allocator)
 }
 
 Page_Swap :: struct($T:typeid) {index:int,page:terrain.Page(T)} // index: the id of the page in its grid
@@ -140,7 +140,7 @@ step_make :: proc(step:^Step,head,edited:^terrain.Source,low,high:[2]int,all:boo
     step.allocator=allocator
     if !step_shaped(head,edited) {
         copied:terrain.Source
-        if !terrain.source_clone(&copied,edited,allocator,editable=false) {return false}
+        if !terrain.source_clone(&copied,edited,allocator) {return false}
         step.whole,step.other=true,head^
         head^=copied
         return true
@@ -235,7 +235,7 @@ steps_rebase :: proc(steps:^[dynamic]Step,id:base.Asset_Id,revision:u32,head,fre
         if !step_shaped(head,fresh) {
             // What the revision before held, whole: the head with the step put back.
             before:terrain.Source
-            if !terrain.source_clone(&before,head,allocator,editable=false) {step_destroy(step);ordered_remove(steps,i);continue}
+            if !terrain.source_clone(&before,head,allocator) {step_destroy(step);ordered_remove(steps,i);continue}
             step_apply(step,&before)
             from:=step.from
             step_destroy(step)
