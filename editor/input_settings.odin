@@ -51,11 +51,21 @@ input_settings_load :: proc(s:^Session) {
     st.loaded,st.unsaved,st.listen=true,false,{}
 }
 
-// Input_Settings of the edited World; nil without it.
+// Input_Settings of the edited World, to read; nil without it.
 @(private)
 input_settings_of :: proc(s:^Session) -> ^input.Input_Settings {
     if s.info==nil || s.edit_world==nil {return nil}
-    return core.world_storage_of(edited_world(s),input.Input_Settings)
+    at,found:=s.info.storages_by_type[input.Input_Settings]
+    if !found || s.info.storages[at].place!=.World {return nil}
+    return (^input.Input_Settings)(uintptr(s.edit_world)+s.info.storages[at].offset)
+}
+
+// After a write of Input_Settings of the edited World: its revision moves, so
+// the maps build again, and the games that play take it.
+@(private)
+input_settings_written :: proc(s:^Session) {
+    core.world_storage_of(edited_world(s),input.Input_Settings)
+    settings_runs_take(s,settings_touched(settings_all(s),"","Input_Settings"))
 }
 
 // What drives an action: its entry in Input_Settings, or the default of the code.
@@ -90,7 +100,7 @@ input_drive :: proc(s:^Session,action:input.Action,driven:input.Action_Bindings)
         notify(s,fmt.tprintf("Input_Settings holds %d actions and names of up to %d bytes: %q does not fit",input.ACTION_CAPACITY,input.ACTION_NAME,name))
         return
     }
-    settings_runs_take(s,settings_touched(settings_all(s),"","Input_Settings"))
+    input_settings_written(s)
 }
 
 // The names of the actions the code declares, for an error that lists them.
@@ -677,12 +687,13 @@ input_timing_rows :: proc(s:^Session) {
         row_begin(ctx,row.label)
         value:=f64(row.value^>0?row.value^:row.default)
         r:=ui.number_field(ctx,ui.id(ctx,"ticks",i+1),&value,{speed=0.01,min=0.01,max=f64(input.SECONDS_MAX),has_min=true,has_max=true})
-        if r.changed {row.value^=f32(value)==row.default?0:f32(value);st.unsaved=true}
+        if r.changed {row.value^=f32(value)==row.default?0:f32(value);st.unsaved=true;input_settings_written(s)}
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
         if row.value^==0 {
             ui.spacer(ctx,REVERT_SIDE,1)
         } else if ui.button(ctx,ui.id(ctx,"ticks_restore",i+1),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
             row.value^=0
+            input_settings_written(s)
             input_settings_commit(s)
         }
         row_end(ctx)

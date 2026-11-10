@@ -193,6 +193,7 @@ action_follow :: proc(s:^Session,info:^core.World_Info,old,name:string) -> Names
     if settings:=input_settings_of(s);settings!=nil && s.has_project {
         if entry:=input.input_settings_find(settings,old);entry!=nil {
             base.text_set(entry.action[:],name)
+            input_settings_written(s)
             if !settings_save(s) {return .Write_Failed}
         }
     }

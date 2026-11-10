@@ -103,7 +103,7 @@ inspector use them.
   An old `input.mirai` in a project is not read: the map says to move its bindings there
   (`input.old_file`).
 - **Building.** `input_map_build` builds the map from the defaults and the setting, the first time
-  and whenever the setting changes (by its hash), without a game function. An entry the code does
+  and whenever the setting is written (its revision), with no game function. An entry the code does
   not take (an action it does not declare, a binding its kind does not read) is the world problem
   `input.settings`, which names the action and the fix, and that action keeps its default; the
   other entries hold. `settings.set` refuses such an entry with the same message

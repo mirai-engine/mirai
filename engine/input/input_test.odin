@@ -79,16 +79,20 @@ input_settings_replace_the_defaults_of_the_actions_they_name :: proc(t:^testing.
     testing.expect(t,action(&actions,HIT).released)
     testing.expect(t,action(&actions,Action(50))=={},"a value the map does not have is released")
 
+    // A frame that wrote nothing builds nothing; a write of the setting moves its revision.
     app:host.App
     app.info=&info
     built:Input_Map
-    input_map_build(&built,core.ref(&settings),&app,nil)
+    revision:=u64(1)
+    written:=core.Stamp(Input_Settings){&revision}
+    input_map_build(&built,core.ref(&settings),written,&app,nil)
     testing.expect(t,built.built && input_map_has(&built,HIT,.Button))
     built.actions[JUMP]={}
-    input_map_build(&built,core.ref(&settings),&app,nil)
-    testing.expect_value(t,built.actions[JUMP],Action_Bindings{})
     input_settings_remove(&settings,"jump")
-    input_map_build(&built,core.ref(&settings),&app,nil)
+    for _ in 0..<3 {input_map_build(&built,core.ref(&settings),written,&app,nil)}
+    testing.expect_value(t,built.actions[JUMP],Action_Bindings{})
+    revision+=1
+    input_map_build(&built,core.ref(&settings),written,&app,nil)
     testing.expect_value(t,built.actions[JUMP].bindings[0].inputs[0],Input_Code.Space)
 }
 
@@ -336,7 +340,7 @@ an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
     settings:Input_Settings
     m:Input_Map
     problems:core.Problems
-    input_map_build(&m,core.ref(&settings),&app,&problems)
+    input_map_build(&m,core.ref(&settings),{},&app,&problems)
     old:=core.problem_find(&problems,core.NONE,"input.old_file")
     testing.expect(t,old!=nil && strings.contains(core.problem_text(old),"Input_Settings of") && strings.contains(core.problem_text(old),project.SETTINGS_FILE))
 }

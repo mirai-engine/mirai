@@ -202,7 +202,7 @@ Input_Map :: struct {
     declared:Action_Mask,
     tap_seconds,hold_seconds:f32, // 0: TAP_SECONDS and HOLD_SECONDS
     built:bool,
-    from:u64, // the hash of the Input_Settings it was built from
+    seen:core.Seen, // the revision of Input_Settings it was built from
 }
 
 // What every action of the map is doing this tick, by value of Action.
@@ -290,13 +290,14 @@ seat_vector :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> math.Vec2 {retur
 @(private) OLD_BINDINGS_FILE :: "input.mirai"
 
 // Builds the map from the defaults of the code and Input_Settings, the first
-// time and whenever the setting changes.
+// time and whenever the setting was handed out to write (its revision moved):
+// a frame that wrote nothing looks at no byte of it.
 @(step="input",stage="begin")
-input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),app:^host.App,problems:^core.Problems) {
-    from:=base.hash64(mem.ptr_to_bytes(settings.ptr))
-    if bindings.built && bindings.from==from {return}
+input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),written:core.Stamp(Input_Settings),app:^host.App,problems:^core.Problems) {
+    seen:=bindings.seen
+    if !core.touched(written,&seen) && bindings.built {return}
     input_map_make(bindings,app.info,settings.ptr,problems)
-    bindings.from=from
+    bindings.seen=seen
     if app.root=="" {return}
     if old:=project.path(app.root,OLD_BINDINGS_FILE,allocator=context.temp_allocator);os.is_file(old) {
         input_report(problems,"input.old_file","%s is no longer read: its bindings go in the section Input_Settings of %s (Project Settings > Input, or settings.set, writes them); bind the actions there again and delete %s",old,project.path(app.root,project.SETTINGS_FILE,allocator=context.temp_allocator),old)
