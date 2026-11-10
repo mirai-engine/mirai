@@ -54,7 +54,7 @@ drop_free :: proc(tool:^Drop_Tool) {
 @(private)
 api_drop_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,DROP_TOOL,"Drop",.Import,{key=.P,set=true})
-    editor.api_method_register(s,Drop_Params,{name="physics.drop",summary="Ends the drop a person holds open with the Drop tool: Confirm keeps the dropped meshes where they are as one step of undo, Cancel takes them away. An agent drops with physics.settle.",run=api_drop})
+    editor.api_method_register(s,Drop_Params,{name="physics.drop",summary="The Confirm and Cancel of the Drop tool, for the person who holds a drop open: Confirm keeps the dropped meshes where they are as one step of undo, Cancel takes them away. A call of an agent finds none open, since an edit of an agent ends what the person left open; an agent drops with physics.settle.",run=api_drop})
     editor.command_bind(s,{name="drop_confirm",method="physics.drop",params=`{"end":"Confirm"}`,label="Confirm",state=drop_state,scene=true})
     editor.command_bind(s,{name="drop_cancel",method="physics.drop",params=`{"end":"Cancel"}`,label="Cancel",state=drop_state,scene=true})
 }
@@ -175,7 +175,8 @@ drop_ready :: proc(tool:^Drop_Tool) {
 drop_pointer :: proc(s:^editor.Session,tool:^Drop_Tool,input:core.Input) {
     drop_ready(tool)
     _,_,tool.press=editor.tool_pointer(s,DROP_TOOL,input)
-    tool.held=(tool.held || tool.press) && s.viewport.hovered && core.mouse_down(input,.Left)
+    // Held from a press on the scene until it is let go: while the button is down the viewport is not hovered.
+    tool.held=(tool.held || tool.press) && core.mouse_down(input,.Left)
 }
 
 @(step="frame")
@@ -183,7 +184,7 @@ drop_frame :: proc(s:^editor.Session,tool:^Drop_Tool,world:core.World_Ref,frame:
     if tool.copy!=nil {
         if !drop_open(s,tool) || (s.gui.begun && ui.escape(s.gui.ctx)) {drop_end(s,tool,false)} else if !drop_advance(s,tool,frame.dt) {editor.notify(s,"Physics stopped while the meshes fell")}
     }
-    if editor.playing(s) || !editor.tool_on(s,DROP_TOOL) || !s.viewport.hovered || s.viewport.pick.active {return}
+    if editor.playing(s) || !editor.tool_on(s,DROP_TOOL) || !(s.viewport.hovered || tool.held) || s.viewport.pick.active {return}
     hit:=editor.pick_point(s,world,s.viewport.pointer)
     if hit.entity==core.NONE || hit.indicator {tool.drop_time=0;return}
     if revision:=s.app.assets!=nil?s.app.assets.revision:0;tool.measured_mesh!=tool.mesh || tool.measured_revision!=revision {
@@ -222,26 +223,27 @@ drop_panel :: proc(s:^editor.Session,tool:^Drop_Tool,input:core.Input) {
     drop_ready(tool)
     ctx:=g.ctx
     id:=ui.id_derive(ctx,DROP_SCOPE,"panel")
-    if !ui.panel(ctx,id,editor.tool_panel(g,id)) {return}
-    ui.id_push(ctx,id)
-    defer ui.id_pop(ctx)
-    ui.section(ctx,"Drop")
-    if drop_open(s,tool) {
-        ui.section(ctx,tool.ticks>=SETTLE_TICKS?"Paused":tool.resting?"Resting":"Falling")
-        editor.command_button(s,"drop_confirm",{label="Confirm",style=.Field,width=-1,center=true})
-        editor.command_button(s,"drop_cancel",{label="Cancel",style=.Field,width=-1,center=true})
-    }
-    editor.row_begin(ctx,"Mesh")
-    _=editor.geometry_choice(s,ui.id(ctx,"mesh"),&tool.mesh)
-    editor.row_end(ctx)
-    speed,height,scale:=f64(tool.speed),f64(tool.height),f64(tool.scale)
-    if ui.property(ctx,"Speed") {
-        if ui.number_field(ctx,ui.id(ctx,"speed"),&speed,{min=0.1,max=60,has_min=true,has_max=true,speed=0.1,unit="/s"}).changed {tool.speed=f32(speed)}
-    }
-    if ui.property(ctx,"Drop height") {
-        if ui.number_field(ctx,ui.id(ctx,"height"),&height,{min=0,max=1000,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.height=f32(height)}
-    }
-    if ui.property(ctx,"Scale") {
-        if ui.number_field(ctx,ui.id(ctx,"scale"),&scale,{min=0.001,max=1000,has_min=true,has_max=true,speed=0.05}).changed {tool.scale=f32(scale)}
+    if ui.panel(ctx,id,editor.tool_panel(g,id)) {
+        ui.id_push(ctx,id)
+        defer ui.id_pop(ctx)
+        ui.section(ctx,"Drop")
+        if drop_open(s,tool) {
+            ui.section(ctx,tool.ticks>=SETTLE_TICKS?"Paused":tool.resting?"Resting":"Falling")
+            editor.command_button(s,"drop_confirm",{label="Confirm",style=.Field,width=-1,center=true})
+            editor.command_button(s,"drop_cancel",{label="Cancel",style=.Field,width=-1,center=true})
+        }
+        editor.row_begin(ctx,"Mesh")
+        _=editor.geometry_choice(s,ui.id(ctx,"mesh"),&tool.mesh)
+        editor.row_end(ctx)
+        speed,height,scale:=f64(tool.speed),f64(tool.height),f64(tool.scale)
+        if ui.property(ctx,"Speed") {
+            if ui.number_field(ctx,ui.id(ctx,"speed"),&speed,{min=0.1,max=60,has_min=true,has_max=true,speed=0.1,unit="/s"}).changed {tool.speed=f32(speed)}
+        }
+        if ui.property(ctx,"Drop height") {
+            if ui.number_field(ctx,ui.id(ctx,"height"),&height,{min=0,max=1000,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.height=f32(height)}
+        }
+        if ui.property(ctx,"Scale") {
+            if ui.number_field(ctx,ui.id(ctx,"scale"),&scale,{min=0.001,max=1000,has_min=true,has_max=true,speed=0.05}).changed {tool.scale=f32(scale)}
+        }
     }
 }
