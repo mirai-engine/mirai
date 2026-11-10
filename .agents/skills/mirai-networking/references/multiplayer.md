@@ -510,9 +510,9 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
   `max_resimulate` in the frame, in `resimulate_budget` and in the history.
   - Critical: one's own, or one that shared a simulation group (`core.Motion`) with what the client
     drives in the last `critical_ticks`: what touched it or is joined to it by a joint.
-  - The return is `host.app_world_replace`, which copies into a separate world and swaps it;
-    without memory the world does not change, the correction is deferred and it is the
-    `net.rollback` problem.
+  - The return is `host.app_world_replace` with the marks of that copy, which copies into a
+    separate world what changed since and swaps it; without memory the world does not change, the
+    correction is deferred and it is the `net.rollback` problem.
   - The `fixed` loop runs again with the saved local input and, at the end of each tick, the pose,
     components and joints of that authoritative tick are applied. Physics takes the pose at the
     start of the next tick, and the record of that tick is the server's state.

@@ -1372,7 +1372,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
     present_input:core.Input
     if input!=nil {present_input=input^}
     restored:=&c.frames[int(start)%len(c.frames)]
-    if !host.app_world_replace(app,w.data,restored.world) {
+    if !host.app_world_replace(app,w.data,restored.world,restored.whole?nil:restored.marks) {
         for &x in c.replicas[:c.replica_high] {x.corrected=false}
         core.report(s.problems,core.NONE,"net.rollback","a correction of the server could not go back to tick %d: out of memory for the copy of the world, so the prediction keeps its error; free memory",start)
         return false

@@ -145,6 +145,7 @@ App :: struct {
     worlds:[dynamic]World_Slot, // the Worlds it made, by the index of their core.World_Id
     reserved:map[rawptr]int,    // the address space of each struct of a place it made (world_alloc)
     scratch:rawptr,  // a World app_world_replace prepares the replacements in; made the first time
+    scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
     animation_cache:string,          // App_Desc.animation_cache
     start_ns:u64,
@@ -461,25 +462,31 @@ world_unregister :: proc(app:^App,data:rawptr) {
 // without allocating. False when memory ran out: dst stays as it was. What
 // the World does not copy (copy=false) stays in dst. The traded contents wait
 // in that World for the next replacement, which copies over them without
-// allocating when they fit.
-app_world_replace :: proc(app:^App,dst,src:rawptr) -> bool {
+// allocating when they fit. marks: when src is a copy core.world_copy_changed
+// keeps of dst, its marks: only what dst changed since that copy is copied
+// and traded, and the readers of the rest see no change (core.world_restore).
+app_world_replace :: proc(app:^App,dst,src:rawptr,marks:[]core.Copy_Mark=nil) -> bool {
     if dst==src {return true}
     if dst==nil || src==nil {return false}
     if app.scratch==nil {
         if app.scratch=app_world_create(app);app.scratch==nil {return false}
     }
     context.allocator=app.allocator
-    if !core.world_copy(app.info,app.scratch,src) {return false}
-    core.world_swap(app.info,dst,app.scratch)
-    return true
+    ok,mixed:=core.world_restore(app.info,dst,src,app.scratch,marks)
+    app.scratch_mixed=mixed
+    return ok
 }
 
 // Frees the World app_world_replace keeps: what a replacement that happens
 // seldom, as opening a scene, need not hold until the next one.
 app_world_scratch_free :: proc(app:^App) {
     if app.scratch==nil {return}
-    app_world_free(app,app.scratch)
-    app.scratch=nil
+    // Parts of several Worlds are no World to run a release phase on: it runs on it cleared.
+    if app.scratch_mixed && !core.world_clear(app.info,app.scratch) {
+        world_unregister(app,app.scratch)
+        world_free(app,app.scratch,.World)
+    } else {app_world_free(app,app.scratch)}
+    app.scratch,app.scratch_mixed=nil,false
 }
 
 // An Editor_World of the project, initialized.

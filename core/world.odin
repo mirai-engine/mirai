@@ -30,6 +30,7 @@ Table_Info :: struct {
     far:bool,    // @(component,far): its entity draws a far form of its own, which stays when its section unloads
     base:bool,   // a component of core, the base of every entity: on while its entity is disabled
     locks:[]Lock, // @(component,locks="..."): the rows of other tables of its struct a row on of this one owns
+    flat:bool,   // world_info_index found that a value holds nothing behind a pointer: a copy of its bytes is a copy
 }
 
 // Which ends of a network session receive the values of a component of the
@@ -95,6 +96,7 @@ Storage_Info :: struct {
     game:bool,     // the game of the project declares it, not the engine or a plugin
     local:bool,    // @(storage,copy=false): no copy, swap or clear of the World touches it
     procs:Storage_Procs,
+    flat:bool,     // as that of Table_Info
 }
 
 // The procedures the attributes of a storage name, in place of what core
@@ -520,6 +522,7 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
 // Copies a dynamic array of values of a type, as value_copy copies each.
 array_copy :: proc(d,s:^runtime.Raw_Dynamic_Array,elem:^runtime.Type_Info) -> bool {
     if d==s {return true}
+    if value_flat(elem) {return array_copy_flat(d,s,elem.size,elem.align)}
     size:=elem.size
     if d.allocator.procedure==nil {d.allocator=context.allocator}
     context.allocator=d.allocator
@@ -528,11 +531,25 @@ array_copy :: proc(d,s:^runtime.Raw_Dynamic_Array,elem:^runtime.Type_Info) -> bo
     for i in s.len..<d.len {value_free(rawptr(uintptr(d.data)+uintptr(i*size)),elem)}
     if s.len>d.len {mem.zero(rawptr(uintptr(d.data)+uintptr(d.len*size)),(s.len-d.len)*size)}
     d.len=s.len
-    if value_flat(elem) {mem.copy(d.data,s.data,s.len*size);return true}
     for i in 0..<s.len {
         offset:=uintptr(i*size)
         if !value_copy(rawptr(uintptr(d.data)+offset),rawptr(uintptr(s.data)+offset),elem) {return false}
     }
+    return true
+}
+
+// Copies a dynamic array of values of size bytes that hold nothing behind a
+// pointer.
+array_copy_flat :: proc(d,s:^runtime.Raw_Dynamic_Array,size,align:int) -> bool {
+    if d==s {return true}
+    if d.allocator.procedure==nil {d.allocator=context.allocator}
+    if s.len>0 && size>0 && s.len>max(int)/size {return false}
+    if d.cap<s.len {
+        context.allocator=d.allocator
+        if !runtime.__dynamic_array_reserve(d,size,align,s.len) {return false}
+    }
+    d.len=s.len
+    if size>0 && s.len>0 {mem.copy(d.data,s.data,s.len*size)}
     return true
 }
 

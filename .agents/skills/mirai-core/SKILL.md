@@ -184,8 +184,8 @@ A game is a struct in memory and a list of functions that transform it
   keep there only what that return trip needs ([attributes](references/generator.md#attributes)).
 - **A storage of a `World` is written by whoever received it with `^S` or asked `core` for it**
   (`world_storage*`): that moves its revision, and a copy of what changed takes it again. Reaching
-  one by its offset, or writing through a `core.Ref`, leaves a rollback with the older value
-  ([reflection](references/core.md#world-reflection)).
+  one by its offset, or writing through a `core.Ref`, leaves a rollback with the value of another
+  tick ([reflection](references/core.md#world-reflection)).
 - **Clearing a world takes its derived storages to their start.** Loading a scene or a save and
   opening a document call `core.world_clear`; what remains is only what `@(storage,keep)` says
   (state of the run), the settings and what is not copied. What a save must keep goes in a

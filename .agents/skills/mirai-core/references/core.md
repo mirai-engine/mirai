@@ -83,7 +83,9 @@ another into its place, with its stamp, without mixing the two sections.
   It relies on the stamps identifying the write across copies of the same world, even after a
   `table_swap`: a world into which another one of a different origin was copied is copied whole
   before it is used again. After `host.app_world_replace`, `copy_marks_follow` keeps the marks
-  valid.
+  valid. Going back to such a copy with its marks brings back only what the world changed since
+  ([replace](host.md#the-application)): a table says it changed with its `version` and its
+  `layout`, which also move when who owns its rows does, and a storage with its revision.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in

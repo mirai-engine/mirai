@@ -119,16 +119,16 @@ simulation_reset :: proc(s:^Simulation) {}
         found,_,_:=strings.partition(rest,"\n")
         return found
     }
-    testing.expect_value(t,line(text,"cache"),`.World,.None,nil,false,nil,false,false,"",false,false,{}}`)
+    testing.expect_value(t,line(text,"cache"),`.World,.None,nil,false,nil,false,false,"",false,false,{},false}`)
     testing.expect(t,strings.contains(text,"free_tally :: proc(value:rawptr) {p_core.tally_free(cast(^p_core.Tally)value)}"),text)
-    testing.expect_value(t,line(text,"tally"),`.World,.None,default_tally,false,nil,false,false,"",false,false,{free=free_tally}}`)
+    testing.expect_value(t,line(text,"tally"),`.World,.None,default_tally,false,nil,false,false,"",false,false,{free=free_tally},false}`)
     testing.expect(t,strings.contains(text,"default_paced :: proc") && strings.contains(text,",default_paced,"),"a table starts its rows at the default of its component")
     testing.expect(t,strings.contains(text,"reset_simulation :: proc(value:rawptr) {p_core.simulation_reset(cast(^p_core.Simulation)value)}"),text)
-    testing.expect_value(t,line(text,"simulation"),`.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_simulation}}`)
-    testing.expect_value(t,line(text,"clock"),`.World,.None,nil,false,nil,false,true,"",false,false,{}}`)
-    testing.expect_value(t,line(text,"progress"),`.World,.None,nil,false,nil,true,true,"",false,false,{}}`)
-    testing.expect_value(t,line(text,"settings"),`.World,.Project,nil,false,nil,false,false,"",false,false,{}}`)
-    testing.expect_value(t,line(text,"world_id"),`.World,.None,nil,false,nil,false,false,"",false,true,{}}`)
+    testing.expect_value(t,line(text,"simulation"),`.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_simulation},false}`)
+    testing.expect_value(t,line(text,"clock"),`.World,.None,nil,false,nil,false,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"progress"),`.World,.None,nil,false,nil,true,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"settings"),`.World,.Project,nil,false,nil,false,false,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"world_id"),`.World,.None,nil,false,nil,false,false,"",false,true,{},false}`)
     // keep and reset are of storages of the World that do not survive already.
     wrong:=`package core
 @(storage,host,keep) Shared_State :: struct {}

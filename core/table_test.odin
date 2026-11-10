@@ -138,7 +138,10 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     locks:=[1]Lock{{offset=lock_offset(&names,&owner),id=1,target="Transform",names={"","Test owner"}}}
     names.locks=locks[:]
     add(&names,a,name_make("a"));add(&names,b,name_make("b"));add(&names,c,name_make("c"))
+    unowned:=owner.version
     table_settle(&names,&es)
+    testing.expect(t,owner.version>unowned,"who owns its rows is part of what a table holds: a copy of what changed takes it")
+    owned:=owner.version
     prior_version,prior_layout,last_stamp:=names.version,names.layout,names.stamps[2]
     tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
@@ -153,6 +156,7 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     testing.expect(t,names.version>prior_version && names.layout>prior_layout)
     testing.expect_value(t,owners[entity_index(b)],Row_Owner{})
     testing.expect_value(t,owners[entity_index(c)].id,u16(1))
+    testing.expect(t,owner.version>owned)
     testing.expect(t,!raw_drop(raw(&names),type_info_of(Name),b))
     testing.expect(t,!raw_drop(nil,type_info_of(Name),a) && !raw_drop(raw(&names),nil,a) && !raw_drop(raw(&names),type_info_of(Name),NONE))
     remove(&names,a)

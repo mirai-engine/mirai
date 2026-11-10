@@ -1738,6 +1738,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         if t.kind!=.Component || !included(t,editor) {continue}
         fields:=len(t.fields)>0?fmt.tprintf("fields_%s[:]",t.field):"nil"
         game:=strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/")
+        // The last of each, flat, is found by core.world_info_index.
         locks:="nil"
         if len(t.locks)>0 {
             locks=fmt.tprintf("locks_%s",t.field)
@@ -1747,14 +1748,14 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 fmt.sbprintf(w,"    %s[%d]={{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,LOCK_NAMES[:],\"%s\"}}\n",locks,li,struct_names[int(t.place)],target.field,struct_names[int(t.place)],t.field,t.lock_id,target.name)
             }
         }
-        fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
+        fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
         i+=1
     }
     fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,count_kind(g,.Storage,editor))
     i=0
     for t in g.types {
         if t.kind!=.Storage || !included(t,editor) {continue}
-        fmt.sbprintf(w,"    storages[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}}}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.setting,defaults[t] or_else "nil",t.by_world,for_device[t] or_else "nil",t.persist,t.keep,project.import_plugin(t.pkg.path),strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/"),t.copy=="false",procs[t])
+        fmt.sbprintf(w,"    storages[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.setting,defaults[t] or_else "nil",t.by_world,for_device[t] or_else "nil",t.persist,t.keep,project.import_plugin(t.pkg.path),strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/"),t.copy=="false",procs[t])
         i+=1
     }
     fmt.sbprintf(w,"    messages:=make([]%s.Message_Info,%d)\n",core_alias,len(g.messages))

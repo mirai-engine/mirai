@@ -32,6 +32,18 @@ storage_free :: proc(s:^Storage_Info,value:rawptr) {
     if s.procs.free!=nil {s.procs.free(value)} else {value_free(value,s.info)}
 }
 
+// kept: into the copy a history keeps.
+@(private="file")
+storage_copy :: proc(s:^Storage_Info,dst,src:rawptr,kept:bool) -> bool {
+    copy:=kept && s.procs.copy_kept!=nil?s.procs.copy_kept:s.procs.copy
+    switch {
+    case copy!=nil: return copy(dst,src)
+    case s.flat:    mem.copy(dst,src,s.info.size)
+    case:           return value_copy(dst,src,s.info)
+    }
+    return true
+}
+
 // Starts the struct of a place: its tables empty and its storages at their
 // defaults. False without memory, with a struct that world_destroy frees.
 world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Allocator) -> bool {
@@ -104,8 +116,8 @@ copy_marked :: proc(info:^World_Info,dst,src:rawptr,marks:[]Copy_Mark) -> bool {
     for &t,at in info.tables {
         if t.place!=.World {continue}
         if changed {
-            if !raw_copy_changed(table_of(dst,&t),table_of(src,&t),t.info,&marks[at]) {return false}
-        } else if !raw_copy(table_of(dst,&t),table_of(src,&t),t.info) {return false}
+            if !raw_copy_changed(table_of(dst,&t),table_of(src,&t),t.info,t.flat,&marks[at]) {return false}
+        } else if !raw_copy(table_of(dst,&t),table_of(src,&t),t.info,t.flat) {return false}
     }
     to_revisions,from_revisions:=revisions_of(info,dst),revisions_of(info,src)
     first:=len(info.tables)
@@ -117,15 +129,77 @@ copy_marked :: proc(info:^World_Info,dst,src:rawptr,marks:[]Copy_Mark) -> bool {
             when CHECK_WRITES {if s.procs.copy==nil && s.procs.copy_kept==nil {storage_check(a,b,s.info,s.name)}}
             continue
         }
-        copy:=changed && s.procs.copy_kept!=nil?s.procs.copy_kept:s.procs.copy
-        if copy!=nil {
-            if !copy(a,b) {return false}
-        } else if !value_copy(a,b,s.info) {return false}
+        if !storage_copy(&s,a,b,changed) {return false}
         if marked {storage_copied(&marks[first+k],&to_revisions[k],from_revisions[k])}
     }
     if !changed {revisions_copied(to_revisions,from_revisions)}
     if found.id>=0 {ids_moved(to,ids_of(info,dst,found.id),synced)}
     return true
+}
+
+// Whether a World still has a table, or a storage, as the copy a mark is of
+// took it: nothing of it is to bring back from that copy.
+@(private="file")
+table_kept :: #force_inline proc "contextless" (t:^Raw_Table,mark:Copy_Mark) -> bool {
+    return mark.valid && mark.version==t.version && mark.layout==t.layout && len(t.pending)==0
+}
+
+@(private="file")
+storage_kept :: #force_inline proc "contextless" (revisions:[]u64,k:int,mark:Copy_Mark) -> bool {
+    return revisions!=nil && mark.valid && mark.version==revisions[k]
+}
+
+// Makes the World dst what src holds, for a src that world_copy_changed
+// keeps as a copy of dst with marks: the tables dst still has as that copy
+// took them, with nothing pending, and the storages whose revision did not
+// move since, stay as they are, and their readers see no change. The others
+// are copied into stage, a third World, and then traded with dst without
+// allocating. All or nothing: false without memory, with dst as it was. With
+// fewer marks than copy_marks_count all of it is copied and traded. mixed:
+// stage is left with parts of several Worlds, to stage another copy in or
+// to clear, never to run; false after all of it was traded.
+world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -> (ok,mixed:bool) {
+    if dst==src {return true,false}
+    if len(marks)<copy_marks_count(info) {
+        if !world_copy(info,stage,src) {return false,true}
+        world_swap(info,dst,stage)
+        return true,false
+    }
+    to,from,held:=entities_of(info,dst),entities_of(info,src),entities_of(info,stage)
+    context.allocator=held.generation.allocator
+    found:=settles(info)
+    synced:=found.id>=0 && ids_synced(from,ids_of(info,src,found.id))
+    if !entities_copy(held,from) {return false,true}
+    revisions,staged:=revisions_of(info,dst),revisions_of(info,stage)
+    first:=len(info.tables)
+    for &t,at in info.tables {
+        if t.place!=.World || table_kept(table_of(dst,&t),marks[at]) {continue}
+        if !raw_copy(table_of(stage,&t),table_of(src,&t),t.info,t.flat) {return false,true}
+    }
+    for &s,k in info.storages {
+        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
+        if !storage_copy(&s,storage_of(stage,&s),storage_of(src,&s),false) {return false,true}
+    }
+    slice.ptr_swap_non_overlapping(to,held,size_of(Entities))
+    for &t,at in info.tables {
+        if t.place!=.World {continue}
+        live:=table_of(dst,&t)
+        if table_kept(live,marks[at]) {table_waits(live,false)} else {raw_swap(live,table_of(stage,&t))}
+    }
+    for &s,k in info.storages {
+        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
+        x,y:=storage_of(dst,&s),storage_of(stage,&s)
+        if s.procs.swap!=nil {s.procs.swap(x,y)} else {slice.ptr_swap_non_overlapping(x,y,s.info.size)}
+        if revisions!=nil {
+            revision:=max(revisions[k],staged[k])+1
+            revisions[k],staged[k]=revision,revision
+        }
+    }
+    if found.id>=0 {
+        ids_moved(to,ids_of(info,dst,found.id),synced)
+        ids_moved(held,ids_of(info,stage,found.id),false)
+    }
+    return true,true
 }
 
 // Trades what two Worlds hold without allocating: what publishes a World

@@ -33,7 +33,7 @@ session_free :: proc(s:^Session) {}
         testing.expect(t,strings.contains(text,"p_core.session_look(p_core.ref(p_core.by_world_get(&s.session,w.world_id)))"))
         // core.world_attach gives each World its value, and core.world_detach frees it with its free.
         testing.expect(t,strings.contains(text,"free_session :: proc(value:rawptr) {p_core.session_free(cast(^p_core.Session)value)}"),text)
-        testing.expect(t,strings.contains(text,`,false,nil,false,false,"",false,true,{}}`+"\n") && strings.contains(text,`p_core.Session),offset_of(Shared,session),.Shared,.None,nil,true,nil,false,false,"",false,false,{free=free_session}}`),text)
+        testing.expect(t,strings.contains(text,`,false,nil,false,false,"",false,true,{},false}`+"\n") && strings.contains(text,`p_core.Session),offset_of(Shared,session),.Shared,.None,nil,true,nil,false,false,"",false,false,{free=free_session},false}`),text)
     }
     // A value for each World is of the application, and a function takes it by pointer.
     wrong:=`package core

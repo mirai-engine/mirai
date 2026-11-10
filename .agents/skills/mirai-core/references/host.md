@@ -74,12 +74,16 @@ its `exit_code` and `script_hold`.
 - `app_world_storage(app, data, T)`: the storage `T` of a world as its functions receive it: in the
   `World`, or its value of a `by_world` of the `Shared` (the network session of a run, its
   [problems](core.md#problems)). `nil` without it or without a loaded game (`app.info` empty).
-- `app_world_replace(app, dst, src) -> bool`: `dst` becomes a copy of `src`, whole or nothing. It
-  copies into a separate `World` of the application (made the first time) and swaps it with `dst`
-  without allocating; what is not copied (`copy=false`) stays in `dst`. `false` without memory, with
-  `dst` as it was. Opening a document and the network rollback use it. The swapped-out content stays
-  in that world for the next replacement, which does not allocate if it fits;
+- `app_world_replace(app, dst, src, marks) -> bool`: `dst` becomes a copy of `src`, whole or
+  nothing. It copies into a separate `World` of the application (made the first time) and swaps it
+  with `dst` without allocating; what is not copied (`copy=false`) stays in `dst`. `false` without
+  memory, with `dst` as it was. Opening a document and the network rollback use it. The swapped-out
+  content stays in that world for the next replacement, which does not allocate if it fits;
   `app_world_scratch_free` releases it when the next one is far off (opening a scene).
+  - With the `marks` of a `src` that `core.world_copy_changed` keeps as a copy of `dst` (a tick of
+    the rollback history), only the tables and storages `dst` changed since that copy are copied
+    and swapped (`core.world_restore`): the rest stays where it is, and its readers see no change.
+    That separate world is then left with parts of several, and is cleared before it is released.
 - `app_world_ref(app, data)` gives the `core.World_Ref`.
 - `app_user_folder(root)`: `<user data>/Mirai/<project name>`, created if missing; empty without a
   project. It stores the saves (`save`) and `pipelines.bin`, the pipeline cache that `app_create`

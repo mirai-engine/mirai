@@ -725,19 +725,23 @@ gone_reset :: proc "contextless" (t:^Raw_Table) {
     clear(&t.gone)
 }
 
-table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of(T))}
+table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of(T),false)}
 
-// info: of a value of the table.
-raw_copy :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info) -> bool {
+// info: of a value of the table. flat: a value is known to hold nothing
+// behind a pointer (Table_Info.flat); false asks its type.
+raw_copy :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool) -> bool {
     if dst==src {return true}
     dst.on=0
-    if !array_copy(&dst.values,&src.values,info) ||
-       !value_copy(&dst.entities,&src.entities,type_info_of([dynamic]Entity)) ||
-       !value_copy(&dst.stamps,&src.stamps,type_info_of([dynamic]u64)) ||
-       !value_copy(&dst.off,&src.off,type_info_of([dynamic]bool)) ||
-       !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) ||
+    values:=flat?array_copy_flat(&dst.values,&src.values,info.size,info.align):array_copy(&dst.values,&src.values,info)
+    // The rows by entity go before the entities: a copy that fails half way
+    // leaves the entities of src over no other rows than theirs.
+    if !values ||
        !rows_copy(dst,src) ||
-       !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.entities,cast(^runtime.Raw_Dynamic_Array)&src.entities,size_of(Entity),align_of(Entity)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.stamps,cast(^runtime.Raw_Dynamic_Array)&src.stamps,size_of(u64),align_of(u64)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.off,cast(^runtime.Raw_Dynamic_Array)&src.off,size_of(bool),align_of(bool)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.turns,cast(^runtime.Raw_Dynamic_Array)&src.turns,size_of(u64),align_of(u64)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
     clear(&dst.pending)
     dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
@@ -764,30 +768,31 @@ Copy_Mark :: struct {
 // copy mark says; the rows whose stamps differ when both have the same rows;
 // all of it otherwise. To the readers of dst it is a copy like table_copy.
 table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
-    return raw_copy_changed(raw(dst),raw(src),type_info_of(T),mark)
+    return raw_copy_changed(raw(dst),raw(src),type_info_of(T),false,mark)
 }
 
-// info: of a value of the table.
-raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,mark:^Copy_Mark) -> bool {
+// info and flat: as raw_copy takes them.
+raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool,mark:^Copy_Mark) -> bool {
     if dst==src {return true}
     if mark.valid && mark.version==src.version && mark.layout==src.layout {return true}
     mark.valid=false
     same:=dst.on==src.on && len(dst.entities)==len(src.entities) && slice.equal(dst.entities[:],src.entities[:]) && slice.equal(dst.off[:],src.off[:])
     if !same {
-        if !raw_copy(dst,src,info) {return false}
+        if !raw_copy(dst,src,info,flat) {return false}
         mark^={src.version,src.layout,true}
         return true
     }
-    size,flat:=info.size,-1
+    size,asked:=info.size,flat
+    flat:=flat
     for stamp,row in src.stamps {
         if dst.stamps[row]==stamp {continue}
-        if flat<0 {flat=int(value_flat(info))}
-        if flat==1 {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
+        if !asked {flat,asked=value_flat(info),true}
+        if flat {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
         dst.stamps[row]=stamp
     }
     // The rows by entity follow from the entities, which are the same.
-    if !slice.equal(dst.turns[:],src.turns[:]) && !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) {return false}
-    if !slice.equal(dst.owners[:],src.owners[:]) && !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
+    if !slice.equal(dst.turns[:],src.turns[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.turns,cast(^runtime.Raw_Dynamic_Array)&src.turns,size_of(u64),align_of(u64)) {return false}
+    if !slice.equal(dst.owners[:],src.owners[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
     clear(&dst.pending)
     dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
@@ -840,7 +845,10 @@ locks_claim :: proc(t:^Raw_Table,e:Entity,name:string) -> bool {
         owners:=lock_owners(t,lock)
         if i>=len(owners) && resize(owners,i+1)!=nil {return false}
     }
-    for lock in t.locks {lock_owners(t,lock)[i]={generation,lock.id}}
+    for lock in t.locks {
+        lock_owners(t,lock)[i]={generation,lock.id}
+        lock_table(t,lock).version+=1
+    }
     return true
 }
 
@@ -849,14 +857,22 @@ locks_release :: proc(t:^Raw_Table,e:Entity) {
     i:=entity_index(e)
     for lock in t.locks {
         owners:=lock_owners(t,lock)
-        if i<len(owners) && owners[i].generation==entity_generation(e) && owners[i].id==lock.id {owners[i]={}}
+        if i<len(owners) && owners[i].generation==entity_generation(e) && owners[i].id==lock.id {
+            owners[i]={}
+            lock_table(t,lock).version+=1
+        }
     }
 }
 
-// The owners of the rows a lock of a table takes: those of the table offset
-// bytes away from it, in the same World.
+// The table whose rows a lock of a table takes: the one offset bytes away
+// from it, in the same World. Who owns its rows is part of what it holds:
+// its version moves when an owner does, so a copy of what changed takes it.
+lock_table :: #force_inline proc "contextless" (t:^Raw_Table,lock:Lock) -> ^Raw_Table {
+    return cast(^Raw_Table)rawptr(uintptr(int(uintptr(t))+lock.offset))
+}
+
 lock_owners :: #force_inline proc "contextless" (t:^Raw_Table,lock:Lock) -> ^[dynamic]Row_Owner {
-    return &(cast(^Raw_Table)rawptr(uintptr(int(uintptr(t))+lock.offset))).owners
+    return &lock_table(t,lock).owners
 }
 
 // The offset of a lock of holder over the rows of target, two tables of one World.
