@@ -47,7 +47,7 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
 gallery_removal_events_do_not_launch_fragments_count_fractures_or_spawn_dust :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     stations:core.Table(Physics_Gallery);defer core.table_destroy(&stations)
-    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
     defer delete(events.fractured.items);defer delete(bodies.queue.items)
     e:=core.create(&entities)
     core.add(&stations,e,Physics_Gallery{station=10,target=e});core.table_settle(&stations,&entities)
@@ -109,7 +109,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
             testing.expect_value(t,model.body_transform(&physics.world,root).p,dd.position)
         }
     }
-    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
     defer delete(events.fractured.items)
     core.push(&events.fractured,destruct.Fracture{entity=target,kind=.Damage})
     physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
@@ -150,7 +150,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     _,cut:=fr.destructible_slice(f,&physics.world,h,command.region.point,command.vector)
     testing.expect(t,cut);testing.expect(t,fr.destructible_revision(f,h)>0)
     testing.expect(t,abs(command.region.point.y-.3)<.001)
-    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
     defer delete(events.fractured.items)
     core.push(&events.fractured,destruct.Fracture{entity=target,kind=.Slice,point=command.region.point})
     physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
@@ -176,7 +176,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
 gallery_event_counts_restart_when_the_scene_is_loaded_again :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     stations:core.Table(Physics_Gallery);defer core.table_destroy(&stations)
-    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{app=&app,problems=&spawned}
+    counts:Physics_Gallery_Events;events:destruct.Destruct_Events;bodies:phys.Body_Requests;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
     defer delete(events.fractured.items);defer delete(bodies.queue.items)
     for _ in 0..<3 {
         e:=core.create(&entities)

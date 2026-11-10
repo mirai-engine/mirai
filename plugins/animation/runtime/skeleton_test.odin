@@ -111,7 +111,7 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    content:=skeleton_content(&skeletons,&app,skeleton_id)
+    content:=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,content!=nil && len(content.bones)==3) {return}
     path:=fmt.tprintf("%s/rig.skeleton",directory)
     disk,_:=os.read_entire_file(path,context.temp_allocator)
@@ -123,12 +123,12 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     // What an editor leaves unsaved: only the registry holds it, and only its revision tells.
     revision:=assets.revision
     testing.expect_value(t,asset.registry_memory_set(&assets.registry,"rig.skeleton",bytes),asset.Error.None)
-    content=skeleton_content(&skeletons,&app,skeleton_id)
+    content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==1 && base.text_get(content.bones[0].name[:])=="alone")
     after,_:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,assets.revision==revision && string(after)==string(disk))
     {dropped,_:=asset.registry_memory_drop(&assets.registry,"rig.skeleton");testing.expect(t,dropped)}
-    content=skeleton_content(&skeletons,&app,skeleton_id)
+    content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==3)
 }
 
@@ -449,11 +449,11 @@ live_retarget_profile_changes_compare_full_asset_ids_and_preserve_source_identit
     profiles:Pose_Assets;defer pose_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil))
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil))
     testing.expect_value(t,modifiers.retargets.values[0].translation,lib.Retarget_Translation.Reference)
     geometry:=modifiers.geometry
     core.get(&animations,target).retarget=b
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil))
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil))
     testing.expect_value(t,modifiers.geometry,geometry+1)
     testing.expect_value(t,modifiers.retargets.values[0].translation,lib.Retarget_Translation.Scaled)
     testing.expect_value(t,modifiers.sources[0].profile,b)

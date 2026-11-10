@@ -99,7 +99,7 @@ Prefab_Source :: struct {
 @(params)
 Spawner :: struct {
     commands:core.Commands,
-    app:^host.App,
+    assets:^host.Assets,
     problems:^core.Problems,
 }
 
@@ -111,22 +111,22 @@ spawn :: proc{spawn_path,spawn_id}
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
     prefab:base.Asset_Id
     error:=Error.No_Assets
-    if s.app.assets!=nil {
+    if s.assets!=nil {
         error=.Not_Found
-        if named,found:=asset.registry_find_path(&s.app.assets.registry,path);found {prefab=named.id;error=.None}
+        if named,found:=asset.registry_find_path(&s.assets.registry,path);found {prefab=named.id;error=.None}
     }
     return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},path,error)
 }
 
 spawn_id :: proc(s:Spawner,prefab:base.Asset_Id,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
     name:[base.ASSET_ID_TEXT]u8
-    return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},host.assets_name(s.app.assets,prefab,&name),.None)
+    return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},host.assets_name(s.assets,prefab,&name),.None)
 }
 
 @(private)
 spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Entity {
     report,error:=Report{},found
-    if error==.None {report,error=spawn_prefab(s.commands,s.app.assets,order)}
+    if error==.None {report,error=spawn_prefab(s.commands,s.assets,order)}
     if error==.None {return report.root}
     fix:string
     #partial switch error {

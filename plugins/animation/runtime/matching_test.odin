@@ -87,9 +87,9 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer {delete(events.items);delete(events.plays.items)}
-    match:=match_content(graphs,app,id);if match==nil {return}
+    match:=match_content(graphs,app.assets,app.allocator,id);if match==nil {return}
     content:=host.content_animation(app,match.profile.info.animation)
-    definition:=skeleton_content(skeletons,app,skeleton)
+    definition:=skeleton_content(skeletons,app.assets,app.allocator,skeleton)
     if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&transforms) || !lib.pose_init(&playback.pose,max(POSE_CAPACITY,content.lib.track_count)) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
     if toes[0]<0 || toes[1]<0 {return}
@@ -113,7 +113,7 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
         copy(state.local[:],state.rest[:])
         clear(&events.items)
         output,programmed,resolved:=program_resolve(&state,animation,app,&blends,graphs,dt,&events,&playback,content,nil,goals[:],{},facing)
-        if !resolved || !programmed || !program_masks_prepare(&state,output,content,graphs,app) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !program_pose(&playback,&state,content,animation,output,{}) {
+        if !resolved || !programmed || !program_masks_prepare(&state,output,content,graphs,app.assets,app.allocator) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !program_pose(&playback,&state,content,animation,output,{}) {
             log.errorf("tick %d: %v",tick,state.program.error);return
         }
         if tick==0 {metrics.load=f64(time.duration_nanoseconds(time.tick_since(start)))} else {metrics.nanoseconds+=f64(time.duration_nanoseconds(time.tick_since(start)))}

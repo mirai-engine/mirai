@@ -111,7 +111,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
                 if e!=owner && destruct.remove(&requests,core.read(&world.groups),e)==.None {break}
             }
         }
-        destruct.destruct_step(&physics,&fractures,core.ref(&fracture_settings),&geometry,&requests,&events,core.ref(&alone),&app,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
+        destruct.destruct_step(&physics,&fractures,core.ref(&fracture_settings),&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
             core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),{},nil)
         physics_bake_settle(&world,nil,nil)
         if frame==15 || frame==30 {sim.world_apply_radial(&physics.world,{0,2.5,0},4,.6,.Constant,true,true)}

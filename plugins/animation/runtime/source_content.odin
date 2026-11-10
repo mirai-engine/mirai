@@ -6,6 +6,7 @@ import "mirai:core"
 import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
+import "base:runtime"
 
 // A program whose graph, blend spaces or actions name clips of several .anim
 // plays one library that joins them, prepared once per set of sources and
@@ -94,7 +95,7 @@ animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Play
 // The library an Animation plays, joining the sources of its program when there are several.
 // A tick whose assets did not change reuses the plan without reading them.
 animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,blends:^Blend_Assets=nil,graphs:^Graph_Assets=nil,actions:^Action_Runtime=nil) -> (content:^host.Content_Animation,error:Program_Error) {
-    if app==nil || app.assets==nil || state==nil {return nil,.Invalid_Asset}
+    if app.assets==nil || state==nil {return nil,.Invalid_Asset}
     if description.asset=={} {state.source_plan=0;return nil,.None}
     if record,present:=asset.registry_find(&app.assets.registry,description.asset);present && record.kind==BLEND_KIND {state.source_plan=0;return nil,.Additive_Space}
     if cache==nil {
@@ -102,10 +103,10 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
         if record,present:=asset.registry_find(&app.assets.registry,description.asset);present {
             switch record.kind {
             case GRAPH_KIND:
-                graph:=graph_content(graphs,app,description.asset);if graph==nil {return nil,.Invalid_Asset}
+                graph:=graph_content(graphs,app.assets,app.allocator,description.asset);if graph==nil {return nil,.Invalid_Asset}
                 primary=source_effective({},graph.profile.info.animation,description.library)
             case MATCH_KIND:
-                match:=match_content(graphs,app,description.asset);if match==nil {return nil,.Invalid_Asset}
+                match:=match_content(graphs,app.assets,app.allocator,description.asset);if match==nil {return nil,.Invalid_Asset}
                 primary=source_effective({},match.profile.info.animation,description.library)
             }
         }
@@ -135,7 +136,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     primary:=plan.primary
     if changed {
         ok:bool
-        primary,ok=source_collect(app,description,state.entity,blends,graphs,actions,&ids,&count,&dependencies,&dependency_count)
+        primary,ok=source_collect(app.assets,app.allocator,description,state.entity,blends,graphs,actions,&ids,&count,&dependencies,&dependency_count)
         if !ok {return nil,.Invalid_Asset}
     } else if plan.set>0 {set:=cache.sets[plan.set-1];count=len(set.ids);copy(ids[:],set.ids)} else {ids[0]=primary;count=1}
     copied:[]Source_Dependency
@@ -304,26 +305,26 @@ source_blend_collect :: proc(profile:Blend_Profile,override:base.Asset_Id,ids:^[
 }
 
 @(private)
-source_collect :: proc(app:^host.App,description:Animation,entity:core.Entity,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
-    if !source_dependency_add(app.assets,dependencies,dependency_count,description.asset) {return}
-    record,present:=asset.registry_find(&app.assets.registry,description.asset)
+source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,entity:core.Entity,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
+    if !source_dependency_add(assets,dependencies,dependency_count,description.asset) {return}
+    record,present:=asset.registry_find(&assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
     primary=description.asset
     switch kind {
     case GRAPH_KIND:
-        graph:=graph_content(graphs,app,description.asset);if graph==nil {return}
+        graph:=graph_content(graphs,assets,allocator,description.asset);if graph==nil {return}
         primary=source_effective({},graph.profile.info.animation,description.library)
         if !source_id_add(ids,count,primary) {return}
         for node in graph.profile.nodes {
             if node.kind==.Clip {if !source_id_add(ids,count,source_effective(node.animation,graph.profile.info.animation,description.library)) {return}}
             else if node.kind==.Blend_Space {
-                if !source_dependency_add(app.assets,dependencies,dependency_count,node.blend_space) {return}
-                blend:=blend_content(blends,app,node.blend_space)
+                if !source_dependency_add(assets,dependencies,dependency_count,node.blend_space) {return}
+                blend:=blend_content(blends,assets,allocator,node.blend_space)
                 if blend==nil || !source_blend_collect(blend.profile,description.library,ids,count) {return}
             }
         }
     case MATCH_KIND:
-        match:=match_content(graphs,app,description.asset);if match==nil {return}
+        match:=match_content(graphs,assets,allocator,description.asset);if match==nil {return}
         primary=source_effective({},match.profile.info.animation,description.library)
         if !source_id_add(ids,count,primary) {return}
         for clip in match.profile.clips {if !source_id_add(ids,count,source_effective(clip.animation,match.profile.info.animation,description.library)) {return}}
@@ -332,13 +333,13 @@ source_collect :: proc(app:^host.App,description:Animation,entity:core.Entity,bl
     case: return
     }
     if description.actions!={} {
-        if !source_dependency_add(app.assets,dependencies,dependency_count,description.actions) {return}
+        if !source_dependency_add(assets,dependencies,dependency_count,description.actions) {return}
         active:=action_state(actions,entity)
         if active==nil || active.plan<0 || int(active.plan)>=len(actions.plans) {return}
         profile:=actions.plans[active.plan].profile
         for action in profile.actions {if !source_id_add(ids,count,source_effective(action.animation,profile.info.animation,description.library)) {return}}
     }
-    for id in ids[:count^] {if !source_dependency_add(app.assets,dependencies,dependency_count,id) {return}}
+    for id in ids[:count^] {if !source_dependency_add(assets,dependencies,dependency_count,id) {return}}
     // The primary source stays first and the rest are sorted, so equal sets share one library.
     for i in 2..<count^ {
         j:=i

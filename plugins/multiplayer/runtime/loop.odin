@@ -187,7 +187,7 @@ net_receive :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App,even
         server_commands(session,world,app,commands,events,inputs)
         return true
     }
-    client_commands(session,world,app,commands,events)
+    client_commands(session,world,app.assets,app.allocator,commands,events)
     if !session.ended {return true}
     // Its ticks go at the pace of the frames again, and its clock is its own.
     if frame:=core.world_storage_of(world,core.Frame_Time);frame!=nil {frame.dilation=0}

@@ -57,7 +57,7 @@ Refusal :: struct {
 // path is of the registry (a level under a host.assets_mount) or absolute.
 // What failed is in report.refused; untrusted_text says it with its fix.
 load_untrusted :: proc(w:core.World_Ref,app:^host.App,path:string,rules:Untrusted) -> (report:Report,error:Error) {
-    if app==nil || app.assets==nil {return {},.No_Assets}
+    if app.assets==nil {return {},.No_Assets}
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     limit:=u64(rules.max_bytes>0?rules.max_bytes:UNTRUSTED_BYTES)
     registry:=&app.assets.registry

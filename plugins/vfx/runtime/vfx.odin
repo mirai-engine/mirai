@@ -309,7 +309,7 @@ particles_sync :: proc(
             for &desc in sync.descs {desc.paused=true}
             dt=clamp(frame.dt,0,1)
         }
-        ui_effects_sync(ui_effects,asked,app,clamp(frame.dt,0,1),shaders,&sync.descs)
+        ui_effects_sync(ui_effects,asked,app.assets,app.renderer,clamp(frame.dt,0,1),shaders,&sync.descs)
         for len(sync.owners)<len(sync.descs) {append(&sync.owners,core.NONE)}
     }
     if r==nil {return}

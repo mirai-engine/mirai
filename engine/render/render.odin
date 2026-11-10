@@ -486,7 +486,7 @@ render_sync :: proc(
         hidden=core.changes(hidden,&sync.seen_hidden),elsewhere=core.changes(elsewhere,&sync.seen_elsewhere),parents=core.changes(parents,&sync.seen_parents),
         overrides=core.changes(overrides,&sync.seen_overrides),offsets=core.changes(offsets,&sync.seen_offsets),layers=core.changes(layers,&sync.seen_layers),
     }
-    slot_textures_apply(app,a,t,frame)
+    slot_textures_apply(&app.extras,a,t,frame)
     extras:=host.extras_instances(&app.extras)
     extras_inherit(t,extras)
     rebuild:=!sync.synced || sync.world!=id || c.meshes.all || c.worlds.all || c.tints.all || c.hidden.all || c.elsewhere.all
@@ -896,14 +896,14 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
 // of the world that does. What drew each one is kept for the next frame
 // (host.extras_slot_shown).
 @(private)
-slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
-    app.extras.slots_shown_count=0
-    for request in host.extras_slot_textures(&app.extras) {
+slot_textures_apply :: proc(extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
+    extras.slots_shown_count=0
+    for request in host.extras_slot_textures(extras) {
         e:=core.Entity(request.object)
         static,has_mesh:=core.get(t.meshes,e)
         if !has_mesh || request.texture==0 {continue}
         shown:^gpu.Instance_Desc
-        for &extra in host.extras_instances(&app.extras) {
+        for &extra in host.extras_instances(extras) {
             if extra.replace_source && extra.object_id==request.object {shown=&extra;break}
         }
         if shown==nil {
@@ -912,9 +912,9 @@ slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:cor
             instance,_,_,made:=instance_make(a,t,e,static,world,frame)
             if !made || instance.hidden {continue}
             instance.copy_owner,instance.replace_source=SLOT_TEXTURE_OWNER,true
-            if !host.extras_instance_add(&app.extras,instance) {continue}
-            extras:=host.extras_instances(&app.extras)
-            shown=&extras[len(extras)-1]
+            if !host.extras_instance_add(extras,instance) {continue}
+            added:=host.extras_instances(extras)
+            shown=&added[len(added)-1]
         }
         row,at:=mesh_slot_row(a,static,shown,request.slot)
         values:=host.assets_material_values(a,row)
@@ -930,9 +930,9 @@ slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:cor
         derived,derives:=host.assets_material_derive(a,values)
         if !derives {continue}
         if at!=nil {at^=derived+1} else {shown.material=gpu.Material_Handle(derived)}
-        if app.extras.slots_shown_count<len(app.extras.slots_shown) {
-            app.extras.slots_shown[app.extras.slots_shown_count]={object=request.object,mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
-            app.extras.slots_shown_count+=1
+        if extras.slots_shown_count<len(extras.slots_shown) {
+            extras.slots_shown[extras.slots_shown_count]={object=request.object,mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
+            extras.slots_shown_count+=1
         }
     }
 }

@@ -177,7 +177,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             for e in bodies[0][1:] {core.add(&worlds[0].objects,e,net_test_replicate(audience=.Always))}
             net_test_settle(&worlds[0],nil,nil)
         }
-        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
         before:=sessions[1].stats.resimulated
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
@@ -332,7 +332,7 @@ correction_fixture_state :: proc(f:^Correction_Fixture,tick:u32,offset:[3]f32) {
 correction_fixture_send :: proc(f:^Correction_Fixture,tick:u32,pose:Pose,motion:Motion_State) {
     s:=&f.session
     command:=net_test_pack(s,&f.world,&s.client.replicas[1],tick,pose,motion,1,f.words)
-    replica_update(s,core.world_ref(&f.world,&f.info),&f.app,&command)
+    replica_update(s,core.world_ref(&f.world,&f.info),f.app.assets,&command)
 }
 
 @(private)
@@ -392,7 +392,7 @@ a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
         wire.host_poll(&sessions[0].host)
-        client_commands(client,core.world_ref(&worlds[1],&info),&apps[1],wire.host_poll(&client.host),&worlds[1].received)
+        client_commands(client,core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&client.host),&worlds[1].received)
         if client.status==.Connected {break}
     }
     testing.expect_value(t,client.status,Status.Connected)

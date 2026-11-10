@@ -50,7 +50,7 @@ cache_test_world_free :: proc(w:^Cache_Test_World) {
 cache_test_step :: proc(w:^Cache_Test_World,physics:^phys.Physics_State,fractures:^destruct.Fracture_State,geometry:^destruct.Destruct_Cache,requests:^destruct.Destruct_Requests,events:^destruct.Destruct_Events,app:^host.App,info:^core.World_Info,tick:u64) {
     alone:core.Network
     settings:=destruct.Destruct_Settings{destructibles=2,pieces=16,connections=64}
-    destruct.destruct_step(physics,fractures,core.ref(&settings),geometry,requests,events,core.ref(&alone),app,{playing=true,dt=1.0/60,tick=tick},core.commands(w,info),
+    destruct.destruct_step(physics,fractures,core.ref(&settings),geometry,requests,events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/60,tick=tick},core.commands(w,info),
         core.read(&w.configs),&w.meshes,&w.tints,core.read(&w.parents),&w.states,&w.groups,&w.elsewhere,&w.transforms,&w.ids,core.read(&w.colliders),{},nil)
     cache_test_settle(w,nil,nil)
 }

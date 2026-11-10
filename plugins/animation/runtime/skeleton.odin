@@ -125,10 +125,10 @@ skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
 @(private)
 assets_stamp :: proc "contextless" (assets:^host.Assets) -> u64 {return assets.revision+assets.registry.revision+1}
 
-skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) -> ^Skeleton_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
-    if cache.rows==nil {cache.rows=make(map[base.Asset_Id]u32,app.allocator)}
+skeleton_content :: proc(cache:^Skeleton_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Skeleton_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
+    if cache.rows==nil {cache.rows=make(map[base.Asset_Id]u32,allocator)}
     row,found:=cache.rows[id]
     if !found {
         row=u32(len(cache.contents))
@@ -136,27 +136,27 @@ skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) 
         if map_insert(&cache.rows,id,row)==nil {pop(&cache.contents);return nil}
     }
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app.assets) {return content if len(content.bones)>0 else nil}
-    record,exists:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if len(content.bones)>0 else nil}
+    record,exists:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if exists {stamp={record.size,record.time}}
-    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app.assets);return content if len(content.bones)>0 else nil}
+    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(assets);return content if len(content.bones)>0 else nil}
     bones:[]asset.Skeleton_Bone
     sockets:[]asset.Skeleton_Socket
     mirror:[]i32
     body:=lib.body_map_empty()
     error:=asset.Error.Not_Found
-    if exists {bones,sockets,body,error=skeleton_read(app.assets,app.allocator,id)}
+    if exists {bones,sockets,body,error=skeleton_read(assets,allocator,id)}
     if error==.None {
         paired:bool
-        if mirror,paired=skeleton_mirror_pairs(bones,app.allocator);!paired {delete(bones);delete(sockets);bones,sockets=nil,nil;error=.Out_Of_Memory}
+        if mirror,paired=skeleton_mirror_pairs(bones,allocator);!paired {delete(bones);delete(sockets);bones,sockets=nil,nil;error=.Out_Of_Memory}
     }
     if error==.None && len(bones)==0 {error=.Invalid}
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     delete(content.bones);delete(content.sockets);delete(content.mirror);content.bones,content.sockets,content.mirror=bones,sockets,mirror
     content.body=body if error==.None else lib.body_map_empty()
-    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if error==.None else nil
 }
 

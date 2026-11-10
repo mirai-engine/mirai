@@ -51,7 +51,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     count,_:=api.params_array_count(call,"points")
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"points must list at least one world point of the stroke");return}
     app:=s.app
-    if app==nil || app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
+    if app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
     w:=editor.edited_world(s)
     e,named:=editor.api_call_entity(call,w,p.entity[:])
     if !named {return}

@@ -23,29 +23,29 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
     playback:Playback;defer playback_free(&playback)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
+    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)) {return}
     geometry:=modifiers.geometry;buffer:=raw_data(modifiers.look.values)
     core.get(&animations,plain).weight=.4;core.get(&animations,target).parameters[0]=.7
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
-    prepared:=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)
+    prepared:=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)
     host_assets.revision+=1
-    prepared &&=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)
+    prepared &&=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;profiles.allocator=saved.allocator;skeletons.allocator=saved.allocator
     testing.expect(t,prepared && modifiers.geometry==geometry && raw_data(modifiers.look.values)==buffer && modifiers.inputs[4]==core.version(&animations) && modifiers.inputs[7]==host_assets.revision+1)
     profiles.contents[0].profile.look[0].weight=.3;profiles.contents[0].revision+=1;host_assets.revision+=1
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
+    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)) {return}
     testing.expect(t,modifiers.geometry==geometry+1 && modifiers.look.values[0].weight==.3)
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied.revisions[0]+=100;testing.expect(t,copied.revisions[0]!=modifiers.revisions[0])
     inputs:=modifiers.inputs;geometry=modifiers.geometry
     profiles.contents[0].profile.look[0].weight=.6;profiles.contents[0].revision+=1;host_assets.revision+=1
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
-    prepared=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)
+    prepared=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;profiles.allocator=saved.allocator;skeletons.allocator=saved.allocator
     testing.expect(t,!prepared && modifiers.inputs==inputs && modifiers.geometry==geometry && modifiers.look.values[0].weight==.3)
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil) && modifiers.look.values[0].weight==.6 && modifiers.geometry==geometry+1)
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil) && modifiers.look.values[0].weight==.6 && modifiers.geometry==geometry+1)
     old:=target;index:=core.entity_index(target)
     core.destroy(&entities,target);core.table_settle(&animations,&entities);core.entities_settle(&entities)
     target=core.create(&entities);core.add(&animations,target,description);core.table_settle(&animations,&entities)
-    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil) && target!=old && core.entity_index(target)==index && modifiers.sources[0].entity==target)
+    testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil) && target!=old && core.entity_index(target)==index && modifiers.sources[0].entity==target)
 }

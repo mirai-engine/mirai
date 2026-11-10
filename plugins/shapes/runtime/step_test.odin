@@ -87,7 +87,7 @@ world_settle :: proc(w:^World) {
 @(private="file")
 world_step :: proc(w:^World) {
     world_settle(w)
-    shapes_update(&w.cache,w.app,core.commands(w,&w.info),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
+    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(w,&w.info),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems)
     world_settle(w)
 }

@@ -6,6 +6,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 BLEND_KIND :: asset.Fourcc(u32('B')|u32('L')<<8|u32('N')<<16|u32('D')<<24)
 BLEND_VERSION :: 1
@@ -125,26 +126,26 @@ blend_assets_free :: proc(cache:^Blend_Assets) {
     for &content in cache.contents {blend_profile_free(&content.profile,allocator);delete(content.space.points,allocator);content.space={}}
     delete(cache.contents);cache^={}
 }
-blend_content :: proc(cache:^Blend_Assets,app:^host.App,id:base.Asset_Id) -> ^Blend_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    if cache.allocator.procedure==nil {cache.allocator=app.allocator}
+blend_content :: proc(cache:^Blend_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Blend_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    if cache.allocator.procedure==nil {cache.allocator=allocator}
     context.allocator=cache.allocator
     row:=-1
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Blend_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     next:Blend_Content
     error:=asset.Error.Not_Found
-    if found {next,error=blend_profile_read(app.assets,id,cache.allocator)}
+    if found {next,error=blend_profile_read(assets,id,cache.allocator)}
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     blend_profile_free(&content.profile,cache.allocator);delete(content.space.points,cache.allocator)
     revision:=content.revision+1
-    content^=next;content.id,content.stamp,content.checked,content.revision=id,stamp,assets_stamp(app.assets),revision
+    content^=next;content.id,content.stamp,content.checked,content.revision=id,stamp,assets_stamp(assets),revision
     content.valid,content.error=error==.None,error
     if content.valid {content.axis_names={base.name_hash(base.text_get(content.profile.info.x.name[:])),base.name_hash(base.text_get(content.profile.info.y.name[:]))}}
     return content if content.valid else nil

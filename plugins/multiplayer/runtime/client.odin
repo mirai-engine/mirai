@@ -315,7 +315,7 @@ replica_state :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[]wire.Command,events:^Net_Events) {
+client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,commands:[]wire.Command,events:^Net_Events) {
     for &command in commands {
         #partial switch command.kind {
         case .Connected:
@@ -326,11 +326,11 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
             s.joined+=1
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
         case .Disconnected:
-            client_end(s,w,app.allocator,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
+            client_end(s,w,allocator,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
         case .Object_Created:
-            replica_create(s,w,app,&command)
+            replica_create(s,w,assets,&command)
         case .Object_Updated:
-            replica_update(s,w,app,&command)
+            replica_update(s,w,assets,&command)
         case .Object_Destroyed:
             replica_destroy(s,w,command.object,command.ended?.End:.Leave)
         case .Role_Changed:
@@ -343,15 +343,15 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
         }
     }
     core.world_settle(w)
-    if !s.ended {replicas_sections(s,w,app)}
+    if !s.ended {replicas_sections(s,w,assets)}
     references_refresh(s,w)
-    if !s.ended {client_world_update(s,w,app.assets,app.allocator)}
+    if !s.ended {client_world_update(s,w,assets,allocator)}
 }
 
 // The replicas of entities of sections take the entity they have here as the
 // sections load and drop (replica_place). Only when the sections change.
 @(private)
-replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
+replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     c:=&s.client
     references:=core.world_table_of(w,scene.Scene_Reference)
     if references==nil {return}
@@ -361,7 +361,7 @@ replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     changed:=false
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 {continue}
-        if r.pose.sections[0]!=0 {changed|=replica_place(s,w,app,&r)}
+        if r.pose.sections[0]!=0 {changed|=replica_place(s,w,assets,&r)}
         // What a section turned on here stays off while the server's is.
         if r.pose.disabled && !r.waits && replica_turns(&r) {replica_turn(w,&r)}
     }
@@ -375,7 +375,7 @@ replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
 // has it. An entity of a section that drops it, dormant or gone, is not the
 // replica's any more. True when it changed.
 @(private)
-replica_place :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) -> bool {
+replica_place :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Replica) -> bool {
     c:=&s.client
     home:=r.pose.sections[0]==0 || section_loaded(w,r.pose.sections[0])
     near:=home
@@ -412,7 +412,7 @@ replica_place :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) 
     if near {
         r.waits=false
         c.waiting-=1
-        replica_spawn(s,w,app,r)
+        replica_spawn(s,w,assets,r)
         replica_classify(s,w,r)
     }
     return true
@@ -432,7 +432,7 @@ replica_adoptable :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica) -> core.En
 }
 
 @(private)
-replica_create :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,command:^wire.Command) {
+replica_create :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,command:^wire.Command) {
     c:=&s.client
     index:=object_index(command.object)
     if index>=len(c.replicas) {
@@ -451,7 +451,7 @@ replica_create :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,command:^wi
     wire.smoothing_init(&r.smoothing)
     c.replica_high=max(c.replica_high,index+1)
     replica_state(s,r,command)
-    replica_place(s,w,app,r)
+    replica_place(s,w,assets,r)
     if r.waits {return}
     authoritative_capture(s,r,command)
 }
@@ -469,7 +469,7 @@ entity_of_id :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id) -> core.
 
 // Gives a replica its entity, with everything the server last said of it.
 @(private)
-replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) {
+replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Replica) {
     t:=net_type(s,r.type)
     es:=core.world_entities(w)
     transforms:=core.world_table_of(w,core.Transform)
@@ -481,12 +481,12 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) 
         if home:=r.pose.sections[0];home!=0 && r.pose.id!=0 {
             if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
                 if reference,found:=core.get(core.read(references),core.entity_of(es,home));found && reference.scene!={} {
-                    if report,error:=scene.spawn_member(core.commands_of(w),app.assets,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
+                    if report,error:=scene.spawn_member(core.commands_of(w),assets,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
                 }
             }
         }
         if e==core.NONE && r.pose.prefab!={} {
-            e=scene.spawn(scene.Spawner{core.commands_of(w),app,core.world_storage_of(w,core.Problems)},r.pose.prefab,local,transient=true)
+            e=scene.spawn(scene.Spawner{core.commands_of(w),assets,core.world_storage_of(w,core.Problems)},r.pose.prefab,local,transient=true)
         }
         if e==core.NONE {
             e=core.create(es)
@@ -668,12 +668,12 @@ rotation_rate :: proc "contextless" (from,to:quaternion128,seconds:f32) -> [3]f3
 }
 
 @(private)
-replica_update :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,command:^wire.Command) {
+replica_update :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,command:^wire.Command) {
     r:=replica_of(s,command.object)
     if r==nil {return}
     sections:=r.pose.sections
     replica_state(s,r,command)
-    if r.pose.sections!=sections {replica_place(s,w,app,r)}
+    if r.pose.sections!=sections {replica_place(s,w,assets,r)}
     if r.waits {return}
     authoritative_capture(s,r,command)
     if core.alive(core.world_entities(w),r.entity) {
@@ -1387,7 +1387,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         if x.corrected && !x.kept {x.drifting=false}
     }
     clock.resimulating=true
-    replicas_relink(s,w,app)
+    replicas_relink(s,w,app.assets)
     authoritative_apply(s,w,target,true)
     for tick:=start;i32(c.newest-tick)>=0;tick+=1 {
         frame:=&c.frames[int(tick)%len(c.frames)]
@@ -1523,7 +1523,7 @@ sync_problem :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,table:int,last:boo
 // After the world was replaced by an older copy: the replicas that did not
 // exist then are made again, and the entities of replicas that ended since are destroyed.
 @(private)
-replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
+replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     c:=&s.client
     es:=core.world_entities(w)
     links:=core.world_table_of(w,Net_Link)
@@ -1544,7 +1544,7 @@ replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 {continue}
         if r.entity==core.NONE {
-            replica_spawn(s,w,app,&r)
+            replica_spawn(s,w,assets,&r)
             s.stats.spawned-=1
         }
         // The copy has the mode the replica had then; it may have changed since.

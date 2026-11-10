@@ -94,7 +94,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     }
     core.table_settle(&parents,&entities);core.table_settle(&skins,&entities);core.table_settle(&transforms,&entities)
     core.table_settle(&meshes,&entities);core.table_settle(&worlds,&entities)
-    definition:=skeleton_content(&skeleton_assets,&app,skeleton_id)
+    definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig in roots {
         pose:=state_get(&playback,rig)
@@ -105,7 +105,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer),skins:^core.Table(Pose_Source),parents:^core.Table(core.Parent),worlds:^core.Table(core.World_Transform),tints:^core.Table(erender.Tint),overrides:^core.Table(erender.Material_Override),hidden:^core.Table(erender.Hidden),elsewhere:^core.Table(erender.Drawn_Elsewhere),highlights:^core.Table(erender.Highlight),offsets:^core.Table(erender.Draw_Offset),problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
         outlines:core.Table(erender.Outline);defer core.table_destroy(&outlines)
-        animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
         s:=&renderer.scene

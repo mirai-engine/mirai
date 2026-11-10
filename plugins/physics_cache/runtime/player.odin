@@ -9,6 +9,7 @@ import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "base:runtime"
 
 @(component,description="Plays baked rigid or fractured geometry without simulating physics. Negative rate reverses playback.")
 Geometry_Playback :: struct {
@@ -68,28 +69,28 @@ cache_content_free :: proc(library:^Cache_Library,content:^Cache_Content) {
 }
 
 @(private)
-cache_content :: proc(library:^Cache_Library,app:^host.App,id:base.Asset_Id) -> ^Cache_View {
-    content,_:=cache_content_find(library,app,id)
+cache_content :: proc(library:^Cache_Library,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Cache_View {
+    content,_:=cache_content_find(library,assets,allocator,id)
     return content!=nil && content.error==.None?&content.view:nil
 }
 
 // The physics cache of an asset, read again when its file changes, and why
 // it cannot be played: Too_Large when CACHE_SOURCES are loaded.
 @(private)
-cache_content_find :: proc(library:^Cache_Library,app:^host.App,id:base.Asset_Id) -> (^Cache_Content,asset.Error) {
-    if library==nil || app==nil || app.assets==nil {return nil,.Invalid}
+cache_content_find :: proc(library:^Cache_Library,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (^Cache_Content,asset.Error) {
+    if library==nil || assets==nil {return nil,.Invalid}
     if id=={} {return nil,.Not_Found}
     if library.allocator.procedure==nil {
-        library.allocator=app.allocator
-        library.assets=app.assets
-        geom.mesh_buffer_init(&library.geometry,app.allocator)
+        library.allocator=allocator
+        library.assets=assets
+        geom.mesh_buffer_init(&library.geometry,allocator)
     }
     index:=-1
     for content,i in library.contents {if content.source==id {index=i;break}}
     if index<0 {
         if len(library.contents)>=CACHE_SOURCES {return nil,.Too_Large}
         if library.contents.allocator.procedure==nil {
-            contents,error:=make([dynamic]Cache_Content,0,CACHE_SOURCES,app.allocator)
+            contents,error:=make([dynamic]Cache_Content,0,CACHE_SOURCES,allocator)
             if error!=nil {return nil,.Out_Of_Memory}
             library.contents=contents
         }
@@ -97,34 +98,34 @@ cache_content_find :: proc(library:^Cache_Library,app:^host.App,id:base.Asset_Id
         if append(&library.contents,Cache_Content{source=id})!=1 {return nil,.Out_Of_Memory}
     }
     content:=&library.contents[index]
-    revision:=app.assets.revision+app.assets.registry.revision+1
+    revision:=assets.revision+assets.registry.revision+1
     if content.checked==revision {return content,content.error}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
     if content.checked!=0 && stamp==content.stamp {content.checked=revision;return content,content.error}
     fresh:=Cache_Content{source=id,stamp=stamp,checked=revision,error=.Not_Found}
     if found {
-        fresh.error=host.assets_file(app.assets,id,asset.KIND_PHYSICS_CACHE,&fresh.file)
+        fresh.error=host.assets_file(assets,id,asset.KIND_PHYSICS_CACHE,&fresh.file)
         if fresh.error==.None {
             if fresh.file.blob.header.id!=id || !asset.blob_verify_hash(&fresh.file.blob) {fresh.error=.Corrupt}
-            else {fresh.view,fresh.error=cache_view(&fresh.file,&app.assets.types)}
+            else {fresh.view,fresh.error=cache_view(&fresh.file,&assets.types)}
         }
     }
     if fresh.error==.None {
         allocation:mem.Allocator_Error
-        fresh.meshes,allocation=make([]base.Asset_Id,len(fresh.view.tracks),app.allocator)
+        fresh.meshes,allocation=make([]base.Asset_Id,len(fresh.view.tracks),allocator)
         if allocation!=nil {fresh.error=.Out_Of_Memory}
         if len(library.sampled)<len(fresh.view.tracks) {
-            sampled,error:=make([]Playback_Piece,len(fresh.view.tracks),app.allocator)
+            sampled,error:=make([]Playback_Piece,len(fresh.view.tracks),allocator)
             if error!=nil {fresh.error=.Out_Of_Memory}
-            else {delete(library.sampled,app.allocator);library.sampled=sampled}
+            else {delete(library.sampled,allocator);library.sampled=sampled}
         }
     }
     if fresh.error==.None {
         for &track,index in fresh.view.tracks {
             if !cache_mesh(fresh.view,u32(index),&library.geometry) {fresh.error=.Out_Of_Memory;break}
-            id,ok:=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&library.geometry),track.materials[:])
+            id,ok:=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&library.geometry),track.materials[:])
             if !ok {fresh.error=.Out_Of_Memory;break}
             fresh.meshes[index]=id
         }
@@ -170,7 +171,7 @@ player_advance :: proc(player:^Geometry_Playback,duration,dt:f32) {
 }
 
 @(step="fixed",stage="react")
-physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Geometry_Requests,library:^Cache_Library,time:core.Time,app:^host.App) {
+physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Geometry_Requests,library:^Cache_Library,time:core.Time,assets:^host.Assets,allocator:runtime.Allocator) {
     for request in core.take(&requests.queue) {
         player:=core.get(players,request.entity)
         if player==nil {continue}
@@ -178,7 +179,7 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
         switch request.kind {
         case .Play:
             player.playing,player.rate=true,request.value
-            if request.restart {view:=cache_content(library,app,player.source);player.time=player.rate<0 && view!=nil?view.info.duration:0}
+            if request.restart {view:=cache_content(library,assets,allocator,player.source);player.time=player.rate<0 && view!=nil?view.info.duration:0}
         case .Pause: player.playing=false
         case .Seek: player.time=max(request.value,0)
         case .Rate: player.rate=request.value
@@ -186,7 +187,7 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
     }
     for index in 0..<core.count(players) {
         player:=core.at(core.read(players),index)
-        view:=cache_content(library,app,player.source)
+        view:=cache_content(library,assets,allocator,player.source)
         if view==nil {continue}
         next:=player
         player_advance(&next,view.info.duration,time.dt)
@@ -195,14 +196,14 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
 }
 
 @(step="render",loops="game editor",before="render_sync")
-physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read(core.World_Transform),hidden:core.Read(render.Hidden),library:^Cache_Library,app:^host.App,problems:^core.Problems) {
-    if app.assets==nil {return}
+physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read(core.World_Transform),hidden:core.Read(render.Hidden),library:^Cache_Library,assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,problems:^core.Problems) {
+    if assets==nil {return}
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
         if core.has(hidden,e) {continue}
         player:=core.at(players,row)
-        content,error:=cache_content_find(library,app,player.source)
-        if content==nil || error!=.None {source_problem(problems,e,app.assets,player.source,error);continue}
+        content,error:=cache_content_find(library,assets,allocator,player.source)
+        if content==nil || error!=.None {source_problem(problems,e,assets,player.source,error);continue}
         world,has:=core.get(worlds,e)
         if !has {continue}
         count:=cache_sample(content.view,player.time,library.sampled)
@@ -210,10 +211,10 @@ physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read
             mesh:=content.meshes[piece.track]
             if mesh=={} {continue}
             pose:=mm.transform_compose(world.transform,piece.pose)
-            instance,ok:=render.mesh_instance(app.assets,{mesh=mesh},mm.transform_matrix(pose))
+            instance,ok:=render.mesh_instance(assets,{mesh=mesh},mm.transform_matrix(pose))
             if !ok {continue}
             instance.object_id=u64(e)
-            host.extras_instance_add(&app.extras,instance)
+            host.extras_instance_add(extras,instance)
         }
     }
 }

@@ -55,7 +55,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     nodes[2].kind,nodes[2].left,nodes[2].right,nodes[2].weight=.Blend,0,1,.5
     profile:=Graph_Profile{info={animation=sources[0].id,output=2},nodes=nodes[:]}
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,nil,nil))
+    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,nil,nil,{}))
     fixture:host.Content_Animation;state:=layer_fixture(t,&fixture);defer {lib.library_destroy(&fixture.lib);playing_free(&state)}
     state.asset,state.generation,state.source_plan=combined.id,combined.generation,1
     testing.expect(t,source_clip_source(&cache,&state,4)==sources[1].id && source_clip_source(&cache,&state,1)==sources[0].id)
@@ -92,7 +92,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     nodes[1].kind,nodes[1].blend_space,nodes[1].position,nodes[1].animation,nodes[1].clip=.Blend_Space,blend.id,{.5,0},{},{}
     nodes[2].kind=.Additive
     profile.info.output=2
-    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,&blends,&app))
+    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,&blends,app.assets,app.allocator))
     spaced:=output.groups[output.instructions[output.instructions[output.output].right].group]
     testing.expect(t,spaced.count==2 && spaced.leaves[0].clip!=spaced.leaves[1].clip,"an additive space keeps the clips of each source apart")
 }

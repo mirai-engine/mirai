@@ -122,7 +122,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     }
     tracks:=make([dynamic]Pose_Bake_Track,call.allocator);frames:=int(preview.ticks)+1
     skeleton:^anim.Skeleton_Content
-    if state.skeleton!={} {cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets);skeleton=anim.skeleton_content(cache,s.app,state.skeleton);if skeleton==nil {authoring_failure(call,"skeleton","Missing_Asset","the evaluated skeleton definition","missing skeleton","The skeleton paths could not be exported");return false}}
+    if state.skeleton!={} {cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets);skeleton=anim.skeleton_content(cache,s.app.assets,s.app.allocator,state.skeleton);if skeleton==nil {authoring_failure(call,"skeleton","Missing_Asset","the evaluated skeleton definition","missing skeleton","The skeleton paths could not be exported");return false}}
     for binding,b in state.bindings {
         path:=""
         if skeleton!=nil {if b==0 {if binding.driven=={} {continue}} else {if b>len(skeleton.bones) {return false};path=base.text_get(skeleton.bones[b-1].path[:])}} else if binding.entity!=entity {

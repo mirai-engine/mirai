@@ -167,28 +167,28 @@ match_content_free :: proc(content:^Match_Content) {
     content^={}
 }
 
-match_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Match_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+match_content :: proc(cache:^Graph_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Match_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     row:=-1
     for content,i in cache.matches {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.matches);if append(&cache.matches,Match_Content{id=id})!=1 {return nil}}
     content:=&cache.matches[row]
-    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Match_Profile;error:=asset.Error.Not_Found
     if found {
         file:asset.Asset
-        error=host.assets_file(app.assets,id,MATCH_KIND,&file)
+        error=host.assets_file(assets,id,MATCH_KIND,&file)
         if error==.None {
-            view,read:=match_view(&file,&app.assets.types);error=read
+            view,read:=match_view(&file,&assets.types);error=read
             if read==.None {
                 profile.info=view.info
-                clips,ok:=graph_clone(view.clips,app.allocator)
-                samples,cloned:=graph_clone(view.samples,app.allocator)
+                clips,ok:=graph_clone(view.clips,allocator)
+                samples,cloned:=graph_clone(view.samples,allocator)
                 if ok && cloned {profile.clips,profile.samples=clips,samples} else {delete(clips);delete(samples);error=.Out_Of_Memory}
             }
             asset.asset_close(&file)
@@ -197,7 +197,7 @@ match_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Ma
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     revision:=content.revision
     match_content_free(content)
-    content^={id=id,profile=profile,valid=error==.None,error=error,stamp=stamp,checked=assets_stamp(app.assets),revision=revision+1}
+    content^={id=id,profile=profile,valid=error==.None,error=error,stamp=stamp,checked=assets_stamp(assets),revision=revision+1}
     return content if content.valid else nil
 }
 

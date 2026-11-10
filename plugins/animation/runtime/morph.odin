@@ -248,7 +248,7 @@ animation_morph :: proc(
             entity:=core.entity_at(meshes,row)
             mesh:=core.at(meshes,row).mesh
             if mesh=={} {continue}
-            index:=skin_rig_load(cache,app,mesh,problems,entity)
+            index:=skin_rig_load(cache,app.assets,app.allocator,mesh,problems,entity)
             if index==max(u32) {found=false;continue}
             if len(cache.rigs[index].morphs)==0 {continue}
             playing:=morph_playing(state,entity)

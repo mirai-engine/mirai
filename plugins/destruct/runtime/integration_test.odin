@@ -97,7 +97,7 @@ destruct_test_settle :: proc(f:^Destruct_Test) {
 destruct_test_step :: proc(f:^Destruct_Test,resimulating:=false) {
     destruct_test_settle(f)
     f.tick+=1
-    destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),&f.app,{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating},core.commands(f,&f.info),
+    destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),f.app.assets,&f.app.jobs,{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating},core.commands(f,&f.info),
         core.read(&f.configs),&f.meshes,&f.tints,core.read(&f.parents),&f.states,&f.groups,&f.elsewhere,&f.transforms,&f.ids,core.read(&f.colliders),{},&f.problems)
     destruct_test_settle(f)
 }

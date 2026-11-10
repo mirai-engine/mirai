@@ -69,7 +69,7 @@ timing_input :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     core.queue_clear(&sh.events.received)
     s.now=sh.now
-    client_commands(s,ref,app,wire.host_poll(&s.host),&sh.events)
+    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host),&sh.events)
     client_reconcile(s,ref,app,w.frame.dt)
     client_clock(s,ref,app)
 }

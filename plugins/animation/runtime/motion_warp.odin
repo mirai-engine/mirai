@@ -124,25 +124,25 @@ motion_cached_content :: proc(cache:^Motion_Assets,id:base.Asset_Id,hint:^i32=ni
     if hint!=nil {hint^=i32(row+1)}
     return &cache.contents[row]
 }
-motion_content :: proc(cache:^Motion_Assets,app:^host.App,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+motion_content :: proc(cache:^Motion_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     content:=motion_cached_content(cache,id,hint)
     if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) || append(&cache.contents,Motion_Content{id=id})!=1 {return nil};content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
-    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{};if found {stamp={record.size,record.time}}
-    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
+    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Motion_Profile;error:=asset.Error.Not_Found
     if found {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        read,read_error:=motion_profile_read(app.assets,app.allocator,id)
+        read,read_error:=motion_profile_read(assets,allocator,id)
         profile=read;error=read_error
     }
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     motion_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if content.valid else nil
 }
 @(private)
@@ -223,13 +223,13 @@ motion_inspect :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> (Motion_In
 }
 
 // Reports why the motion profile of a rig did not apply in a tick.
-motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,app:^host.App=nil,assets:^Motion_Assets=nil,profile:base.Asset_Id={}) {
+motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,loaded:^host.Assets=nil,assets:^Motion_Assets=nil,profile:base.Asset_Id={}) {
     switch error {
     case .None,.Unsupported_Clock:
     case .Invalid:
         core.report(problems,e,"animation.motion_invalid","the motion profile of this rig could not warp it: a value of the profile, of its targets, of the locomotion asked or of the root motion is not finite or is out of range; check them (animation.inspect)")
     case .Missing_Profile:
-        if assets!=nil {asset_problem(problems,e,app,"animation.motion_asset","Animation.motion",profile,content_error(assets.contents[:],profile))}
+        if assets!=nil {asset_problem(problems,e,loaded,"animation.motion_asset","Animation.motion",profile,content_error(assets.contents[:],profile))}
     case .Unbound_Bone:
         core.report(problems,e,"animation.motion_bones","the motion profile of this rig names a pelvis, spine or leg bone its skeleton does not have, or legs that are not chains (hip, knee, foot) or that share bones; fix the profile (animation.asset.inspect lists the bones)")
     case .Missing_Target:
@@ -325,9 +325,9 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     return true
 }
 
-motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,assets:^Motion_Assets,app:^host.App,problems:^core.Problems) -> bool {
+motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     if runtime==nil || playback==nil || animations.table==nil {return false}
-    if app!=nil {context.allocator=app.allocator}
+    if allocator.procedure!=nil {context.allocator=allocator}
     runtime.frame+=1
     if !motion_discover(runtime,animations,problems) {return false}
     kept:=0
@@ -337,10 +337,10 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animati
         instance.seen=runtime.frame
         state:=constraint_playing(playback,instance.entity)
         id:=animations.table.values[row].motion
-        content:=motion_content(assets,app,id,&instance.content)
+        content:=motion_content(assets,loaded,allocator,id,&instance.content)
         if content==nil {
             instance.error=.Missing_Profile
-            motion_problem(problems,instance.entity,.Missing_Profile,app,assets,id)
+            motion_problem(problems,instance.entity,.Missing_Profile,loaded,assets,id)
         } else if state!=nil && !motion_bind(&instance,state,content) {
             motion_problem(problems,instance.entity,instance.error)
         }
@@ -364,10 +364,10 @@ motion_resolve_targets :: proc(runtime:^Motion_Runtime,playback:^Playback,skelet
     }}
 }
 
-motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,app:^host.App,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
+motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
-    definition:=motion_content(assets,app,profile,&instance.content)
+    definition:=motion_content(assets,loaded,allocator,profile,&instance.content)
     if definition==nil {return false}
     if !motion_bind(instance,state,definition) {return false}
     instance.window=-1;instance.remaining_error=0;instance.error=.None;instance.source_velocity={}
