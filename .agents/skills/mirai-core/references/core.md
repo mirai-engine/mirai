@@ -499,7 +499,8 @@ destroy, settle, copy and swap of its tables.
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
   component or the value of a storage. What the attributes of `T` say is read from the source that
   declares it, through the `core.declared_read` the generator uses: a test world cannot say
-  something else of a type than a generated one. A type a test file declares may have no attribute.
+  something else of a type than a generated one. A type a test file declares may have no attribute,
+  and takes the default its test gives it.
 - What the application and the editor hold go in two more structs, given to `core.test_info`: a
   `@(storage,host)` as a value, a `by_world` one as a `core.By_World(T)`.
 - `core.test_world_init` makes a world that holds its own `World_Info`, for a test of one world;
