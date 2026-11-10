@@ -241,7 +241,8 @@ table per record (`UI_TABLE_*`); contracts and precedence, in the
   `host.ui_check_refuses_what_tree_load_refuses_case_by_case` compares the two paths field by
   field. The values are covered by the check against the schema.
 - Changing a value: `mirai asset set hud.ui 'nodes[6].layout.gap=8'`; adding or removing nodes or
-  changing texts is `unpack`, edit and `pack`, or the editor's `ui.*` API.
+  changing texts is its document (`mirai ui read`, edit, `mirai ui write`), or the editor's
+  `ui.*` API.
 
 ## Font
 

@@ -781,7 +781,7 @@ property_default :: proc "contextless" (property:ui.Anim_Property) -> [4]f32 {
     case .Scale:            return {1,1,0,0}
     case .Opacity:          return {1,0,0,0}
     case .Color:            return {1,1,1,1}
-    case .Width,.Height,.Value,.Frame,.Reveal: return {}
+    case .Value,.Frame,.Reveal: return {}
     }
     return {}
 }

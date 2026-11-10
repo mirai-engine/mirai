@@ -522,37 +522,32 @@ other; authority, prediction and rollback for the rest belong to the
   grids in that region, or of the layers of a
   layer change, whose region is the whole source. What `terrain_replay` applies does not move
   `Source.revision`.
-- **The server decides.** It applies what its game asks and what a client asks
-  (`Net_Terrain_Ask`), and sends each edit and each layer change to all (`Net_Terrain_Edit`),
-  numbered per source, with its tick, its region and its check. A client's request waits for the
-  tick at which the client made it. What is not allowed comes back as `Net_Terrain_Refused` with
-  the cause (rate, connection without a seat, reach from what its seat drives, radius, brush, tick,
-  unloaded source or the edit's error), which the client reports as the `terrain.net_refused`
-  problem with how to fix it. `Terrain_Net_Settings` (project setting) sets the rate, the reach and
-  the radius.
+- **Edits are an
+  [operation journal](../../mirai-networking/references/multiplayer.md#operation-journal) keyed by
+  source.** The server applies what its game asks and what a client asks, and publishes each edit
+  and each layer change with its region and its check. A client's request waits for the tick at
+  which the client made it. What is not allowed is refused with the cause (rate, connection
+  without a seat, reach from what its seat drives, radius, brush, tick, unloaded source or the
+  edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it.
+  `Terrain_Net_Settings` (project setting) sets the rate, the reach and the radius.
 - **What the game asks of a client is a prediction:** an edit is applied at its tick, stored with
   its check and asked of the server. When the server's edit comes back, a prediction that left the
   same check stays as that edit, without repeating the brush. A layer change is not predicted
   (`Terrain_Replays.asked`): it is asked and applied when it comes back, in the server's order. A
   game asks for an edit at the end that decides it (`core.owned`), not at both.
-- **The client follows the server's order** per source, edits and parts, from where
-  `Terrain_Net_World` says, which is part of the `World`: a correction that comes back earlier finds
-  the source as it was and applies each element again at the tick at which it first applied it, and
-  the game repeats its predictions. What arrives out of order waits for its turn; a lasting gap
-  asks for a base.
+- **The client follows the server's order** per source, edits and parts, as the journal hands
+  them; a correction finds the source as it was and the game repeats its predictions.
 - **An edit by someone else** over a pending prediction, from an already simulated tick, asks to go
   back to that tick (`multiplayer.rewind`) to end up in the server's order; if it cannot, or it
   touches no prediction, it is applied in the present.
 - **No bit-for-bit equality.** A different check (another order, another architecture), a
-  prediction that was rejected or never came back asks for the parts of that region
-  (`Net_Terrain_Resync`): the pages of its grids. The server sends them
-  whole, in LZ and in chunks, with a byte budget per tick that a long part spreads over ticks, and
-  the client writes each one in the place of the order where it started arriving: what follows
-  waits for it.
+  prediction that was rejected or never came back asks for the parts of that region: the pages of
+  its grids, whole (`Net_Part` says what each one is).
 - **A source knows where it came from:** `Source.origin` is the hash of the contents of the file it
-  was read from (or saved to, which becomes it), and each page says whether it was
-  written since then (`altered`; `Grid.filled` for the parts of a directory that took one value); a
-  copy carries it.
+  was read from (or saved to, which becomes it), and each page says whether it was written since
+  it was read (`altered`; `Grid.filled` for the parts of a directory that took one value): saving
+  codes the values with loss, so a page edited before a save still differs from the file. A copy
+  carries it.
 - **One base for each source that the client loads, or cannot read,** is asked for by it with its
   origin if it wrote nothing since its file or what was written came from the server; if not,
   without origin. The server sends the base's head, which stands for all the earlier edits (shape,
@@ -562,9 +557,8 @@ other; authority, prediction and rollback for the rest belong to the
   starts again from that shape, or is created if it did not have it. It only sends to the
   connections that entered its world. The base ends with a mark: what differs on the client up
   to it is not asked for, because the base brings it.
-- A player launched over the network prints the base that arrives, a region that differs and on
-  exit how many edits left another check; the server, the parts it sends to each connection. In
-  the editor it goes to the log.
+- A player launched over the network prints the base that arrives and on exit how many edits left
+  another check. In the editor it goes to the log.
 - `Terrain_Digs` comes out at each end where an edit is applied: the client's prediction and the
   edits of others that reach it. The dust belongs to each end; a game counts what was dug and
   `terrain_debris` makes pieces and drops only where `core.Network` is not a client, and a prefab
