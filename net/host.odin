@@ -172,7 +172,7 @@ Op :: struct {
     offset,size:u32,
 }
 @(private)
-Connect_Request :: struct {address:Address,credentials:Credentials}
+Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int,credentials:Credentials}
 // Bytes of messages given to the game channels of one connection: 4 more than each one's data.
 @(private)
 Queued_Bytes :: struct {connection:Connection,bytes:[MAX_CHANNELS]u64}
@@ -252,6 +252,7 @@ Back :: struct {
     key:u64,
     secret:[16]u8,
     secure:Host_Secure,
+    attempt:Attempt, // client
     rng:u64,
     tick:u32,
     send_pending:bool,
@@ -441,11 +442,16 @@ frame_submit :: proc(h:^Host) {
 
 // Client: starts connecting. The answer is a Connected or a Disconnected command.
 // credentials are what the client knows of the server: its key, and the connect token it may ask for.
-host_connect :: proc(h:^Host,address:Address,credentials:Credentials={}) -> Error {
+// nearby also looks for the server on this machine and on its network, at the same port, in the same
+// attempts: for the address of an invitation code, a router that may not loop its own traffic back.
+// Only the server that holds the invitation can accept, so whoever else answers gains nothing.
+host_connect :: proc(h:^Host,address:Address,credentials:Credentials={},nearby:=false) -> Error {
     if h.desc.mode!=.Client || address.kind==.None {return .Invalid}
     zero:Key
     if credentials.has_token && credentials.server_key==zero {return .Invalid}
-    request:=Connect_Request{address,credentials}
+    request:=Connect_Request{credentials=credentials}
+    request.candidates[0],request.count=address,1
+    if nearby {request.candidates,request.count=connect_candidates(address,address.kind==.IP4?address_lan_broadcast(int(address.port)):{})}
     return op_push(h,{kind=.Connect},mem.ptr_to_bytes(&request))?.None:.Full
 }
 // Closes a connection and tells the other end why. Zero closes every connection.
@@ -634,7 +640,7 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
     case .Connect:
         request:Connect_Request
         mem.copy(&request,raw_data(op_data(frame,op)),size_of(Connect_Request))
-        peer_connect(h,request.address,&request.credentials)
+        peer_connect(h,&request)
     case .Disconnect:
         for &peer in b.peers {
             if peer.state==.Free || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}

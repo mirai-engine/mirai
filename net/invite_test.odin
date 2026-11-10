@@ -1,6 +1,7 @@
 package mirai_net
 
 import "core:log"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -132,8 +133,10 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
     testing.expect_value(t,host_stats(server).handshakes_refused,u64(0))
 }
 
-// The same over real UDP sockets on loopback: the right invitation connects
-// and carries a message; a wrong one and none hear only the challenge.
+// The same over real UDP sockets on loopback, with the address of the code
+// unreachable, as the public address of a router that does not loop back: the
+// right invitation connects through a nearby candidate and carries a message;
+// a wrong one and none hear only the challenge.
 @(test)
 an_invitation_over_udp_on_loopback_answers_only_who_brings_it :: proc(t:^testing.T) {
     server_socket:Udp
@@ -146,14 +149,14 @@ an_invitation_over_udp_on_loopback_answers_only_who_brings_it :: proc(t:^testing
     defer host_destroy(server)
     attempt :: proc(t:^testing.T,server:^Host,answers:^Answers,address:Address,invite:u32) -> (reason:Disconnect_Reason,delivered:bool) {
         client_socket:Udp
-        if !udp_open(&client_socket,address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+        if !udp_open(&client_socket,address_ip4(0,0,0,0,0)) {testing.expect(t,false,"cannot bind a UDP socket");return}
         defer udp_close(&client_socket)
         client:=new(Host)
         defer free(client)
         if !testing.expect_value(t,host_init(client,{mode=.Client,transport=udp_transport(&client_socket),channels={{kind=.Reliable}},invite=invite,protocol_id=91,connect_timeout=1}),Error.None) {return}
         defer host_destroy(client)
-        answers.all,answers.only={},client_socket.address
-        host_connect(client,address)
+        answers.all,answers.only={},address_loopback(int(client_socket.address.port))
+        host_connect(client,address,nearby=true)
         reason=.Timeout
         start:=host_time(server)
         for host_time(server)-start<3 {
@@ -171,12 +174,30 @@ an_invitation_over_udp_on_loopback_answers_only_who_brings_it :: proc(t:^testing
         }
         return
     }
-    reason,delivered:=attempt(t,server,&answers,server_socket.address,0x2b3c4d)
+    unreachable:=address_ip4(192,0,2,1,int(server_socket.address.port)) // a documentation address
+    reason,delivered:=attempt(t,server,&answers,unreachable,0x2b3c4d)
     testing.expect(t,reason==.None && delivered,"the right invitation connects and carries a message")
     for invite in ([2]u32{0x2b3c4e,0}) {
-        reason,_=attempt(t,server,&answers,server_socket.address,invite)
+        reason,_=attempt(t,server,&answers,unreachable,invite)
         testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
         testing.expectf(t,answers.all[.Challenge]>0 && answers.all[.Accepted]==0 && answers.all[.Denied]==0 && answers.all[.Data]==0,"invitation %x: the server answered %v",invite,answers.all)
+    }
+}
+
+@(test)
+a_code_is_looked_for_at_its_address_on_this_machine_and_on_its_network :: proc(t:^testing.T) {
+    public:=address_ip4(203,0,113,7,27500)
+    broadcast:=address_ip4(192,168,1,255,0)
+    Case :: struct {address,broadcast:Address,want:[]Address}
+    for c in ([]Case{
+        {public,broadcast,{public,address_loopback(27500),address_ip4(192,168,1,255,27500)}},
+        {public,{},{public,address_loopback(27500)}},
+        {address_loopback(27500),broadcast,{address_loopback(27500),address_ip4(192,168,1,255,27500)}},
+        {address_loopback6(7950),broadcast,{address_loopback6(7950)}},
+        {address_memory(3),broadcast,{address_memory(3)}},
+    }) {
+        candidates,count:=connect_candidates(c.address,c.broadcast)
+        testing.expectf(t,slice.equal(candidates[:count],c.want),"%v: %v",c.address,candidates[:count])
     }
 }
 

@@ -81,9 +81,6 @@ Peer_Secure :: struct {
     refused:bool, // client: an answer came that the expected server could not have sent
     ephemeral:Key,  // client, until accepted: its secret
     public:Key,     // the public key this end made for the connection
-    server_key:Key, // client: the key it expects the server to hold
-    shared:Key,     // client, until accepted: what its secret and server_key give
-    proof:[TOKEN_BYTES+TAG_BYTES]u8, // client: the token, if any, and the tag, sealed with the proof key
     accept,send,receive,receive_old:Key,
     send_epoch,receive_epoch:u64,
 }
@@ -255,7 +252,7 @@ secure_session :: proc(h:^Host,s:^Peer_Secure,salt:u64,exchanged,static,client_p
     crypto.zero_explicit(&keys,size_of(keys))
 }
 
-// Client: makes the key of a connection attempt and keeps what it will present.
+// Client: makes the key of a connection attempt.
 @(private)
 secure_client_begin :: proc(p:^Peer,credentials:^Credentials) {
     s:=&p.secure
@@ -264,36 +261,36 @@ secure_client_begin :: proc(p:^Peer,credentials:^Credentials) {
     crypto.rand_bytes(s.ephemeral[:])
     x25519.scalarmult_basepoint(s.public[:],s.ephemeral[:])
     s.pinned,s.has_token=credentials.server_key!=zero,credentials.has_token
-    s.server_key=credentials.server_key
-    if s.has_token {copy(s.proof[:],credentials.token[:])}
 }
 
-// Client: seals what it presents for the server whose answer brought
-// server_key, or for the one it pinned. False when that key leaves nothing secret.
+// Client: seals what it presents for a server that answered with server_key,
+// or for the one it pinned. False when that key leaves nothing secret.
 @(private)
-secure_client_prove :: proc(h:^Host,p:^Peer,server_key:^Key) -> bool {
+secure_client_prove :: proc(h:^Host,p:^Peer,c:^Challenger,server_key:^Key) -> bool {
     s:=&p.secure
-    if !s.pinned {s.server_key=server_key^}
-    if !secure_exchange(&s.shared,&s.ephemeral,&s.server_key) {return false}
+    a:=&h.back.attempt
+    c.server_key=s.pinned?a.server_key:server_key^
+    if !secure_exchange(&c.shared,&s.ephemeral,&c.server_key) {return false}
     key:Key
     defer crypto.zero_explicit(&key,KEY_BYTES)
-    proof_key(h,&key,&s.shared,&s.public,&s.server_key,p.client_salt,s.has_token)
-    body:=s.proof[:s.has_token?TOKEN_BYTES:0]
-    aead_seal(&key,0,s.public[:],body,s.proof[len(body):][:TAG_BYTES])
+    proof_key(h,&key,&c.shared,&s.public,&c.server_key,p.client_salt,s.has_token)
+    body:=c.proof[:s.has_token?TOKEN_BYTES:0]
+    copy(body,a.token[:])
+    aead_seal(&key,0,s.public[:],body,c.proof[len(body):][:TAG_BYTES])
     return true
 }
 
-// Client: the keys of the connection from the server's answer. False when the answer is not from who the client expects.
+// Client: the keys of the connection from the answer of the server it proved
+// itself to. False when the answer is not from who the client expects.
 @(private)
-secure_client_finish :: proc(h:^Host,p:^Peer,server_public:^Key,sealed:[]u8) -> bool {
+secure_client_finish :: proc(h:^Host,p:^Peer,c:^Challenger,server_public:^Key,sealed:[]u8) -> bool {
     s:=&p.secure
     exchanged:Key
     defer crypto.zero_explicit(&exchanged,KEY_BYTES)
     if !secure_exchange(&exchanged,&s.ephemeral,server_public) {return false}
-    secure_session(h,s,p.client_salt,&exchanged,&s.shared,&s.public,server_public,&s.server_key)
+    secure_session(h,s,p.client_salt,&exchanged,&c.shared,&s.public,server_public,&c.server_key)
     if !aead_open(&s.accept,0,server_public[:],sealed[:len(sealed)-TAG_BYTES],sealed[len(sealed)-TAG_BYTES:]) {return false}
     crypto.zero_explicit(&s.ephemeral,KEY_BYTES)
-    crypto.zero_explicit(&s.shared,KEY_BYTES)
     return true
 }
 

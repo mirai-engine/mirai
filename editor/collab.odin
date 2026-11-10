@@ -328,7 +328,7 @@ collab_name_set :: proc(c:^Collab,name:string) {
 }
 
 @(private)
-collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32) -> (st:^Collab_State,error:Collab_Error) {
+collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32,target:wire.Address={}) -> (st:^Collab_State,error:Collab_Error) {
     c:=collab_of(s)
     if c.state!=nil && c.state.role!=.None && c.state.phase!=.Ended {return nil,.Busy}
     if s.app.assets==nil {return nil,.No_Assets}
@@ -342,7 +342,8 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
         {kind=.Reliable,max_message_bytes=COLLAB_MESSAGE,queue_bytes=256<<10},
         {kind=.Unreliable},
     }
-    bind:=wire.address_any6(role==.Host?port:0)
+    // A guest of an IPv4 host binds IPv4, which can also look for it by broadcast on its network.
+    bind:=role==.Guest && target.kind==.IP4?wire.address_ip4(0,0,0,0,0):wire.address_any6(role==.Host?port:0)
     if !wire.udp_open(&st.udp,bind) {
         free(st)
         return nil,.Transport
@@ -390,9 +391,10 @@ collab_join :: proc(s:^Session,code,name:string,discard:bool) -> Collab_Error {
     target,invite,valid:=wire.invite_decode(code)
     if !valid {return .Invite}
     if document_dirty(s) && !discard {return .Dirty}
-    st,error:=collab_start(s,.Guest,0,name,invite)
+    st,error:=collab_start(s,.Guest,0,name,invite,target)
     if error!=.None {return error}
-    if wire.host_connect(&st.host,target)!=.None {
+    // Also on this machine and its network: the address of the code may be a router that does not loop back.
+    if wire.host_connect(&st.host,target,nearby=true)!=.None {
         collab_destroy(s)
         return .Transport
     }

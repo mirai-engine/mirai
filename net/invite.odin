@@ -156,6 +156,43 @@ interface_has_gateway :: proc(interface:cnet.Network_Interface) -> bool {
     return false
 }
 
+// The broadcast address of the network this machine reaches the internet
+// through, with a port; none when it is not known.
+address_lan_broadcast :: proc(port:int) -> Address {
+    lan:=address_lan(port)
+    if lan.kind!=.IP4 || lan.ip[0]==127 {return {}}
+    broadcast,_:=lan_broadcast(lan)
+    return broadcast
+}
+
+// Where a client looks for the server of an address at once: the address, this
+// machine at its port and, for IPv4, the broadcast of its network. The address
+// of a code may be a router that does not loop its own traffic back, and then
+// its server answers from the network or from this machine.
+connect_candidates :: proc "contextless" (address,broadcast:Address) -> (candidates:[CANDIDATES]Address,count:int) {
+    add :: proc "contextless" (candidates:^[CANDIDATES]Address,count:^int,address:Address) {
+        if address.kind==.None || count^>=CANDIDATES {return}
+        for other in candidates[:count^] {
+            if other==address {return}
+        }
+        candidates[count^]=address
+        count^+=1
+    }
+    add(&candidates,&count,address)
+    #partial switch address.kind {
+    case .IP4:
+        add(&candidates,&count,address_loopback(int(address.port)))
+        if broadcast.kind==.IP4 {
+            at:=broadcast
+            at.port=address.port
+            add(&candidates,&count,at)
+        }
+    case .IP6:
+        add(&candidates,&count,address_loopback6(int(address.port)))
+    }
+    return
+}
+
 // Where others reach a host whose port the router may have mapped: the
 // mapped address when there is one, the one of its network otherwise.
 address_reachable :: proc(mapping:^Port_Mapping,mapped:bool,port:int) -> Address {

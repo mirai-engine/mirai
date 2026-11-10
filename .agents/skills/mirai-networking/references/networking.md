@@ -63,7 +63,13 @@ like `replication.hysteresis`) and the values it admits.
 ## Connections
 
 - **Four-datagram handshake, always sealed.** The client's request and response are padded.
-  - *Request*: the client salt. *Challenge*: a SipHash cookie of the address, the salt and the
+  - *Request*: the client salt, to every candidate of the attempt at once: the address given and,
+    with `host_connect(nearby=true)` (an invitation code), loopback and the broadcast of the
+    network the machine routes through (`connect_candidates`), because the address of a code may
+    be a router that does not loop its own public address back. The client proves itself to each
+    server that answers (`CANDIDATES` at most) and goes on with the one that accepts; with several
+    candidates a denial or another version ends the attempt only when its time is up.
+  - *Challenge*: a SipHash cookie of the address, the salt and the
     time, the server's version and its lasting X25519 key; every request gets it, the server
     stores nothing, and a client of another version ends with `Denied_Version` on reading it.
   - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
