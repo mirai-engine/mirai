@@ -5,39 +5,25 @@ over caller buffers and delivers poses and palettes to the upper layers, without
 depends on `core:`, `std/base` and `std/math`.
 
 - It uses `math.Ease` for the curves. The
-  [UI animation](../../mirai-ui/references/ui.md#game-interfaces) shares the curves of
-  `std/math`, but has its own library and its own `ui.Ease` enum.
+  [UI animation](../../mirai-ui/references/ui.md#game-interfaces) stores these keys and reads them
+  with `track_evaluate`, in a library of its own: its nodes are not entities.
 - The definition (`Library`) is created with capacities, prepared at load or authoring time, and is
-  shared and immutable during playback. The temporal state (`Player`, `Fader`, `Tween`,
+  shared and immutable during playback. The temporal state (`Player`, `Fader`,
   `Inertial_State`, `Spring_Joint_State`) is plain and copyable; the solvers receive caller buffers.
   Playback does not allocate.
 - Creation and [resident compression](anim-storage.md) are explicit transactions; what is rejected
   returns its cause (`Clip_Error`) or `false`, and poses count in `failed`.
 - The [body map, the metrics and the editing verbs](anim-body.md) work on sampled clips (`Frames`).
 
-## Tweens (`tween.odin`, `loop.odin`)
+## Loops (`loop.odin`)
 
-- `Tween($T)` works on scalars, vectors and `Quat` (slerp); `tween_make_color` interpolates in
-  OKLab. A negative `dt` rewinds it; a duration of 0 without delay is born finished.
 - `Loop` and `loop_time` define the timeline of a playback: one pass is one duration and the
   ping-pong walks the odd ones backwards.
 
-## Transform sequences
-
-- `Transform_Frame` is a TRS pose with its arrival segment (`Linear`, with the slerp of the tracks,
-  or `Step`, both with `Ease`). The first pose ignores `duration`; each pose waits `hold` after
-  arriving.
-- `sequence_duration` validates unit poses, times and enums and sums without overflowing;
-  `sequence_sample` evaluates with `track_evaluate` and `loop_time`, without allocating. An invalid
-  input returns `false`; an empty list is not a sequence; a total duration of zero gives the last
-  pose.
-- `Once` holds the first and the last value; `Ping_Pong` reverses the whole timeline, including the
-  waits.
-- The `Keyframe_Path` component adds editable configuration and per-entity playback
-  ([Keyframe_Path](../../mirai-animation/references/animation-sequence.md)).
-
 ## Tracks, keys and clips (`track.odin`, `clip.odin`)
 
+- `Keyframe` is the only key of the engine and `track_evaluate` the only reader of a keyed value:
+  clips, the cinematics they play and the animations of an interface store and read the same.
 - The interpolation and easing of a `Keyframe` say how the value arrives at it from the previous
   one; the comment of `Keyframe` defines the tangents of `Cubic` (Hermite). Outside the keys the
   track holds its value; a NaN time gives the first one.

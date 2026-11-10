@@ -7,6 +7,7 @@ import game "mirai:demo/game"
 import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
+import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -116,7 +117,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
         destruct.destruct_step(&physics,&fractures,core.ref(&fracture_settings),&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
             core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),{},nil)
         physics_bake_settle(&world,nil,nil)
-        if frame==15 || frame==30 {phys.apply_radial_impulse(&bodies,{0,2.5,0},4,.6,.Constant,velocity_change=true)}
+        if frame==15 || frame==30 {phys.apply_area(&bodies,volume.sphere(4),{position={0,2.5,0}},.6,impulse=true,velocity_change=true)}
         error:=cache.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
         if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.content.failed=true;return id}
         if frame<150 && !phys.simulate(&physics,&bodies,&app.jobs,1.0/30,gravity,&problems) {o.content.failed=true;return id}

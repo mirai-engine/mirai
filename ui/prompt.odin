@@ -45,6 +45,20 @@ prompt :: proc(ctx:^Context,id:Id,action:u64,style:Text_Style,layout:Layout) {
     element_close(ctx)
 }
 
+// The prompts of an action as boxes in the line of the text begun, as high as height.
+@(private)
+prompt_boxes :: proc(ctx:^Context,action:u64,height:f32) {
+    found:[PROMPT_CAPACITY]Prompt
+    count:=0
+    if game:=&ctx.game;game.prompts!=nil && action!=0 {count=game.prompts(game.user,action,game.family,found[:])}
+    for shown,i in found[:count] {
+        p:=shown
+        if p.quad.kind==.Solid {p.text=text_store(ctx,p.text)}
+        width:=height*p.aspect if p.quad.kind!=.Solid && p.aspect>0 else prompt_width(ctx,p,height)
+        text_box(ctx,width,height,{kind=.Prompt,prompt=p},gap=height*0.12 if i<count-1 else 0)
+    }
+}
+
 // One prompt as a leaf of the layout, as high as height: the image of its
 // pack, or else its drawing.
 prompt_glyph :: proc(ctx:^Context,p:Prompt,height:f32) {
@@ -110,7 +124,9 @@ prompt_draw :: proc(ctx:^Context,r:Rect,g:Prompt) {
 
 @(private="file")
 prompt_label :: proc(ctx:^Context,r:Rect,text:string,size:f32,color:Color) {
-    draw_text_block(ctx,text,r,{font=FONT_SEMIBOLD,size=size,color=color,align_x=.Center,align_y=.Center,wrap=.None})
+    clip_push(ctx,r)
+    draw_text(ctx,text,r.x+(r.w-text_width(&ctx.font,text,size,FONT_SEMIBOLD))*0.5,r.y+text_leading(size,r.h),size,color,FONT_SEMIBOLD)
+    clip_pop(ctx)
 }
 
 // Arrow keys by name: 0 up, 1 right, 2 down, 3 left; -1 for any other.

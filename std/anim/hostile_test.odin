@@ -114,36 +114,6 @@ numbers :: proc(values:..f32) -> bool {
 hostile_ease_bounded :: proc(ease:math.Ease) -> bool {return ease<.Back_In || int(ease)>=len(math.Ease)}
 
 @(test)
-hostile_numbers_through_the_tweens :: proc(t:^testing.T) {
-    h:=base.Hostile{1}
-    for _ in 0..<HOSTILE_ROUNDS {
-        from,to:=finite(&h),finite(&h)
-        scalar:=tween_make(from,to,base.hostile_f32(&h),hostile_ease(&h),base.hostile_f32(&h),hostile_loop(&h))
-        vector:=tween_make(math.Vec3{base.hostile_f32(&h),0,0},math.Vec3{0,base.hostile_f32(&h),0},base.hostile_f32(&h),hostile_ease(&h),base.hostile_f32(&h),hostile_loop(&h))
-        color:=tween_make_color(hostile_vec4(&h),hostile_vec4(&h),base.hostile_f32(&h),hostile_ease(&h),base.hostile_f32(&h),hostile_loop(&h))
-        rotation:=tween_make(hostile_quat(&h),hostile_quat(&h),base.hostile_f32(&h),hostile_ease(&h),base.hostile_f32(&h),hostile_loop(&h))
-        if base.hostile_int(&h,3)==0 {
-            scalar.duration,scalar.delay,scalar.elapsed=base.hostile_f32(&h),base.hostile_f32(&h),base.hostile_f32(&h)
-            color.duration,color.delay,color.elapsed=base.hostile_f32(&h),base.hostile_f32(&h),base.hostile_f32(&h)
-        }
-        // With numbers for its times, a tween is somewhere between its two values.
-        timed:=numbers(scalar.duration,scalar.delay,scalar.elapsed) && hostile_ease_bounded(scalar.ease)
-        for _ in 0..<4 {
-            dt:=base.hostile_f32(&h)
-            timed&&=numbers(dt)
-            value:=tween_advance(&scalar,dt)
-            _=tween_advance(&vector,dt);_=tween_advance(&color,dt);_=tween_advance(&rotation,dt)
-            _=tween_value(color)
-            if !timed {continue}
-            progress:=tween_progress(scalar)
-            if !testing.expectf(t,progress>=0 && progress<=1 && value>=min(from,to)-1e-3 && value<=max(from,to)+1e-3,"A tween left its two values: progress %v, value %v of %v..%v, %v",progress,value,from,to,scalar) {return}
-        }
-        tween_reset(&scalar);tween_reset(&color)
-        testing.expect(t,scalar.elapsed==0 && (!timed || tween_progress(scalar)==0 || !(scalar.delay>0)),"A tween that was reset is not at its start")
-    }
-}
-
-@(test)
 hostile_numbers_through_the_loops :: proc(t:^testing.T) {
     h:=base.Hostile{2}
     for _ in 0..<HOSTILE_ROUNDS {
