@@ -138,7 +138,7 @@ memory_problem :: proc(problems:^core.Problems) {
 // What arrived since the tick before. A fracture of a tick already simulated
 // asks to go back to it, in the next frame. A tick that runs again took its
 // messages the first time: what they left is outside the World.
-@(step="fixed",stage="begin",after="net_tick_head")
+@(step="fixed",stage="begin")
 destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
     net_world(n,root)
     if authority.role==.Standalone || time.resimulating {return}
@@ -182,7 +182,7 @@ net_chunk :: proc(n:^Destruct_Net,chunk:Net_State,problems:^core.Problems) {
 
 // Client, before destruct replays in the tick: the state of the server when it
 // stands, and the events whose tick came, in order.
-@(step="fixed",stage="react",before="destruct_step")
+@(step="fixed",stage="react")
 destruct_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,requests:^destruct.Destruct_Requests,fractures:core.Ref(destruct.Fracture_State),
     destructibles:core.Read(destruct.Destructible),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),root:core.Ref(scene.Scene_Root),
@@ -234,7 +234,7 @@ destruct_net_follow :: proc(
 // broken destructibles go to the connections that arrived or asked. Client:
 // what the replays did decides whether to ask for the state. Both: the
 // groups that are not debris stand for their bodies on the network.
-@(step="fixed",stage="react",after="destruct_step")
+@(step="fixed",stage="react")
 destruct_net_send :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,adoptions:^multiplayer.Net_Adoptions,session:core.Ref(multiplayer.Net_Session),
     connections:core.Ref(multiplayer.Net_Connections),

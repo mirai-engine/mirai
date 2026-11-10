@@ -109,7 +109,7 @@ entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc
     for tick in 1..<6 {server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))}
     // Twenty times a second at 60 ticks: each once every three ticks, one of them in each tick.
     for tick in 6..<15 {
-        for e in entities {core.get(&world.values,e).force=f32(tick)}
+        for e in entities {core.edit(&world.values,e).force=f32(tick)}
         before:=s.stats.fragments_published
         server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
         testing.expectf(t,s.stats.fragments_published-before==1,"tick %v published %v entities",tick,s.stats.fragments_published-before)

@@ -59,12 +59,12 @@ history_at :: proc(f:^History_Fixture,id:base.Entity_Id) -> core.Entity {
 }
 
 @(private="file")
-history_transform :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^core.Transform {return core.get(&f.world.transforms,history_at(f,id))}
+history_transform :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^core.Transform {return core.edit(&f.world.transforms,history_at(f,id))}
 
 // The Lamp of an entity, also while it is turned off; written, the row is stamped.
 @(private="file")
 history_lamp :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^History_Lamp {
-    return (^History_Lamp)(core.raw_get(core.raw(&f.world.lamps),type_info_of(History_Lamp),history_at(f,id)))
+    return (^History_Lamp)(core.raw_edit(core.raw(&f.world.lamps),type_info_of(History_Lamp),history_at(f,id)))
 }
 
 // Opens a gesture of an author; history_commit records it as a step of that author.
@@ -242,7 +242,7 @@ undo_of_a_creation_keeps_the_entity_while_a_child_of_another_author_hangs_from_i
     core.test_world_settle(&f.world)
     testing.expect(t,move.done && move.kept==1)
     testing.expect(t,core.alive(&f.world.entities,made) && core.alive(&f.world.entities,child))
-    parent,_:=core.get(core.read(&f.world.parents),child)
+    parent,_:=core.get(&f.world.parents,child)
     testing.expect_value(t,parent.entity,made)
     // Without the child, the creation goes.
     testing.expect(t,history_move(f,AGENT,false).done)

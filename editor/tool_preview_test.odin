@@ -26,6 +26,9 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)
     defer delete(selection.entities)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
     history.selection_set(&selection,{original})
     tool_set(&s,"test",true)
     testing.expect(t,tool_preview_begin(&s,"test","Place"))
@@ -35,7 +38,7 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     core.add(&world.transforms,duplicate,core.Transform{{2,0,0},1,{1,1,1}})
     core.world_settle(w)
     history.selection_set(&selection,{duplicate})
-    core.get(&world.transforms,original).position.x=5
+    core.edit(&world.transforms,original).position.x=5
     history.edits_end(&edits)
     history.edits_flush(&edits,w,&selection)
     testing.expect(t,!history.edits_commit(&edits,w,&selection))
@@ -66,19 +69,19 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,history.selection_active(&selection),duplicate)
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
-    core.get(&world.transforms,duplicate).position.x=8
-    testing.expect(t,action_run(&s,.Undo))
+    core.edit(&world.transforms,duplicate).position.x=8
+    testing.expect(t,test_command(&s,"undo"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
     testing.expect_value(t,edits.cursor,1)
     testing.expect(t,!tool_preview_active(&s,"test"))
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
-    core.get(&world.transforms,duplicate).position.x=9
+    core.edit(&world.transforms,duplicate).position.x=9
     tool_set(&s,"other",true)
     testing.expect(t,!tool_preview_active(&s,"test"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
     testing.expect(t,tool_preview_begin(&s,"other","Move"))
-    core.get(&world.transforms,duplicate).position.x=10
+    core.edit(&world.transforms,duplicate).position.x=10
     call:api.Call
     testing.expect(t,api_guard(&s,&call))
     testing.expect(t,!tool_preview_active(&s,"other"))
@@ -86,7 +89,7 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,edits.cursor,1)
 
     testing.expect(t,tool_preview_begin(&s,"other","Move"))
-    core.get(&world.transforms,duplicate).position.x=11
+    core.edit(&world.transforms,duplicate).position.x=11
     testing.expect_value(t,document_write(&s,"unused.scene",false),Document_Error.No_Assets)
     testing.expect(t,!tool_preview_active(&s,"other"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
@@ -126,19 +129,22 @@ tool_lent_to_the_gizmo_stays_on :: proc(t:^testing.T) {
     history.edits_reset(&edits,edited_world(&s))
     defer history.edits_free(&edits)
     defer delete(selection.entities)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
     tool_set(&s,"test",true)
-    testing.expect(t,action_state(&s,.Tool_Move).checked)
+    testing.expect(t,command_state(&s,"tool_move").checked)
     tool_lend(&s,"test")
-    testing.expect(t,!action_state(&s,.Tool_Move).checked)
-    testing.expect(t,action_run(&s,.Tool_Rotate))
+    testing.expect(t,!command_state(&s,"tool_move").checked)
+    testing.expect(t,test_command(&s,"tool_rotate"))
     testing.expect(t,tool_on(&s,"test") && tool_aside(&s,"test"))
-    testing.expect(t,action_state(&s,.Tool_Rotate).checked)
+    testing.expect(t,command_state(&s,"tool_rotate").checked)
     tool_take(&s,"test")
     testing.expect(t,!tool_aside(&s,"test") && tool_on(&s,"test"))
-    testing.expect(t,!action_state(&s,.Tool_Rotate).checked)
+    testing.expect(t,!command_state(&s,"tool_rotate").checked)
     // Another tool lends nothing until it says so.
     tool_set(&s,"other",true)
-    testing.expect(t,action_state(&s,.Tool_Rotate).checked)
-    testing.expect(t,action_run(&s,.Tool_Move))
+    testing.expect(t,command_state(&s,"tool_rotate").checked)
+    testing.expect(t,test_command(&s,"tool_move"))
     testing.expect(t,!tool_aside(&s,"other"))
 }

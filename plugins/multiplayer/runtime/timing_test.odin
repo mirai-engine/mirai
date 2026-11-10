@@ -76,12 +76,12 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
     w:=cast(^Net_Test_World)world
     sh:=cast(^Timing_Shared)shared
     sh.ran+=1
-    if local:=core.get(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
+    if local:=core.edit(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
     if sh.bare {
         app:=cast(^host.App)application
         ref:=core.world_ref(w,sh.info)
         core.revisions_moved(w.storage_revisions[:])
-        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
         core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
         core.settle(sh.info,w,nil)
@@ -181,7 +181,7 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         x.server_tick+=1
         wire.host_update(&s.host,x.server_time)
         server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&server.remote)
-        for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
+        for row in 0..<core.count(&server.transforms) {core.edit_at(&server.transforms,row).position.x+=x.speed}
         core.settle(&x.info,server,nil)
         server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)
     }
@@ -206,7 +206,7 @@ timing_replica :: proc(x:^Timing) -> core.Entity {
 @(private="file")
 timing_drawn :: proc(x:^Timing,e:core.Entity) -> (position:[3]f32,ok:bool) {
     client:=&x.worlds[1]
-    world,found:=core.get(core.read(&client.worlds),e)
+    world,found:=core.get(&client.worlds,e)
     if !found {return}
     return render.drawn_transform(world,client.frame).position,true
 }
@@ -310,7 +310,7 @@ an_interpolated_replica_whose_states_come_further_apart_keeps_moving :: proc(t:^
     if !timing_init(x,t,{latency=0.03,jitter=0.002}) {return}
     random:=u64(31)
     for _ in 0..<240 {timing_frame_run(x,timing_dt(&random,1.0/60,0))}
-    core.get(&x.worlds[0].objects,x.moved).update_hz=10
+    core.edit(&x.worlds[0].objects,x.moved).update_hz=10
     smallest,largest,stalled:=replica_steps(t,x,1.0/60,0,4)
     testing.expectf(t,stalled==0 && smallest>0.7 && largest<1.3,"steps between %v and %v of the steady one, still for %d frames",smallest,largest,stalled)
     c:=&x.sessions[1].client
@@ -375,7 +375,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         net_test_fixed(&world,&shared,nil,&app)
     }
     testing.expect_value(t,body_type(&world,e),phys.Body_Type.Kinematic)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,math.abs(motion.linear.x-3)<0.2 && math.abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
     replica_classify(&s,ref,r)
@@ -430,8 +430,8 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         phys.manipulation_target(&world.requests,e,held)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_:=core.get(core.read(&world.transforms),e)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    local,_:=core.get(&world.transforms,e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,abs(local.position.x-1.5)<0.1 && abs(local.position.y)<0.05,"it is where the server has it: %v",local.position)
     testing.expectf(t,abs(motion.linear.x-3)<0.2 && abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
@@ -444,7 +444,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_=core.get(core.read(&world.transforms),e)
+    local,_=core.get(&world.transforms,e)
     testing.expectf(t,linalg.length(local.position-held)<0.01,"the manipulation of the game holds it again: %v",local.position)
     phys.manipulation_end(&world.requests,e)
     net_test_fixed(&world,&shared,nil,&app)

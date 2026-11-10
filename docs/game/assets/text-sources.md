@@ -1,13 +1,13 @@
 # Interfaces and scenes as text
 
-A project keeps its interfaces, scenes and prefabs as files of text under `source/`, and one
+A project keeps its interfaces and scenes as files of text under `source/`, and one
 command turns them into the assets the game loads. No editor runs: an agent writes the files with
 its own tools, and git shows what changed.
 
 ```
 source/hud/hud.ui.json          ->  assets/hud/hud.ui
 source/arena/main.scene.json    ->  assets/arena/main.scene
-source/player/Player.prefab.json ->  assets/player/Player.prefab
+source/player/Player.scene.json ->  assets/player/Player.scene
 ```
 
 ## The loop
@@ -15,7 +15,7 @@ source/player/Player.prefab.json ->  assets/player/Player.prefab
 ```sh
 mirai build editor . --dev      # once, and again after the code of the game changes
 mirai ui write source           # every .ui.json under source/
-mirai scene write source        # every .scene.json and .prefab.json
+mirai scene write source        # every .scene.json
 mirai play test .               # the scenarios of tests/scenarios
 ```
 
@@ -52,7 +52,7 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
    "components": {"Tint": {"color": [0.35, 0.38, 0.42, 1]}, "Collider": {}}},
   {"name": "Lamp", "preset": "point_light", "position": [2, 3, 0],
    "components": {"Point_Light": {"intensity": 7}}},
-  {"name": "Hero", "prefab": "player/Player.prefab", "position": [0, 1, 4]},
+  {"name": "Hero", "prefab": "player/Player.scene", "position": [0, 1, 4]},
   {"name": "Hud", "components": {"UI_Screen": {"asset": "hud/score.ui"}}}
 ]}
 ```
@@ -60,12 +60,12 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
 - `preset` is a recipe of `scene.add` (`cube`, `sphere`, `plane`, `point_light`, `sun`, `camera`...)
   or the card of a plugin (`spawn`, `fog`...): it gives the components, and `components` changes
   their fields or adds others. A field left out starts as its component does.
-- `prefab` with the path or the id of a `.prefab` is a linked instance of it, placed the first
-  time. What the document leaves out of it and of its children stays as the prefab gives it; what
-  it says of them, by their names, the instance holds on its own.
+- `prefab` with the path or the id of a `.scene` that has one entity at the top is a linked
+  instance of it, placed the first time. What the document leaves out of it and of its children
+  stays as the prefab gives it; what it says of them, by their names, the instance holds on its own.
 - An asset in a field is its path under `assets/` or its id. An entity in a field is the `id` of
   another entity of the document, which `mirai scene read` shows once the file exists.
 - Entities are matched by `id`, else by `name` among their siblings, else by place: keep the names
   and a later write changes those entities instead of making new ones. What the document leaves
   out goes.
-- A prefab is the same document with one entity at the top.
+- A prefab is a scene with one entity at the top: the same document, and no other kind of file.

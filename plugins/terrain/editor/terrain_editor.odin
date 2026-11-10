@@ -176,7 +176,7 @@ terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(ter
     }
     editor.revision_sync(s,&tool.history,terrains,a,REVISIONS,tool,follow)
 }
-@(step="frame",after="editor_tools")
+@(step="frame")
 terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     defer terrain_focus(s,tool,world,input)
@@ -454,15 +454,15 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         e:=core.entity_at(chunks,row)
         placed,has_pose:=core.get(worlds,e)
         if !has_pose || editor.entity_hidden(world,e) {continue}
-        static,has_static:=core.get(core.read(statics),e)
+        static,has_static:=core.get(statics,e)
         if !has_static {static.materials=terrain.chunk_materials(&stroke.source)}
         tint:=erender.TINT_DEFAULT;override:erender.Material_Override
         if tints!=nil {
-            if value,ok:=core.get(core.read(tints),e);ok {tint=value} else if value,ok:=core.get(core.read(tints),chunk.owner);ok {tint=value}
+            if value,ok:=core.get(tints,e);ok {tint=value} else if value,ok:=core.get(tints,chunk.owner);ok {tint=value}
         }
         if overrides!=nil {
-            found:bool;override,found=core.get(core.read(overrides),e)
-            if !found {override,_=core.get(core.read(overrides),chunk.owner)}
+            found:bool;override,found=core.get(overrides,e)
+            if !found {override,_=core.get(overrides,chunk.owner)}
         }
         if preview.mesh!={} {static.mesh,static.shape=preview.mesh,.None}
         if overlay_weights(overlay) {static.materials[0],override=WEIGHTS_MATERIAL,weights_override(overlay,tool.layer)}
@@ -486,7 +486,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     defer if !committed {stroke_free(tool)}
     a:=assets;table:=core.world_table_of(world,terrain.Terrain)
     if !stroke.changed || a==nil || table==nil {return}
-    marker,known:=core.get(core.read(table),stroke.entity)
+    marker,known:=core.get(table,stroke.entity)
     if !known || marker.source!=stroke.id || marker.revision!=stroke.revision {return}
     if !terrain_budget(s,world,&stroke.source,stroke.id) {return}
     held:=editor.revision_applied(&tool.history,stroke.id)
@@ -500,7 +500,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     if !editor.revision_push(&tool.history,&step,step_destroy) {editor.notify(s,"The terrain history could not be stored")}
     stroke.stamp=terrain.terrain_stamp(a,stroke.id)
     history.edits_begin(s.edits,s.selection,label)
-    for value,row in table.values[:core.count(table)] {if value.source==stroke.id {core.at(table,row).revision=next}}
+    for value,row in table.values[:core.count(table)] {if value.source==stroke.id {core.edit_at(table,row).revision=next}}
     if consume!=core.NONE {editor.entities_delete(s,{consume});history.selection_set(s.selection,{stroke.entity})}
     history.edits_end(s.edits)
     held.revision,held.stamp=next,stroke.stamp

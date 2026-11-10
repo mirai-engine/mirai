@@ -65,7 +65,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
         case 40:
             testing.expect(t,connected!=0)
-            core.get(&server.transforms,entities[0][0]).position={5,0,0}
+            core.edit(&server.transforms,entities[0][0]).position={5,0,0}
             net_test_own(server,entities[0][1],connected)
             core.settle(&info,server,nil)
             object:=wire.object_of_user(&sessions[0].host,u64(entities[0][0]))
@@ -73,10 +73,10 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             for _ in 0..=sessions[0].host.desc.frame_ops {error=wire.object_set_priority(&sessions[0].host,object,1)}
             testing.expect_value(t,error,wire.Error.Full)
         case 79:
-            moved,_:=core.get(core.read(&client.links),entities[1][0])
+            moved,_:=core.get(&client.links,entities[1][0])
             r:=replica_of(&sessions[1],moved.object)
             testing.expect(t,r!=nil && abs(r.pose.position.x-5)<1e-3)
-            link,_:=core.get(core.read(&client.links),entities[1][1])
+            link,_:=core.get(&client.links,entities[1][1])
             owned:=replica_of(&sessions[1],link.object)
             testing.expect(t,owned!=nil && owned.role==.Predicted)
         }
@@ -101,7 +101,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         net_test_init(&world,&info)
         entities[index][0]=net_test_body(&world,&info,1)
         entities[index][1]=net_test_body(&world,&info,2,{1,0,0})
-        for e in entities[index] {core.get(&world.values,e).force=0}
+        for e in entities[index] {core.edit(&world.values,e).force=0}
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         if body {net_test_physics(&world,&shares[index],&apps[index])}
@@ -136,7 +136,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
-            core.get(&server.values,source).target=target
+            core.edit(&server.values,source).target=target
             core.add(&server.objects,source,net_test_replicate(audience=.Always,update_hz=10,simulation=body?.Lent:.Server))
             if body {
                 core.add(&server.joints,source,phys.joint_fixed(target))
@@ -146,7 +146,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         case 31:
             if body {testing.expect(t,authority_grant(&sessions[0],source,connected))}
         case 34:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,core.NONE)
             if body {
                 testing.expect(t,!core.has(&client.joints,replica))
@@ -166,10 +166,10 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         case 41:
             if body {testing.expect(t,authority_grant(&sessions[0],source,0))}
         case 46,70:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,visitor)
             if body {
-                joint,has:=core.get(core.read(&client.joints),replica)
+                joint,has:=core.get(&client.joints,replica)
                 testing.expect(t,has && joint.target==visitor)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
@@ -177,7 +177,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         case 47:
             core.remove(&server.objects,target)
         case 55:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,core.NONE)
             if body {
                 testing.expect(t,!core.has(&client.joints,replica))
@@ -189,15 +189,15 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
                 core.add(&server.joints,source,phys.joint_fixed(core.NONE))
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
-            } else {core.get(&server.values,source).target=core.NONE}
+            } else {core.edit(&server.values,source).target=core.NONE}
         case 84:
             if body {
-                joint,has:=core.get(core.read(&client.joints),replica)
+                joint,has:=core.get(&client.joints,replica)
                 testing.expect(t,has && joint.target==core.NONE)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
             } else {
-                value,_:=core.get(core.read(&client.values),replica)
+                value,_:=core.get(&client.values,replica)
                 testing.expect_value(t,value.target,core.NONE)
             }
         }
@@ -257,7 +257,7 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
         case 40:
             core.add(&server.colliders,entities[0][0],changed)
         case 69:
-            collider,has:=core.get(core.read(&client.colliders),entities[1][0])
+            collider,has:=core.get(&client.colliders,entities[1][0])
             expected:=changed
             expected.group=entities[1][1]
             testing.expectf(t,has && collider==expected,"the client holds %v",collider)

@@ -8,6 +8,7 @@ import game "mirai:demo/game"
 import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import spawn "plugins:spawn/runtime"
+import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
 import render "mirai:engine/render"
 import lib "mirai:std/anim"
@@ -52,7 +53,7 @@ control_spawns :: proc(s:^asset.Scene_Builder,name:string,prefab:base.Asset_Id,f
 
 write_control_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","control"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","control"))
     defer asset.builder_destroy(&s)
     demo:=game.Control_Demo{}
     asset.builder_set(&s,asset.builder_entity(&s,"Control demo"),demo)
@@ -76,25 +77,37 @@ write_control_scene :: proc(o:^Out) {
     control_spawns(&s,"Player start",PERSON_PREFAB_ID,{-3,0,2})
     control_camera(&s,game.CONTROL_SHARED_CAMERA,{0,12,0},-math.PI/2,0)
 
+    // The intro is a clip: it moves the room camera, narrows the lens of the dog camera and marks
+    // the bark; the cameras are its actors by name, and two shots choose which one is seen.
+    ROOM,DOG :: "Intro room camera","Intro dog camera"
+    CUT :: f32(50)/60
+    intro:=asset.content_id(PROJECT,"animation","control_intro")
+    {
+        dolly:=[]lib.Keyframe{{time=0,value={5,5,9,0}},{time=CUT,value={4,4.5,8,0},ease=.Cubic_In_Out}}
+        zoom:=[]lib.Keyframe{{time=CUT,value={game.VIEW_FOV,0,0,0}},{time=2*CUT,value={0.9,0,0,0},ease=.Cubic_In_Out}}
+        clips:=[]asset.Animation_Clip_Desc{{name="intro",tracks={{target=ROOM,property=.Position,keys=dolly},{target=DOG+"/"+asset.ANIMATION_FIELD_PATH+"Camera.fov",property=.Float,keys=zoom}},markers={{CUT/2,"intro.bark"}}}}
+        asset.content_check(&o.content,"assets/control/intro.anim",asset.animation_save(path(o,"assets/control/intro.anim"),&o.content.types,{id=intro,clips=clips}))
+    }
     timeline:=asset.builder_entity(&s,game.CONTROL_INTRO)
-    cinematic:=cine.Cinematic{duration_ticks=100,auto_play=true}
-    asset.builder_set(&s,timeline,cinematic)
-    first:=control_camera(&s,"Intro room camera",{5,5,9},-0.48,0.62)
+    {
+        value:=anim.ANIMATION_DEFAULT
+        value.asset,value.loop,value.fade=intro,false,0
+        asset.builder_set(&s,timeline,value)
+        asset.builder_set(&s,timeline,cine.Cinematic{})
+    }
+    actor :: proc(s:^asset.Scene_Builder,timeline,e:base.Entity_Id,name:string) {
+        target:=anim.Animation_Target{animation=core.Entity(timeline)}
+        base.text_set(target.path[:],name)
+        asset.builder_set(s,e,target)
+    }
+    first:=control_camera(&s,ROOM,{5,5,9},-0.48,0.62)
+    actor(&s,timeline,first,ROOM)
     shot:=cine.Cinematic_Shot{timeline=core.Entity(timeline),camera=core.Entity(first)}
     asset.builder_set(&s,first,shot)
-    track:=cine.Cinematic_Track{timeline=core.Entity(timeline),target=core.Entity(first),property=.Position,key_count=2}
-    track.keys[0]={time=0,value={5,5,9,0}}
-    track.keys[1]={time=50,value={4,4.5,8,0},ease=.Cubic_In_Out}
-    asset.builder_set(&s,first,track)
-    second:=control_camera(&s,"Intro dog camera",{-4,3,7},-0.35,-0.72)
-    shot={timeline=core.Entity(timeline),camera=core.Entity(second),tick=50,blend_ticks=20,ease=.Cubic_In_Out}
+    second:=control_camera(&s,DOG,{-4,3,7},-0.35,-0.72)
+    actor(&s,timeline,second,DOG)
+    shot={timeline=core.Entity(timeline),camera=core.Entity(second),time=CUT,blend=f32(20)/60,ease=.Cubic_In_Out}
     asset.builder_set(&s,second,shot)
-    fov_track:=cine.Cinematic_Track{timeline=core.Entity(timeline),target=core.Entity(second),property=.Fov,key_count=2}
-    fov_track.keys[0]=lib.Keyframe{time=50,value={game.VIEW_FOV,0,0,0}}
-    fov_track.keys[1]=lib.Keyframe{time=100,value={0.9,0,0,0},ease=.Cubic_In_Out}
-    asset.builder_set(&s,second,fov_track)
-    marker:=cine.Cinematic_Marker{timeline=core.Entity(timeline),tick=25,id=base.name_hash("intro.bark")}
-    asset.builder_set(&s,asset.builder_entity(&s,"Intro bark event"),marker)
     output:=control_camera(&s,"Intro output",{5,5,9},-0.48,0.62)
     viewer:=cine.Cinematic_Viewer{timeline=core.Entity(timeline),block_mask=inp.ALL_ACTIONS}
     asset.builder_set(&s,output,viewer)

@@ -25,7 +25,7 @@ Usually its prefab carries it: everything that appears from that prefab is repli
 
 - What travels is what the entity has when it is first replicated:
   - its pose (position to 1 mm, rotation of 15 bits per component, scale), preceded by the
-    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Source`) and the
+    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Instance`) and the
     [section](#sections) it hangs from;
   - its motion (`Motion_State`, linear and angular velocity to 1 mm/s) if a simulation moves it
     (it has `core.Motion`);
@@ -652,7 +652,7 @@ the present: for that the rewound pose was never on screen.
   this end is the owner: `core.owned(remotes, e)`. Without network always; on the server, what no
   connection owns; on a client, what it owns, what it has lent and what is not replicated.
   `destruct` damages only on the server (by role), seats change only bodies this end owns and
-  cinematics are controlled only where one owns the timeline.
+  the clip of a cinematic follows the end that owns the timeline.
 - The game tells its role with `core.Network` (`Standalone`, `Server`, `Client`), or with
   `is_server` and `is_client` where it already has the session.
 - A client does not save games: `save` answers `Unavailable` on a client.

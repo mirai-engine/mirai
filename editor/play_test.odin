@@ -56,12 +56,14 @@ play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     test_session_open(&f.edited,core.world_ref(f.data,&f.info))
     f.s.app=&f.app
+    if !test_commands_open(t,&f.s,&f.commands) {return false}
     f.document.saved=history.edits_state(&f.edits)
     return true
 }
 
 play_test_close :: proc(f:^Play_Test) {
     runs_stop(&f.s)
+    test_commands_close(&f.s)
     test_session_close(&f.edited)
     delete(f.s.edit_selection.entities)
     host.app_world_scratch_free(&f.app)
@@ -98,14 +100,15 @@ play_and_simulation_keep_the_document_and_step_exactly_one_tick :: proc(t:^testi
         testing.expect_value(t,world.ticks.count,0)
         game_frame(s)
         testing.expect_value(t,running.ticks.count,1)
-        core.get(&running.transforms,original).position.x=5
+        core.edit(&running.transforms,original).position.x=5
         viewport.orbit.target={8,9,10}
         history.selection_clear(selection)
         if simulate {
             history.selection_set(selection,{original})
-            testing.expect(t,action_run(s,.Apply_Simulation))
-            testing.expect(t,run_find(s,0).world==running && .Apply_Simulation in s.requests)
-            requests_run(s)
+            // The entry runs between frames, where the calls of agents do.
+            testing.expect(t,command_run(s,"apply_simulation"))
+            testing.expect(t,run_find(s,0).world==running)
+            commands_run(s)
             testing.expect_value(t,entity_local(edited_world(s),original).position.x,f32(5))
             testing.expect_value(t,edits.cursor,1)
             testing.expect(t,history.undo(edits,edited_world(s),selection))

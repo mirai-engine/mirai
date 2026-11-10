@@ -56,16 +56,13 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
             cut_drop(h,e)
             moved=hierarchy_unlink(h,e) || moved
         }
-        if version(parents)>c.since {
-            for row in 0..<count(parents) {
-                if !changed(parents,c,row) {continue}
-                e:=entity_at(parents,row)
-                if hierarchy_placed(h,parents,e) {continue}
-                cut_drop(h,e)
-                hierarchy_unlink(h,e)
-                hierarchy_place(h,parents,es,e)
-                moved=true
-            }
+        for row in each_changed(parents,&c) {
+            e:=entity_at(parents,row)
+            if hierarchy_placed(h,parents,e) {continue}
+            cut_drop(h,e)
+            hierarchy_unlink(h,e)
+            hierarchy_place(h,parents,es,e)
+            moved=true
         }
     }
     // A link that went may let one left out for a cycle in.

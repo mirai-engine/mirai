@@ -153,7 +153,7 @@ bench_minds :: proc(t:^testing.T) {
     b:Bench
     for bench_round(&b) {
         for tick in 0..<TICKS {
-            ctx.time=f64(tick)/30
+            ctx.dt=1.0/30
             ctx.tick=u64(tick)
             for &m,i in minds {
                 facts[i]={i32((i+tick)/20%2),i32((i*7+tick)%4)}

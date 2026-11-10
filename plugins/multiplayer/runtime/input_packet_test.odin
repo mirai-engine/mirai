@@ -69,7 +69,7 @@ a_look_of_some_ticks_ago_corrects_the_look_of_the_server_once :: proc(t:^testing
         client :: proc(at:int) -> f32 {return 0.01*f32(at)+(at>=8?0.2:0)}
         for at in 1..=20 {
             w.time.tick=u64(at)
-            move:=core.get(&w.move_inputs,body)
+            move:=core.edit(&w.move_inputs,body)
             move.look_yaw+=0.01
             entry.look,entry.look_behind,entry.has_look={client(at-int(behind)),0.1},behind,at>int(behind)
             remote_look(core.ref(&s),&w.remote,core.read(&w.seats),core.read(&w.drivables),&w.move_inputs,w.time)

@@ -475,7 +475,7 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.ik,goal.rig,goal.slot);row>=0 {
             value:=&runtime.ik.values[row]
             if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.at(&runtime.ik,row)
+                out:=core.edit_at(&runtime.ik,row)
                 out.target=goal.target
                 out.weight,out.enabled=scaled,active
             }
@@ -484,7 +484,7 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 {
             value:=&runtime.look.values[row]
             if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.at(&runtime.look,row)
+                out:=core.edit_at(&runtime.look,row)
                 out.target=goal.target
                 out.weight,out.enabled=scaled,active
             }
@@ -493,13 +493,13 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.feet,goal.rig,goal.slot);row>=0 {
                 value:=&runtime.feet.values[row]
                 if value.hit_position!=goal.position || value.hit_normal!=goal.normal || value.contact!=goal.weight || value.grounded!=goal.enabled || value.enabled!=active {
-                    out:=core.at(&runtime.feet,row);out.hit_position,out.hit_normal,out.contact,out.grounded,out.enabled=goal.position,goal.normal,goal.weight,goal.enabled,active
+                    out:=core.edit_at(&runtime.feet,row);out.hit_position,out.hit_normal,out.contact,out.grounded,out.enabled=goal.position,goal.normal,goal.weight,goal.enabled,active
                 }
         }
     case .Grounding:
-        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
+        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.edit_at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
     case .Limit:
-        if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
+        if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.edit_at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
     case .Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget,.Spline_IK,.Corrective,.Follow:
         rigs_apply_goal(runtime,goal,scaled,active,problems)
     }
@@ -547,7 +547,13 @@ animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(An
 progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playback,requests:^Animation_Requests) {
     for row in 0..<core.count(progress) {
         e:=core.entity_at(progress,row)
-        if constraint_playing(playback,e)==nil {animation_seek(requests,e,core.at(core.read(progress),row).time)}
+        if constraint_playing(playback,e)!=nil {continue}
+        kept:=core.at(progress,row)
+        #partial switch kept.transport {
+        case .Play: animation_command(requests,e,.Resume)
+        case .Pause: animation_command(requests,e,.Pause)
+        }
+        animation_seek(requests,e,kept.time)
     }
 }
 
@@ -561,18 +567,19 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
         e:=core.entity_at(animations,row)
         clip_time,_,_,ok:=animation_progress(playback,e)
         if !ok {continue}
+        now:=Animation_Progress{clip_time,constraint_playing(playback,e).transport}
         if at:=core.row_of(progress,e);at<0 {
-            core.add(progress,e,Animation_Progress{clip_time})
-        } else if core.at(core.read(progress),at).time!=clip_time {
-            core.at(progress,at).time=clip_time
+            core.add(progress,e,now)
+        } else if core.at(progress,at)!=now {
+            core.edit_at(progress,at)^=now
         }
     }
 }
 
 @(step="fixed",loops="game editor",stage="react")
-animation_advance :: proc(configs:core.Read(Pose_Modifiers),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),requests:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,poses:^Animation_Requests,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,motion_assets:^Motion_Assets,verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),clock:core.Clock) {
+animation_advance :: proc(configs:core.Read(Pose_Modifiers),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),requests:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,poses:^Animation_Requests,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,motion_assets:^Motion_Assets,verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
     modifier_take(runtime,requests,configs,problems,time.dt)
     inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.feet),core.read(&runtime.sockets),core.read(&runtime.retargets),{},worlds,runtime.geometry,skeletons.ptr,problems}
     ground_inputs:=Grounding_Inputs{core.read(&runtime.grounding),core.world_query(world,queries),core.read(transforms),parents,runtime.geometry,problems,verticals}
-    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,motion_assets,core.take(&poses.final_poses),paces,clock)
+    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,motion_assets,core.take(&poses.final_poses),paces,clock,places)
 }

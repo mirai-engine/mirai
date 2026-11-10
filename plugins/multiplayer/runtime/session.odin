@@ -639,8 +639,8 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
     transforms:=core.world_table_of(w,core.Transform)
     // own: on a server, 1 for what a connection owns; on a client, how it lives there: 0 here, 1 interpolated, 2 predicted.
     line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:int) {
-        local:=core.get(transforms,e)
-        if local==nil {return}
+        local,ok:=core.get(transforms,e)
+        if !ok {return}
         os.write_string(file,fmt.tprintf("object %d %d %.3f %.3f %.3f\n",u64(object),own,local.position.x,local.position.y,local.position.z))
     }
     if s.mode==.Server {

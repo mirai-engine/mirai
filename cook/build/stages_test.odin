@@ -1,5 +1,6 @@
 package build
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -45,8 +46,8 @@ errors_have :: proc(errors:[]string,parts:..string) -> bool {
 }
 
 // A phase runs its steps one after another: its stages in their order, and
-// inside a stage the steps in the order of the libraries, where a step runs
-// first the ones it waits for: its after, and the before that name it,
+// inside a stage the steps in the order of the libraries, where what a step
+// waits for runs right before it: its after, and the before that name it,
 // separated by spaces or commas. The order is the same every time the world
 // is generated, and it is all the world says of how its steps run. A step
 // that makes entities settles the World before the next one runs.
@@ -108,8 +109,8 @@ slice_equal :: proc(a,b:[]string) -> bool {
 }
 
 // Steps have no number: order= is an error that says what to use. A stage
-// that does not exist, a name no step has, a cycle and an after or before
-// against the order of the stages are errors that name the steps.
+// that does not exist, a name no step has, a cycle of names and an after or
+// before against the order of the stages are errors that name the steps.
 @(test)
 order_names_cycles_and_stages_that_cannot_be_are_errors :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"stages")
@@ -136,11 +137,104 @@ order_names_cycles_and_stages_that_cannot_be_are_errors :: proc(t:^testing.T) {
     testing.expectf(t,errors_have(output.errors,"late is in the stage end and runs before lost, which is in the stage intent"),"%v",output.errors)
     cycles:=0
     for message in output.errors {
-        if strings.contains(message,"ring_a -> ring_b -> ring_a") {cycles+=1}
+        if strings.contains(message,"ring_a runs after ring_b by after or before; ring_b runs after ring_a by after or before. take one of those names out of after or before") {cycles+=1}
     }
     testing.expectf(t,cycles==1,"a cycle in two phases is one error: %v",output.errors)
     // An after towards a step of another phase orders nothing and is no error.
     testing.expectf(t,!errors_have(output.errors,"elsewhere"),"%v",output.errors)
+}
+
+// Inside a stage the data orders the steps: the ones that push to a queue run
+// before the step of its library that takes it, and the writer of a table, of
+// a storage or of events before the ones that read it. A step that pushes a
+// request to the writer of what it reads runs before it, and so does one that
+// names it: it reads what the last tick left. What several write (shared) is
+// not ordered. A name that says what the data says changes nothing.
+@(test)
+the_data_of_a_stage_orders_its_steps :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"stages")
+    if folder=="" {return}
+    core_source:=`package core
+@(storage,queue) Orders :: struct {count:int}
+@(storage,events) News :: struct {count:int}
+@(storage) Board :: struct {value:int}
+@(component) Score :: struct {value:f32}
+@(component,shared) Place :: struct {value:f32}
+@(step="fixed") core_serve :: proc(orders:^Orders,news:^News,board:^Board) {}
+`
+    game_source:=`package game
+import "mirai:core"
+@(component) Mark :: struct {{value:f32}}
+@(step="fixed"%s) game_show :: proc(scores:core.Read(core.Score),news:core.Ref(core.News),board:core.Ref(core.Board)) {{}}
+@(step="fixed") game_count :: proc(scores:^core.Table(core.Score),marks:core.Read(Mark)) {{}}
+@(step="fixed") game_mark :: proc(marks:^core.Table(Mark),orders:^core.Orders) {{}}
+@(step="fixed") game_look :: proc(places:core.Read(core.Place)) {{}}
+@(step="fixed") game_move :: proc(places:^core.Table(core.Place)) {{}}
+@(step="fixed") game_ask :: proc(board:core.Ref(core.Board),orders:^core.Orders) {{}}
+@(step="fixed",before="game_count") game_peek :: proc(scores:core.Read(core.Score)) {{}}
+`
+    want:=[]string{"game_mark","game_ask","core_serve","game_peek","game_count","game_show","game_look","game_move"}
+    worlds:[2]string
+    for name,i in ([]string{"",`,after="core_serve game_count"`}) {
+        p,ok:=stages_project(t,folder,core_source,fmt.tprintf(game_source,name))
+        if !ok {return}
+        output:=world_generate(&p,context.temp_allocator)
+        if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
+        got:=calls_of(output.game_world,"game_fixed")
+        testing.expectf(t,slice_equal(got,want),"%v",got)
+        again:=world_generate(&p,context.temp_allocator)
+        testing.expect(t,again.game_world==output.game_world && again.editor_world==output.editor_world,"two generations of the same sources differ")
+        worlds[i]=output.game_world
+    }
+    testing.expect(t,worlds[0]==worlds[1],"a name that says what the data says changed the world")
+}
+
+// Steps that wait for each other through what they read, write, push and take
+// are an error that names them, what makes each wait and the name that
+// settles it; with that name the world is generated.
+@(test)
+a_cycle_of_the_data_is_an_error_one_name_settles :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"stages")
+    if folder=="" {return}
+    core_source:=`package core
+@(storage,queue) Orders :: struct {count:int}
+@(component) Stock :: struct {value:f32}
+@(component) Price :: struct {value:f32}
+@(component) Sale :: struct {value:f32}
+@(step="fixed late") core_orders :: proc(orders:^Orders,sales:^Table(Sale)) {}
+`
+    game_source:=`package game
+import "mirai:core"
+@(step="fixed"%s) game_stock :: proc(stock:^core.Table(core.Stock),prices:core.Read(core.Price)) {{}}
+@(step="fixed") game_price :: proc(prices:^core.Table(core.Price),stock:core.Read(core.Stock)) {{}}
+@(step="late"%s) game_buy :: proc(orders:^core.Orders,shelf:core.Read(Shelf)) {{}}
+@(step="late") game_sold :: proc(shelf:^core.Table(Shelf),sales:core.Read(core.Sale)) {{}}
+@(component) Shelf :: struct {{value:f32}}
+`
+    cases:=[]struct{stock,buy:string,errors:[]string,fixed,late:[]string}{
+        {"",`,before="game_sold"`,{
+            "steps of the stage intent of fixed in the game loop wait for each other: game_stock runs after game_price, which writes Price, which game_stock reads; game_price runs after game_stock, which writes Stock, which game_price reads. a name wins over what the data says, so one name settles it: write before=\"game_price\" on game_stock, or after=\"game_stock\" on game_price, and game_stock reads Price as the last tick left it",
+        },nil,nil},
+        // A cycle through a request: the name it proposes is on what is read, which costs a request no tick.
+        {`,before="game_price"`,"",{
+            "core_orders runs after game_buy, which pushes to Orders, a queue core_orders takes; game_buy runs after game_sold, which writes Shelf, which game_buy reads; game_sold runs after core_orders, which writes Sale, which game_sold reads",
+            "write before=\"game_sold\" on game_buy, or after=\"game_buy\" on game_sold, and game_buy reads Shelf as the last tick left it",
+        },nil,nil},
+        {`,before="game_price"`,`,before="game_sold"`,nil,{"core_orders","game_stock","game_price"},{"game_buy","core_orders","game_sold"}},
+    }
+    for c in cases {
+        p,ok:=stages_project(t,folder,core_source,fmt.tprintf(game_source,c.stock,c.buy))
+        if !ok {return}
+        output:=world_generate(&p,context.temp_allocator)
+        for part in c.errors {testing.expectf(t,errors_have(output.errors,part),"%s is missing in %v",part,output.errors)}
+        if len(c.errors)>0 {
+            testing.expectf(t,len(output.errors)==1,"%v",output.errors)
+            continue
+        }
+        if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {continue}
+        fixed,late:=calls_of(output.game_world,"game_fixed"),calls_of(output.game_world,"game_late")
+        testing.expectf(t,slice_equal(fixed,c.fixed) && slice_equal(late,c.late),"%v %v",fixed,late)
+    }
 }
 
 // A server step runs only where the rules are decided: the generated call

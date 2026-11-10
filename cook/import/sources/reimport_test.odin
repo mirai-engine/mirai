@@ -64,7 +64,7 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    prefab,has_prefab:=written_of(&first,asset.KIND_PREFAB,"box")
+    prefab,has_prefab:=written_of(&first,asset.KIND_SCENE,"box")
     wood,has_wood:=written_of(&first,asset.KIND_MATERIAL,"Wood")
     if !testing.expect(t,has_prefab && has_wood && prefab.id!={} && prefab.id==first.prefab) {return}
     // The mesh is a part; Wood, whose island reaches across its texture, and Paint, without one, are not.
@@ -113,11 +113,11 @@ a_source_moved_or_renamed_keeps_the_ids_of_its_import :: proc(t:^testing.T) {
     moved,moved_ok:=box_import(t,crate,root);if !moved_ok {return};defer importer.report_destroy(&moved)
     testing.expect_value(t,moved.prefab,first.prefab)
     for written in first.assets {
-        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_PREFAB?"crate":written.name)
+        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_SCENE?"crate":written.name)
         testing.expectf(t,found && same.id==written.id && same.path==written.path,"%s keeps its id and its file",written.name)
     }
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    prefab,_:=written_of(&moved,asset.KIND_PREFAB,"crate")
+    prefab,_:=written_of(&moved,asset.KIND_SCENE,"crate")
     if a,loaded:=read_asset(t,prefab,&types);loaded {
         info,_:=asset.import_info(&a,&types)
         testing.expect(t,info!=nil && string_of(info.source[:])=="source/props/crate.gltf","the import names the source where it is now")
@@ -130,7 +130,7 @@ a_source_moved_or_renamed_keeps_the_ids_of_its_import :: proc(t:^testing.T) {
     renamed,renamed_ok:=box_import(t,barrel,root,into=first.prefab);if !renamed_ok {return};defer importer.report_destroy(&renamed)
     testing.expect_value(t,renamed.prefab,first.prefab)
     for written in first.assets {
-        if written.kind==asset.KIND_PREFAB {continue}
+        if written.kind==asset.KIND_SCENE {continue}
         same,found:=written_of(&renamed,written.kind,written.name)
         testing.expectf(t,found && same.id==written.id,"%s keeps its id",written.name)
     }
@@ -272,7 +272,7 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
         return "?"
     }
     for written in report.assets {
-        if written.kind==asset.KIND_PREFAB {continue}
+        if written.kind==asset.KIND_SCENE {continue}
         part:=written.kind==asset.KIND_MESH || written.name=="Atlas" || written.name=="atlas"
         owner:=header_of(written.path).owner
         testing.expectf(t,owner==(part?report.prefab:base.Asset_Id{}),"%s: owner %v",written.path,owner)
@@ -372,7 +372,7 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
     os.make_directory_all(fmt.tprintf("%s/source",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    prefab,_:=written_of(&first,asset.KIND_PREFAB,"box")
+    prefab,_:=written_of(&first,asset.KIND_SCENE,"box")
     live,_:=os.read_entire_file(prefab.path,context.temp_allocator)
     live_mesh,_:=written_of(&first,asset.KIND_MESH,"Box")
     mesh_bytes,_:=os.read_entire_file(live_mesh.path,context.temp_allocator)
@@ -389,7 +389,7 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
 
     code,_,err:=run(source,"--out",scratch,"--root",root,"--uncompressed","--no-save","--rebuild")
     testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(err,"box.prefab") && strings.contains(err,"--in-place") && strings.contains(err,"--copy"),err)
+    testing.expect(t,strings.contains(err,"box.scene") && strings.contains(err,"--in-place") && strings.contains(err,"--copy"),err)
     testing.expect(t,unchanged(prefab.path,live) && unchanged(live_mesh.path,mesh_bytes),"the live import is left as it was")
     entries,_:=os.read_all_directory_by_path(scratch,context.temp_allocator)
     testing.expect_value(t,len(entries),0)
@@ -397,7 +397,7 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
     code,_,err=run(source,"--out",scratch,"--root",root,"--uncompressed","--no-save","--copy")
     testing.expect_value(t,code,0)
     testing.expect(t,unchanged(prefab.path,live) && unchanged(live_mesh.path,mesh_bytes),"a copy leaves the live import alone")
-    copied:=header_of(fmt.tprintf("%s/box.prefab",scratch))
+    copied:=header_of(fmt.tprintf("%s/box.scene",scratch))
     testing.expect(t,copied.id!={} && copied.id!=prefab.id,"the copy has an id of its own")
 
     code,_,err=run(source,"--in-place","--copy","--out",scratch)
@@ -405,12 +405,12 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
 
     // With the copy there, each import of the source updates the one in its folder.
     box:=fmt.tprintf("%s/assets/models/box",root)
-    copy_bytes,_:=os.read_entire_file(fmt.tprintf("%s/box.prefab",scratch),context.temp_allocator)
+    copy_bytes,_:=os.read_entire_file(fmt.tprintf("%s/box.scene",scratch),context.temp_allocator)
     out:string
     code,out,err=run(source,"--out",box,"--root",root,"--uncompressed","--no-save","--rebuild")
     testing.expectf(t,code==0,"%s",err)
     testing.expect(t,!strings.contains(out,"warning:"),out)
-    testing.expect(t,unchanged(fmt.tprintf("%s/box.prefab",scratch),copy_bytes),"the copy is left alone")
+    testing.expect(t,unchanged(fmt.tprintf("%s/box.scene",scratch),copy_bytes),"the copy is left alone")
     for written in first.assets {
         testing.expectf(t,strings.contains(out,written.path),"%s is written again where it is: %s",written.path,out)
     }

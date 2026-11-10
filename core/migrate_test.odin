@@ -72,11 +72,11 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     mem.free(old)
 
     testing.expect(t,fresh.entities.alive==2,"The entities move")
-    spin:=get(read(&fresh.spin),a) or_else After_Spin{}
+    spin:=get(&fresh.spin,a) or_else After_Spin{}
     testing.expect(t,spin.speed==2.5 && spin.axis=={0,1,0} && spin.turns==7,"A field takes its value by name; a new one its default")
-    other:=get(read(&fresh.spin),b) or_else After_Spin{}
+    other:=get(&fresh.spin,b) or_else After_Spin{}
     testing.expect(t,other.speed==-1)
-    kept:=get(read(&fresh.kept),b) or_else Kept_Tag{}
+    kept:=get(&fresh.kept,b) or_else Kept_Tag{}
     testing.expect(t,kept.value==42 && !has(&fresh.kept,a),"A table of the same layout moves")
     testing.expect(t,count(&fresh.added)==0)
     testing.expect(t,fresh.score.points==1234 && fresh.score.lives==3,"A storage converts over what the new library starts it with")
@@ -86,7 +86,7 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     // It says that it waits where the new World looks for it, not where the old one did.
     testing.expect(t,fresh.entities.pending[2] && !fresh.entities.pending[0] && !fresh.entities.pending[1])
     testing.expect(t,table_settle(&fresh.spin,&fresh.entities))
-    testing.expect(t,(get(read(&fresh.spin),c) or_else After_Spin{}).speed==9)
+    testing.expect(t,(get(&fresh.spin,c) or_else After_Spin{}).speed==9)
     world_destroy(&after,.World,fresh)
     mem.free(fresh)
     world_migration_destroy(&m)
@@ -135,7 +135,7 @@ a_world_keeps_its_actions_by_name_when_their_numbers_move :: proc(t:^testing.T) 
     fresh:=new(Aim_World)
     testing.expect(t,world_init(&before,.World,fresh,allocator))
     place_migrate(&m,.World,old,fresh,allocator)
-    testing.expect_value(t,(get(read(&fresh.aim),a) or_else Aim_Tag{}).action,Test_Action(2))
+    testing.expect_value(t,(get(&fresh.aim,a) or_else Aim_Tag{}).action,Test_Action(2))
     world_destroy(&before,.World,old);mem.free(old)
     world_destroy(&before,.World,fresh);mem.free(fresh)
     world_migration_destroy(&m)

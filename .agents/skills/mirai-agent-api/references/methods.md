@@ -59,19 +59,26 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
 ## Editor and viewport
 
 - `editor.inspect`: selection, tool, snap, document, camera, interactions (capture, modal, popups,
-  text being edited, pending dialog, hover), window, layout and `actions` with
-  `{name,disabled,checked}`.
+  text being edited, pending dialog, hover), window, layout and `commands`: every entry of the
+  menus, shortcuts and buttons of the editor and of its plugins, with the method it calls, its
+  params and whether it is off or checked for the person now
+  ([commands](../../mirai-editor/references/editor.md#commands-and-shortcuts)).
   - Rectangles are `[x,y,width,height]` in window points.
-  - `layout.widgets` brings those of `action.<name>`, `menu.file|edit|view|help`, `stats` and
+  - `layout.widgets` brings those of `command.<name>`, `menu.file|edit|view|help`, `stats` and
     `share` that are on screen.
   - `camera` is `{position,target,yaw,pitch,distance,fov}` (`fov` in vertical degrees).
   - `snap` is that of Move; Rotate and Scale have their own state and increments
     ([gizmo](../../mirai-editor/references/panels.md#viewport)).
-- `editor.action`: runs an action of `editor.inspect.actions` as its menu or its shortcut (`save`,
-  `undo`, `duplicate`, `tool_move`, `focus`, `grid`, `play`, `prefab_apply`, `library_panel`…).
-  - Fails with a disabled action and with those that open a dialog: `open`, `save_as`, `quit`,
-    `shortcuts`, `import` (use `scene.open`, `scene.save`, `engine.shutdown`, `asset.import`).
-  - `library_panel` (Tab) toggles the shared left panel keeping its tab and state.
+- What a menu does, an agent does by calling the method of its entry with values of its own in
+  place of what the entry takes from the person (`$roots`, `$toggle`, `$ask`): there is no method
+  that runs entries by name.
+  - `editor.tool` sets the mode of the gizmo or turns the tool of a plugin on and off;
+    `editor.view` shows a dialog, a popup, a tab of the left panel, the name field or the studio
+    light; the panels and the options of the viewport the editor remembers are `preferences.set`
+    (`Layout`, `Viewport_Preferences`).
+  - `scene.new`, `scene.group`, `scene.thumbnail`, `editor.copy`, `editor.save_all`, `play.release`
+    and `camera.preview` are what the File menu, Ctrl+G, View, Ctrl+C, Save all, F1 and the camera
+    preview do.
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
@@ -220,7 +227,9 @@ with `animation.analyze` and `animation.capture` before touching keys.
 ## Cinematics
 
 The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.set`
-on their components. In Edit, `cinematics.control` drives the preview of the Cinematics tool: the
+on their components; the keys and markers of a timeline are those of its clip, which the
+`animation.*` methods write. In Edit, `cinematics.control` drives the preview of the Cinematics
+tool: the
 document does not change and the image shows in the next frame (`capture`); in Play it
 queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
@@ -347,7 +356,7 @@ Reading a capture:
   `Nothing to undo`/`Nothing to redo` (the caller has no steps of its own) or with a step that only
   goes in order (a change of linked prefabs with steps of others after it: the error says what to
   do).
-- In a manual editor they run a frame before replying, like `editor.action` with `undo` and `redo`:
+- In a manual editor they run a frame before replying:
   what the plugins derive from the history (the file of a terrain takes the revision of its
   owners) is already there when it replies.
 
@@ -412,7 +421,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     when rewriting an entity; `scene.inspect` gives its components, not the preset.
   - A member of an instance of a prefab that is not its root keeps its parent: declaring it under
     another fails, and leaving it out turns it off (`disabled` of the result).
-  - A new entity with `prefab` (the path or the id of a `.prefab`) is placed as a linked instance,
+  - A new entity with `prefab` (the path or the id of a `.scene`) is placed as a linked instance,
     in the step of the write, with the rules and the errors of the write with no editor
     ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)): what it and the entities under it leave
     out stays as the prefab gives it, also in a later write that names it the same way, and what
@@ -431,7 +440,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 - `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
   becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
   scene never saved.
-- `scene.open`: opens a scene or a prefab in the active document, with an empty history; without
+- `scene.open`: opens a scene, a prefab too, in the active document, with an empty history; without
   `path` it rereads the document's file. Fails as a guest.
 
 **Entity of `scene.inspect`** with `components` true or a list of names; without it, `id`, `name`,
@@ -502,7 +511,7 @@ foliage) at the place the locals give them, with the edits of the same frame.
   documents; without it `Activate` and `Preview_Sun` are the active tab and `Close` the asset
   document in front when one is.
   - Opening an already open file activates its tab; activating or opening a scene brings it to the
-    front. `Open` of an asset that is neither scene nor prefab opens its
+    front. `Open` of an asset that is no scene opens its
     [document](../../mirai-editor/references/document.md#asset-documents); one of a type
     without a document is `-32602`. `Close` of an unsaved asset that no open scene uses asks for
     `discard`, which gives back what the file has.
@@ -593,7 +602,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
     `null` removes one. `position` and `rotation_deg` are world values and teleport with
     `core.place`: a free `Transform` changes now and one owned by a library (a physics body) jumps
     on the next tick. It reads everything before changing anything.
-  - `play.spawn`: the prefab appears now (`scene.spawn`), with `Prefab_Source` on its root, which
+  - `play.spawn`: the prefab appears now (`scene.spawn`), with `Prefab_Instance` on its root, which
     it returns as a handle.
   - `play.push`: requests to a storage with a `core.Queue` (`Seat_Requests`, `Spawns`, `Places` or
     one of the game), with the schema of the type of its elements; the functions of the next tick
@@ -723,11 +732,14 @@ when the viewport draws with them, which `mirai shaders` asks for.
   last build that remains and answers when the game plays; if the build fails, it fails with the
   first error and the rest in `data.diagnostics`.
 - `build.check` checks the types of the project code (game, editor and plugins, with the generated
-  world) without compiling or loading anything, and `build.test` compiles and runs the `@(test)`s
-  of a project package (`package_folder`, `game` if missing; `tests` by name) against the engine it
-  uses, without loading it. Both reply when done, with each error and its file and line, or each
-  test that failed with what it logged; the editor keeps drawing meanwhile and they do not run
-  during a build.
+  world) without compiling or loading anything, and replies when done with each error and its file
+  and line. `build.test` compiles and runs the `@(test)`s of a project package (`package_folder`,
+  `game` if missing; `tests` by name) against the libraries the editor loads, without loading them,
+  with the runner and the executable of `mirai test` of that package
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). It replies at
+  once with `running`, and the editor answers other calls while the job builds and runs:
+  `build.test.status` says how long it has run and, once `running` is false, each test that failed
+  with what it logged. Neither runs during a build, nor two at once.
 
 - With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
   shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`
@@ -759,9 +771,11 @@ when the viewport draws with them, which `mirai shaders` asks for.
 
 ## Prefabs
 
-A prefab is named by `asset`, as any asset is: a path under `assets/` or its id. Those that edit are
-transactions. Unknown id, no id, prefab not found, nonexistent override and "is not part of an
-instance" are `-32602`; the rest, `-32000`
+A prefab is a scene with exactly one root, named by `asset` as any asset is: a path under
+`assets/` or its id. `asset.list` says `prefab` of every scene and `prefab.list` lists them.
+Those that edit are transactions. Unknown id, no id, prefab not found (a scene without exactly
+one root is none: the error says so), nonexistent override and "is not part of an instance" are
+`-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
 - An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
@@ -803,9 +817,10 @@ instance" are `-32602`; the rest, `-32000`
 - `asset.list`: rescans the registry. `kind` filters by the name of the type as the result gives it
   (`mesh`, `sound set`, case-insensitive and with `_` for a space; that of a plugin type is the
   extension of its files, `particle`); empty or `all`, all of them. Free-form result
-  `{root,assets:[{path,asset,kind,size,dependencies,used_by,owner}],total,offset,shown,broken,
-  duplicates,missing}`; `used_by` counts the files that depend on the asset (the inverse index of
-  the [registry](../../mirai-assets/references/formats.md#registry)) and `owner`, only on a part of
+  `{root,assets:[{path,asset,kind,prefab,size,dependencies,used_by,owner}],total,offset,shown,
+  broken,duplicates,missing}`; `prefab`, only on a scene, says whether it is one; `used_by` counts
+  the files that depend on the asset (the inverse index of the
+  [registry](../../mirai-assets/references/formats.md#registry)) and `owner`, only on a part of
   another asset (that of an imported prefab), is its owner.
 - `asset.import`: what the Import button of the content browser does with any source it imports
   ([import](../../mirai-editor/references/panels.md#import)), wherever it is on disk: the
@@ -832,9 +847,6 @@ instance" are `-32602`; the rest, `-32000`
   unsaved edit, with undo, and that of a plugin is written by its plugin in a frame the method
   runs. Returns `{id,path,unsaved}`; an unknown type fails naming the valid ones, and a taken or
   invalid name says why.
-- `asset.convert`: `asset` (path or id) of a scene becomes a prefab or of a prefab becomes a scene,
-  with the same id and a new extension, at once. Returns `{path}`. Fails with the document open,
-  outside Edit, a scene without exactly one root or with `Scene_Reference`.
 - `asset.delete`: `asset` (path or id) goes to the system trash with the import parts it owns, like
   Delete of the [content browser](../../mirai-editor/references/panels.md#content-browser): at
   once, without undo or `asset.save`. Returns `{moved,used_by}`; those that use it keep the

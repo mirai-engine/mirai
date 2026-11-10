@@ -179,10 +179,16 @@ sky_set :: proc(s:^asset.Scene_Builder,sky:^render.Sky,turn:f32=0,exposure:=rend
     look:=render.View_Volume{exposure=exposure,tint={1,1,1}}
     asset.builder_set(s,asset.builder_entity(s,"Exposure"),look)
 }
+// The id the import of source/materials/<name>.json gives the material <name>.mat.
+material_id :: proc(name:string) -> base.Asset_Id {
+    buffer:[192]u8
+    return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
+}
+
 @(private)
 cube :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,material:string) {
     mesh:=render.Mesh_Renderer{shape=.Cube}
-    mesh.materials[0]=game.material_asset(material)
+    mesh.materials[0]=material_id(material)
     asset.builder_set(s,id,mesh)
 }
 
@@ -203,7 +209,7 @@ spawn_point :: proc(s:^asset.Scene_Builder,position:[3]f32) {
 
 write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","showcase"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","showcase"))
     defer asset.builder_destroy(&s)
 
     environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.6)

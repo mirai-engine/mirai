@@ -76,7 +76,7 @@ project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Er
     }
     if os.copy_directory_all(root,template)!=nil || !template_common_copy(template,root) {return .Copy_Failed}
     // What a build of the template itself left is not part of it.
-    _=os.remove_all(project.folder_path(root,.Generated,context.temp_allocator))
+    _=base.remove_all(project.folder_path(root,.Generated,context.temp_allocator))
     for layout in ([]project.Folder{.Assets,.Source,.Game,.Editor,.Plugins,.Shaders}) {
         directory:=project.folder_path(root,layout,context.temp_allocator)
         if os.make_directory_all(directory)!=nil && !os.is_dir(directory) {return .Copy_Failed}

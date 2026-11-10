@@ -26,7 +26,7 @@ STREAMING_SETTINGS_DEFAULT :: Streaming_Settings{active=40,load=80}
 @(storage)
 Streaming_Seen :: struct {
     sources:u64,    // Streaming_Sources.revision
-    references:u64, // the version of the table of Scene_Reference
+    references:core.Seen, // the table of Scene_Reference
     worlds:core.Seen,
     settings:Streaming_Settings,
 }
@@ -39,20 +39,21 @@ section_distance :: proc "contextless" (reference:scene.Scene_Reference,pose:mm.
     return linalg.length(outside)
 }
 
-@(step="frame",loops="game editor",before="scene_sections")
+@(step="frame",loops="game editor")
 streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),settings:core.Ref(Streaming_Settings),seen:^Streaming_Seen,requests:^scene.Section_Requests) {
     s:=settings.ptr!=nil?settings.ptr^:STREAMING_SETTINGS_DEFAULT
     if sources.ptr==nil || s.load<=0 {return}
     moved:=core.changes(worlds,&seen.worlds)
-    all:=moved.all || sources.ptr.revision!=seen.sources || core.version(references)!=seen.references || s!=seen.settings
-    if !all && core.version(worlds)<=moved.since {return}
-    seen.sources,seen.references,seen.settings=sources.ptr.revision,core.version(references),s
+    all:=core.touched(references,&seen.references)
+    all||=moved.all || sources.ptr.revision!=seen.sources || s!=seen.settings
+    if !all && !moved.written {return}
+    seen.sources,seen.settings=sources.ptr.revision,s
     for row in 0..<core.count(references) {
         reference:=core.at(references,row)
         if reference.rule!=.Spatial {continue}
         e:=core.entity_at(references,row)
         at:=core.row_of(worlds,e)
-        if at<0 || !all && core.stamp(worlds,at)<=moved.since {continue}
+        if at<0 || !all && !core.changed(worlds,moved,at) {continue}
         pose:=core.at(worlds,at).transform
         // How near the sources come to its box, in loads.
         near:=scene.sources_near(sources.ptr,mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}),s.load)
@@ -72,7 +73,7 @@ streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:
 Streaming_Crossings :: struct {
     homes:[dynamic]Home, // by entity index
     hierarchy:u64,       // the version of the hierarchy the homes are of
-    references:u64,      // the version of the table of Scene_Reference it looked at
+    references:core.Seen, // the table of Scene_Reference it looked at
     worlds:core.Seen,
 }
 
@@ -98,14 +99,13 @@ streaming_crossings :: proc(
         crossings.hierarchy=hierarchy.ptr.version
     }
     moved:=core.changes(worlds,&crossings.worlds)
-    sections:=core.version(references)!=crossings.references
-    crossings.references=core.version(references)
-    if !moved.all && core.version(worlds)<=moved.since && !sections {return}
+    sections:=core.touched(references,&crossings.references)
+    if !moved.written && !sections {return}
     for row in 0..<core.count(motions) {
         if !core.at(motions,row).awake {continue}
         e:=core.entity_at(motions,row)
         at:=core.row_of(worlds,e)
-        if at<0 || !moved.all && core.stamp(worlds,at)<=moved.since {continue}
+        if at<0 || !core.changed(worlds,moved,at) {continue}
         index:=core.entity_index(e)
         if index>=len(crossings.homes) && resize(&crossings.homes,index+1)!=nil {
             core.report(problems,e,"streaming.memory","out of memory to follow what moves between sections; this entity stays in the section it hangs from: free memory")
@@ -133,7 +133,7 @@ streaming_crossings :: proc(
     for row in 0..<core.raw_count(t) {
         e:=t.entities[row]
         at:=core.row_of(worlds,e)
-        if at<0 || core.raw_row(core.raw(parents),e)>=0 || !sections && !moved.all && core.stamp(worlds,at)<=moved.since {continue}
+        if at<0 || core.raw_row(core.raw(parents),e)>=0 || !sections && !core.changed(worlds,moved,at) {continue}
         crossing_hang(references,worlds,hierarchy,parents,transforms,e,at,core.NONE,false)
     }
 }
@@ -155,14 +155,14 @@ crossing_hang :: proc(references:core.Read(scene.Scene_Reference),worlds:core.Re
     if target==core.NONE && !root {return false}
     local,ok:=mm.transform_relative(core.at(worlds,at).transform,target_pose)
     if !ok {return false}
-    if transform:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),e));transform!=nil {transform^=transmute(core.Transform)local}
+    if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),e));transform!=nil {transform^=transmute(core.Transform)local}
     if target==core.NONE {
         core.remove(parents,e)
         return true
     }
     last:i32=-1
     for child:=core.first_child(hierarchy,target);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
-        if p,has:=core.get(core.read(parents),child);has {last=max(last,p.order)}
+        if p,has:=core.get(parents,child);has {last=max(last,p.order)}
     }
     core.add(parents,e,core.Parent{target,last+1})
     return true

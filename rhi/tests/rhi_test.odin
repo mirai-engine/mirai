@@ -145,6 +145,58 @@ rhi_buffer_round_trip_and_compute :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// One code serves the pipelines of each set of its constants, which the
+// driver compiles it with; a constant it does not declare makes no pipeline.
+@(test)
+rhi_pipelines_of_one_shader_differ_by_their_constants :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	code := rhi.test_shader("constant.comp")
+	doubled, found := rhi.shader_constant(code, "double")
+	testing.expect(t, found && doubled == rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}, "the shader names its constant")
+	COUNT :: 64
+	output := rhi.buffer_create(d, {size = COUNT * size_of(f32), usage = {.Storage}, memory = .GPU, name = "output"})
+	testing.expect(t, output != 0, rhi.device_error(d))
+	Case :: struct {constants: rhi.Shader_Constants, expected: f32}
+	for c in ([]Case{{{}, 1}, {doubled, 2}, {{}, 1}}) {
+		pipeline := rhi.pipeline_create_compute(d, {shader = code, constants = c.constants, name = "constant"})
+		testing.expect(t, pipeline != 0, rhi.device_error(d))
+		if pipeline == 0 {return}
+		cmd, ok := rhi.frame_begin(d)
+		testing.expect(t, ok, rhi.device_error(d))
+		if !ok {return}
+		rhi.cmd_bind_pipeline(cmd, pipeline)
+		rhi.cmd_bind_buffer(cmd, 0, output)
+		rhi.cmd_dispatch(cmd, 1)
+		testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+		rhi.device_wait_idle(d)
+		result: [COUNT]f32
+		testing.expect(t, rhi.buffer_read_slice(d, output, 0, result[:]), rhi.device_error(d))
+		for value, i in result {
+			if value != c.expected {
+				testing.expectf(t, false, "constants %v, element %d: %f != %f", c.constants, i, value, c.expected)
+				break
+			}
+		}
+		rhi.pipeline_destroy(d, pipeline)
+	}
+	undeclared := rhi.Shader_Constants{rhi.MAX_SHADER_CONSTANTS - 1}
+	testing.expect_value(t, rhi.pipeline_create_compute(d, {shader = code, constants = undeclared, name = "undeclared"}), rhi.Pipeline(0))
+	testing.expect(t, strings.contains(rhi.device_error(d), "constant"), rhi.device_error(d))
+	graphics := rhi.Graphics_Pipeline_Desc{
+		vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("triangle.frag"),
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "undeclared",
+	}
+	for stage in 0 ..< 2 {
+		desc := graphics
+		if stage == 0 {desc.vertex_constants = {0}} else {desc.fragment_constants = {0}}
+		testing.expect_value(t, rhi.pipeline_create_graphics(d, desc), rhi.Pipeline(0))
+	}
+	rhi.buffer_destroy(d, output)
+	expect_clean(t, d)
+}
+
 @(test)
 rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	d := test_device(t)

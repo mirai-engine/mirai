@@ -21,7 +21,7 @@ a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_d
     ref:=core.world_ref(&f.world,&f.info)
     SPEED :: f32(3)
     STEP :: SPEED/60
-    core.get(&f.world.values,f.e).force=0
+    core.edit(&f.world.values,f.e).force=0
     s.host.front.clock.local=12
     modes:[3]Mode
     seen:=0
@@ -103,6 +103,7 @@ a_predicted_spawn_is_taken_by_its_replica_also_across_a_correction :: proc(t:^te
     client_reconcile(s,ref,&f.app,1.0/60)
     testing.expect_value(t,s.stats.corrected,u64(1))
     taken(t,&f,r,id,entities,"after the tick of the spawn ran again")
+    testing.expect_value(t,f.shared.sent,1) // the tick that ran again sent nothing
 
     // The ticks that run again no longer make it, and the server did: the replica makes its entity.
     f.shared.spawn_at=0

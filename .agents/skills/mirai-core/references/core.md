@@ -39,8 +39,7 @@ of a network session and in the editor API. `Entities.ids` translates it to the 
 time:
 
 - `entity_of` answers according to the last settle of the `Id` table: one that was added and not
-  yet settled is not found; a destroyed entity stops being found immediately. `id_of` reads without
-  stamping the row.
+  yet settled is not found; a destroyed entity stops being found immediately. `id_of` reads the row.
 - The index follows the `changes` of the `Id` table; `world_copy` and `world_swap` carry it with
   the world without rereading it (`ids_moved`), and a hand-copied world rereads its table.
 - If two entities have the same `Id`, the first one indexed has it and, when it leaves, another.
@@ -62,9 +61,15 @@ table holds no memory: a table costs what its rows cost, not what the entities o
 The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
 another into its place, with its stamp, without mixing the two sections.
 
-- **Writing is requesting the row.** `get`, `at` and `writable` on `^Table`, and `free` on a
-  `shared` table, give `^T` and stamp the row with a new `version`; on a `Read` they give the value.
-  `row_of` and `has` look without stamping. None of them sees a disabled row.
+- **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
+  answer the same on a `Read` and on a `^Table`, as `row_of` and `has` do. None of them sees a
+  disabled row.
+- **Writing is requesting the row.** `edit`, `edit_at` and `writable` on `^Table`, and `free` on a
+  `shared` table, give `^T` and stamp the row with a new `version`, written or not. `set` and
+  `set_at` take the value and stamp only when its bytes differ from those of the row: what a
+  function computes every tick and seldom changes goes through them.
+- **Stamps come in pages.** `page_stamps` keeps, for each `STAMP_PAGE` rows, the newest stamp
+  written in them: a reader of what changed skips the pages written before it looked.
 - **Structural changes wait.** `add` (adds or replaces), `remove`, `disable` and `enable` wait in
   `pending` until `table_settle`, which applies them in order and discards those of entities that
   are not alive. It reserves room for all the additions first: without memory it applies none and
@@ -96,11 +101,18 @@ another into its place, with its stamp, without mixing the two sections.
 
 A reader keeps one `core.Seen` per table and calls `changes(t, &seen)`, which advances it:
 
-- `since`: the rows with a greater stamp were written, added or enabled.
+- `each_changed(t, &c)` gives, in a `for`, the rows written, added or enabled since: every row with
+  `all`, none when `written` is false. It is the only walk of what changed; `changed(t, c, row)`
+  answers for one row, for a reader that walks another table and looks up the row of its entity.
 - `gone`: the entities whose row stopped being enabled since the last read (some may have come
   back, among the stamped ones); valid until the next settle.
 - `all`: the reader did not see the rows that exist (the table was copied, swapped or cleared, or
   the log discarded entries) and walks all of them.
+- **A reader that makes again whole what it derives** does not walk rows: `touched(t, &seen)` says
+  whether anything changed in the table since it looked, and `reshaped(t, &shape)` whether its rows
+  are others (added, removed, turned on or off, replaced whole) whatever was written in them, for
+  what orders or indexes the rows of a table written every tick. Both advance what they are given;
+  a reader of several tables joins them with `|`, which asks every one.
 - The `gone` log gets its room when the first entity leaves a table, and from then on never
   allocates in a settle: its room grows with the rows, when they are reserved (twice those that
   exist, `GONE_CAPACITY` at least), and when full it discards its oldest half. What leaves between
@@ -148,6 +160,24 @@ write: a prefab, a piece of terrain, a piece of something broken.
   Any other storage is written by a single library, except `@(storage,shared)`.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
   not see.
+
+## Waiting
+
+A wait is the tick it ends at, plain data in a component or a storage: it is copied and rolled
+back with the world, and a save keeps it with the clock.
+
+- `deadline(time, seconds)` is the tick that many seconds after the one that runs, and
+  `due(time, at)` says whether it came; a deadline nobody set, 0, has, and `NEVER` never does.
+  `elapsed(time, since)` gives the seconds since a tick; `ticks_of` and `seconds_of` convert.
+  Seconds become ticks with the `dt` of the clock, so a wait lasts the same at any tick rate.
+- The row is written when the wait starts and when it ends: nothing counts down tick by tick.
+- An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
+  has now. What must follow a pace that changes during the wait adds its own time up every tick.
+- A request waits in its queue: `later(&q, time, seconds, item)`, and its owner takes with
+  `take_due(&q, time)` what was pushed and what is due. An owner that takes with `take` refuses
+  what was pushed for later, and its `queue_serve` reports it. A queue is not saved: a wait that
+  a save must keep is a deadline in a component.
+- There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
 
@@ -197,7 +227,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   fixed step is a single one, and each library that moves an entity through time compensates:
   - the locomotion of its `Character` and the turn of the seat
     ([locomotion](../../mirai-physics/references/engine.md#own-pace));
-  - its animation, its pose modifiers and its `Keyframe_Path` advance `dt * pace_of`.
+  - its animation and its pose modifiers advance `dt * pace_of`.
   - The camera that follows it already runs with the `dt` of the frame (`late`), which does not
     scale.
   - What it throws or fires follows the world clock unless the game gives it its own `Own_Pace`; a
@@ -290,9 +320,10 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 
 - With `teleport` it is a jump (`jump`) and the drawing does not interpolate the path;
   `teleport=false` is for what moves frame by frame (a cinematic).
-- The owning library takes its requests in `fixed` with `before="places_drop"` and leaves the
-  others. `places_drop` (`simulate`) reports what nobody took as the problem `core.place`; what is
-  requested afterwards waits for the next tick.
+- The owning library takes its requests in `fixed`, in the `simulate` stage, and leaves the
+  others: a function that receives `^core.Places` runs before `places_drop`, which reports what
+  nobody took as the problem `core.place`. What is requested in a later stage waits for the next
+  tick.
 - `at_rest` stops what the owner moves (a respawn, a reset); the owner takes it from the request.
   The default keeps the velocity, which a portal needs.
 - This is how the `spawn` plugin, portals and cinematics place things without importing physics.
@@ -507,7 +538,8 @@ A test that needs a world declares a struct and lets `core` describe it
 destroy, settle, copy and swap of its tables.
 
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
-  component or the value of a storage. What the attributes of `T` say is read from the source that
+  component, an array of them (a table per element, named `<T>_<index>`) or the value of a
+  storage. What the attributes of `T` say is read from the source that
   declares it, through the `core.declared_read` the generator uses: a test world cannot say
   something else of a type than a generated one. A type a test file declares may have no attribute,
   and takes the default its test gives it.

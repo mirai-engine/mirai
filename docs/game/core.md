@@ -11,11 +11,11 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 
 ## Map
 
-- Folders and files: [Layout](#layout). New component or storage: [Data](#data).
-- A function and its phase: [Functions](#functions), [Phases](#phases).
+- Folders and files: [Layout](#layout). New component or storage: [Data](#data). A function and
+  its phase: [Functions](#functions), [Phases](#phases). Waits: [waiting.md](core/waiting.md).
 - Order, asking a library, telling the rest what happened: [wiring.md](core/wiring.md).
 - Children, runtime prefabs, destroying a subtree: [prefabs.md](core/prefabs.md).
-- Catalogs as rows: [records.md](core/records.md). Saves: [saves.md](core/saves.md).
+- Catalogs as rows: [records.md](core/records.md). Saves, state of a run: [saves.md](core/saves.md).
 - Characters: [character](character.md); scenes, light: [world](world.md); ids: [assets](assets.md).
 
 ## Layout
@@ -38,10 +38,11 @@ Health :: struct {
     regen:f32 `mirai:"unit=1/s"`,
     hurt_at:f64 `mirai:"transient"`,   // derived: neither saved nor replicated
 }
-HEALTH_DEFAULT :: Health{hp=100}       // NAME_DEFAULT: what a new row starts as
+HEALTH_DEFAULT :: Health{hp=100}       // NAME_DEFAULT: new rows and literals start from it
 ```
 
-- `@(storage)` is one value per world, written by one library; a save keeps components only.
+- `@(storage)` is one value per world, written by one library; a save keeps components only, and
+  a run keeps its state in components on a `core.Keep` root ([saves](core/saves.md)).
   Flat data: no pointers, maps or owned memory; another entity is a `core.Entity` field.
 - Tags: `transient`, `local`, `readonly`, `hidden`, `unit=`, `min=`, `max=`, `color`, `angle`.
 
@@ -58,8 +59,8 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
   storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`, `^core.Entities`,
   `core.Placer`; of the application, its part (`^host.Assets`, `^render.Renderer`, `^audio.Mixer`,
   `runtime.Allocator`) or `^host.App`. No result or defaults. Names are unique in the whole world.
-- `core.Read` hands out copies; a write needs `^core.Table`, whose `core.writable`, `core.at` and
-  `core.get` mark rows changed (`core.read(table)` reads). `core.add` waits (`core.staged_has`).
+- `core.get` and `core.at` read any table. `^core.Table` writes: `core.edit`, `core.edit_at`,
+  `core.writable` mark the row, `core.set` only a new value. `core.add` waits (`core.staged_has`).
 - One function writes each table; the others push a request ([wiring.md](core/wiring.md)).
   `core.free(table, e)` is the row, or `nil` when a library owns it (`Transform` of a body).
 
@@ -74,7 +75,6 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
 
 ## Pitfalls that fail silently
 
-- A literal `Health{}` drops the defaults: use `core.default(commands,Health)`.
 - Writing the `Transform` of a body is refused: `core.place` or a request. A request pushed
-  after its owner ran waits for the next tick; events live one tick.
+  in a later stage than its owner's waits for the next tick; events live one tick.
 - A `fixed` function that reads `core.Frame_Input` differs when a tick is replayed: use actions.

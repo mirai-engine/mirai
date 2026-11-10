@@ -274,9 +274,7 @@ records_anim_remove :: proc(r:^Records,anim:int) {
         if value^==played {value^=0} else if value^>played {value^-=1}
     }
     for &set in r.anim_sets {
-        fix(&set.shown,played);fix(&set.hidden,played);fix(&set.hovered,played);fix(&set.unhovered,played)
-        fix(&set.pressed,played);fix(&set.released,played);fix(&set.focused,played);fix(&set.unfocused,played)
-        fix(&set.selected,played);fix(&set.unselected,played);fix(&set.clicked,played)
+        fix(&set.shown,played);fix(&set.hidden,played);fix(&set.clicked,played)
     }
 }
 

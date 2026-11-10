@@ -25,9 +25,9 @@ import wire "mirai:net"
 // Each step first catches up with a scene that replaced the world (world.odin).
 // A paused game runs no phase: pump keeps its connections instead.
 //
-// A correction runs the fixed loop again with core.Time.resimulating set: send
-// drops what the ticks ask again (Net_Outbox.replaying), and the tail neither
-// publishes nor sends.
+// A correction runs the fixed loop again with core.Time.resimulating and
+// Net_Outbox.replaying set (replaying): send drops what the ticks ask again,
+// and the tail neither publishes nor sends.
 
 @(step="input",loops="game",stage="begin",before="clock_requests")
 net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settings:^Net_Settings,inputs:^Remote_Inputs,problems:^core.Problems) {
@@ -55,7 +55,7 @@ net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settin
 
 // After the libraries read what arrived: what they learned changed ticks
 // already simulated goes back to the earliest of them and runs again.
-@(step="input",loops="game",stage="begin",after="net_begin")
+@(step="input",loops="game",stage="begin")
 net_rewind :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,rewinds:^Net_Rewinds,problems:^core.Problems) {
     asked:=core.take(&rewinds.queue)
     if !session.host_ready || session.mode!=.Client || len(asked)==0 {return}
@@ -66,7 +66,7 @@ net_rewind :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,rewin
 }
 
 @(step="fixed",loops="game",stage="begin",before="pose_targets_place")
-net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,events:^Net_Events,outbox:^Net_Outbox,problems:^core.Problems) {
+net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,events:^Net_Events,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
@@ -74,7 +74,6 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
     authority_follow(session,world)
     time:=core.world_storage_of(world,core.Time)
     if time==nil {return}
-    if outbox!=nil {outbox.replaying=time.resimulating}
     // A tick run again has those it had.
     if connections!=nil && !time.resimulating {
         core.queue_clear(&connections.events)
@@ -102,8 +101,6 @@ net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outb
     session.problems=problems
     defer session.problems=previous
     world_follow(session,world)
-    // What is sent outside the ticks is not of a tick that runs again.
-    outbox.replaying=false
     adopted:=core.take(&adoptions.queue)
     time:=core.world_storage_of(world,core.Time)
     if !session.host_ready || time==nil {return}

@@ -35,7 +35,7 @@ dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=
 dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asset_Id,size:[3]f32,pickup:bool) -> base.Asset_Id {
     id:=asset.content_id(PROJECT,"prefab",file)
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_PREFAB,id)
+    asset.builder_init(&s,&o.content,id)
     defer asset.builder_destroy(&s)
     e:=asset.builder_entity(&s,name)
     body:=phys.RIGID_BODY_DYNAMIC
@@ -50,7 +50,7 @@ dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asse
         asset.builder_set(&s,e,game.Dig_Pickup{material=material})
         tinted(&s,look,{1,1,1},{2.5,1.4,0.4})
     }
-    asset.builder_save(&s,path(o,fmt.tprintf("assets/dig/%s.prefab",file)))
+    asset.builder_save(&s,path(o,fmt.tprintf("assets/dig/%s.scene",file)))
     return id
 }
 
@@ -62,7 +62,7 @@ write_dig_scene :: proc(o:^Out) {
     os.make_directory_all(path(o,"assets/dig"))
     grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
     soil:=dig_material(o,"Dig soil",{0.34,0.23,0.14},0.95)
-    rock:=game.material_asset("Cobblestone")
+    rock:=material_id("Cobblestone")
     ore:=dig_material(o,"Dig ore",{0.85,0.5,0.22},0.35,0.85)
 
     // 32 by 16 by 32 m: solid from 7.5 m under the surface, at 0, up to it.
@@ -98,7 +98,7 @@ write_dig_scene :: proc(o:^Out) {
     ore_drop:=dig_prefab(o,"Ore","dig_ore_drop",.Sphere,ore,{0.3,0.3,0.3},true)
 
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","dig"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","dig"))
     defer asset.builder_destroy(&s)
     u:=daylight(3)
     environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.75,0.6,0}),render.SUN_DIRECTION),u,3)

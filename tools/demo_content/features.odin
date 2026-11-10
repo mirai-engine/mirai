@@ -105,7 +105,7 @@ write_decal_images :: proc(o:^Out) -> (images:[Decal_Image]base.Asset_Id) {
 // views take over the meter.
 @(private)
 feature_scene_begin :: proc(s:^asset.Scene_Builder,o:^Out,name:string,sky:Sky,sun_color:[3]f32,sun:f32,towards:[3]f32,u:Light_Units,exposure:f32=0) {
-    asset.builder_init(s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene",name))
+    asset.builder_init(s,&o.content,asset.content_id(PROJECT,"scene",name))
     environment,turn,to_sun,disc:=sky_of(o,sky,towards,u,sun)
     meter:=render.EXPOSURE_DEFAULT
     meter.compensation=exposure
@@ -145,7 +145,7 @@ placed :: proc(s:^asset.Scene_Builder,name:string,position:[3]f32,rotation:mm.Qu
 @(private)
 shape :: proc(s:^asset.Scene_Builder,id:base.Entity_Id,kind:render.Shape,material:string) {
     mesh:=render.Mesh_Renderer{shape=kind}
-    mesh.materials[0]=game.material_asset(material)
+    mesh.materials[0]=material_id(material)
     asset.builder_set(s,id,mesh)
 }
 

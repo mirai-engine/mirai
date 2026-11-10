@@ -340,9 +340,10 @@ Numbered layers; a package only imports lower layers.
 - **4** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
-- **5** `engine/*`: the engine libraries `scene`, `volume` (per-zone values: where they apply, how
-  they combine, and wind), `render`, `audio`, `gui`, `input` (devices, actions, seats, driving and
-  `Move_Input`), `camera` (each seat's camera and the game view), `save`.
+- **5** `engine/*`: the engine libraries `scene`, `volume` (the regions of the world, the per-zone
+  values in them, how they combine, and wind), `render`, `audio`, `gui`, `input` (devices,
+  actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
+  `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
   stored by what makes it), `cook/compressor/lz` (the optimal levels of the LZ encoder, which only
   a cook writes with), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
@@ -353,8 +354,8 @@ Numbered layers; a package only imports lower layers.
   project's plugins that come from git, and the catalog). The importers are `cook/import` (core,
   no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`, which reads with
   the C library of `third_party/ufbx`) and `cook/import/sources` (the table of formats and
-  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface, a scene or a
-  prefab is authored with as a nested document, between its text and the file of the asset, on
+  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface or a scene
+  is authored with as a nested document, between its text and the file of the asset, on
   top of `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui`
   and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,

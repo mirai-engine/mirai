@@ -361,6 +361,14 @@ assets_unsaved :: proc(a:^Assets) -> []asset.Registry_Memory {return a.registry.
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
 
+// The id of the asset at a path of the folder, as its file is spelled
+// ("arena/Chrome.mat"): what code that names an asset by path resolves.
+assets_id :: proc(a:^Assets,path:string) -> (id:base.Asset_Id,found:bool) {
+    if a==nil {return}
+    file:=asset.registry_find_path(&a.registry,path) or_return
+    return file.id,file.id!={}
+}
+
 // How a message names an asset: its path in the folder, or its id, written in
 // buffer, when the folder has no file with it. Without allocating.
 assets_name :: proc(a:^Assets,id:base.Asset_Id,buffer:^[base.ASSET_ID_TEXT]u8) -> string {
@@ -421,7 +429,7 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     case .Mesh:     expected=record.kind==asset.KIND_MESH
     case .Texture:  expected=record.kind==asset.KIND_TEXTURE
     case .Material: expected=record.kind==asset.KIND_MATERIAL
-    case .Scene:    expected=record.kind==asset.KIND_SCENE || record.kind==asset.KIND_PREFAB
+    case .Scene:    expected=record.kind==asset.KIND_SCENE
     case .Document: expected=record.kind==document
     case .Fracture: expected=record.kind==asset.KIND_FRACTURE
     }
@@ -1828,7 +1836,7 @@ assets_scene :: proc(a:^Assets,id:base.Asset_Id) -> ^asset.Asset {return assets_
 // kept open where it is as scenes are, and read again when its file changes
 // (a.revision moves). nil when it cannot be loaded.
 assets_document :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc) -> ^asset.Asset {
-    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE || kind==asset.KIND_PREFAB else .Document,kind)
+    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE else .Document,kind)
 }
 
 // A document of assets_document whose tables its plugin refuses: a problem

@@ -88,7 +88,7 @@ override_make :: proc(entity:base.Entity_Id,component:u64,kind:Override_Kind,pat
 // known, and the instance is left out.
 Override_Bases :: struct {
     data:rawptr,
-    base:proc(data:rawptr,root:base.Entity_Id,instance:Instance) -> ^Scene,
+    base:proc(data:rawptr,root:base.Entity_Id,instance:Prefab_Instance) -> ^Scene,
 }
 
 // What the instances placed in a document hold apart from their bases: for
@@ -100,7 +100,7 @@ scene_overrides_derive :: proc(out:^[dynamic]Override,scene:^Scene,bases:Overrid
     if len(rows)==0 {return .None}
     ids,parents:=scene_ids(scene),scene_parents(scene)
     // The members of each instance, one after another.
-    Group :: struct {first,count:int,prefab:^Scene,instance:Instance}
+    Group :: struct {first,count:int,prefab:^Scene,instance:Prefab_Instance}
     groups:=make(map[base.Entity_Id]Group,context.temp_allocator)
     order:=make([dynamic]base.Entity_Id,context.temp_allocator) // of the roots: what is derived does not depend on the map
     for value in values {
@@ -182,7 +182,7 @@ scene_overrides_derive :: proc(out:^[dynamic]Override,scene:^Scene,bases:Overrid
 // scene_overrides_derive of one instance against a prefab.
 scene_instance_overrides :: proc(out:^[dynamic]Override,scene:^Scene,root:base.Entity_Id,prefab:^Scene) -> Error {
     if _,placed:=scene_instance(scene,root);!placed || scene==prefab {return .Invalid}
-    one :: proc(data:rawptr,root:base.Entity_Id,instance:Instance) -> ^Scene {return (^Scene)(data)}
+    one :: proc(data:rawptr,root:base.Entity_Id,instance:Prefab_Instance) -> ^Scene {return (^Scene)(data)}
     return scene_overrides_derive(out,scene,{prefab,one},root)
 }
 

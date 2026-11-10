@@ -44,31 +44,31 @@ a_jump_carries_where_an_entity_and_what_hangs_from_it_were :: proc(t:^testing.T)
     near :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-4}
 
     propagate(&locals,&parents,&worlds,&hierarchy,&propagation,&jumps,&es,tick)
-    get(&locals,body).position={1,0,0}
-    get(&locals,bystander).position={0,0,3}
+    edit(&locals,body).position={1,0,0}
+    edit(&locals,bystander).position={0,0,3}
     propagate(&locals,&parents,&worlds,&hierarchy,&propagation,&jumps,&es,tick)
-    carried,_:=get(read(&worlds),hand)
+    carried,_:=get(&worlds,hand)
     testing.expect(t,near(carried.previous.position,{0,1,0}) && near(carried.position,{1,1,0}))
 
     // The body is put a quarter turn away and ten metres off: its hand was, for whoever draws between the ticks, where that takes where it was.
     by:=mm.Transform{{10,0,0},mm.quat_axis_angle({0,1,0},math.PI/2),{1,1,1}}
     there:=mm.transform_compose(by,mm.Transform{{1,0,0},1,{1,1,1}})
-    placed:=get(&locals,body)
+    placed:=edit(&locals,body)
     placed.position,placed.rotation=there.position,there.rotation
     jump(&jumps,body,by)
     propagate(&locals,&parents,&worlds,&hierarchy,&propagation,&jumps,&es,tick)
-    carried,_=get(read(&worlds),hand)
+    carried,_=get(&worlds,hand)
     testing.expect(t,near(carried.position,mm.transform_point(by,{1,1,0})))
     testing.expect(t,near(carried.previous.position,carried.position),"the hand was drawn between the two places")
-    moved,_:=get(read(&worlds),body)
+    moved,_:=get(&worlds,body)
     testing.expect(t,near(moved.previous.position,moved.position))
     // Nothing else jumps, and a jump lasts its tick.
-    other,_:=get(read(&worlds),bystander)
+    other,_:=get(&worlds,bystander)
     testing.expect(t,near(other.previous.position,{0,0,3}) && near(other.position,{0,0,3}))
     testing.expect_value(t,len(jumps.queue.items),0)
-    get(&locals,body).position+={0,0,1}
+    edit(&locals,body).position+={0,0,1}
     propagate(&locals,&parents,&worlds,&hierarchy,&propagation,&jumps,&es,tick)
-    moved,_=get(read(&worlds),body)
+    moved,_=get(&worlds,body)
     testing.expect(t,near(moved.position-moved.previous.position,{0,0,1}))
 }
 
@@ -104,12 +104,12 @@ propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
     seen:=version(&f.worlds)
 
     // Asked for and left as it was: neither it nor what hangs from it is written.
-    _=get(&f.locals,body)
+    _=edit(&f.locals,body)
     fixture_propagate(&f,.Fixed)
     fixture_propagate(&f,.Late)
     testing.expect_value(t,version(&f.worlds),seen)
 
-    get(&f.locals,body).position={1,0,0}
+    edit(&f.locals,body).position={1,0,0}
     fixture_propagate(&f,.Late)
     for e in ([]Entity{body,hand}) {testing.expect(t,stamp(&f.worlds,row_of(&f.worlds,e))>seen)}
     testing.expect(t,stamp(&f.worlds,row_of(&f.worlds,bystander))<=seen)
@@ -135,12 +135,12 @@ a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:
     }
     test_world_settle(&f)
     fixture_propagate(&f,.Fixed)
-    get(&f.locals,a).position={2,0,0}
+    edit(&f.locals,a).position={2,0,0}
     fixture_propagate(&f,.Late)
 
     world,placed:=world_of(read(&f.locals),read(&f.parents),deepest)
     testing.expect(t,placed && abs(world.position.x-201)<1e-3,"world_of composes every parent of a chain within HIERARCHY_DEPTH")
-    propagated,_:=get(read(&f.worlds),deepest)
+    propagated,_:=get(&f.worlds,deepest)
     testing.expect(t,abs(propagated.position.x-201)<1e-3)
     _,placed=world_of(read(&f.locals),read(&f.parents),c)
     testing.expect(t,placed)

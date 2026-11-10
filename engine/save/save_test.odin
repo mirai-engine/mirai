@@ -30,6 +30,7 @@ Save_Test_World :: struct {
     references:core.Table(scene.Scene_Reference),
     hierarchy:core.Hierarchy,
     root:scene.Scene_Root,
+    time:core.Time,
 }
 
 // The layout of the World and an application that makes it.
@@ -91,8 +92,8 @@ a_transient_entity_comes_back_from_a_save_without_the_id_it_was_lent :: proc(t:^
     for row in 0..<core.count(&w.transforms) {
         e:=core.entity_at(&w.transforms,row)
         if core.has(&w.ids,e) {continue}
-        placed,_:=core.get(core.read(&w.transforms),e)
-        parent,found:=core.get(core.read(&w.parents),e)
+        placed,_:=core.get(&w.transforms,e)
+        parent,found:=core.get(&w.parents,e)
         testing.expect(t,placed.position==[3]f32{1,2,3} && found && core.has(&w.ids,parent.entity))
     }
 }
@@ -178,7 +179,7 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     testing.expect_value(t,w.entities.alive,64)
     testing.expect(t,!core.alive(&w.entities,first))
     again:=core.entity_of(&w.entities,1)
-    placed,found:=core.get(core.read(&w.transforms),again)
+    placed,found:=core.get(&w.transforms,again)
     testing.expect(t,found && placed.position==[3]f32{1,2,3})
 }
 
@@ -205,14 +206,14 @@ a_server_saves_what_a_client_simulates_without_the_marks_of_the_session :: proc(
     defer serial.writer_destroy(&out)
     remotes,targets:=[2]u64{w.remotes.version,w.remotes.layout},[2]u64{w.targets.version,w.targets.layout}
     if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
-    target,kept:=core.get(core.read(&w.targets),lent)
+    target,kept:=core.get(&w.targets,lent)
     testing.expect(t,core.has(&w.remotes,lent) && kept && target.placed==2,"the session keeps what it has")
     testing.expect_value(t,[2]u64{w.remotes.version,w.remotes.layout},remotes)
     testing.expect_value(t,[2]u64{w.targets.version,w.targets.layout},targets)
 
     if !testing.expect_value(t,restore(ref,&f.app,serial.writer_bytes(&out)),Error.None) {return}
     again:=core.entity_of(&w.entities,5)
-    placed,found:=core.get(core.read(&w.transforms),again)
+    placed,found:=core.get(&w.transforms,again)
     testing.expect(t,found && placed.position==[3]f32{4,0,0})
     testing.expect_value(t,core.count(&w.remotes),0)
     testing.expect_value(t,core.count(&w.targets),0)
@@ -278,13 +279,13 @@ autosaves_of :: proc(s:^Serve) -> (count:int) {
 
 @(private="file")
 placed_at :: proc(w:^Save_Test_World,id:base.Entity_Id) -> [3]f32 {
-    placed,_:=core.get(core.read(&w.transforms),core.entity_of(&w.entities,id))
+    placed,_:=core.get(&w.transforms,core.entity_of(&w.entities,id))
     return placed.position
 }
 
 @(private="file")
 place :: proc(w:^Save_Test_World,id:base.Entity_Id,position:[3]f32) {
-    core.at(&w.transforms,core.table_row(&w.transforms,core.entity_of(&w.entities,id))).position=position
+    core.edit_at(&w.transforms,core.table_row(&w.transforms,core.entity_of(&w.entities,id))).position=position
 }
 
 @(private="file")
@@ -518,17 +519,24 @@ autosaves_go_round_their_slots_and_a_checkpoint_loads_back :: proc(t:^testing.T)
     testing.expect_value(t,slots(&s.state,&f.app,list[:]),2)
     testing.expect_value(t,base.text_get(list[0].label[:]),"Save 2")
 
+    // A deadline is a tick of the clock the save keeps: what waited two seconds waits them again.
+    w.time={tick=600,seconds=10,dt=1.0/60,playing=true}
+    until:=core.deadline(w.time,2)
     request_label(&s.requests,"Act 1")
     request_checkpoint(&s.requests)
     serve(&f,&s)
     played:=s.game.played
     place(w,5,{9,9,9})
+    w.time.tick,w.time.seconds=900,15
+    testing.expect(t,core.due(w.time,until))
     serve(&f,&s)
     request_load_checkpoint(&s.requests)
     serve(&f,&s)
     if !testing.expect_value(t,len(s.results.queue.items),1) {return}
     testing.expect_value(t,s.results.queue.items[0].error,Error.None)
     testing.expect_value(t,placed_at(w,5),[3]f32{1,2,3})
+    testing.expect_value(t,w.time.tick,u64(600))
+    testing.expect(t,!core.due(w.time,until) && until-w.time.tick==core.ticks_of(w.time,2))
     testing.expect_value(t,base.text_get(s.game.label[:]),"Act 1")
     testing.expect_value(t,s.game.played,played)
 }
@@ -556,7 +564,7 @@ autosaves_follow_play_scenes_and_levels_but_not_the_start :: proc(t:^testing.T) 
     serve(&f,&s)
     testing.expect_value(t,autosaves_of(&s),0)
 
-    core.at(&w.references,0).held=true
+    core.edit_at(&w.references,0).held=true
     next:=core.create(&w.entities)
     core.add(&w.references,next,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,3}})
     core.settle(&f.info,w,nil)

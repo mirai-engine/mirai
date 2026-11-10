@@ -23,12 +23,12 @@ animation_motor_input :: proc "contextless" (delta:anim.Root_Delta,actor:mm.Tran
 
 // After the animation is sampled, a character with a motor moves by its root
 // motion instead of what its seat or its AI asked.
-@(step="fixed",stage="apply",after="animation_sample")
+@(step="fixed",stage="apply")
 animation_motor_drive :: proc(motors:core.Read(Animation_Motor),inputs:^core.Table(inp.Move_Input),walks:core.Read(phys.Walk),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(motors) {
         entity:=core.entity_at(motors,row)
-        input:=core.get(inputs,entity)
+        input:=core.edit(inputs,entity)
         config,configured:=core.get(walks,entity)
         actor,placed:=core.get(worlds,entity)
         if input==nil || !configured || !placed {continue}

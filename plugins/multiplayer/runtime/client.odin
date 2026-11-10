@@ -431,7 +431,7 @@ replica_place :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
             section:=section_of(core.ref(core.world_storage_of(w,core.Hierarchy)),references,r.entity)
             loaded:=section==core.NONE
             if !loaded && references!=nil {
-                reference,_:=core.get(core.read(references),section)
+                reference,_:=core.get(references,section)
                 loaded=reference.loaded!={}
             }
             if loaded {
@@ -528,7 +528,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
         // Where its section is not loaded, a copy of it from the scene of that section.
         if home:=r.pose.sections[0];home!=0 && r.pose.id!=0 {
             if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
-                if reference,found:=core.get(core.read(references),core.entity_of(es,home));found && reference.scene!={} {
+                if reference,found:=core.get(references,core.entity_of(es,home));found && reference.scene!={} {
                     if report,error:=scene.spawn_member(core.commands_of(w),assets,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
                 }
             }
@@ -596,7 +596,7 @@ row_staged :: proc "contextless" (t:^core.Raw_Table,e:core.Entity) -> bool {
 section_holding :: proc(w:core.World_Ref,e:core.Entity) -> bool {
     references:=core.world_table_of(w,scene.Scene_Reference)
     if references==nil {return false}
-    reference,found:=core.get(core.read(references),core.parent_of(core.ref(core.world_storage_of(w,core.Hierarchy)),e))
+    reference,found:=core.get(references,core.parent_of(core.ref(core.world_storage_of(w,core.Hierarchy)),e))
     return found && reference.loaded!={} && reference.held
 }
 
@@ -1037,7 +1037,7 @@ client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
         wire.smoothing_update(&r.smoothing,dt)
         drawn,has:=core.get(core.read(offsets),r.entity)
         if !has || drawn.offset==r.smoothing.offset && drawn.rotation==r.smoothing.rotation {continue}
-        shown:=core.get(offsets,r.entity)
+        shown:=core.edit(offsets,r.entity)
         shown.offset,shown.rotation=r.smoothing.offset,r.smoothing.rotation
     }
 }
@@ -1108,14 +1108,14 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     for index in c.driven[:c.driven_count] {
         r:=&c.replicas[index]
         if !core.alive(es,r.entity) {continue}
-        motion,has:=core.get(core.read(motions),r.entity)
+        motion,has:=core.get(motions,r.entity)
         if !has || motion.island==0 || slice.contains(c.islands[:islands],motion.island) {continue}
         c.islands[islands]=motion.island
         islands+=1
     }
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || !core.alive(es,r.entity) {continue}
-        motion,has_motion:=core.get(core.read(motions),r.entity)
+        motion,has_motion:=core.get(motions,r.entity)
         if has_motion && motion.island!=0 {
             for island in c.islands[:islands] {
                 if island==motion.island {r.touched,r.touched_set=tick,true;break}
@@ -1140,7 +1140,7 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.role!=.Held || !core.alive(es,r.entity) {continue}
         t:=net_type(s,r.type)
-        local,has_pose:=core.get(core.read(transforms),r.entity)
+        local,has_pose:=core.get(transforms,r.entity)
         if !has_pose {continue}
         pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,r.entity,t)}
         motion,_:=motion_read(w,r.entity)
@@ -1393,6 +1393,13 @@ client_rewinds :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,ticks:[]u32
     s.stats.resimulate_seconds+=time.duration_seconds(time.tick_since(started))
 }
 
+// The ticks that follow run again, or no longer: their Time says so, and their sends are dropped.
+@(private)
+replaying :: proc(w:core.World_Ref,clock:^core.Time,on:bool) {
+    clock.resimulating=on
+    if outbox:=core.world_storage_of(w,Net_Outbox);outbox!=nil {outbox.replaying=on}
+}
+
 // A rollback to target when this frame and the budget have room for it.
 @(private)
 client_rewind :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32) -> bool {
@@ -1439,7 +1446,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         if &frame!=restored {core.copy_marks_follow(w,restored.marks,frame.marks)}
     }
     core.copy_marks_follow(w,restored.marks,restored.marks)
-    clock.resimulating=true
+    replaying(w,clock,true)
     replicas_relink(s,w,app.assets,start)
     driven_list(c)
     authoritative_apply(s,w,target,true)
@@ -1456,7 +1463,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         records_capture(s,w,tick)
         s.stats.resimulated+=1
     }
-    clock.resimulating=false
+    replaying(w,clock,false)
     if input!=nil {input^=present_input}
     for &x in c.replicas[:c.replica_high] {
         if x.object==0 || x.waits {continue}
@@ -1513,10 +1520,10 @@ client_sync_test :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     for tick:=first;i32(last-tick)>=0;tick+=1 {
         frame:=&c.frames[int(tick)%len(c.frames)]
         if !host.app_world_replace(app,w.data,frame.world) {break}
-        clock.resimulating=true
+        replaying(w,clock,true)
         if input!=nil {input^=frame.input}
         host.app_tick_replay(app,w.data,frame.content)
-        clock.resimulating=false
+        replaying(w,clock,false)
         s.stats.sync_tested+=1
         // The network gave the tick something else: a state of the server that came after it ran.
         if c.sync_fed[c.history]!=c.sync_fed[int(tick)%c.history] {
@@ -1671,7 +1678,7 @@ driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     if seat==core.NONE {return}
     for row in 0..<core.count(drivables) {
         if drivables.values[row].seat!=seat {continue}
-        move,has:=core.get(core.read(moves),core.entity_at(drivables,row))
+        move,has:=core.get(moves,core.entity_at(drivables,row))
         if !has {return}
         return {move.look_yaw,move.look_pitch},true
     }

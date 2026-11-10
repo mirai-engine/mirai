@@ -172,7 +172,7 @@ recovery_open :: proc(s:^Session) {
     r:=&s.recovery
     r.tabs=os.is_file(project.path(recovery_tabs_folder(s),"restart-documents.json",allocator=context.temp_allocator))
     for number in recovery_assets_numbers(s) {
-        if folder:=recovery_assets_folder(s,number);assets_unsaved_kept(folder) {append(&r.assets,number)} else {os.remove_all(folder)}
+        if folder:=recovery_assets_folder(s,number);assets_unsaved_kept(folder) {append(&r.assets,number)} else {base.remove_all(folder)}
     }
     for slot in recovery_slots(s) {
         found:=Recovery_Found{slot=slot}
@@ -353,13 +353,13 @@ recovery_tabs_keep :: proc(s:^Session) {
     r:=&s.recovery
     if !r.tabs {
         folder:=recovery_tabs_folder(s)
-        os.remove_all(folder)
+        base.remove_all(folder)
         _=os.make_directory_all(folder)
         if _,kept:=documents_save_restart(s,folder);kept {
             recovery_chains_close(s,true)
             return
         }
-        os.remove_all(folder)
+        base.remove_all(folder)
     }
     if document_dirty(s) {document_recovery(s)}
     recovery_wait(s)
@@ -377,7 +377,7 @@ recovery_assets_update :: proc(s:^Session) {
     revision:=s.app.assets.registry.revision
     if len(assets_unsaved(s))==0 {
         if r.assets_owned {
-            os.remove_all(recovery_assets_own(s))
+            base.remove_all(recovery_assets_own(s))
             r.assets_owned=false
         }
         r.assets_revision,r.assets_deadline=revision,0
@@ -448,8 +448,8 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
             }
         }
         resize(&r.found,kept)
-        for number in r.assets {os.remove_all(recovery_assets_folder(s,number))}
-        os.remove_all(recovery_tabs_folder(s))
+        for number in r.assets {base.remove_all(recovery_assets_folder(s,number))}
+        base.remove_all(recovery_tabs_folder(s))
         resolved||=len(r.assets)>0 || r.tabs
         clear(&r.assets)
         r.tabs=false
@@ -464,9 +464,9 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
             if why:=documents_restore(s,project.path(recovery_tabs_folder(s),"restart-documents.json",allocator=context.temp_allocator),beside=document_dirty(s));why!="" {
                 return false,fmt.tprintf("The tabs could not all be recovered and their copies are kept: %s",why)
             }
-            os.remove_all(recovery_tabs_folder(s))
+            base.remove_all(recovery_tabs_folder(s))
             for &found in r.found {recovery_slot_remove(s,found.slot)}
-            for number in r.assets {os.remove_all(recovery_assets_folder(s,number))}
+            for number in r.assets {base.remove_all(recovery_assets_folder(s,number))}
             clear(&r.found)
             clear(&r.assets)
             r.tabs=false
@@ -492,7 +492,7 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
                 source:=base.text_get(found.scene?found.info.source[:]:found.source[:])
                 previous:=s.active_document
                 tab:=document_scene_tab(s)
-                beside:=scene || path_is_prefab(source) || tab<0 || document_tab_dirty(s,tab)
+                beside:=scene || path_is_prefab(s,source) || tab<0 || document_tab_dirty(s,tab)
                 why:=""
                 if beside {
                     if !document_tab_new(s) {why=fmt.tprintf("%s could not be opened in a new tab",source!=""?source:"Untitled")}
@@ -509,7 +509,7 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
                     continue
                 }
                 resolved=true
-                scene||=!path_is_prefab(source)
+                scene||=!path_is_prefab(s,source)
                 if front<0 {front=s.active_document}
             }
             resize(&r.found,kept)

@@ -25,11 +25,12 @@ import "core:thread"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/5"
+GENERATOR_CONTRACT :: "mirai-shaders/6"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.
@@ -223,8 +224,8 @@ Job :: struct {
     first:    bool,
     idle:     bool,
     active:   bool, // a stage of the engine or of an extension that is not idle: Options.active_output waits for it
-    variant:  string,
-    defines:  []string,
+    defines:  []string, // of its variant, then each of its constants as the constant of native.slang it reads
+    constants:[]string, // the names of its constants, by id
     includes: []string, // those of the generation, or before them a folder with the extensions.slang of the stage
     bases:    []Base,
     out,staging:string,
@@ -273,7 +274,9 @@ identifier :: proc(name:string,allocator:=context.allocator) -> string {
 
 Variant :: struct {name:string,defines:[]string}
 
-// The source itself and one compilation more for each `//! variant name DEFINE...` line.
+// The source itself and one compilation more for each `//! variant name DEFINE...` line:
+// what a constant cannot choose, because it changes what the stage declares to the
+// device (a capability, its outputs, the kind of a slot).
 @(private)
 variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
     found:=make([dynamic]Variant,allocator)
@@ -285,6 +288,43 @@ variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
         if len(words)>=2 && words[0]=="variant" {append(&found,Variant{words[1],words[2:]})}
     }
     return found[:]
+}
+
+// A boolean a pipeline of the stage chooses (rhi.Shader_Constants), false
+// unless it says so: the code reads it as `if (DEFINE)`.
+Constant :: struct {name,define:string}
+
+// The constant of native.slang a stage reads its constant of that id as.
+@(private)
+CONSTANT_SYMBOL :: "mirai_constant_%d"
+
+// The constants of a source, by id: one for each `//! constant name DEFINE` line.
+@(private)
+constants :: proc(text:string,allocator:=context.allocator) -> []Constant {
+    found:=make([dynamic]Constant,allocator)
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if !strings.has_prefix(line,"//!") {continue}
+        words:=strings.fields(line[3:],allocator)
+        if len(words)==3 && words[0]=="constant" {append(&found,Constant{words[1],words[2]})}
+    }
+    return found[:]
+}
+
+// Why the constants of a source cannot be compiled; "" when they can.
+@(private)
+constants_problem :: proc(declared:[]Constant,allocator:=context.allocator) -> string {
+    if len(declared)>rhi.MAX_SHADER_CONSTANTS {
+        return fmt.aprintf("it declares %d constants (`//! constant`) and a stage has at most %d: make one of them a variant, or drop one",len(declared),rhi.MAX_SHADER_CONSTANTS,allocator=allocator)
+    }
+    for constant,i in declared {
+        for other in declared[:i] {
+            if other.name==constant.name || other.define==constant.define {
+                return fmt.aprintf("it declares the constant %s %s twice: each `//! constant` line names another constant and another define",constant.name,constant.define,allocator=allocator)
+            }
+        }
+    }
+    return ""
 }
 
 // The resources an entry point uses, by slot, checked against the portable
@@ -308,6 +348,8 @@ reflected_resources :: proc(data:json.Object,allocator:=context.allocator) -> (r
         name:=json_text(parameter["name"])
         if !used[name] {continue}
         binding,_:=parameter["binding"].(json.Object)
+        // A constant of the stage (`//! constant`) binds nothing.
+        if json_text(binding["kind"])=="specializationConstant" {continue}
         if json_text(binding["kind"])!="descriptorTableSlot" {return nil,fmt.aprintf("%s: parameters need an explicit descriptor binding",name,allocator=allocator)}
         slot,_:=json_int(binding["index"])
         space,_:=json_int(binding["space"])
@@ -438,6 +480,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     slang_stages:=SLANG_STAGES
     _,stage,_:=stage_of(path_name(job.source))
     name:=job.name
+    if job.error!="" {return}
     configuration:=make([dynamic]u8,context.temp_allocator)
     append(&configuration,..g.configuration)
     append(&configuration,..transmute([]u8)strings.join(job.defines,"\n",context.temp_allocator))
@@ -453,6 +496,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         job.result=shader_trim(stored,g.backends)
         job.reused=true
         job.result.staged=true
+        job.result.constants=job.constants
         return
     }
     if job.has_prior {
@@ -461,6 +505,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
             job.result=shader_trim(job.prior,g.backends)
             job.reused=true
             job.result.staged=true
+            job.result.constants=job.constants
             cache_stage_write(g.shared,job.result,files,g.backends)
             return
         }
@@ -475,7 +520,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     temporary,temporary_error:=os.make_directory_temp("","mirai-shader-*",context.temp_allocator)
     if temporary_error!=nil {job_fail(job,allocator,"%s: could not create a temporary folder",name);return}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     reflection:=path_join(temporary,"reflection.json",allocator=context.temp_allocator)
     metal_spv:=path_join(temporary,"metal.spv",allocator=context.temp_allocator)
     optimized:=path_join(temporary,"metal.optimized.spv",allocator=context.temp_allocator)
@@ -583,7 +628,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     }
     job.result={
         id=identifier(name,allocator),name=name,stage=stage,spv=spv_name,msl=msl_name,entry=strings.clone(entry,allocator),
-        bindings=resources,group=group,fingerprint=digest,staged=true,
+        bindings=resources,constants=job.constants,group=group,fingerprint=digest,staged=true,
         spv_hash=sha_of(spv_bytes,allocator) if vulkan else "",msl_hash=sha_of(metal_bytes,allocator) if metal else "",
     }
     cache_stage_write(g.shared,job.result,{.Vulkan=spv_bytes,.Metal=metal_bytes},g.backends)
@@ -719,6 +764,14 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             if per_surface {for name in g.surface {append(&programs,Of{name,SURFACE_FOLDER})}}
             if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER})}}
         }
+        declared:=constants(text,allocator)
+        problem:=constants_problem(declared,allocator)
+        constant_names:=make([]string,len(declared),allocator)
+        constant_defines:=make([]string,len(declared),allocator)
+        for constant,id in declared {
+            constant_names[id]=constant.name
+            constant_defines[id]=fmt.aprintf("%s="+CONSTANT_SYMBOL,constant.define,id,allocator=allocator)
+        }
         for program in programs do for variant in variants(text,allocator) {
             named:=stem if program.name=="" else fmt.tprintf("%s__%s",stem,program.name)
             name:=fmt.aprintf("%s%s%s%s",named,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
@@ -730,7 +783,11 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
                 append(&own,..g.includes)
                 includes=own[:]
             }
-            job:=Job{source=source,name=name,stage=itself,variant=strings.clone(variant.name,allocator),defines=variant.defines,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name)}
+            defines:=make([dynamic]string,allocator)
+            append(&defines,..variant.defines)
+            append(&defines,..constant_defines)
+            job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name)}
+            if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             for value in engine_entries {
                 object,is_object:=value.(json.Object)
                 if !is_object || json_text(object["name"])!=name {continue}
@@ -900,7 +957,7 @@ worker_run :: proc(worker:^Worker) {
 @(private)
 early_write :: proc(g:^Generation,folder:string,written:^bool,active:bool) {
     if runner_cancelled(g.runner) {return}
-    if os.exists(folder) && os.remove_all(folder)!=nil {return}
+    if os.exists(folder) && base.remove_all(folder)!=nil {return}
     if os.make_directory_all(folder)!=nil {return}
     entries:[3][dynamic]Shader
     for jobs,i in ([3][]Job{g.shader_jobs,g.program_jobs,g.extension_jobs}) {
@@ -982,9 +1039,7 @@ publish :: proc(replacements:[]Publication,move:Publish_Move=nil,user_data:rawpt
     recovered=true
     for i:=len(replacements)-1;i>=0;i-=1 {
         replacement:=&replacements[i]
-        // POSIX remove_all opens the path as a directory: a table is a file.
-        remove:=os.remove_all if os.is_dir(replacement.target) else os.remove
-        if replacement.installed && remove(replacement.target)!=nil {recovered=false;continue}
+        if replacement.installed && base.remove_all(replacement.target)!=nil {recovered=false;continue}
         if replacement.saved && os.rename(replacement.backup,replacement.target)!=nil {recovered=false}
     }
     return false,recovered
@@ -1111,7 +1166,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     staging=path_clean(staging,scratch)
     g.staging=staging
     cleanup:=true
-    defer if cleanup {os.remove_all(staging)}
+    defer if cleanup {base.remove_all(staging)}
 
     copies:=make([dynamic]Base,scratch)
     programs_folder:=path_join(staging,"include/programs",allocator=scratch)
@@ -1263,7 +1318,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     outputs:=make([dynamic]string,scratch)
     replacements:=make([dynamic]Publication,scratch)
     tables_folder:string
-    defer if cleanup && tables_folder!="" {os.remove_all(tables_folder)}
+    defer if cleanup && tables_folder!="" {base.remove_all(tables_folder)}
     shipped:=false
     if odin {
         assertions:=strings.builder_make(scratch)
@@ -1380,7 +1435,13 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
             if i>0 {strings.write_string(b,", ")}
             fmt.sbprintf(b,"{{slot = %d, kind = .%s, stages = {{.%s}}}}",binding.slot,binding.kind,stages[shader.stage])
         }
-        strings.write_string(b,"}}},\n" if size>=0 else "}},\n")
+        strings.write_string(b,"}")
+        if len(shader.constants)>0 {
+            strings.write_string(b,", constants = []string{")
+            for constant,i in shader.constants {fmt.sbprintf(b,"%s\"%s\"",", " if i>0 else "",constant)}
+            strings.write_string(b,"}")
+        }
+        strings.write_string(b,"}},\n" if size>=0 else "},\n")
     }
     b:=strings.builder_make(allocator)
     fmt.sbprintf(&b,"// Code generated by mirai shaders. DO NOT EDIT.\npackage %s\n\n",package_name)
@@ -1392,7 +1453,25 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
     }
     strings.write_string(&b,"Shader_Id :: enum u8 {\n")
     for job in jobs {fmt.sbprintf(&b,"\t%s,\n",job.result.id)}
-    fmt.sbprintf(&b,"}}\n\nwhen %sSHADER_FORMAT == .Msl {{\n",prefix)
+    strings.write_string(&b,"}\n\n")
+    // The constants of each source, which its variants and the stages of its programs share.
+    {
+        seen:=make(map[string]bool,context.temp_allocator)
+        any:=false
+        for job in jobs {
+            if len(job.constants)==0 || job.source in seen {continue}
+            seen[job.source]=true
+            if !any {strings.write_string(&b,"// The ids of the constants of the stages (`//! constant`), for the constants of a pipeline.\n")}
+            any=true
+            stem,stage,_:=stage_of(path_name(job.source))
+            suffixes:=STAGE_SUFFIXES
+            for constant,id in job.constants {
+                fmt.sbprintf(&b,"%s_%s :: %d\n",strings.to_upper(identifier(strings.concatenate({stem,suffixes[stage]},context.temp_allocator),context.temp_allocator),context.temp_allocator),strings.to_upper(identifier(constant,context.temp_allocator),context.temp_allocator),id)
+            }
+        }
+        if any {strings.write_string(&b,"\n")}
+    }
+    fmt.sbprintf(&b,"when %sSHADER_FORMAT == .Msl {{\n",prefix)
     names:=EMBEDDED_NAMES
     for metal in ([]bool{true,false}) {
         if !metal {strings.write_string(&b,"} else {\n")}

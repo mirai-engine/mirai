@@ -17,7 +17,7 @@ import wire "mirai:net"
 // the client of that connection predict it and its view follow it. A client
 // drives with its first local seat the body the server lets it predict.
 
-@(step="fixed",loops="game",stage="begin",after="net_tick_head")
+@(step="fixed",loops="game",stage="begin")
 net_seats :: proc(
     es:^core.Entities,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
     objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:core.Read(Net_Link),
@@ -129,10 +129,10 @@ connected :: proc(connections:core.Ref(Remote_Inputs),connection:Connection) -> 
 owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
     drivables,seats:=core.world_table_of(w,input.Drivable),core.world_table_of(w,input.Seat)
     if seats==nil {return 0}
-    if seat,is:=core.get(core.read(seats),e);is {return Connection(seat.peer)}
+    if seat,is:=core.get(seats,e);is {return Connection(seat.peer)}
     if drivables==nil {return 0}
-    driven,_:=core.get(core.read(drivables),e)
-    seat,_:=core.get(core.read(seats),driven.seat)
+    driven,_:=core.get(drivables,e)
+    seat,_:=core.get(seats,driven.seat)
     return Connection(seat.peer)
 }
 
@@ -151,7 +151,7 @@ net_input_take :: proc(session:^Net_Session,seats:^core.Table(input.Seat),time:c
     if !time.resimulating {seat.actions,seat.held,seat.rearm,seat.fed=c.fed_seat.actions,c.fed_seat.held,c.fed_seat.rearm,c.fed_seat.fed}
 }
 
-@(step="fixed",loops="game",stage="input",after="input_seats",before="input_drive")
+@(step="fixed",loops="game",stage="input",after="input_seats")
 net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindings:core.Ref(input.Input_Map),time:core.Time) {
     seat:=delayed_seat(session,seats)
     if seat==nil {return}
@@ -172,12 +172,12 @@ net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindi
 @(private)
 delayed_seat :: proc(session:^Net_Session,seats:^core.Table(input.Seat)) -> ^input.Seat {
     if !session.host_ready || session.mode!=.Client || session.desc.input_delay==0 {return nil}
-    return core.get(seats,input.local_seat(core.read(seats),0))
+    return core.edit(seats,input.local_seat(core.read(seats),0))
 }
 
 // A client: its first local seat asks to drive the body the server lets it
 // predict, and to let go of a replicated one it no longer predicts.
-@(step="fixed",loops="game",stage="input",before="input_drive")
+@(step="fixed",loops="game",stage="input")
 net_driving :: proc(
     links:core.Read(Net_Link),replicas:core.Read(core.Pose_Target),elsewhere:core.Read(core.Remote),
     drivables:core.Read(input.Drivable),seats:core.Read(input.Seat),requests:^input.Seat_Requests,network:core.Ref(core.Network),

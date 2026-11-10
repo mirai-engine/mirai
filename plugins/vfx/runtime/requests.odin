@@ -118,7 +118,7 @@ requests_apply :: proc(
                 }
             case .Override_Set,.Override_Remove,.Override_Clear:
                 override:Particle_Override
-                if current,found:=core.get(core.read(overrides),request.entity);found {override=current}
+                if current,found:=core.get(overrides,request.entity);found {override=current}
                 #partial switch request.command {
                 case .Override_Set:
                     field,found:=effect.particle_value_find(request.name)
@@ -128,18 +128,18 @@ requests_apply :: proc(
                 case .Override_Clear: override={}
                 }
                 if error==.None {
-                    if row:=core.get(overrides,request.entity);row!=nil {row^=override} else {core.add(overrides,request.entity,override)}
+                    if row:=core.edit(overrides,request.entity);row!=nil {row^=override} else {core.add(overrides,request.entity,override)}
                 }
             case .Parameter_Set,.Parameter_Remove,.Parameter_Clear:
                 given:Particle_Parameters
-                if current,found:=core.get(core.read(parameters),request.entity);found {given=current}
+                if current,found:=core.get(parameters,request.entity);found {given=current}
                 #partial switch request.command {
                 case .Parameter_Set: error=parameter_put(&given,&request.parameter)
                 case .Parameter_Remove: parameter_remove(&given,base.text_get(request.parameter.name[:]))
                 case .Parameter_Clear: given={}
                 }
                 if error==.None {
-                    if row:=core.get(parameters,request.entity);row!=nil {row^=given} else {core.add(parameters,request.entity,given)}
+                    if row:=core.edit(parameters,request.entity);row!=nil {row^=given} else {core.add(parameters,request.entity,given)}
                 }
             }
         }

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:time"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/ai"
 import "mirai:std/base"
@@ -47,7 +48,7 @@ Navigation_Builds :: struct {
     obstacles:core.Entity_Map(Area_Seen), // each Nav_Obstacle as it was at the last look
     bounds:[dynamic]mm.Aabb,         // of the Nav_Bounds at the last look; empty: the static collision
     air:[dynamic]mm.Aabb,            // of the Nav_Bounds of the air at the last look
-    water:[dynamic]mm.Aabb,          // of the water of the Fluid_Volume rows at the last look, a plane within the bounds
+    water:[dynamic]mm.Aabb,          // of the water of the Fluid rows at the last look, a plane within the bounds
     dry:[dynamic]mm.Aabb,            // of their dry boxes
     boxes:[NAV_CHANGES_PER_READ]mm.Aabb,
     sections:Nav_Sections,           // of this tick
@@ -95,6 +96,31 @@ Tile_Field :: struct {
 @(private)
 poses_stamps :: proc "contextless" (rows:core.Read($T),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
     return {core.version(rows),core.layout(rows),core.version(transforms),core.layout(transforms),core.version(parents),core.layout(parents)}
+}
+
+// poses_stamps of rows whose box is the Volume of their entity.
+@(private)
+boxes_stamps :: proc "contextless" (rows:core.Read($T),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
+    stamps:=poses_stamps(rows,transforms,parents)
+    if volumes.table!=nil {
+        stamps[0]+=core.version(volumes)
+        stamps[1]+=core.layout(volumes)
+    }
+    return stamps
+}
+
+// Half the size of the box of a Nav_Bounds, a Nav_Area or a Nav_Obstacle: the
+// extents of the Volume of its entity, which is to be a Box.
+box_half :: proc(volumes:core.Read(volume.Volume),e:core.Entity) -> (half:[3]f32,ok:bool) {
+    if volumes.table==nil {return}
+    v,found:=core.get(volumes,e)
+    if !found || v.shape!=.Box {return}
+    return v.extents,true
+}
+
+@(private)
+box_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
+    core.report(problems,e,"navigation.volume","its %s has no box, so the navigation does not see it: it takes the Volume of its entity, of shape Box; add one (volume.box)",what)
 }
 
 @(private)
@@ -434,7 +460,7 @@ upright_box :: proc "contextless" (pose:mm.Transform,half:[3]f32) -> (box:mm.Aab
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:core.Read(Navigation_Bake),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
-    bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
+    bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
     unloaded:core.Ref(Nav_Unloaded),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
 ) {
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
@@ -479,13 +505,13 @@ navigation_build :: proc(
     }
     bakes_update(n,b,bakes,app,problems,fresh && !reset)
     next,count,overflow:=phys.static_changes(physics,b.cursor,b.boxes[:])
-    limits:=bounds_update(n,b,bounds,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
+    limits:=bounds_update(n,b,bounds,volumes,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
     if fresh {
         for limit in limits.surface {mark_box(n,limit,limits)}
         for limit in limits.air {mark_box(n,limit,limits)}
     }
-    areas_update(n,b,areas,transforms,parents,limits,fresh,problems)
-    obstacles_update(n,b,obstacles,transforms,parents,limits,time,fresh,problems)
+    areas_update(n,b,areas,volumes,transforms,parents,limits,fresh,problems)
+    obstacles_update(n,b,obstacles,volumes,transforms,parents,limits,time,fresh,problems)
     for asked in core.take(&requests.queue) {
         if asked.box=={} {
             for limit in limits.surface {mark_box(n,limit,limits,true)}
@@ -525,13 +551,13 @@ navigation_build :: proc(
 // The bounds where meshes are made: those of the Nav_Bounds, or the box of
 // the static collision and of where it is not loaded, which does not shrink
 // when a terrain lets its colliders go; those of the air; and the water of the
-// Fluid_Volume rows, up to its surface, a plane within the bounds of the
+// Fluid rows, up to its surface, a plane within the bounds of the
 // surface, with its dry boxes. Tiles and zones that leave them are removed;
 // those that enter are marked.
 @(private)
-bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
+bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
-    poses:=poses_stamps(bounds,transforms,parents)
+    poses:=boxes_stamps(bounds,volumes,transforms,parents)
     stamps:=[7]u64{poses[0],poses[1],poses[2],poses[3],poses[4],poses[5],unloaded.revision}
     if !fresh && !collision_changed && stamps==b.bounds_stamps {return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}}
     b.bounds_stamps=stamps
@@ -543,7 +569,12 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         bound:=bounds.table.values[i]
-        box,_:=upright_box(pose,bound.half)
+        half,boxed:=box_half(volumes,e)
+        if !boxed {
+            box_missing(problems,e,"Nav_Bounds")
+            continue
+        }
+        box,_:=upright_box(pose,half)
         if bound.air {
             if count_air<len(air) {air[count_air]=box;count_air+=1}
         } else if count<len(surface) {surface[count]=box;count+=1}
@@ -643,8 +674,8 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
-    stamps:=poses_stamps(areas,transforms,parents)
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
+    stamps:=boxes_stamps(areas,volumes,transforms,parents)
     if !fresh && stamps==b.areas_stamps {return}
     seen,enough:=seen_reset(b,len(b.areas.values),problems)
     if !enough {return}
@@ -655,7 +686,12 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         area:=areas.table.values[i]
-        box,corners:=upright_box(pose,area.half)
+        half,boxed:=box_half(volumes,e)
+        if !boxed {
+            box_missing(problems,e,"Nav_Area")
+            continue
+        }
+        box,corners:=upright_box(pose,half)
         now:=Area_Seen{box=box,volume={count=4,area=u8(area.area),min_y=box.min.y,max_y=box.max.y}}
         for corner,k in corners {now.volume.points[k]=corner}
         at:=core.entity_map_index(&b.areas,e)
@@ -1036,8 +1072,8 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
-    stamps:=poses_stamps(obstacles,transforms,parents)
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+    stamps:=boxes_stamps(obstacles,volumes,transforms,parents)
     moved:=fresh || stamps!=b.obstacles_stamps
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
@@ -1054,7 +1090,12 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
             if !ok {continue}
-            box,corners:=upright_box(pose,obstacle.half)
+            half,boxed:=box_half(volumes,e)
+            if !boxed {
+                box_missing(problems,e,"Nav_Obstacle")
+                continue
+            }
+            box,corners:=upright_box(pose,half)
             volume:=ai.Nav_Area_Volume{count=4,area=ai.NAV_AREA_BLOCKED,min_y=box.min.y,max_y=box.max.y}
             for corner,k in corners {volume.points[k]=corner}
             if at<0 {
