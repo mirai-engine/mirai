@@ -37,8 +37,8 @@ import phys "plugins:physics/runtime"
 @(actions)
 Walk_Action :: enum u8 {Jump,Sprint,Crouch}
 
-// Their bindings when input.mirai of the project does not name them.
-walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Default {
+// Their bindings when Input_Settings does not name them.
+walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Bindings {
     return {
         .Jump=input.action_default(.Button,input.binding_key(.Space),input.binding_gamepad_button(.South)),
         .Sprint=input.action_default(.Button,input.binding_key(.Left_Shift),input.binding_gamepad_button(.Left_Stick)),

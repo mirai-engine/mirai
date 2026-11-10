@@ -273,8 +273,8 @@ Stats :: struct {
 	pages_loaded:      u32, // the pages it loaded
 	pages_evicted:     u32, // the pages that left their slot to others
 	page_requests_dropped: u32, // the requests past the capacity of the list and the pages that found no slot
-	textures_reduced:  u32, // held without the largest levels their distance asks for, to fit the pool
-	textures_pending:  u32, // streamed, whose levels are not yet those their distance asks for
+	textures_reduced:  u32, // held without the largest levels the frames sample, to fit the pool
+	textures_pending:  u32, // streamed, whose levels are not yet those the frames sample
 	lights:            u32,
 	probes:            u32,
 	probes_per_frame:  u32,
@@ -659,7 +659,7 @@ set_error :: proc(r: ^Renderer, format: string, args: ..any) {
 
 UI_VERTEX_CAPACITY :: 524288
 DEBUG_VERTEX_CAPACITY :: 131072
-MATERIAL_ANISOTROPY :: 8
+MATERIAL_ANISOTROPY :: abi.MATERIAL_ANISOTROPY
 
 // ---------------------------------------------------------------- lifecycle
 
@@ -695,6 +695,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.glass_seen = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "glass seen"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
 	r.light_changes = rhi.buffer_create(device, {size = LIGHT_CHANGES_MAX * size_of(Vec4), usage = {.Storage}, name = "light changes"})
+	feedback := textures_feedback_reserve(r, rhi.TEXTURE_TABLE_FIRST)
 	r.kept_count = clamp(desc.worlds if desc.worlds > 0 else WORLDS_DEFAULT, 1, WORLDS_MAX) - 1
 	r.gi_warm = true
 	for &b in r.stats_readback {b = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), memory = .Readback, name = "stats readback"})}
@@ -705,7 +706,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.glass_seen == 0 || r.dispatch_start == 0 || r.light_changes == 0 {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.glass_seen == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -1386,7 +1387,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if !made {return false}
 	old := r.settings
 	r.settings = settings
-	if old.texture_max_size != settings.texture_max_size || old.texture_pool_megabytes != settings.texture_pool_megabytes {r.textures.residency.stale = true}
+	if old.texture_max_size != settings.texture_max_size || old.texture_pool_megabytes != settings.texture_pool_megabytes {r.textures.residency.retarget = true}
 	// The probe volume: its layout, or what its rays see of the sun.
 	volume := old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget
 	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows

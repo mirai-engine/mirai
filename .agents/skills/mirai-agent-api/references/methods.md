@@ -250,12 +250,11 @@ or a part of it, with `ui.write` (`document=@file`, `save=true`); `ui.capture` s
 it alone, at its size, as a PNG.
 Contract: [the inspector](../../mirai-plugins/references/ui-inspector.md#api).
 
-## Painting and placement
+## Painting and shapes
 
-Viewport tools through the API, on the document whatever plays (`placement.drop`, only in Edit: it
-simulates on the document) and with the scene in front; each call is an undo step and an error
-leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#paint) and
-[Physics placement](../../mirai-plugins/references/plugins.md#physics-placement).
+Viewport tools through the API, on the document whatever plays and with the scene in front; each
+call is an undo step and an error leaves nothing. Contract:
+[paint](../../mirai-plugins/references/plugins.md#paint).
 
 - `paint.stroke`: the points are world points and need not be on the surface; paints the vertices
   within `radius` of the stroke. A stroke that reaches no vertex is `-32602` and does not write the
@@ -265,11 +264,6 @@ leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#pain
   points ([shapes tool](../../mirai-world/references/shapes.md#shapes-tool)). A cut that touches
   no outline shape, a refused stamp or a corner move that would cross edges is `-32602`. The
   brushes of a Solid are child entities with `Shape_Brush`, edited with the `scene.*` methods.
-- `placement.drop`: creates the entities, simulates only physics on a copy of the scene with the
-  environment fixed and commits when everything sleeps or when `time` runs out; `rested` says
-  which ones slept. It cancels the user's open preview and leaves the tool that was active turned
-  on. A body or a shape that physics cannot make is `-32000`, with the detail in
-  `engine.diagnostics`.
 
 ## Profiling
 
@@ -339,7 +333,7 @@ Reading a capture:
   `profile.compare`; `profile.frames` and `profile.zone` explain a spike or a function.
 - **Against `main`.** `mirai bench compare [project] [--scene S] [--camera x,y,z,tx,ty,tz]`,
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
-  or a checkout with its editor already built) alike, at `--dev` unless `--release`, since two
+  or a checkout with its editor already built) alike, dev unless `--release`, since two
   builds of the same mode compare; the base goes in the worktree of
   [`render check`](../../mirai-rendering/references/verification.md#render-check). With
   `measure.lock` taken it opens the two headless editors (no pacing, VSync or validation) and
@@ -692,6 +686,12 @@ Runs the whole scene with the editor's camera and controls, without player input
   the entity that owns the body is moved.
 - `simulation.apply`: the `entities` must be distinct and exist in the copy and the document. It
   does not include created entities or component changes.
+- `physics.settle`, only in Edit: the
+  [Simulate limited](../../mirai-editor/references/editor.md#simulate) to its `entities`, which
+  need a `Collider`. Dropping a pile is `scene.write` of the objects
+  above where they fall, then `physics.settle` of them; the poses are one undo step. An entity that
+  cannot fall is `-32602` naming its index; `rested` false and `reason` say what the tick limit cut.
+  `physics.drop` only ends the Drop gesture a person holds open (`Confirm` or `Cancel`).
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
 actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`
@@ -738,10 +738,10 @@ when the viewport draws with them, which `mirai shaders` asks for.
   and line. `build.test` compiles and runs the `@(test)`s of a project package (`package_folder`,
   `game` if missing; `tests` by name) against the libraries the editor loads, without loading them,
   with the runner and the executable of `mirai test` of that package
-  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). It replies at
-  once with `running`, and the editor answers other calls while the job builds and runs:
-  `build.test.status` says how long it has run and, once `running` is false, each test that failed
-  with what it logged. Neither runs during a build, nor two at once.
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)) and replies
+  when they end with each test that failed and what it logged. Every `build.*` method waits until
+  its action ends; the editor keeps drawing frames meanwhile, since the one job slot runs off the
+  frame. None runs while another does.
 
 - With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
   shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`
@@ -936,11 +936,13 @@ one root is none: the error says so), nonexistent override and "is not part of a
   `"engine"`; `settings` are sections with the fields that change
   (`{"Particle_Settings":{"capacity":100000}}`), and `graphics_preset` sets the quality fields of
   `Graphics_Settings` as that preset of the Graphics popup does, before `settings`. Answers as
-  `settings.get` does, for the sections it changed; `preferences.set` and `input.set` too, with
-  `sections` and `actions` as the filters of their gets.
+  `settings.get` does, for the sections it changed; `preferences.set` too, with `sections` as the
+  filter of its get.
   - `engine` admits only `machine` sections; another is `-32602` with those it admits.
   - The edited world and the games that play take the values instantly; the layer's file stores
     what differs.
+  - A section the engine refuses is `-32602` with the fix: an entry of `Input_Settings` that names
+    an action the code does not declare, or a binding its kind does not read, names the action.
   - In `engine`, a field that the project overrides does not change.
   - A section that is not a setting or a field the type does not have is `-32602` with those that
     exist (the file, on the other hand, may store fields the type no longer has, and they are
@@ -1030,16 +1032,11 @@ one root is none: the error says so), nonexistent override and "is not part of a
 Project Settings > Input
 ([panel](../../mirai-editor/references/panels.md#project-settings)).
 
-- `input.get` (read-only): each action the code declares, with its type, its bindings in effect as
-  `input.mirai` writes them, and `source`: `code` if they are the code's, `file` if the file
-  changes them. `problem` says why the file was not read.
-- `input.set`: `action` with `bindings` (and `kind` to change the type) replaces them, `[]` removes
-  them; `action` with `reset: true` gives it back to the code; `tap_ticks` and `hold_ticks` go
-  alone or together with the above. Returns what `input.get` returns.
-  - Everything is checked before writing. An action, key, button, axis or stick that does not
-    exist, a binding that does not fit the type or an unknown parameter is `-32602` with the valid
-    names.
-  - With an `input.mirai` that cannot be read, it fails without writing it.
+- `input.get` (read-only): each action the code declares with what drives it, as an entry of
+  `Input_Settings` writes it, `changed` with the actions the project's setting changes, and the
+  seconds of a tap and of a hold. An entry it gives, changed, is what `settings.set` takes in
+  `Input_Settings.actions`; an entry equal to the code's default stays in the file, and Project
+  Settings > Input removes it.
 
 ## Material programs
 

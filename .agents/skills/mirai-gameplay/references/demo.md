@@ -27,7 +27,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 
 - `project.mirai`: start scene `control/control.scene`; plugins `spawn`, `cinematics`,
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
-  `physics_placement`, `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
+  `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
 - `settings.mirai`: `UI_Settings` in English and Spanish (no player prefab: the spawn points of
   each gallery name its body), with the prompt pack of `prompts_kenney`.

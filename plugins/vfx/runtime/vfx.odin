@@ -157,9 +157,7 @@ particles_tick :: proc(
     for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
-        stamp:=core.layout(overrides)
-        if at:=core.row_of(overrides,e);at>=0 {stamp=base.hash_combine(stamp,core.stamp(overrides,at))}
-        if key:=emission_key(emitter.particle,a,stamp);clock.resolved!=key {
+        if key:=emission_key(emitter.particle,a,row_stamp(core.read(overrides),e));clock.resolved!=key {
             override,_:=core.get(overrides,e)
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
@@ -226,11 +224,8 @@ particles_sync :: proc(
     for e,emitter,world in core.each_joined(&placed) {
         shown:=shown_of(sync,e)
         if shown==nil {continue}
-        stamps:=[2]u64{core.layout(overrides),core.layout(parameters)}
-        if at:=core.row_of(overrides,e);at>=0 {stamps[0]=base.hash_combine(stamps[0],core.stamp(overrides,at))}
-        if at:=core.row_of(parameters,e);at>=0 {stamps[1]=base.hash_combine(stamps[1],core.stamp(parameters,at))}
         key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),a!=nil?a.revision:0)
-        key=base.hash_combine(base.hash_combine(base.hash_combine(base.hash_combine(key,stamps[0]),stamps[1]),shaders),made)|1
+        key=base.hash_combine(base.hash_combine(base.hash_combine(base.hash_combine(key,row_stamp(overrides,e)),row_stamp(parameters,e)),shaders),made)|1
         if shown.resolved!=key {
             shown.resolved=shown_resolve(shown,app,emitter.particle,overrides,parameters,e)?key:0
             shown.desc.revision,shown.sub_desc.revision=shown.resolved,shown.resolved

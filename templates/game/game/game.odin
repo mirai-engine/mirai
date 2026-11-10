@@ -45,9 +45,9 @@ Status :: struct {
 @(actions)
 Action :: enum u8 {Hit,Save,Load}
 
-// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
-// input.mirai only what they change of these.
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+// Their bindings. The editor (Project Settings > Input), settings.set and the
+// player keep in Input_Settings of settings.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     return {
         .Hit=inp.action_default(.Button,inp.binding_mouse_button(.Left),inp.binding_gamepad_axis(.Right_Trigger)),
         .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Dpad_Up)),

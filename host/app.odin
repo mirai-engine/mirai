@@ -56,7 +56,7 @@ App_Desc :: struct {
     audio:Audio_Output,
     audio_driver:string,
 
-    root:string,                 // the project: its manifest, its input bindings, its settings
+    root:string,                 // the project: its manifest and its settings
     engine_root:string,          // the engine whose general settings lie under those of the project; empty: only the project's, as in a shipped game
     options:string,              // folder of the options the player chose (settings of the machine and input bindings) over those of the project; "": none, as in the editor
     assets_root:string,          // folder of cooked assets; its changes are reloaded

@@ -13,8 +13,7 @@ import portals "plugins:portals/runtime"
 // The portal chamber of portals/portal_chamber.scene. The player carries a gun
 // that opens two portals, a blue and an orange one, on the white surfaces
 // (Portal_Surface); what goes into one comes out of the other, the player
-// included, and a cube halfway through shows on both sides. The actions of
-// ../input.mirai:
+// included, and a cube halfway through shows on both sides. Its actions:
 //   portal_blue    left button, left trigger   opens the blue portal; with a cube in hand, throws it
 //   portal_orange  right button, left shoulder opens the orange portal
 //   grab           E, West                     picks up the cube in front, or puts it down

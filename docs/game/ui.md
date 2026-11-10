@@ -62,7 +62,7 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Opt
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
   `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
   fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.
-- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `input.mirai` like
+- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `Input_Settings` like
   any other) when no interface used that Escape: what opens and closes a menu.
 
 ## Focus

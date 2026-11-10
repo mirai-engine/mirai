@@ -20,7 +20,7 @@ remote_bindings :: proc() -> (m:Input_Map) {
     input_map_bind(&m,TEST_JUMP,binding_key(.Space))
     input_map_action(&m,TEST_CONFIRM,.Button)
     input_map_bind(&m,TEST_CONFIRM,binding_key(.Space))
-    m.contexts[TEST_CONFIRM]=TEST_MENU
+    m.actions[TEST_CONFIRM].input_context=TEST_MENU
     return
 }
 

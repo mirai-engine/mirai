@@ -204,9 +204,6 @@ demo enables. How an `editor/` adds steps, panels and tools:
     [authoring by API](../../mirai-animation/references/animation-authoring.md) of clips, curves,
     skeletons, sockets and profiles, with preview and goal control. The dedicated visual window
     is pending.
-- **`physics_placement`** (`Editor`): places a chosen mesh under the cursor with a temporary
-  physics simulation; confirms creation and poses in a single undo; `placement.drop` does it by
-  API. See [Physics placement](#physics-placement).
 - **`ragdoll`** (`Runtime`, `Editor`): [ragdolls](ragdoll.md) with bodies bound to bones, free
   simulation, animated kinematics and physical animation motors; `ragdoll.setup` builds them from
   the skeleton's body.
@@ -262,50 +259,9 @@ Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin
   the radius, and each vertex keeps the maximum of its stamps: passing twice in one stroke paints
   once.
 - `paint.stroke` and `paint.clear` are the brush and **Clear paint** by API
-  ([methods](../../mirai-agent-api/references/methods.md#painting-and-placement)): they load, stamp
+  ([methods](../../mirai-agent-api/references/methods.md#painting-and-shapes)): they load, stamp
   and write the copy with the same procedures as the tool, on an entity by id and without
   touching its state or the user's current stroke. The whole stroke is one undo step.
-
-## Physics placement
-
-Editor tool (place icon, shortcut **P**, code in `placement.odin`) that drops meshes under the
-cursor with a temporary physics simulation and confirms creation and poses in a single undo.
-`placement.drop`
-([methods](../../mirai-agent-api/references/methods.md#painting-and-placement)) does the same within
-one call: it opens the preview, drops each mesh in order, advances the physics until rest or its
-cap and confirms, or cancels on an error; it never leaves the preview open.
-
-- The panel uses the Mesh row of Details (`editor.geometry_choice`, the
-  [geometry selector](../../mirai-editor/references/extensions.md#a-panel)) and needs no selected
-  entity. **Speed**, **Drop height** and **Scale** set the frequency, the drop height and the
-  uniform scale, and change within the same preview.
-- The mesh, its box, the footprint and the drop height under the cursor are instances and lines
-  of the frame, with no entities or undo. Preview and creation use the same pose, also with a
-  non-centered origin; the bounds are measured again only when the geometry or the asset revision
-  changes.
-- The left button drops a mesh and, held, keeps going according to Speed; releasing it stops the
-  creations and the physics continues. A confirmation admits `PLACEMENT_CAPACITY` meshes.
-
-The drop:
-
-- Clones the world and advances only the [physics](../../mirai-physics/references/engine.md), at a
-  fixed step and with a cap on steps per frame: no gameplay, player input or network. Each drop is
-  added to the same clone without restarting the previous ones.
-- The environment stays fixed. The created meshes are dynamic bodies with their box as the
-  collision approximation, also if they are curved or concave. The environment's characters are
-  their static capsule, what another plugin gives its shapes (a `Collider` of kind `External`, as
-  a destructible has) is the mesh it shows, and other surfaces need a collider; joints do not act.
-- When the bodies sleep, advancing stops; `PLACEMENT_TICKS` after the last drop it pauses to
-  confirm or cancel, and another drop resumes it.
-
-Transaction:
-
-- The poses are shown inside a
-  [temporary tool transaction](../../mirai-editor/references/extensions.md). **Confirm** keeps
-  entities and poses as one undo step; **Cancel** or Escape restores entities, poses and
-  selection. Changing tool, starting Play or replacing the document cancels.
-- The clone's auxiliary colliders and bodies never enter the document. The `Physics_Placement`
-  storage owns the clone and frees it on finishing or when the editor is destroyed.
 
 ## Changing a plugin
 
@@ -317,9 +273,3 @@ Transaction:
   (`painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel`,
   `paint_api_strokes_along_points_and_clears_as_steps_of_undo`). The stroke with the pointer is
   verified by the user.
-- `physics_placement/editor`: drop and stacking without gameplay, a single undo/redo,
-  cancellation, tool removal, selection preservation, atomic rejection of invalid geometry and
-  the drop by API without an open preview
-  (`placement_api_drops_settle_and_confirm_within_the_call`). Capture the mesh and its footprint
-  under the cursor without modifying entities or history; the click on surfaces and its controls
-  are verified by the user.

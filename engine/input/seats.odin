@@ -190,7 +190,7 @@ seat_buttons :: proc(seats:core.Read(Seat),seat:core.Entity,bindings:^Input_Map)
     if row<0 {return}
     source:=&seats.table.values[row]
     for state,i in source.actions.states[:source.actions.count] {
-        if state.down && bindings.kinds[i]==.Button {mask|=action_bit(Action(i))}
+        if state.down && bindings.actions[i].kind==.Button {mask|=action_bit(Action(i))}
     }
     return mask&~(source.blocked|source.rearm)
 }
@@ -270,7 +270,7 @@ slot_input :: proc "contextless" (device:core.Input,slot,count,focus:int) -> (ow
 @(private)
 held_buttons :: proc "contextless" (actions:^Actions,bindings:^Input_Map) -> (mask:Action_Mask) {
     for state,i in actions.states[:actions.count] {
-        if state.down && !state.released && bindings.kinds[i]==.Button {mask|=action_bit(Action(i))}
+        if state.down && !state.released && bindings.actions[i].kind==.Button {mask|=action_bit(Action(i))}
     }
     return
 }

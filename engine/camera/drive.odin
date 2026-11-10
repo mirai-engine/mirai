@@ -45,7 +45,7 @@ camera_drive :: proc(
         body:=source.body
         if body==core.NONE || !core.owned(remotes,body) {continue}
         if !axes {
-            core.report(problems,body,"camera.seat_actions","a seat drives this body, and its actions move and look have another kind than Axis2 in the input map; give them that kind in input.mirai")
+            core.report(problems,body,"camera.seat_actions","a seat drives this body, and its actions move and look have another kind than Axis2 in the input map; give them that kind in Project Settings > Input (Input_Settings)")
             continue
         }
         vertical:=core.vertical_of(verticals,body)

@@ -216,11 +216,13 @@ Terrain_Resident :: struct {
     owners:[dynamic]Resident_Owner,
     ready:bool,
     pass:u32,
-    gc_stamps:[6]u64,
-    shown:[3]u64, // the versions of Terrain, Tint and Material_Override after the owners last showed their chunks
+    gc_shapes:[4]core.Shape, // of the transforms, the chunks, the ids and the terrains at the last prune
+    gc_parents:core.Seen,
+    shown:[3]core.Seen, // Terrain, Tint and Material_Override after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
-    lod_stamp:[5]u64, // the version of the transforms, the revision of the streaming sources, the count of owners, marks, the version of the colliders
+    lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
+    lod_seen:[2]core.Seen, // the transforms and the colliders
     marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
