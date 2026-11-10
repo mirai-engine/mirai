@@ -33,7 +33,7 @@ Diagnostic :: struct {
 // multiple assignment of a large value makes it do (odin-lang/Odin#7937).
 // COMPILER_MEMORY_ENV sets it in GiB, 0 for none; by default it is half the
 // memory of the machine within COMPILER_MEMORY_LEAST and COMPILER_MEMORY_MOST,
-// above the 3.2 GB of the largest build (the runtime library at -o:speed).
+// above the 3.2 GB of the largest build (a library of the engine at -o:speed).
 // macOS has no reliable cap for another process: there it is none.
 COMPILER_MEMORY_ENV :: "MIRAI_COMPILER_MEMORY"
 COMPILER_MEMORY_LEAST :: 4<<30

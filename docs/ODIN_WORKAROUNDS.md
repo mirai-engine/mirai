@@ -238,9 +238,10 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
     `dispatch_amd64.odin`) instead of one body over the width.
   - To test: with a version that resolves it, the reproducer builds and prints 10.
 - **Slow Linux Odin with many modules** (no issue).
-  - Defect: the nightly in `.deps/odin/linux-amd64` is static with musl. Compiling `stage-runtime`
-    at `-o:minimal` with `/usr/bin/time` gives 116 s of processor time, 68 of them in the kernel,
-    against 25 s for master with the same LLVM 20 and glibc.
+  - Defect: the nightly in `.deps/odin/linux-amd64` is static with musl. Compiling the runtime
+    packages of the engine as one library at `-o:minimal` with `/usr/bin/time` gives 116 s of
+    processor time, 68 of them in the kernel, against 25 s for master with the same LLVM 20 and
+    glibc.
   - To test: with a Linux nightly linked against glibc, repeat that compilation.
 
 ## Slang and SPIRV

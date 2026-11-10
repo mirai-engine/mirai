@@ -177,17 +177,17 @@ shipped_static_libraries :: proc(folder:string,out:^[dynamic]string) {
 job_shipped_start :: proc(job:^Job,p:^project.Project,force:bool) -> Failure {
     a:=virtual.arena_allocator(&job.arena)
     s:=&job.shipped
-    runtime_packages:=ENGINE_RUNTIME_PACKAGES
+    runtime_packages:=engine_runtime_packages(context.temp_allocator)
     s.packages=shipped_engine_plugins(p,a)
     s.flags=shipped_engine_flags(p,a)
-    s.key,s.loads=shipped_engine_key(p.engine_root,job.compiler,s.flags,runtime_packages[:],s.packages,a)
+    s.key,s.loads=shipped_engine_key(p.engine_root,job.compiler,s.flags,runtime_packages,s.packages,a)
     saved,_,stamped:=stamp_read(s.stamp)
     if !force && stamped && saved==s.key && library_present(s.library,s.linked) && os.is_dir(s.decl) {
         job.result.shipped_engine=.Current
         return .None
     }
     _=os.remove(s.stamp)
-    errors,_:=declare({root=p.engine_root,packages=runtime_packages[:],binary="mirai",library=s.linked,stage=s.stage,decl=s.decl})
+    errors,_:=declare({root=p.engine_root,packages=runtime_packages,binary="mirai",library=s.linked,stage=s.stage,decl=s.decl})
     if len(errors)==0 && len(s.packages)>0 {
         errors,_=declare({root=project.path(p.engine_root,"plugins",allocator=context.temp_allocator),packages=s.packages,binary="plugins",library=s.linked,stage=s.stage_plugins,decl=s.decl_plugins})
     }
@@ -195,7 +195,7 @@ job_shipped_start :: proc(job:^Job,p:^project.Project,force:bool) -> Failure {
         job.result.text=strings.join(errors,"\n",a)
         return .Generate
     }
-    imports:=entry_imports("mirai",runtime_packages[:])
+    imports:=entry_imports("mirai",runtime_packages)
     append(&imports,..entry_imports("plugins",s.packages)[:])
     if _,written:=entry_write(s.stage,SHIPPED_ENGINE_ENTRY,imports[:]);!written {return .Write_Failed}
     if !force && shipped_cache_take(job.engine_root,s) {

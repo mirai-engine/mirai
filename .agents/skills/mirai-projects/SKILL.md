@@ -67,8 +67,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
    in `manifest_validate` or `plugin_validate`.
-2. A new engine package goes into `ENGINE_RUNTIME_PACKAGES` or `ENGINE_EDITOR_PACKAGES` and, if it
-   is engine-time, into `engine_time_packages`.
+2. A new engine package goes into `ENGINE_PACKAGES`, in the lowest
+   [library](references/projects.md#engine-binaries) that has what it imports, and, if it is
+   engine-time, into `engine_time_packages`.
 3. A change in what `declare` writes bumps `DECLARE_VERSION`.
 4. Update [projects.md](references/projects.md) or [build.md](references/build.md) in the same task
    if an invariant or a workflow changes.
@@ -132,8 +133,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Cache: changing an engine source and opening the editor rebuilds; repeating without changes
   reuses both builds ([reload](../mirai-editor/references/editor.md#build-and-reload)).
 - Fingerprint and shared cache: `mirai build engine --dev` twice (the second says "unchanged"
-  without waiting for a turn), a change only in `editor/` (rebuilds only `mirai-editor`) and in a
-  worktree from `mirai worktree new` (reports "copied from the shared cache").
+  without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
+  its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
+  cache").
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
 - Installed engine: `mirai test project an_installed_engine_is_told_by_its_manifest`, and in
