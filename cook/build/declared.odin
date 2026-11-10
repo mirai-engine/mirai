@@ -107,6 +107,31 @@ declared_line :: proc(line:string) -> (name:string,hash:u64,ok:bool) {
     return name,hash,true
 }
 
+// The first declaration of a package that two texts of its DECLARED_NAMES do
+// not both have with the same hash, as `<package>.<name>`; the package alone
+// when they declare the same in another order.
+@(private)
+declared_moved :: proc(path,old,new:string) -> string {
+    texts:=[2]string{old,new}
+    hashes:[2]map[string]u64
+    for text,which in texts {
+        hashes[which]=make(map[string]u64,context.temp_allocator)
+        rest:=text
+        for line in strings.split_lines_iterator(&rest) {
+            name,hash:=declared_line(line) or_continue
+            hashes[which][name]=base.hash_combine(hashes[which][name],hash)
+        }
+    }
+    for text in texts {
+        rest:=text
+        for line in strings.split_lines_iterator(&rest) {
+            name,_:=declared_line(line) or_continue
+            if hashes[0][name]!=hashes[1][name] {return fmt.aprintf("%s.%s",path,name)}
+        }
+    }
+    return strings.clone(path)
+}
+
 // Of each node, the hash of itself and of every node it reaches. The nodes
 // that reach each other (a type that names itself through another) are one
 // component and share one hash; a component is closed once the ones it

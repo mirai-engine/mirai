@@ -113,9 +113,8 @@ gallery_morphs :: proc(o:^Out) {
     logical:=fmt.tprintf("source/models/%s",source)
     animation:=imported_id(o,logical,asset.KIND_ANIMATION,"jelly")
     // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
-    moods:=asset.content_id(PROJECT,"action","jelly_moods")
     layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}
     base.text_set(layers[0].name[:],"Mood");base.text_set(layers[0].clip[:],"Sleepy");layers[0].sync,layers[0].weight,layers[0].fade=true,0,0
     base.text_set(layers[1].name[:],"Rubber");base.text_set(layers[1].clip[:],"Rubber");layers[1].mode,layers[1].weight,layers[1].fade=.Additive,.25,.2
-    asset.content_check(&o.content,"jelly_moods.action",anim.action_profile_save(path(o,"assets/characters/jelly/jelly_moods.action"),&o.content.types,moods,{info={animation=animation},layers=layers[:]}))
+    gallery_set(o,"characters/jelly","jelly_moods",animation,{actions={layers=layers[:]}})
 }

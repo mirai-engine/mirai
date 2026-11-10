@@ -18,12 +18,7 @@
 *.strings merge=mirai diff=mirai -text
 *.prompts merge=mirai diff=mirai -text
 *.records merge=mirai diff=mirai -text
-*.match merge=mirai diff=mirai -text
-*.agraph merge=mirai diff=mirai -text
-*.blend merge=mirai diff=mirai -text
-*.motion merge=mirai diff=mirai -text
-*.pose merge=mirai diff=mirai -text
-*.action merge=mirai diff=mirai -text
+*.character merge=mirai diff=mirai -text
 *.foliage binary
 *.navmesh binary
 *.terrain binary

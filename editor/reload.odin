@@ -1,6 +1,7 @@
 package editor
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -13,7 +14,9 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/serial"
 
-// A Build replaces the library of the project while the editor runs. When
+// A Build takes what was built since the editor loaded it, while the editor
+// runs. The libraries of the engine built again are taken in place when they
+// declare what they did (engine_take). The library of the project: when
 // the new one lays its worlds out as the loaded one, its procedures take over
 // the same memory. Otherwise every struct of the worlds migrates, where it
 // is, to the new layout (core.place_migrate, host.app_worlds_migrate): the
@@ -32,11 +35,13 @@ Library_Reload :: enum u8 {
 @(private)
 library_reload :: proc(s:^Session) -> Library_Reload {
     if library_busy(s) {return .Wait}
-    // The engine was built again after this editor started (build.engine_unlock): the library
-    // was compiled against the new one, which only a new editor runs.
-    if engine_rebuilt(s) {
-        log.infof("the engine was built again since the editor started: it restarts on the new one")
-        return .Restart
+    taken,goes_on:=engine_take(s)
+    if !goes_on {return .Restart}
+    stamp:=library_stamp_here(s,context.temp_allocator)
+    if stamp==s.library_stamp {
+        // What the editor keeps by procedure is registered again (api_poll).
+        if taken {s.library_generation+=1}
+        return .Reloaded
     }
     tool_preview_cancel(s)
     path:=project.project_library(s.project_root,"editor")
@@ -59,9 +64,45 @@ library_reload :: proc(s:^Session) -> Library_Reload {
         s.app.step_ns=make([]u64,len(s.info.steps),s.app.allocator)
     }
     append(&s.libraries,library)
+    delete(s.library_stamp)
+    s.library_stamp=strings.clone(stamp)
     log.infof("code reloaded from %s",path)
     notify(s,"Code reloaded")
     return .Reloaded
+}
+
+// Takes in place the libraries of the engine a build left since this editor
+// loaded the ones it runs (build.engine_swap): only bodies of their
+// procedures changed, so the worlds, the documents, the Play and every thread
+// go on and the next call into them runs the new code. goes_on is false,
+// having said why in a line, when the editor has to start again on them.
+@(private)
+engine_take :: proc(s:^Session) -> (taken,goes_on:bool) {
+    folder:=engine_folder_here(s)
+    now:=build.engine_stamp_of(folder,context.temp_allocator)
+    if s.engine_stamp=="" || now==s.engine_stamp {return false,true}
+    libraries,restart:=build.engine_swap(build.ENGINE_MODE_HERE,s.engine_stamp,now,context.temp_allocator)
+    names:=strings.builder_make(context.temp_allocator)
+    for library in libraries {
+        s.library_generation+=1
+        loaded,error:=host.engine_library_swap(folder,library.file,library.packages,s.library_generation)
+        if error!=.None {
+            restart=host.library_error_text(error,library.file)
+            break
+        }
+        append(&s.libraries,loaded)
+        fmt.sbprintf(&names,"%s%s",strings.builder_len(names)>0?", ":"",library.file)
+    }
+    if restart!="" {
+        log.infof("the engine was built again and the editor restarts on it: %s",restart)
+        return false,false
+    }
+    delete(s.engine_stamp)
+    s.engine_stamp=strings.clone(now)
+    if len(libraries)==0 {return false,true}
+    log.infof("engine code reloaded: %s",strings.to_string(names))
+    notify(s,"Engine code reloaded")
+    return true,true
 }
 
 // The folder this editor started from, with forward slashes: where the
@@ -83,9 +124,14 @@ engine_stamp_here :: proc(s:^Session,allocator:=context.allocator) -> string {
     return build.engine_stamp_of(engine_folder_here(s),allocator)
 }
 
-// Whether the binaries beside this editor are no longer those it started from.
-engine_rebuilt :: proc(s:^Session) -> bool {
-    return s.engine_stamp!="" && engine_stamp_here(s,context.temp_allocator)!=s.engine_stamp
+// The stamp of the library of the project the last build left.
+library_stamp_here :: proc(s:^Session,allocator:=context.allocator) -> string {
+    return build.target_stamp_of(s.project_root,.Editor,allocator)
+}
+
+// Whether a build left binaries, of the engine or of the project, that this editor has not loaded.
+library_stale :: proc(s:^Session) -> bool {
+    return s.engine_stamp!="" && engine_stamp_here(s,context.temp_allocator)!=s.engine_stamp || library_stamp_here(s,context.temp_allocator)!=s.library_stamp
 }
 
 // The record mirai session keeps of the editor it opened (api.SESSION_FILE)
