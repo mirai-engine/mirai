@@ -25,8 +25,12 @@ Voice_Start :: struct {
     offset:u32,      // frames into the sound; for a feed, where its ring begins
     start_frame:u64, // mixer clock
     position,velocity:[3]f32,
+    rotation:quaternion128,
     attenuation:Attenuation,
+    directivity:Directivity,
     doppler:f32,
+    occlusion:f32,
+    transmission:[BANDS]f32,
     lowpass,reverb:f32,
 }
 Voice_Phase :: enum u8 {Free,Playing,Paused}
@@ -43,8 +47,23 @@ Mix_Voice :: struct {
     end_after_fade:bool,
     pausing,stopping:bool, // ramp to silence over this chunk, then pause or end
     orphan:bool,           // its handle was given to a voice that never started: it ends without a word
-    spatial_gain:[2]f32,spatial_pitch:f32,
+    spatial_pitch:f32,
     spatial_dirty:bool,listener_serial:u32,
+    // The direct sound of a spatial voice: its gain and EQ, where it comes
+    // from in the listener's space, and what the last chunk ended with.
+    direct_gain,direct_gain_now:f32,
+    eq_target,eq_gains:[BANDS]f32,
+    eq:[2][BANDS]Biquad,eq_state:[2][BANDS]Biquad_State,eq_current:u8,
+    direct_ready:bool,
+    direction:[3]f32,
+    pan_now:[2]f32,pan_valid:bool,
+    binaural_live,binaural_direction_valid:bool,
+    binaural_kept:u8,
+    binaural_read:u32,
+    binaural_direction:[3]f32,
+    // Frames of the binaural tail still to play after the voice went silent,
+    // and whether it pauses rather than ends then.
+    tail_left:i32,tail_pause:bool,
     // The filter and the send, ramped over every chunk from where they were:
     // a coefficient of 1 lets everything through.
     filter:f32,filter_state:[2]f32,
@@ -61,7 +80,7 @@ voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
         v.fade=0;v.fade_left=start.fade_in;v.fade_step=1/f32(start.fade_in)
     }
     v.spatial_dirty=true
-    v.spatial_gain={1,1};v.spatial_pitch=1
+    v.spatial_pitch=1
     v.filter=lowpass_coefficient(start.lowpass,f32(m.sample_rate))
     v.reverb_now=start.reverb
 }
@@ -114,7 +133,8 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         case .Voice_Pitch:target.pitch=command.value
         case .Voice_Pan:target.pan=command.value
         case .Voice_Loop:target.loop=command.flag
-        case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1]
+        case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1];target.rotation=command.rotation
+        case .Voice_Occlusion:target.occlusion=command.value;target.transmission=command.vectors[0]
         case .Voice_Lowpass:target.lowpass=command.value
         case .Voice_Reverb:target.reverb=command.value
         }
@@ -124,11 +144,17 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     #partial switch command.kind {
     case .Voice_Stop:
         started:=m.clock>=v.start_frame
+        if v.tail_left>0 {v.tail_pause=false;return}
         if v.phase==.Paused || !started {voice_end(m,command.index);return}
         if command.frames==0 {v.stopping=true;return}
         v.fade_target=0;v.fade_left=command.frames;v.fade_step=-v.fade/f32(command.frames)
         v.end_after_fade=true
     case .Voice_Pause:
+        if v.tail_left>0 {
+            // Resumed while its tail plays: it goes on from there.
+            if !command.flag && v.tail_pause {v.tail_left,v.tail_pause=0,false}
+            return
+        }
         if command.flag {
             if v.phase==.Playing {
                 if m.clock>=v.start_frame {v.pausing=true} else {v.phase=.Paused}
@@ -150,25 +176,27 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         if command.frames==0 {v.fade=command.value;v.fade_left=0;return}
         v.fade_left=command.frames;v.fade_step=(command.value-v.fade)/f32(command.frames)
     case .Voice_Place:
-        v.position=command.vectors[0];v.velocity=command.vectors[1]
+        v.position=command.vectors[0];v.velocity=command.vectors[1];v.rotation=command.rotation
+        v.spatial_dirty=true
+    case .Voice_Occlusion:
+        v.occlusion=command.value;v.transmission=command.vectors[0]
         v.spatial_dirty=true
     case .Voice_Lowpass:v.lowpass=command.value
     case .Voice_Reverb:v.reverb=command.value
     }
 }
 
-// Gains of a voice before its fade: volume, and pan or position.
+// Gains of a voice before its fade: volume, and pan. A spatial voice is
+// mixed as one mono source into the left channel, which spatial_post places.
 voice_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> (gains:[4]f32) {
     sides:[2]f32
     if v.spatial {
         if v.spatial_dirty || v.listener_serial!=m.listener_serial {
-            v.spatial_gain,v.spatial_pitch=spatialize(m.listener,v.position,v.velocity,v.attenuation,v.doppler,m.speed_of_sound)
+            direct_update(m,v)
             v.spatial_dirty=false;v.listener_serial=m.listener_serial
         }
-        sides=v.spatial_gain*v.volume
-        // A stereo sound that has a place in the world is heard as one source.
-        if v.source.channels==2 {return {sides[0]*0.5,sides[1]*0.5,sides[0]*0.5,sides[1]*0.5}}
-        return {sides[0],sides[1],0,0}
+        if v.source.channels==2 {return {v.volume*0.5,0,v.volume*0.5,0}}
+        return {v.volume,0,0,0}
     }
     if v.source.channels==2 {
         sides=balance_gains(v.pan)*v.volume
@@ -200,6 +228,10 @@ voice_mix :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
 voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
     if clock+u64(n)<=v.start_frame {return}
+    if v.tail_left>0 {
+        voice_tail(m,index,n)
+        return
+    }
     offset:=0
     if clock<v.start_frame {offset=int(v.start_frame-clock)}
     target:=voice_gains(m,v)
@@ -209,9 +241,9 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     step:=u64(f64(pitch)*f64(v.source.rate)/f64(m.sample_rate)*f64(ONE))
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
-    // A voice that is filtered or sent is mixed apart first.
+    // A voice that is placed, filtered or sent is mixed apart first.
     filter:=lowpass_coefficient(v.lowpass,f32(m.sample_rate))
-    apart:=filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
+    apart:=v.spatial || filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
     if apart {
         out=raw_data(m.voice_scratch)
         #no_bounds_check for i in offset*2..<n*2 {out[i]=0}
@@ -224,9 +256,37 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
         alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,out,offset,n,max(step,1),target,span)
     }
     v.base=target
+    if v.spatial {spatial_post(m,v,index,out,offset,n)}
     if apart {voice_post(m,v,out,bus,offset,n,filter)}
-    if !alive || v.stopping {voice_end(m,index);return}
+    ended:=!alive || v.stopping
+    if (ended || v.pausing) && v.binaural_live && m.output_now==.Headphones && m.channels==2 {
+        // What the convolution still holds plays out before it ends or pauses.
+        v.tail_left=i32(BINAURAL_OVERLAP+m.hrtf.interp.n)
+        v.tail_pause=!ended
+        v.stopping,v.pausing=false,false
+        return
+    }
+    if ended {voice_end(m,index);return}
     if v.pausing {v.pausing=false;v.phase=.Paused}
+}
+
+// Plays n frames of the binaural tail of a voice that went silent.
+voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int) {
+    v:=&m.voices[index]
+    out:=raw_data(m.voice_scratch)
+    #no_bounds_check for i in 0..<n*2 {out[i]=0}
+    silence:=m.spatial_mono[:n]
+    for &x in silence {x=0}
+    binaural_run(m,v,index,silence,out,v.binaural_direction)
+    bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
+    voice_post(m,v,out,bus,0,n,lowpass_coefficient(v.lowpass,f32(m.sample_rate)))
+    v.tail_left-=i32(n)
+    if v.tail_left>0 {return}
+    v.tail_left=0
+    if !v.tail_pause {voice_end(m,index);return}
+    v.tail_pause=false
+    v.phase=.Paused
+    v.binaural_live=false
 }
 
 // Filters frames [from,to) of a voice mixed apart into its bus and sends them to the reverb.

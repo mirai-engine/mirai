@@ -98,9 +98,10 @@ invalid one return false.
   yet is stopped at once.
 - **Aligned start.** With `start_frame` (mixer clock) the first sample comes out exactly on that
   frame, even if it falls in the middle of a render.
-- **Filter and send.** A voice with a low-pass or a reverb send is mixed apart and goes through its
-  one-pole filter, which changes cutoff without clicks; with neither it goes straight to its bus,
-  at no extra cost.
+- **Filter and send.** A spatial voice, or one with a low-pass or a reverb send, is mixed apart: a
+  spatial one goes through its [direct effect and its output](#positional-audio), then any voice
+  through its one-pole filter, which changes cutoff without clicks, and its send. Any other goes
+  straight to its bus, at no extra cost.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
   The stolen handle stops being valid at once and its sound drops to silence within a chunk.
@@ -131,18 +132,35 @@ kinds:
 ## Positional audio
 
 Right-handed, Y up, meters: a listener without rotation looks toward -Z with +X to its right.
+`spatial.odin`, `direct.odin`, `hrtf.odin` and `binaural.odin` translate Steam Audio's direct,
+binaural and panning effects.
 
 - Attenuation clamps the distance to [`min_distance`, `max_distance`]: closer than the minimum the
   gain is 1 and farther than the maximum it stops dropping.
-- Pan is the component of the direction to the source along the listener's right, with constant
-  power: it does not tell front from back.
+- **Direct effect.** Per spatial voice, one gain (attenuation, directivity) and a three-band EQ
+  (low shelf, peak, high shelf at 800 Hz and 8 kHz): air absorption over the distance, and
+  `occlusion` blending each band toward `transmission`. The EQ is normalized to a peak of 1 with a
+  floor of 24 dB, so distance and occlusion take highs first and never raise a band. A change of
+  gains crossfades the old and the new cascade over the chunk.
+- **Output.** `Output_Kind` is one per mixer: on headphones each voice is convolved with the HRTF of
+  its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements
+  around it), overlapped in blocks whose shared samples crossfade a change of direction; the output
+  is `BINAURAL_OVERLAP` samples late whatever size the render has. On speakers the direction,
+  brought to the horizontal plane, pans with constant power; a mono output plays it centered.
+- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
+  only runs at the rates it was measured at. It is loaded and transformed when the mixer is
+  created; the binaural state of every voice slot is reserved then.
+- A source at the listener comes from above. A place, velocity, rotation or occlusion that is not
+  a number is refused by `voice_play`, `voice_set_position`, `voice_set_occlusion` and
+  `listener_set`.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
 - A stereo sound with a position is heard as one source (average of its channels).
-- Gains and pitch of a positional voice are recomputed on the audio thread when its position or
-  the listener changes, with the chunk's ramp.
+- The direct path and the pitch of a positional voice are recomputed on the audio thread when its
+  place, its occlusion or the listener change; the HRTF only when its direction changed.
 
 ## What it does not do
 
-Resampling better than linear, other per-voice filters, more than one room reverb, reflections
-from geometry, HRTF, sounds or output of more than two channels, and seeking or querying the
-position of a playing voice.
+Resampling better than linear, more than one room reverb, reflections, pathing, baked or
+convolution reverb from geometry (a later plugin), ambisonics, a 2D/3D blend of a spatial voice,
+propagation delay, other HRTFs than the one shipped, sounds or output of more than two channels,
+and seeking or querying the position of a playing voice.
