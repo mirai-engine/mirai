@@ -4,7 +4,7 @@ import importer "mirai:cook/import"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // The locomotion of the Mirai that walks by its physics: matching over idle and walk for walking
 // and fall for falling, with jump starting falling and land starting walking; the warp of its walk
@@ -12,9 +12,9 @@ import phys "plugins:physics/runtime"
 // its speed; and its feet on the ground.
 @(private)
 gallery_mirai_matching :: proc(o:^Out,model:^importer.Imported_Model,animation:base.Asset_Id) {
-    Clip :: struct {name:string,mode:phys.Locomotion_Mode,loop:bool}
+    Clip :: struct {name:string,mode:locomotion.Locomotion_Mode,loop:bool}
     clips:[5]anim.Match_Source
-    for value,i in ([5]Clip{{"idle",phys.MODE_WALKING,true},{"walk",phys.MODE_WALKING,true},{"fall",phys.MODE_FALLING,true},{"jump",phys.MODE_FALLING,false},{"land",phys.MODE_WALKING,false}}) {
+    for value,i in ([5]Clip{{"idle",locomotion.MODE_WALKING,true},{"walk",locomotion.MODE_WALKING,true},{"fall",locomotion.MODE_FALLING,true},{"jump",locomotion.MODE_FALLING,false},{"land",locomotion.MODE_WALKING,false}}) {
         base.text_set(clips[i].clip[:],value.name);clips[i].modes=1<<u32(value.mode);clips[i].loop,clips[i].entry=value.loop,!value.loop
     }
     info:=anim.MATCH_INFO_DEFAULT

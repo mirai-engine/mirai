@@ -6,6 +6,7 @@ import "core:testing"
 import "core:math/linalg"
 import "mirai:asset"
 import "mirai:core"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -35,8 +36,8 @@ Animation_Input_Fixture :: struct {
     assets:host.Assets,app:host.App,
     transforms:core.Table(core.Transform),worlds:core.Table(core.World_Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
     inputs:core.Table(inp.Move_Input),motors:core.Table(Animation_Motor),
-    walks:core.Table(phys.Walk),flights:core.Table(phys.Fly),swims:core.Table(phys.Swim),remotes:core.Table(core.Remote),character_moves:core.Table(phys.Character_Move),locomotion_requests:phys.Locomotion_Requests,
-    characters:core.Table(phys.Character),rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),joints:core.Table(phys.Joint),meshes:core.Table(render.Mesh_Renderer),
+    walks:core.Table(locomotion.Walk),flights:core.Table(locomotion.Fly),swims:core.Table(locomotion.Swim),remotes:core.Table(core.Remote),character_moves:core.Table(phys.Character_Move),locomotion_requests:locomotion.Locomotion_Requests,
+    characters:core.Table(phys.Character),locomotion_states:core.Table(locomotion.Locomotion_State),rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),joints:core.Table(phys.Joint),meshes:core.Table(render.Mesh_Renderer),
     body_states:core.Table(core.Motion),replicas:core.Table(core.Pose_Target),character_states:core.Table(phys.Character_State),joint_states:core.Table(phys.Joint_State),
     physics:phys.Physics_State,settings:phys.Physics_Settings,body_requests:phys.Body_Requests,body_events:phys.Physics_Events,collider_meshes:phys.Collider_Meshes,problems:core.Problems,
     animations:core.Table(anim.Animation),targets:core.Table(anim.Animation_Target),played:core.Table(anim.Animation_Played),requests:anim.Animation_Requests,events:anim.Animation_Events,playback:anim.Playback,skeletons:anim.Skeleton_Assets,
@@ -54,9 +55,9 @@ animation_input_fixture_destroy :: proc(f:^Animation_Input_Fixture) {
 
 @(private)
 animation_input_physics :: proc(f:^Animation_Input_Fixture,time:core.Time) {
-    no_slides:core.Table(phys.Slide);no_mantles:core.Table(phys.Mantle);no_tacticals:core.Table(phys.Tactical_Sprint);no_ledges:core.Table(phys.Ledge_Jump)
-    phys.locomotion_step(&f.characters,&f.character_moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&f.character_states),core.read(&f.body_states),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),{&f.physics},{},{},&f.locomotion_requests,time,core.CLOCK_DEFAULT,&f.problems)
-    core.table_settle(&f.characters,&f.entities);core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.character_moves,&f.entities)
+    no_slides:core.Table(locomotion.Slide);no_mantles:core.Table(locomotion.Mantle);no_tacticals:core.Table(locomotion.Tactical_Sprint);no_ledges:core.Table(locomotion.Ledge_Jump)
+    locomotion.locomotion_step(core.read(&f.characters),&f.locomotion_states,&f.character_moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&f.character_states),core.read(&f.body_states),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),{&f.physics},{},{},&f.locomotion_requests,time,core.CLOCK_DEFAULT,&f.problems)
+    core.table_settle(&f.locomotion_states,&f.entities);core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.character_moves,&f.entities)
     phys.physics_step(&f.physics,{&f.settings},&f.body_requests,&f.body_events,&f.collider_meshes,&f.app,time,core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.character_moves),&f.joints,core.read(&f.meshes),core.read(&f.parents),core.read(&f.names),&f.transforms,&f.body_states,core.read(&f.replicas),&f.character_states,&f.joint_states,{},nil,{},{},nil,nil,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy))
     core.table_settle(&f.body_states,&f.entities);core.table_settle(&f.character_states,&f.entities);core.table_settle(&f.joint_states,&f.entities)
     core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
@@ -69,8 +70,8 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     core.entities_init(&f.entities);testing.expect(t,host.assets_init(&f.assets,{root="assets",capacity=8}))
     f.app={assets=&f.assets,allocator=context.allocator};f.settings={bodies=8,shapes=8,contacts=32,joints=1,characters=2,hulls=1,meshes=1,heightfields=1}
     controlled,motor,hip,floor:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
-    character:=phys.character_default();character.move_relative_to=.Game
-    walk:=phys.WALK_DEFAULT;walk.max_speed=5;walk.acceleration,walk.braking=1000,1000
+    character:=phys.character_default()
+    walk:=locomotion.WALK_DEFAULT;walk.max_speed=5;walk.acceleration,walk.braking=1000,1000
     for entity,i in ([2]core.Entity{controlled,motor}) {core.add(&f.inputs,entity,{});core.add(&f.characters,entity,character);core.add(&f.walks,entity,walk);core.add(&f.colliders,entity,phys.collider_character());core.add(&f.transforms,entity,{position={f32(i)*2,0,0},rotation=1,scale={1,1,1}})}
     core.add(&f.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&f.parents,hip,{entity=motor});core.add(&f.names,hip,core.name_make("hip"));core.add(&f.motors,motor,ANIMATION_MOTOR_DEFAULT)
     core.add(&f.transforms,floor,{position={0,-.1,0},rotation=1,scale={1,1,1}});collider:=phys.COLLIDER_DEFAULT;collider.size={5,.1,5};core.add(&f.colliders,floor,collider)

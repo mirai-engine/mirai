@@ -129,6 +129,10 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`physics`**: the solver as its own package (`runtime/sim`) and its integration with the world;
   the editor gets its collision rows, its API, Simulate with bodies and the Collision modes
   ([physics](../../mirai-physics/SKILL.md)).
+- **`locomotion`** (`Runtime`, `Editor`; depends on `physics`): walking, jumping, flying and
+  swimming of a `Character` by its `Walk`, `Fly` or `Swim`, the layered moves and the seat that
+  drives it; it tells the editor's bots how fast a body walks
+  ([locomotion](../../mirai-physics/references/engine.md#locomotion)).
 - **`destruct`**: destructibles, fracture and pieces
   ([destruction](../../mirai-physics/references/engine-destruct.md)).
 - **`shapes`** (`Runtime` and `Editor`; depends on `physics`): editable outlines and solids of
@@ -148,17 +152,18 @@ demo enables. How an `editor/` adds steps, panels and tools:
   `core.Ground_Queries`, which `terrain` provides; births of effects go through `core.Births`,
   which `vfx` takes; and a component declared `replicated="object"` (removed foliage) is
   replicated by `multiplayer` without a bridge ([core](../../mirai-core/references/core.md#ground)).
-- **`navigation`** (`Runtime`, `Editor`; depends on `physics`): automatic navmesh from static
-  collision, per agent class and by tiles that rebuild themselves, areas, obstacles, manual and
-  generated links, agents that write their `Move_Input` and cross links, the scene's `.navmesh`
-  and the `nav.*` methods. Contract in [navigation](../../mirai-world/references/navigation.md).
-- **`behavior`** (`Runtime`, `Editor`; depends on `physics` and `navigation`): minds that the game
-  runs by name in its functions, perception with memory, smart objects, place queries, influence
-  maps and the `behavior.*` methods. Contract in
+- **`navigation`** (`Runtime`, `Editor`; depends on `physics` and `locomotion`): automatic
+  navmesh from static collision, per agent class and by tiles that rebuild themselves, areas,
+  obstacles, manual and generated links, agents that write their `Move_Input` and cross links, the
+  scene's `.navmesh` and the `nav.*` methods. Contract in
+  [navigation](../../mirai-world/references/navigation.md).
+- **`behavior`** (`Runtime`, `Editor`; depends on `physics`, `locomotion` and `navigation`):
+  minds that the game runs by name in its functions, perception with memory, smart objects, place
+  queries, influence maps and the `behavior.*` methods. Contract in
   [behavior](../../mirai-world/references/behavior.md).
-- **`abilities`** (`Runtime`, `Editor`; depends on `physics` and `animation`): abilities as
-  `Ability` and `Ability_Kit` rows of game data, the `Ability_User` that runs them, effects and
-  the `abilities.*` methods. Contract in [abilities](../../mirai-abilities/SKILL.md).
+- **`abilities`** (`Runtime`, `Editor`; depends on `physics`, `locomotion` and `animation`):
+  abilities as `Ability` and `Ability_Kit` rows of game data, the `Ability_User` that runs them,
+  effects and the `abilities.*` methods. Contract in [abilities](../../mirai-abilities/SKILL.md).
 - **`spawn`** (`Runtime`, `Editor`): spawn points and bodies for the players, which it destroys
   with their seat; the Spawn card of Create
   ([spawn points](../../mirai-gameplay/references/control.md#spawn-points)).
@@ -235,10 +240,10 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`imprint`** (`Runtime`, `Shaders`; depends on `vfx` and `physics`): snow, mud and sand
   [footprints](../../mirai-world/references/imprint.md) in a height clipmap on a `vfx` grid, with
   the ground meshes displaced on the GPU for the raster and the rays.
-- **`decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`**
+- **`decals`, `deform`, `monitors`, `portals`, `fog`**
   - Parts: `Runtime`; `Shaders` except `monitors`; `Editor` except `deform`.
   - Renderer extensions: decals on the G-buffer, meshes deformed on the GPU with their own
-    equations, screens that show cameras, portals, flat mirrors and volumetric fog. Contract in
+    equations, screens that show cameras, portals and flat mirrors, and volumetric fog. Contract in
     [render plugins](render-plugins.md).
   - Editor: Decal, Screen, Portal, Mirror and Fog cards of Create, with their icon and what they
     show when selected.

@@ -11,6 +11,7 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
@@ -201,7 +202,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act),w:Arena) {
 
 // Walks somewhere near for a second or so, then stands a second and a half.
 @(act="Wander")
-zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(phys.Fly),state:^Arena_State) -> ai.Status {
+zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(locomotion.Fly),state:^Arena_State) -> ai.Status {
     if ai.stage(a)==0 {
         if a.phase==.Enter {
             e:=behavior.agent(a)
@@ -756,7 +757,7 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character())
-    walk:=core.default(c,phys.Walk)
+    walk:=core.default(c,locomotion.Walk)
     walk.max_speed=speed
     core.commands_add(c,e,walk)
     core.commands_add_default(c,e,nav.Nav_Agent)
@@ -956,12 +957,9 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     e:=core.commands_create(c)
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
-    character:=core.default(c,phys.Character)
-    character.mode=phys.MODE_FLYING
-    core.commands_add(c,e,character)
+    core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
-    core.commands_add_default(c,e,phys.Walk)
-    core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})
+    core.commands_add(c,e,locomotion.Fly{speed=5,acceleration=20})
     core.commands_add_default(c,e,nav.Nav_Agent)
     arena_shown(c,e,{{0,0.4,0},1,{0.5,0.4,0.5}},{0.95,0.6,0.2,1})
     return e

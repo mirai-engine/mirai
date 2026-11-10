@@ -262,8 +262,7 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
     testing.expect(t,desc.mass>100 && desc.mass<1000)
     created:=f.state.stats.characters_created
     core.edit(&f.colliders,e).collides=COLLISION_LAYERS_ALL
-    // The locomotion writes the rest of the row every tick; that does not make it again.
-    core.edit(&f.characters,e).coyote=0.05
+    // A change of its collision filters it again, without making it again.
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created)
     current,_:=core.get(&f.colliders,e)

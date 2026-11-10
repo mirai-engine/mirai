@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "mirai:core"
 import inp "mirai:engine/input"
 import gui "mirai:engine/gui"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -124,7 +125,7 @@ Animation_Gallery_Diagnostics :: struct {
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
 @(step="fixed",after="gallery_player_move")
-gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Table(inp.Move_Input),walks:core.Read(phys.Walk),worlds:core.Read(core.World_Transform),placer:core.Placer,seats:inp.Players,walk_actions:inp.Input_Of(phys.Walk_Action),time:core.Time) {
+gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Table(inp.Move_Input),walks:core.Read(locomotion.Walk),worlds:core.Read(core.World_Transform),placer:core.Placer,seats:inp.Players,walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
@@ -230,7 +231,7 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
             placed,_:=core.get(worlds,entity)
             forward:=mm.quat_forward(placed.rotation)
             velocity:=forward*(item.speed if manual else speed)
-            anim.match_goal(requests,{rig=entity,mode=u16(phys.MODE_WALKING),velocity=velocity,desired=velocity,facing=forward})
+            anim.match_goal(requests,{rig=entity,mode=u16(locomotion.MODE_WALKING),velocity=velocity,desired=velocity,facing=forward})
             if !manual && gallery_period(item.age,time.dt,9,4.5) {anim.play(requests,entity,"Wave")}
         case .Additive,.Sync,.Layered:
             anim.set(requests,entity,gallery_parameter(item.kind),item.values[0] if manual else value)

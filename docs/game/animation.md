@@ -33,7 +33,7 @@ fast the body goes (`Walk.max_speed`), never which clip plays. Without a `Charac
 walker) a `fixed` step tells the set what the body does (world axes, m/s; the model faces -Z):
 
 ```odin
-anim.match_goal(requests,{rig=e,mode=u16(phys.MODE_WALKING),   // requests:^anim.Animation_Requests
+anim.match_goal(requests,{rig=e,mode=u16(locomotion.MODE_WALKING), // ^anim.Animation_Requests
     velocity=w.velocity,desired=w.velocity,facing=w.facing})
 ```
 

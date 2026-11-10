@@ -173,9 +173,40 @@ The network and physics share only `core` tables, each with one writer:
 `destruct_multiplayer` replicates fractures
 ([networked destruction](../../mirai-physics/references/engine-destruct.md#network)) and
 `terrain_multiplayer` terrain edits
-([terrain](../../mirai-world/references/terrain.md#network)). The `behavior` minds decide only on
+([terrain](../../mirai-world/references/terrain.md#network)), both as
+[operation journals](#operation-journal). The `behavior` minds decide only on
 the server, and clients play what their actions play through the replicated `Animation_Played`,
 without predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
+
+## Operation journal
+
+What a library changes by operations (a fracture, a dig) and both ends must hold alike goes as a
+`Journal` (`journal.odin`) the library keeps in a host storage of its own, one per world. The
+library gives the bytes of each operation (`Journal_Op.body`, with its region and the check of what
+it leaves) and applies what the journal hands it; the journal owns the rest:
+
+- **Numbering and order.** The server numbers the operations of each key (`Journal_Key`: an
+  entity Id, a source asset) and sends them reliably; a client applies them in that order at the
+  server's tick (`journal_due`) and tells how each went (`journal_result`).
+- **What a correction replays.** Each entry keeps the tick it was first handed at and the tick it
+  was done: a correction that brings the `World` back hands again exactly what those ticks applied,
+  never twice. No cursor lives in the `World`.
+- **Late operations** ask to go back to their tick (`rewind`): every one, or only those over a
+  prediction, as the library says.
+- **Predictions.** An operation the client's game asks is applied there and asked of the server
+  (`journal_ask`); the server holds it until its tick (`journal_asks`), the library validates and
+  applies it or refuses it with its own reason (`journal_refuse`), and when it comes back it stands
+  for the server's operation.
+- **Parts.** A check that differs, a missing operation, a refused or unanswered prediction asks for
+  the parts of the key over a region, or a base (`journal_resync`, with what the client holds,
+  `since`, in the library's terms); a server offers a base itself (`journal_offer`), as to each
+  connection that enters its world. The library writes each part (`journal_serves`,
+  `journal_part`); the journal packs it in LZ and sends it within `JOURNAL_BUDGET` bytes a tick, and
+  the client applies it in its place among the operations. A new ask waits for the answer to the
+  last one, or `JOURNAL_ASK_TICKS`.
+- A scene that replaces the world forgets the journal (`journal_world`).
+
+A third library declares its operation bytes, applies them and writes its parts: nothing else.
 
 ## Authority and players
 
@@ -751,6 +782,11 @@ one set by whoever tests those functions by hand).
   `rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate`,
   `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
   and `a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from` (rewind).
+- Operation journal (`journal_test.odin`):
+  `operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_within_the_budget`
+  (in-memory network with loss, a late joiner and UDP on loopback),
+  `a_correction_hands_each_operation_again_at_its_tick_and_never_twice` and
+  `what_a_client_receives_without_memory_is_left_out_and_reported`.
 - The display rule and predicted spawns (`switch_test.odin`):
   `a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_drawn` and
   `a_predicted_spawn_is_taken_by_its_replica_also_across_a_correction`.
